@@ -144,7 +144,6 @@ import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.SESSION_BOUNDARY_TEST_TAG
-import de.pyryco.mobile.ui.conversations.components.treeHostChannelAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostChatAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
@@ -2883,15 +2882,10 @@ class InteractiveStreamE2ETest {
             val before = hostConversationIds(serverId, "the default-folder probe") { daemonDefault.id in it }
 
             // 1. The empty Channels section creates in the host's default working folder.
-            val plus = hasTestTag(treeHostChannelAddTestTag(serverId))
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                runCatching { scrollListTo(plus) }.isSuccess
+            val source = GlobalContext.get().get<HostConversationSource>()
+            composeTestRule.createChannelFromEmptyHost(serverId, LIST_TIMEOUT_MS) {
+                source.snapshots.value
             }
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).fetchSemanticsNodes().isEmpty()
-            }
-            composeTestRule.onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).assertCountEquals(0)
-            composeTestRule.onNode(plus).performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(string(R.string.create_channel_title)).fetchSemanticsNodes().isNotEmpty()
             }
@@ -3473,12 +3467,32 @@ class InteractiveStreamE2ETest {
                     peerStep(prior, "open prior peer") { prior.open(CONNECT_TIMEOUT_MS) }
                 }
                 peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
-                sendFromPhone(STOP_HOLD_PROMPT)
+                // #1925: correlate this send with bounded observations before failure cleanup; cause remains unproven.
                 val modalId =
-                    peerStep(
-                        peer,
-                        "await the held command's permission prompt",
-                    ) { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+                    withStopHoldDiagnostics(
+                        conversationId = conversationId,
+                        nowMs = System::currentTimeMillis,
+                        snapshot = {
+                            val coordinator =
+                                GlobalContext
+                                    .get()
+                                    .get<RelayConnectionRegistry>()
+                                    .connectionFor(serverId)
+                                    ?.coordinator
+                            val phonePermission =
+                                coordinator?.hostModals?.value?.outstanding?.any {
+                                    it.conversationId == conversationId && it.modalClass == "permission"
+                                }
+                            stopHoldEvidence(conversationId, peer.recorded(conversationId), phonePermission)
+                        },
+                        emit = { Log.i("StopHoldProbe", it) },
+                    ) {
+                        sendFromPhone(STOP_HOLD_PROMPT)
+                        peerStep(
+                            peer,
+                            "await the held command's permission prompt",
+                        ) { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+                    }
                 peerStep(peer, "allow the prompt once and await its dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
 
                 // 3. Tap the composer's Stop control once no dialog covers it.

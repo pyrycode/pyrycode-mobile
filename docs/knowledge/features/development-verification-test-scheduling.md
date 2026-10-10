@@ -49,6 +49,19 @@ events before attributing the failure to conversation routing or increasing a ti
 [permission-answer coverage](../../e2e-interactive-stream.md#what-rung-3-is-made-of) and its
 [53-test full-suite proof](../../e2e-interactive-stream.md#verification-status).
 
+An open peer session proves neither turn delivery nor permission emission. For the Stop permission
+wait (#1925), an exact test-authored held-prompt match correlated #1870's conversation to daemon
+submission and durable thinking activity; absent modal history still could not distinguish a prompt
+never emitted from one lost before observation. Aggregate delivery refusals in #1968's daemon log
+could not be attributed without a scenario/conversation marker. Retain a bounded submission timestamp
+and validated conversation UUID before send, then summarize conversation-owned events and current
+phone permission before failure cleanup. Use capped counters and fixed allowlists, without payload
+text, tool names, raw errors, instructions or pairing material. Non-atomic phone/peer snapshots and
+missing transient phone state remain observation limits; no activity observed is not proof that a
+turn never started. The Stop wrapper currently retains failure snapshots only for assertions;
+non-assertion send/wait failures remain a diagnostic gap. See
+[Stop coverage and the open behavioural investigation](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
 A standalone peer scenario can pass while later full-suite scenarios fail because an earlier peer
 bound their shared token. Open and close a prior peer with the same pairing before the observing peer
 when testing this lifecycle, as the [Stop scenario](../../e2e-interactive-stream.md#what-rung-3-is-made-of)

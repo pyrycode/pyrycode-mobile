@@ -47,6 +47,21 @@ source only if its escapes are typed in upper case.
 
 ## Emulator and real evidence
 
+Tier-tag counts in the shared lazy channel list span every host and only composed rows. After
+archiving one host's fixtures, requiring global `TREE_CHANNEL_ROW_TEST_TAG` absence can time out
+on another host's valid channel; zero composed rows can also hide offscreen membership. Establish
+emptiness from the exact host's collected `HostConversationSnapshot`: it must exist, have
+`rowsLoaded` and contain no channels. Then scroll to and tap that host's qualified plus. Repository
+emptiness alone does not establish that the list's collected snapshot has caught up.
+
+`EmptyHostChannelSetupTest` (#1897) keeps selected B's channel visible while target A is loaded
+and empty, and requires exactly A's creation event. The old drive failed (**1 executed/failed,
+0 skipped**); repaired JVM and Android 13 runs each passed **4 executed, 0 failed/errors/skipped**,
+including absent, unloaded and stale-nonempty target guards. Preserve fixture restoration/deletion
+on failure. The historical timeout identifies the faulty wait but does not identify the remaining
+row's host. See [retained controlled evidence and fresh full-live named pass](../../e2e-interactive-stream.md#empty-host-channel-setup-1897)
+for the source mapping, counts, mobile/daemon revisions and artifact locations.
+
 A collected repository publication can lag synchronous authenticated availability (#1888).
 `RelayRepositoryCoordinator.currentRepository` can still emit retired A while `.value` is null
 or replacement B. An ordinary `MutableStateFlow` cannot model that divergence; the first

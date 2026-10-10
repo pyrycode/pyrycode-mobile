@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="4" failures="0" errors="0" skipped="0" time="7.413" timestamp="2026-10-10T03:36:35" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.e2e.EmptyHostChannelSetupTest" tests="4" failures="0" errors="0" skipped="0" time="6.91" timestamp="2026-10-10T03:36:35" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="emptyTargetCreatesWhileAnotherSelectedHostKeepsItsChannel" classname="de.pyryco.mobile.e2e.EmptyHostChannelSetupTest" time="1.988" />
+    <testcase name="unloadedEmptyTargetDoesNotEstablishChannelAbsence" classname="de.pyryco.mobile.e2e.EmptyHostChannelSetupTest" time="1.826" />
+    <testcase name="staleTargetChannelsMustLeaveTheListSnapshotBeforeCreation" classname="de.pyryco.mobile.e2e.EmptyHostChannelSetupTest" time="1.522" />
+    <testcase name="missingTargetDoesNotBorrowAnotherHostsEmptyList" classname="de.pyryco.mobile.e2e.EmptyHostChannelSetupTest" time="1.574" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,18 @@
+--- a/app/src/sharedTest/java/de/pyryco/mobile/e2e/EmptyHostChannelSetup.kt
++++ b/app/src/sharedTest/java/de/pyryco/mobile/e2e/EmptyHostChannelSetup.kt
+@@ -2,0 +3 @@
++import androidx.compose.ui.test.assertCountEquals
+@@ -9,0 +11 @@
++import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
+@@ -11 +12,0 @@
+-/** A global tier tag spans every host and only composed rows; use the list's loaded host snapshot. */
+@@ -17,4 +17,0 @@
+-    waitUntil(timeoutMillis) {
+-        val target = snapshots().singleOrNull { it.serverId == serverId }
+-        target != null && target.rowsLoaded && target.channels.isEmpty()
+-    }
+@@ -24,0 +22,4 @@
++    waitUntil(timeoutMillis) {
++        onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).fetchSemanticsNodes().isEmpty()
++    }
++    onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).assertCountEquals(0)
