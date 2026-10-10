@@ -48,3 +48,13 @@ Preserve existing capture timeout behavior. Do not catch assertion failures, ins
 - What terminates: assertion, instrumentation process or emulator process? Resolve using correlated fresh logs, not historical empty XML.
 - Does the evidenced cause belong to Mobile, the external agents runner or the host? Only Mobile-owned causes may be repaired in this branch.
 - What bounded evidence can be retained without secrets? Scanner-only logs and sanitized timestamped process/crash excerpts are candidates; preserve counts and revision identifiers alongside artifacts.
+
+## Revisions
+
+### 2026-10-10 — Current dark-only fixture after refinement
+
+The refined issue supersedes the historical dual-theme contract after merged PR #2062. `checkFrame` now covers dark only with one Back and one Paste callback in each method: `fullSizeDarkFrames` at 412×892 dp, `compactDarkFrames` at 360×640 dp, and `compactEnlargedTextFrames` at 360×640 dp with font scale 1.5. Preserve all current assertions, time bounds and capture retries; restoring light coverage is outside scope. This revision supersedes the both-theme and dark-to-light statements above.
+
+Begin with the unchanged enlarged method; if it completes, investigate the whole current class and the reported suite context without manufacturing a failure. This dispatch runs on `Juhanas-MacBook-Air.local` (Darwin arm64); the refinement identifies HP as the historically affected runner. A Mac pass alone cannot diagnose or establish repair of HP emulator loss. Preserve revision and host identity with any fresh result, then route unestablished or external ownership for refinement as the issue requires.
+
+The refreshed remote-branch overlap check found no numeric feature branch changing the scanner fixture, screenshot helper, app build configuration or Gradle properties. Sizing remains one investigation deliverable, roughly 450 written lines, no new exported types or consumer migrations, three acceptance criteria and no new reject branches. No production UI change or documentation-stage requirement is introduced.
