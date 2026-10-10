@@ -47,6 +47,7 @@ import de.pyryco.mobile.data.repository.HostReadingFrames
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.awaitSendNowConnection
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.thread.AttachmentRead
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
@@ -124,6 +125,61 @@ class RelayConnectionFactoryTest {
         RelayLog.sink = previousSink
         RelayLog.enabled = previousEnabled
     }
+
+    @Test
+    fun sendNowReadinessIgnoresStoppedSelectedHost() =
+        runTest {
+            val f = Fixture(this)
+            f.unavailable = "B"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                f.transports.last().reportAbsent()
+                runCurrent()
+                val selected = registry.selected.value
+                assertSame(registry.connectionFor("B"), selected)
+                assertEquals(RelayLinkStatus.DaemonAbsent, registry.connectionStatus.value.relay)
+
+                awaitSendNowConnection(registry, "A", 30_000)
+
+                assertSame("readiness must not mutate selection", selected, registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun sendNowReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected() =
+        runTest {
+            val f = Fixture(this)
+            f.unavailable = "A"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                f.transports.first().reportAbsent()
+                runCurrent()
+                assertEquals(RelayLinkStatus.Connected, registry.connectionStatus.value.relay)
+                val readiness = async { awaitSendNowConnection(registry, "A", 30_000) }
+                runCurrent()
+                assertFalse("another host cannot satisfy Send now readiness", readiness.isCompleted)
+
+                f.unavailable = null
+                registry.connectionFor("A")?.supervisor?.retry()
+                runCurrent()
+                readiness.await()
+                assertSame(registry.connectionFor("B"), registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
 
     @Test
     fun pairingStatusWaitsForExactCredentialsAndKeepsConnectedPeer() =
