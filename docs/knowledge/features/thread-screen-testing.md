@@ -543,6 +543,76 @@ only its mode's repository and creates a fresh ViewModel/composition. Exact newe
 text wholly within the viewport through frame commit remains the endpoint.
 Documentation inspected retained reports and ran no device tests.
 
+**Residual optional-history dependency (#2050), 2026-10-10.** The
+[verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2066#issuecomment-6102499328)
+and [controlled comparisons](../../specs/architecture/2050-saved-thread-residual-restore.md#revisions)
+establish that validated rows waited for optional coverage proofs and repository
+saved-order seeding. Matching dark-fixture main `969d9c3c8847` missed fragmented
+first opens at **1606/1344 ms**, with workers **884/778 wall, 862/760 CPU ms** and
+zero queue delay. Rows-first `8c5ae3703` drew them at **718/510 ms** while optional
+history still took **1259/1012 wall, 1115/925 CPU ms**. Removing the dependency
+improves first draw without eliminating validation cost.
+
+The quiet baseline missed at **1711/1655 ms** despite readiness and negligible
+queue delay. Its offline interval had no app GC; held-connected collections had
+microsecond pauses. The rows-first comparison passed despite a **28.7 ms** young-GC
+pause. Both retained all eight install/clear pairs without lifecycle failure or
+ANR. Host quota contention contributes variance but cannot explain away this
+critical-path product cost. Timestamp, vendored-digest and decimal-parser candidates
+were rejected; the final repair retains the original serializer/provider and does
+not integrate #2042's decoder. See [cache reader ownership](conversation-cache-layout.md#thread-document-readers-1949)
+and [live merge ordering](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+
+`readableRowsDoNotWaitForOptionalHistoryButLiveMergeDoes` holds metadata separately:
+validated rows and atomic suppression must publish, but nonempty live merges must
+wait for saved unsigned order. Marker anchors are checked after coverage restoration;
+that wait cannot turn a late draw into a pass. Allocate each upstream snapshot's
+generation **before** deferred history reads
+or ordering dispatch: allocation afterward lets old content outrank a newer coverage
+save. Four read/dispatch × quiet-period/cancellation probes failed before that fix
+(**4 executed/failed**); two inherited removal regressions also failed (**2 executed/failed**).
+All six then passed, retaining exact emission sequence, fresh-file rows, complete
+saved position and write history. Affected checks passed **76 executed/passed**;
+dispatcher units passed **5219 executed/passed**, both with zero failures/errors/skips.
+
+**Retained misses and counterevidence.** Supplied #2039 main `c88a07d6` drew
+fragmented first opens at **1630/1388 ms**; unintegrated #2042 `b15ed69c` at
+**2024/1721 ms**, each one executed/failed, zero errors/skips. The earlier #2039
+five-isolated and regular UI passes above remain counterevidence. #2050 retains its
+baseline, traced and parser-only failures, all comparisons and the first red fixed
+sample. That sample passed four/failed one isolated first-draw methods; the ordinary
+offline outlier drew at **1271 ms** after rows decoded within 100 ms, with a 34-frame
+skip. Its isolated control failed readiness before any Probe; the 3000 ms restore
+never began. Its whole class passed both methods. Neither passing diagnostics nor
+later green samples establishes an environment defect for these two unclassified
+outcomes. No speculative ordinary-path or readiness repair ships.
+
+**Final builder sample, separate from regular gates.** Actual rework source
+`ac2337e347026da719810547ace561b654737d29` passed five isolated first-draw methods,
+one isolated control and one whole class: **8 executed/passed, 0 failed/errors/skipped**,
+all seven exits 0, existing build-hp-1 Pixel 2 API 33 ATD, FIFO coordination and
+disabled animations. Forty isolated draws span **164–883 ms**. Controls draw at
+**3419/3433 ms**, rejecting the same 1000 ms bound. Whole-class ordinary content
+follows the control and is not an isolated cold-process sample.
+
+Evidence root `/Users/juhanailmoniemi/.codex/publish/pyrycode-mobile/builder-2050/evidence/`
+retains earlier attempts in `REPORT.md`/`fixed-sample.json`, resumed comparisons in
+`RESUME-REPORT.md`/`resume-counts-and-timings.json`, and final proof in
+`rework/REWORK-REPORT.md`/`rework-counts-and-timings.json`: commands, exits, fresh
+XML/hashes, all case phases and full/selected logcat. `rework/verified-source.json`
+corrects the mistyped runner revision label using matching production/test hashes;
+original labels remain retained. Subsequent commits change only the plan.
+
+**Dispatcher gates on `78d7a7b465c6`.** Configured UI and scripted-all commands
+above exited 0: respectively **258 executed/passed, 0 failed/errors, 1 skipped**
+and **22 executed/passed, 0 failed/errors/skipped**. Both named saved-thread methods
+executed/passed once each in UI; scripted-all runs neither. UI draw vector is
+**99/137/87/77/311/218/226/196 ms**, control **3101 ms**. The sole skip is rename
+capture. Fresh UI XML timestamp **2026-10-10T21:38:34**, XML, named logcats and
+count summary are retained under `/tmp/verifier-2066/re-review-78d7a7b4/`.
+The original eight-case fixture and timed committed-frame contract remain intact.
+Documentation obtained no test runs.
+
 ## Folded-row composition reuse (#1954)
 
 `ThreadRowContentTypeTest.foldedRows_exposeDistinctKindsAndSharedMessageTypeInActualListLayout`
