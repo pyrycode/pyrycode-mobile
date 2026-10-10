@@ -14,9 +14,9 @@
 
 ## Context
 
-Both original stderr reports fail before Stop at the 90-second permission wait, with link 1 open and zero replacements. The retained #1870 isolated daemon namespace is `e2e-auto-840bce75`. Its durable history for conversation `55cb9ba3-7182-4b87-aee8-a8ddb72999cd` contains this test-authored exact held prompt, identifying this scenario independently of an inferred test order. The matching daemon log in `pyry-e2e.RQHz3X` creates the conversation at 2026-10-07T17:32:09.432Z and enqueues the phone message at 17:32:10.327Z. History records its user echo at 17:32:38.892336Z, thinking at 17:32:44.190248Z and thinking progress through 17:33:54.038381Z. It contains no tool-use, tool-result, modal or turn-end frame. The next conversation is created at 17:33:42.163Z, consistent with the failed permission wait. This proves turn activity, not a command executing or a model refusal, and does not prove why the prompt was absent.
+Both original stderr reports fail before Stop at the 90-second permission wait, with link 1 open and zero replacements. The retained #1870 isolated daemon namespace is `e2e-auto-840bce75`. Its durable history for conversation `55cb9ba3-7182-4b87-aee8-a8ddb72999cd` contains this test-authored exact held prompt, identifying this scenario independently of an inferred test order. The matching daemon log in `pyry-e2e.RQHz3X` creates the conversation at 2026-10-07T17:32:09.432Z and enqueues the phone message at 17:32:10.327Z. History records its user echo at 17:32:38.892336Z, thinking at 17:32:44.190248Z and thinking progress through 17:33:54.038381Z. It contains no tool-use, tool-result or turn-end frame. The stderr permission timeout establishes that the peer observed no modal; durable history alone does not establish whether one was emitted. The next conversation is created at 17:33:42.163Z, consistent with the failed permission wait. This proves turn activity, not a command executing or a model refusal, and does not prove why the prompt was absent.
 
-The #1968 namespace `e2e-auto-9900c196` contains no durable held-command marker. Its daemon log has many permission-posture delivery refusals, but no retained scenario/conversation correlation establishes that they caused this particular failure. Do not claim either a repeated #1456 ping loss or a behavioural root-cause repair. Repair the demonstrated evidence gap, and file a linked follow-up to investigate the behaviour using the new stage evidence. No decision record is needed.
+The #1968 namespace `e2e-auto-9900c196` contains no durable held-command marker. Its daemon log has many permission-posture delivery refusals, but no retained scenario/conversation correlation establishes that they caused this particular failure. Do not claim either a repeated #1456 ping loss or a behavioural root-cause repair. Repair the demonstrated evidence gap, and track the behavioural investigation in #2032 using the new stage evidence. No decision record is needed.
 
 ## Design
 
@@ -60,11 +60,11 @@ Run focused JVM tests, lint, assembleDebug, androidTest compilation, Spotless ap
 
 ## Open Questions
 
-What delays the held turn or prevents its permission ask? Unproven; the linked behavioural follow-up must use fresh stage evidence. #1968 turn delivery is also unproven. This ticket deliberately claims an evidence repair only.
+What delays the held turn or prevents its permission ask? Unproven; #2032 must use fresh stage evidence. #1968 turn delivery is also unproven. This ticket deliberately claims an evidence repair only.
 
 ## Documentation handoff
 
-- Pending documentation stage: `docs/e2e-interactive-stream.md`, stop-running-turn coverage: record #1870’s proven thinking-stage evidence, #1968’s remaining delivery gap, the new bounded probe and the linked behavioural follow-up. Do not describe diagnostics as eliminating the flake.
+- Pending documentation stage: `docs/e2e-interactive-stream.md`, stop-running-turn coverage: record #1870’s proven thinking-stage evidence, #1968’s remaining delivery gap, the new bounded probe and #2032. Do not describe diagnostics as eliminating the flake.
 - Pending documentation stage: the same file, “Verification status”: retain the fresh dispatcher-supplied full-live tested commit, named Stop testcase and executed/failed/skipped counts.
 
 ## Security review
