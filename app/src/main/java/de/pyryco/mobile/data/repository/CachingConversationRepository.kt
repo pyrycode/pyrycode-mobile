@@ -229,6 +229,7 @@ class CachingConversationRepository(
                 val writer = ThreadWriter(conversationId, this, base, collectionCoverageRevision)
                 try {
                     delegate.threadSnapshots(conversationId).collect { snapshot ->
+                        val generation = generations.incrementAndGet()
                         if (!restoredOrder && snapshot.rows.isNotEmpty()) {
                             val savedPosition = cache.readHistoryPosition(serverId, conversationId)
                             baseOrder =
@@ -237,7 +238,6 @@ class CachingConversationRepository(
                                 }
                             restoredOrder = true
                         }
-                        val generation = generations.incrementAndGet()
                         val drawn =
                             withContext(processingDispatcher) {
                                 val live = snapshot.rows
