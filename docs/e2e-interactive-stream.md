@@ -2672,6 +2672,69 @@ main-only base run, identifies daemon bug pyrycode#2785, and clears the live gat
 The full suite retains its one failure; manual USB evidence and the Android 16 driver failure
 above are separate from this automated named pass.
 
+The timeout investigation (#1898) repairs a separate, controlled host-readiness defect.
+`awaitSendNowConnection` waits for both relay and daemon legs of the explicitly addressed
+harness host at the original 30000 ms deadline. A stopped selected host must not block that
+host, and an unrelated connected host must not satisfy its readiness. The real-registry checks
+`RelayConnectionFactoryTest.sendNowReadinessIgnoresStoppedSelectedHost` and
+`sendNowReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected` failed against the selected-host
+wait (**2 executed, 2 failed, 0 errors/skips**) and passed against the explicit-host wait
+(**2 executed, 2 passed, 0 failed/errors/skips**). Selection, retries and deadlines are unchanged.
+See [shared-process fixture isolation](knowledge/features/development-verification-emulator-evidence.md#emulator-and-real-evidence).
+
+Fixed `SendNowStage` labels distinguish list/connection setup, conversation creation and identity,
+composer readiness, warmup and fresh capabilities, peer admission/send, held Bash observation,
+phone queue rendering, peer queue observation, Send now control/tap, peer queue removal,
+original-turn completion, delivered-row rendering and final repository rows. Logcat emits
+`event=send_now_stage` with started/completed/failed status. Timeout failures lazily snapshot
+harness-host registration, whether selection matches, relay/daemon state names, repository
+availability and peer link state. These bounded records contain no identifiers, pairing material,
+prompts or frame payloads. Coroutine/Compose timeouts and nested permission-aware timeout
+assertions retain their cause chain; other failures and cancellation propagate. The final
+repository row read now has an explicit bounded wait. The held foreground Bash, peer queue
+removal, exactly one completion of the original turn, marker in its reply, delivery after the
+tool result and exactly one delivered phone user row without a queued copy remain required.
+
+Historical #1731 evidence proves intermittency, not the timed-out operation: the full run
+executed **64 tests, 13 failed, 0 errors/skips**, with Send now failing after interrupted upload;
+the rerun executed **13 tests, 1 failed, 0 errors/skips**, with Send now passing after create/edit/archive.
+Both used mobile `a7a4b484d7260c4dc7418b85df9c10f2b7245398` and daemon
+`6019328b378cad587f69b7bc94de37febbdf8556`, which already contains the distinct #2820 ordering fix.
+The failure is a bare 30000 ms coroutine timeout without a scenario call site. Its daemon log
+has no Send now delivery event; the passing log has one. Original phone logcat and method-timing
+XML were lost. Stopped predecessor pairings provide a reproduced mechanism, but attributing
+that historical failure to readiness remains an inference. Passing diagnostics do not establish
+historical causation or future reliability.
+
+[Retained evidence](../app/src/androidTest/assets/send-now-1898/README.md) includes historical
+full/rerun XML, controlled before/after XML and the deterministic `send-now` twin's `scripted.xml`
+(**1 executed/passed, 0 failed/errors/skips**, exit 0). `provenance.json` identifies that scripted
+run's mobile `0d8e807a84ec66ae493117a59c0eaa3eecb45af1`, daemon revision, dirty flag and binary hash.
+
+The returned dispatcher full live run used
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`, exit 0:
+**65 executed/passed, 0 failed/errors/skips**. Retained
+[dispatcher-full.xml](../app/src/androidTest/assets/send-now-1898/dispatcher-full.xml) and
+[dispatcher-method.xml](../app/src/androidTest/assets/send-now-1898/dispatcher-method.xml)
+show Send now **1 executed/passed, 0 failed/errors/skips**, immediately after interrupted upload
+in the same process. [Dispatcher provenance](../app/src/androidTest/assets/send-now-1898/dispatcher-provenance.json)
+records the tested mobile merge `e463a39009544f7332091c692580c6e6d55d188a`, daemon
+`a536d17b1e182fb5398a5458e3afe6079b37a510`, Claude Code 2.1.280, source/artifact hashes and extraction
+from `2026-10-10T02-03-00-622Z_real-claude-gate_#1898.log`. Normalized XML retains counted
+outcomes but no individual timing. Raw per-device XML, phone stage logcat and daemon
+binary/hash/dirty-build metadata disappeared with that gate worktree.
+
+The separate final post-artifact [dispatcher live gate](https://github.com/pyrycode/pyrycode-mobile/issues/1898#issuecomment-6093363183)
+used the same command and exited 0: **65 executed/passed, 0 failed/errors/skips**, including
+Send now **1 executed/passed, 0 failed/errors/skips**, again after interrupted upload. Its fresh
+normalized XML is `2026-10-10T03-20-57-273Z_real-claude-gate_#1898.log` in the dispatcher
+repository's `logs/`; it is separate from the committed earlier XML. Matching stderr identifies
+tested mobile `ef667bec15efd3cdfa3721b60ec0e51cf2833624`, with main input
+`1014cfdf0035e802f8bed956a43d0b132f92f1b2`, daemon
+`a536d17b1e182fb5398a5458e3afe6079b37a510` and Claude Code 2.1.280. The XML has no daemon annotation;
+the revision comes from that run's stderr. The final gate satisfies counted full-live execution
+for this candidate; historical attribution remains unresolved.
+
 **What it runs.** The current curated selector passes 64 runnable methods as a comma-separated
 `class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
 against `LIVE_MINIMUM` in `scripts/android-test-gate.py`. The #481
@@ -5986,8 +6049,10 @@ The remaining checks here are specific to a real relay or real Claude execution:
 - **Send now — shipped coverage (#1642):**
   `InteractiveStreamE2ETest.interactiveTurn_sendQueuedNow_reachesRunningTurn` and
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_sendQueuedNow_placesAfterToolResult`
-  cover delivery after a held tool. Full-suite counts, the named pass and the operator's
-  unrelated-failure disposition are recorded under [Live mode](#live-mode-rung-3-live-relay).
+  cover delivery after a held tool. #1898 adds explicit-harness-host readiness and fixed
+  stage/link diagnostics without weakening the proof. Controlled before/after counts, historical
+  attribution limits, retained full/method XML and the separate final full-live pass are recorded
+  in “Send now coverage (#1642)” under [Live mode](#live-mode-rung-3-live-relay).
   #1655 retains the first-confirmation-after-next-turn ordering gap; daemon pyrycode#2785
   owns the lost question-answer failure. Queue-removal-only assertions cannot prove delivery placement.
 

@@ -3209,65 +3209,96 @@ class InteractiveStreamE2ETest {
                     serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
                 ),
             )
-        try {
-            awaitChannelList()
-            awaitConnected()
-            val before = hostConversationIds(serverId)
-            createChat()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+
+        fun links(): String {
+            val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+            val bundle = registry.connectionFor(serverId)
+            val status = bundle?.coordinator?.connectionStatus?.value
+            return "phone host=${bundle != null} selected=${bundle != null && registry.selected.value === bundle} " +
+                "relay=${status?.relay?.javaClass?.simpleName ?: "absent"} " +
+                "daemon=${status?.pyrycode?.javaClass?.simpleName ?: "absent"} " +
+                "repository=${bundle?.coordinator?.currentRepository?.value != null}; peer=${peer.linkState()}"
+        }
+
+        fun <T> step(
+            stage: SendNowStage,
+            block: () -> T,
+        ): T {
+            Log.i("E2E", "event=send_now_stage stage=${stage.name} status=started")
+            try {
+                return sendNowStep(stage, ::links, block).also {
+                    Log.i("E2E", "event=send_now_stage stage=${stage.name} status=completed")
+                }
+            } catch (failure: Throwable) {
+                Log.i("E2E", "event=send_now_stage stage=${stage.name} status=failed; ${links()}")
+                throw failure
             }
-            val conversationId = newHostConversationId(serverId, before)
+        }
+
+        try {
+            step(SendNowStage.AwaitList) { awaitChannelList() }
+            step(SendNowStage.AwaitConnection) {
+                runBlocking { awaitSendNowConnection(GlobalContext.get().get(), serverId, CONNECT_TIMEOUT_MS) }
+            }
+            val before = step(SendNowStage.ReadConversations) { hostConversationIds(serverId) }
+            step(SendNowStage.CreateChat) { createChat() }
+            step(SendNowStage.AwaitComposer) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+                }
+            }
+            val conversationId = step(SendNowStage.ReadChatId) { newHostConversationId(serverId, before) }
             // Warm the session and its explicit capability reading before starting the held turn.
-            sendFromPhone(PING_PROMPT)
-            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-            assertTrue("session must report mid-turn support", freshSettings(conversationId).capabilities?.midTurnInput == true)
+            step(SendNowStage.SendWarmup) { sendFromPhone(PING_PROMPT) }
+            step(SendNowStage.AwaitWarmup) { composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS) }
+            val settings = step(SendNowStage.ReadCapabilities) { freshSettings(conversationId) }
+            assertTrue("session must report mid-turn support", settings.capabilities?.midTurnInput == true)
             val marker = "sendnow1642_" + System.currentTimeMillis()
             val queuedPrompt = "In your final reply to this running turn include exactly this marker: $marker"
             val command = "while [ ! -e '$release' ]; do sleep 0.1; done; printf hold_done"
             val prompt =
                 "Run exactly this Bash command with timeout 120000, in the foreground, never background it: $command. " +
                     "Wait for its result. Then reply with any marker supplied while the command was running."
-            runBlocking {
-                peer.open(CONNECT_TIMEOUT_MS)
-                peer.sendMessage(conversationId, prompt, THREAD_TIMEOUT_MS)
-            }
+            step(SendNowStage.OpenPeer) { runBlocking { peer.open(CONNECT_TIMEOUT_MS) } }
+            step(SendNowStage.SendHeldTurn) { runBlocking { peer.sendMessage(conversationId, prompt, THREAD_TIMEOUT_MS) } }
             val allowed = mutableSetOf<String>()
             val running =
-                allowPromptsUntil(
-                    peer,
-                    conversationId,
-                    REPLY_TIMEOUT_MS,
-                    "Bash did not remain running",
-                    allowed,
-                    frame = "tool_progress",
-                ) { it.type == "tool_progress" }
+                step(SendNowStage.AwaitHeldTool) {
+                    allowPromptsUntil(
+                        peer,
+                        conversationId,
+                        REPLY_TIMEOUT_MS,
+                        "Bash did not remain running",
+                        allowed,
+                        frame = "tool_progress",
+                    ) { it.type == "tool_progress" }
+                }
             val turnId = requireNotNull(peer.field(running, "turn_id"))
             assertTrue("held turn ended before queueing", peer.recorded(conversationId).none { it.type == "turn_end" })
-            sendFromPhone(queuedPrompt)
-            awaitQueuedRow(queuedPrompt)
+            step(SendNowStage.QueueMarker) { sendFromPhone(queuedPrompt) }
+            step(SendNowStage.DrawQueuedMarker) { awaitQueuedRow(queuedPrompt) }
             val queued =
-                runBlocking {
-                    withTimeoutDiagnostic({ "Send now: peer never observed the queued entry" }) {
-                        peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.any { it.text == queuedPrompt } }
-                    }
+                step(SendNowStage.ObserveQueuedMarker) {
+                    runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.any { it.text == queuedPrompt } } }
                 }.single { it.text == queuedPrompt }
             val send = hasContentDescription("Send now") and hasAnyAncestor(queuedRow(queuedPrompt))
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(send).fetchSemanticsNodes().isNotEmpty() }
-            composeTestRule.onNode(send).performClick()
-            runBlocking {
-                withTimeoutDiagnostic({ "Send now: peer never observed queue removal after the pointer tap" }) {
-                    peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.none { it.queuedMsgId == queued.queuedMsgId } }
-                }
+            step(SendNowStage.AwaitSendNow) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(send).fetchSemanticsNodes().isNotEmpty() }
+            }
+            step(SendNowStage.TapSendNow) { composeTestRule.onNode(send).performClick() }
+            step(SendNowStage.ObserveQueueRemoval) {
+                runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.none { it.queuedMsgId == queued.queuedMsgId } } }
             }
             val ended =
-                allowPromptsUntil(
-                    peer,
-                    conversationId,
-                    REPLY_TIMEOUT_MS,
-                    "held turn did not finish with the marker",
-                    allowed,
-                ) { it.type == "turn_end" }
+                step(SendNowStage.AwaitTurnEnd) {
+                    allowPromptsUntil(
+                        peer,
+                        conversationId,
+                        REPLY_TIMEOUT_MS,
+                        "held turn did not finish with the marker",
+                        allowed,
+                    ) { it.type == "turn_end" }
+                }
             assertEquals(turnId, peer.field(ended, "turn_id"))
             val frames = peer.recorded(conversationId)
             assertEquals("Send now must stay in the running turn", 1, frames.count { it.type == "turn_end" })
@@ -3279,14 +3310,19 @@ class InteractiveStreamE2ETest {
                     .filter { it.type == "assistant_delta" && peer.field(it, "turn_id") == turnId }
                     .joinToString("") { peer.field(it, "text").orEmpty() }
             assertTrue("the same turn's reply omitted the marker", marker in finalText)
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(inThreadList(queuedPrompt), useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
-                    composeTestRule.onAllNodes(queuedRow(queuedPrompt)).fetchSemanticsNodes().isEmpty()
+            step(SendNowStage.DrawDeliveredMarker) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(inThreadList(queuedPrompt), useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
+                        composeTestRule.onAllNodes(queuedRow(queuedPrompt)).fetchSemanticsNodes().isEmpty()
+                }
             }
             assertDrawnOnce(inThreadList(queuedPrompt))
             val rows =
-                runBlocking { hostRepository().observeMessages(conversationId).first() }
-                    .filterIsInstance<ThreadItem.MessageItem>()
+                step(SendNowStage.ReadDeliveredRows) {
+                    runBlocking {
+                        withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).observeMessages(conversationId).first() }
+                    }.filterIsInstance<ThreadItem.MessageItem>()
+                }
             val toolIndex = rows.indexOfLast { it.message.role == Role.Tool }
             val userIndex = rows.indexOfFirst { it.message.id == queued.messageId }
             assertEquals(1, rows.count { it.message.id == queued.messageId })

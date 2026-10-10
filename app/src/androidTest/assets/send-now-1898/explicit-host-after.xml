@@ -1,0 +1,5 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="de.pyryco.mobile.di.RelayConnectionFactoryTest" tests="2" failures="0" errors="0" skipped="0" timestamp="2026-10-10T01:30:46.315Z">
+  <testcase name="sendNowReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.013" />
+  <testcase name="sendNowReadinessIgnoresStoppedSelectedHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.007" />
+</testsuite>

@@ -69,6 +69,18 @@ connection, then requires unchanged entries, the same connection bundle and Conn
 in that same process. A fresh process or successful recovery reply alone cannot prove cleanup.
 See [recovery evidence](../../e2e-interactive-stream.md#session-error-recovery-1731).
 
+An explicitly addressed scenario must await readiness for the same host, even after fixture
+cleanup is correct. Compatibility selection can block on a stopped unrelated host or falsely
+report readiness from a different connected host. Send now's `awaitSendNowConnection` (#1898)
+reads its named bundle's combined relay/daemon status and requires both legs Connected at the
+original deadline, without changing selection or retrying. Real-registry regression checks
+exercise both wrong-host cases; a single happy-path connection check would miss them.
+[Send now coverage](../../e2e-interactive-stream.md#live-mode-rung-3-live-relay) records the
+controlled failures/passes and the separate historical and full-live evidence. A bare timeout
+without retained stage/phone evidence cannot establish which operation failed. Fixed operation
+labels and lazy content-free link snapshots preserve the original timeout cause rather than
+turning a passing diagnostic run into proof of historical causation.
+
 An instrumented test proves behavior in its fixture. It does not prove camera
 binding, lifecycle timing, relay compatibility or a real daemon round trip. The
 dispatcher runs the UI gate and each zero-real-Claude scripted scenario before
