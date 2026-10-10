@@ -78,12 +78,18 @@ internal class SessionErrorRecoveryScenario(
             diagnosticServerId = null
             var diagnosed: AssertionError? = null
             try {
-                sessionErrorCleanup(cleanup = { request(arm, "close") }) {
+                sessionErrorCleanup(
+                    cleanup = { request(arm, "close") },
+                    onPrimaryFailure = { stage(arm, "fixture_close") },
+                ) {
                     val fixture = request(arm, "start")
                     fixtureReady = true
                     val serverId = fixture.value("serverId")
                     diagnosticServerId = serverId
-                    sessionErrorCleanup(cleanup = { runBlocking { store.remove(serverId) } }) {
+                    sessionErrorCleanup(
+                        cleanup = { runBlocking { store.remove(serverId) } },
+                        onPrimaryFailure = { stage(arm, "pairing_teardown") },
+                    ) {
                         // Pairing can save before its UI wait fails; ownership starts before pair().
                         try {
                             runCase(arm, fixture)
@@ -259,7 +265,7 @@ internal class SessionErrorRecoveryScenario(
         val store = GlobalContext.get().get<PairedServerCollectionStore>()
         val registry = GlobalContext.get().get<RelayConnectionRegistry>()
         val connection = registry.connectionFor(serverId)
-        val saved = runBlocking { withTimeout(1_000) { store.loadById(serverId) } } != null
+        val saved = runBlocking { sessionErrorSavedPairing(store, serverId) }
         val status = connection?.coordinator?.connectionStatus?.value
         val selected = connection != null && registry.selected.value === connection
         val unavailable = nodes(hasText("temporarily unavailable", substring = true)).isNotEmpty()
