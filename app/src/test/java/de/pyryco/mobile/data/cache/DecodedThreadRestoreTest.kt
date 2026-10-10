@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnsignedHistorySpan
 import de.pyryco.mobile.data.repository.historyIdentity
 import de.pyryco.mobile.data.repository.mergeIdentity
+import de.pyryco.mobile.ui.conversations.thread.fragmentedHistoryFixture
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
@@ -39,6 +40,18 @@ class DecodedThreadRestoreTest {
 
     private fun row(text: String = "Saved") =
         ThreadItem.MessageItem(Message("row", "s", Role.User, text, Instant.fromEpochSeconds(1), false))
+
+    @Test fun fullFragmentedFixtureRestoresExactRowsAndClaimsThroughFreshCache() =
+        runTest {
+            val root = temporary.newFolder()
+            val (coverage, rows) = fragmentedHistoryFixture((0 until 18000).toList())
+            val writer = FileConversationCache(root)
+            writer.writeThread("host", "c", rows).getOrThrow()
+            writer.writeHistoryPosition("host", "c", HistoryPosition("saved", false, coverage)).getOrThrow()
+            val reader = FileConversationCache(root)
+            assertEquals(rows, reader.readThread("host", "c"))
+            assertEquals(coverage, reader.readHistoryPosition("host", "c")?.coverage)
+        }
 
     @Test fun rowAndPositionReadersReuseOneValidatedDecode() =
         runTest {
