@@ -133,6 +133,35 @@ peer admission/key-binding repair. Accepted daemon handshakes do not prove that 
 was sent. Preserve sanitized stderr, counted XML and copied per-test logcat together; removed
 gate worktrees can erase the phone evidence needed to correlate them.
 
+A setup-stage label still needs a sub-operation and the historical tested source. In #1899,
+`PairPhone`'s 30000 ms coroutine timeout identifies the compatibility `awaitConnected` before
+code pairing: the other UI waits throw Compose timeouts and target verification handles its
+deadline as ViewModel state. Compatibility selection follows the latest surviving saved host,
+not the host about to be paired. The controlled Offline regression fails at that wait before
+repair and passes after its removal, while real parsing, fingerprint confirmation, encrypted
+save/name and exact-new-record verification remain. This establishes an unrelated setup
+prerequisite, not why the preceding host was unavailable. The unopened `peer::linkState` is
+not phone evidence; a post-test DESTROYED/focus snapshot describes teardown. Historical phone
+logcat and timed device XML were lost with the gate worktree, and retained daemon handshakes
+lack a method interval for attribution. Preserve that uncertainty rather than assigning
+selection, transport or lifecycle failure from another surface. See the
+[historical, controlled and fresh live evidence](../../e2e-interactive-stream.md#answer-host-setup-independence-1899).
+
+A passing fixture method does not prove that its process-global DI restoration is correct.
+The #1899 answer-host fixture initially restored `PairCodeViewModel` from explicit Koin
+parameters, while production navigation supplies `SavedStateHandle["serverId"]`. After
+teardown, later targeted pairing consequently lost its read-only host name and wrong-host
+guard. Restore the production lookup, including empty-target normalization, only after the
+fixture activity closes. `AnswerHostSetupCleanupTest.targetedPairingAfterFixtureTeardownKeepsItsHostGuard`
+finishes the actual fixture and activity, then launches production navigation in a second
+activity in the same instrumentation process without replacing Koin. Its red/green checks
+cover target naming/read-only behavior, wrong-host rejection before fingerprint confirmation,
+editable empty-target pairing and unchanged saved entries. A fresh process or separately
+passing pairing unit class cannot expose this contamination. The
+[retained device evidence](../../../app/src/androidTest/assets/answer-host-1899/README.md)
+records **1 executed/failed, 0 skipped** before binding repair and **2 executed/passed,
+0 failed/errors/skipped** afterward across cleanup and setup independence.
+
 An enabled semantic node and successful `performScrollToNode` do not establish a usable physical
 tap target. The thread draws beneath header/composer chrome. In #1703's short-thread reproduction,
 Continue's tap center was 468.5 while composer top was 461; the real pointer tap emitted no submit
