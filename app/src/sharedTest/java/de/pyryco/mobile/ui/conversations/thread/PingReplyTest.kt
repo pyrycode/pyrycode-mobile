@@ -49,7 +49,7 @@ class PingReplyTest {
             )
         var state by mutableStateOf(initialState)
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = state,
                     onBack = {},

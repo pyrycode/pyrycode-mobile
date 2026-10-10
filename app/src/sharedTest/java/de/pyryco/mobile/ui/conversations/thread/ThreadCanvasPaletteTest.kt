@@ -228,28 +228,17 @@ class ThreadCanvasPaletteTest {
         assertBothScreens()
     }
 
-    @Test fun staticLightRetainsBothCanvasesAndRules() {
-        show(isDark = false)
-        assertBothScreens()
-    }
-
     @Test fun wallpaperDarkRetainsBothCanvasesAndRules() {
         show(isWallpaper = true)
         assertBothScreens()
     }
 
-    @Test fun wallpaperLightRetainsBothCanvasesAndRules() {
-        show(isDark = false, isWallpaper = true)
-        assertBothScreens()
-    }
-
-    @Test fun themeChangesUpdateAlreadyComposedScreens() {
-        show(isDark = false)
+    @Test fun wallpaperChangesUpdateAlreadyComposedDarkScreens() {
+        show()
         for (showReader in listOf(false, true)) {
             rule.runOnIdle { reader = showReader }
-            for ((newDark, newWallpaper) in listOf(true to false, true to true, false to true, false to false)) {
+            for (newWallpaper in listOf(true, false)) {
                 rule.runOnIdle {
-                    dark = newDark
                     wallpaper = newWallpaper
                 }
                 rule.waitForIdle()

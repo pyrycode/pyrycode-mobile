@@ -78,7 +78,7 @@ class ThreadScreenOverflowTest {
                 baseState().copy(hasMessages = true, items = listOf(boundary), runConfig = ThreadRunConfig(memorySearch = available)),
             )
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = state.value,
                     onBack = {},
@@ -115,7 +115,7 @@ class ThreadScreenOverflowTest {
 
     private fun setContent(events: MutableList<ThreadEvent>) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = baseState(),
                     onBack = {},
@@ -161,7 +161,7 @@ class ThreadScreenOverflowTest {
         var backs = 0
         val events = mutableListOf<ThreadEvent>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = baseState(),
                     onBack = { backs++ },
@@ -188,7 +188,7 @@ class ThreadScreenOverflowTest {
     fun headerMenu_tracksLiveWindowAnchor_andLayerOrigin() {
         val top = mutableStateOf(10.dp)
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Box(Modifier.padding(top = top.value)) {
                     ThreadScreen(
                         state = baseState(),
@@ -250,7 +250,7 @@ class ThreadScreenOverflowTest {
             )
         val errorFlow = errors.receiveAsFlow()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = state,
                     onBack = {},
@@ -284,7 +284,7 @@ class ThreadScreenOverflowTest {
     fun edit_channel_modal_shows_while_open_and_reports_ok_and_cancel() {
         val events = mutableListOf<ThreadEvent>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
                         baseState().copy(

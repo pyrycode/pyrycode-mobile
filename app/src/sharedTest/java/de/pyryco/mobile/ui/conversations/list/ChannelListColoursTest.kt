@@ -59,15 +59,6 @@ class ChannelListColoursTest {
     }
 
     @Test
-    fun lightPanelAndRuleKeepTheirExistingColours() {
-        show(dark = false)
-        val bitmap = draw()
-        assertPanel(bitmap, Color.rgb(248, 249, 255))
-        assertToolbarRule(bitmap, Color.rgb(216, 219, 226))
-        assertSelectedRowContrasts(bitmap)
-    }
-
-    @Test
     @Config(qualifiers = "w412dp-h892dp-mdpi")
     fun emptyDarkPanelDrawsTheSameGlowBehindItsBar() {
         show(dark = true, empty = true, figmaFrame = true)
@@ -138,16 +129,6 @@ class ChannelListColoursTest {
                 view.draw(Canvas(it))
             }
         }
-
-    private fun assertPanel(
-        bitmap: Bitmap,
-        expected: Int,
-    ) {
-        val bounds = rule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).fetchSemanticsNode().boundsInRoot
-        val x = bounds.center.x.roundToInt()
-        assertEquals("Top bar background", expected, bitmap.getPixel(x, bounds.top.roundToInt() + 2))
-        assertEquals("List background", expected, bitmap.getPixel(x, bounds.bottom.roundToInt() - 2))
-    }
 
     /** Bare-canvas samples of Figma 15:8's 412 × 892 export: the glow under the 30 % overlay, bar included. */
     private fun assertGlow(
@@ -221,19 +202,6 @@ class ChannelListColoursTest {
         val file = File(System.getProperty("java.io.tmpdir"), "sidebar-1189-$expected.png")
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         println("Sidebar render: ${file.absolutePath}")
-    }
-
-    private fun assertSelectedRowContrasts(bitmap: Bitmap) {
-        val bounds =
-            rule
-                .onNodeWithText("Selected channel")
-                .assertIsSelected()
-                .fetchSemanticsNode()
-                .boundsInRoot
-        val x = bounds.center.x.roundToInt()
-        val selected = bitmap.getPixel(x, bounds.top.roundToInt() + 2)
-        val panel = bitmap.getPixel(x, bitmap.height - 2)
-        assertTrue("Selected row keeps a visible fill", !closeColour(panel, selected))
     }
 
     private fun assertSelectedRowFill(

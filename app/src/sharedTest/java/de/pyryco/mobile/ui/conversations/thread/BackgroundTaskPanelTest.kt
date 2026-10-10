@@ -62,7 +62,7 @@ class BackgroundTaskPanelTest {
                 backgroundTaskCount = count,
             )
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = state,
                     onBack = {},
@@ -78,7 +78,7 @@ class BackgroundTaskPanelTest {
 
     private fun setPanel(roster: BackgroundTaskRoster?) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 if (panelOpen) BackgroundTaskPanel(roster = roster, onDismiss = { panelOpen = false })
             }
         }
@@ -235,7 +235,7 @@ class BackgroundTaskPanelTest {
     fun taskTypes_showReadableLabels_withoutChangingRawValues() {
         val current = mutableStateOf(task())
         composeTestRule.setContent {
-            PyrycodeMobileTheme { BackgroundTaskPanel(roster(current.value), onDismiss = {}) }
+            PyrycodeMobileTheme(darkTheme = true) { BackgroundTaskPanel(roster(current.value), onDismiss = {}) }
         }
         listOf(
             "local_agent" to "Agent",
@@ -274,7 +274,7 @@ class BackgroundTaskPanelTest {
     fun mappedTypes_keepPrintableFiltering_bounds_andCutMarkers() {
         val current = mutableStateOf(task(taskType = "local_custom_\u001Btask", truncatedFields = listOf("task_type")))
         composeTestRule.setContent {
-            PyrycodeMobileTheme { BackgroundTaskPanel(roster(current.value), onDismiss = {}) }
+            PyrycodeMobileTheme(darkTheme = true) { BackgroundTaskPanel(roster(current.value), onDismiss = {}) }
         }
         composeTestRule.onNodeWithText("Custom task", useUnmergedTree = true).assertIsDisplayed()
         markers().assertCountEquals(1)
@@ -387,7 +387,7 @@ class BackgroundTaskPanelTest {
     fun finishSummary_withEmptyOrWhitespaceDescription_isShown() {
         val current = mutableStateOf(task(description = "", finish = terminal("Finished successfully"), isFinished = true))
         composeTestRule.setContent {
-            PyrycodeMobileTheme { BackgroundTaskPanel(roster(current.value), onDismiss = {}) }
+            PyrycodeMobileTheme(darkTheme = true) { BackgroundTaskPanel(roster(current.value), onDismiss = {}) }
         }
 
         composeTestRule.onNodeWithText("Finished successfully", useUnmergedTree = true).assertIsDisplayed()
@@ -399,7 +399,7 @@ class BackgroundTaskPanelTest {
     fun finishSummary_emptyOrWhitespace_isHidden() {
         val current = mutableStateOf(task(finish = terminal("", listOf("summary")), isFinished = true))
         composeTestRule.setContent {
-            PyrycodeMobileTheme { BackgroundTaskPanel(roster(current.value), onDismiss = {}) }
+            PyrycodeMobileTheme(darkTheme = true) { BackgroundTaskPanel(roster(current.value), onDismiss = {}) }
         }
 
         markers().assertCountEquals(0)

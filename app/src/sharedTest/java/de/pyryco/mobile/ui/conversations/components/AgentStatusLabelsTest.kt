@@ -38,7 +38,7 @@ class AgentStatusLabelsTest {
         )
 
     private fun show(content: @Composable () -> Unit) {
-        composeTestRule.setContent { PyrycodeMobileTheme { content() } }
+        composeTestRule.setContent { PyrycodeMobileTheme(darkTheme = true) { content() } }
     }
 
     private fun assertDescribed(description: String) {

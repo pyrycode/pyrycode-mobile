@@ -292,7 +292,7 @@ class SavedThreadFirstDrawDeviceTest {
                 }
                 Box {
                     if (state.items.isNotEmpty()) probe.complete.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
-                    PyrycodeMobileTheme {
+                    PyrycodeMobileTheme(darkTheme = true) {
                         ThreadScreen(state, {
                         }, {
                         }, if (online) ConnectionState.Connected else ConnectionState.Offline, {

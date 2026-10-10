@@ -101,7 +101,7 @@ class ThreadTopOverlayTest {
     private var mcpTaps = 0
     private var retryTaps = 0
 
-    private fun setScreen(darkTheme: Boolean = false) {
+    private fun setScreen(darkTheme: Boolean = true) {
         composeRule.setContent {
             PyrycodeMobileTheme(darkTheme = darkTheme, dynamicColor = false) {
                 view = LocalView.current
@@ -487,7 +487,7 @@ class ThreadTopOverlayTest {
         composeRule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(2f)) {
-                    PyrycodeMobileTheme(dynamicColor = false) {
+                    PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                         ThreadTopOverlay(
                             usageLimit = null,
                             usageLimitDismissed = false,
@@ -530,7 +530,7 @@ class ThreadTopOverlayTest {
             val navigation = rememberTransientErrorNoticeState()
             LaunchedEffect(navigation) { navigation.enqueue(this, "navigation error") }
             CompositionLocalProvider(LocalNavigationErrorNotice provides navigation) {
-                PyrycodeMobileTheme(dynamicColor = false) {
+                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                     ThreadTopOverlay(
                         usageLimit = warning,
                         usageLimitDismissed = false,

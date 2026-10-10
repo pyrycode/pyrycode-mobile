@@ -264,18 +264,8 @@ class ThreadInputBarStyleTest {
         }
     }
 
-    @Test fun staticLightOverridesDarkSystem() {
-        show(dark = false)
-        assertEmptyFocusedAndTyped()
-    }
-
     @Test fun wallpaperDarkRetainsExistingFill() {
         show(dark = true, wallpaper = true)
-        assertEmptyFocusedAndTyped()
-    }
-
-    @Test fun wallpaperLightRetainsExistingFill() {
-        show(dark = false, wallpaper = true)
         assertEmptyFocusedAndTyped()
     }
 

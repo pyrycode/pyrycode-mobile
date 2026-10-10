@@ -74,7 +74,7 @@ class SessionBoundaryDelimiterScreenTest {
 
     private fun setContent(boundary: ThreadItem.SessionBoundary) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 SessionBoundaryDelimiter(boundary = boundary)
             }
         }
@@ -173,7 +173,7 @@ class SessionBoundaryDelimiterScreenTest {
     fun every_reason_draws_only_the_rule_row() {
         val reason = mutableStateOf(clearBoundary())
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 SessionBoundaryDelimiter(boundary = reason.value)
             }
         }

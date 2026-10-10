@@ -88,7 +88,7 @@ class ThreadScreenConnectionGateTest {
 
     private fun setScreen(isBusy: Boolean = false) {
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
                         ThreadUiState(

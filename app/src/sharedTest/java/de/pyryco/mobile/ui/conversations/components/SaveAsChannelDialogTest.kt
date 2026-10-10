@@ -43,7 +43,7 @@ class SaveAsChannelDialogTest {
 
     private fun show(initialName: String = "Release notes") {
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 SaveAsChannelDialog(
                     conversationId = "conversation-1",
                     initialName = initialName,

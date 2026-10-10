@@ -39,7 +39,7 @@ class ScannerScreenTest {
     @Test
     fun topAppBar_rendersPairingTitle() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.ReadyToScan,
                     onNavigateBack = {},
@@ -57,7 +57,7 @@ class ScannerScreenTest {
     @Test
     fun hintCard_rendersPyryPairInstruction() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.ReadyToScan,
                     onNavigateBack = {},
@@ -75,7 +75,7 @@ class ScannerScreenTest {
     @Test
     fun pasteCodeFallback_hasClickAction() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.ReadyToScan,
                     onNavigateBack = {},
@@ -93,7 +93,7 @@ class ScannerScreenTest {
     @Test
     fun permissionRequesting_rendersViewportShell() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.PermissionRequesting,
                     onNavigateBack = {},
@@ -111,7 +111,7 @@ class ScannerScreenTest {
     @Test
     fun denied_rendersScannerDeniedScreen() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.Denied,
                     onNavigateBack = {},
@@ -130,7 +130,7 @@ class ScannerScreenTest {
     fun denied_backReturnsToCaller() {
         val actions = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.Denied,
                     onNavigateBack = { actions.add("back") },
@@ -152,7 +152,7 @@ class ScannerScreenTest {
     @Test
     fun decoded_rendersViewportUnchanged() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.Decoded("ignored-payload"),
                     onNavigateBack = {},
@@ -175,7 +175,7 @@ class ScannerScreenTest {
     @Test
     fun cameraPreviewSlot_rendersBehindLockedOverlay() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.ReadyToScan,
                     onNavigateBack = {},
@@ -203,7 +203,7 @@ class ScannerScreenTest {
     @Test
     fun error_rendersMessageAndClickablePasteFallback() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.Error("Camera unavailable"),
                     onNavigateBack = {},
@@ -249,7 +249,7 @@ class ScannerScreenTest {
     @Test
     fun awaitingConfirm_rendersFingerprintVerbatimAndCompareCopy() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.AwaitingConfirm(FINGERPRINT, pairedServer()),
                     onNavigateBack = {},
@@ -268,7 +268,7 @@ class ScannerScreenTest {
     @Test
     fun awaitingConfirm_fingerprint_exposesContentDescription() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.AwaitingConfirm(FINGERPRINT, pairedServer()),
                     onNavigateBack = {},
@@ -287,7 +287,7 @@ class ScannerScreenTest {
     fun awaitingConfirm_confirmButton_invokesOnConfirm() {
         var confirmed = false
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.AwaitingConfirm(FINGERPRINT, pairedServer()),
                     onNavigateBack = {},
@@ -306,7 +306,7 @@ class ScannerScreenTest {
     fun awaitingConfirm_declineButton_invokesOnDecline() {
         var declined = false
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.AwaitingConfirm(FINGERPRINT, pairedServer()),
                     onNavigateBack = {},
@@ -324,7 +324,7 @@ class ScannerScreenTest {
     @Test
     fun awaitingConfirm_confirmAndDecline_meetMinimumTouchTargetHeight() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.AwaitingConfirm(FINGERPRINT, pairedServer()),
                     onNavigateBack = {},
@@ -349,7 +349,7 @@ class ScannerScreenTest {
     fun verifying_keepsTheModalLoadingWithCancelEnabled() {
         var cancelled = false
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = ScannerUiState.Verifying(FINGERPRINT, pairedServer()),
                     onNavigateBack = {},
@@ -372,7 +372,7 @@ class ScannerScreenTest {
         val events = mutableListOf<String>()
         var state by mutableStateOf<ScannerUiState>(failed(PairingVerification.Failure.Unavailable))
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(
                     state = state,
                     onNavigateBack = {},
@@ -406,7 +406,7 @@ class ScannerScreenTest {
     fun confirmWaitAndFailure_keepTheSameModalWindow() {
         var state by mutableStateOf<ScannerUiState>(ScannerUiState.AwaitingConfirm(FINGERPRINT, pairedServer()))
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerScreen(state = state, onNavigateBack = {}, onOpenSettings = {}, onPasteCode = {})
             }
         }

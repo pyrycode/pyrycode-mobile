@@ -165,8 +165,8 @@ class MainActivityInsetsDeviceTest {
         runBlocking { preferences.setDefaultYolo(true) }
         val cases =
             listOf(
-                Triple("no", ThemeMode.LIGHT, true),
-                Triple("no", ThemeMode.LIGHT, false),
+                Triple("no", ThemeMode.DARK, true),
+                Triple("no", ThemeMode.DARK, false),
                 Triple("yes", ThemeMode.SYSTEM, false),
                 Triple("no", ThemeMode.SYSTEM, true),
                 Triple("yes", ThemeMode.DARK, true),
@@ -199,7 +199,7 @@ class MainActivityInsetsDeviceTest {
                     }
                 }
             assertEquals("case $index: static-dark channel-list canvas", 0xFF0B0E11.toInt(), pixel)
-            if (index == 0) capture("light-wallpaper-android-light")
+            if (index == 0) capture("dark-wallpaper-android-day")
         }
     }
 
@@ -325,7 +325,7 @@ class MainActivityInsetsDeviceTest {
                 }
                 conversation.id
             }
-        for ((theme, wallpaper) in listOf(ThemeMode.DARK to false, ThemeMode.LIGHT to false, ThemeMode.LIGHT to true)) {
+        for ((theme, wallpaper) in listOf(ThemeMode.DARK to false, ThemeMode.DARK to true)) {
             drafts.clearConversation("demo", conversationId)
             runBlocking {
                 preferences.setThemeMode(theme)

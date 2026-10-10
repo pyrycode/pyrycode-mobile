@@ -45,7 +45,7 @@ class ThreadConfirmationNoticeTest {
         val flow = errors.receiveAsFlow()
         rule.setContent {
             CompositionLocalProvider(LocalAccessibilityManager provides accessibility) {
-                PyrycodeMobileTheme(dynamicColor = false) {
+                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                     if (visible) {
                         ThreadScreen(
                             state = ThreadUiState("c1", name),
