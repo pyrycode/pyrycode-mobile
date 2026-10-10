@@ -110,5 +110,4 @@ class ModalFieldPaletteTest {
         show(darkTheme = true)
         assertBothFocusStates()
     }
-
 }
