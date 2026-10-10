@@ -2,6 +2,7 @@ package de.pyryco.mobile
 
 import android.view.ViewGroup
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -20,6 +21,8 @@ class MainActivityInsetsTest {
     @get:Rule val rule = createAndroidComposeRule<MainActivity>()
 
     @Test fun welcomeConsumesChangingSystemBarsExactlyOnce() {
+        // Activity startup loads hosts and migrates DataStore outside Compose's idle loop.
+        rule.waitUntil(5_000) { rule.onNodeWithText("Pyrycode").isDisplayed() }
         rule.onNodeWithText("Pyrycode").assertIsDisplayed()
         val manager = rule.activity.packageManager
         assertEquals(
