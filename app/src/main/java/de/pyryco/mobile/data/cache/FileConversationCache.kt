@@ -21,13 +21,16 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToStream
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -79,6 +82,17 @@ class FileConversationCache(
 ) : ConversationCache {
     private val mutex = Mutex()
 
+    // One immutable decode shared by the row and coverage readers, guarded by mutex.
+    // Reads still inspect exact disk bytes, so another instance's same-size write cannot stay hidden.
+    private data class DecodedThread(
+        val document: File,
+        val bytes: ByteArray,
+        val rows: List<ThreadItem>,
+        val history: HistoryPosition?,
+    )
+
+    private var decodedThread: DecodedThread? = null
+
     override suspend fun readConversations(serverId: String): List<Conversation> =
         withContext(ioDispatcher) {
             mutex.withLock { readOrEmpty(serverId, "read") }
@@ -127,7 +141,7 @@ class FileConversationCache(
                     )
                 }
             val record = CachedThread(VERSION, kept.map { it.toRecord() }, history)
-            writeAtomically(document, MobileJson.encodeToString(record))
+            writeAtomically(document, record)
         }
 
     override suspend fun readHistoryPosition(
@@ -137,9 +151,7 @@ class FileConversationCache(
         withContext(ioDispatcher) {
             mutex.withLock {
                 try {
-                    decodeThreadDocument(threadDocumentFor(serverId, conversationId))?.let { stored ->
-                        stored.history?.copy(coverage = stored.history.coverage?.retainedBy(stored.rows.map { it.toDomain() }))?.toDomain()
-                    }
+                    readDecodedThread(threadDocumentFor(serverId, conversationId))?.history
                 } catch (error: Exception) {
                     val code = failureCode(error) ?: throw error
                     RelayLog.d { "conversation_cache operation=read_history status=failed code=$code" }
@@ -161,17 +173,17 @@ class FileConversationCache(
         mutate("write_history") {
             val document = threadDocumentFor(serverId, conversationId)
             if (position == null && !document.isFile) return@mutate
-            val rows =
+            val (storedRows, rows) =
                 try {
-                    decodeThreadDocument(document)?.rows.orEmpty()
+                    decodeThreadDocument(document) ?: (emptyList<CachedThreadRow>() to emptyList<ThreadItem>())
                 } catch (error: Exception) {
                     val code = failureCode(error) ?: throw error
                     RelayLog.d { "conversation_cache operation=write_history_read status=failed code=$code" }
-                    emptyList()
+                    emptyList<CachedThreadRow>() to emptyList<ThreadItem>()
                 }
-            val coverage = position?.coverage?.retainedBy(rows.map { it.toDomain() })?.boundTo(rows.map { it.toDomain() })
-            val record = CachedThread(VERSION, rows, position?.let { CachedHistoryPosition(it.cursor, it.atStart, coverage) })
-            writeAtomically(document, MobileJson.encodeToString(record))
+            val coverage = position?.coverage?.retainedBy(rows)?.boundTo(rows)
+            val record = CachedThread(VERSION, storedRows, position?.let { CachedHistoryPosition(it.cursor, it.atStart, coverage) })
+            writeAtomically(document, record)
         }
 
     override suspend fun readReadPositions(serverId: String): Map<String, ReadPosition> =
@@ -252,23 +264,87 @@ class FileConversationCache(
         MobileJson.encodeToString(CachedConversations(VERSION, conversations.map { it.toRecord() })),
     )
 
-    private fun decodeThread(document: File): List<ThreadItem> = readThreadRecord(document)?.let(::validatedRows).orEmpty()
+    private fun decodeThread(document: File): List<ThreadItem> = readDecodedThread(document)?.rows.orEmpty()
+
+    private fun readDecodedThread(document: File): DecodedThread? {
+        if (!document.isFile) {
+            decodedThread = null
+            return null
+        }
+        val started = System.nanoTime()
+        decodedThread?.takeIf { it.document == document && matchesBytes(document, it.bytes) }?.let { return it }
+        decodedThread = null
+        val bytes = document.readBytes()
+        val read = System.nanoTime()
+        val record = decodeThreadRecord(bytes)
+        val decoded = System.nanoTime()
+        require(record.version == VERSION) { "unsupported conversation cache version" }
+        val rows = validatedRows(record)
+        val validated = System.nanoTime()
+        val stored = validatedHistory(record.history, rows)
+        val metadata = System.nanoTime()
+        val history = stored?.copy(coverage = stored.coverage?.retainedBy(rows))?.toDomain()
+        val retained = System.nanoTime()
+        RelayLog.d {
+            "event=thread_cache_restored rows=${rows.size} read_ms=${(read - started) / 1_000_000} " +
+                "decode_ms=${(decoded - read) / 1_000_000} validate_ms=${(validated - decoded) / 1_000_000} " +
+                "metadata_ms=${(metadata - validated) / 1_000_000} proofs_ms=${(retained - metadata) / 1_000_000}"
+        }
+        return DecodedThread(document, bytes, rows, history).also { decodedThread = it }
+    }
+
+    /** Read every current byte and EOF without allocating another whole-document copy. */
+    private fun matchesBytes(
+        document: File,
+        bytes: ByteArray,
+    ): Boolean =
+        document.inputStream().buffered().use { reader ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var offset = 0
+            var count = reader.read(buffer)
+            while (count >= 0) {
+                if (count > bytes.size - offset) return@use false
+                for (index in 0 until count) {
+                    if (buffer[index] != bytes[offset + index]) return@use false
+                }
+                offset += count
+                count = reader.read(buffer)
+            }
+            offset == bytes.size
+        }
 
     /**
      * The thread document, or `null` when none was written, rejected whole unless every row passes
      * [validatedRows], so a position is never read from a document whose rows are unreadable (#1354).
      */
-    private fun decodeThreadDocument(document: File): CachedThread? = readThreadRecord(document)?.also { validatedRows(it) }
-
-    private fun readThreadRecord(document: File): CachedThread? {
+    private fun decodeThreadDocument(document: File): Pair<List<CachedThreadRow>, List<ThreadItem>>? {
         if (!document.isFile) return null
-        val raw =
-            MobileJson.parseToJsonElement(document.readText()) as? JsonObject ?: throw IllegalArgumentException("invalid thread document")
-        // Optional metadata must not participate in row decoding: malformed claims leave rows readable.
-        val stored = MobileJson.decodeFromJsonElement<CachedThread>(JsonObject(raw - "history"))
+        val stored = decodeThreadRecord(document.readBytes())
         require(stored.version == VERSION) { "unsupported conversation cache version" }
-        return stored.copy(history = decodeHistory(raw["history"], stored.rows.map { it.toDomain() }))
+        val rows = validatedRows(stored)
+        validatedHistory(stored.history, rows)
+        return stored.rows to rows
     }
+
+    private fun decodeThreadRecord(bytes: ByteArray): CachedThread =
+        try {
+            MobileJson.decodeFromString<CachedThread>(bytes.toString(Charsets.UTF_8))
+        } catch (_: SerializationException) {
+            // Optional metadata must not participate in row decoding; legacy omitted spans remain compatible.
+            val fallback = MobileJson.decodeFromString<CachedThreadRead>(bytes.toString(Charsets.UTF_8))
+            CachedThread(fallback.version, fallback.rows, decodeHistory(fallback.history))
+        }
+
+    private fun validatedHistory(
+        history: CachedHistoryPosition?,
+        rows: List<ThreadItem>,
+    ): CachedHistoryPosition? =
+        try {
+            history.also { it?.coverage?.validated(rows) }
+        } catch (_: IllegalArgumentException) {
+            RelayLog.d { "conversation_cache operation=read_history_metadata status=failed code=invalid_data" }
+            null
+        }
 
     /**
      * Decodes a thread document's rows, rejecting what would mislead or crash the thread: a row of no kind or
@@ -281,23 +357,35 @@ class FileConversationCache(
      */
     private fun validatedRows(stored: CachedThread): List<ThreadItem> {
         val rows = stored.rows.map { it.toDomain() }
-        val messages = rows.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
-        require(messages.none { it.toolCall?.status == ToolCallStatus.Running }) { "running tool in thread cache" }
-        require(messages.distinctBy { it.id }.size == messages.size) { "duplicate thread cache message identity" }
-        val boundaries = rows.filterIsInstance<ThreadItem.SessionBoundary>()
-        require(boundaries.distinctBy { Triple(it.previousSessionId, it.newSessionId, it.occurredAt) }.size == boundaries.size) {
-            "duplicate thread cache boundary identity"
+        val messages = HashSet<String>()
+        val boundaries = HashSet<Triple<String, String, Instant>>()
+        val banners = HashSet<Instant>()
+        val compactions = HashSet<Instant>()
+        val refusals = HashSet<Pair<Boolean, Instant>>()
+        val stopped = HashSet<String>()
+        rows.forEach { row ->
+            when (row) {
+                is ThreadItem.MessageItem -> {
+                    require(row.message.toolCall?.status != ToolCallStatus.Running) { "running tool in thread cache" }
+                    require(messages.add(row.message.id)) { "duplicate thread cache message identity" }
+                }
+                is ThreadItem.SessionBoundary ->
+                    require(boundaries.add(Triple(row.previousSessionId, row.newSessionId, row.occurredAt))) {
+                        "duplicate thread cache boundary identity"
+                    }
+                is ThreadItem.Banner -> require(banners.add(row.occurredAt)) { "duplicate thread cache banner identity" }
+                is ThreadItem.CompactionBoundary ->
+                    require(
+                        compactions.add(row.occurredAt),
+                    ) { "duplicate thread cache compaction identity" }
+                is ThreadItem.ModelRefusal ->
+                    require(refusals.add((row.fallbackModel != null) to row.occurredAt)) {
+                        "duplicate thread cache refusal identity"
+                    }
+                is ThreadItem.StoppedTurn -> require(stopped.add(row.turnId)) { "duplicate thread cache stopped turn identity" }
+                else -> Unit
+            }
         }
-        val banners = rows.filterIsInstance<ThreadItem.Banner>()
-        require(banners.distinctBy { it.occurredAt }.size == banners.size) { "duplicate thread cache banner identity" }
-        val compactions = rows.filterIsInstance<ThreadItem.CompactionBoundary>()
-        require(compactions.distinctBy { it.occurredAt }.size == compactions.size) { "duplicate thread cache compaction identity" }
-        val refusals = rows.filterIsInstance<ThreadItem.ModelRefusal>()
-        require(refusals.distinctBy { (it.fallbackModel != null) to it.occurredAt }.size == refusals.size) {
-            "duplicate thread cache refusal identity"
-        }
-        val stopped = rows.filterIsInstance<ThreadItem.StoppedTurn>()
-        require(stopped.distinctBy { it.turnId }.size == stopped.size) { "duplicate thread cache stopped turn identity" }
         return rows
     }
 
@@ -375,17 +463,30 @@ class FileConversationCache(
         ),
     )
 
-    /** Temp file plus atomic move: process death mid-write leaves the previous document or the new one. */
     private fun writeAtomically(
         document: File,
         text: String,
+    ) = writeAtomically(document) { it.writeText(text) }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    private fun writeAtomically(
+        document: File,
+        record: CachedThread,
+    ) = writeAtomically(document) { temporary ->
+        temporary.outputStream().buffered().use { MobileJson.encodeToStream(record, it) }
+    }
+
+    /** Temp file plus atomic move: process death mid-write leaves the previous document or the new one. */
+    private fun writeAtomically(
+        document: File,
+        write: (File) -> Unit,
     ) {
         val directory = document.parentFile ?: throw IOException("conversation cache directory unavailable")
         if (!directory.isDirectory && !directory.mkdirs()) {
             throw IOException("conversation cache directory unavailable")
         }
         val temporary = File(directory, "${document.name}.tmp")
-        temporary.writeText(text)
+        write(temporary)
         Files.move(temporary.toPath(), document.toPath(), StandardCopyOption.ATOMIC_MOVE)
     }
 
@@ -396,6 +497,7 @@ class FileConversationCache(
         withContext(ioDispatcher) {
             mutex.withLock {
                 try {
+                    decodedThread = null
                     block()
                     RelayLog.d { "conversation_cache operation=$operation status=ok" }
                     Result.success(Unit)
@@ -531,6 +633,14 @@ private data class CachedThread(
     val version: Int,
     val rows: List<CachedThreadRow>,
     val history: CachedHistoryPosition? = null,
+)
+
+/** Read rows directly while leaving malformed optional metadata independent of row readability. */
+@Serializable
+private data class CachedThreadRead(
+    val version: Int,
+    val rows: List<CachedThreadRow>,
+    val history: JsonElement? = null,
 )
 
 /** [CachedThread] without its rows: the row writer reads only the position it keeps (#1354). */
@@ -669,11 +779,13 @@ private data class CachedStoppedTurn(
 )
 
 // Only settled rows reach here: `cacheableThreadRows` has already dropped in-flight and unrecognized ones.
-internal fun cachedThreadRowProof(row: ThreadItem): String =
-    MessageDigest
-        .getInstance("SHA-256")
-        .digest(MobileJson.encodeToString(row.toRecord()).toByteArray(Charsets.UTF_8))
-        .joinToString("") { "%02x".format(it) }
+internal fun cachedThreadRowProof(row: ThreadItem): String = cachedThreadRowProof(row, MessageDigest.getInstance("SHA-256"))
+
+/** The caller owns this digest for one synchronous batch; digest() resets it between rows. */
+internal fun cachedThreadRowProof(
+    row: ThreadItem,
+    digest: MessageDigest,
+): String = digest.digest(MobileJson.encodeToString(row.toRecord()).toByteArray(Charsets.UTF_8)).toHexString()
 
 private fun ThreadItem.toRecord(): CachedThreadRow =
     when (this) {
@@ -712,7 +824,14 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
     }
 
 private fun CachedThreadRow.toDomain(): ThreadItem {
-    require(listOfNotNull(message, boundary, banner, compaction, refusal, stopped).size == 1) { "thread cache row must be one kind" }
+    var kinds = 0
+    if (message != null) kinds++
+    if (boundary != null) kinds++
+    if (banner != null) kinds++
+    if (compaction != null) kinds++
+    if (refusal != null) kinds++
+    if (stopped != null) kinds++
+    require(kinds == 1) { "thread cache row must be one kind" }
     if (message != null) {
         return ThreadItem.MessageItem(
             Message(

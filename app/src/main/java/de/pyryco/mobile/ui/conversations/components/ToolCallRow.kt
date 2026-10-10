@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -96,6 +97,14 @@ internal const val TOOL_EXPANDED_BODY_TAG = "tool-expanded-body"
 /** Tags a resolved row's result count (#1316), so tests can assert its absence and measure its bound. */
 internal const val TOOL_RESULT_DETAIL_TAG = "tool-row-result-detail"
 
+/** The thread shares saved expansion with unplaced boundary measurements of the same row. */
+internal data class ToolCallExpansion(
+    val expanded: Boolean,
+    val toggle: () -> Unit,
+)
+
+internal val LocalToolCallExpansion = staticCompositionLocalOf<ToolCallExpansion?> { null }
+
 /**
  * One tool call in the thread: a `Bash` description takes the described Figma header, otherwise the
  * simple header draws [toolHeadline]'s lead and subject. Tapping expands the input, the output once
@@ -119,10 +128,11 @@ fun ToolCallRow(
     onTrailingEdge: ((Float) -> Unit)? = null,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
+    val sharedExpansion = LocalToolCallExpansion.current
     ToolCallRowContent(
         toolCall = toolCall,
-        expanded = expanded,
-        onToggle = { expanded = !expanded },
+        expanded = sharedExpansion?.expanded ?: expanded,
+        onToggle = { if (sharedExpansion == null) expanded = !expanded else sharedExpansion.toggle() },
         modifier = modifier,
         subagentDepth = subagentDepth,
         joinsNextToolRow = joinsNextToolRow,

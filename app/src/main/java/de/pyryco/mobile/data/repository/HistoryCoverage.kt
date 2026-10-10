@@ -97,31 +97,34 @@ data class HistoryCoverage(
         signedUncertainty = unsignedIncomplete,
     )
 
-    @Transient val spans: List<HistorySpan> =
+    // Unsigned restore consumers do not need the legacy signed collections.
+    val spans: List<HistorySpan> by lazy {
         unsignedSpans.mapNotNull { span ->
             span.first.signedId()?.let { HistorySpan(it, minOf(span.last, Long.MAX_VALUE.toULong()).toLong()) }
         }
+    }
 
-    @Transient val gaps: List<HistoryGap> =
+    val gaps: List<HistoryGap> by lazy {
         unsignedGaps.mapNotNull { gap ->
             gap.anchor.signedId()?.let { anchor -> gap.edge.signedId()?.let { HistoryGap(anchor, it) } }
         }
+    }
 
-    @Transient val cursors: Map<Long, String> = unsignedCursors.mapNotNull { (id, value) -> id.signedId()?.let { it to value } }.toMap()
+    val cursors: Map<Long, String> by lazy {
+        unsignedCursors.mapNotNull { (id, value) -> id.signedId()?.let { it to value } }.toMap()
+    }
 
-    @Transient val walks: Map<Long, String> =
-        unsignedWalks
-            .mapNotNull { (id, value) ->
-                id.signedId(allowZero = true)?.let { it to value }
-            }.toMap()
+    val walks: Map<Long, String> by lazy {
+        unsignedWalks.mapNotNull { (id, value) -> id.signedId(allowZero = true)?.let { it to value } }.toMap()
+    }
 
-    @Transient val rowOrder: Map<String, Long> = unsignedRowOrder.mapNotNull { (key, id) -> id.signedId()?.let { key to it } }.toMap()
+    val rowOrder: Map<String, Long> by lazy {
+        unsignedRowOrder.mapNotNull { (key, id) -> id.signedId()?.let { key to it } }.toMap()
+    }
 
-    @Transient val rowEntries: Map<String, Set<Long>> =
-        unsignedRowEntries
-            .mapValues { (_, ids) ->
-                ids.mapNotNull { it.signedId() }.toSet()
-            }.filterValues { it.isNotEmpty() }
+    val rowEntries: Map<String, Set<Long>> by lazy {
+        unsignedRowEntries.mapValues { (_, ids) -> ids.mapNotNull { it.signedId() }.toSet() }.filterValues { it.isNotEmpty() }
+    }
 
     @Transient val unsignedHighWater: ULong = unsignedSpans.maxOfOrNull { it.last } ?: 0u
 
@@ -131,9 +134,9 @@ data class HistoryCoverage(
 
     @Transient val unknown: Boolean = unsignedUnknown || unsignedIncomplete
 
-    @Transient val highWater: Long = spans.maxOfOrNull { it.last } ?: 0
+    val highWater: Long by lazy { spans.maxOfOrNull { it.last } ?: 0 }
 
-    @Transient val unknownEdge: Long? = if (unknown) spans.minOfOrNull { it.first } else null
+    val unknownEdge: Long? by lazy { if (unknown) spans.minOfOrNull { it.first } else null }
 
     fun cursorFor(anchor: Long): String {
         require(anchor >= 0) { "invalid history anchor" }
@@ -305,12 +308,15 @@ data class HistoryCoverage(
     fun retainedBy(rows: List<ThreadItem>): HistoryCoverage {
         val kept = cacheableThreadRows(rows)
         val direct = historyRowProofs(kept)
-        val available = direct + legacyBindingProofs(kept, direct)
+        val legacy = legacyBindingProofs(kept, direct)
+        val available = if (legacy.isEmpty()) direct else direct + legacy
         val missing =
             proofs
                 .filter { (key, proof) ->
                     available[key] != proof && (deltaHashes[key] == null || available[key] != deltaHashes[key])
                 }.keys
+        // Every claim was checked above; avoid rebuilding all derived maps when none changed.
+        if (missing.isEmpty() && proofs.all { (key, proof) -> available[key] == proof }) return this
         return withoutRows(missing).copy(proofs = proofs.mapValues { (key, proof) -> available[key] ?: proof } - missing)
     }
 
@@ -319,6 +325,7 @@ data class HistoryCoverage(
         rows: List<ThreadItem>,
         direct: Map<String, String>,
     ): Map<String, String> {
+        if (legacyKeys.isEmpty()) return emptyMap()
         val legacy =
             rows
                 .filterIsInstance<ThreadItem.MessageItem>()
@@ -389,24 +396,35 @@ data class HistoryCoverage(
     }
 
     internal fun unsignedPositions(): Map<String, ULong> =
-        unsignedRowOrder.toMutableMap().apply {
-            legacyKeys.forEach { (key, alias) -> unsignedRowOrder[key]?.let { put(alias, maxOf(get(alias) ?: 0u, it)) } }
+        if (legacyKeys.isEmpty()) {
+            unsignedRowOrder
+        } else {
+            unsignedRowOrder.toMutableMap().apply {
+                legacyKeys.forEach { (key, alias) -> unsignedRowOrder[key]?.let { put(alias, maxOf(get(alias) ?: 0u, it)) } }
+            }
         }
 
     internal fun positions(): Map<String, Long> = unsignedPositions().mapNotNull { (key, id) -> id.signedId()?.let { key to it } }.toMap()
 
     /** Validate optional disk claims independently from the retained rows. */
     internal fun validated(rows: List<ThreadItem>? = null): HistoryCoverage {
-        require(
-            unsignedSpans.all { it.first > 0u && it.first <= it.last } && normalize(unsignedSpans) == unsignedSpans,
-        ) { "invalid history spans" }
-        val holes = unsignedSpans.zipWithNext()
-        require(
-            unsignedGaps.size == holes.size &&
-                unsignedGaps.zip(holes).all { (gap, spans) ->
-                    gap.anchor in spans.first.first..spans.first.last && gap.edge == spans.second.first
-                },
-        ) { "invalid history gaps" }
+        var previousLast = 0uL
+        for (index in unsignedSpans.indices) {
+            val span = unsignedSpans[index]
+            require(
+                span.first > 0u &&
+                    span.first <= span.last &&
+                    (index == 0 || span.first > previousLast && span.first - 1u != previousLast),
+            ) { "invalid history spans" }
+            previousLast = span.last
+        }
+        require(unsignedGaps.size == (unsignedSpans.size - 1).coerceAtLeast(0)) { "invalid history gaps" }
+        for (index in unsignedGaps.indices) {
+            val gap = unsignedGaps[index]
+            val older = unsignedSpans[index]
+            val newer = unsignedSpans[index + 1]
+            require(gap.anchor in older.first..older.last && gap.edge == newer.first) { "invalid history gaps" }
+        }
 
         fun covered(id: ULong): Boolean {
             val found = unsignedSpans.binarySearch { it.first.compareTo(id) }
@@ -429,7 +447,7 @@ data class HistoryCoverage(
                 deltaLengths.values.all { it >= 0 } &&
                 legacyOffsets.values.all { it >= 0 },
         ) { "invalid history anchors" }
-        if (rows != null) {
+        if (rows != null && legacyKeys.isNotEmpty()) {
             val direct = historyRowProofs(rows)
             val aliased = legacyKeys.keys - direct.keys
             require(legacyBindingProofs(rows, direct).keys == aliased) { "invalid history legacy bindings" }
@@ -463,10 +481,27 @@ private fun Long.positiveHistoryId(allowZero: Boolean = false): ULong {
 private fun ULong.signedId(allowZero: Boolean = false): Long? =
     takeIf { (allowZero || it > 0u) && it <= Long.MAX_VALUE.toULong() }?.toLong()
 
-internal fun historyIdentity(identity: Any): String =
-    historyHash(
-        (identity as? List<*>)?.joinToString("") { value -> value.toString().let { "${it.length}:$it" } } ?: identity.toString(),
-    )
+internal fun historyIdentity(identity: Any): String = historyHash(historyIdentityText(identity))
+
+/** A synchronous restore batch may reuse a digest; digest resets after each independent identity. */
+internal fun historyIdentity(
+    identity: Any,
+    digest: MessageDigest,
+): String = historyHash(historyIdentityText(identity), digest)
+
+private fun historyIdentityText(identity: Any): String =
+    if (identity is List<*>) {
+        buildString {
+            identity.forEach { value ->
+                val text = value.toString()
+                append(text.length)
+                append(':')
+                append(text)
+            }
+        }
+    } else {
+        identity.toString()
+    }
 
 internal fun ThreadItem.historyKeys(): List<String> {
     val segment = (this as? ThreadItem.MessageItem)?.message?.segment
@@ -476,6 +511,7 @@ internal fun ThreadItem.historyKeys(): List<String> {
 
 internal fun historyRowProofs(rows: List<ThreadItem>): Map<String, String> =
     buildMap {
+        val digest = MessageDigest.getInstance("SHA-256")
         rows.forEach { row ->
             val message = (row as? ThreadItem.MessageItem)?.message
             val segment = message?.segment
@@ -483,14 +519,19 @@ internal fun historyRowProofs(rows: List<ThreadItem>): Map<String, String> =
                 var offset = 0
                 segment.deltas.forEach { delta ->
                     val end = (offset + delta.length).coerceIn(offset, message.content.length)
-                    put(historyIdentity(listOf("delta", segment.turnId, delta.seq)), historyHash(message.content.substring(offset, end)))
+                    put(
+                        historyHash(historyIdentityText(listOf("delta", segment.turnId, delta.seq)), digest),
+                        historyHash(message.content.substring(offset, end), digest),
+                    )
                     offset = end
                 }
             } else {
-                put(historyIdentity(row.mergeIdentity()), cachedThreadRowProof(row))
+                put(historyHash(historyIdentityText(row.mergeIdentity()), digest), cachedThreadRowProof(row, digest))
             }
         }
     }
 
-private fun historyHash(value: String): String =
-    MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+private fun historyHash(
+    value: String,
+    digest: MessageDigest = MessageDigest.getInstance("SHA-256"),
+): String = digest.digest(value.toByteArray(Charsets.UTF_8)).toHexString()

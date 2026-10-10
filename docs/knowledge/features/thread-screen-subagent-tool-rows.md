@@ -71,6 +71,28 @@ Loaded tool-parent chains are memoised with a cycle guard; each claimed family m
 original internal order, with its message keys and nesting intact. Repository arrival/history order
 never changes.
 
+Main-turn completion does not end ownership or finish the Agent (#1951). With the root and
+local-agent launch evidence loaded, every loaded tool-parent chain reaching that root stays
+exclusively in its block, including children received while idle or during a later main turn.
+Foreground tools and another Agent's children remain separate. Do not infer ownership from
+adjacency, a matching tool count or a turn id. Correctly attributed post-turn frames already
+pass the unchanged Mobile production path; [daemon #2960](https://github.com/pyrycode/pyrycode/issues/2960)
+supplies the attribution fix. The wire contract remains in the daemon's `docs/protocol-mobile.md`.
+
+`ScriptedBackgroundAgentToolsTest.lateToolsRemainOwnedAcrossMainCompletion` drives received
+frames through the repository, ViewModel and rendered thread: one child starts before main
+completion and finishes afterward, and two more arrive later, including during a later main
+turn. It checks sibling identity/order/status, collapse off, closed and expanded states, the
+separate Running header and terminal-task settlement. Its replay/interleaving companion checks
+another Agent, foreground tools and parent backfill; a repository-visible replay barrier ensures
+assertions run after duplicates have actually been reduced. The sibling-permutation probe in
+`BackgroundAgentBlocksTest` checks exclusive ownership independently of loaded parent order.
+Removing `late-two`'s received parent made the ownership control fail (1 executed, 1 failed,
+0 skipped); restoring attribution passed. This demonstrates the renderer's dependence on
+received attribution, not correctness of an older daemon. The strengthened
+[live and scripted proofs](../../e2e-interactive-stream.md#late-background-agent-tools-1951)
+check actual post-main-end frame order as well as owned placement and expansion.
+
 The launch slot becomes a separately keyed `agent-start:<Agent message id>` marker: a Busy dot and
 “Agent started, still working”, or a Success dot and “Agent finished” for any terminal status,
 beside “Go to agent ↓”. The second line is an ellipsized launch description. The description is inert `Text`,
@@ -81,6 +103,82 @@ children's run opens only from its own tap, via `ToolRunRow`'s toggle — and wo
 Navigation preserves the reader's collapse state. A placement test must assert that state after
 navigation and explicitly open the owned child run before inspecting its prose (#1904); reaching
 the always-visible Agent root does not prove that its children are visible.
+
+The first held-Agent marker proof fences the phone repository's finalized newer
+main reply and Idle phase before revealing (#1994); peer completion alone does
+not synchronize phone rendering. Newer reply growth can leave the marker projected
+while disposing its lazy row. The test helper supplies `agent-start:<Agent id>`,
+checks `IndexForKey` on a zero-node sample, reveals that same key and remeasures
+chrome before one physical tap. Missing keys and ambiguous matches fail. The live
+selector includes the held task's bounded launch description to distinguish equally
+labelled markers; the description remains inert and is never logged. Settled
+`verifyAgentRunNavigation` also supplies the owned key and preserves scroll-only
+navigation and closed/open/closed membership assertions.
+
+`BackgroundAgentBlocksScreenTest.lateNewerReplyDisposesMarkerButKeyedRevealStillNavigatesHeldAgent`
+reproduces disposal after the first reveal while the task stays running;
+`keyedMarkerWithHeldDescriptionNavigatesOnlyItsAgent` proves the exact destination
+with two markers; `removedMarkerFailsInsteadOfBeingTreatedAsLazyDisposal` rejects
+projection removal. These are harness proofs, with placement rules unchanged.
+See [Compose sampling guidance](development-verification-compose-evidence.md#compose-evidence)
+and [fresh live/scripted evidence](../../e2e-interactive-stream.md#held-agent-marker-reveal-1994).
+
+**Pending marker navigation (#1956).** A tap survives its root disappearing from loaded
+rows while the reader waits in the same mounted destination. When the root returns,
+`ThreadAgentNavigation` scrolls once and consumes that request. Every fresh tap replaces
+unresolved intent, including another tap on the same Agent; reference identity prevents
+an older completion from consuming its replacement. Navigation preserves expansion both
+before and after task completion.
+
+Nonzero vertical nested-scroll `UserInput`, including gestures and accessibility scrolling,
+synchronously clears pending intent and cancels its active job. The observer encloses both
+the list and the empty-thread scrollable, so removing the last root cannot remove cancellation.
+Programmatic navigation, layout changes and viewport compensation do not supply that input.
+Do not reuse the history-demand touch-provenance gate: accessibility input must cancel too.
+Destination `ON_PAUSE`, disposal and conversation replacement retire intent. Returning,
+remounting or restoring saved list/run state cannot revive it: navigation is conversation-keyed
+`remember` state, while expansion remains independently saveable.
+
+Rows or prompt-count changes cancel the outer `LaunchedEffect` and retain unresolved intent
+for a fresh root lookup. Reader-priority scroll mutation rejection can instead cancel the
+inner scroll while that effect remains active. `ensureActive()` distinguishes the two:
+propagate genuine effect cancellation, but consume a reader-interrupted request so later
+rows cannot retry it. The newest-end follow rule's retry policy is not marker intent.
+
+The [shared production-screen probes](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/AgentNavigationScreenTest.kt)
+tap the rendered marker with a loaded root, then remove that root in the same UI turn before
+the navigation effect runs. A fixture with an initially missing root cannot exercise the
+production callback: the fold never emits its marker. Probes observe the real `LazyListState`
+and returning-root anchor; an isolated request-holder test would miss effect restarts and
+scroll mutation rejection. The [Android wrappers](../../../app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/AgentNavigationDeviceTest.kt)
+explicitly expose the same probes to the routine UI gate.
+
+The [verifier's fresh XML review](https://github.com/pyrycode/pyrycode-mobile/pull/2019#issuecomment-6089149709)
+records **9 executed/passed, 0 failed, 0 skipped** for `AgentNavigationScreenTest` and
+**15 executed/passed, 0 failed, 0 skipped** for existing `BackgroundAgentBlocksScreenTest`
+marker/expansion coverage. The full UI gate passed **254 executed/passed, 0 failed, 1 skipped**;
+the supplied per-method JUnit-XML report confirms every navigation wrapper passed.
+Each cell below is executed / failed / skipped, with every executed method passing:
+
+| Production-screen probe | JVM | UI gate |
+| --- | --- | --- |
+| `rootReturnsWhileWaiting_navigatesOnce` | 1 / 0 / 0 | 1 / 0 / 0 |
+| `gestureWhileWaiting_cancelsNavigation` | 1 / 0 / 0 | 1 / 0 / 0 |
+| `accessibilityScrollWhileWaiting_cancelsNavigation` | 1 / 0 / 0 | 1 / 0 / 0 |
+| `readerInterruptsInProgressNavigation_doesNotRetry` | 1 / 0 / 0 | 1 / 0 / 0 |
+| `departureAndReturn_doesNotReviveRequest` | 1 / 0 / 0 | 1 / 0 / 0 |
+| `remount_doesNotReviveRequest` | 1 / 0 / 0 | 1 / 0 / 0 |
+| `conversationSwitch_doesNotReviveRequest` | 1 / 0 / 0 | 1 / 0 / 0 |
+| `freshTap_replacesUnresolvedRequest` | 1 / 0 / 0 | 1 / 0 / 0 |
+| `freshTapAfterReaderCancellation_navigates` | 1 / 0 / 0 | 1 / 0 / 0 |
+
+The remount probe also uses `StateRestorationTester`; successful navigation is checked against
+later root disappearance/rearrival to prove consumption. The unrelated skipped UI method was
+`RenameDialogCaptureTest.renameAtFigmaViewport`. The retained focused Android report
+`/tmp/builder-1956/AgentNavigationDeviceTest.xml` was inspected and also records all nine passing
+with none skipped. Fresh full live/scripted preservation evidence is in
+[the ladder](../../e2e-interactive-stream.md#stale-agent-navigation-cancellation-1956);
+these shared screen regressions establish cancellation.
 
 Running families sit below every ordinary and queued row. Multiple families keep unknown launches
 in their roster slots and sort known launches within the remaining slots; once all start history is

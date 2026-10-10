@@ -31,11 +31,88 @@ with and without the status band's running-tasks pill. Non-rendering Info banner
 their stable rows and keys but are skipped when finding the newest rendered row;
 otherwise appending an invisible banner would change the ordinary-message resting gap.
 
-Reservations follow actual attachment and draft height changes. When a prompt or
-row-kind change changes the rest adjustment, an idle history reader's keyed anchor
-and physical offset are preserved with `requestScrollToItem`; active drags are not
-cancelled. `FollowNewestEnd` retains its existing rules. The empty state is centered
-within measured chrome reservations rather than behind the bars.
+Reservations follow actual attachment and draft height changes. Since
+[#1942](https://github.com/pyrycode/pyrycode-mobile/issues/1942), non-following readers
+retain the anchored row's top through both row-height and newest-end padding changes,
+including progressive reveal and taller or shorter settled markdown. Index zero does
+not imply following: a reply taller than the viewport can still be anchored there
+while its reader is far from the newest end. The empty state is centered within
+measured chrome reservations rather than behind the bars.
+
+`ThreadListViewport`, remembered with the list, shares geometry bookkeeping with
+`FollowNewestEnd`. Row measurement captures the current keyed anchor's height delta
+before a shrink can cause lazy measurement to publish a different anchor. It reads
+the old layout through `Snapshot.withoutReadObservation`, so row measurement does
+not observe its own measurement result. The list's placement callback combines that
+size delta with the newest-end padding delta and applies `dispatchRawDelta` before
+drawing. It corrects relative displacement without taking the scroll mutation from
+a resting finger, drag or fling. The former separate idle-only
+`requestScrollToItem` rest-adjustment effect is removed; applying both would compensate
+twice. Only the current anchor's matching displayed key contributes size compensation,
+so moving to another row does not restore a stale reading position.
+
+`ListFrame.compensatedScroll` accumulates the displacement actually consumed, including
+clamping at a list end. `followStep` excludes its change from the anchor-offset change
+when detecting reader movement. Otherwise compensation itself could change following
+state. Followers still pin growth, accepted sends resume following, prompt sizes stay
+masked from the growth signature, and a reader anchored on a departing prompt resumes
+following under #1449. Keep these rules together with geometry compensation; see
+[rendered-frame and gesture coverage](thread-screen-testing.md#reader-geometry-during-streaming-1942)
+and [the newest-end follow rule](thread-screen-subagent-tool-rows.md#the-newest-end-follow-rule-1314).
+
+**Background Agent relocation (#1955).** Stable keys alone cannot preserve the
+place a block vacates: reverse layout can follow its bottom-most visible keyed row
+into history. `ThreadListViewport.relocationFor` captures the old layout during
+composition without snapshot observation and transfers the anchor before the next
+lazy measurement, rather than waiting for a follow effect to repair a drawn jump.
+Block placement, displayed keys, internal order and run collapse retain the
+[background-agent fold contract](thread-screen-subagent-tool-rows.md#background-agent-lifecycle-placement-1783).
+
+Finished roster controls and terminal receipts can publish separately. Compare
+placement on each publication against common stationary rows **and common block
+roots**, so movement across another still-running block is visible. Classification
+also requires the block's own finished status or `finishAnchor` destination to
+change. A changed predecessor alone can mean another block inserted before an
+already-finished stationary block; excluding that stationary block would lose its
+reader's anchor. Unchanged terminal replays and ordinary inserts do not transfer.
+Moving keys come from previous block membership, including collapsed or expanded
+tool-run representatives.
+
+A follower requests index/offset zero before measurement, even when another block
+remains running. A history reader transfers to the first surviving visible
+stationary row at its old geometry and new index. Rows wholly hidden on the newest
+side behind composer chrome (`offset + size <= 0`) cannot anchor the visible reader.
+Lazy item offsets remain logical, increasing toward the older end under reverse
+layout; `requestScrollToItem` takes their **negation**.
+
+If all visible rows move, retain the vacated older boundary against the nearest
+surviving stationary row on the older side, including the heights of intervening
+old children and the root. Fill from the remaining thread; use the normal newest-end
+clamp when it cannot fill the vacancy, or index zero when no stationary content
+survives. A direct jump or restored viewport may never have measured those older
+rows. Reuse a cached height only when both the old row and its chronological
+neighbour match; otherwise `ThreadMessageList` subcomposes the old row before
+measuring the relocated list. It uses the shared renderer, identical item width
+constraints, unbounded height and the old neighbour's joined-tool spacing. These
+boundary rows are never placed, drawn, exposed to input or used to publish read or
+attachment presentation.
+
+Individual tool expansion is conversation-keyed saved screen state, shared through
+`LocalToolCallExpansion` by placed and unplaced renderers. Re-rendering identical
+content under a different saveable-state owner would collapse an expanded offscreen
+tool and undercount the boundary after neighbour invalidation or restoration.
+Standalone tool rows retain their local-state fallback.
+
+Relocation captures the selected stationary row's old height; its measured height
+delta and newest-end padding delta still use #1942's placement correction. Ordinary
+row growth and completion without changed placement keep that existing path.
+The follow collector ignores intermediate layouts while transfer is pending. A
+snapshot-observable `relocationVersion` advances in placement, allowing `followStep`
+to retain the previous following state across the completed transfer or clamp.
+Publishing it earlier would expose incomplete geometry; treating a clamp as reader
+input would wrongly enable following. Raw geometry displacement remains separately
+accounted in `compensatedScroll`. See
+[shared and Android frame coverage](thread-screen-testing.md#reader-geometry-during-background-agent-relocation-1955).
 
 The body shape since [#246](../codebase/246.md) iterated `state.items.asReversed()` with stable composite keys and dispatched at the `ThreadItem` sealed-interface level. **Since [#782](../codebase/782.md) the list walks `ThreadRow`s, not `ThreadItem`s directly:** `val rows = remember(state.items, state.queuedMessages) { foldQueuedRows(state.items, state.queuedMessages) }` joins the thread's items against the daemon's queued backlog (see
 [Queued backlog rendering § The render-time join](queued-backlog-section.md#the-render-time-join-782)),

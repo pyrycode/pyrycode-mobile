@@ -34,7 +34,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -938,8 +937,6 @@ class CoalescedThreadWritesTest {
             f.reader.join()
         }
 
-    // https://github.com/pyrycode/pyrycode-mobile/issues/1979: the unchanged merge drops this row before scheduling.
-    @Ignore("blocked on #1979: cached segment drops beside a same-key user row")
     @Test
     fun identityInvariant_collidingRendererKeysKeepBothIdentitiesThroughPendingReconnect() =
         runTest {

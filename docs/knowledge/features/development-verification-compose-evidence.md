@@ -43,6 +43,29 @@ when the physical center clears the measured header and composer; otherwise the
 chrome guard still fails. This adds no tap, sleep or timeout. Its defaulted evidence
 sink records only geometry and static stages, without content or identifiers.
 
+Peer `turn_end` is not a phone render fence (#1994). Before the first held-Agent
+marker reveal, wait for the phone repository's finalized main newer reply and Idle
+phase using the existing timeout. Later layout can still dispose the revealed row.
+Supply `agent-start:<agentId>` as `questionAnswerTarget`'s optional `lazyKey`:
+a zero-node sample must retain that key in `IndexForKey`, then reveal the same key
+and take fresh geometry within the existing three-measurement budget. Read node
+count and bounds together from one synchronized semantics sample. A removed key
+or ambiguous selector fails; neither is a reason to retry a physical click.
+The live matcher also includes the held task's bounded, inert launch description,
+which must not be logged. Default helper callers retain their existing behavior.
+
+`BackgroundAgentBlocksScreenTest` supplies three independent real-screen probes:
+`lateNewerReplyDisposesMarkerButKeyedRevealStillNavigatesHeldAgent` grows the newer
+reply after the first reveal and establishes a running task, a projected marker
+and zero composed nodes before recovery;
+`keyedMarkerWithHeldDescriptionNavigatesOnlyItsAgent` uses two equally labelled
+markers and proves one chrome-clear pointer tap reaches only the held Agent;
+`removedMarkerFailsInsteadOfBeingTreatedAsLazyDisposal` rejects projection removal.
+The recovery probe fails before repair, before any tap, and passes afterward.
+The historical missing-node trace establishes the first failed tap but contains
+no projection/composition samples, so it cannot identify that occurrence's exact
+update. See [counted evidence](../../e2e-interactive-stream.md#held-agent-marker-reveal-1994).
+
 Use one center pointer tap per open/close transition and prove the resulting state
 independently of lazy disposal. Reveal the owned prose before checking that it
 appears exactly once, then require its lazy-list key absent through `IndexForKey`

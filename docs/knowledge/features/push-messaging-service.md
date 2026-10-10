@@ -476,6 +476,17 @@ unchanged-post-time checks; the [ladder](../../e2e-interactive-stream.md#private
 records the fresh counted full live result. The hard-break limitation above remains outside the
 passing sanitizer suite's coverage.
 
+`AttentionNotifierTest.previewsArePrivateAndPublicVersionsContainOnlyFixedCopy` also checks the
+serialized public parcel in UTF-8 and UTF-16LE. Match the exact synthetic fixture path
+`/private/secret`: Robolectric can serialize a local `/private/tmp/.../app/build/...` resource
+path, so a generic `/private` sentinel can fail without preview leakage (#2008). Keep the other
+private-text sentinels, public extras, fixed-copy, private-visibility and ledger assertions intact.
+The [privacy sentinel verification](https://github.com/pyrycode/pyrycode-mobile/pull/2017#issuecomment-6088848226)
+used the same redirected `/private/tmp` build layout for both focused runs: the unchanged method
+executed once and failed at the parcel assertion; the corrected method executed once and passed,
+with zero skipped/errors. The complete notifier class executed and passed 42 tests, with zero
+failed/skipped/errors. A normal build path lacking `/private` does not reproduce the false positive.
+
 **Daemon-read proof (#1884).** `AttentionNotifierTest` inspects actual posted/cancelled Android
 notifications under Robolectric: read-before-post, post-before-read, initial snapshots, duplicate
 updates, unsigned zero/equality, host isolation, cancellation despite closed posting gates, suspended

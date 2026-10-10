@@ -5499,9 +5499,11 @@ class InteractiveStreamE2ETest {
             openChatRow(name)
             val hold = "curl --max-time 180 --silent --show-error $fixture/hold"
             val childReply = "agent1783_done"
+            val holdTools = "curl --max-time 180 --silent --show-error $fixture/hold-tools"
             sendFromPhone(
                 "Use Agent once with run_in_background=true, subagent_type=general-purpose and description=Held background agent. " +
-                    "Give it exactly these instructions: first make two separate foreground Bash calls, " +
+                    "Give it exactly these instructions: first run Bash with timeout 180000 in the foreground: $holdTools . " +
+                    "After that finishes make two separate foreground Bash calls, " +
                     "each running printf agent1783_ready. Then run Bash with timeout 180000 in the foreground: $hold . " +
                     "Wait for that command to finish, then reply exactly $childReply as your own ordinary assistant paragraph. " +
                     "Do not use any other tool yourself or wait for the agent. " +
@@ -5521,7 +5523,42 @@ class InteractiveStreamE2ETest {
             val task = MobileJson.decodeFromJsonElement(BackgroundTaskStartedPayloadDto.serializer(), launched.payload)
             val agentId = task.toolCallId
             require(agentId.isNotEmpty()) { "background task omitted its Agent join" }
-            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "launching turn did not end", allowed) { it.type == "turn_end" }
+            val origin =
+                requireNotNull(
+                    peer
+                        .recorded(chat)
+                        .single {
+                            it.type == "tool_use" && peer.field(it, "tool_use_id") == agentId
+                        }.let { peer.field(it, "turn_id") },
+                )
+            val launchingEnd =
+                allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "launching turn did not end", allowed) {
+                    it.type == "turn_end" && peer.field(it, "turn_id") == origin
+                }
+            // Causal fence: the child cannot start these tools until the main turn has ended.
+            stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release-tools")
+            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "two late child tools did not arrive", allowed, frame = "tool_use") {
+                peer.recorded(chat).dropWhile { frame -> frame != launchingEnd }.drop(1).count { frame ->
+                    frame.type == "tool_use" && peer.field(frame, "parent_tool_use_id") == agentId
+                } >= 2
+            }
+            val lateTools =
+                peer
+                    .recorded(chat)
+                    .dropWhile { it != launchingEnd }
+                    .drop(1)
+                    .filter {
+                        it.type == "tool_use" && peer.field(it, "parent_tool_use_id") == agentId
+                    }.map { requireNotNull(peer.field(it, "tool_use_id")) }
+            assertTrue("at least two distinct child tools received after main completion", lateTools.distinct().size >= 2)
+            assertTrue(
+                "late child calls retain their launching turn",
+                peer
+                    .recorded(chat)
+                    .filter {
+                        it.type == "tool_use" && peer.field(it, "tool_use_id") in lateTools
+                    }.all { peer.field(it, "turn_id") == origin },
+            )
             allowPromptsUntil(
                 peer,
                 chat,
@@ -5546,11 +5583,46 @@ class InteractiveStreamE2ETest {
             allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "newer phone turn did not finish", allowed) {
                 it.type == "turn_end" && peer.recorded(chat).count { frame -> frame.type == "turn_end" } > priorEnds
             }
+            // The peer connection can finish before the phone folds and renders that same reply.
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    hostRepository().observeMessages(chat).first { items ->
+                        items.filterIsInstance<ThreadItem.MessageItem>().any {
+                            it.message.role == Role.Assistant &&
+                                it.message.parentToolUseId.isEmpty() &&
+                                "newer1783" in it.message.content &&
+                                !it.message.isStreaming
+                        }
+                    }
+                    hostRepository().observeTurnPhase(chat).first { it == LiveSessionEvent.TurnState.Phase.Idle }
+                }
+            }
             val go = string(R.string.agent_go_to)
-            val marker = hasText(go) and hasClickAction()
+            val marker = hasText(go) and hasClickAction() and hasText(task.description.orEmpty().take(4096))
             val header = hasTestTag("background-agent:$agentId")
-            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
-            composeTestRule.onNode(marker).performClick()
+            val markerTarget =
+                composeTestRule.questionAnswerTarget(marker, lazyKey = "agent-start:$agentId") {
+                    val frames = peer.recorded(chat)
+                    val finished =
+                        frames.any {
+                            it.type == "background_task_updated" &&
+                                peer.field(it, "task_id") == task.taskId &&
+                                !peer.field(it, "status").isNullOrEmpty()
+                        }
+                    val phase = runBlocking { hostRepository().observeTurnPhase(chat).first() }
+                    val markerIndex =
+                        composeTestRule
+                            .onNode(
+                                hasScrollToNodeAction(),
+                            ).fetchSemanticsNode()
+                            .config[SemanticsProperties.IndexForKey]("agent-start:$agentId")
+                    val composed = composeTestRule.onAllNodes(marker).fetchSemanticsNodes().size
+                    Log.i(
+                        "AgentRunProof",
+                        "event=first_marker task_finished=$finished peer_turn_ended=true phone_phase=$phase marker_index=$markerIndex composed=$composed $it",
+                    )
+                }
+            markerTarget.performTouchInput { click(center) }
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
             composeTestRule.onNode(header).assertIsDisplayed()
             val user = composeTestRule.onNode(inThreadList(newer), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
@@ -5609,14 +5681,33 @@ class InteractiveStreamE2ETest {
                         it.role == Role.Assistant &&
                         it.parentToolUseId == agentId
                 }
+            assertTrue(
+                "every late received child belongs to the visible Agent family",
+                lateTools.all { id ->
+                    ownedMessages.any { it.id == id && it.toolCall?.parentToolUseId == agentId }
+                },
+            )
+            val lateResults = peer.recorded(chat).filter { it.type == "tool_result" && peer.field(it, "tool_use_id") in lateTools }
+            assertTrue(
+                "late children receive correctly attributed results",
+                lateTools.all { id ->
+                    lateResults.any {
+                        peer.field(it, "tool_use_id") == id &&
+                            peer.field(it, "parent_tool_use_id") == agentId &&
+                            peer.field(it, "turn_id") == origin
+                    }
+                },
+            )
             val runId = ownedMessages.first { it.role == Role.Tool }.id
             val proofRun = System.currentTimeMillis()
+            Log.i("AgentRunProof", "event=late_agent_tools after_main_end=true late_tools=${lateTools.distinct().size}")
             composeTestRule.verifyAgentRunNavigation(
                 agentId = agentId,
                 runId = runId,
                 childIds = ownedMessages.map { it.id },
                 ownedChild = hasText(childReply) and hasAnyAncestor(hasTestTag("background-agent-child:$agentId")),
                 goLabel = go,
+                markerMatcher = marker,
                 expandLabel = string(R.string.tool_run_expand),
                 collapseLabel = string(R.string.tool_run_collapse),
                 evidence = { Log.i("AgentRunProof", "proof_run=$proofRun $it") },
@@ -5642,6 +5733,7 @@ class InteractiveStreamE2ETest {
             assertTrue("later phone message must render below the settled Agent", laterIndex < agentIndex)
         } finally {
             try {
+                stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release-tools")
                 stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release")
             } finally {
                 runBlocking { preferences.setCollapseToolUses(previousCollapse) }

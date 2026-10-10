@@ -67,8 +67,14 @@ Background-agent placement (#1783) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
 and at rung 4 by
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`.
+Since #1951, both scenarios verify at least two attributed child tool starts received after
+the launching main `turn_end`, retaining the originating turn and owned expansion membership.
 Both scenarios also prove settled scroll-only navigation followed by one owned-control tap to open
 and one to close, checking expansion semantics and child list membership (#1867).
+Since #1994, the live first marker reveal waits for the phone's finalized newer reply
+and Idle phase; owned keyed recovery distinguishes lazy disposal from projection removal.
+The shared settled-navigation proof supplies the same owned marker key in both harnesses.
+See [marker reveal evidence](#held-agent-marker-reveal-1994).
 Controlled projection/Compose fixtures separately cover multiple agents and history permutations.
 Since #1940, the shared navigation proof treats the first child's message key as the
 collapsed representative and requires all remaining children absent until expansion.
@@ -76,6 +82,10 @@ collapsed representative and requires all remaining children absent until expans
 the integrated tool-rendering check. Deterministic anchor preservation is proved by
 `ThreadRowAnchorTest` and its Android-visible wrapper, independently of these live
 scenarios; see [stable-row evidence](#stable-row-identity-1940).
+The same scenarios remain unchanged for #1955. Shared
+`BackgroundAgentViewportTest` and Android `BackgroundAgentViewportDeviceTest`
+prove each rendered frame during relocation, independently of E2E placement/navigation;
+see [counted acceptance evidence](#background-agent-viewport-preservation-1955).
 Attributed background-agent prose (#1827) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent`; the same rung-4
 `background-agent` scenario adds attributed and unmatched prose to its fixtures.
@@ -429,9 +439,21 @@ command remains `python3 scripts/android-test-gate.py live`.
 **Background Agent follows the newest end (#1783).**
 `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
 launches a real `local_agent` with `run_in_background=true` and waits for the launching turn to end
-while the task continues. Two harmless `printf` tool calls advance the subagent's tool count by two,
+while the task continues. An independent `/hold-tools` fence holds the child before its two
+harmless `printf` tool calls; `/release-tools` is sent only after the peer observes the launching
+main `turn_end` (#1951). The peer requires at least two distinct later tool starts with the Agent
+parent and originating turn, then correlated results with the same attribution. Every received
+late tool must belong to the repository's owned family and the visible run's expansion proof.
+The two `printf` calls advance the subagent's tool count by two,
 the daemon's threshold for progress evidence, before a foreground Bash `curl` enters a causal hold.
 A newer phone message must render above the live block; “Go to agent ↓” must reveal its Agent header.
+Before that first reveal, wait for the phone repository's finalized main newer reply and Idle
+phase; peer `turn_end` does not fence phone rendering (#1994). Select the held Agent's marker
+with its bounded launch description and `agent-start:<agentId>` key. If later growth disposes
+it, `questionAnswerTarget` checks projected membership, reveals the same key and remeasures
+chrome within its existing budget before the single physical tap. Missing keys and ambiguous
+selectors remain failures. Count and bounds come from one synchronized semantics sample.
+
 A phone Bash command releases the hold, and the scenario waits for the phone's Finished marker
 before sending the later message, avoiding a race between peer and app socket delivery.
 The later message must appear below the settled block. With collapsing enabled, the settled child
@@ -440,7 +462,9 @@ The first loaded direct child tool's message id identifies the owned run, not th
 One physical pointer tap on its chrome-clear control opens it, and the next closes it (#1867).
 Each transition checks the Show/Hide tool uses expansion action and all loaded owned child keys
 through `IndexForKey`. The owned final paragraph is brought into composition and shown once before
-closing; collapsed keys must be absent from the list, so off-screen disposal cannot pass as collapse.
+closing; all nonrepresentative child keys must be absent when closed. The first child's key
+represents the closed header (#1940), so expansion semantics must accompany membership checks;
+off-screen disposal cannot pass as collapse.
 Opening a tall block can dispose its header: wait for child-key membership, then reveal the existing
 header once to inspect its expansion action. Lifecycle, running/finished marker navigation and
 list-position checks remain. The latter compare list indexes rather than on-screen bounds because
@@ -448,7 +472,8 @@ attributed prose can make the opened block taller than the screen (#1827).
 The existing progress-panel scenario uses a foreground subagent and cannot prove this placement.
 
 `scripts/background-agent-fixture.py` is scenario-specific host I/O: loopback only, an ephemeral
-port written inside the harness temporary directory, fixed `/hold` and `/release` endpoints,
+port written inside the harness temporary directory, fixed `/hold` and `/release` endpoints
+and the independent `/hold-tools` and `/release-tools` pair,
 a 180-second maximum hold and no request logging. The harness starts it, passes
 `backgroundAgentFixtureUrl` to instrumentation and cleans it up with the isolated test stack.
 This requires daemon v0.31.0's inactive-conversation delivery fix (pyrycode#2739) and the merged
@@ -1239,7 +1264,7 @@ that reconnect re-ask's history page to supply the prompt text.
 **[#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) removed the reconnect re-ask outright**
 (older history now loads only on the reader's own pull, never on a reconnect — see [Remote conversation
 repository § the retry and the two
-restarts](knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md#the-retry-and-the-two-restarts-778)),
+restarts](knowledge/features/remote-conversation-repository-history-walk.md#the-retry-and-the-two-restarts-778)),
 so this scenario no longer has a history page to lean on for `OFFLINE_PROMPT`'s text. It still needs none:
 since pyrycode#2699, landed before #1352, the daemon pushes each delivered user message **live and into
 the replay ring**, not only into history, so the missed-event `last_event_id` replay that #1352 explicitly
@@ -2947,7 +2972,7 @@ The configured `scripted-all` gate includes `ping` and retains both methods:
 | --- | --- | --- | --- |
 | `reply-suggestion` (#1866) | actual suggestion placeholder, long-press/release, one verbatim user message and newer daemon clear | `reply-suggestion.jsonl` (successful result followed by native `prompt_suggestion`) | one |
 | `stop-background-task` (#1830) | opening the retained running row and tapping Stop removes its row/count | existing fakeclaude canned-roster rider and `stop_task` handler | no replay fragments or second-message release |
-| `background-agent` (#1783, #1827) | background lifecycle moves a loaded tool family, marker navigation preserves collapse state, explicit expansion reveals its child run, and finish settles it before later text; attributed child prose stays in the run through closed, open and closed states while unmatched and main prose stay top-level | `background-agent-open.jsonl` + `background-agent-finish.jsonl` | **two** (release on second send) |
+| `background-agent` (#1783, #1827, #1951) | two attributed child tools arrive after main turn end and expand under their Agent; background lifecycle moves a loaded tool family, marker navigation preserves collapse state, explicit expansion reveals its child run, and finish settles it before later text; attributed child prose stays in the run through closed, open and closed states while unmatched and main prose stay top-level | `background-agent-open.jsonl` + `background-agent-finish.jsonl` | **two** (release on second send) |
 | `selection-copy` (#1674) | finished assistant prose copies only the long-pressed word through Android’s system menu | `selection-copy.jsonl` | one |
 | `direct-share` (#1729) | published shortcut stages text in its thread without a picker or send; explicit Send receives ping | `ping.jsonl` | one |
 | `ping` (default, #1842) | original single-line reply plus durable reconnect newest-page delivery and reader-driven gap catch-up | `ping.jsonl` | one, reused by both methods |
@@ -3096,8 +3121,12 @@ are recorded under [Verification status](#verification-status).
 
 `background-agent` selects
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
-and belongs to `python3 scripts/android-test-gate.py scripted-all`. The first raw fragment leaves a
-running background Agent family after its launching turn; a second phone send releases terminal
+and belongs to `python3 scripts/android-test-gate.py scripted-all`. Since #1951, the first raw
+fragment ends the launching main turn before `late1951-one` and `late1951-two` arrive. Collection
+starts before sending: the proof requires the observed main `TurnEnd`, those two later child
+`ToolUse`s with the Agent parent and originating turn, and no additional main `TurnEnd` from
+child activity. The tools must survive in the owned family and enter its expanded child list.
+The Agent remains running; a second phone send releases terminal
 lifecycle evidence followed by `after1783`. The test navigates from Running and Finished markers,
 asserts the owned `tool-run:child1783` remains closed after both taps and that the settled header
 is above the later reply. The run id comes from the first owned child tool in the loaded repository
@@ -5265,6 +5294,132 @@ Earlier results and failure history:
   selective. Rung 4 needs no negative control: the scripted backend makes the positive assertion
   deterministic.
 
+### Held Agent marker reveal (#1994)
+
+The [sanitized diagnosis](https://github.com/pyrycode/pyrycode-mobile/issues/1994#issuecomment-6089958984)
+reproduces newer reply growth between first reveal and tap preparation: the Agent stays
+running, its marker remains projected at index 4, and composed matches fall to zero.
+The unmodified chrome helper fails before tapping. Keyed recovery restores a fresh
+chrome-clear sample and one physical tap reveals the held root without opening its run.
+The historical #1992 trace identifies the failed first tap but cannot identify the particular
+update that disposed its marker; the same-tree rerun is not diagnostic evidence.
+The later #1942 timeout occurs after clicking and is a separate observed boundary.
+
+The [verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2022#issuecomment-6090233965)
+and retained XML confirm
+`BackgroundAgentBlocksScreenTest.lateNewerReplyDisposesMarkerButKeyedRevealStillNavigatesHeldAgent`
+failed before repair (**1 executed, 1 failed, 0 skipped**) and passed afterward.
+`keyedMarkerWithHeldDescriptionNavigatesOnlyItsAgent` and
+`removedMarkerFailsInsteadOfBeingTreatedAsLazyDisposal` also passed. The affected shared
+classes total **41 executed/passed, 0 failed, 0 skipped** (18 marker, 9 prose, 14 inline-question).
+The full UI gate records **254 executed/passed, 0 failed, 1 skipped**; the unrelated skip
+is `RenameDialogCaptureTest.renameAtFigmaViewport`.
+
+The fresh full scripted-all report confirms
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+passed: **22 executed/passed, 0 failed, 0 skipped** overall, with the named method
+**1 executed/passed, 0 failed, 0 skipped**. This is full-suite preservation evidence,
+separate from the builder's focused scripted run.
+
+The [dispatcher full live gate](https://github.com/pyrycode/pyrycode-mobile/issues/1994#issuecomment-6090438126)
+and supplied per-method JUnit report confirm
+`InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
+passed: **65 executed/passed, 0 failed, 0 skipped**, none flaky. Output
+`2026-10-09T22-23-06-431Z` tested `feature/1994` at `3885c5a12c5f` merged with
+`origin/main` at `5133aa796352`, after verifier PASS. No daemon revision was annotated.
+This fresh full run satisfies live acceptance; no focused live run is claimed.
+Held-running, newer-message and settled placement, completion, scroll-only navigation,
+owned-run closed/open/closed proof and fixture/preference cleanup remain intact.
+
+### Late background Agent tools (#1951)
+
+Correctly attributed late frames passed without a Mobile production change; daemon
+[#2960](https://github.com/pyrycode/pyrycode/issues/2960) supplies the attribution repair.
+The [verifier's XML review](https://github.com/pyrycode/pyrycode-mobile/pull/2005#issuecomment-6081750934)
+and retained `/tmp/builder-1951/focused-green/` reports establish **56 executed, 56 passed,
+0 failed/errors, 0 skipped**: `ScriptedBackgroundAgentToolsTest` (2), `BackgroundAgentBlocksTest`
+(21), `BackgroundAgentBlocksScreenTest` (15), `ToolRunCollapseTest` (6) and
+`BackgroundAgentProseTest` (12). The missing-parent control in `missing-parent-red.xml` reports
+**1 executed, 1 expected failure, 0 errors, 0 skipped**: removing only `late-two`'s parent
+loses that child from the block. Both received-frame regressions passed after restoration.
+
+The builder's `python3 scripts/android-test-gate.py scripted background-agent` passed
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`:
+**1 executed, 1 passed, 0 failed/errors, 0 skipped**. Documentation inspected the retained
+`/tmp/builder-1951/scripted-green.xml`; this is the focused scripted scenario, not a full
+`scripted-all` result.
+
+The [fresh dispatcher live gate](https://github.com/pyrycode/pyrycode-mobile/issues/1951#issuecomment-6084909152),
+output `2026-10-09T16-08-53-491Z`, ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `feature/1951`
+at `5d3aa0207093` merged with `origin/main` at `4a5e624f6f63`:
+**65 executed, 65 passed, 0 failed, 0 skipped**, none flaky, exit 0 in 945.8 seconds.
+The supplied per-method JUnit-XML gate report explicitly lists
+`InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished` as passed.
+This satisfies the fresh full-live requirement; no separate focused live run is claimed.
+There is no daemon-revision annotation in this run.
+
+Full deterministic verification remains unverified: the verifier's `./gradlew check` timed out
+at `:app:compileDebugUnitTestKotlin` after 60 minutes without counted unit results. The supplied
+UI and `scripted-all` gate entries have missing logs and no per-test counts. The focused results
+above do not establish a full deterministic gate pass. Documentation ran only the docs guard.
+
+### Stale Agent navigation cancellation (#1956)
+
+The existing rung-3
+`InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
+and rung-4
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+remain unchanged. They preserve integrated marker navigation and owned-run collapse coverage.
+[Production-screen regressions and Android wrappers](knowledge/features/thread-screen-subagent-tool-rows.md#background-agent-lifecycle-placement-1783)
+prove stale-request cancellation, including accessibility, departure/restoration and replacement.
+
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2019#issuecomment-6089149709)
+on `005e15f4cb724cd137ab484cc401b46531033bab` records the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`
+result: **22 executed, 22 passed, 0 failed, 0 skipped**. Its fresh
+`build/dispatcher-tests/scripted-all-008lfg42/dispatcher.xml` review and the supplied
+per-method JUnit-XML gate report confirm the named rung-4 method executed and passed:
+**1 executed, 1 passed, 0 failed, 0 skipped**.
+
+The [dispatcher full live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1956#issuecomment-6089455387),
+report `2026-10-09T20-59-16-477Z`, ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`feature/1956` at `005e15f4cb72`, merged with `origin/main` at `60ba3f24fed1`:
+**65 executed, 65 passed, 0 failed, 0 skipped**, none flaky, exit 0 in 21m 23s.
+The supplied fresh per-method JUnit-XML report explicitly lists the named rung-3
+method as passed: **1 executed, 1 passed, 0 failed, 0 skipped**. No daemon-revision
+annotation was supplied. Both named results came from full suites; no separate
+focused live run is claimed. Documentation ran only the docs guard.
+
+### Background-agent viewport preservation (#1955)
+
+The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2016#issuecomment-6088220558)
+on `ef4b4b21657f` records the fresh full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`
+gate: **22 executed, 22 passed, 0 failed, 0 skipped**. Its `dispatcher.xml` and
+`background-agent-0-TEST-installed.xml` confirm
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+executed and passed (**1 executed, 0 failed, 0 skipped**). This is full scripted
+acceptance, distinct from the builder's focused background-agent run.
+
+The [dispatcher-owned full live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1955#issuecomment-6088454607),
+report `2026-10-09T19-56-00-743Z`, ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`feature/1955` at `ef4b4b21657f`, merged with `origin/main` at `d7c1e20e8a43`:
+**65 executed, 65 passed, 0 failed, 0 skipped**, none flaky, exit 0 in 14m 46s.
+The supplied fresh per-method JUnit-XML report lists
+`InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
+as executed and passed (**1 executed, 0 failed, 0 skipped**). No daemon-revision
+annotation was supplied, and no separate focused live run is claimed.
+
+Both existing rung-3/rung-4 methods remain unchanged. They prove integrated
+placement/navigation; the one-physical-pixel and every-rendered-frame viewport
+requirements are established by the
+[23 shared/Android frame methods](knowledge/features/thread-screen-testing.md#reader-geometry-during-background-agent-relocation-1955).
+The fresh full UI gate passed **245 executed, 245 passed, 0 failed, 1 skipped**;
+all 23 viewport methods passed with none skipped. Documentation ran only the docs guard.
+
 ### Stable row identity (#1940)
 
 The [fresh dispatcher live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1940#issuecomment-6079196923)
@@ -5331,6 +5486,46 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Stale Agent navigation cancellation (#1956):** Preserved rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
+  and rung-4
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+  each passed **1/0/0** (executed/failed/skipped) in the fresh full live/scripted
+  gates [above](#stale-agent-navigation-cancellation-1956). Nine shared/Android screen probes
+  supply cancellation proof. No scenario or evidence follow-up remains; the pre-ship
+  command stays `python3 scripts/android-test-gate.py live`.
+
+- **Background Agent viewport preservation (#1955):** Retained rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
+  and rung-4
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+  each passed **1/0/0** (executed/failed/skipped) in the fresh full live/scripted
+  gates [above](#background-agent-viewport-preservation-1955). Shared and Android
+  frame probes supply the viewport proof. No scenario or evidence follow-up remains;
+  the pre-ship command stays `python3 scripts/android-test-gate.py live`.
+
+- **Late background Agent tools (#1951):** Strengthened existing rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished` and rung-4
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+  establish post-main-end child attribution and owned placement/expansion. The live tool fence
+  is independent of task completion. The focused scripted named pass and fresh full-live named
+  pass are recorded [above](#late-background-agent-tools-1951); no scenario coverage or live
+  evidence follow-up remains. Complete full deterministic gate evidence remains an operator
+  follow-up after the Gradle timeout; no full UI or scripted-all pass is claimed. The pre-ship
+  command stays `python3 scripts/android-test-gate.py live`.
+
+- **Held Agent marker reveal (#1994):** Existing rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
+  and rung-4
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+  retain their placement and navigation contracts. The phone-side finalized-reply fence,
+  owned-marker selection and bounded keyed disposal recovery are covered by the three
+  shared marker regressions. Fresh full live (65 executed/passed, 0 failed, 0 skipped)
+  and scripted-all (22 executed/passed, 0 failed, 0 skipped) named passes are
+  [recorded above](#held-agent-marker-reveal-1994); no coverage or acceptance follow-up remains.
+  The exact historical disposal update remains unidentified. No scenario or real-Claude
+  turn was added; the pre-ship command stays `python3 scripts/android-test-gate.py live`.
 
 - **Background Agent chrome remeasurement (#1973):**
   `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent` retains

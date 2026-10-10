@@ -15,10 +15,10 @@ from stored bytes, absence of identifiers from `RelayLog` output across both suc
 failure paths, and a coded, causeless exception on a forced write failure.
 
 **Every persistence assertion reads through a second `FileConversationCache` constructed over
-the same root**, not the instance that wrote it. Nothing in this implementation caches
-in-memory, so a same-instance read happens to be honest today — but it proves nothing about "a
-fresh process that did not write it," and the first in-memory field anyone adds would make a
-same-instance assertion pass while lying. This is the JVM-root equivalent of the paired-server
+the same root**, not the instance that wrote it. The one-entry validated thread decode
+(#1949) makes this distinction concrete: a same-instance read alone proves nothing about
+"a fresh process that did not write it." Every thread read still checks freshly read bytes,
+but persistence and reuse need separate assertions. This is the JVM-root equivalent of the paired-server
 store's ["recreating the store over the same DataStore can pass on cached preferences"](paired-server-store.md#testing)
 lesson. `RelayLog.sink`/`enabled` are captured and restored around each test, the same idiom
 `SettingsViewModelTest` uses, which is what makes the "no identifier reaches a log" assertion
@@ -72,11 +72,21 @@ the production path never exercised the trim rule — a drawn thread trimmed at
 cache. See [Caching conversation repository](caching-conversation-repository.md) for why
 `observeMessages` now hands `writeThread` the untrimmed drawn rows rather than pre-trimming them.
 
+`DecodedThreadRestoreTest` (#1949) checks shared row/position decode reuse, mutation
+invalidation, host isolation, same-length/same-time external replacement, malformed
+optional metadata, unreadable replacement and removal. Typed row reads also preserve
+arbitrary field order and unknown-field handling. File size and modification time are
+not content evidence. `HistoryHashCompatibilityTest` compares identities and row proofs
+with the previous formatter and persisted representation, including multiple independent
+inputs in a reused digest and maximum-unsigned restore order. Keep stale-claim and
+legacy-alias tests alongside the matching-coverage identity-preservation regression:
+reusing immutable coverage must never bypass proof checks.
+
 `HistoryDurabilityTest` (#1832) covers fresh-instance coverage/high-water and cursor restore,
 partial fills, conservative legacy migration, cache exclusions, failed row writes and interruption
 between row/state writes. `HistoryCacheReworkTest` exercises complete production paths for durable
 order, saved cursor/stop trim reset and deletion during suspended writers; see
-[wrapper testing](caching-conversation-repository.md#testing).
+[wrapper testing](caching-conversation-repository-testing.md#testing).
 
 Real app process death is proved on a device: [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833)'s
 external force-stop proof stops the app without clearing data, and a post made meanwhile appears
@@ -90,14 +100,16 @@ handoff; [#1842](https://github.com/pyrycode/pyrycode-mobile/pull/1915#issuecomm
 scopes a bounded three-minute timeout to `trimmingResetsWalk`, rather than shrinking the fixture
 or changing cache production behavior.
 
-No Compose UI test and no emulator scenario for the original two storage families — #796's
+The original storage-family checks did not include Compose or emulator scenarios: #796's
 restored conversation rows
-and #797's restored thread rows both draw through the same composables a live row does, so the
-screen needs no cache-specific coverage. See [dependency injection §
+and #797's restored thread rows both draw through the same composables a live row does.
+That establishes shared rendering, not restore latency. The production-wired
+[saved-thread first-draw device check](thread-screen-testing.md#saved-thread-first-draw-1949)
+now covers real cache/repository/ViewModel restoration and committed drawing. See [dependency injection §
 Testing](dependency-injection.md#testing) for `HostConversationSourceTest`'s restore/live-race
 cases and for why every other instrumented container built from `appModule` overrides this binding
 with a shared `InertConversationCache` fake rather than supplying a real `Context`. See [Caching
-conversation repository § Testing](caching-conversation-repository.md#testing) for the restore
+conversation repository § Testing](caching-conversation-repository-testing.md#testing) for the restore
 merge's own unit coverage. Live continuity across a real reconnect — a loaded conversation staying
 readable while its host link is cut and reconciling a peer's turn once the link is restored — is
 proven live by [#850](https://github.com/pyrycode/pyrycode-mobile/issues/850)

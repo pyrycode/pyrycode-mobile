@@ -298,12 +298,20 @@ class HistoryReconciliationTest {
     @Test
     fun hostileOrdinaryKey_cannotEvictHeldAssistantText() {
         val held = reduced(delta(1, 2, "keep"), end(2))
-        val collision = listOf(ThreadItem.MessageItem(message("t#2", 2)))
-        assertEquals(held, held.mergeCachedRows(collision))
-        val ordinary = listOf(ThreadItem.MessageItem(message("t#2", 2)))
-        val drawn = ordinary.mergeHistoryRows(held)
-        assertEquals(listOf("t#2"), drawn.ids())
-        assertEquals("t#2", drawn.messages().single().content)
+        val user = ThreadItem.MessageItem(message("t#2", 2))
+        val aliasedUser = user.copy(message = user.message.copy(id = "t#2~1", reconciliationId = "t#2"))
+        val assistant = held.single() as ThreadItem.MessageItem
+        val aliasedAssistant = assistant.copy(message = assistant.message.copy(id = "t#2~1"))
+        for (cache in listOf(false, true)) {
+            var assistantFirst = held
+            var userFirst = listOf<ThreadItem>(user)
+            repeat(3) {
+                assistantFirst = if (cache) assistantFirst.mergeCachedRows(listOf(user)) else assistantFirst.mergeHistoryRows(listOf(user))
+                userFirst = if (cache) userFirst.mergeCachedRows(held) else userFirst.mergeHistoryRows(held)
+                assertEquals(held + aliasedUser, assistantFirst)
+                assertEquals(listOf(aliasedAssistant, user), userFirst)
+            }
+        }
     }
 
     @Test
@@ -314,12 +322,14 @@ class HistoryReconciliationTest {
             projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t#2", 1, " tail"))
             val held = projection.observe("c").first()
             val collision = page(delta(1, 2, "older"), end(2))
+            val newcomer = reduced(delta(1, 2, "older"), end(2)).single() as ThreadItem.MessageItem
+            val expected = listOf(newcomer.copy(message = newcomer.message.copy(id = "t#2~1"))) + held
             var cached = held
             repeat(3) {
                 projection.mergeHistoryPage("c", collision, true)
-                assertEquals(held, projection.observe("c").first())
+                assertEquals(expected, projection.observe("c").first())
                 cached = cached.mergeCachedRows(reduceHistoryPage(collision.entries, true))
-                assertEquals(held, cached)
+                assertEquals(expected, cached)
                 assertEquals(cached.ids().distinct(), cached.ids())
             }
         }
@@ -329,13 +339,15 @@ class HistoryReconciliationTest {
         val legacy = ThreadItem.MessageItem(message("t", 0).copy(role = Role.Assistant, content = "unmatched legacy"))
         val held = listOf(legacy) + reduced(delta(1, 0, "keep", turn = "t#0"))
         val incoming = reduced(delta(2, 0, "novel"))
+        val newcomer = incoming.single() as ThreadItem.MessageItem
+        val expected = held + newcomer.copy(message = newcomer.message.copy(id = "t#0~1"))
         var cached = held
         var history = held
         repeat(3) {
             history = history.mergeHistoryRows(incoming)
             cached = cached.mergeCachedRows(incoming)
-            assertEquals(held, history)
-            assertEquals(held, cached)
+            assertEquals(expected, history)
+            assertEquals(expected, cached)
             assertEquals(cached.ids().distinct(), cached.ids())
         }
     }
