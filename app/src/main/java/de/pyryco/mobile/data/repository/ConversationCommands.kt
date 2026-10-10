@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.ArchiveConversationPayloadDto
 import de.pyryco.mobile.data.network.ConversationDeletedPayloadDto
@@ -33,6 +34,7 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.T
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_UNARCHIVE_CONVERSATION
 import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.Clock
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -59,7 +61,29 @@ internal class ConversationCommands(
     private val conversationList: ConversationListProjection,
     private val threadProjection: ThreadProjection,
     private val deviceName: String,
+    negotiatedCapabilities: () -> Set<String>,
 ) {
+    private val agentSwitches = SwitchAgentCommands(send, negotiatedCapabilities, requests::nextRequestId)
+
+    suspend fun switchAgent(
+        conversationId: String,
+        agent: ConversationAgent,
+        model: String,
+        effort: String?,
+    ): Result<Unit> = agentSwitches.switchAgent(conversationId, agent, model, effort)
+
+    fun confirmAgentSwitch(
+        record: ConversationResponseDto,
+        payload: JsonElement,
+    ) = agentSwitches.confirm(record, payload)
+
+    fun refuseAgentSwitch(
+        requestId: Long,
+        payload: JsonElement,
+    ) = agentSwitches.refuse(requestId, payload)
+
+    fun endAgentSwitches() = agentSwitches.end()
+
     private val pendingReadMarks = ConcurrentHashMap<Long, String>()
 
     /** Validate this command's type and target before the ordinary update arm can fold a reply. */

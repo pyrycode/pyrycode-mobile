@@ -5848,7 +5848,7 @@ annotation was supplied, and no separate focused live run is claimed.
 Both existing rung-3/rung-4 methods remain unchanged. They prove integrated
 placement/navigation; the one-physical-pixel and every-rendered-frame viewport
 requirements are established by the
-[23 shared/Android frame methods](knowledge/features/thread-screen-testing.md#reader-geometry-during-background-agent-relocation-1955).
+[23 shared/Android frame methods](knowledge/features/thread-screen-testing-background-agent-viewport.md#reader-geometry-during-background-agent-relocation-1955).
 The fresh full UI gate passed **245 executed, 245 passed, 0 failed, 1 skipped**;
 all 23 viewport methods passed with none skipped. Documentation ran only the docs guard.
 

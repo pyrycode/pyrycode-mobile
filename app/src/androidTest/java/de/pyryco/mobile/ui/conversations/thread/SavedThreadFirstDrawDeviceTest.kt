@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import android.os.Debug
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import android.view.View
@@ -21,6 +22,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.model.ConnectionState
@@ -37,6 +39,8 @@ import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSnapshotSource
+import de.pyryco.mobile.e2e.awaitEmulatorCpuIdle
+import de.pyryco.mobile.e2e.parseEmulatorCpuTicks
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -67,6 +71,21 @@ class SavedThreadFirstDrawDeviceTest {
         val probe: Probe,
         val online: Boolean,
     )
+
+    private fun awaitDeviceReadiness() {
+        runBlocking {
+            awaitEmulatorCpuIdle(
+                sample = {
+                    ParcelFileDescriptor
+                        .AutoCloseInputStream(
+                            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("cat /proc/stat"),
+                        ).use { parseEmulatorCpuTicks(it.bufferedReader().readLine()) }
+                },
+                onWindow = { Log.i("SavedThreadEnvironment", "event=cpu_window idle_pct=$it") },
+            )
+        }
+        Log.i("SavedThreadEnvironment", "event=cpu_idle")
+    }
 
     private val selected = mutableStateOf<Opening?>(null)
     private var activeProbe: Probe? = null
@@ -114,6 +133,7 @@ class SavedThreadFirstDrawDeviceTest {
                         val delegate = HeldNewest()
                         var repo: CachingConversationRepository? = null
                         repeat(2) { opening ->
+                            awaitDeviceReadiness()
                             val probe =
                                 Probe("$name online=$online opening=$opening", (rows.last() as ThreadItem.MessageItem).message.content)
                             activeProbe = probe
@@ -136,6 +156,7 @@ class SavedThreadFirstDrawDeviceTest {
         val rows = listOf(ThreadItem.MessageItem(Message("slow", "s", Role.User, "Slow saved row.", Instant.fromEpochSeconds(1), false)))
         withFixture("slow", rows, null) { root ->
             val delegate = HeldNewest()
+            awaitDeviceReadiness()
             val probe = Probe("negative-control", (rows.last() as ThreadItem.MessageItem).message.content)
             activeProbe = probe
             openAndMeasure(repository(root, delegate, 3000), delegate, false, probe, rows, null)

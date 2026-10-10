@@ -234,3 +234,5 @@ _(none yet — system overview will land when there's more than one screen to ma
 
 - [Caching conversation repository — testing](features/caching-conversation-repository-testing.md): worker scheduling, restore/reconnect and coalesced persistence probes; split from the cache wrapper overview for #1979.
 - [Remote conversation repository — history walk and retry](features/remote-conversation-repository-history-walk.md): backwards history requests, retry and retired reconnect restarts; split from history paging for #1979.
+
+- [Thread screen — background-agent viewport testing](features/thread-screen-testing-background-agent-viewport.md): 23 shared/Android frame probes, cold-boundary controls and counted viewport evidence; split from thread-screen-testing.md for #2039.
