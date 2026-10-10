@@ -67,7 +67,7 @@ None. Forecast: approximately 1000–1300 written lines including plan and tests
 
 **Verdict:** PASS
 
-- [Trust boundaries] The validated factory and assembler completion are the only admission boundaries. Required token shapes, finite bytes and exact metadata checks prevent coercion or partial authority. Raw retained content remains explicitly inert; rendering and item applicability are later-store work.
+- [Trust boundaries] The validated factory and assembler completion are the only admission boundaries. Required token shapes, finite bytes and exact metadata checks prevent coercion or partial authority. Retained digest lookup identifies the original repair owner even when a later part changes or omits its route. Raw retained content remains explicitly inert; rendering and item applicability are later-store work.
 - [Tokens, secrets and credentials] No credentials are generated or stored. Host/connection identities and all DTO/outcome content are excluded from diagnostics; string representations redact payloads.
 - [Files and storage] No filesystem use, cache writes or daemon-derived paths. Decrypted buffering is ephemeral and discarded on terminal paths.
 - [Android attack surface] No new components, intents, providers or WebViews. UI leakage/rendering remains #1988 and its consumers.
@@ -79,3 +79,7 @@ None. Forecast: approximately 1000–1300 written lines including plan and tests
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-10
+
+## Revisions
+
+- 2026-10-10: Adversarial probes `changedRoutingRepairsOriginalOwnerAndDiscardsItsBuffer` and `malformedRoutingStillDiscardsIdentifiableAssembly` initially failed because conversation-keyed lookup repaired the supplied route rather than the pending owner. Resolve a retained update digest to its original conversation before admitting routing or reporting malformed metadata, discard that owner's buffer, and emit no complete update. Different payload digests remain independent across conversations. This tightens the trust-boundary and owning-conversation cleanup findings in the security review.
