@@ -1,6 +1,8 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.foundation.lazy.LazyListState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -9,6 +11,29 @@ import org.junit.Test
  * offset, so growth never reads as a scroll.
  */
 class ThreadListFollowTest {
+    @Test
+    fun firstSavedCompositionCannotRelocateAnAgentAndDoesNotTraverseSavedBlocks() {
+        val saved =
+            object : AbstractList<ThreadRow>() {
+                override val size = 18000
+
+                override fun get(index: Int): ThreadRow = error("first composition must not scan saved block keys")
+            }
+        val viewport = ThreadListViewport(LazyListState())
+        assertNull(viewport.relocationFor(saved, saved, 0))
+    }
+
+    @Test
+    fun firstSavedCompositionHasNoMeasuredKeysToPrune() {
+        val saved =
+            object : AbstractList<ThreadRow>() {
+                override val size = 18000
+
+                override fun get(index: Int): ThreadRow = error("empty measurement cache must not scan saved keys")
+            }
+        ThreadListViewport(LazyListState()).onRowsChanged(saved, saved, null)
+    }
+
     private fun frame(
         key: Any? = "msg:30",
         index: Int = 0,
