@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.test.runner.AndroidJUnitRunner
+import kotlinx.coroutines.runBlocking
 
 /**
  * Instrumentation runner for the interactive-stream e2e prototype (#337 / #642 rung 3).
@@ -32,7 +33,7 @@ import androidx.test.runner.AndroidJUnitRunner
  * finishes. Bluetooth stays off: switching it back on would restart the crash loop on an emulator that
  * scripted-all reuses for its next scenario.
  * Disable is unconditional on emulators: a persisted off preference does not cancel pending recovery.
- * The bounded platform wait must confirm OFF before tests start; disable itself is asynchronous.
+ * A bounded state check must confirm OFF before tests start; disable itself is asynchronous.
  */
 class E2eInstrumentationRunner : AndroidJUnitRunner() {
     private var disableAnimations = false
@@ -79,7 +80,7 @@ class E2eInstrumentationRunner : AndroidJUnitRunner() {
     private fun quietSystem() {
         val hideDialogs = shell("settings get global $HIDE_ERROR_DIALOGS").trim()
         shell("settings put global $HIDE_ERROR_DIALOGS 1")
-        disableEmulatorBluetooth(::shell)
+        runBlocking { disableEmulatorBluetooth(::shell) }
         shell("am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS")
         restoreDialogs =
             if (hideDialogs.isEmpty() || hideDialogs == "null") {
