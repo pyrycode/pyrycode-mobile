@@ -69,6 +69,18 @@ connection, then requires unchanged entries, the same connection bundle and Conn
 in that same process. A fresh process or successful recovery reply alone cannot prove cleanup.
 See [recovery evidence](../../e2e-interactive-stream.md#session-error-recovery-1731).
 
+An explicitly addressed scenario must await readiness for the same host, even after fixture
+cleanup is correct. Compatibility selection can block on a stopped unrelated host or falsely
+report readiness from a different connected host. Send now's `awaitSendNowConnection` (#1898)
+reads its named bundle's combined relay/daemon status and requires both legs Connected at the
+original deadline, without changing selection or retrying. Real-registry regression checks
+exercise both wrong-host cases; a single happy-path connection check would miss them.
+[Send now coverage](../../e2e-interactive-stream.md#live-mode-rung-3-live-relay) records the
+controlled failures/passes and the separate historical and full-live evidence. A bare timeout
+without retained stage/phone evidence cannot establish which operation failed. Fixed operation
+labels and lazy content-free link snapshots preserve the original timeout cause rather than
+turning a passing diagnostic run into proof of historical causation.
+
 An instrumented test proves behavior in its fixture. It does not prove camera
 binding, lifecycle timing, relay compatibility or a real daemon round trip. The
 dispatcher runs the UI gate and each zero-real-Claude scripted scenario before
@@ -132,6 +144,35 @@ timeouts, retaining the original cause and deadline (#1703). Its captured `Await
 peer admission/key-binding repair. Accepted daemon handshakes do not prove that a phone answer
 was sent. Preserve sanitized stderr, counted XML and copied per-test logcat together; removed
 gate worktrees can erase the phone evidence needed to correlate them.
+
+A setup-stage label still needs a sub-operation and the historical tested source. In #1899,
+`PairPhone`'s 30000 ms coroutine timeout identifies the compatibility `awaitConnected` before
+code pairing: the other UI waits throw Compose timeouts and target verification handles its
+deadline as ViewModel state. Compatibility selection follows the latest surviving saved host,
+not the host about to be paired. The controlled Offline regression fails at that wait before
+repair and passes after its removal, while real parsing, fingerprint confirmation, encrypted
+save/name and exact-new-record verification remain. This establishes an unrelated setup
+prerequisite, not why the preceding host was unavailable. The unopened `peer::linkState` is
+not phone evidence; a post-test DESTROYED/focus snapshot describes teardown. Historical phone
+logcat and timed device XML were lost with the gate worktree, and retained daemon handshakes
+lack a method interval for attribution. Preserve that uncertainty rather than assigning
+selection, transport or lifecycle failure from another surface. See the
+[historical, controlled and fresh live evidence](../../e2e-interactive-stream.md#answer-host-setup-independence-1899).
+
+A passing fixture method does not prove that its process-global DI restoration is correct.
+The #1899 answer-host fixture initially restored `PairCodeViewModel` from explicit Koin
+parameters, while production navigation supplies `SavedStateHandle["serverId"]`. After
+teardown, later targeted pairing consequently lost its read-only host name and wrong-host
+guard. Restore the production lookup, including empty-target normalization, only after the
+fixture activity closes. `AnswerHostSetupCleanupTest.targetedPairingAfterFixtureTeardownKeepsItsHostGuard`
+finishes the actual fixture and activity, then launches production navigation in a second
+activity in the same instrumentation process without replacing Koin. Its red/green checks
+cover target naming/read-only behavior, wrong-host rejection before fingerprint confirmation,
+editable empty-target pairing and unchanged saved entries. A fresh process or separately
+passing pairing unit class cannot expose this contamination. The
+[retained device evidence](../../../app/src/androidTest/assets/answer-host-1899/README.md)
+records **1 executed/failed, 0 skipped** before binding repair and **2 executed/passed,
+0 failed/errors/skipped** afterward across cleanup and setup independence.
 
 An enabled semantic node and successful `performScrollToNode` do not establish a usable physical
 tap target. The thread draws beneath header/composer chrome. In #1703's short-thread reproduction,
