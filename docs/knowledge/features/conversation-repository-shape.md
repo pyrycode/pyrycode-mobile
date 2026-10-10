@@ -47,6 +47,8 @@ interface ConversationRepository {
     suspend fun delete(conversationId: String): Unit =
         error("delete is not implemented for this ConversationRepository")
     suspend fun rename(conversationId: String, name: String): Conversation
+    suspend fun switchAgent(conversationId: String, agent: ConversationAgent, model: String, effort: String? = null): Result<Unit> =
+        Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.Unsupported))
     suspend fun setSessionSettings(  // #543 — SESSION-scoped, not conversation-scoped
         sessionId: String, model: String? = null, effort: String? = null, yolo: Boolean? = null,
     ): Unit = error("setSessionSettings is not implemented for this ConversationRepository")
@@ -194,6 +196,28 @@ data class McpServerStatus(  // #1343 — every field claude-authored and unsani
 
 data class AttachmentOffer(val attachmentId: String, val displayName: String)  // #898 — return element of observeAttachmentOffers; attachmentId is a validated lowercase UUIDv4, displayName is claude-authored even after cleaning — render as inert text only, never a path
 ```
+
+`switchAgent(conversationId, agent, model, effort)` (#1117) is a portable
+`Result<Unit>` command. `ConversationAgent` selects Claude or Codex; model is
+forwarded verbatim, including `""` for the target template default. Null effort
+is omitted, while empty and nonempty effort remain explicit. The default returns
+`SwitchAgentFailure(Category.Unsupported)` so unrelated doubles stay compatible.
+There is no optimistic agent change, client deadline or automatic retry;
+cancellation propagates. See [remote confirmation](remote-conversation-repository-conversation-writes.md#agent-switching-1117)
+and [stable snapshot delegation](stable-conversation-repository.md#agent-switching--snapshot-or-result-1117).
+
+`SwitchAgentFailure` exposes a client-owned `category` and `retryable` flag, with
+static message `Agent switch failed` and no cause. The six daemon categories are
+`ConversationNotFound`, `Malformed`, `Unsupported`, `ModelListUnavailable`,
+`BinaryBusy` and `BinaryOffline`; `Unavailable` covers local connection/send
+failure, and `Failed` is the fallback for unknown or malformed correlated errors.
+The daemon documents the first three categories as non-retryable and the latter
+three as retryable. Valid decoded errors retain the daemon's retryability, including unknown codes;
+malformed errors and local failures use false. Consumers must not infer that an
+operational failure undid outgoing wrap-up. The code mapping and documented
+retryability live in the [daemon protocol](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#switch_agent).
+The model picker, confirmation UI and operator-flow proof belong to
+[#1118](https://github.com/pyrycode/pyrycode-mobile/issues/1118).
 
 The first `AttachmentOffer` of each attachment id also becomes a `Message.attachments` thread row (#983), since the wire never replays `attachment_offered` and the thread cache is its only retention — see [Remote conversation repository § Status projections](remote-conversation-repository.md#status-projections-one-file-per-status-event).
 

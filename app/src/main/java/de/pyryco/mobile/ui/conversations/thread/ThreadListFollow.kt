@@ -195,6 +195,7 @@ internal class ThreadListViewport(
         if (rows === previousRows && blocks === previousBlocks) return null
         val oldRows = previousRows
         val oldBlocks = previousBlocks
+        if (oldBlocks.none { it is ThreadRow.AgentStartMarker }) return null
         // Controls can finish a roster before the terminal receipt supplies the final position.
         // Common roots also encode movement across an adjacent still-running block. New rows and
         // children are excluded, so inserts and unchanged terminal replays cannot transfer an anchor.
@@ -299,7 +300,7 @@ internal class ThreadListViewport(
     ) {
         previousRows = rows
         previousBlocks = blocks
-        rowMeasurements.keys.retainAll(rows.mapTo(HashSet()) { it.listKey(0) })
+        if (rowMeasurements.isNotEmpty()) rowMeasurements.keys.retainAll(rows.mapTo(HashSet()) { it.listKey(0) })
         if (transfer == null) return
         sizeDelta = 0
         relocationPending = true

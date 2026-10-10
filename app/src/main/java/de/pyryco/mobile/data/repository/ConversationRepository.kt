@@ -435,6 +435,19 @@ interface ConversationRepository {
     ): Conversation
 
     /**
+     * Switch only this conversation. Success requires a confirmed agent row visible to observers.
+     * Empty model selects the target template; null effort is unspecified and empty effort clears.
+     * No timeout/retry or optimistic mutation. Cancellation propagates; failures are client-owned.
+     * Unsupported by default so unrelated test doubles remain source-compatible.
+     */
+    suspend fun switchAgent(
+        conversationId: String,
+        agent: ConversationAgent,
+        model: String,
+        effort: String? = null,
+    ): Result<Unit> = Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.Unsupported))
+
+    /**
      * Applies the operator's run-configuration change — model / effort / YOLO — to the running
      * session [sessionId], sending a `set_session_settings` request and returning only after the
      * daemon's ack (#543). **Takes a session id, not a conversation id** — this is the first
