@@ -42,6 +42,7 @@ import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.SlashCommandMenu
+import de.pyryco.mobile.data.repository.SwitchAgentFailure
 import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -369,6 +370,18 @@ class ThreadViewModel(
     /** The [pendingModel] twin for effort (#807). */
     private val pendingEffort = MutableStateFlow<String?>(null)
 
+    /** Phone-local confirmation, send and display-only settlement; never a persisted command. */
+    private data class AgentSwitchUi(
+        val request: ThreadAgentSwitch? = null,
+        val confirmed: ThreadModelChoice? = null,
+        val previous: ThreadModelChoice? = null,
+        val failed: Boolean = false,
+    )
+
+    private val agentSwitchUi = MutableStateFlow(AgentSwitchUi())
+    private var previousConversationAgent: ConversationAgent? = null
+    private var agentChanged = false
+
     /**
      * This thread's switch-back offer (#1360), or `null`: at most one, armed only by a live session-scoped
      * fallback refusal ([onLiveRefusalEvent]), never by a row, so a restored refusal cannot arm it. Written on
@@ -457,6 +470,10 @@ class ThreadViewModel(
         repository
             .observeConversations(ConversationFilter.All)
             .onEach { list ->
+                list.firstOrNull { it.id == conversationId }?.let { conversation ->
+                    if (previousConversationAgent?.let { it != conversation.agent } == true) agentChanged = true
+                    previousConversationAgent = conversation.agent
+                }
                 if (hostAvailable.value) {
                     list.firstOrNull { it.id == conversationId }?.currentSessionId?.takeIf { it.isNotEmpty() }?.let {
                         lastKnownSessionId = it
@@ -483,17 +500,28 @@ class ThreadViewModel(
     private val runConfigFlow: Flow<ThreadRunConfig> =
         combine(
             sessionSettings,
-            // #1110: the agent joins by a chained combine, since this one is at the typed ceiling. Filtering
-            // here, before [runConfig] caps the rows, is what makes the hidden count the filtered list's.
-            repository.observeModelMenu(conversationId).combine(conversationAgent) { menu, agent ->
-                menu?.forAgent(agent) to agent
+            // The shared conversation reading binds stale settings after an agent transition.
+            repository.observeModelMenu(conversationId).combine(conversations) { menu, list ->
+                menu to list.firstOrNull { it.id == conversationId }
             },
             pendingModel,
             pendingEffort,
             pendingPermission,
         ) { settings, menuAndAgent, model, effort, permission ->
             // #1411: the settings ride along to the context-usage combine, which falls back to their token pair.
-            runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission) to settings
+            val conversation = menuAndAgent.second
+            val freshSettings =
+                settings?.takeUnless {
+                    agentChanged && (it.held || it.sessionId != conversation?.currentSessionId)
+                }
+            runConfig(freshSettings, menuAndAgent.first, conversation?.agent ?: ConversationAgent.Claude, model, effort, permission) to
+                freshSettings
+        }.combine(agentSwitchUi) { (config, settings), switching ->
+            config.copy(
+                agentSwitch = switching.request,
+                agentSwitchFailed = switching.failed,
+                confirmedSwitchChoice = switching.confirmed.takeIf { settings == null },
+            ) to settings
         }.combine(runningModel) { (config, settings), (running, announced) ->
             config.copy(running = running, announcedModel = announced) to settings
         }.combine(repository.observeContextUsage(conversationId)) { (config, settings), usage ->
@@ -2847,12 +2875,70 @@ class ThreadViewModel(
     fun onModelSelected(value: String) {
         if (!connectedFor("model")) return
         val config = state.value.runConfig
-        if (config.pending || value == config.selectedModel) return
+        if (agentSwitchUi.value.request != null || config.pending) return
+        val choice = config.choices.singleOrNull { it.value == value }
+        // Preserve an own-agent write already requested when no menu is available. A published menu,
+        // however, must resolve one known row before a pick can write or ask for confirmation.
+        if (config.menuAvailable && choice == null) return
+        if (choice != null && choice.agent != config.agent) {
+            if (!config.writable || config.settingsHeld) return
+            effortRecall.cancel()
+            agentSwitchUi.value = AgentSwitchUi(request = ThreadAgentSwitch(config.agent, choice), previous = config.selectedChoice)
+            RelayLog.d { "event=agent_switch_confirmation outcome=opened" }
+            return
+        }
+        if (value == config.selectedModel) return
         if (!skipUnlessWritable(config)) return
+        agentSwitchUi.value = AgentSwitchUi()
         // #1360: a model the user picks replaces the way back to the refused one.
         clearRefusalOffer("menu")
         pendingModel.value = value
         sendSessionSettings(config.sessionId, model = value) { pendingModel.value = null }
+    }
+
+    private fun dismissAgentSwitch() {
+        if (agentSwitchUi.value.request?.sending == true) return
+        agentSwitchUi.value = AgentSwitchUi()
+        RelayLog.d { "event=agent_switch_confirmation outcome=dismissed" }
+    }
+
+    private fun confirmAgentSwitch() {
+        val switching = agentSwitchUi.value
+        val request = switching.request ?: return
+        if (request.sending) return
+        val config = state.value.runConfig
+        if (!connectedFor("agent_switch") || config.agent != request.source || config.settingsHeld) {
+            agentSwitchUi.value = AgentSwitchUi(failed = true, confirmed = switching.previous)
+            RelayLog.w { "event=agent_switch_ui outcome=unavailable" }
+            return
+        }
+        val effort =
+            config.selectedEffort.takeIf { level ->
+                level.isNotEmpty() && request.choice.effortChoices.any { it.value == level }
+            }
+        // Claim on Main before launch: even two taps before StateFlow publishes send only once.
+        agentSwitchUi.value = switching.copy(request = request.copy(sending = true))
+        clearRefusalOffer("agent_switch")
+        RelayLog.d { "event=agent_switch_ui outcome=started" }
+        viewModelScope.launch {
+            val result =
+                try {
+                    repository.switchAgent(conversationId, request.choice.agent, request.choice.value, effort)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.Failed))
+                }
+            if (result.isSuccess) {
+                agentSwitchUi.value = AgentSwitchUi(confirmed = request.choice)
+                repository.refreshSessionSettings(conversationId)
+                RelayLog.d { "event=agent_switch_ui outcome=confirmed" }
+            } else {
+                agentSwitchUi.value = AgentSwitchUi(failed = true, confirmed = switching.previous)
+                val category = (result.exceptionOrNull() as? SwitchAgentFailure)?.category ?: SwitchAgentFailure.Category.Failed
+                RelayLog.w { "event=agent_switch_ui outcome=failed category=$category" }
+            }
+        }
     }
 
     /**
@@ -2867,6 +2953,7 @@ class ThreadViewModel(
      * the model is claude's text.
      */
     fun onSwitchBack() {
+        if (agentSwitchUi.value.request != null) return
         if (!connectedFor("switch_back")) return
         val offer = refusalOffer.value ?: return
         if (pendingModel.value != null) {
@@ -2927,7 +3014,7 @@ class ThreadViewModel(
      *  the selected row, forwarded verbatim — never `Effort.name.lowercase()`, whose five entries are this
      *  device's guess at a vocabulary the row itself publishes. */
     fun onEffortSelected(level: String) {
-        if (!connectedFor("effort")) return
+        if (!connectedFor("effort") || agentSwitchUi.value.request != null) return
         effortRecall.cancel()
         val config = state.value.runConfig
         if (config.pending || level == config.selectedEffort) return
@@ -2955,6 +3042,7 @@ class ThreadViewModel(
      * on the confirmed reading and [ThreadRunConfig.pendingPermission] only marks it pending.
      */
     fun onPermissionModeSelected(value: String) {
+        if (agentSwitchUi.value.request != null) return
         if (!connectedFor("permission")) return
         val mode = PermissionModeOption.fromWire(value) ?: return
         val config = state.value.runConfig
@@ -3146,6 +3234,8 @@ class ThreadViewModel(
 
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
+            ThreadEvent.AgentSwitchConfirm -> confirmAgentSwitch()
+            ThreadEvent.AgentSwitchDismiss -> dismissAgentSwitch()
             is ThreadEvent.NewestContentPresented -> {
                 // The composition sampled sight and daemon support together before dispatch.
                 val checkpoint = event.checkpoint
@@ -3476,20 +3566,20 @@ private fun runConfig(
     pendingEffort: String?,
     pendingPermission: String?,
 ): ThreadRunConfig {
-    val rows = menu?.rows.orEmpty()
+    val rows = menu?.rows.orEmpty().filter { it.agent != null }
     val visibleRows = rows.filterNot { it.value == INHERITED_DEFAULT_MODEL_VALUE }
     val defaultRow =
         if (agent == ConversationAgent.Claude) {
-            rows.filter { it.value == INHERITED_DEFAULT_MODEL_VALUE }.singleOrNull()
+            rows.filter { it.agent == agent && it.value == INHERITED_DEFAULT_MODEL_VALUE }.singleOrNull()
         } else {
             null
         }
     return ThreadRunConfig(
-        choices = visibleRows.take(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice(agent) },
-        overflowChoices = visibleRows.drop(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice(agent) },
-        inheritedChoice = defaultRow?.toChoice(agent),
+        choices = visibleRows.take(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice() },
+        overflowChoices = visibleRows.drop(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice() },
+        inheritedChoice = defaultRow?.toChoice(),
         inheritedResolutionUnique =
-            defaultRow != null && visibleRows.count { it.resolvedModel == defaultRow.resolvedModel } == 1,
+            defaultRow != null && visibleRows.count { it.agent == agent && it.resolvedModel == defaultRow.resolvedModel } == 1,
         menuAvailable = menu != null,
         droppedModels = menu?.droppedModels ?: 0,
         hiddenChoices = (visibleRows.size - MAX_RENDERED_MODEL_CHOICES).coerceAtLeast(0),
@@ -3508,18 +3598,6 @@ private fun runConfig(
         agent = agent,
     )
 }
-
-/**
- * The rows [agent]'s conversation lists (#1110), in the daemon's order. A merged `multi_agent` menu is the
- * same for every conversation and the daemon refuses a model or effort outside the session's own agent, so
- * the other agent's rows, and rows naming an agent this client does not know, are left out. `droppedModels`
- * counts only Claude's cut entries, so a Codex conversation reports none.
- */
-private fun ModelMenu.forAgent(agent: ConversationAgent): ModelMenu =
-    ModelMenu(
-        rows = rows.filter { it.agent == agent },
-        droppedModels = if (agent == ConversationAgent.Claude) droppedModels else 0,
-    )
 
 /**
  * Hides a permission mode (#650), applied effort (#889), and memory search report left over from a replaced session. A
@@ -3549,8 +3627,8 @@ internal const val PERMISSION_SETTLE_INTERVAL_MS = 500L
 /** One published row, split into the verbatim write argument and inert display text. `resolvedModel`
  *  becomes [ThreadModelChoice.detail], which no screen draws since #1497, only when it says something the
  *  label does not. */
-private fun ModelMenuRow.toChoice(agent: ConversationAgent): ThreadModelChoice {
-    val label = dropdownLabel(agent)
+private fun ModelMenuRow.toChoice(): ThreadModelChoice {
+    val label = displayName.inert()
     return ThreadModelChoice(
         value = value,
         label = label,
@@ -3558,6 +3636,7 @@ private fun ModelMenuRow.toChoice(agent: ConversationAgent): ThreadModelChoice {
         effortChoices = effortLevels.map { ThreadEffortChoice(value = it, label = it.inert()) },
         supportsAutoMode = supportsAutoMode,
         resolvedModel = resolvedModel.takeUnless { "resolved_model" in truncatedFields.orEmpty() }.orEmpty(),
+        agent = requireNotNull(agent),
     )
 }
 

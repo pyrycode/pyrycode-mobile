@@ -531,4 +531,10 @@
     <string name="background_tasks_expanded">Expanded</string>
     <string name="background_tasks_collapsed">Collapsed</string>
     <string name="send_suggested_reply">Send suggested reply</string>
+    <string name="thread_agent_switch_title">Switch to %1$s?</string>
+    <string name="thread_agent_switch_action">Switch</string>
+    <string name="thread_agent_switch_body">This channel moves from %1$s to %2$s on %3$s. %1$s writes a hand-over note first, and %3$s continues from it. The first reply after the switch has no prompt cache, so it is slower and costs more. Full-bypass mode turns off.</string>
+    <string name="thread_agent_switch_wrapping_up">Switching to %1$s: %2$s is writing a hand-over note…</string>
+    <string name="thread_agent_switch_pending">Switching to %1$s…</string>
+    <string name="thread_agent_switch_failed">Couldn’t switch agents. Hand-over or queued-message changes may already have occurred.</string>
 </resources>
