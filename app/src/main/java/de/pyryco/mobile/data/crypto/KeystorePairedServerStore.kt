@@ -39,10 +39,17 @@ import javax.crypto.spec.GCMParameterSpec
  * Takes only [DataStore]; AndroidKeyStore operations go through the keystore daemon and need no
  * `Context`, keeping the data layer portable behind the interface.
  */
-class KeystorePairedServerStore(
+class KeystorePairedServerStore internal constructor(
     private val dataStore: DataStore<Preferences>,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val ioDispatcher: CoroutineDispatcher,
+    private val wrapKeyAlias: String,
 ) : PairedServerCollectionStore {
+    /** Production custody always uses the fixed alias; destructive storage tests own a private alias. */
+    constructor(
+        dataStore: DataStore<Preferences>,
+        ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    ) : this(dataStore, ioDispatcher, WRAP_KEY_ALIAS)
+
     private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun load(): PairedServer? = list().lastOrNull()?.record
@@ -162,7 +169,7 @@ class KeystorePairedServerStore(
     /** Non-creating lookup so [load] never mints a key: a missing alias → blob is undecryptable → null. */
     private fun getWrapKey(): SecretKey? {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        return keyStore.getKey(WRAP_KEY_ALIAS, null) as? SecretKey
+        return keyStore.getKey(wrapKeyAlias, null) as? SecretKey
     }
 
     private fun getOrCreateWrapKey(): SecretKey {
@@ -171,7 +178,7 @@ class KeystorePairedServerStore(
         keyGenerator.init(
             KeyGenParameterSpec
                 .Builder(
-                    WRAP_KEY_ALIAS,
+                    wrapKeyAlias,
                     KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
                 ).setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
