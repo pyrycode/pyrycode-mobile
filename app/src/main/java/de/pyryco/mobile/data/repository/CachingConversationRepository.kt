@@ -221,17 +221,22 @@ class CachingConversationRepository(
             // A save captured before entry can still complete while restoration suspends.
             val collectionCoverageRevision = persistedThreads[conversationId]?.coverageRevision ?: 0
             var base = cache.readThread(serverId, conversationId)
-            val savedPosition = cache.readHistoryPosition(serverId, conversationId)
-            var baseOrder =
-                withContext(processingDispatcher) {
-                    base.receivedUnsignedHistoryOrder(savedPosition?.coverage?.unsignedPositions().orEmpty())
-                }
+            var baseOrder = withContext(processingDispatcher) { emptyMap<Any, ULong>() }
+            var restoredOrder = false
             var lastOrder = emptyMap<Any, ULong>()
             var lastDrawn = base
             coroutineScope {
                 val writer = ThreadWriter(conversationId, this, base, collectionCoverageRevision)
                 try {
                     delegate.threadSnapshots(conversationId).collect { snapshot ->
+                        if (!restoredOrder && snapshot.rows.isNotEmpty()) {
+                            val savedPosition = cache.readHistoryPosition(serverId, conversationId)
+                            baseOrder =
+                                withContext(processingDispatcher) {
+                                    base.receivedUnsignedHistoryOrder(savedPosition?.coverage?.unsignedPositions().orEmpty())
+                                }
+                            restoredOrder = true
+                        }
                         val generation = generations.incrementAndGet()
                         val drawn =
                             withContext(processingDispatcher) {

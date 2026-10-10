@@ -26,6 +26,46 @@ import kotlin.coroutines.CoroutineContext
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CachedThreadWorkerTest {
+    @Test
+    fun readableRowsDoNotWaitForOptionalHistoryButLiveMergeDoes() =
+        runTest {
+            val rows = listOf(row("saved", role = Role.User))
+            val position = CompletableDeferred<HistoryPosition?>()
+            val cache =
+                object : ConversationCache by Cache(rows) {
+                    override suspend fun readHistoryPosition(
+                        serverId: String,
+                        conversationId: String,
+                    ): HistoryPosition? = position.await()
+                }
+            val source = Source(ThreadSnapshot(emptyList(), setOf("unrelated")))
+            val repository =
+                CachingConversationRepository(source, cache, "h", processingDispatcher = UnconfinedTestDispatcher(testScheduler))
+            val readings = mutableListOf<ThreadSnapshot>()
+            val reader = backgroundScope.launch { repository.observeThreadSnapshot("c").collect { readings += it } }
+            runCurrent()
+            assertEquals(rows, readings.single().rows)
+            assertEquals(setOf("unrelated"), readings.single().suppressedUserMessageIds)
+            val live = row("live")
+            source.snapshots.value = ThreadSnapshot(listOf(live), unsignedHistoryOrder = mapOf(live.mergeIdentity() to 5uL))
+            runCurrent()
+            assertEquals(1, readings.size)
+            position.complete(
+                HistoryPosition(
+                    "",
+                    false,
+                    HistoryCoverage(
+                        unsignedSpans = emptyList(),
+                        unsignedRowOrder = mapOf(historyIdentity(rows.single().mergeIdentity()) to 10uL),
+                    ),
+                ),
+            )
+            runCurrent()
+            assertEquals(listOf(live) + rows, readings.last().rows)
+            reader.cancel()
+            runCurrent()
+        }
+
     private class HeldWorker : CoroutineDispatcher() {
         private val pending = ArrayDeque<Runnable>()
         var running = false
@@ -48,6 +88,42 @@ class CachedThreadWorkerTest {
             }
         }
     }
+
+    @Test
+    fun repeatedRowsOnlyOpenKeepsSuppressionAndCancelsPendingOrderRead() =
+        runTest {
+            val rows = listOf(row("mine", role = Role.User), row("saved"))
+            val position = CompletableDeferred<HistoryPosition?>()
+            val cache =
+                object : ConversationCache by Cache(rows) {
+                    override suspend fun readHistoryPosition(
+                        serverId: String,
+                        conversationId: String,
+                    ): HistoryPosition? = position.await()
+                }
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            val source = Source(ThreadSnapshot(emptyList(), setOf("mine")))
+            val repository = CachingConversationRepository(source, cache, "h", processingDispatcher = dispatcher)
+            val openings = mutableListOf<List<ThreadSnapshot>>()
+            repeat(2) {
+                source.snapshots.value = ThreadSnapshot(emptyList(), setOf("mine"))
+                val readings = mutableListOf<ThreadSnapshot>()
+                openings += readings
+                val reader = backgroundScope.launch { repository.observeThreadSnapshot("c").collect { readings += it } }
+                runCurrent()
+                assertEquals(listOf(rows.last()), readings.single().rows)
+                source.snapshots.value = ThreadSnapshot(listOf(row("live")))
+                runCurrent()
+                assertEquals(1, readings.size)
+                reader.cancel()
+                runCurrent()
+                assertFalse(position.isCompleted)
+                assertEquals(1, readings.size)
+            }
+            position.complete(null)
+            runCurrent()
+            assertTrue(openings.all { it.size == 1 })
+        }
 
     private fun TestScope.drain(worker: HeldWorker) {
         repeat(20) {

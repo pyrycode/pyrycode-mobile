@@ -88,12 +88,14 @@ class FileConversationCache(
 
     // One immutable decode shared by the row and coverage readers, guarded by mutex.
     // Reads still inspect exact disk bytes, so another instance's same-size write cannot stay hidden.
-    private data class DecodedThread(
+    private class DecodedThread(
         val document: File,
         val bytes: ByteArray,
         val rows: List<ThreadItem>,
-        val history: HistoryPosition?,
-    )
+        history: () -> HistoryPosition?,
+    ) {
+        val history: HistoryPosition? by lazy(history)
+    }
 
     private var decodedThread: DecodedThread? = null
 
@@ -153,14 +155,13 @@ class FileConversationCache(
         conversationId: String,
     ): HistoryPosition? =
         withContext(ioDispatcher) {
-            mutex.withLock {
-                try {
-                    readDecodedThread(threadDocumentFor(serverId, conversationId))?.history
-                } catch (error: Exception) {
-                    val code = failureCode(error) ?: throw error
-                    RelayLog.d { "conversation_cache operation=read_history status=failed code=$code" }
-                    null
-                }
+            try {
+                val restored = mutex.withLock { readDecodedThread(threadDocumentFor(serverId, conversationId)) }
+                restored?.history
+            } catch (error: Exception) {
+                val code = failureCode(error) ?: throw error
+                RelayLog.d { "conversation_cache operation=read_history status=failed code=$code" }
+                null
             }
         }
 
@@ -280,21 +281,33 @@ class FileConversationCache(
         decodedThread = null
         val bytes = document.readBytes()
         val read = System.nanoTime()
-        val record = decodeThreadRecord(bytes)
+        val record = threadReadJson.decodeFromString<CachedThreadRows>(bytes.toString(Charsets.UTF_8))
         val decoded = System.nanoTime()
         require(record.version == VERSION) { "unsupported conversation cache version" }
-        val rows = validatedRows(record)
+        val rows = validatedRows(CachedThread(record.version, record.rows))
         val validated = System.nanoTime()
-        val stored = validatedHistory(record.history, rows)
-        val metadata = System.nanoTime()
-        val history = stored?.copy(coverage = stored.coverage?.retainedBy(rows))?.toDomain()
-        val retained = System.nanoTime()
         RelayLog.d {
             "event=thread_cache_restored rows=${rows.size} read_ms=${(read - started) / 1_000_000} " +
-                "decode_ms=${(decoded - read) / 1_000_000} validate_ms=${(validated - decoded) / 1_000_000} " +
-                "metadata_ms=${(metadata - validated) / 1_000_000} proofs_ms=${(retained - metadata) / 1_000_000}"
+                "decode_ms=${(decoded - read) / 1_000_000} validate_ms=${(validated - decoded) / 1_000_000}"
         }
-        return DecodedThread(document, bytes, rows, history).also { decodedThread = it }
+        return DecodedThread(document, bytes, rows) {
+            val startedHistory = System.nanoTime()
+            val text = bytes.toString(Charsets.UTF_8)
+            val recordHistory =
+                try {
+                    threadReadJson.decodeFromString<CachedTypedThreadHeader>(text).history
+                } catch (_: SerializationException) {
+                    decodeHistory(threadReadJson.decodeFromString<CachedThreadHeader>(text).history)
+                }
+            val stored = validatedHistory(recordHistory, rows)
+            val metadata = System.nanoTime()
+            val history = stored?.copy(coverage = stored.coverage?.retainedBy(rows))?.toDomain()
+            RelayLog.d {
+                "event=thread_cache_history_restored rows=${rows.size} metadata_ms=${(metadata - startedHistory) / 1_000_000} " +
+                    "proofs_ms=${(System.nanoTime() - metadata) / 1_000_000}"
+            }
+            history
+        }.also { decodedThread = it }
     }
 
     /** Read every current byte and EOF without allocating another whole-document copy. */
@@ -636,6 +649,18 @@ private fun CachedConversation.toDomain() =
 private data class CachedThread(
     val version: Int,
     val rows: List<CachedThreadRow>,
+    val history: CachedHistoryPosition? = null,
+)
+
+@Serializable
+private data class CachedThreadRows(
+    val version: Int,
+    val rows: List<CachedThreadRow>,
+)
+
+@Serializable
+private data class CachedTypedThreadHeader(
+    val version: Int,
     val history: CachedHistoryPosition? = null,
 )
 
