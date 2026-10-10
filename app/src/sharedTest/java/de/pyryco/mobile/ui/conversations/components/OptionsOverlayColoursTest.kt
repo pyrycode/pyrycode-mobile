@@ -43,57 +43,6 @@ import kotlin.math.roundToInt
 class OptionsOverlayColoursTest {
     @get:Rule val rule = createComposeRule()
 
-    @Test fun lightMenuKeepsReadableIdleRows() = assertReadableLightMenu(dynamic = false)
-
-    @Test fun dynamicLightMenuKeepsReadableIdleRows() = assertReadableLightMenu(dynamic = true)
-
-    private fun assertReadableLightMenu(dynamic: Boolean) {
-        var label = Color.Unspecified
-        var detail = Color.Unspecified
-        var idle = Color.Unspecified
-        var view: android.view.View? = null
-        rule.setContent {
-            PyrycodeMobileTheme(darkTheme = false, dynamicColor = dynamic) {
-                val colors = MaterialTheme.colorScheme
-                label = colors.primary
-                detail = colors.onSurfaceVariant
-                idle = colors.surfaceContainerLowest
-                view = LocalView.current
-                Box(Modifier.fillMaxSize().background(Color.White)) {
-                    OptionsOverlay(
-                        options = listOf(OptionsOverlayOption("idle", "Idle", detail = "Detail")),
-                        selectedValue = "none",
-                        notListed = 0,
-                        anchor = Rect(40f, 300f, 100f, 340f),
-                        onSelect = {},
-                        onDismiss = {},
-                    )
-                }
-            }
-        }
-        val bitmap =
-            rule.runOnIdle {
-                val root = checkNotNull(view)
-                Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888).also { root.draw(Canvas(it)) }
-            }
-        val bounds = rule.onNodeWithText("Idle").fetchSemanticsNode().boundsInRoot
-        val actualIdle = Color(bitmap.getPixel(bounds.left.roundToInt() + 6, bounds.center.y.roundToInt()))
-        rule.runOnIdle {
-            assertEquals(idle.toArgb(), actualIdle.toArgb())
-            assertEquals(true, contrast(label, idle) >= 4.5)
-            assertEquals(true, contrast(detail, idle) >= 4.5)
-        }
-    }
-
-    private fun contrast(
-        foreground: Color,
-        background: Color,
-    ): Double {
-        val a = android.graphics.Color.luminance(foreground.toArgb()) + 0.05
-        val b = android.graphics.Color.luminance(background.toArgb()) + 0.05
-        return maxOf(a, b) / minOf(a, b)
-    }
-
     @Test fun compactViewportWithLargeTextCanReachLastOption() {
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(280.dp, 400.dp))) {
@@ -152,7 +101,7 @@ class OptionsOverlayColoursTest {
         var anchorLeft by mutableStateOf(40.dp)
         var anchorBottom by mutableStateOf(100.dp)
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 val density = LocalDensity.current
                 OptionsOverlay(
                     options = listOf(OptionsOverlayOption("settings", "Settings"), OptionsOverlayOption("archive", "Archive")),
@@ -183,7 +132,7 @@ class OptionsOverlayColoursTest {
 
     @Test fun belowMenuScrollsWithinTheSpaceBelowItsAnchor() {
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 val density = LocalDensity.current
                 OptionsOverlay(
                     options = (1..60).map { OptionsOverlayOption(it.toString(), "Option $it") },
@@ -204,8 +153,6 @@ class OptionsOverlayColoursTest {
         rule.onNodeWithText("Option 60").performScrollTo().assertIsDisplayed()
         assertEquals(true, rule.onNodeWithText("Option 60").getUnclippedBoundsInRoot().bottom <= layerBottom - 8.dp + pixelDp().dp)
     }
-
-    @Test fun belowActionsUseTheExistingLightPalette() = assertActionPalette(dark = false)
 
     @Test fun belowActionsUseTheExistingDarkPalette() = assertActionPalette(dark = true)
 

@@ -70,7 +70,7 @@ class StatusSheetTest {
         var dismissals = 0
         val writes = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 StatusSheet(
                     choices = listOf(opus, sonnet),
                     menuAvailable = true,
@@ -102,7 +102,7 @@ class StatusSheetTest {
         composeTestRule.setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, 1.6f)) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     StatusSheet(
                         choices = models,
                         menuAvailable = true,
@@ -144,7 +144,7 @@ class StatusSheetTest {
         permissionPending: Boolean = false,
         onPermissionSelected: (String) -> Unit = {},
     ) = setContent {
-        PyrycodeMobileTheme {
+        PyrycodeMobileTheme(darkTheme = true) {
             StatusSheetContent(
                 choices = choices,
                 menuAvailable = menuAvailable,
@@ -440,7 +440,7 @@ class StatusSheetTest {
     fun tapping_close_icon_invokes_onDismiss() {
         var invoked = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 StatusSheet(
                     choices = listOf(opus),
                     menuAvailable = true,

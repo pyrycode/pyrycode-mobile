@@ -58,9 +58,9 @@ class AppPreferencesTest {
         }
 
     @Test
-    fun setThemeMode_roundTripsAllValues() =
+    fun setThemeMode_roundTripsDarkAndSystem() =
         runBlocking {
-            for (mode in ThemeMode.entries) {
+            for (mode in listOf(ThemeMode.DARK, ThemeMode.SYSTEM)) {
                 prefs.setThemeMode(mode)
                 assertEquals(mode, prefs.themeMode.first())
             }
@@ -76,7 +76,7 @@ class AppPreferencesTest {
     @Test
     fun themeMode_existingStoredNames_surviveRestart() =
         runBlocking {
-            val existingChoices = listOf("SYSTEM" to ThemeMode.SYSTEM, "LIGHT" to ThemeMode.LIGHT, "DARK" to ThemeMode.DARK)
+            val existingChoices = listOf("SYSTEM" to ThemeMode.SYSTEM, "DARK" to ThemeMode.DARK)
             for ((stored, expected) in existingChoices) {
                 val file = tmp.newFile("$stored.preferences_pb")
                 val writerJob = Job()

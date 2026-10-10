@@ -31,7 +31,7 @@ class ThreadStreamingRevealTest {
     private fun showThread() {
         composeRule.mainClock.autoAdvance = false
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 if (open) {
                     ThreadScreen(
                         state =

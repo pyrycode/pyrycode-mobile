@@ -62,7 +62,7 @@ class ThreadAttentionNavigationTest {
         lifecycle.currentState = Lifecycle.State.RESUMED
         compose.setContent {
             CompositionLocalProvider(LocalLifecycleOwner provides owner) {
-                PyrycodeMobileTheme(dynamicColor = false) {
+                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                     nav = rememberNavController()
                     NavHost(nav, startDestination = Routes.CHANNEL_LIST) {
                         composable(Routes.CHANNEL_LIST) { }

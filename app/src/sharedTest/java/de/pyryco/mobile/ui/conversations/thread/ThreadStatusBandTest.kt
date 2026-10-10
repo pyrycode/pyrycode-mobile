@@ -123,7 +123,7 @@ class ThreadStatusBandTest {
             // ForcedSize rescales density, so the absolute-dp geometry checks keep the default configuration.
             val size = DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp)).takeIf { referenceWidth }
             DeviceConfigurationOverride(size ?: DeviceConfigurationOverride.FontScale(1f)) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         state =
                             ThreadUiState(

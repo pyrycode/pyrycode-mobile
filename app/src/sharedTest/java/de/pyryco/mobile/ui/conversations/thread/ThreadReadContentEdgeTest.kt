@@ -36,7 +36,7 @@ class ThreadReadContentEdgeTest {
         var padding = 0f
         compose.setContent {
             padding = with(LocalDensity.current) { BubbleVerticalPadding.toPx() }
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 MessageBubble(
                     message = message(Role.Assistant),
                     metaRowVisible = metadata.value,
@@ -64,7 +64,7 @@ class ThreadReadContentEdgeTest {
         var edge: Float? = null
         var row: Rect? = null
         compose.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Box(Modifier.onGloballyPositioned { row = it.boundsInWindow() }) {
                     MessageBubble(
                         message =

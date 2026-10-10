@@ -45,7 +45,7 @@ class ThreadScreenSystemPromptTest {
     private fun setContent(initial: SystemPromptEditorState?) {
         prompt = initial
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
                         ThreadUiState(
