@@ -51,7 +51,7 @@ class BackgroundTaskStopPanelTest {
     ) {
         val tasks = listOf(task("a", "first", finished), task("b", "second", finished))
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 density = LocalDensity.current
                 BackgroundTaskPanel(
                     roster = BackgroundTaskRoster(tasks, 0),

@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite tests="5" failures="0" errors="0" skipped="0" time="9.689" timestamp="2026-10-10T12:19:22" source-tests="5" source-time="9.924">
+    <testcase name="failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest" time="0.209" />
+    <testcase name="failedFixtureRestoresBindingsAndPreservesAppPairings" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest" time="2.943" />
+    <testcase name="storageTestKeyLossAndTeardownPreserveAppPairings" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest" time="2.842" />
+    <testcase name="targetedPairingAfterFixtureTeardownKeepsItsHostGuard" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest" time="2.636" />
+    <testcase name="offlinePrecedingHostDoesNotBlockAnswerHostPairing" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest" time="1.059" />
+  </testsuite>
+</testsuites>

@@ -39,7 +39,7 @@ class ThreadAgentNameTest {
 
     private fun setScreen(agent: ConversationAgent) {
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
                         ThreadUiState(

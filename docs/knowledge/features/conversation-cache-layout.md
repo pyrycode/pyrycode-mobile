@@ -117,30 +117,33 @@ span/gap counts and the unknown flag, never opaque cursors, identity proofs or e
 
 ### Thread document readers (#1949)
 
-`readThread` and `readHistoryPosition` share one immutable `DecodedThread` under
-`FileConversationCache`'s existing mutex. Each read still opens the current document
-from disk. Since #2018 the retained value holds the exact document byte array; a
-bounded byte buffer compares freshly opened bytes through EOF before reuse. Reuse
-requires both the same host/conversation document path and identical bytes, including
-length; file length and modification time alone cannot establish freshness. A second
-cache instance's same-size/same-time replacement must therefore be observed. This retains only one document, not an unbounded thread cache.
+`readThread` and `readHistoryPosition` share one immutable `DecodedThread`.
+Under the existing mutex, each read opens the current document and checks its exact
+bytes through EOF with a bounded buffer before reuse. Both host/conversation path
+and every byte, including length, must match; length/mtime alone miss same-size,
+same-time replacement by another cache instance. Only one document is retained.
 
-Mutations clear the retained decode before running. Missing files clear it, and changed
-bytes or a different path retires it before decoding. An unreadable document cannot
-supply cached rows or position: a successful fresh read remains a prerequisite for
-reuse. Host changes cannot borrow another host's decode even with colliding conversation
-ids. No schema, durable retention or coroutine ownership changes accompany this reuse.
+Mutations clear the retained decode before running. Missing files, changed bytes,
+a different path or unreadable storage prevent reuse. Host changes cannot borrow
+another host's decoded document. Since #2050, a captured read owns its immutable
+bytes even if a later mutation retires them; it cannot republish that snapshot into
+the cache. Future reads must establish freshness again.
 
-Valid documents decode directly into typed `CachedThread` records with the string
-parser (#2018), avoiding a large optional-history JSON tree followed by a second
-metadata decode. The temporary UTF-8 string is released after decoding; only the
-bytes and validated value are retained. Stream decoding was measured slower and
-is not the reader path. On serialization failure, `CachedThreadRead` decodes typed
-rows with optional `history` as a JSON element, retaining malformed-metadata and
-legacy omitted-`spans` compatibility. Version and domain-row validation precede
-metadata acceptance; malformed or structurally invalid optional metadata yields
-readable rows with no position, while invalid rows withhold both. Field order and
-unknown fields do not change that boundary. Metadata writers share this decoder.
+`readThread` decodes the complete versioned document into typed `CachedThreadRows`
+and validates every row before returning. Optional history no longer blocks row
+readability. `readHistoryPosition` captures the same snapshot under the mutex,
+then resolves its synchronized lazy history outside it: typed header decoding,
+legacy/malformed-metadata fallback, validation and content-bound proofs all remain
+required before any position is returned. Identical-byte reads share that work;
+no background job or scope is introduced. Invalid rows withhold both rows and
+position; invalid optional metadata leaves readable rows without a position.
+Field order and unknown fields preserve this boundary. Metadata writers retain
+the full typed `CachedThread` decoder and independent fallback.
+
+A rows-only API is insufficient if its repository waits for optional coverage to
+seed order before publishing. See [rows-first merging](caching-conversation-repository.md#how-the-restore-merges-with-live-rows)
+and [controlled first-draw evidence](thread-screen-testing.md#allocation-margin-and-retained-evidence-2018).
+Canonical persisted bytes, SHA-256 proofs and the serializer/provider stay unchanged.
 
 Since #2026, thread records, their independent fallback, header reads and optional
 metadata use immutable decoder-only `threadReadJson = Json(MobileJson) { explicitNulls = true }`.

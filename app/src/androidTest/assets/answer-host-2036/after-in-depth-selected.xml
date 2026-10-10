@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite tests="2" failures="0" errors="0" skipped="0" time="6.243" timestamp="2026-10-10T12:30:15" source-tests="821" source-time="574.486">
+    <testcase name="storageTestKeyLossAndTeardownPreserveAppPairings" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest" time="3.427" />
+    <testcase name="targetedPairingAfterFixtureTeardownKeepsItsHostGuard" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest" time="2.816" />
+  </testsuite>
+  <testsuite tests="5" failures="0" errors="0" skipped="2" time="4.157" timestamp="2026-10-10T12:29:42" source-tests="757" source-time="542.339">
+    <testcase name="renameAtFigmaViewport" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogCaptureTest" time="1.111">
+      <skipped message="Details redacted; status retained" />
+    </testcase>
+    <testcase name="pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty" classname="de.pyryco.mobile.ui.conversations.thread.ComposerPasteTest" time="0.17">
+      <skipped message="Details redacted; status retained" />
+    </testcase>
+    <testcase name="failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest" time="0.088" />
+    <testcase name="failedFixtureRestoresBindingsAndPreservesAppPairings" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest" time="1.74" />
+    <testcase name="offlinePrecedingHostDoesNotBlockAnswerHostPairing" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest" time="1.048" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,33 @@
+{
+  "revision": "c69770073c5cbed292d2393419cfdf17b01b51a2",
+  "dirty": [],
+  "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "command": [
+    "./gradlew",
+    ":app:pixel2Api33AtdDebugAndroidTest",
+    "--rerun",
+    "-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest#targetedPairingAfterFixtureTeardownKeepsItsHostGuard",
+    "-Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e",
+    "-Pandroid.testInstrumentationRunnerArguments.disableAnimations=true",
+    "--console=plain"
+  ],
+  "exit": 0,
+  "counts": {
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "named": [
+    {
+      "classname": "de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest",
+      "name": "targetedPairingAfterFixtureTeardownKeepsItsHostGuard",
+      "status": "passed"
+    }
+  ],
+  "failures": [],
+  "reports": [
+    "TEST-pixel2Api33Atd-_app-.xml"
+  ]
+}

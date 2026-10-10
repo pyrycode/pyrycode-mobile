@@ -104,7 +104,7 @@ class MarkdownReaderScreenTest {
         document: MarkdownDocument,
         onBack: () -> Unit = {},
     ) = composeRule.setContent {
-        PyrycodeMobileTheme {
+        PyrycodeMobileTheme(darkTheme = true) {
             MarkdownReaderScreen(document = document, onBack = onBack)
         }
     }
@@ -172,7 +172,7 @@ class MarkdownReaderScreenTest {
     fun aLinkedNote_opensInTheSameReader_andItsBackArrowGoesBack() {
         var backs = 0
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 LinkedMarkdownReaderDestination(
                     note = LinkedMarkdown("notes/Plan.md", MarkdownDocument("Plan.md", "# Live note")),
                     reread = { null },
@@ -191,7 +191,7 @@ class MarkdownReaderScreenTest {
     fun noLinkedNote_goesBackOnce_andDrawsNoReader() {
         var backs = 0
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 LinkedMarkdownReaderDestination(note = null, reread = { null }, onBack = { backs++ })
             }
         }
@@ -212,7 +212,7 @@ class MarkdownReaderScreenTest {
         initial: MarkdownDocument,
         reread: suspend () -> MarkdownDocument?,
     ) = composeRule.setContent {
-        PyrycodeMobileTheme {
+        PyrycodeMobileTheme(darkTheme = true) {
             RefreshableMarkdownReader(initial = initial, reread = reread, onBack = {})
         }
     }
@@ -240,7 +240,7 @@ class MarkdownReaderScreenTest {
         var dispatcher: androidx.activity.OnBackPressedDispatcher? = null
         composeRule.setContent {
             dispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 MarkdownReaderScreen(MarkdownDocument("Plan.md", "# Plan"), onBack = { backs++ })
             }
         }
@@ -275,7 +275,7 @@ class MarkdownReaderScreenTest {
                 override val activityResultRegistry: ActivityResultRegistry = registry
             }
         CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 MarkdownReaderScreen(document = document, onBack = {})
             }
         }
@@ -304,7 +304,7 @@ class MarkdownReaderScreenTest {
         val visible = mutableStateOf(true)
         composeRule.setContent {
             CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
-                PyrycodeMobileTheme(dynamicColor = false) {
+                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                     if (visible.value) {
                         RefreshableMarkdownReader(
                             initial = MarkdownDocument("Plan.md", "# Plan"),
@@ -448,7 +448,7 @@ class MarkdownReaderScreenTest {
                     }
                 }
             CompositionLocalProvider(LocalContext provides isolatedContext) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     MarkdownReaderScreen(MarkdownDocument("Plan.md", "# Plan"), onBack = {})
                 }
             }
@@ -462,7 +462,7 @@ class MarkdownReaderScreenTest {
         val present = mutableStateOf(true)
         val errors = TransientErrorNoticeState { 4_000L }
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 if (present.value) {
                     MarkdownReaderScreen(MarkdownDocument("Plan.md", "# Plan"), onBack = {}, errorNotices = errors)
                 }
@@ -596,7 +596,7 @@ class MarkdownReaderScreenTest {
             }
         composeRule.setContent {
             CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     RefreshableMarkdownReader(
                         initial = MarkdownDocument("Old.md", "# Old"),
                         reread = { MarkdownDocument("New.md", "# Refreshed") },

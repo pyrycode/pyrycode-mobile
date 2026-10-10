@@ -400,7 +400,7 @@ class ThreadScreenFollowTest {
         modalState: ModalUiState = ModalUiState.Hidden,
     ) {
         CompositionLocalProvider(LocalOverscrollFactory provides null) {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = state,
                     onBack = {},

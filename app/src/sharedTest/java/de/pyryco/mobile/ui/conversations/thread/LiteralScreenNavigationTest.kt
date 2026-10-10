@@ -274,7 +274,7 @@ class LiteralScreenNavigationTest {
         return StateRestorationTester(compose).also { tester ->
             tester.setContent {
                 KoinIsolatedContext(app) {
-                    PyrycodeMobileTheme {
+                    PyrycodeMobileTheme(darkTheme = true) {
                         nav = rememberNavController()
                         PyryNavHost(Routes.CHANNEL_LIST, navController = nav)
                     }

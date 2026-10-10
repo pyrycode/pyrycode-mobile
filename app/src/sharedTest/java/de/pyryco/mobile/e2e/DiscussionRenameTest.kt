@@ -58,7 +58,7 @@ class DiscussionRenameTest {
         var delayStartedAt: Long? = null
         var delayFinishedAt: Long? = null
         compose.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 val focus = remember { FocusRequester() }
                 var title by remember { mutableStateOf("old name") }
                 Column {
@@ -144,7 +144,7 @@ class DiscussionRenameTest {
             var submitted = 0
             var rejected = 0
             compose.setContent {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     Text(title.value)
                     if (visible.value) {
                         RenameDialog(title.value, onSubmit = {
@@ -196,7 +196,7 @@ class DiscussionRenameTest {
 
     @Test fun matchingFieldDoesNotProveRename() {
         compose.setContent {
-            PyrycodeMobileTheme { RenameDialog("old name", onSubmit = {}, onDismiss = {}) }
+            PyrycodeMobileTheme(darkTheme = true) { RenameDialog("old name", onSubmit = {}, onDismiss = {}) }
         }
         val failure =
             assertThrows(AssertionError::class.java) {
@@ -211,7 +211,7 @@ class DiscussionRenameTest {
         val title = mutableStateOf("old name")
         val submissions = mutableListOf<String>()
         compose.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Text(title.value)
                 if (visible.value) {
                     RenameDialog(title.value, onSubmit = {

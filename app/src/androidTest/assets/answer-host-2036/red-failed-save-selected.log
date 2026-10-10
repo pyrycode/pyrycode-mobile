@@ -1,0 +1,9 @@
+SOURCE 0-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest-failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings.txt
+10-10 15:16:04.702 TestRunner: started: failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+10-10 15:16:04.715 paired_store operation=save status=ok
+10-10 15:16:04.729 paired_store operation=rename status=ok
+10-10 15:16:04.737 paired_store operation=save status=ok
+10-10 15:16:04.749 paired_store operation=rename status=ok
+10-10 15:16:04.784 paired_store operation=remove status=ok
+10-10 15:16:04.803 paired_store operation=remove status=ok
+10-10 15:16:04.821 TestRunner: finished: failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)

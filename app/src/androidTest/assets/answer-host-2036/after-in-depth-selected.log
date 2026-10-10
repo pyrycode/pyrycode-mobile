@@ -1,0 +1,116 @@
+SOURCE 1516-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest-failedFixtureRestoresBindingsAndPreservesAppPairings.txt
+10-10 15:28:52.385 TestRunner: started: failedFixtureRestoresBindingsAndPreservesAppPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+10-10 15:28:52.391 paired_store operation=save status=ok
+10-10 15:28:52.397 paired_store operation=rename status=ok
+10-10 15:28:52.402 paired_store operation=save status=ok
+10-10 15:28:52.408 paired_store operation=rename status=ok
+10-10 15:28:52.419 paired_store operation=save status=ok
+10-10 15:28:52.573 paired_store operation=remove status=ok
+10-10 15:28:53.059 event=pair_code_failed code=target_mismatch
+10-10 15:28:53.191 event=pair_code_back
+10-10 15:28:53.708 event=pair_code_prepared
+10-10 15:28:53.779 event=pair_code_back
+10-10 15:28:54.008 event=pair_code_back
+10-10 15:28:54.125 paired_store operation=remove status=ok
+10-10 15:28:54.133 paired_store operation=remove status=ok
+10-10 15:28:54.141 TestRunner: finished: failedFixtureRestoresBindingsAndPreservesAppPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+SOURCE 1517-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest-failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings.txt
+10-10 15:28:52.302 TestRunner: started: failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+10-10 15:28:52.318 paired_store operation=save status=ok
+10-10 15:28:52.328 paired_store operation=rename status=ok
+10-10 15:28:52.336 paired_store operation=save status=ok
+10-10 15:28:52.342 paired_store operation=rename status=ok
+10-10 15:28:52.373 paired_store operation=remove status=ok
+10-10 15:28:52.380 paired_store operation=remove status=ok
+10-10 15:28:52.384 TestRunner: finished: failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+SOURCE 1518-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest-offlinePrecedingHostDoesNotBlockAnswerHostPairing.txt
+10-10 15:28:54.144 TestRunner: started: offlinePrecedingHostDoesNotBlockAnswerHostPairing(de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest)
+10-10 15:28:54.153 paired_store operation=save status=ok
+10-10 15:28:54.825 event=pair_code_prepared
+10-10 15:28:54.930 event=pair_code_save_started
+10-10 15:28:54.936 paired_store operation=save status=ok
+10-10 15:28:54.940 paired_store operation=rename status=ok
+10-10 15:28:54.946 event=pair_code_connection_wait
+10-10 15:28:54.960 event=pair_code_connected
+10-10 15:28:55.156 paired_store operation=remove status=ok
+10-10 15:28:55.171 paired_store operation=remove status=ok
+10-10 15:28:55.176 TestRunner: finished: offlinePrecedingHostDoesNotBlockAnswerHostPairing(de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest)
+SOURCE 18-logcat-de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest-load_returnsNullWhenWrapKeyLost.txt
+10-10 15:21:27.722 TestRunner: started: load_returnsNullWhenWrapKeyLost(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+10-10 15:21:27.733 paired_store operation=save status=ok
+10-10 15:21:27.740 paired_store operation=read status=failed code=keystore
+10-10 15:21:27.742 TestRunner: finished: load_returnsNullWhenWrapKeyLost(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+SOURCE 19-logcat-de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest-missingKeyAndInvalidEnvelopes_readGracefullyWithoutMutation.txt
+10-10 15:21:27.426 TestRunner: started: missingKeyAndInvalidEnvelopes_readGracefullyWithoutMutation(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+10-10 15:21:27.441 paired_store operation=save status=ok
+10-10 15:21:27.457 paired_store operation=read status=failed code=invalid_data
+10-10 15:21:27.467 paired_store operation=read status=failed code=invalid_data
+10-10 15:21:27.486 paired_store operation=save status=ok
+10-10 15:21:27.504 paired_store operation=read status=failed code=keystore
+10-10 15:21:27.533 paired_store operation=read status=failed code=keystore
+10-10 15:21:27.536 paired_store operation=remove status=failed code=keystore
+10-10 15:21:27.549 TestRunner: finished: missingKeyAndInvalidEnvelopes_readGracefullyWithoutMutation(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+SOURCE 759-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest-storageTestKeyLossAndTeardownPreserveAppPairings.txt
+10-10 15:29:24.167 TestRunner: started: storageTestKeyLossAndTeardownPreserveAppPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+10-10 15:29:24.182 paired_store operation=save status=ok
+10-10 15:29:24.188 paired_store operation=rename status=ok
+10-10 15:29:24.197 paired_store operation=save status=ok
+10-10 15:29:24.226 paired_store operation=rename status=ok
+10-10 15:29:24.264 event=answer_host_key_probe stage=before_lost_key_test
+10-10 15:29:24.304 paired_store operation=save status=ok
+10-10 15:29:24.341 paired_store operation=read status=failed code=keystore
+10-10 15:29:24.342 event=answer_host_key_probe stage=after_lost_key_test
+10-10 15:29:24.348 event=answer_host_key_probe stage=after_storage_teardown
+10-10 15:29:24.426 paired_store operation=save status=ok
+10-10 15:29:25.490 event=pair_code_prepared
+10-10 15:29:25.630 event=pair_code_save_started
+10-10 15:29:25.640 paired_store operation=save status=ok
+10-10 15:29:25.677 paired_store operation=rename status=ok
+10-10 15:29:25.678 event=pair_code_connection_wait
+10-10 15:29:25.685 event=pair_code_connected
+10-10 15:29:25.930 paired_store operation=remove status=ok
+10-10 15:29:25.947 paired_store operation=remove status=ok
+10-10 15:29:26.478 event=pair_code_failed code=target_mismatch
+10-10 15:29:26.622 event=pair_code_back
+10-10 15:29:27.155 event=pair_code_prepared
+10-10 15:29:27.245 event=pair_code_back
+10-10 15:29:27.471 event=pair_code_back
+10-10 15:29:27.593 paired_store operation=remove status=ok
+10-10 15:29:27.603 paired_store operation=remove status=ok
+10-10 15:29:27.611 TestRunner: finished: storageTestKeyLossAndTeardownPreserveAppPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+SOURCE 760-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest-targetedPairingAfterFixtureTeardownKeepsItsHostGuard.txt
+10-10 15:29:27.612 TestRunner: started: targetedPairingAfterFixtureTeardownKeepsItsHostGuard(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+10-10 15:29:27.621 paired_store operation=save status=ok
+10-10 15:29:27.627 paired_store operation=rename status=ok
+10-10 15:29:27.634 paired_store operation=save status=ok
+10-10 15:29:27.643 paired_store operation=rename status=ok
+10-10 15:29:27.651 paired_store operation=save status=ok
+10-10 15:29:28.338 event=pair_code_prepared
+10-10 15:29:28.443 event=pair_code_save_started
+10-10 15:29:28.449 paired_store operation=save status=ok
+10-10 15:29:28.459 paired_store operation=rename status=ok
+10-10 15:29:28.478 event=pair_code_connection_wait
+10-10 15:29:28.482 event=pair_code_connected
+10-10 15:29:28.728 paired_store operation=remove status=ok
+10-10 15:29:28.742 paired_store operation=remove status=ok
+10-10 15:29:29.242 event=pair_code_failed code=target_mismatch
+10-10 15:29:29.371 event=pair_code_back
+10-10 15:29:29.924 event=pair_code_prepared
+10-10 15:29:30.014 event=pair_code_back
+10-10 15:29:30.255 event=pair_code_back
+10-10 15:29:30.384 paired_store operation=remove status=ok
+10-10 15:29:30.401 paired_store operation=remove status=ok
+10-10 15:29:30.411 TestRunner: finished: targetedPairingAfterFixtureTeardownKeepsItsHostGuard(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+SOURCE 846-logcat-de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest-namesAndRemoval_preserveCredentialsOrderAndDeviceKeys.txt
+10-10 15:21:16.927 TestRunner: started: namesAndRemoval_preserveCredentialsOrderAndDeviceKeys(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+10-10 15:21:16.951 paired_store operation=save status=ok
+10-10 15:21:16.957 paired_store operation=save status=ok
+10-10 15:21:16.963 paired_store operation=rename status=ok
+10-10 15:21:16.968 paired_store operation=rename status=ok
+10-10 15:21:16.972 paired_store operation=rename status=ok
+10-10 15:21:16.975 paired_store operation=remove status=ok
+10-10 15:21:16.978 paired_store operation=rename status=ok
+10-10 15:21:16.987 paired_store operation=remove status=ok
+10-10 15:21:16.996 paired_store operation=remove status=ok
+10-10 15:21:17.005 paired_store operation=save status=ok
+10-10 15:21:17.017 TestRunner: finished: namesAndRemoval_preserveCredentialsOrderAndDeviceKeys(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)

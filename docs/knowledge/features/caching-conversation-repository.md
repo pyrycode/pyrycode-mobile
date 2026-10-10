@@ -103,6 +103,15 @@ restored rows are the older set and the live projection is the receiver:
 drawn = snapshot.rows.mergeUnsignedCachedRows(restoredWithoutSuppressedUserEchoes, baseOrder + snapshot.unsignedHistoryOrder, rendererOwners = lastDrawn)
 ```
 
+Since #2050, validated cached rows can publish with an empty live snapshot and
+its atomic suppression without waiting for optional history. The first nonempty
+live snapshot still awaits saved history and resolves unsigned base order on the
+injected processing dispatcher before merging. Hold metadata independently in
+regressions: holding only the newest response cannot expose an indirect order-seed
+wait. Repeated rows-only opens retain suppression and cancel pending ordering with
+the observer; no early subscription or independent background scope is added.
+See [cache snapshot ownership](conversation-cache-layout.md#thread-document-readers-1949).
+
 `mergeUnsignedCachedRows` shares `mergeUnsignedHistoryRows`'s join (ordinary logical id for a message, covering a
 `tool_use_id` and a `turn_id`; the `(previousSessionId, newSessionId, occurredAt)` triple for a
 boundary) and its [attachment-reference hint fill](remote-conversation-repository-reads-and-thread-store-history-paging.md),
@@ -428,6 +437,15 @@ drawn base's generation. A candidate captured before that boundary cannot rewrit
 or coverage merely because its worker resumes later. Later drawn generations remain eligible.
 Observer successes replace the shared row baseline while preserving coverage satisfaction;
 otherwise resubscription could compare against older coverage rows and skip a needed write.
+
+Allocate the observer generation immediately when capturing each upstream snapshot,
+before any optional-history read or saved-order dispatch (#2050). A newer coverage
+save may complete during either suspension; assigning the old snapshot a later
+generation would let it overwrite those newer rows and claims. Four controlled
+read/dispatch × quiet-period/cancellation probes withhold the next merge and check
+fresh-cache rows, full saved position and write history. When deferred order changes
+capture timing, assert the exact older-snapshot/newer-removal emission sequence
+rather than assuming a single emission, while retaining persistence assertions.
 
 Each successful coverage row write also advances `coverageRevision`, even if the subsequent
 position write fails or is cancelled. The observer captures that successful revision at entry,

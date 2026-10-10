@@ -237,6 +237,56 @@ passing pairing unit class cannot expose this contamination. The
 records **1 executed/failed, 0 skipped** before binding repair and **2 executed/passed,
 0 failed/errors/skipped** afterward across cleanup and setup independence.
 
+Private DataStore files alone do not isolate UID-wide Keystore custody (#2036).
+`KeystorePairedServerStoreTest` deleted the production pairing wrap alias during
+lost-key tests and teardown while the app retained encrypted blobs, including
+empty collections. Fresh sweep logcat orders failed read, failed seed save and
+then failed removal; the teardown error masked the original save failure.
+`storageTestKeyLossAndTeardownPreserveAppPairings` establishes the cause by driving
+the actual lost-key method and teardown, then requiring a successful app snapshot
+of named, ordered records. Each storage test now owns a private DataStore and
+alias through the [internal constructor](paired-server-store.md#how-custody-works-mechanism-a-wrap-at-rest);
+production keeps its fixed alias and real encryption.
+
+The answer-host fixture requires `readSnapshot().getOrThrow()`: fallback-empty
+`list()` cannot prove readability or restoration. After activity closure it
+restores the original connection source and production `SavedStateHandle` target
+binding, removes only persisted fixture IDs, and compares preceding records,
+names and order. Failed initial reads change nothing; failed saves remove no
+unowned IDs. Failed setup/body keeps its primary exception, with any cleanup
+failure suppressed on it. This storage boundary complements the two-activity DI
+regression above; passing either in isolation cannot establish sweep isolation.
+
+[Retained #2036 evidence](../../../app/src/androidTest/assets/answer-host-2036/README.md)
+contains commands, revisions/patch identities, exit statuses, sanitized XML and
+selected content-free logcat. All builder runs used managed `pixel2Api33Atd`,
+Android 13/API 33 AOSP ATD, under the host-wide hold. Before isolated cleanup at
+`292c52bca` and before classes/sweep at `75a10c4a4` precede repair; final after runs
+use `c69770073`. Executed excludes skips; all rows have zero errors.
+
+| Selection | Before executed / passed / failed / skipped; exit | After executed / passed / failed / skipped; exit |
+| --- | --- | --- |
+| Isolated cleanup | 1 / 1 / 0 / 0; 0 | 1 / 1 / 0 / 0; 0 |
+| Complete answer-host classes | 2 / 2 / 0 / 0; 0 | 5 / 5 / 0 / 0; 0 |
+| Key-custody probe | 1 / 0 / 1 / 0; 1 | 1 / 1 / 0 / 0; 0 |
+| Failed-save primary-error probe | 1 / 0 / 1 / 0; 1 | 1 / 1 / 0 / 0; 0 |
+| Same two-shard non-e2e sweep | 1573 / 1572 / 1 / 2; 1 | 1576 / 1576 / 0 / 2; 0 |
+
+The isolated/class baselines passed while the sweep failed only cleanup; the
+fresh sweep reproduced the retained #2027 baseline. Both named acceptance methods
+above passed in the repaired classes and sweep; storage coverage passed **17/17**.
+Identity comparison found no misses, three new regressions and no unrelated
+failures. Unchanged skips were `RenameDialogCaptureTest.renameAtFigmaViewport` and
+`ComposerPasteTest.pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty`.
+
+The [#2036 verifier](https://github.com/pyrycode/pyrycode-mobile/pull/2046#issuecomment-6097849302)
+and dispatcher gate report confirm configured UI execution at `70e785332`:
+**259 executed/passed, 0 failed/errors, 1 skipped**, exit 0, with both named methods
+passed. Scripted-all: **22 executed/passed, 0 failed/errors/skipped**, exit 0.
+These are configured gates, distinct from the builder diagnostic sweep; this
+repair required no new real-Claude run. See the
+[answer-host evidence history](../../e2e-interactive-stream.md#answer-host-setup-independence-1899).
+
 An enabled semantic node and successful `performScrollToNode` do not establish a usable physical
 tap target. The thread draws beneath header/composer chrome. In #1703's short-thread reproduction,
 Continue's tap center was 468.5 while composer top was 461; the real pointer tap emitted no submit

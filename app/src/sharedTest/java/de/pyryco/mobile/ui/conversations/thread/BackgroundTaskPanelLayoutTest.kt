@@ -77,7 +77,7 @@ class BackgroundTaskPanelLayoutTest {
         val size = mutableStateOf(DpSize(412.dp, 892.dp))
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(size.value)) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     BackgroundTaskPanel(roster = roster.value, onDismiss = {}, modifier = Modifier.requiredSize(size.value))
                 }
             }
@@ -119,7 +119,7 @@ class BackgroundTaskPanelLayoutTest {
         val size = DpSize(412.dp, height.dp)
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(size)) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     if (open.value) {
                         BackgroundTaskPanel(roster, onDismiss = { open.value = false }, modifier = Modifier.requiredSize(size))
                     }

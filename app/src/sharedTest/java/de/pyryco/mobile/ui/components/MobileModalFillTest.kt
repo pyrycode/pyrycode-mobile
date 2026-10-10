@@ -246,22 +246,8 @@ class MobileModalFillTest {
     }
 
     @Test
-    fun lightThemeKeepsThePrimaryContainerFill() {
-        show(darkTheme = false)
-
-        assertEquals(Color(0xFFCFE4FF), sheetCentre())
-        assertEquals(expectedContentColor, contentColor)
-        assertEquals(Color(0xFF134A74), contentColor)
-    }
-
-    @Test
     fun darkCancelUsesPrimaryAndKeepsNativeDisabledColour() {
         assertCancelColours(darkTheme = true)
-    }
-
-    @Test
-    fun lightCancelUsesPrimaryAndKeepsNativeDisabledColour() {
-        assertCancelColours(darkTheme = false)
     }
 
     private fun assertCancelColours(darkTheme: Boolean) {

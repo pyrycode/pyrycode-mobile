@@ -65,7 +65,7 @@ class ToolRowNestingTest {
                 tool(id = "toolu_bash", name = "Bash", parent = "toolu_not_loaded"),
             )
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
                         ThreadUiState(

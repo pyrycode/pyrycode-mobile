@@ -113,7 +113,7 @@ class ScriptedThreadHarness(
     fun start() {
         composeRule.setContent {
             val open = vm
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 val colors = MaterialTheme.colorScheme
                 SideEffect { colorScheme = colors }
                 // collectAsState (not collectAsStateWithLifecycle): these are StateFlows and

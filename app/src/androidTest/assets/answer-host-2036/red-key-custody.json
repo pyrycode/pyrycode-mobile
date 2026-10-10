@@ -1,0 +1,41 @@
+{
+  "revision": "75a10c4a43c2d1b3fb7aca07f70c8218797ffd09",
+  "dirty": [
+    " M app/src/androidTest/java/de/pyryco/mobile/ui/onboarding/AnswerHostSetupCleanupTest.kt"
+  ],
+  "diff_sha256": "712576c18e8c38b69f0d5a6afcf079cb06bbae448880a8d587d55e95eb37f044",
+  "command": [
+    "./gradlew",
+    ":app:pixel2Api33AtdDebugAndroidTest",
+    "--rerun",
+    "-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest#storageTestKeyLossAndTeardownPreserveAppPairings",
+    "-Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e",
+    "-Pandroid.testInstrumentationRunnerArguments.disableAnimations=true",
+    "--console=plain"
+  ],
+  "exit": 1,
+  "counts": {
+    "executed": 1,
+    "passed": 0,
+    "failed": 1,
+    "errors": 0,
+    "skipped": 0
+  },
+  "named": [
+    {
+      "classname": "de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest",
+      "name": "storageTestKeyLossAndTeardownPreserveAppPairings",
+      "status": "failed"
+    }
+  ],
+  "failures": [
+    {
+      "classname": "de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest",
+      "name": "storageTestKeyLossAndTeardownPreserveAppPairings",
+      "status": "failed"
+    }
+  ],
+  "reports": [
+    "TEST-pixel2Api33Atd-_app-.xml"
+  ]
+}

@@ -50,6 +50,7 @@ import javax.crypto.SecretKey
 class KeystorePairedServerStoreTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
     private lateinit var prefsName: String
+    private lateinit var wrapKeyAlias: String
     private lateinit var dataStore: DataStore<Preferences>
     private lateinit var dataJob: CompletableJob
     private var createdDeviceKey = false
@@ -57,6 +58,7 @@ class KeystorePairedServerStoreTest {
     @Before
     fun setUp() {
         prefsName = "test_paired_server_${UUID.randomUUID()}"
+        wrapKeyAlias = "pyrycode.test.paired_server_wrap.$prefsName"
         openDataStore()
     }
 
@@ -77,16 +79,17 @@ class KeystorePairedServerStoreTest {
     @After
     fun tearDown() {
         runBlocking { dataJob.cancelAndJoin() }
-        // Drop the shared Keystore wrap key and the test DataStore so each run is hermetic.
+        // The test owns both the private DataStore and this alias, never the app pairing key.
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        if (keyStore.containsAlias(WRAP_KEY_ALIAS)) {
-            keyStore.deleteEntry(WRAP_KEY_ALIAS)
+        if (keyStore.containsAlias(wrapKeyAlias)) {
+            keyStore.deleteEntry(wrapKeyAlias)
         }
         if (createdDeviceKey) keyStore.deleteEntry("pyrycode.device_static_wrap")
         context.preferencesDataStoreFile(prefsName).delete()
     }
 
-    private fun newStore() = KeystorePairedServerStore(dataStore)
+    private fun newStore(preferences: DataStore<Preferences> = dataStore) =
+        KeystorePairedServerStore(preferences, Dispatchers.IO, wrapKeyAlias)
 
     // Adversarial sample: pubkey carries base64-std '+'/'/'/'=', relayUrl keeps its /v1/client
     // path plus a query param, token is a long hex string. Proves byte-faithful round-trip.
@@ -162,7 +165,7 @@ class KeystorePairedServerStoreTest {
             // never an exception, never a crash, never a regenerated record.
             newStore().save(sampleRecord())
             val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-            keyStore.deleteEntry(WRAP_KEY_ALIAS)
+            keyStore.deleteEntry(wrapKeyAlias)
             assertNull(newStore().load())
         }
     }
@@ -271,7 +274,7 @@ class KeystorePairedServerStoreTest {
             val records = listOf(sampleRecord(), sampleRecord().copy(serverId = "second"))
             withTimeout(10_000) {
                 coroutineScope {
-                    records.map { record -> async { KeystorePairedServerStore(gated).save(record) } }.awaitAll()
+                    records.map { record -> async { newStore(gated).save(record) } }.awaitAll()
                 }
             }
             reopen()
@@ -335,7 +338,7 @@ class KeystorePairedServerStoreTest {
                 val entries = newStore().list()
                 val selection = newStore().load()
                 val faults = FaultStore(dataStore)
-                val store = KeystorePairedServerStore(faults)
+                val store = newStore(faults)
                 for (fault in listOf(IOException(first.token), ProviderException(first.token))) {
                     faults.failure = fault
                     for (mutate in listOf<suspend () -> Unit>(
@@ -371,7 +374,7 @@ class KeystorePairedServerStoreTest {
 
                     override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences = throw error
                 }
-            val store = KeystorePairedServerStore(faults)
+            val store = newStore(faults)
             assertTrue(store.list().isEmpty())
             assertNull(store.load())
             mutationFailure { store.save(sampleRecord()) }
@@ -444,7 +447,7 @@ class KeystorePairedServerStoreTest {
             dataStore.edit { it[stringPreferencesKey(PREF_KEY)] = valid }
             KeyStore.getInstance(ANDROID_KEYSTORE).apply {
                 load(null)
-                deleteEntry(WRAP_KEY_ALIAS)
+                deleteEntry(wrapKeyAlias)
             }
             assertTrue(newStore().list().isEmpty())
             mutationFailure { newStore().remove(sample.serverId) }
@@ -465,7 +468,7 @@ class KeystorePairedServerStoreTest {
 
     // Independent legacy writer: same AES envelope as the pre-collection store, no collection codec.
     private suspend fun writePlaintext(plaintext: String) {
-        val key = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.getKey(WRAP_KEY_ALIAS, null) as SecretKey
+        val key = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.getKey(wrapKeyAlias, null) as SecretKey
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key)
         val encrypted = cipher.iv + cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
@@ -496,7 +499,6 @@ class KeystorePairedServerStoreTest {
 
     private companion object {
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        const val WRAP_KEY_ALIAS = "pyrycode.paired_server_wrap"
         const val PREF_KEY = "pyrycode.paired_server"
     }
 }

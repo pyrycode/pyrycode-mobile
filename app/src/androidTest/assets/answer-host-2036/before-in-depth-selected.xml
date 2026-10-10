@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite tests="1" failures="1" errors="0" skipped="0" time="0.03" timestamp="2026-10-10T12:14:53" source-tests="820" source-time="573.06">
+    <testcase name="targetedPairingAfterFixtureTeardownKeepsItsHostGuard" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest" time="0.03">
+      <failure message="paired server remove failed: keystore" type="de.pyryco.mobile.data.crypto.PairedServerStoreException" />
+    </testcase>
+  </testsuite>
+  <testsuite tests="3" failures="0" errors="0" skipped="2" time="2.287" timestamp="2026-10-10T12:14:14" source-tests="755" source-time="534.611">
+    <testcase name="renameAtFigmaViewport" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogCaptureTest" time="1.107">
+      <skipped message="Details redacted; status retained" />
+    </testcase>
+    <testcase name="pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty" classname="de.pyryco.mobile.ui.conversations.thread.ComposerPasteTest" time="0.148">
+      <skipped message="Details redacted; status retained" />
+    </testcase>
+    <testcase name="offlinePrecedingHostDoesNotBlockAnswerHostPairing" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest" time="1.032" />
+  </testsuite>
+</testsuites>

@@ -88,7 +88,7 @@ class MessageReplyTargetsTest {
         var boundaryHeightPx = 0
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(width.dp, 892.dp))) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     val bodyStyle = MaterialTheme.typography.bodyMedium
                     val testBody =
                         if (atBoundary) {

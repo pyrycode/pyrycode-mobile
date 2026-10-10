@@ -118,7 +118,7 @@ class ThreadScreenModalTest {
         onBack: () -> Unit = {},
     ) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = baseState(),
                     onBack = onBack,
@@ -172,7 +172,7 @@ class ThreadScreenModalTest {
             }
         composeTestRule.setContent {
             CompositionLocalProvider(LocalOverscrollFactory provides null) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         state = baseState().copy(hasMessages = true, items = items),
                         onBack = {},
@@ -213,7 +213,7 @@ class ThreadScreenModalTest {
             }
         composeTestRule.setContent {
             CompositionLocalProvider(LocalOverscrollFactory provides null) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         state = baseState().copy(hasMessages = true, items = items),
                         onBack = {},
@@ -542,7 +542,7 @@ class ThreadScreenModalTest {
         var cancelled = 0
         val changes = mutableListOf<Pair<String, Boolean>>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = baseState(),
                     onBack = {},
@@ -760,7 +760,7 @@ class ThreadScreenModalTest {
         composeTestRule.setContent {
             val modal = remember { openModal() }
             var armed by remember { mutableStateOf<String?>(null) }
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = baseState(),
                     onBack = {},
@@ -857,7 +857,7 @@ class ThreadScreenModalTest {
     fun armed_choice_shows_its_confirm_hint_directly_under_it_until_the_arm_clears() {
         var armed by mutableStateOf<String?>("allow_once")
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = baseState(),
                     onBack = {},
@@ -887,7 +887,7 @@ class ThreadScreenModalTest {
         var stage by mutableStateOf(LocalSendStage.Sending)
         var connection by mutableStateOf<ConnectionState>(ConnectionState.Connected)
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = baseState(),
                     onBack = {},
