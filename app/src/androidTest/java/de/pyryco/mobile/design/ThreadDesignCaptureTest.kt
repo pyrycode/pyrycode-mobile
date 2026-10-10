@@ -75,7 +75,6 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.preferences.AppPreferences
-import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.repository.AttachmentContent
 import de.pyryco.mobile.data.repository.AttachmentFetchResult
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
@@ -900,15 +899,14 @@ class ThreadDesignCaptureTest {
         }
     }
 
-    /** Real-device pixels for #1918: both actions and Cancel-only in both static palettes. */
-    @Test fun queuedActions_lightDarkAndCancelOnlyAt412By892() {
+    /** Real-device pixels for #1918: both actions and Cancel-only in the static dark palette. */
+    @Test fun queuedActions_darkAndCancelOnlyAt412By892() {
         openThread()
-        val palette = mutableStateOf(ThemeMode.LIGHT)
         val sendNow = mutableStateOf(true)
-        // MainActivity pins dark; mount the same component under explicit palettes for this capture.
+        // MainActivity pins dark; mount the same component under the static dark palette for this capture.
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             (design.view.context as ComponentActivity).setContent {
-                PyrycodeMobileTheme(darkTheme = palette.value == ThemeMode.DARK, dynamicColor = false) {
+                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.threadColors.background) {
                         Column(Modifier.systemBarsPadding().padding(vertical = 24.dp)) {
                             listOf(
@@ -922,63 +920,60 @@ class ThreadDesignCaptureTest {
                 }
             }
         }
-        for (theme in listOf(ThemeMode.LIGHT, ThemeMode.DARK)) {
-            for (enabled in listOf(true, false)) {
-                rule.runOnIdle {
-                    palette.value = theme
-                    sendNow.value = enabled
-                }
-                rule.waitUntil(5_000) {
-                    rule.onAllNodesWithContentDescription("Send now").fetchSemanticsNodes().size == if (enabled) 2 else 0
-                }
-                rule.onAllNodesWithContentDescription("Drop this queued message").assertCountEquals(2)
-                rule.onAllNodesWithTag("queued-cancel-glyph", useUnmergedTree = true)[0].assertIsDisplayed()
-                rule.waitForIdle()
-                val instrumentation = InstrumentationRegistry.getInstrumentation()
-                instrumentation.uiAutomation.waitForIdle(500, 5_000)
-                val output =
-                    File(
-                        checkNotNull(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")),
-                        "queued-actions-1918",
-                    ).apply { mkdirs() }
-                val name = "${theme.name.lowercase()}-${if (enabled) "send-cancel" else "cancel-only"}"
-                val bars =
-                    design.view.rootWindowInsets.getInsets(
-                        android.view.WindowInsets.Type
-                            .systemBars(),
-                    )
-                val realBars = bars.top > 0 && bars.bottom > 0
-                if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
-                    assertTrue("queued captures require real system bars", realBars)
-                    assertTrue("queued captures require hardware rendering", design.view.isHardwareAccelerated)
-                }
-                if (!realBars) {
-                    File(
-                        output,
-                        "$name.txt",
-                    ).writeText("figma=848:9517 theme=$theme sendNow=$enabled syntheticBars=true geometryOnly=true\n")
-                    continue
-                }
-                val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
-                try {
-                    val colors =
-                        (0 until bitmap.height step 8).flatMap { y ->
-                            (0 until bitmap.width step 8).map { x -> bitmap.getPixel(x, y) }
-                        }
-                    assertTrue("capture must contain rendered content", colors.toSet().size > 10)
-                    val background = bitmap.getPixel(4, bitmap.height / 2)
-                    val brightness = Color.red(background) + Color.green(background) + Color.blue(background)
-                    assertTrue("capture uses $theme palette", if (theme == ThemeMode.LIGHT) brightness > 600 else brightness < 150)
-                    File(output, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-                    File(output, "$name.txt").writeText(
-                        "figma=848:9517 theme=$theme wallpaper=false sendNow=$enabled " +
-                            "sizePx=${bitmap.width}x${bitmap.height} viewportDp=412x892 " +
-                            "hardwareAccelerated=${design.view.isHardwareAccelerated} " +
-                            "actions=primary bubbleAndClockAlpha=0.6\n",
-                    )
-                } finally {
-                    bitmap.recycle()
-                }
+        for (enabled in listOf(true, false)) {
+            rule.runOnIdle {
+                sendNow.value = enabled
+            }
+            rule.waitUntil(5_000) {
+                rule.onAllNodesWithContentDescription("Send now").fetchSemanticsNodes().size == if (enabled) 2 else 0
+            }
+            rule.onAllNodesWithContentDescription("Drop this queued message").assertCountEquals(2)
+            rule.onAllNodesWithTag("queued-cancel-glyph", useUnmergedTree = true)[0].assertIsDisplayed()
+            rule.waitForIdle()
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            instrumentation.uiAutomation.waitForIdle(500, 5_000)
+            val output =
+                File(
+                    checkNotNull(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")),
+                    "queued-actions-1918",
+                ).apply { mkdirs() }
+            val name = "dark-${if (enabled) "send-cancel" else "cancel-only"}"
+            val bars =
+                design.view.rootWindowInsets.getInsets(
+                    android.view.WindowInsets.Type
+                        .systemBars(),
+                )
+            val realBars = bars.top > 0 && bars.bottom > 0
+            if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
+                assertTrue("queued captures require real system bars", realBars)
+                assertTrue("queued captures require hardware rendering", design.view.isHardwareAccelerated)
+            }
+            if (!realBars) {
+                File(
+                    output,
+                    "$name.txt",
+                ).writeText("figma=848:9517 theme=DARK sendNow=$enabled syntheticBars=true geometryOnly=true\n")
+                continue
+            }
+            val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+            try {
+                val colors =
+                    (0 until bitmap.height step 8).flatMap { y ->
+                        (0 until bitmap.width step 8).map { x -> bitmap.getPixel(x, y) }
+                    }
+                assertTrue("capture must contain rendered content", colors.toSet().size > 10)
+                val background = bitmap.getPixel(4, bitmap.height / 2)
+                val brightness = Color.red(background) + Color.green(background) + Color.blue(background)
+                assertTrue("capture uses dark palette", brightness < 150)
+                File(output, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                File(output, "$name.txt").writeText(
+                    "figma=848:9517 theme=DARK wallpaper=false sendNow=$enabled " +
+                        "sizePx=${bitmap.width}x${bitmap.height} viewportDp=412x892 " +
+                        "hardwareAccelerated=${design.view.isHardwareAccelerated} " +
+                        "actions=primary bubbleAndClockAlpha=0.6\n",
+                )
+            } finally {
+                bitmap.recycle()
             }
         }
     }

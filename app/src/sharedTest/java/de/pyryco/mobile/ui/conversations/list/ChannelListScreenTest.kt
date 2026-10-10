@@ -156,7 +156,7 @@ class ChannelListScreenTest {
                 ),
             )
         }
-        PyrycodeMobileTheme {
+        PyrycodeMobileTheme(darkTheme = true) {
             ChannelListScreen(
                 hostState = hostState,
                 onEvent = { event ->
@@ -282,7 +282,7 @@ class ChannelListScreenTest {
                 ),
             )
         composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(state.value, onEvent = { events += it }) }
+            PyrycodeMobileTheme(darkTheme = true) { ChannelListScreen(state.value, onEvent = { events += it }) }
         }
 
         fun assertNoRowPens() {
@@ -388,7 +388,7 @@ class ChannelListScreenTest {
             copy(host = host.copy(connectionStatus = ConnectionStatus(relay, PyrycodeLinkStatus.Connected)))
         var state by mutableStateOf(HostChannelListState(listOf(first, second)))
         composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(hostState = state, onEvent = { events += it }) }
+            PyrycodeMobileTheme(darkTheme = true) { ChannelListScreen(hostState = state, onEvent = { events += it }) }
         }
         val firstControls =
             listOf(
@@ -503,7 +503,7 @@ class ChannelListScreenTest {
                 ),
             )
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ChannelListScreen(state.value, onEvent = { event ->
                     events += event
                     if (event is ChannelListEvent.TreeFoldToggled) {
@@ -767,7 +767,7 @@ class ChannelListScreenTest {
     fun listBar_drawsMenuAndPairingAndNoneOfTheRetiredChrome_onEveryDraw() {
         var hostState: HostChannelListState by mutableStateOf(HostChannelListState())
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ChannelListScreen(hostState = hostState, onEvent = { events += it })
             }
         }
@@ -856,7 +856,7 @@ class ChannelListScreenTest {
         var state by mutableStateOf(HostChannelListState())
         var inset by mutableStateOf(20.dp)
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ChannelListScreen(state, { events += it }, Modifier.padding(top = inset))
             }
         }
@@ -1260,7 +1260,7 @@ class ChannelListScreenTest {
                 ),
             )
         composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(state.value, onEvent = { events += it }) }
+            PyrycodeMobileTheme(darkTheme = true) { ChannelListScreen(state.value, onEvent = { events += it }) }
         }
         val untitled = string(R.string.untitled_discussion)
 
@@ -1313,7 +1313,7 @@ class ChannelListScreenTest {
                 HostChannelListState(listOf(host("alpha channel", "alpha chat")), selected = HostConversationTarget("pyrybox", "d1")),
             )
         composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(state.value, onEvent = { events += it }) }
+            PyrycodeMobileTheme(darkTheme = true) { ChannelListScreen(state.value, onEvent = { events += it }) }
         }
         assertEquals(listOf("alpha chat", "middle chat"), drawnRows(TREE_CHAT_ROW_TEST_TAG))
 
@@ -1411,7 +1411,7 @@ class ChannelListScreenTest {
         val state =
             mutableStateOf(HostChannelListState(listOf(channelHost()), createChannel = CreateChannelState("pyrybox")))
         composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+            PyrycodeMobileTheme(darkTheme = true) { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
         }
 
         composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextInput("  Ops  ")
@@ -1466,7 +1466,7 @@ class ChannelListScreenTest {
     fun editWorkspaceModal_isSeeded_reportsTheNameAndTheArchiveSteps() {
         val state = mutableStateOf(HostChannelListState(listOf(workspaceHost()), workspaceEditor = openWorkspace()))
         composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+            PyrycodeMobileTheme(darkTheme = true) { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
         }
 
         composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).assertTextContains("two")
@@ -1496,7 +1496,7 @@ class ChannelListScreenTest {
     fun editWorkspaceModal_failuresAreStaticAndTheTypedNameSurvives_andOkFollowsItsOwnHost() {
         val state = mutableStateOf(HostChannelListState(listOf(workspaceHost()), workspaceEditor = openWorkspace()))
         composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+            PyrycodeMobileTheme(darkTheme = true) { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
         }
         composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).performTextReplacement("Typed")
 
@@ -1550,7 +1550,7 @@ class ChannelListScreenTest {
     fun arrivalMarker_isCarriedByEveryDrawOfTheList_exactlyOnce() {
         var hostState: HostChannelListState by mutableStateOf(HostChannelListState())
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ChannelListScreen(hostState = hostState, onEvent = {})
             }
         }
@@ -1584,7 +1584,7 @@ class ChannelListScreenTest {
     @Test
     fun emptyState_rendersPlaceholder_whenThereAreNoHosts() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ChannelListScreen(hostState = HostChannelListState(), onEvent = { events += it })
             }
         }
@@ -1616,7 +1616,7 @@ class ChannelListScreenTest {
             HostChannelListState(hosts = listOf(entry(serverId = "pyrybox", displayName = "Pyrybox"))),
         )
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ChannelListScreen(hostState = state, onEvent = { events += it })
             }
         }
@@ -1667,7 +1667,7 @@ class ChannelListScreenTest {
             ),
         )
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ChannelListScreen(hostState = state, onEvent = { events += it })
             }
         }

@@ -24,7 +24,7 @@ class AboutScreenTest {
     @Test
     fun versionRow_rendersBuildConfigVersionName() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 AboutScreen(onBack = {})
             }
         }
@@ -38,7 +38,7 @@ class AboutScreenTest {
     @Test
     fun versionRow_rendersSupportingTextWithGitSha() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 AboutScreen(onBack = {})
             }
         }
@@ -52,7 +52,7 @@ class AboutScreenTest {
     @Test
     fun openSourceRow_hasClickAction() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 AboutScreen(onBack = {})
             }
         }
@@ -66,7 +66,7 @@ class AboutScreenTest {
     @Test
     fun licenseRow_hasNoClickAction() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 AboutScreen(onBack = {})
             }
         }
@@ -81,7 +81,7 @@ class AboutScreenTest {
     fun backArrow_invokesOnBack() {
         var backCount = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 AboutScreen(onBack = { backCount++ })
             }
         }

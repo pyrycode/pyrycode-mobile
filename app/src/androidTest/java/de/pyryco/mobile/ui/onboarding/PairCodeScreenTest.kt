@@ -98,7 +98,6 @@ class PairCodeScreenTest {
     val rule = createAndroidComposeRule<ComponentActivity>()
     private var state by mutableStateOf(PairCodeState(name = "Host", code = "draft"))
     private val events = mutableListOf<PairCodeEvent>()
-    private var dark by mutableStateOf(true)
     private lateinit var view: View
 
     private fun capture(name: String) {
@@ -132,7 +131,7 @@ class PairCodeScreenTest {
                 DeviceConfigurationOverride.ForcedSize(if (small) DpSize(360.dp, 640.dp) else DpSize(412.dp, 892.dp)),
             ) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
-                    PyrycodeMobileTheme(darkTheme = dark) {
+                    PyrycodeMobileTheme(darkTheme = true) {
                         Scaffold { padding ->
                             PairCodeScreen(state, { event ->
                                 events += event
@@ -157,7 +156,7 @@ class PairCodeScreenTest {
         val before = runBlocking { store.list() }
         lateinit var nav: NavHostController
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 nav = rememberNavController()
                 PyryNavHost(Routes.WELCOME, navController = nav)
             }
@@ -184,7 +183,7 @@ class PairCodeScreenTest {
         val before = runBlocking { store.list() }
         lateinit var nav: NavHostController
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 nav = rememberNavController()
                 PyryNavHost(Routes.WELCOME, navController = nav)
             }
@@ -203,7 +202,7 @@ class PairCodeScreenTest {
         val before = runBlocking { store.list() }
         lateinit var nav: NavHostController
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 nav = rememberNavController()
                 PyryNavHost(Routes.WELCOME, navController = nav)
             }
@@ -230,15 +229,13 @@ class PairCodeScreenTest {
         rule.waitUntil(5_000) { nav.currentDestination?.route == Routes.WELCOME }
     }
 
-    @Test fun fullSizeLightAndDarkFrames() {
+    @Test fun fullSizeDarkFrames() {
         state = PairCodeState()
         show()
         for (label in listOf("Host name", "Pairing code", "Pair", "Cancel")) {
             rule.onNodeWithText(label).assertIsDisplayed()
         }
         capture("pair-code-dark")
-        rule.runOnIdle { dark = false }
-        capture("pair-code-light")
     }
 
     @Test fun emptyFieldLabelsSitAboveTheirClearActions() {

@@ -57,7 +57,7 @@ class DiscussionPreviewRowTest {
     fun discussionWithMessage_exposesSingleMergedLabelOfNameAndTime() {
         val name = "Help me debug auth flow"
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 DiscussionPreviewRow(
                     conversation = discussion(name),
                     lastMessage = message("The token refresh is happening…"),
@@ -74,7 +74,7 @@ class DiscussionPreviewRowTest {
     fun discussionWithoutMessage_stillExposesNameAndTimeLabel() {
         val name = "Quick regex for log parsing"
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 DiscussionPreviewRow(
                     conversation = discussion(name),
                     lastMessage = null,
@@ -91,7 +91,7 @@ class DiscussionPreviewRowTest {
     fun discussionRow_meetsMinimumTouchTargetHeight() {
         val name = "Help me debug auth flow"
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 DiscussionPreviewRow(
                     conversation = discussion(name),
                     lastMessage = null,

@@ -64,7 +64,7 @@ class SlashCommandTypeAheadScreenTest {
 
     private fun setThread(commands: List<SlashCommandMenuRow>? = menu) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
                         ThreadUiState(
@@ -240,7 +240,7 @@ class SlashCommandTypeAheadScreenTest {
         var imeVisible by mutableStateOf(true)
         var completed: String? = null
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Box(Modifier.fillMaxSize()) {
                     SlashCommandTypeAhead(
                         text = "/cl",

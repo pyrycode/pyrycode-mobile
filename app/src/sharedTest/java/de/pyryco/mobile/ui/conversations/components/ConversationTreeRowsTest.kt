@@ -91,7 +91,7 @@ class ConversationTreeRowsTest {
         var adds = 0
         var opens = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Column(modifier = Modifier.width(320.dp)) {
                     TreeHostRow(
                         serverId = "pyry",
@@ -142,7 +142,7 @@ class ConversationTreeRowsTest {
 
     private fun setBoundedContent(content: @Composable () -> Unit) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Box(modifier = Modifier.width(rowWidth)) { content() }
             }
         }
@@ -161,7 +161,7 @@ class ConversationTreeRowsTest {
     @Test
     fun sectionHeader_rendersTitleAsHeading() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme { TreeSectionHeader(title = "Channels", onAddTapped = {}) }
+            PyrycodeMobileTheme(darkTheme = true) { TreeSectionHeader(title = "Channels", onAddTapped = {}) }
         }
 
         composeTestRule.onNodeWithText("Channels").assert(isHeading())
@@ -452,7 +452,7 @@ class ConversationTreeRowsTest {
     fun hostRow_foldControl_namesTheOppositeStateAndTogglesOnTap() {
         var toggles = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 TreeHostRow(
                     serverId = "pyrybox",
                     hostName = "Pyrybox",
@@ -482,7 +482,7 @@ class ConversationTreeRowsTest {
     @Test
     fun hostRow_collapsed_namesTheExpandAction() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 TreeHostRow(
                     serverId = "pyrybox",
                     hostName = "Pyrybox",
@@ -519,7 +519,7 @@ class ConversationTreeRowsTest {
                 "Pyrycode: idle"
         val status = mutableStateOf(ConnectionStatus(relays.first(), pyrycodes.first()))
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 TreeHostRow(
                     serverId = "pyrybox",
                     hostName = "Pyrybox",
@@ -571,7 +571,7 @@ class ConversationTreeRowsTest {
         var reconnects = 0
         var toggles = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 TreeHostRow(
                     serverId = "pyrybox",
                     hostName = "Pyrybox",
@@ -597,7 +597,7 @@ class ConversationTreeRowsTest {
     fun hostRow_connectedConnectingOrIdle_drawsNoReconnectControl() {
         val status = mutableStateOf(ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected))
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 TreeHostRow(
                     serverId = "pyrybox",
                     hostName = "Pyrybox",
@@ -628,7 +628,7 @@ class ConversationTreeRowsTest {
         onReconnectTapped: () -> Unit = {},
     ) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 TreeHostRow(
                     serverId = "pyrybox",
                     hostName = "Pyrybox",
@@ -693,7 +693,7 @@ class ConversationTreeRowsTest {
     fun workspaceRow_foldControl_namesTheOppositeStateAndTogglesOnTap() {
         var toggles = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 TreeWorkspaceRow(
                     workspaceName = "Second Brain",
                     expanded = false,
@@ -718,7 +718,7 @@ class ConversationTreeRowsTest {
         // Stacked in a Column: siblings placed straight into setContent overlap, and the topmost
         // full-width row would swallow the tap aimed at the one beneath it.
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Column {
                     TreeConversationRow(
                         conversationName = "rocd-thinking",
@@ -742,7 +742,7 @@ class ConversationTreeRowsTest {
         var edits = 0
         var toggles = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 TreeHostRow(
                     serverId = "pyrybox",
                     hostName = "Pyrybox",
@@ -790,7 +790,7 @@ class ConversationTreeRowsTest {
     @Test
     fun everyTappableRow_keepsTheCompactBandWithoutClippingItsText() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Column {
                     TreeHostRow(
                         serverId = "pyrybox",

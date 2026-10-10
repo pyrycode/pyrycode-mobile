@@ -83,7 +83,7 @@ class CreateChatFailureNoticeTest {
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
                 CompositionLocalProvider(LocalAccessibilityManager provides accessibility) {
-                    PyrycodeMobileTheme {
+                    PyrycodeMobileTheme(darkTheme = true) {
                         if (visible.value) ChannelListScreen(state.value, events::add)
                     }
                 }

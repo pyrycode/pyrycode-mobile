@@ -99,14 +99,6 @@ class MarkdownReaderCaptureTest {
         capture("compact-menu-320x700.png", 320, 700, 1.5f)
     }
 
-    @Test fun lightActionsMenuAt412By892() {
-        show("Builder Pipeline - Plan.md", REFERENCE_MARKDOWN, 1f, dark = false)
-        rule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
-        rule.onNodeWithTag("markdown-reader-menu").assertIsDisplayed()
-        rule.onNodeWithText(string(R.string.markdown_reader_save_to_device)).assertIsDisplayed()
-        capture("menu-light-412x892.png", 412, 892, 1f, dark = false)
-    }
-
     private fun show(
         name: String,
         markdown: String,

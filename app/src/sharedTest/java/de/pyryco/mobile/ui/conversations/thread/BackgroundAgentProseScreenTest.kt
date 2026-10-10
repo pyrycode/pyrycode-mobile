@@ -102,7 +102,7 @@ class BackgroundAgentProseScreenTest {
         ) + (if (childTool) listOf(read, prose("Child after tool", "a")) else emptyList())
         compose.setContent {
             val screen: @Composable () -> Unit = {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         state = ThreadUiState("c", "Channel", items = items, hasMessages = true, historyMarkers = markers),
                         onBack = {},

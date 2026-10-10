@@ -46,7 +46,7 @@ class MessageReplyImeDeviceTest {
         var sends = 0
         rule.setContent {
             view = LocalView.current
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
                         ThreadUiState(

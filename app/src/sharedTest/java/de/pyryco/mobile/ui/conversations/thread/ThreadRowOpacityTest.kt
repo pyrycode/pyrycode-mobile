@@ -47,7 +47,7 @@ class ThreadRowOpacityTest {
         composeRule.setContent {
             view = LocalView.current
             density = LocalDensity.current.density
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
                         ThreadUiState(

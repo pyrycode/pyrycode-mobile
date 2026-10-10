@@ -111,7 +111,7 @@ class ThreadPacedReadViewportTest {
             compose.setContent {
                 val state by vm.state.collectAsState()
                 CompositionLocalProvider(LocalLifecycleOwner provides owner) {
-                    PyrycodeMobileTheme {
+                    PyrycodeMobileTheme(darkTheme = true) {
                         ThreadScreen(state, {}, {}, ConnectionState.Connected, {}, onOverflowEvent = {
                             if (it is ThreadEvent.NewestContentPresented) presented += it
                             vm.onOverflowEvent(it)

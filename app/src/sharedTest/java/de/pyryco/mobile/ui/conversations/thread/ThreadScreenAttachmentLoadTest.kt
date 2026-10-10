@@ -130,7 +130,7 @@ class ThreadScreenAttachmentLoadTest {
                     baseContext
                 }
             CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner, LocalContext provides actionContext) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         state = state,
                         modalState = modal,

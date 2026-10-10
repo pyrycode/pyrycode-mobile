@@ -226,26 +226,13 @@ class MessageBubblePaletteTest {
         assertPalette()
     }
 
-    @Test fun staticLightRetainsContainers() {
-        show(isDark = false)
-        assertPalette()
-    }
-
     @Test fun wallpaperDarkRetainsContainers() {
         show(isDark = true, isWallpaper = true)
         assertPalette()
     }
 
-    @Test fun wallpaperLightRetainsContainers() {
-        show(isDark = false, isWallpaper = true)
-        assertPalette()
-    }
-
-    @Test fun themeChangesUpdateAlreadyComposedBubbles() {
-        show(isDark = false)
-        assertPalette()
-        rule.runOnIdle { dark = true }
-        rule.waitForIdle()
+    @Test fun wallpaperChangesUpdateAlreadyComposedDarkBubbles() {
+        show(isDark = true)
         assertPalette()
         rule.runOnIdle { wallpaper = true }
         rule.waitForIdle()

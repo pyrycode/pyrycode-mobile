@@ -67,7 +67,7 @@ class ToolCallRowTest {
 
     private fun setContent(toolCall: ToolCall) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ToolCallRow(toolCall = toolCall)
             }
         }
@@ -279,7 +279,7 @@ class ToolCallRowTest {
                 ),
             )
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ToolCallRow(toolCall = toolCall)
             }
         }
@@ -333,7 +333,7 @@ class ToolCallRowTest {
     @Test
     fun an_empty_or_missing_count_draws_nothing() {
         var toolCall by mutableStateOf(doneToolCall().copy(resultDetail = ""))
-        composeTestRule.setContent { PyrycodeMobileTheme { ToolCallRow(toolCall = toolCall) } }
+        composeTestRule.setContent { PyrycodeMobileTheme(darkTheme = true) { ToolCallRow(toolCall = toolCall) } }
 
         composeTestRule.onNodeWithTag(TOOL_RESULT_DETAIL_TAG, useUnmergedTree = true).assertDoesNotExist()
         toolCall = doneToolCall().copy(resultDetail = null)

@@ -21,7 +21,7 @@ class AppTypographyTest {
     fun themeSuppliesFigmaBaseTextMetrics() {
         lateinit var typography: Typography
         rule.setContent {
-            PyrycodeMobileTheme(dynamicColor = false) {
+            PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                 typography = MaterialTheme.typography
             }
         }

@@ -697,7 +697,7 @@ class ThreadScreenHistoryTest {
     ): LazyListState {
         val list = LazyListState(firstVisibleItemIndex = initialIndex)
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 val oldest by rememberUpdatedState(count() - 1)
                 val demand by rememberUpdatedState(onDemand)
                 val gesture =
@@ -869,7 +869,7 @@ class ThreadScreenHistoryTest {
         onUnsignedGap: ((ULong) -> Unit)? = null,
     ) {
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 if (onUnsignedGap == null) {
                     ThreadScreen(
                         state = state(),
@@ -934,7 +934,7 @@ class ThreadScreenHistoryTest {
     @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
     fun retryRow_keepsItsLabelsFullLineBox_andLeavesTheStandard16dpGapBelowIt() {
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 androidx.compose.foundation.layout.Box(
                     androidx.compose.ui.Modifier
                         .testTag("retry-row"),
