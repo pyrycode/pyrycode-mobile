@@ -12,6 +12,8 @@
 - `docs/knowledge/features/development-verification-emulator-evidence.md`: peer status is not phone evidence; post-test DESTROYED focus snapshots do not establish lifecycle during the failing wait.
 - `docs/e2e-interactive-stream.md`: rung-3 contract and retained evidence boundaries.
 - `app/src/test/java/de/pyryco/mobile/ui/onboarding/PairCodeViewModelTest.kt`: exact-record verification and cancellation coverage.
+- `app/src/main/java/de/pyryco/mobile/di/AppModule.kt`: navigation supplies the optional pairing target through `SavedStateHandle`, with the empty default normalized to null.
+- `app/src/androidTest/java/de/pyryco/mobile/ui/onboarding/PairCodeScreenTest.kt`: targeted navigation checks the host label, read-only field and Back without saving.
 
 ## Design source
 
@@ -42,6 +44,8 @@ Compatibility flow remains Offline and never authorizes the target. Target verif
 | Previously selected host is Offline when pairing starts | `AnswerHostSetupTest.offlinePrecedingHostDoesNotBlockAnswerHostPairing` fails at the historical wait before repair, passes after removal. |
 | Confirm saves and verifies the new host | Same regression requires exact record/name, one connect and one target verification, and list navigation. |
 | Setup failure or repeated method execution | Outer fixture cleanup restores definitions and removes both unique owned ids; original entries/order are asserted preserved on success. |
+| Targeted pairing after fixture teardown in the same instrumentation process | `AnswerHostSetupCleanupTest.targetedPairingAfterFixtureTeardownKeepsItsHostGuard` runs the actual setup fixture and its Compose rule to completion, then starts a separate Compose activity with production navigation; checks target label, read-only name, wrong-host rejection and unchanged saved entries. |
+| Empty-target add-host route after teardown | The same regression navigates again with an empty target, requires an editable name and accepts the valid code through fingerprint confirmation without saving. |
 
 ## Error handling
 
@@ -64,6 +68,7 @@ Pending documentation stage: `docs/e2e-interactive-stream.md`, “What rung 3 is
 **Verdict:** PASS
 
 - [Trust boundaries] Real `PairCodeViewModel` still parses and confirms the code; test-only override controls target readiness, never live readiness. Removing unrelated compatibility observation does not bypass target verification.
+- [Trust boundaries, rework] Cleanup must restore the production `SavedStateHandle` target lookup and empty-target normalization. The same-process navigation regression proves a different host's code is rejected before fingerprint confirmation, then proves add-host remains available for an empty target. This addresses verifier finding 1; no production binding changes.
 - [Tokens/secrets] Fixture credentials are static non-secret test values; actual pairing remains in the existing Keystore-wrapped collection. Never retain codes, keys, credentials or records in diagnostics.
 - [Files/storage] Evidence paths are fixed under androidTest assets. Cleanup removes only two unique fixture-owned ids, preserving preceding encrypted records/order; no new storage format or backup behavior.
 - [Android surface] Only instrumentation code changes. The native CAMERA grant belongs to the existing helper; no exported component, deep link, provider or WebView change.
@@ -79,3 +84,4 @@ Pending documentation stage: `docs/e2e-interactive-stream.md`, “What rung 3 is
 ## Revisions
 
 - 2026-10-10: controlled device regression at the pre-repair helper (`54fd1bd52`) executed once and failed with the historical 30000 ms coroutine timeout, before target verification. Remove only the compatibility wait. The native fixture controls compatibility state and the PairCodeViewModel network-controller/readiness seams; it keeps the actual parser, fingerprint confirm, encrypted save, display-name write and exact-target verification path. Cleanup and unchanged answer assertions remain mandatory.
+- 2026-10-10: verifier finding 1 identified persistent DI contamination: cleanup read explicit Koin parameters rather than navigation's `SavedStateHandle`. Restore the equivalent production binding, including the empty-target normalization. Add a device regression using two sequential JUnit rule evaluations: first the existing fixture and real setup helper, fully torn down; then an independent activity using `PyryNavHost` in the same process. No intervening Koin replacement is permitted. Exercise targeted and empty-target routes, reject a valid different-host code, and preserve all saved entries. Run it red before the binding repair, then green with both answer-host device classes and existing pairing unit tests. Device-only because the actual fixture uses native permissions and encrypted Keystore storage. Rework adds approximately 110 lines; total remains below 450 lines, with three exported test declarations, no new production types or changed live consumers. Full live acceptance remains dispatcher-owned.
