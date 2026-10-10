@@ -1,0 +1,7 @@
+<testsuites>
+  <testsuite name="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" tests="3" failures="0" errors="0" skipped="0" time="51.821">
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_finishedReply_systemCopyCopiesSelectedWord" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_permissionPrompts_heldPerConversation" />
+  </testsuite>
+</testsuites>
