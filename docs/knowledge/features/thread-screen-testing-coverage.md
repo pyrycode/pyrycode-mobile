@@ -47,6 +47,26 @@ The baseline device run failed all five while Robolectric passed them. The
 routine dispatcher UI gate did not run these shared methods; its suite totals
 are not their device evidence. Coverage remains in `sharedTest`.
 
+Fresh [#1890 confirmation](https://github.com/pyrycode/pyrycode-mobile/pull/2028#issuecomment-6091545417)
+on 2026-10-10 retained repair `1a333fcf24a127b2f4621398c7171cde58ad62ac`
+on builder base `f3186e5a5ed013540cf74ff410e9e36dcd75b775` without source
+changes or assertion relaxation. Separate focused Robolectric and managed
+Android 13 runs each executed and passed nine cases, with zero failures,
+errors or skips: the five methods above plus the delete class's four pointer
+methods. Every method recorded executed/failed/skipped **1/0/0** on both
+runners; the whole delete class recorded **6/0/0** on each.
+
+Preserved JVM XML is under `/tmp/builder-1890/focused-jvm/` (timestamps
+`2026-10-10T00:02:10.779Z`–`2026-10-10T00:02:18.042Z`); device XML is
+`/tmp/builder-1890/focused-device/TEST-pixel2Api33Atd-_app-.xml` (timestamp
+`2026-10-10T00:12:22`, SHA-256
+`060bf2c13d24b7910696496e61e4e8e50bc437e56f891f01699f2d79673b7740`).
+The [ticket verification record](../../specs/architecture/1890-confirm-thread-geometry-repair.md#verification-results)
+lists each method and its counts; the PR records the exact focused commands.
+These focused passes do not establish the later in-depth main sweep, which
+remains dispatcher-owned. The verifier UI gate's unreadable XML supplies no
+additional per-method evidence.
+
 `ThreadStreamingRevealTest` pauses the Compose clock through the real
 `ThreadScreen`: pre-open text is immediate, appended text retains its prefix and
 reveals progressively, and reopening before catch-up shows all arrived text.
