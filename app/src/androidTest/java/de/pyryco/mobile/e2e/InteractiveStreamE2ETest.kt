@@ -144,7 +144,6 @@ import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.SESSION_BOUNDARY_TEST_TAG
-import de.pyryco.mobile.ui.conversations.components.treeHostChannelAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostChatAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
@@ -2883,15 +2882,10 @@ class InteractiveStreamE2ETest {
             val before = hostConversationIds(serverId, "the default-folder probe") { daemonDefault.id in it }
 
             // 1. The empty Channels section creates in the host's default working folder.
-            val plus = hasTestTag(treeHostChannelAddTestTag(serverId))
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                runCatching { scrollListTo(plus) }.isSuccess
+            val source = GlobalContext.get().get<HostConversationSource>()
+            composeTestRule.createChannelFromEmptyHost(serverId, LIST_TIMEOUT_MS) {
+                source.snapshots.value
             }
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).fetchSemanticsNodes().isEmpty()
-            }
-            composeTestRule.onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).assertCountEquals(0)
-            composeTestRule.onNode(plus).performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(string(R.string.create_channel_title)).fetchSemanticsNodes().isNotEmpty()
             }
