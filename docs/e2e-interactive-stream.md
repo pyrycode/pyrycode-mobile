@@ -2030,6 +2030,21 @@ session id; host A's copy gets a run-unique one, so the first send revives that 
 restart-recovery path and spawns claude fresh under it, while host B's copy stays unbound, since nothing is
 ever sent there. One real-claude turn: the phone's message on host A.
 
+Readiness belongs to A as well (#1900): the initial wait uses
+`hostRepository(serverIdA)` under the unchanged 30-second deadline, requiring A's
+authenticated, Noise-Open repository. The former global `awaitConnected()` follows
+the latest saved/selected host: unavailable B could block this scenario while A was
+already ready, and another host's relay Connected state cannot establish A's
+repository readiness. Static operation labels and content-free readiness/selection
+state make a timeout diagnosable without pairing material or file/message contents.
+No retries, arbitrary sleeps or control injections ship; suite membership and all
+isolation assertions above remain, including A's pending file surviving the switch
+back from B. The rejected-B control proves this wrong-host readiness defect; the
+historical anonymous timeout and leaked-fixture trigger remain weaker observations
+and inference. The fresh full dispatcher live suite executed/passed all 65 methods,
+including this `InteractiveStreamE2ETest` scenario, with zero failures or skips;
+see [host-isolation evidence](#host-isolation-readiness-1900).
+
 No rung-4 twin for any of the three: the cut itself is deterministic, but proving nothing arrives needs a
 real daemon's chunk reassembly, and the scripted `fakeclaude` backend can neither call `send_file` nor serve
 `attachment_chunk` / `request_attachment`. See [Verification status](#verification-status) for the mobile
@@ -3384,6 +3399,112 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+### Host-isolation readiness (#1900)
+
+The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1950#issuecomment-6092091069)
+reviews mobile `99cf7dae9d07cb81a52df8b990125be28c5a1c0c`, carrying forward the
+code review and deterministic gates from `087b572516d7fcdd46f00933bbc5a1274fcdc279`.
+The rung-3 method is
+`InteractiveStreamE2ETest.interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`;
+its existing pending-file retention/absence, exactly-one-user-message/attachment,
+exact fixture bytes, B tile/row/cache absence and B-host `NotFound` checks remain.
+No rung-4 twin was added. Documentation inspected the retained XML and manifests,
+issue evidence and fresh dispatcher reports; it ran no acceptance tests.
+
+**Historical observation versus controlled proof.** The #1731 run failed this
+method with an anonymous 30-second timeout, then passed on rerun. Actual harness
+revisions were mobile `a7a4b484d7260c4dc7418b85df9c10f2b7245398`, daemon
+`6019328b378cad587f69b7bc94de37febbdf8556`, Claude `2.1.280`. Its removed worktree's
+raw device XML/logcat are unavailable, so neither the timed-out operation nor a
+leaked closed-fixture selection is established historically. Restoring leaked
+pairings alone passed; waiting for their relay rejection failed in setup with
+Reconnecting, which is not a red result for the scenario's initial wait.
+
+The [controlled diagnosis](https://github.com/pyrycode/pyrycode-mobile/issues/1900#issuecomment-6054470480)
+instead selected a test-only rejected B while confirming A's repository was Open.
+The unchanged global wait failed with static diagnostic `a_ready=true`,
+`selected_is_a=false`, `selected_relay=PairingRejected`. Replacing only that wait
+with `hostRepository(serverIdA)` passed under the identical control and completed
+all isolation assertions. Both temporary injections were removed before shipping.
+
+| Evidence | Executed | Passed | Failed | Errors | Skipped | Exit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Rejected-B before, `live-7h5phpsk` | 1 | 0 | 1 | 0 | 0 | 1 |
+| Identical control after, `live-nbuxonk5` | 1 | 1 | 0 | 0 | 0 | 0 |
+| Fresh focused post-blocker, `live-q6v35j6y` | 1 | 1 | 0 | 0 | 0 | 0 |
+| Earlier dispatcher full live, `live-n5o3cgtn` | 65 | 64 | 1 | 0 | 0 | 1 |
+| Fresh dispatcher full live, `live-qnb8dku7` | 65 | 65 | 0 | 0 | 0 | 0 |
+
+The [retained control XML, patches and revision/hash manifest](../app/src/test/resources/e2e/host-isolation-1900/README.md)
+identify mobile base `5dbb7c0d2a8b0d75cb78e3bbfe13f569a6983697` plus the before/after
+working-tree patch hashes, daemon `6019328b378cad587f69b7bc94de37febbdf8556` and Claude
+`2.1.280`. Sanitized failure XML preserves the operation and state, without contents
+or pairing material. This establishes the controlled wrong-host readiness defect,
+not the exact cause of the unavailable historical device report.
+
+**Fresh focused verification (2026-10-10).** The separate command was:
+
+```sh
+python3 scripts/android-test-gate.py live --tests 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost'
+```
+
+The [focused manifest](../app/src/test/resources/e2e/host-isolation-1900/post-2014-focused-live.json)
+and [XML](../app/src/test/resources/e2e/host-isolation-1900/post-2014-focused-live.xml)
+confirm the named method passed once at mobile
+`c445ef3adf85714d68fe44309e11e73e9d915d7e`, merged main
+`127c31dac6a0c18b791881560e9eba0f75b068a1`, daemon
+`a536d17b1e182fb5398a5458e3afe6079b37a510`, Claude `2.1.280`.
+The manifest retains binary SHA-256 and **`vcs.modified=true`**; reported absence of
+tracked checkout changes does not make that binary a clean-revision build. Original
+XML/logcat were copied to `/tmp/builder-1900/evidence/post-2014-focused-live/`;
+the committed content-free XML normalizes only line endings and final newline,
+with both hashes retained. This focused pass is separate from full-suite acceptance.
+
+After incorporating #2014's merged repair `f3186e5a5ed013540cf74ff410e9e36dcd75b775`,
+[fresh rename evidence](../app/src/test/resources/e2e/host-isolation-1900/rename-rework/post-2014.json)
+at mobile `6ccb18ea3c4160a95e21221a01c3f86787ad30c1` records
+`DiscussionRenameTest.delayedDialogDoesNotReplaceComposer` **1/1 passed** and the
+complete class **5/5 passed**, each with zero failures/errors/skips and exit 0.
+Commands used `./gradlew testDebugUnitTest --tests '<selector>' --rerun --console=plain`;
+adjacent verbatim XML confirms the named method. Earlier rename failures remain
+baseline history. The verifier's deterministic UI gate executed/passed 254,
+failed 0, skipped 1; scripted-all executed/passed 22, failed/skipped 0.
+
+**Fresh dispatcher full-live acceptance (2026-10-10).** The
+[gate comment](https://github.com/pyrycode/pyrycode-mobile/issues/1900#issuecomment-6092262669)
+records the separate fresh full-suite command
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`:
+**65 executed/passed, 0 failed, 0 errors, 0 skipped**, exit 0 in 19m 19s.
+Documentation inspected the fresh JUnit report: the fully qualified
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest.interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`
+is present with no failure/error/skipped child, **PASS in this full suite**.
+This supplies the required passing full execution, separately from focused proof.
+
+The report is dispatcher
+`logs/2026-10-10T01-18-44-539Z_real-claude-gate_#1900.log`; its matching
+`.stderr.log` reports actual mobile `99cf7dae9d07cb81a52df8b990125be28c5a1c0c`,
+daemon `a536d17b1e182fb5398a5458e3afe6079b37a510` and Claude `2.1.280`.
+The branch was merged with main `127c31dac6a0c18b791881560e9eba0f75b068a1`
+in the detached gate worktree. The XML has no daemon-revision annotation;
+the diagnostic log supplies that revision. Device artifacts were reported under
+`build/dispatcher-tests/live-qnb8dku7/`. The focused binary hash and
+`vcs.modified=true` metadata are not independently attributed to this full-live
+binary. No new host-isolation failure supplied causal XML/logcat in either full run.
+
+**Earlier full run remains historical evidence.** The
+[earlier gate comment](https://github.com/pyrycode/pyrycode-mobile/issues/1900#issuecomment-6091977937)
+reported the same full command at mobile `087b572516d7fcdd46f00933bbc5a1274fcdc279`,
+merged with main `127c31dac6a0`, daemon `a536d17b1e182fb5398a5458e3afe6079b37a510`,
+Claude `2.1.280`: **65 executed, 64 passed, 1 failed, 0 errors/skips**, exit 1.
+Host isolation passed outright; only `interactiveTurn_replySuggestion_longPressSends`
+failed. Its separate same-tree rerun passed 1/1, with zero failures/errors/skips,
+but did not satisfy the passing-full-suite criterion. Reports remain dispatcher
+`logs/2026-10-10T00-47-43-063Z_real-claude-gate_#1900.log`, its matching
+`.stderr.log` and `real-claude-gate-rerun_#1900.log`, with device artifacts under
+`build/dispatcher-tests/live-n5o3cgtn/`. The fresh 65/65 run above now supplies
+full-suite acceptance without substituting that single-method rerun.
+
 
 **Frame-paced complete thread content (#1968, 2026-10-09).** The
 [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1991#issuecomment-6080670785)
@@ -6453,7 +6574,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
   the other host. Each cut is fired deterministically from the app's own `RelayLog` line (never a timer),
   so it can't race the daemon's reply. One real-claude turn each. See the dedicated paragraph under
   [What rung 3 is made of](#what-rung-3-is-made-of) and [Verification status](#verification-status) for
-  the mobile/daemon revisions and the first live run's result.
+  the mobile/daemon revisions and the first live run's result. #1900 retains
+  `InteractiveStreamE2ETest.interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`
+  with exact-host authenticated readiness and every isolation assertion. Its rejected-B
+  red/green control, separate focused pass and fresh 65/65 dispatcher full-suite pass
+  are recorded in [host-isolation readiness](#host-isolation-readiness-1900).
+  No `DeterministicInteractiveStreamE2ETest` twin was added.
 
 - **Coverage — hardened:** [#1059](https://github.com/pyrycode/pyrycode-mobile/issues/1059) made a
   `SecondClientPeer` wait on `interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread` (#955)

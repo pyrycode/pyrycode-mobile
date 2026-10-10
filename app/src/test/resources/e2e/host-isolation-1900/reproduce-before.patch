@@ -1,0 +1,58 @@
+diff --git a/app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt b/app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt
+index 0aceb3691..4aa1166f9 100644
+--- a/app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt
++++ b/app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt
+@@ -88,6 +88,7 @@ import de.pyryco.mobile.data.model.ConnectionState
+ import de.pyryco.mobile.data.model.Conversation
+ import de.pyryco.mobile.data.model.ConversationAgent
+ import de.pyryco.mobile.data.model.LiveSessionEvent
++import de.pyryco.mobile.data.model.RelayLinkStatus
+ import de.pyryco.mobile.data.model.Role
+ import de.pyryco.mobile.data.network.ATTACHMENT_CHUNK_BYTES
+ import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
+@@ -6472,15 +6473,20 @@ class InteractiveStreamE2ETest {
+      */
+     @Test
+     fun interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost() {
+-        fun <T> step(
+-            label: String,
+-            block: suspend () -> T,
+-        ): T = runBlocking { withTimeoutDiagnostic({ "host-isolation step '$label' timed out" }, block) }
+-
+         val serverIdA = twoHostArg(ARG_SERVER_ID)
+         val serverIdB = twoHostArg(ARG_SERVER_ID_B)
+         val collisionId = twoHostArg(ARG_COLLISION_CONVERSATION_ID)
+         val peer = runningToolPeer()
++        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
++        fun <T> step(label: String, block: suspend () -> T): T =
++            runBlocking {
++                withTimeoutDiagnostic({
++                    val hostA = registry.connectionFor(serverIdA)
++                    "host-isolation step '$label' timed out; a_ready=${hostA?.coordinator?.currentRepository?.value != null}; " +
++                        "selected_is_a=${hostA != null && registry.selected.value === hostA}; " +
++                        "selected_relay=${registry.selected.value?.supervisor?.relayStatus?.value?.let { it::class.simpleName }}"
++                }, block)
++            }
+         val stub = ActivityIntentStub()
+         val inserted = mutableListOf<Uri>()
+         val instrumentation = InstrumentationRegistry.getInstrumentation()
+@@ -6493,6 +6499,19 @@ class InteractiveStreamE2ETest {
+             // 1. Pair host B as #847 does, and read each copy's current name by the shared id.
+             peerStep(peer, "open host-isolation peer on A") { peer.open(CONNECT_TIMEOUT_MS) }
+             awaitChannelList()
++            // Controlled reproduction only: reject B without changing A's live connection.
++            step("control: confirm A repository") { hostRepository(serverIdA) }
++            val store = GlobalContext.get().get<PairedServerCollectionStore>()
++            step("control: select rejected B") {
++                val hostA = checkNotNull(store.loadById(serverIdA)).record
++                store.save(hostA.copy(serverId = serverIdB, token = "negative-control-invalid-token"))
++                withTimeout(CONNECT_TIMEOUT_MS) {
++                    registry.selected.first { it != null && it === registry.connectionFor(serverIdB) }
++                    checkNotNull(registry.connectionFor(serverIdB)).supervisor.relayStatus.first {
++                        it is RelayLinkStatus.PairingRejected
++                    }
++                }
++            }
+             step("wait for phone connection on A") { awaitConnected() }
+             instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+             pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
