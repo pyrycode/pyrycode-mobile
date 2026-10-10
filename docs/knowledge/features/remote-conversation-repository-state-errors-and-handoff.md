@@ -4,6 +4,20 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
 
 ## State & concurrency model
 
+- **Agent-switch pending work (#1117)** belongs to one connection's synchronized
+  `SwitchAgentCommands` ledger. Admission, registration and non-suspending send
+  share the same monitor as confirmation, refusal, cancellation removal and end,
+  so teardown cannot sweep and then admit an orphaned waiter. Refused or throwing
+  sends return typed `Unavailable`; caller cancellation propagates and removes
+  only that registration in `finally`. No new operation job, timeout or retry is
+  introduced. Coordinator teardown ends switches synchronously before cancelling
+  the collector; the collector's `finally` and its idempotent job completion hook
+  also end admission and settle all pending switches. **Finally alone is
+  insufficient:** cancelling a collector before its body starts skips that block.
+  `scopeCancellationBeforeCollectorStartsEndsPendingCalls` protects this case.
+  An ended repository rejects later calls; a fresh connection gets a fresh ledger,
+  so reused request ids cannot settle work from the previous connection. See
+  [agent-switch confirmation](remote-conversation-repository-conversation-writes.md#agent-switching-1117).
 - **Session errors have inbound, caller-send and teardown writers (#1677).**
   `SessionErrorProjection` holds a connection-local `StateFlow<Map<String, String>>`;
   pure atomic `update`/`getAndUpdate` operations replace or remove one conversation's

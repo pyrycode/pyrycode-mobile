@@ -446,6 +446,7 @@ class RelayRepositoryCoordinator(
     private fun teardownActive() {
         val current = activeConnection.value ?: return
         activeConnection.value = null
+        current.repo.endSwitchAgentRequests()
         current.repo.endBackgroundTaskStops()
         current.repo.endDebugBundle()
         current.scope.cancel()
