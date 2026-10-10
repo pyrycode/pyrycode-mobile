@@ -92,6 +92,8 @@ None. Rework forecast: approximately 1450–1550 written lines including plan an
 
 - 2026-10-10 (verifier finding 4): The unchanged focused first-draw device method failed on both this branch and clean `origin/main` at `d3ecf8775`, one executed/one failed/no errors or skips each. Main fragmented first-open committed draws were 1732 ms offline and 1632 ms held-newest against 1000 ms; fresh XML/logcat are preserved under `/tmp/builder-2042/device-baseline/`. Existing open #2039 / PR #2041 owns the diagnosed main gate failure. Preserve the bound and fixtures; this supplied-input decoder ticket does not repair the unrelated restore/render path.
 
+- 2026-10-10 (HP recovery, verifier finding 4): Escalated host KVM probe passed. After merging #2039, the unchanged focused first-draw method still failed on feature `b15ed69cc` (2024/1721 ms fragmented first opens) and clean main `c88a07d67` (1630/1388 ms); each run executed one test, failed one, and skipped none. Fresh XML/logcat, commands, revisions and checksums are retained under `/tmp/builder-2042/recovery-20261010/`. Open #2050 owns this residual main failure and blocks #2042. Preserve the 1000 ms assertion and supplied-input scope; the 59 decoder/wire regressions pass. The initial D8 heap-exhaustion attempt executed zero tests; counted comparisons use a command-scoped 4096 MiB Gradle heap and two workers. No product/build configuration or decoder design changed.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/mobile-protocol-v2-wire-layer.md`, supplied thread updates/assembly guidance: describe retained JSON/patch presence, complete/pending/repair outcomes, combined byte limits and strict stack-safe admission. Record the original-syntax and metadata-budget lessons.
