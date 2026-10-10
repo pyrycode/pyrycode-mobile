@@ -74,8 +74,10 @@ Focused device command (Android 13 `pixel2Api33Atd`, no daemon or Claude):
 
 The fresh managed-device XML was copied from
 `app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/TEST-pixel2Api33Atd-_app-.xml`.
+Its CRLF line endings are normalized to LF; test content and counts are unchanged.
 
-`old-drive.patch` reinstates the old drive in an isolated checkout for reproduction; select just
+`git apply --unidiff-zero app/src/androidTest/assets/channel-setup-1897/old-drive.patch` reinstates
+the old drive in an isolated checkout for reproduction; select just
 `EmptyHostChannelSetupTest.emptyTargetCreatesWhileAnotherSelectedHostKeepsItsChannel` for the same
 counted red. The repair is confined to test code. All downstream live functional assertions and
 the scenario's guaranteed fixture restoration/deletion remain in place.
