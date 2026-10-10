@@ -190,7 +190,7 @@ class ComposerAttachmentStripTest {
         try {
             composeRule.setContent {
                 view = LocalView.current
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ComposerAttachmentStrip(listOf(entry(1, "paste.jpg", "image/jpeg").copy(ownedPaste = copy)), false, {})
                 }
             }
@@ -397,7 +397,7 @@ class ComposerAttachmentStripTest {
         var current by mutableStateOf(chatA)
         composeRule.setContent {
             val attachments by current.pendingAttachments.collectAsState()
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = ThreadUiState(conversationId = "chat", displayName = "Chat"),
                     onBack = {},
@@ -440,7 +440,7 @@ class ComposerAttachmentStripTest {
         sendFailures: Flow<AttachmentSendFailure> = emptyFlow(),
     ) {
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 if (registry != null) {
                     val owner =
                         object : ActivityResultRegistryOwner {

@@ -88,7 +88,7 @@ class MessageAttachmentsTest {
     ) {
         composeTestRule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     CompositionLocalProvider(LocalAttachmentThumbnailDecoder provides decoder) {
                         Surface {
                             MessageBubble(
@@ -352,7 +352,7 @@ class MessageAttachmentsTest {
     fun failedRetry_keepsFortyDpLayoutHeight_andFortyEightDpTouchTarget() {
         val retried = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Surface {
                     MessageAttachments(
                         attachments =

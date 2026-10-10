@@ -79,7 +79,7 @@ class ScannerDeniedScreenTest {
     private fun showScreen(): List<String> {
         val actions = mutableListOf<String>()
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ScannerDeniedScreen(
                     onNavigateBack = { actions.add("back") },
                     onOpenSettings = { actions.add("settings") },

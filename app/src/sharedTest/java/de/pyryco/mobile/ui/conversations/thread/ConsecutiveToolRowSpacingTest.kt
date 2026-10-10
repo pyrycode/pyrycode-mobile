@@ -68,7 +68,7 @@ class ConsecutiveToolRowSpacingTest {
                 message(id = "m_reply", role = Role.Assistant, content = "Found it."),
             )
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
                         ThreadUiState(

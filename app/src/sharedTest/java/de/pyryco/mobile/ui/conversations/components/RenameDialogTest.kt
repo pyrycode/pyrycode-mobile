@@ -45,7 +45,7 @@ class RenameDialogTest {
     @Test
     fun title_and_field_label_and_buttons_render() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 RenameDialog(initialName = "old name", onSubmit = {}, onDismiss = {})
             }
         }
@@ -63,7 +63,7 @@ class RenameDialogTest {
     @Test
     fun label_keeps_its_full_line_box_so_the_field_does_not_creep_closer() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 RenameDialog(initialName = "old name", onSubmit = {}, onDismiss = {})
             }
         }
@@ -83,7 +83,7 @@ class RenameDialogTest {
     @Test
     fun field_prefills_with_initial_name() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 RenameDialog(initialName = "old name", onSubmit = {}, onDismiss = {})
             }
         }
@@ -111,7 +111,7 @@ class RenameDialogTest {
     @Test
     fun field_reports_focus_once_dialog_composes() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 RenameDialog(initialName = "old name", onSubmit = {}, onDismiss = {})
             }
         }
@@ -128,7 +128,7 @@ class RenameDialogTest {
     @Test
     fun save_disabled_on_first_composition_when_matches_initial_name() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 RenameDialog(initialName = "old name", onSubmit = {}, onDismiss = {})
             }
         }
@@ -139,7 +139,7 @@ class RenameDialogTest {
     @Test
     fun save_disabled_when_input_cleared() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 RenameDialog(initialName = "old name", onSubmit = {}, onDismiss = {})
             }
         }
@@ -152,7 +152,7 @@ class RenameDialogTest {
     @Test
     fun save_disabled_on_whitespace_only_input() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 RenameDialog(initialName = "old name", onSubmit = {}, onDismiss = {})
             }
         }
@@ -165,7 +165,7 @@ class RenameDialogTest {
     @Test
     fun save_disabled_when_trimmed_input_equals_initial_name() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 RenameDialog(initialName = "kitchenclaw", onSubmit = {}, onDismiss = {})
             }
         }
@@ -178,7 +178,7 @@ class RenameDialogTest {
     @Test
     fun save_enabled_when_trimmed_input_differs_from_initial_name() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 RenameDialog(initialName = "old name", onSubmit = {}, onDismiss = {})
             }
         }
@@ -192,7 +192,7 @@ class RenameDialogTest {
     fun tapping_save_invokes_onSubmit_with_trimmed_text() {
         var submitted: String? = null
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 RenameDialog(
                     initialName = "old",
                     onSubmit = { submitted = it },
@@ -212,7 +212,7 @@ class RenameDialogTest {
         var dismissed = 0
         var submitted: String? = null
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 RenameDialog(
                     initialName = "old",
                     onSubmit = { submitted = it },
@@ -232,7 +232,7 @@ class RenameDialogTest {
     fun ime_done_submits_only_a_changed_trimmed_name() {
         val submitted = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 RenameDialog(initialName = "old", onSubmit = { submitted += it }, onDismiss = {})
             }
         }
@@ -254,7 +254,7 @@ class RenameDialogTest {
         var dismissed = 0
         var submitted = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 RenameDialog(initialName = "old", onSubmit = { submitted++ }, onDismiss = { dismissed++ })
             }
         }

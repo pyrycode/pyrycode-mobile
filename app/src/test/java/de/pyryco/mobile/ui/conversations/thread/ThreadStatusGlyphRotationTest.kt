@@ -63,7 +63,7 @@ class ThreadStatusGlyphRotationTest {
     private fun setThread() {
         composeTestRule.mainClock.autoAdvance = false
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = ThreadUiState(conversationId = "c1", displayName = "Test channel", isPromoted = true),
                     onBack = {},

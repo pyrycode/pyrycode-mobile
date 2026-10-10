@@ -27,7 +27,7 @@ class EmptyThreadStateTest {
     @Test
     fun text_uses_body_small() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme { EmptyThreadState() }
+            PyrycodeMobileTheme(darkTheme = true) { EmptyThreadState() }
         }
         val string = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_empty_state)
 

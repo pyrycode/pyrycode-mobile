@@ -83,7 +83,7 @@ class ThreadMutationArrivalTest {
         }
         compose.setContent {
             val state by vm.state.collectAsState()
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = state,
                     onBack = {},

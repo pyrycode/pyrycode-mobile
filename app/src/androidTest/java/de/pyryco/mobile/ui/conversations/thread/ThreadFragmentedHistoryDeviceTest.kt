@@ -89,7 +89,7 @@ class ThreadFragmentedHistoryDeviceTest {
             composeRule.setContent {
                 val state by vm.state.collectAsState()
                 val draft by vm.draft.collectAsState()
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         state,
                         {},

@@ -41,7 +41,7 @@ open class ThreadReadViewportTest {
         val events = mutableListOf<ThreadEvent.NewestContentPresented>()
         compose.setContent {
             CompositionLocalProvider(LocalLifecycleOwner provides owner) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(state.value, {}, {}, ConnectionState.Connected, {}, onOverflowEvent = {
                         if (it is ThreadEvent.NewestContentPresented) {
                             events +=
@@ -86,7 +86,7 @@ open class ThreadReadViewportTest {
         val events = mutableListOf<ThreadEvent.NewestContentPresented>()
         compose.setContent {
             CompositionLocalProvider(LocalLifecycleOwner provides owner) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(state.value, {}, {}, ConnectionState.Connected, {}, onOverflowEvent = {
                         if (it is ThreadEvent.NewestContentPresented) {
                             events +=
@@ -113,7 +113,7 @@ open class ThreadReadViewportTest {
         val events = mutableListOf<ThreadEvent.NewestContentPresented>()
         compose.setContent {
             CompositionLocalProvider(LocalLifecycleOwner provides owner) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(state.value, {}, {}, ConnectionState.Connected, {}, onOverflowEvent = {
                         if (it is ThreadEvent.NewestContentPresented) events += it
                     })
@@ -148,7 +148,7 @@ open class ThreadReadViewportTest {
         val events = mutableListOf<ThreadEvent.NewestContentPresented>()
         compose.setContent {
             CompositionLocalProvider(LocalLifecycleOwner provides owner) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(state.value, {}, {}, ConnectionState.Connected, {}, onOverflowEvent = {
                         if (it is ThreadEvent.NewestContentPresented) events += it
                     })
@@ -185,7 +185,7 @@ open class ThreadReadViewportTest {
         }
         compose.setContent {
             CompositionLocalProvider(LocalLifecycleOwner provides owner, LocalThreadListCompositionObserver provides observer) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(fixedState, {}, {}, ConnectionState.Connected, {}, onOverflowEvent = {
                         if (it is ThreadEvent.NewestContentPresented) events += it
                     })

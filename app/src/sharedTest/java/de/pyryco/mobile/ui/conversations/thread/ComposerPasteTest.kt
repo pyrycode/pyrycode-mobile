@@ -34,7 +34,7 @@ class ComposerPasteTest {
 
     private fun setBar() {
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadInputBar(
                     text = draft,
                     onTextChange = { draft = it },

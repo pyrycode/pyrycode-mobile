@@ -29,7 +29,7 @@ class ThreadInputBarDraftBindingTest {
         var draft by mutableStateOf("")
         composeRule.setContent {
             CompositionLocalProvider(LocalSaveableStateRegistry provides registry) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadInputBar(text = draft, onTextChange = { draft = it }, onSend = {})
                 }
             }

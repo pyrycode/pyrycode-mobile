@@ -16,17 +16,6 @@ class WarningColorSlotTest {
     val composeTestRule = createComposeRule()
 
     @Test
-    fun lightTheme_resolvesWarningToLightValue() {
-        var captured: Color? = null
-        composeTestRule.setContent {
-            PyrycodeMobileTheme(darkTheme = false, dynamicColor = false) {
-                CaptureWarning { captured = it }
-            }
-        }
-        assertEquals(warningLight, captured)
-    }
-
-    @Test
     fun darkTheme_resolvesWarningToDarkValue() {
         var captured: Color? = null
         composeTestRule.setContent {

@@ -48,7 +48,7 @@ class ThreadRowContentTypeTest {
         val observer: (LazyListState) -> Unit = { list = it }
         compose.setContent {
             CompositionLocalProvider(LocalThreadListCompositionObserver provides observer) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         state =
                             ThreadUiState(

@@ -137,7 +137,7 @@ class ThreadScreenNewestRowTest {
     private fun setScreen(state: () -> ThreadUiState) {
         composeRule.setContent {
             CompositionLocalProvider(LocalOverscrollFactory provides null) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         state = state(),
                         onBack = {},

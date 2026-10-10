@@ -28,7 +28,7 @@ class WorkspacePickerTest {
         val repo = FakeConversationRepository()
         val picked = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 WorkspacePickerInternal(
                     repository = repo,
                     onPicked = { picked += it },
@@ -55,7 +55,7 @@ class WorkspacePickerTest {
     fun cancelling_create_dialog_keeps_sheet_visible_and_does_not_invoke_host_onDismiss() {
         var dismissed = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 WorkspacePickerInternal(
                     repository = FakeConversationRepository(),
                     onPicked = {},
@@ -87,7 +87,7 @@ class WorkspacePickerTest {
                 override suspend fun createWorkspaceFolder(name: String): String = throw IllegalStateException("not connected")
             }
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 WorkspacePickerInternal(
                     repository = throwingRepo,
                     onPicked = { picked += it },
@@ -116,7 +116,7 @@ class WorkspacePickerTest {
     fun tapping_a_recent_row_invokes_onPicked_with_that_rows_path() {
         val picked = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 WorkspacePickerInternal(
                     repository = FakeConversationRepository(),
                     onPicked = { picked += it },

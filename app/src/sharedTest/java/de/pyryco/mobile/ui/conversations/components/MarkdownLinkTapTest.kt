@@ -43,7 +43,7 @@ class MarkdownLinkTapTest {
 
     private fun show(content: @Composable () -> Unit) =
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CompositionLocalProvider(LocalUriHandler provides uriHandler) {
                     Surface { Column { content() } }
                 }

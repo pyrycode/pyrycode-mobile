@@ -75,7 +75,7 @@ class ComposerImagePasteDeviceTest {
         composeRule.setContent {
             val attachments by viewModel.pendingAttachments.collectAsStateWithLifecycle()
             val draft by viewModel.draft.collectAsStateWithLifecycle()
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 hostView = LocalView.current
                 ThreadScreen(
                     state = ThreadUiState(conversationId = "chat", displayName = "Chat"),
