@@ -3711,6 +3711,65 @@ JUnit and revision lines in these logs. The gate reported copied XML/per-test ar
 that removed gate-worktree directory was unavailable during documentation. The retained
 report supplies the named pass and counts, but no fresh phone logcat inspection is claimed.
 
+**Fixture storage custody (#2036).** A later device sweep exposed a separate
+boundary from the #1899 target-binding repair. Private-DataStore storage tests
+still deleted the UID-wide production pairing wrap alias while app blobs survived,
+including encrypted empty collections. Fresh cleanup logcat shows failed read,
+failed seed save, then failed removal masking the save error. The causal
+`AnswerHostSetupCleanupTest.storageTestKeyLossAndTeardownPreserveAppPairings`
+drives the actual lost-key test and teardown before checking a strict app snapshot.
+Each storage test now owns its private file and real Keystore alias; the
+[public production constructor](knowledge/features/paired-server-store.md#how-custody-works-mechanism-a-wrap-at-rest)
+retains the fixed alias, strict mutation failures and redaction.
+
+Answer-host cleanup requires successful snapshots, restores the original source
+and production target binding after activity closure, removes only persisted
+fixture IDs and preserves preceding records/names/order. Failed setup/body retains
+the primary error and attaches cleanup errors as suppressed.
+`failedFixtureRestoresBindingsAndPreservesAppPairings` and
+`failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings` cover those
+failure paths. The target-guard regression still uses two sequential activity
+lifetimes with no intervening Koin replacement: a retained host's name is read-only,
+a wrong-host code is rejected before confirmation, an empty target is editable
+and reaches confirmation, and rejection/cancellation save nothing. Storage
+custody and production navigation restoration require separate assertions.
+
+[Durable builder evidence](../app/src/androidTest/assets/answer-host-2036/README.md)
+retains exact commands, revisions/patch identities, exits, sanitized XML and
+selected logcat. All runs used managed `pixel2Api33Atd`, Android 13/API 33 AOSP ATD,
+under the host-wide hold. Before isolated cleanup used `292c52bca`; before classes
+and sweep used `75a10c4a4`; final after runs used `c69770073`. All rows have zero
+errors; executed excludes skips.
+
+| Selection | Before executed / passed / failed / skipped; exit | After executed / passed / failed / skipped; exit |
+| --- | --- | --- |
+| Isolated cleanup | 1 / 1 / 0 / 0; 0 | 1 / 1 / 0 / 0; 0 |
+| Complete answer-host classes | 2 / 2 / 0 / 0; 0 | 5 / 5 / 0 / 0; 0 |
+| Key-custody probe | 1 / 0 / 1 / 0; 1 | 1 / 1 / 0 / 0; 0 |
+| Failed-save primary-error probe | 1 / 0 / 1 / 0; 1 | 1 / 1 / 0 / 0; 0 |
+| Same two-shard non-e2e sweep | 1573 / 1572 / 1 / 2; 1 | 1576 / 1576 / 0 / 2; 0 |
+
+Passing isolated/class baselines did not expose sweep contamination. The fresh
+before sweep reproduced #2027's retained baseline, failing only cleanup while
+setup independence passed. Both acceptance methods executed and passed after
+repair in the complete classes and sweep; the storage class passed **17/17**.
+Testcase comparison found no misses, exactly three new regressions and no
+unrelated failures. The two unchanged diagnostic skips were
+`RenameDialogCaptureTest.renameAtFigmaViewport` and
+`ComposerPasteTest.pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty`.
+
+At `70e785332`, the [verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/2046#issuecomment-6097849302)
+and dispatcher gate report confirm
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`:
+**259 executed/passed, 0 failed/errors, 1 skipped**, exit 0. Both
+`offlinePrecedingHostDoesNotBlockAnswerHostPairing` and
+`targetedPairingAfterFixtureTeardownKeepsItsHostGuard` explicitly passed in that
+configured UI run; the sole skip was rename capture. The fresh device XML timestamp
+was `2026-10-10T13:06:02`. Configured `scripted-all` passed **22 executed/passed,
+0 failed/errors/skipped**, exit 0. The builder sweep is diagnostic evidence rather
+than a changed gate invocation; no new real-Claude acceptance was required by
+this storage/harness repair. The #1899 full-live result above remains historical.
+
 ### Host-isolation readiness (#1900)
 
 The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1950#issuecomment-6092091069)
