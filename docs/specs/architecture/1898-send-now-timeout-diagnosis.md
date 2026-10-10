@@ -57,3 +57,19 @@ Write controlled JVM checks for diagnostic failure propagation, original deadlin
 ## Documentation handoff
 
 - Pending: `docs/e2e-interactive-stream.md`, “Send now coverage (#1642)”: record diagnostic stages, historical failure/pass distinction, and eventual dispatcher method-level XML, mobile/daemon revisions and suite counts. Do not describe diagnostic passes as a repair.
+
+## Revisions
+
+### 2026-10-10: isolate readiness from the selected host
+
+The #1731 verifier found that its original recovery scenario retained pairings for stopped daemons. RelayConnectionRegistry.reconcile selects the last saved entry; observe follows that selection. The existing Send now method nevertheless calls the global awaitConnected before creating a chat on its explicit harness host. This supplies a concrete mechanism for an early 30000 ms timeout, now repaired at the producer by 61a3a4bb55e7631d7b1526e3205371f0ab38ec2a. Historical attribution remains an inference because the occurrence has no stage/phone evidence.
+
+Add test-only awaitSendNowConnection and call it only from Send now. Read the named host's combined relay/daemon readiness instead of whichever host is selected; do not change selection or retry a link. Keep the same connection deadline and wait for both legs to be Connected. Add two controlled tests to RelayConnectionFactoryTest using its real registry and encrypted transport fixture: sendNowReadinessIgnoresStoppedSelectedHost and sendNowReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected. The former reproduces the stopped-predecessor mechanism; the latter prevents a connected unrelated host from satisfying setup. Run both against the original selected-host wait before switching to the explicit-host wait. Existing cleanup remains untouched. The additional helper, checks and plan keep total written work below 800 lines and new exported types at one.
+
+### 2026-10-10: controlled evidence and live artifact handoff
+
+The original selected-host implementation failed both new readiness checks (2 executed, 2 failed, 0 skipped), including the same 30000 ms coroutine timeout for a stopped selected peer. The explicit-host implementation passed the affected class and diagnostic/readiness checks (51 executed, 0 failed/errors/skipped). Historical stderr identifies a daemon whose ancestry includes the distinct #2820 ordering repair. Retained before/after controlled XML and the historical full/rerun reports live under app/src/androidTest/assets/send-now-1898/.
+
+The failed original operation is narrowed to the early phone setup by the absent Send now delivery and the known selected-host wiring; exact historical attribution remains unresolved without its lost phone logcat. Fixed stage labels, bounded start/completion/failure logs and lazy snapshots cover the next occurrence. Nested permission-aware timeout assertions retain their cause chain and also gain the stage snapshot. No assertion proving held Bash, queue removal, original-turn identity, marker reply, delivery order or one phone user row was removed.
+
+The first focused live request (recovery, upload, Send now) executed zero tests because another device run held the emulator for its 300-second queue deadline. This is no live result. The candidate will be checked with the deterministic send-now twin and a fresh focused request if the device is available. The dispatcher still owns the required full live gate after verification. Mark needs-live-artifacts so the builder returns to commit dispatcher-full.xml, dispatcher-method.xml and dispatcher-provenance.json under app/src/androidTest/assets/send-now-1898/. The provenance must name the command, tested mobile and daemon revisions and complete suite/method executed, failed, error and skipped counts. Preserve the original timeout evidence and report any remaining failed stage before declaring the historical flake repaired.

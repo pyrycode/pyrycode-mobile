@@ -1,0 +1,42 @@
+{
+  "historical_mobile": "a7a4b484d7260c4dc7418b85df9c10f2b7245398",
+  "historical_daemon": "6019328b378cad587f69b7bc94de37febbdf8556",
+  "historical_feature": "f3728e7752",
+  "historical_main": "e4ecbb099d",
+  "historical_failure": "TimeoutCancellationException: Timed out waiting for 30000 ms",
+  "historical_prior_method": "interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes",
+  "historical_rerun_prior_method": "interactiveTurn_createEditArchiveChannel_readsPromptBack",
+  "historical_full_send_now_delivery_events": 0,
+  "historical_rerun_send_now_delivery_events": 1,
+  "controlled_command": "./gradlew testDebugUnitTest --tests \"de.pyryco.mobile.di.RelayConnectionFactoryTest.sendNowReadiness*\" --console=plain",
+  "controlled_before": {
+    "executed": 2,
+    "failed": 2,
+    "errors": 0,
+    "skipped": 0,
+    "exit": 1,
+    "implementation": "registry.observe().first { it is ConnectionState.Connected } under withTimeout(30000)"
+  },
+  "controlled_after": {
+    "executed": 2,
+    "passed": 2,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "exit": 0,
+    "implementation": "named harness bundle coordinator connectionStatus; both legs Connected under the same deadline"
+  },
+  "historical_sources": [
+    {
+      "source": "2026-10-07T06-50-40-098Z_real-claude-gate_#1731.log",
+      "artifact": "historical-full.xml",
+      "sha256": "74009e0b48e12c04ec2b1d2b99b08c0e37f936a9a7a30345935ab5761df113b5"
+    },
+    {
+      "source": "2026-10-07T06-50-40-098Z_real-claude-gate-rerun_#1731.log",
+      "artifact": "historical-rerun.xml",
+      "sha256": "848f413129df9fdb427535f8890a415b0f836d1d6428c0ee5a5740753ce410f5"
+    }
+  ],
+  "historical_daemon_contains_ordering_repair_7a52b70a": true
+}
