@@ -2041,7 +2041,9 @@ No retries, arbitrary sleeps or control injections ship; suite membership and al
 isolation assertions above remain, including A's pending file surviving the switch
 back from B. The rejected-B control proves this wrong-host readiness defect; the
 historical anonymous timeout and leaked-fixture trigger remain weaker observations
-and inference. See [host-isolation evidence](#host-isolation-readiness-1900).
+and inference. The fresh full dispatcher live suite executed/passed all 65 methods,
+including this `InteractiveStreamE2ETest` scenario, with zero failures or skips;
+see [host-isolation evidence](#host-isolation-readiness-1900).
 
 No rung-4 twin for any of the three: the cut itself is deterministic, but proving nothing arrives needs a
 real daemon's chunk reassembly, and the scripted `fakeclaude` backend can neither call `send_file` nor serve
@@ -3400,8 +3402,10 @@ only and must not be used to diagnose a current deterministic run.
 
 ### Host-isolation readiness (#1900)
 
-The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1950#issuecomment-6091795440)
-reviews mobile `087b572516d7fcdd46f00933bbc5a1274fcdc279`. The rung-3 method is
+The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1950#issuecomment-6092091069)
+reviews mobile `99cf7dae9d07cb81a52df8b990125be28c5a1c0c`, carrying forward the
+code review and deterministic gates from `087b572516d7fcdd46f00933bbc5a1274fcdc279`.
+The rung-3 method is
 `InteractiveStreamE2ETest.interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`;
 its existing pending-file retention/absence, exactly-one-user-message/attachment,
 exact fixture bytes, B tile/row/cache absence and B-host `NotFound` checks remain.
@@ -3429,7 +3433,8 @@ all isolation assertions. Both temporary injections were removed before shipping
 | Rejected-B before, `live-7h5phpsk` | 1 | 0 | 1 | 0 | 0 | 1 |
 | Identical control after, `live-nbuxonk5` | 1 | 1 | 0 | 0 | 0 | 0 |
 | Fresh focused post-blocker, `live-q6v35j6y` | 1 | 1 | 0 | 0 | 0 | 0 |
-| Dispatcher full live, `live-n5o3cgtn` | 65 | 64 | 1 | 0 | 0 | 1 |
+| Earlier dispatcher full live, `live-n5o3cgtn` | 65 | 64 | 1 | 0 | 0 | 1 |
+| Fresh dispatcher full live, `live-qnb8dku7` | 65 | 65 | 0 | 0 | 0 | 0 |
 
 The [retained control XML, patches and revision/hash manifest](../app/src/test/resources/e2e/host-isolation-1900/README.md)
 identify mobile base `5dbb7c0d2a8b0d75cb78e3bbfe13f569a6983697` plus the before/after
@@ -3466,26 +3471,39 @@ adjacent verbatim XML confirms the named method. Earlier rename failures remain
 baseline history. The verifier's deterministic UI gate executed/passed 254,
 failed 0, skipped 1; scripted-all executed/passed 22, failed/skipped 0.
 
-**Dispatcher full-live result (2026-10-10): acceptance evidence still incomplete.**
-The [gate comment](https://github.com/pyrycode/pyrycode-mobile/issues/1900#issuecomment-6091977937)
-reports `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
-on branch `087b572516d7` merged with main `127c31dac6a0`: exit 1, **65 executed,
-64 passed, 1 failed, 0 errors/skips**. Fresh JUnit explicitly contains the named
-host-isolation method with no failure/error/skip: **PASS in the full run**, with
-no rerun for this method. Only `interactiveTurn_replySuggestion_longPressSends`
-failed; a separate same-tree rerun executed/passed that one method, with zero
-failures/errors/skips. The dispatcher called this “PASS, AFTER A RE-RUN”; it is
-not a fresh passing full-suite execution as #1900's criterion explicitly requires.
-That counted full-suite evidence remains pending verification.
+**Fresh dispatcher full-live acceptance (2026-10-10).** The
+[gate comment](https://github.com/pyrycode/pyrycode-mobile/issues/1900#issuecomment-6092262669)
+records the separate fresh full-suite command
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`:
+**65 executed/passed, 0 failed, 0 errors, 0 skipped**, exit 0 in 19m 19s.
+Documentation inspected the fresh JUnit report: the fully qualified
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest.interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`
+is present with no failure/error/skipped child, **PASS in this full suite**.
+This supplies the required passing full execution, separately from focused proof.
 
-Reports are dispatcher `logs/2026-10-10T00-47-43-063Z_real-claude-gate_#1900.log`
-and the corresponding `real-claude-gate-rerun_#1900.log`. The same-stem `.stderr.log`
-reports actual mobile `087b572516d7fcdd46f00933bbc5a1274fcdc279`, daemon
-`a536d17b1e182fb5398a5458e3afe6079b37a510` and Claude `2.1.280`; the XML has no
-daemon-revision annotation. Device artifacts were reported under
-`build/dispatcher-tests/live-n5o3cgtn/`. The focused binary hash/dirty-build metadata
-above is not independently attributed to this full-live binary. No new failure of
-the host-isolation method supplies causal XML/logcat in this run.
+The report is dispatcher
+`logs/2026-10-10T01-18-44-539Z_real-claude-gate_#1900.log`; its matching
+`.stderr.log` reports actual mobile `99cf7dae9d07cb81a52df8b990125be28c5a1c0c`,
+daemon `a536d17b1e182fb5398a5458e3afe6079b37a510` and Claude `2.1.280`.
+The branch was merged with main `127c31dac6a0c18b791881560e9eba0f75b068a1`
+in the detached gate worktree. The XML has no daemon-revision annotation;
+the diagnostic log supplies that revision. Device artifacts were reported under
+`build/dispatcher-tests/live-qnb8dku7/`. The focused binary hash and
+`vcs.modified=true` metadata are not independently attributed to this full-live
+binary. No new host-isolation failure supplied causal XML/logcat in either full run.
+
+**Earlier full run remains historical evidence.** The
+[earlier gate comment](https://github.com/pyrycode/pyrycode-mobile/issues/1900#issuecomment-6091977937)
+reported the same full command at mobile `087b572516d7fcdd46f00933bbc5a1274fcdc279`,
+merged with main `127c31dac6a0`, daemon `a536d17b1e182fb5398a5458e3afe6079b37a510`,
+Claude `2.1.280`: **65 executed, 64 passed, 1 failed, 0 errors/skips**, exit 1.
+Host isolation passed outright; only `interactiveTurn_replySuggestion_longPressSends`
+failed. Its separate same-tree rerun passed 1/1, with zero failures/errors/skips,
+but did not satisfy the passing-full-suite criterion. Reports remain dispatcher
+`logs/2026-10-10T00-47-43-063Z_real-claude-gate_#1900.log`, its matching
+`.stderr.log` and `real-claude-gate-rerun_#1900.log`, with device artifacts under
+`build/dispatcher-tests/live-n5o3cgtn/`. The fresh 65/65 run above now supplies
+full-suite acceptance without substituting that single-method rerun.
 
 
 **Frame-paced complete thread content (#1968, 2026-10-09).** The
@@ -6556,7 +6574,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
   the other host. Each cut is fired deterministically from the app's own `RelayLog` line (never a timer),
   so it can't race the daemon's reply. One real-claude turn each. See the dedicated paragraph under
   [What rung 3 is made of](#what-rung-3-is-made-of) and [Verification status](#verification-status) for
-  the mobile/daemon revisions and the first live run's result.
+  the mobile/daemon revisions and the first live run's result. #1900 retains
+  `InteractiveStreamE2ETest.interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`
+  with exact-host authenticated readiness and every isolation assertion. Its rejected-B
+  red/green control, separate focused pass and fresh 65/65 dispatcher full-suite pass
+  are recorded in [host-isolation readiness](#host-isolation-readiness-1900).
+  No `DeterministicInteractiveStreamE2ETest` twin was added.
 
 - **Coverage — hardened:** [#1059](https://github.com/pyrycode/pyrycode-mobile/issues/1059) made a
   `SecondClientPeer` wait on `interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread` (#955)
