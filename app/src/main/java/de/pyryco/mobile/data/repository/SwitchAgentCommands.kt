@@ -143,8 +143,10 @@ internal class SwitchAgentCommands(
                 val message = fields?.get("message") as? JsonPrimitive
                 val retryable = fields?.get("retryable") as? JsonPrimitive
                 if (
-                    code?.isString != true || message?.isString != true ||
-                    retryable?.isString != false || retryable.booleanOrNull == null
+                    code?.isString != true ||
+                    message?.isString != true ||
+                    retryable?.isString != false ||
+                    retryable.booleanOrNull == null
                 ) {
                     null
                 } else {
