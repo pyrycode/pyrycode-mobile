@@ -4,7 +4,10 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.SessionSettingsPayloadDto
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
@@ -12,17 +15,22 @@ import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
+import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.ResetStatus
+import de.pyryco.mobile.data.repository.SessionPump
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.SwitchAgentCall
 import de.pyryco.mobile.data.repository.SwitchAgentFailure
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -30,6 +38,9 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -253,6 +264,110 @@ class ThreadViewModelAgentSwitchTest {
             assertEquals("", vm.state.value.runConfig.selectedEffort)
         }
 
+    @Test fun realProjectionKeepsSuccessorSettingsWritableThroughUpdatesAndSnapshotsInBothDirections() =
+        runTest {
+            val pump = ProjectionPump()
+            val remote =
+                RemoteConversationRepository(
+                    pump,
+                    CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)),
+                    negotiatedCapabilities = { setOf("interactive", "multi_agent") },
+                )
+            val menu = Repo().backing
+            val repo =
+                object : ConversationRepository by remote {
+                    override fun observeModelMenu(conversationId: String) = menu.observeModelMenu(conversationId)
+                }
+            pump.push("conversation_updated", pump.row(ConversationAgent.Claude))
+            val (vm, _) = collect(repo)
+            assertEquals("opus", vm.state.value.runConfig.selectedModel)
+            var previous = "s1"
+            for ((target, successor) in listOf(ConversationAgent.Codex to "s2", ConversationAgent.Claude to "s3")) {
+                val model = if (target == ConversationAgent.Claude) "opus" else "gpt-6-luna"
+                vm.onModelSelected(model)
+                vm.onOverflowEvent(ThreadEvent.AgentSwitchConfirm)
+                runCurrent()
+                assertTrue(vm.state.value.runConfig.pending)
+                // Daemon order, with no consumer yield between transition and confirming update.
+                pump.push(
+                    "session_transition",
+                    """{"conversation_id":"$CONV","previous_session_id":"$previous","new_session_id":"$successor","reason":"clear","occurred_at":"2026-10-10T10:00:00Z"}""",
+                )
+                pump.push("conversation_updated", pump.row(target))
+                runCurrent()
+                assertFalse(vm.state.value.runConfig.pending)
+                assertFalse(vm.state.value.runConfig.settingsAvailable)
+                assertTrue(
+                    vm.state.value.runConfig.effortChoices
+                        .isEmpty(),
+                )
+                pump.settings = reading(successor, model, "high")
+                remote.refreshSessionSettings(CONV)
+                runCurrent()
+                for (update in listOf("conversation_updated", "conversations")) {
+                    val row = pump.row(target, "renamed")
+                    pump.push(update, if (update == "conversations") """{"conversations":[$row]}""" else row)
+                    runCurrent()
+                    val config = vm.state.value.runConfig
+                    assertEquals(successor, config.sessionId)
+                    assertEquals(target, config.selectedMetadata?.agent)
+                    assertEquals(listOf("low", "high"), config.effortChoices.map { it.value })
+                    assertEquals("default", config.permissionMode)
+                    assertTrue(config.writable)
+                }
+                vm.onEffortSelected("low")
+                runCurrent()
+                val write =
+                    pump.sent
+                        .last { it.type == "set_session_settings" }
+                        .payload.jsonObject
+                assertEquals(successor, write["session_id"]?.jsonPrimitive?.content)
+                assertEquals("low", write["effort"]?.jsonPrimitive?.content)
+                previous = successor
+            }
+            assertEquals(2, pump.sent.count { it.type == "switch_agent" })
+        }
+
+    @Test fun authoritativeReadingsRetireSuccessAndFailureFallbacks() =
+        runTest {
+            for (success in listOf(true, false)) {
+                val repo = Repo()
+                val (vm, _) = collect(repo)
+                vm.onModelSelected(repo.target)
+                vm.onOverflowEvent(ThreadEvent.AgentSwitchConfirm)
+                repo.settings.value = null
+                if (success) repo.binding.value = repo.other to "s2"
+                repo.result.complete(
+                    if (success) Result.success(Unit) else Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.Failed)),
+                )
+                runCurrent()
+                assertEquals(if (success) repo.targetLabel else "Claude Opus", vm.state.value.runConfig.modelLabel)
+                val session = if (success) "s2" else "s1"
+                repo.settings.value = reading(session, if (success) repo.target else repo.original, "high")
+                runCurrent()
+                val newer = if (success) "gpt-6-sol" else "haiku"
+                repo.settings.value = reading(session, newer, "low")
+                runCurrent()
+                assertEquals(
+                    newer,
+                    vm.state.value.runConfig.selectedChoice
+                        ?.value,
+                )
+                repo.settings.value = null
+                runCurrent()
+                assertNull(vm.state.value.runConfig.confirmedSwitchChoice)
+                assertNull(vm.state.value.runConfig.selectedChoice)
+                assertEquals(UNKNOWN_RUN_CONFIG_LABEL, vm.state.value.runConfig.modelLabel)
+            }
+        }
+
+    @Test fun dropdownLabelsUseBoundedInertDisplayNamesForBothAgents() {
+        for (agent in ConversationAgent.entries) {
+            val row = row("opus", "Claude\nOpus" + "x".repeat(200), agent)
+            assertEquals("ClaudeOpus" + "x".repeat(118), row.dropdownLabel(agent))
+        }
+    }
+
     @Test fun recollectionDoesNotResend() =
         runTest {
             val repo = Repo()
@@ -305,7 +420,7 @@ class ThreadViewModelAgentSwitchTest {
             assertTrue(repo.settingsWrites.isEmpty())
         }
 
-    private fun TestScope.collect(repo: Repo): Pair<ThreadViewModel, Job> {
+    private fun TestScope.collect(repo: ConversationRepository): Pair<ThreadViewModel, Job> {
         val vm =
             ThreadViewModel(
                 SavedStateHandle(mapOf("serverId" to "host", "conversationId" to CONV)),
@@ -316,6 +431,49 @@ class ThreadViewModelAgentSwitchTest {
         val job = backgroundScope.launch { vm.state.collect {} }
         runCurrent()
         return vm to job
+    }
+
+    private class ProjectionPump : SessionPump {
+        private val channel = Channel<Envelope>(Channel.UNLIMITED)
+        override val inbound = channel.receiveAsFlow()
+        val sent = mutableListOf<Envelope>()
+        var settings = reading("s1", "opus", "high")
+
+        override fun send(envelope: Envelope): Boolean {
+            sent += envelope
+            if (envelope.type == "request_session_settings") {
+                val s = settings
+                val payload =
+                    MobileJson.encodeToJsonElement(
+                        SessionSettingsPayloadDto(s.sessionId, s.model, s.effort, s.yolo, s.permissionMode, 0, 0),
+                    )
+                check(
+                    channel.trySend(Envelope(900, "session_settings", "2026-10-10T10:00:00Z", payload, inReplyTo = envelope.id)).isSuccess,
+                )
+            } else if (envelope.type == "set_session_settings") {
+                push("session_settings_updated", """{"session_id":"${settings.sessionId}"}""", envelope.id)
+            }
+            return true
+        }
+
+        fun push(
+            type: String,
+            payload: String,
+            replyTo: Long? = null,
+        ) {
+            check(
+                channel
+                    .trySend(
+                        Envelope(900, type, "2026-10-10T10:00:00Z", MobileJson.parseToJsonElement(payload), inReplyTo = replyTo),
+                    ).isSuccess,
+            )
+        }
+
+        fun row(
+            agent: ConversationAgent,
+            name: String = "channel",
+        ) =
+            """{"id":"$CONV","name":"$name","is_promoted":true,"is_archived":false,"cwd":"/p","last_message_ts":"2026-10-10T10:00:00Z","last_used_at":"2026-10-10T10:00:00Z","agent":"${agent.name.lowercase()}"}"""
     }
 
     private class Repo(

@@ -10,6 +10,8 @@
 - `EffortRecall.kt`: `offer` consumes selected metadata; widening visible rows must not widen recall's vocabulary.
 - `SwitchAgentCommands.kt`: `switchAgent` settles only after a matching conversation update; sanitized typed failures do not promise rollback.
 - `Conversation.kt`: `Conversation.agent` and `currentSessionId` establish successor identity.
+- `ConversationListProjection.kt`: `applySnapshot` and `upsertConversation` must retain the authoritative transition's session identity omitted by metadata DTOs.
+- `InteractiveStreamE2ETest.kt`: `usableRows`, `awaitAnnouncedMark` and `inheritedModelLabel` consume the same bounded display-name contract as the merged picker.
 - `ThreadViewModelAgentModelMenuTest.kt`: existing inherited/default, overflow and agent-scoping assertions.
 - `docs/knowledge/features/thread-screen-how-it-works-state.md`: the model-menu agent filter couples menu projection to effort recall.
 - `docs/knowledge/features/mobile-modal.md`: reuse shell tokens, callbacks and exported close asset; no new modal geometry.
@@ -48,6 +50,8 @@ All claims and writes run on Main in `viewModelScope`; the switch flow participa
 | Refusal/local failure/disconnect | Clear pending, restore confirmed choice, static error without rollback claim; `failuresRestoreConfirmedChoice` |
 | Confirmed agent update and successor read | Own-agent metadata only in both directions; `successUsesFreshSuccessorSettings` |
 | External agent update or repeated switch back | Mask stale settings; `externalAgentChangeRejectsOldSessionReadings` |
+| Ordered transition/update, later rename/snapshot, then switch back | Retain authoritative successor identity through the real repository; `realProjectionKeepsSuccessorSettingsWritableThroughUpdatesAndSnapshotsInBothDirections` |
+| Settlement, fresh settings, newer external selection, unavailable settings | Retire success/failure display fallbacks permanently; `authoritativeReadingsRetireSuccessAndFailureFallbacks` |
 | Recollection/configuration change | Retain ViewModel command, no resend; `recollectionDoesNotResend` |
 | Process death/route exit | No persisted command and owning scope cancellation; `viewModelClearCancelsSwitch` |
 
@@ -75,6 +79,7 @@ None.
 - [Network/I/O] Reuse #1117's authenticated/capability-gated switch operation, teardown and confirmed correlation. No retry or new socket.
 - [Errors/logs] Only static event/outcome/category codes; never model labels/values, message bodies, tokens, payloads or exception text. Static failure copy makes no rollback promise.
 - [Concurrency] Main-thread synchronous sending claim precedes suspension; reentrant confirms cannot duplicate operations. Pending is independent of reset/settings clears; viewModelScope cancels on destruction.
+- [Session identity] Metadata DTOs omit session IDs. Preserve the authenticated transition's binding on the same conversation row through snapshots/upserts; row removal and connection destruction discard it. Retire a captured fallback only when a fresh reading for its agent supersedes it. No session IDs or labels are logged or persisted.
 - [Threat model] Relay delay/drop cannot forge completion through reset progress; repository confirmation remains authoritative. Hostile daemon labels are bounded inert text. Rooted token theft and accessibility/screenshot exposure retain existing transport/OS controls, outside this UI change.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
@@ -93,6 +98,10 @@ Preservation checks: focused `ThreadViewModelAgentModelMenuTest` and `ThreadView
 2026-10-10 (selection identity): `confirmedRadioMarkIsScopedToAgentEvenWhenValuesCoincide` failed because the radio projection compared value alone. Add optional selected-agent metadata to `StatusSheet`/`StatusSheetContent` and forward it only from `ThreadScreen`. Two production call sites change; all existing constructors and other calls keep their defaults. No new exported type and no simultaneous fixture migration. The raw row-agent pair owns the radio mark as well as the command routing.
 
 2026-10-10 (existing routing contract): Focused effort-recall and held-permission tests require the existing `onModelSelected` write path while no menu is available. Preserve that own-agent settings write; a published menu still requires exactly one known row, and only a captured other-agent row can switch. Unknown/ambiguous published rows remain inert. The Codex model-selection fixture now explicitly tags its row Codex, rather than relying on the source-compatible Claude default. No broad fixture migration.
+
+2026-10-10 (verifier rework): Findings 1–4 require five existing label expectations to follow bounded daemon display names, retention of transition identity across metadata-only conversation updates, permanent retirement of superseded settlement labels, and matching live assertion consumers. `ConversationListProjection` now preserves the known session ID on existing rows in both upserts and full snapshots; the ViewModel's exact successor-session check stays intact. The real-repository probe drives Claude → Codex → Claude with ordered transition/update frames, stale and fresh settings, later rename/snapshot pushes and a successor-addressed effort write. Fresh non-held settings for the fallback's agent retire it; later unavailable settings cannot resurrect it. `dropdownLabel` returns the display name for both agents and retains its argument for source compatibility; all six existing assertion consumers were checked; live radio expectations use the merged visible list and agent/value identity. Security review remains PASS. Forecast is below 1500 total written lines, with no new exported types or required consumer migration.
+
+Rework overlaps: #1682, #1689, #1690, #1691, #1693, #1695, #1766, #1869, #1879 and #1896 touch other scenarios in `InteractiveStreamE2ETest`; their diffs do not restructure the model-menu helpers. Keep the edits local.
 
 
 ## Documentation handoff

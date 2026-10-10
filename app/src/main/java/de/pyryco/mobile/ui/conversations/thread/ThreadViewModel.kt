@@ -517,6 +517,10 @@ class ThreadViewModel(
             runConfig(freshSettings, menuAndAgent.first, conversation?.agent ?: ConversationAgent.Claude, model, effort, permission) to
                 freshSettings
         }.combine(agentSwitchUi) { (config, settings), switching ->
+            // A fresh reading supersedes the captured settlement label permanently, including failures.
+            if (settings != null && !settings.held && switching.confirmed?.agent == config.agent) {
+                agentSwitchUi.update { it.copy(confirmed = null) }
+            }
             config.copy(
                 agentSwitch = switching.request,
                 agentSwitchFailed = switching.failed,
@@ -3628,7 +3632,7 @@ internal const val PERMISSION_SETTLE_INTERVAL_MS = 500L
  *  becomes [ThreadModelChoice.detail], which no screen draws since #1497, only when it says something the
  *  label does not. */
 private fun ModelMenuRow.toChoice(): ThreadModelChoice {
-    val label = displayName.inert()
+    val label = dropdownLabel(requireNotNull(agent))
     return ThreadModelChoice(
         value = value,
         label = label,
@@ -3640,9 +3644,8 @@ private fun ModelMenuRow.toChoice(): ThreadModelChoice {
     )
 }
 
-/** The desktop dropdown label, shared with the host-backed scenario's dynamic assertion. */
-internal fun ModelMenuRow.dropdownLabel(agent: ConversationAgent): String =
-    if (agent == ConversationAgent.Claude) value.modelFamily().ifEmpty { displayName.inert() } else displayName.inert()
+/** The bounded daemon display name for either agent; retain the agent argument for existing callers. */
+internal fun ModelMenuRow.dropdownLabel(agent: ConversationAgent): String = displayName.inert()
 
 /** Desktop's dropdown family rule over a raw identifier; used for display and the inherited mark (#1308). */
 internal fun String.modelFamily(): String {

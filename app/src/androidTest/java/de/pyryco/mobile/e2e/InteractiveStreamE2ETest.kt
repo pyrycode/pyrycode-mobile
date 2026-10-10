@@ -8042,7 +8042,7 @@ class InteractiveStreamE2ETest {
     }
 
     /** Usable Claude rows, including default for inherited-effort setup. Ordinary labels must be unique
-     * so tapping a model in Run configuration cannot pick another published row. */
+     * across the visible merged menu so a text tap cannot pick another agent's row. */
     private fun usableRows(menu: ModelMenu): List<ModelMenuRow> =
         menu.rows.filter { row ->
             row.agent == ConversationAgent.Claude &&
@@ -8050,13 +8050,18 @@ class InteractiveStreamE2ETest {
                 row.displayName.inert().isNotBlank() &&
                 (
                     row.value == INHERITED_MODEL_VALUE ||
-                        menu.rows.count {
-                            it.agent == ConversationAgent.Claude &&
-                                it.value != INHERITED_MODEL_VALUE &&
-                                it.dropdownLabel(ConversationAgent.Claude) == row.dropdownLabel(ConversationAgent.Claude)
-                        } == 1
+                        row in renderedModelRows(menu) &&
+                        renderedModelRows(menu).count {
+                            it.dropdownLabel(requireNotNull(it.agent)) ==
+                                row.dropdownLabel(ConversationAgent.Claude)
+                        } ==
+                        1
                 )
         }
+
+    /** The menu's rendering cap applies after removing unknown agents and hidden default metadata. */
+    private fun renderedModelRows(menu: ModelMenu): List<ModelMenuRow> =
+        menu.rows.filter { it.agent != null && it.value != INHERITED_MODEL_VALUE }.take(32)
 
     /** The raw model claude announced for [conversationId]'s latest turn, as the phone's host repository holds it. */
     private fun announcedModel(conversationId: String): String {
@@ -8107,16 +8112,16 @@ class InteractiveStreamE2ETest {
      * Run configuration marks exactly [marked]'s radio, or, with [marked] `null`, no model radio at all and
      * shows [note] outside the radios (#1308). Model rows draw only their label (#1497), so two rows sharing
      * a family label read alike; the marked radio is told apart by its position among the model radios,
-     * which render in [menu] order. Every non-default Claude row of [menu] counts, including rows whose
-     * family label another row shares, since those are the rows a wrong mark would land on.
+     * which render in [menu] order. Both agents' visible rows count, including duplicate display labels,
+     * since those are the rows a wrong mark would land on. Selection remains agent-scoped.
      */
     private fun awaitAnnouncedMark(
         menu: ModelMenu,
         marked: ModelMenuRow?,
         note: String,
     ) {
-        val rows = menu.rows.filter { it.agent == ConversationAgent.Claude && it.value != INHERITED_MODEL_VALUE }
-        val rowLabels = rows.map { it.dropdownLabel(ConversationAgent.Claude) }
+        val rows = renderedModelRows(menu)
+        val rowLabels = rows.map { it.dropdownLabel(requireNotNull(it.agent)) }
         val labels = rowLabels.toSet()
         val modelRadio =
             SemanticsMatcher("a model radio") { node ->
@@ -8126,7 +8131,15 @@ class InteractiveStreamE2ETest {
                         ?.firstOrNull()
                         ?.text in labels
             }
-        val expectedMarks = listOfNotNull(marked?.let { row -> rows.indexOfFirst { it.value == row.value } })
+        val expectedMarks =
+            listOfNotNull(
+                marked?.let { row ->
+                    rows.indexOfFirst { it.value == row.value && it.agent == row.agent }.takeIf {
+                        it >=
+                            0
+                    }
+                },
+            )
 
         // The model radios in sheet order, as (label, marked) pairs.
         fun radios() =
