@@ -485,7 +485,8 @@ class ThreadViewModel(
                     previousConversationAgent = conversation.agent
                     pendingModel.value?.let { pending ->
                         if (pending.agent != conversation.agent ||
-                            conversation.currentSessionId.isNotEmpty() && pending.sessionId != conversation.currentSessionId
+                            conversation.currentSessionId.isNotEmpty() &&
+                            pending.sessionId != conversation.currentSessionId
                         ) {
                             pendingModel.compareAndSet(pending, null)
                             RelayLog.d { "event=model_write_pending outcome=session_replaced" }
@@ -533,10 +534,13 @@ class ThreadViewModel(
                 settings?.takeUnless {
                     // A replacement connection's summary has no session binding. Its fresh correlated
                     // reply supplies authority; held readings and known transition mismatches cannot.
-                    agentChanged && (
-                        it.held || conversation == null ||
-                            conversation.currentSessionId.isNotEmpty() && it.sessionId != conversation.currentSessionId
-                    )
+                    agentChanged &&
+                        (
+                            it.held ||
+                                conversation == null ||
+                                conversation.currentSessionId.isNotEmpty() &&
+                                it.sessionId != conversation.currentSessionId
+                        )
                 }
             val pending = model?.takeIf { it.agent == agent && it.sessionId == freshSettings?.sessionId }?.value
             runConfig(freshSettings, menuAndAgent.first, agent, pending, effort, permission) to freshSettings
