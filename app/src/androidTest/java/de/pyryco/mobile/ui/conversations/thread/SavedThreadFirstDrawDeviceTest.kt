@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import android.os.Debug
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import android.view.View
@@ -21,6 +22,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.model.ConnectionState
@@ -37,6 +39,8 @@ import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSnapshotSource
+import de.pyryco.mobile.e2e.awaitEmulatorCpuIdle
+import de.pyryco.mobile.e2e.parseEmulatorCpuTicks
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -68,6 +72,21 @@ class SavedThreadFirstDrawDeviceTest {
         val online: Boolean,
     )
 
+    private fun awaitDeviceReadiness() {
+        runBlocking {
+            awaitEmulatorCpuIdle(
+                sample = {
+                    ParcelFileDescriptor
+                        .AutoCloseInputStream(
+                            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("cat /proc/stat"),
+                        ).use { parseEmulatorCpuTicks(it.bufferedReader().readLine()) }
+                },
+                onWindow = { Log.i("SavedThreadEnvironment", "event=cpu_window idle_pct=$it") },
+            )
+        }
+        Log.i("SavedThreadEnvironment", "event=cpu_idle")
+    }
+
     private val selected = mutableStateOf<Opening?>(null)
     private var activeProbe: Probe? = null
 
@@ -83,16 +102,19 @@ class SavedThreadFirstDrawDeviceTest {
 
         fun elapsed(nanos: Long) = (nanos - start) / 1_000_000
 
+        fun metBound() = drawn.get() > 0 && elapsed(drawn.get()) <= 1000
+
         fun assertBound() {
             assertTrue(
                 "$name first drawn newest row: ${elapsed(drawn.get())} ms (bound 1000 ms)",
-                drawn.get() > 0 && elapsed(drawn.get()) <= 1000,
+                metBound(),
             )
         }
     }
 
     @Test fun savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen() {
         installHost()
+        val probes = mutableListOf<Probe>()
         for (name in listOf("ordinary", "fragmented")) {
             val (coverage, rows) =
                 if (name == "ordinary") {
@@ -105,20 +127,28 @@ class SavedThreadFirstDrawDeviceTest {
                 } else {
                     fragmentedHistoryFixture((0 until 18000).toList())
                 }
-            for (online in listOf(false, true)) {
-                withFixture(name, rows, coverage) { root ->
-                    val delegate = HeldNewest()
-                    var repo: CachingConversationRepository? = null
-                    repeat(2) { opening ->
-                        val probe = Probe("$name online=$online opening=$opening", (rows.last() as ThreadItem.MessageItem).message.content)
-                        activeProbe = probe
-                        if (repo == null) repo = repository(root, delegate)
-                        openAndMeasure(requireNotNull(repo), delegate, online, probe, rows, coverage)
-                        probe.assertBound()
+            withFixture(name, rows, coverage) { source ->
+                for (online in listOf(false, true)) {
+                    withFixtureCopy(source) { root ->
+                        val delegate = HeldNewest()
+                        var repo: CachingConversationRepository? = null
+                        repeat(2) { opening ->
+                            awaitDeviceReadiness()
+                            val probe =
+                                Probe("$name online=$online opening=$opening", (rows.last() as ThreadItem.MessageItem).message.content)
+                            activeProbe = probe
+                            probes += probe
+                            if (repo == null) repo = repository(root, delegate)
+                            openAndMeasure(requireNotNull(repo), delegate, online, probe, rows, coverage)
+                        }
                     }
                 }
             }
         }
+        assertTrue(
+            probes.joinToString("; ") { "${it.name} drawn_ms=${it.elapsed(it.drawn.get())}" },
+            probes.size == 8 && probes.all(Probe::metBound),
+        )
     }
 
     @Test fun slowRestore_negativeControlRejectsTheSameFirstDrawBound() {
@@ -126,6 +156,7 @@ class SavedThreadFirstDrawDeviceTest {
         val rows = listOf(ThreadItem.MessageItem(Message("slow", "s", Role.User, "Slow saved row.", Instant.fromEpochSeconds(1), false)))
         withFixture("slow", rows, null) { root ->
             val delegate = HeldNewest()
+            awaitDeviceReadiness()
             val probe = Probe("negative-control", (rows.last() as ThreadItem.MessageItem).message.content)
             activeProbe = probe
             openAndMeasure(repository(root, delegate, 3000), delegate, false, probe, rows, null)
@@ -158,42 +189,52 @@ class SavedThreadFirstDrawDeviceTest {
         delegate: HeldNewest,
         delayMs: Long = 0,
     ): CachingConversationRepository {
-        val measuredIo =
-            object : CoroutineDispatcher() {
-                override fun dispatch(
-                    context: CoroutineContext,
-                    block: Runnable,
-                ) {
-                    Dispatchers.IO.dispatch(context) {
-                        val started = SystemClock.elapsedRealtimeNanos()
-                        val cpu = Debug.threadCpuTimeNanos()
-                        try {
-                            block.run()
-                        } finally {
-                            Log.i(
-                                "SavedThreadCacheWorker",
-                                "event=cache_worker_run wall_ms=${(SystemClock.elapsedRealtimeNanos() - started) / 1_000_000} cpu_ms=${(Debug.threadCpuTimeNanos() - cpu) / 1_000_000}",
-                            )
-                        }
+        fun measuredWorker(
+            dispatcher: CoroutineDispatcher,
+            worker: String,
+        ) = object : CoroutineDispatcher() {
+            override fun dispatch(
+                context: CoroutineContext,
+                block: Runnable,
+            ) {
+                val queued = SystemClock.elapsedRealtimeNanos()
+                val probe = activeProbe
+                dispatcher.dispatch(context) {
+                    val started = SystemClock.elapsedRealtimeNanos()
+                    val cpu = Debug.threadCpuTimeNanos()
+                    try {
+                        block.run()
+                    } finally {
+                        Log.i(
+                            "SavedThreadCacheWorker",
+                            "event=cache_worker_run worker=$worker case=${probe?.name} queue_ms=${(started - queued) / 1_000_000} wall_ms=${(SystemClock.elapsedRealtimeNanos() - started) / 1_000_000} cpu_ms=${(Debug.threadCpuTimeNanos() - cpu) / 1_000_000}",
+                        )
                     }
                 }
             }
-        val disk = FileConversationCache(root, measuredIo)
+        }
+        val disk = FileConversationCache(root, measuredWorker(Dispatchers.IO, "io"))
         val measured =
             object : ConversationCache by disk {
                 override suspend fun readThread(
                     serverId: String,
                     conversationId: String,
                 ): List<ThreadItem> {
+                    val probe = activeProbe
                     delay(delayMs)
                     return disk
                         .readThread(
                             serverId,
                             conversationId,
-                        ).also { activeProbe?.restored?.compareAndSet(0, SystemClock.elapsedRealtimeNanos()) }
+                        ).also { probe?.restored?.compareAndSet(0, SystemClock.elapsedRealtimeNanos()) }
                 }
             }
-        return CachingConversationRepository(delegate, measured, "host")
+        return CachingConversationRepository(
+            delegate,
+            measured,
+            "host",
+            processingDispatcher = measuredWorker(Dispatchers.Default, "default"),
+        )
     }
 
     private fun installHost() {
@@ -291,6 +332,10 @@ class SavedThreadFirstDrawDeviceTest {
                 )
             store.put("thread", vm)
             selected.value = Opening(vm, probe, online)
+            Log.i(
+                "SavedThreadFirstDraw",
+                "event=opening_installed case=${probe.name} elapsed_ms=${probe.elapsed(SystemClock.elapsedRealtimeNanos())}",
+            )
         }
         try {
             composeRule.waitUntil(15000) { probe.drawn.get() > 0 }
@@ -323,6 +368,10 @@ class SavedThreadFirstDrawDeviceTest {
             composeRule.runOnUiThread {
                 selected.value = null
                 store.clear()
+                Log.i(
+                    "SavedThreadFirstDraw",
+                    "event=opening_cleared case=${probe.name} elapsed_ms=${probe.elapsed(SystemClock.elapsedRealtimeNanos())}",
+                )
             }
             composeRule.waitForIdle()
         }
@@ -332,6 +381,19 @@ class SavedThreadFirstDrawDeviceTest {
         if (this is ViewRootForTest) return this
         if (this is ViewGroup) for (index in 0 until childCount) getChildAt(index).composeRoot()?.let { return it }
         return null
+    }
+
+    private fun withFixtureCopy(
+        source: File,
+        block: (File) -> Unit,
+    ) {
+        val root = File(source.parentFile, "first-draw-copy-${SystemClock.elapsedRealtimeNanos()}")
+        try {
+            check(source.copyRecursively(root))
+            block(root)
+        } finally {
+            root.deleteRecursively()
+        }
     }
 
     private fun withFixture(

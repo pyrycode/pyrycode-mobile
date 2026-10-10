@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.e2e.DiscussionRenameTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-10T00:24:13.129Z" hostname="Juhanas-MacBook-Air.local" time="5.967">
+  <properties/>
+  <testcase name="reopenedDialogSubmitsEachNameOnce" classname="de.pyryco.mobile.e2e.DiscussionRenameTest" time="5.068"/>
+  <testcase name="matchingFieldDoesNotProveRename" classname="de.pyryco.mobile.e2e.DiscussionRenameTest" time="0.357"/>
+  <testcase name="delayedDialogDoesNotReplaceComposer" classname="de.pyryco.mobile.e2e.DiscussionRenameTest" time="0.138"/>
+  <testcase name="owningHostGapDoesNotLoseRenameWhenAnotherHostIsReady" classname="de.pyryco.mobile.e2e.DiscussionRenameTest" time="0.082"/>
+  <testcase name="diagnosticFailurePreservesOriginalTimeout" classname="de.pyryco.mobile.e2e.DiscussionRenameTest" time="0.025"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

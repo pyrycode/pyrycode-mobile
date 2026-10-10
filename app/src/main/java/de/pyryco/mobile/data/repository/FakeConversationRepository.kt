@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
@@ -335,6 +336,31 @@ class FakeConversationRepository(
      * wire DTO [SetSessionSettingsPayloadDto] as the record shape (structural equality for free).
      */
     val setSessionSettingsCalls: List<SetSessionSettingsPayloadDto> get() = recordedSessionSettings
+
+    private val recordedAgentSwitches = mutableListOf<SwitchAgentCall>()
+    val switchAgentCalls: List<SwitchAgentCall> get() = recordedAgentSwitches.toList()
+
+    /** Deterministic caller-test refusal; null confirms the named conversation's new agent. */
+    var switchAgentFailure: SwitchAgentFailure? = null
+
+    override suspend fun switchAgent(
+        conversationId: String,
+        agent: ConversationAgent,
+        model: String,
+        effort: String?,
+    ): Result<Unit> {
+        recordedAgentSwitches += SwitchAgentCall(conversationId, agent, model, effort)
+        switchAgentFailure?.let { return Result.failure(it) }
+        if (conversationId !in state.value) {
+            return Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.ConversationNotFound))
+        }
+        state.update { records ->
+            records.mapValues { (id, record) ->
+                if (id == conversationId) record.copy(conversation = record.conversation.copy(agent = agent)) else record
+            }
+        }
+        return Result.success(Unit)
+    }
 
     private val recordedSessionSettings = mutableListOf<SetSessionSettingsPayloadDto>()
 
