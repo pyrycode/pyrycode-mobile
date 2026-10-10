@@ -53,6 +53,46 @@ class DecodedThreadRestoreTest {
             assertEquals(coverage, reader.readHistoryPosition("host", "c")?.coverage)
         }
 
+    @Test fun persistedTimestampParsingRetainsCalendarValidationAndLegacyFormats() =
+        runTest {
+            val root = temporary.newFolder()
+            FileConversationCache(root).writeThread("host", "c", listOf(row())).getOrThrow()
+            val document = root.walkTopDown().single { it.isFile }
+            val original = document.readText()
+            val timestamps =
+                listOf(
+                    "0000-01-01T00:00:00Z",
+                    "1969-12-31T23:59:59Z",
+                    "2000-02-29T12:34:56Z",
+                    "2024-02-29T00:00:00Z",
+                    "9999-12-31T23:59:59Z",
+                    "2026-10-10T01:02:03.123456789Z",
+                    "2026-10-10T01:02:03+03:00",
+                    "+10000-01-01T00:00:00Z",
+                    "-0001-01-01T00:00:00Z",
+                    "2026-10-10t01:02:03z",
+                    "2026-10-10T01:02:03.000Z",
+                    "1900-02-29T00:00:00Z",
+                    "2026-02-30T00:00:00Z",
+                    "2026-00-10T00:00:00Z",
+                    "2026-13-10T00:00:00Z",
+                    "2026-10-00T00:00:00Z",
+                    "2026-10-32T00:00:00Z",
+                    "2026-10-10T24:00:00Z",
+                    "2026-10-10T00:60:00Z",
+                    "2026-10-10T23:59:60Z",
+                    "2026-10-10T23:59:61Z",
+                    "2026-10-10T0x:00:00Z",
+                    "2026/10/10T00:00:00Z",
+                )
+            for (text in timestamps) {
+                document.writeText(original.replace("\"timestamp\":\"1970-01-01T00:00:01Z\"", "\"timestamp\":${JsonPrimitive(text)}"))
+                val expected = runCatching { Instant.parse(text) }.getOrNull()
+                val restored = FileConversationCache(root).readThread("host", "c")
+                assertEquals(text, expected?.let { listOf(row().copy(message = row().message.copy(timestamp = it))) }.orEmpty(), restored)
+            }
+        }
+
     @Test fun rowAndPositionReadersReuseOneValidatedDecode() =
         runTest {
             val cache = FileConversationCache(temporary.newFolder())
@@ -138,6 +178,28 @@ class DecodedThreadRestoreTest {
                 val reader = FileConversationCache(root)
                 assertEquals(listOf(row()), reader.readThread("host", "c"))
                 assertNull(reader.readHistoryPosition("host", "c"))
+            }
+        }
+
+    @Test fun missingRequiredHistoryFieldsRejectOnlyMetadataWhileNullableDefaultsRemainCompatible() =
+        runTest {
+            val root = temporary.newFolder()
+            FileConversationCache(root).writeThread("host", "c", listOf(row())).getOrThrow()
+            val document = root.walkTopDown().single { it.isFile }
+            val stored = MobileJson.parseToJsonElement(document.readText()).jsonObject
+            for ((history, valid) in listOf(
+                "{\"cursor\":\"saved\",\"atStart\":false}" to true,
+                "{\"cursor\":\"saved\",\"atStart\":false,\"coverage\":null}" to true,
+                "{\"cursor\":\"saved\",\"atStart\":false,\"coverage\":{\"spans\":[],\"newestCursor\":null}}" to true,
+                "{\"cursor\":\"saved\",\"atStart\":false,\"coverage\":{\"spans\":[]}}" to true,
+                "{\"atStart\":false}" to false,
+                "{\"cursor\":\"saved\"}" to false,
+                "{\"cursor\":null,\"atStart\":false}" to false,
+            )) {
+                document.writeText(JsonObject(stored + ("history" to MobileJson.parseToJsonElement(history))).toString())
+                val reader = FileConversationCache(root)
+                assertEquals(listOf(row()), reader.readThread("host", "c"))
+                assertEquals(history, if (valid) "saved" else null, reader.readHistoryPosition("host", "c")?.cursor)
             }
         }
 
