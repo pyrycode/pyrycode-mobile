@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite tests="2" failures="0" errors="0" skipped="0" time="4.837" timestamp="2026-10-10T12:04:38" source-tests="2" source-time="5.132">
+    <testcase name="targetedPairingAfterFixtureTeardownKeepsItsHostGuard" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest" time="3.698" />
+    <testcase name="offlinePrecedingHostDoesNotBlockAnswerHostPairing" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest" time="1.139" />
+  </testsuite>
+</testsuites>

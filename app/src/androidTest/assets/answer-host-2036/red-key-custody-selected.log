@@ -1,0 +1,14 @@
+SOURCE 0-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest-storageTestKeyLossAndTeardownPreserveAppPairings.txt
+10-10 15:15:34.615 TestRunner: started: storageTestKeyLossAndTeardownPreserveAppPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+10-10 15:15:34.629 paired_store operation=save status=ok
+10-10 15:15:34.649 paired_store operation=rename status=ok
+10-10 15:15:34.654 paired_store operation=save status=ok
+10-10 15:15:34.659 paired_store operation=rename status=ok
+10-10 15:15:34.662 event=answer_host_key_probe stage=before_lost_key_test
+10-10 15:15:34.667 paired_store operation=save status=ok
+10-10 15:15:34.671 paired_store operation=read status=failed code=keystore
+10-10 15:15:34.671 event=answer_host_key_probe stage=after_lost_key_test
+10-10 15:15:34.672 event=answer_host_key_probe stage=after_storage_teardown
+10-10 15:15:34.672 paired_store operation=read status=failed code=keystore
+10-10 15:15:34.674 paired_store operation=remove status=failed code=keystore
+10-10 15:15:34.703 TestRunner: finished: storageTestKeyLossAndTeardownPreserveAppPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)

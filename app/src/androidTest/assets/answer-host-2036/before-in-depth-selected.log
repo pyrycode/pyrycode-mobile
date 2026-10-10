@@ -1,0 +1,46 @@
+SOURCE 1515-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest-offlinePrecedingHostDoesNotBlockAnswerHostPairing.txt
+10-10 15:13:24.700 TestRunner: started: offlinePrecedingHostDoesNotBlockAnswerHostPairing(de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest)
+10-10 15:13:24.730 paired_store operation=save status=ok
+10-10 15:13:25.427 event=pair_code_prepared
+10-10 15:13:25.530 event=pair_code_save_started
+10-10 15:13:25.537 paired_store operation=save status=ok
+10-10 15:13:25.548 paired_store operation=rename status=ok
+10-10 15:13:25.561 event=pair_code_connection_wait
+10-10 15:13:25.564 event=pair_code_connected
+10-10 15:13:25.742 paired_store operation=remove status=ok
+10-10 15:13:25.753 paired_store operation=remove status=ok
+10-10 15:13:25.757 TestRunner: finished: offlinePrecedingHostDoesNotBlockAnswerHostPairing(de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest)
+SOURCE 18-logcat-de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest-load_returnsNullWhenWrapKeyLost.txt
+10-10 15:06:03.094 TestRunner: started: load_returnsNullWhenWrapKeyLost(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+10-10 15:06:03.105 paired_store operation=save status=ok
+10-10 15:06:03.106 paired_store operation=read status=failed code=keystore
+10-10 15:06:03.108 TestRunner: finished: load_returnsNullWhenWrapKeyLost(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+SOURCE 19-logcat-de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest-missingKeyAndInvalidEnvelopes_readGracefullyWithoutMutation.txt
+10-10 15:06:02.950 TestRunner: started: missingKeyAndInvalidEnvelopes_readGracefullyWithoutMutation(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+10-10 15:06:02.961 paired_store operation=save status=ok
+10-10 15:06:02.966 paired_store operation=read status=failed code=invalid_data
+10-10 15:06:02.971 paired_store operation=read status=failed code=invalid_data
+10-10 15:06:02.976 paired_store operation=save status=ok
+10-10 15:06:02.980 paired_store operation=read status=failed code=keystore
+10-10 15:06:02.991 paired_store operation=read status=failed code=keystore
+10-10 15:06:02.993 paired_store operation=remove status=failed code=keystore
+10-10 15:06:02.996 TestRunner: finished: missingKeyAndInvalidEnvelopes_readGracefullyWithoutMutation(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+SOURCE 759-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest-targetedPairingAfterFixtureTeardownKeepsItsHostGuard.txt
+10-10 15:14:01.978 TestRunner: started: targetedPairingAfterFixtureTeardownKeepsItsHostGuard(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+10-10 15:14:02.000 paired_store operation=read status=failed code=keystore
+10-10 15:14:02.002 paired_store operation=save status=failed code=keystore
+10-10 15:14:02.004 paired_store operation=remove status=failed code=keystore
+10-10 15:14:02.022 TestRunner: finished: targetedPairingAfterFixtureTeardownKeepsItsHostGuard(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+SOURCE 845-logcat-de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest-namesAndRemoval_preserveCredentialsOrderAndDeviceKeys.txt
+10-10 15:05:53.899 TestRunner: started: namesAndRemoval_preserveCredentialsOrderAndDeviceKeys(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+10-10 15:05:53.912 paired_store operation=save status=ok
+10-10 15:05:53.915 paired_store operation=save status=ok
+10-10 15:05:53.919 paired_store operation=rename status=ok
+10-10 15:05:53.925 paired_store operation=rename status=ok
+10-10 15:05:53.929 paired_store operation=rename status=ok
+10-10 15:05:53.931 paired_store operation=remove status=ok
+10-10 15:05:53.933 paired_store operation=rename status=ok
+10-10 15:05:53.941 paired_store operation=remove status=ok
+10-10 15:05:53.948 paired_store operation=remove status=ok
+10-10 15:05:53.955 paired_store operation=save status=ok
+10-10 15:05:53.961 TestRunner: finished: namesAndRemoval_preserveCredentialsOrderAndDeviceKeys(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)

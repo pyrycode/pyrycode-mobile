@@ -1,0 +1,28 @@
+SOURCE 10-logcat-de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest-namesAndRemoval_preserveCredentialsOrderAndDeviceKeys.txt
+10-10 15:19:58.942 TestRunner: started: namesAndRemoval_preserveCredentialsOrderAndDeviceKeys(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+10-10 15:19:58.979 paired_store operation=save status=ok
+10-10 15:19:58.989 paired_store operation=save status=ok
+10-10 15:19:58.993 paired_store operation=rename status=ok
+10-10 15:19:58.997 paired_store operation=rename status=ok
+10-10 15:19:59.006 paired_store operation=rename status=ok
+10-10 15:19:59.008 paired_store operation=remove status=ok
+10-10 15:19:59.010 paired_store operation=rename status=ok
+10-10 15:19:59.019 paired_store operation=remove status=ok
+10-10 15:19:59.025 paired_store operation=remove status=ok
+10-10 15:19:59.033 paired_store operation=save status=ok
+10-10 15:19:59.042 TestRunner: finished: namesAndRemoval_preserveCredentialsOrderAndDeviceKeys(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+SOURCE 8-logcat-de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest-load_returnsNullWhenWrapKeyLost.txt
+10-10 15:19:59.186 TestRunner: started: load_returnsNullWhenWrapKeyLost(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+10-10 15:19:59.195 paired_store operation=save status=ok
+10-10 15:19:59.198 paired_store operation=read status=failed code=keystore
+10-10 15:19:59.203 TestRunner: finished: load_returnsNullWhenWrapKeyLost(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+SOURCE 9-logcat-de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest-missingKeyAndInvalidEnvelopes_readGracefullyWithoutMutation.txt
+10-10 15:19:58.875 TestRunner: started: missingKeyAndInvalidEnvelopes_readGracefullyWithoutMutation(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)
+10-10 15:19:58.890 paired_store operation=save status=ok
+10-10 15:19:58.897 paired_store operation=read status=failed code=invalid_data
+10-10 15:19:58.902 paired_store operation=read status=failed code=invalid_data
+10-10 15:19:58.923 paired_store operation=save status=ok
+10-10 15:19:58.929 paired_store operation=read status=failed code=keystore
+10-10 15:19:58.934 paired_store operation=read status=failed code=keystore
+10-10 15:19:58.939 paired_store operation=remove status=failed code=keystore
+10-10 15:19:58.941 TestRunner: finished: missingKeyAndInvalidEnvelopes_readGracefullyWithoutMutation(de.pyryco.mobile.data.crypto.KeystorePairedServerStoreTest)

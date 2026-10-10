@@ -1,0 +1,28 @@
+SOURCE 0-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest-storageTestKeyLossAndTeardownPreserveAppPairings.txt
+10-10 15:17:09.414 TestRunner: started: storageTestKeyLossAndTeardownPreserveAppPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+10-10 15:17:09.426 paired_store operation=save status=ok
+10-10 15:17:09.434 paired_store operation=rename status=ok
+10-10 15:17:09.444 paired_store operation=save status=ok
+10-10 15:17:09.448 paired_store operation=rename status=ok
+10-10 15:17:09.450 event=answer_host_key_probe stage=before_lost_key_test
+10-10 15:17:09.461 paired_store operation=save status=ok
+10-10 15:17:09.465 paired_store operation=read status=failed code=keystore
+10-10 15:17:09.465 event=answer_host_key_probe stage=after_lost_key_test
+10-10 15:17:09.466 event=answer_host_key_probe stage=after_storage_teardown
+10-10 15:17:09.497 paired_store operation=save status=ok
+10-10 15:17:10.772 event=pair_code_prepared
+10-10 15:17:10.906 event=pair_code_save_started
+10-10 15:17:10.917 paired_store operation=save status=ok
+10-10 15:17:10.936 paired_store operation=rename status=ok
+10-10 15:17:10.961 event=pair_code_connection_wait
+10-10 15:17:10.965 event=pair_code_connected
+10-10 15:17:11.313 paired_store operation=remove status=ok
+10-10 15:17:11.323 paired_store operation=remove status=ok
+10-10 15:17:11.838 event=pair_code_failed code=target_mismatch
+10-10 15:17:11.970 event=pair_code_back
+10-10 15:17:12.605 event=pair_code_prepared
+10-10 15:17:12.697 event=pair_code_back
+10-10 15:17:12.936 event=pair_code_back
+10-10 15:17:13.141 paired_store operation=remove status=ok
+10-10 15:17:13.146 paired_store operation=remove status=ok
+10-10 15:17:13.151 TestRunner: finished: storageTestKeyLossAndTeardownPreserveAppPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)

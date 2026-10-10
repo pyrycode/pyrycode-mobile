@@ -1,0 +1,54 @@
+{
+  "revision": "c69770073c5cbed292d2393419cfdf17b01b51a2",
+  "dirty": [],
+  "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "command": [
+    "./gradlew",
+    ":app:pixel2Api33AtdDebugAndroidTest",
+    "--rerun",
+    "-Pandroid.experimental.androidTest.numManagedDeviceShards=2",
+    "-Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e",
+    "-Pandroid.testInstrumentationRunnerArguments.disableAnimations=true",
+    "--console=plain"
+  ],
+  "exit": 0,
+  "counts": {
+    "executed": 1576,
+    "passed": 1576,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 2
+  },
+  "named": [
+    {
+      "classname": "de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest",
+      "name": "storageTestKeyLossAndTeardownPreserveAppPairings",
+      "status": "passed"
+    },
+    {
+      "classname": "de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest",
+      "name": "targetedPairingAfterFixtureTeardownKeepsItsHostGuard",
+      "status": "passed"
+    },
+    {
+      "classname": "de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest",
+      "name": "failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings",
+      "status": "passed"
+    },
+    {
+      "classname": "de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest",
+      "name": "failedFixtureRestoresBindingsAndPreservesAppPairings",
+      "status": "passed"
+    },
+    {
+      "classname": "de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest",
+      "name": "offlinePrecedingHostDoesNotBlockAnswerHostPairing",
+      "status": "passed"
+    }
+  ],
+  "failures": [],
+  "reports": [
+    "TEST-pixel2Api33Atd_0-_app-.xml",
+    "TEST-pixel2Api33Atd_1-_app-.xml"
+  ]
+}
