@@ -32,10 +32,12 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -329,6 +331,153 @@ class ThreadViewModelAgentSwitchTest {
             assertNull(vm.state.value.runConfig.agentSwitch)
             assertEquals(repo.original, vm.state.value.runConfig.selectedModel)
             assertEquals(1, repo.switches.size)
+        }
+
+    @Test fun queuedClaudeToCodexSuccessKeepsTargetDisplay() = queuedSuccessKeepsTargetDisplay(ConversationAgent.Claude)
+
+    @Test fun queuedCodexToClaudeSuccessKeepsTargetDisplay() = queuedSuccessKeepsTargetDisplay(ConversationAgent.Codex)
+
+    private fun queuedSuccessKeepsTargetDisplay(source: ConversationAgent) =
+        runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            for (replacement in listOf(false, true)) {
+                val backing = Repo(source)
+                val authoritative = MutableStateFlow(backing.observeConversations(ConversationFilter.All).first())
+                val repo =
+                    object : ConversationRepository by backing {
+                        override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = authoritative
+                    }
+                val (vm, _) = collect(repo)
+                vm.onModelSelected(backing.target)
+                runCurrent()
+                vm.onOverflowEvent(ThreadEvent.AgentSwitchConfirm)
+                runCurrent()
+                backing.settings.value = null
+                // Fold the repository's successor before completion, without yielding to ViewModel projections.
+                authoritative.value = authoritative.value.map { it.copy(agent = backing.other, currentSessionId = "s2") }
+                backing.result.complete(Result.success(Unit))
+                runCurrent()
+                val settled = vm.state.value.runConfig
+                assertEquals(backing.other, settled.agent)
+                assertFalse(settled.pending)
+                assertEquals(backing.targetLabel, settled.modelLabel)
+                assertEquals(backing.target, settled.confirmedSwitchChoice?.value)
+                assertEquals(1, backing.switches.size)
+                assertFalse(settled.writable)
+                assertNull(settled.selectedMetadata)
+                assertTrue(settled.effortChoices.isEmpty())
+                assertEquals("", settled.permissionMode)
+
+                if (replacement) {
+                    authoritative.value = authoritative.value.map { it.copy(currentSessionId = "s3") }
+                    runCurrent()
+                    authoritative.value = authoritative.value.map { it.copy(currentSessionId = "s2") }
+                } else {
+                    val newer = if (backing.other == ConversationAgent.Claude) "haiku" else "gpt-6-sol"
+                    backing.settings.value = reading("s2", newer, "low")
+                    runCurrent()
+                    assertEquals(
+                        newer,
+                        vm.state.value.runConfig.selectedChoice
+                            ?.value,
+                    )
+                    backing.settings.value = null
+                }
+                runCurrent()
+                assertEquals(UNKNOWN_RUN_CONFIG_LABEL, vm.state.value.runConfig.modelLabel)
+                assertNull(vm.state.value.runConfig.confirmedSwitchChoice)
+            }
+        }
+
+    @Test fun queuedFreshSuccessorReadingDuringSwitchRetiresTargetDisplay() =
+        runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            for (source in ConversationAgent.entries) {
+                val backing = Repo(source)
+                val authoritative = MutableStateFlow(backing.observeConversations(ConversationFilter.All).first())
+                val repo =
+                    object : ConversationRepository by backing {
+                        override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = authoritative
+                    }
+                val (vm, _) = collect(repo)
+                vm.onModelSelected(backing.target)
+                vm.onOverflowEvent(ThreadEvent.AgentSwitchConfirm)
+                runCurrent()
+                val newer = if (backing.other == ConversationAgent.Claude) "haiku" else "gpt-6-sol"
+                authoritative.value = authoritative.value.map { it.copy(agent = backing.other, currentSessionId = "s2") }
+                backing.settings.value = reading("s2", newer, "low")
+                backing.result.complete(Result.success(Unit))
+                runCurrent()
+                assertEquals(
+                    newer,
+                    vm.state.value.runConfig.selectedChoice
+                        ?.value,
+                )
+                assertFalse(vm.state.value.runConfig.pending)
+                assertEquals(1, backing.switches.size)
+                backing.settings.value = null
+                runCurrent()
+                assertEquals(UNKNOWN_RUN_CONFIG_LABEL, vm.state.value.runConfig.modelLabel)
+                assertNull(vm.state.value.runConfig.confirmedSwitchChoice)
+            }
+        }
+
+    @Test fun realRepositoryQueuedClaudeToCodexSuccessKeepsTargetDisplay() = realRepositoryQueuedSuccess(ConversationAgent.Claude)
+
+    @Test fun realRepositoryQueuedCodexToClaudeSuccessKeepsTargetDisplay() = realRepositoryQueuedSuccess(ConversationAgent.Codex)
+
+    private fun realRepositoryQueuedSuccess(source: ConversationAgent) =
+        runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val backing = Repo(source)
+            val pump = ProjectionPump().apply { settings = reading("s1", backing.original, "high") }
+            val remote =
+                RemoteConversationRepository(
+                    pump,
+                    CoroutineScope(backgroundScope.coroutineContext + StandardTestDispatcher(testScheduler)),
+                    negotiatedCapabilities = { setOf("interactive", "multi_agent") },
+                )
+            val repo =
+                object : ConversationRepository by remote {
+                    override fun observeModelMenu(conversationId: String) = backing.observeModelMenu(conversationId)
+                }
+            pump.push("conversation_updated", pump.row(source))
+            val (vm, _) = collect(repo)
+            vm.onModelSelected(backing.target)
+            vm.onOverflowEvent(ThreadEvent.AgentSwitchConfirm)
+            runCurrent()
+            pump.transition("s1", "s2", backing.other)
+            runCurrent()
+            val settled = vm.state.value.runConfig
+            assertFalse(settled.pending)
+            assertEquals(backing.other, settled.agent)
+            assertEquals(backing.targetLabel, settled.modelLabel)
+            assertEquals(backing.target, settled.confirmedSwitchChoice?.value)
+            assertEquals(1, pump.sent.count { it.type == "switch_agent" })
+            assertFalse(settled.settingsAvailable)
+            assertFalse(settled.writable)
+            assertTrue(settled.effortChoices.isEmpty())
+            assertEquals("", settled.permissionMode)
+            val newer = if (backing.other == ConversationAgent.Claude) "haiku" else "gpt-6-sol"
+            pump.settings = reading("s2", newer, "low")
+            remote.refreshSessionSettings(CONV)
+            runCurrent()
+            assertEquals(
+                newer,
+                vm.state.value.runConfig.selectedChoice
+                    ?.value,
+            )
+            pump.answerSettings = false
+            remote.refreshSessionSettings(CONV)
+            runCurrent()
+            pump.push(
+                "error",
+                """{"code":"session_settings.unavailable","retryable":false,"message":"Reading unavailable"}""",
+                pump.sent.last { it.type == "request_session_settings" }.id,
+            )
+            runCurrent()
+            assertEquals(UNKNOWN_RUN_CONFIG_LABEL, vm.state.value.runConfig.modelLabel)
+            assertNull(vm.state.value.runConfig.confirmedSwitchChoice)
         }
 
     @Test fun successUsesFreshSuccessorSettings() =

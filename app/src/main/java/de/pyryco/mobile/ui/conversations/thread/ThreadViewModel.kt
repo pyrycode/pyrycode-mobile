@@ -383,11 +383,24 @@ class ThreadViewModel(
         val label: String,
         val rowValue: String?,
         val settingsSeq: Long,
+        val conversationSeq: Long,
     ) {
         fun belongsTo(conversation: Conversation?): Boolean =
             conversation != null &&
                 agent == conversation.agent &&
                 (conversation.currentSessionId.isEmpty() || sessionId == conversation.currentSessionId)
+
+        fun supersededBy(
+            conversation: Conversation?,
+            conversationSeq: Long,
+            reading: SettingsReading,
+        ): Boolean =
+            conversationSeq > this.conversationSeq &&
+                !belongsTo(conversation) ||
+                conversationSeq >= this.conversationSeq &&
+                belongsTo(conversation) &&
+                reading.seq > settingsSeq &&
+                reading.settings?.held == false
 
         override fun toString(): String = "ConfirmedModelDisplay"
     }
@@ -418,17 +431,17 @@ class ThreadViewModel(
      * This conversation's saved run configuration (#590), the authority for the displayed model and
      * effort and for the session id a write addresses (#807).
      *
-     * The `onEach` confirms a pending model only when a fresh reading names that raw value. A stale reply
+     * Admission confirms a pending model only when a fresh reading names that raw value. A stale reply
      * cannot briefly put the old model back. A lost reading clears the pending context. The acknowledgement
      * echoes only the input session id and confirms nothing.
      * It rides this flow rather than a second collector because `observeSessionSettings` is cold and
      * per-collector — a separate subscription would send a second `request_session_settings` frame on
      * every thread entry.
      */
-    private val sessionSettings: Flow<SessionSettings?> =
+    private val sessionSettings: Flow<SettingsReading> =
         repository
             .observeSessionSettings(conversationId)
-            .onEach { reading ->
+            .map { reading ->
                 // #1320: a held reading heads the subscription on a same-host reconnect where `null` used to,
                 // so it ends the pending context the same way.
                 val lost = reading == null || reading.held
@@ -445,7 +458,9 @@ class ThreadViewModel(
                 permissionWrite?.let { write ->
                     if (lost || reading?.sessionId != write.sessionId) cancelPermissionWrite()
                 }
-                settingsReadings.update { SettingsReading(it.seq + 1, reading) }
+                val delivered = SettingsReading(settingsReadings.value.seq + 1, reading)
+                settingsReadings.value = delivered
+                delivered
             }
 
     /** The permission mode a write asked for (#650), while its request or settle runs; else `null`. */
@@ -485,6 +500,14 @@ class ThreadViewModel(
     /** Last selection on this connection; empty summaries cannot undo a known session replacement. */
     private var lastKnownSessionId = ""
 
+    private data class ConversationReading(
+        val seq: Long,
+        val list: List<Conversation>,
+        val agentChanged: Boolean,
+    )
+
+    private var conversationSeq = 0L
+
     /**
      * The conversation list, shared (#1110) so [state] and [conversationAgent] ride one upstream
      * subscription: the remote repository sends a `list_conversations` request on every subscription.
@@ -492,7 +515,7 @@ class ThreadViewModel(
      * #1399: a list showing this row archived, from any client, leaves for the list. Upstream of `shareIn`
      * so it runs once per emission. A row that disappears, or is only renamed or moved, stays (desktop #653).
      */
-    private val conversations: Flow<List<Conversation>> =
+    private val conversationReadings =
         repository
             .observeConversations(ConversationFilter.All)
             .onEach { list ->
@@ -517,7 +540,10 @@ class ThreadViewModel(
                 if (list.any { it.id == conversationId && it.archived } && leaveForList()) {
                     RelayLog.d { "event=thread_left_archived" }
                 }
-            }.shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
+            }.map { list -> ConversationReading(++conversationSeq, list, agentChanged) }
+            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
+
+    private val conversations: Flow<List<Conversation>> = conversationReadings.map { it.list }
 
     /** The agent that runs this conversation (#1110); Claude while the list does not hold it yet. */
     private val conversationAgent: Flow<ConversationAgent> =
@@ -536,21 +562,21 @@ class ThreadViewModel(
         combine(
             sessionSettings,
             // The shared conversation reading binds stale settings after an agent transition.
-            repository.observeModelMenu(conversationId).combine(conversations) { menu, list ->
-                menu to list.firstOrNull { it.id == conversationId }
+            repository.observeModelMenu(conversationId).combine(conversationReadings) { menu, reading ->
+                menu to reading
             },
             pendingModel,
             pendingEffort,
             pendingPermission,
-        ) { settings, menuAndAgent, model, effort, permission ->
+        ) { reading, menuAndAgent, model, effort, permission ->
             // #1411: the settings ride along to the context-usage combine, which falls back to their token pair.
-            val conversation = menuAndAgent.second
+            val conversation = menuAndAgent.second.list.firstOrNull { it.id == conversationId }
             val agent = conversation?.agent ?: ConversationAgent.Claude
             val freshSettings =
-                settings?.takeUnless {
+                reading.settings?.takeUnless {
                     // A replacement connection's summary has no session binding. Its fresh correlated
                     // reply supplies authority; held readings and known transition mismatches cannot.
-                    agentChanged &&
+                    menuAndAgent.second.agentChanged &&
                         (
                             it.held ||
                                 conversation == null ||
@@ -559,19 +585,21 @@ class ThreadViewModel(
                         )
                 }
             val pending = model?.takeIf { it.agent == agent && it.sessionId == freshSettings?.sessionId }?.value
-            Triple(runConfig(freshSettings, menuAndAgent.first, agent, pending, effort, permission), freshSettings, conversation)
-        }.combine(agentSwitchUi) { (config, settings, conversation), switching ->
-            val fresh = settings != null && !settings.held
-            val confirmed = switching.confirmed?.takeIf { it.belongsTo(conversation) && !fresh }
-            val previous =
-                switching.previous?.takeIf {
-                    it.belongsTo(conversation) && !(fresh && settingsReadings.value.seq > it.settingsSeq)
-                }
-            // Supersession is permanent, including a replacement/read while the operation is sending.
+            Triple(
+                runConfig(freshSettings, menuAndAgent.first, agent, pending, effort, permission),
+                reading.copy(settings = freshSettings),
+                menuAndAgent.second,
+            )
+        }.combine(agentSwitchUi) { (config, reading, conversations), switching ->
+            val conversation = conversations.list.firstOrNull { it.id == conversationId }
+            val confirmed = switching.confirmed?.takeUnless { it.supersededBy(conversation, conversations.seq, reading) }
+            val previous = switching.previous?.takeUnless { it.supersededBy(conversation, conversations.seq, reading) }
+            // Retire only against versions carried by these inputs, never a newer global observation.
             if (confirmed != switching.confirmed || previous != switching.previous) {
-                agentSwitchUi.update { it.copy(confirmed = confirmed, previous = previous) }
+                agentSwitchUi.compareAndSet(switching, switching.copy(confirmed = confirmed, previous = previous))
             }
-            val display = confirmed.takeIf { settings == null }
+            val settings = reading.settings
+            val display = confirmed?.takeIf { it.belongsTo(conversation) && settings == null }
             config.copy(
                 agentSwitch = switching.request,
                 agentSwitchFailed = switching.failed,
@@ -2952,6 +2980,7 @@ class ThreadViewModel(
                             config.modelLabel.inert(),
                             config.selectedChoice?.value,
                             settingsReadings.value.seq,
+                            conversationReadings.replayCache.lastOrNull()?.seq ?: 0L,
                         ),
                 )
             RelayLog.d { "event=agent_switch_confirmation outcome=opened" }
@@ -2987,6 +3016,7 @@ class ThreadViewModel(
             config.selectedEffort.takeIf { level ->
                 level.isNotEmpty() && request.choice.effortChoices.any { it.value == level }
             }
+        val originSettingsSeq = settingsReadings.value.seq
         // Claim on Main before launch: even two taps before StateFlow publishes send only once.
         agentSwitchUi.value = switching.copy(request = request.copy(sending = true))
         clearRefusalOffer("agent_switch")
@@ -3001,15 +3031,23 @@ class ThreadViewModel(
                     Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.Failed))
                 }
             if (result.isSuccess) {
+                // The repository folded the confirmed successor before returning. Its shared observer
+                // can still be queued behind this coroutine; bind to that input rather than the old UI.
+                val successor =
+                    conversationReadings.first { reading ->
+                        reading.list.any { it.id == conversationId && it.agent == request.choice.agent }
+                    }
+                val sessionId = successor.list.first { it.id == conversationId }.currentSessionId
                 agentSwitchUi.value =
                     AgentSwitchUi(
                         confirmed =
                             ConfirmedModelDisplay(
                                 request.choice.agent,
-                                lastKnownSessionId,
+                                sessionId,
                                 request.choice.label.inert(),
                                 request.choice.value,
-                                settingsReadings.value.seq,
+                                originSettingsSeq,
+                                successor.seq,
                             ),
                     )
                 repository.refreshSessionSettings(conversationId)
