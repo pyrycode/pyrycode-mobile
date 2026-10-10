@@ -376,11 +376,27 @@ class ThreadViewModel(
     /** The [pendingModel] twin for effort (#807). */
     private val pendingEffort = MutableStateFlow<String?>(null)
 
+    /** Display only: never carries settings authority or effort/permission metadata. */
+    private data class ConfirmedModelDisplay(
+        val agent: ConversationAgent,
+        val sessionId: String,
+        val label: String,
+        val rowValue: String?,
+        val settingsSeq: Long,
+    ) {
+        fun belongsTo(conversation: Conversation?): Boolean =
+            conversation != null &&
+                agent == conversation.agent &&
+                (conversation.currentSessionId.isEmpty() || sessionId == conversation.currentSessionId)
+
+        override fun toString(): String = "ConfirmedModelDisplay"
+    }
+
     /** Phone-local confirmation, send and display-only settlement; never a persisted command. */
     private data class AgentSwitchUi(
         val request: ThreadAgentSwitch? = null,
-        val confirmed: ThreadModelChoice? = null,
-        val previous: ThreadModelChoice? = null,
+        val confirmed: ConfirmedModelDisplay? = null,
+        val previous: ConfirmedModelDisplay? = null,
         val failed: Boolean = false,
     )
 
@@ -543,16 +559,27 @@ class ThreadViewModel(
                         )
                 }
             val pending = model?.takeIf { it.agent == agent && it.sessionId == freshSettings?.sessionId }?.value
-            runConfig(freshSettings, menuAndAgent.first, agent, pending, effort, permission) to freshSettings
-        }.combine(agentSwitchUi) { (config, settings), switching ->
-            // A fresh reading supersedes the captured settlement label permanently, including failures.
-            if (settings != null && !settings.held && switching.confirmed?.agent == config.agent) {
-                agentSwitchUi.update { it.copy(confirmed = null) }
+            Triple(runConfig(freshSettings, menuAndAgent.first, agent, pending, effort, permission), freshSettings, conversation)
+        }.combine(agentSwitchUi) { (config, settings, conversation), switching ->
+            val fresh = settings != null && !settings.held
+            val confirmed = switching.confirmed?.takeIf { it.belongsTo(conversation) && !fresh }
+            val previous =
+                switching.previous?.takeIf {
+                    it.belongsTo(conversation) && !(fresh && settingsReadings.value.seq > it.settingsSeq)
+                }
+            // Supersession is permanent, including a replacement/read while the operation is sending.
+            if (confirmed != switching.confirmed || previous != switching.previous) {
+                agentSwitchUi.update { it.copy(confirmed = confirmed, previous = previous) }
             }
+            val display = confirmed.takeIf { settings == null }
             config.copy(
                 agentSwitch = switching.request,
                 agentSwitchFailed = switching.failed,
-                confirmedSwitchChoice = switching.confirmed.takeIf { settings == null },
+                confirmedModelLabel = display?.label,
+                confirmedSwitchChoice =
+                    display?.rowValue?.let { value ->
+                        config.choices.singleOrNull { it.agent == config.agent && it.value == value }
+                    },
             ) to settings
         }.combine(runningModel) { (config, settings), (running, announced) ->
             config.copy(running = running, announcedModel = announced) to settings
@@ -2915,7 +2942,18 @@ class ThreadViewModel(
         if (choice != null && choice.agent != config.agent) {
             if (!config.writable || config.settingsHeld) return
             effortRecall.cancel()
-            agentSwitchUi.value = AgentSwitchUi(request = ThreadAgentSwitch(config.agent, choice), previous = config.selectedChoice)
+            agentSwitchUi.value =
+                AgentSwitchUi(
+                    request = ThreadAgentSwitch(config.agent, choice),
+                    previous =
+                        ConfirmedModelDisplay(
+                            config.agent,
+                            config.sessionId,
+                            config.modelLabel.inert(),
+                            config.selectedChoice?.value,
+                            settingsReadings.value.seq,
+                        ),
+                )
             RelayLog.d { "event=agent_switch_confirmation outcome=opened" }
             return
         }
@@ -2941,7 +2979,7 @@ class ThreadViewModel(
         if (request.sending) return
         val config = state.value.runConfig
         if (!connectedFor("agent_switch") || config.agent != request.source || config.settingsHeld) {
-            agentSwitchUi.value = AgentSwitchUi(failed = true, confirmed = switching.previous)
+            agentSwitchUi.value = AgentSwitchUi(failed = true, confirmed = agentSwitchUi.value.previous)
             RelayLog.w { "event=agent_switch_ui outcome=unavailable" }
             return
         }
@@ -2963,11 +3001,21 @@ class ThreadViewModel(
                     Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.Failed))
                 }
             if (result.isSuccess) {
-                agentSwitchUi.value = AgentSwitchUi(confirmed = request.choice)
+                agentSwitchUi.value =
+                    AgentSwitchUi(
+                        confirmed =
+                            ConfirmedModelDisplay(
+                                request.choice.agent,
+                                lastKnownSessionId,
+                                request.choice.label.inert(),
+                                request.choice.value,
+                                settingsReadings.value.seq,
+                            ),
+                    )
                 repository.refreshSessionSettings(conversationId)
                 RelayLog.d { "event=agent_switch_ui outcome=confirmed" }
             } else {
-                agentSwitchUi.value = AgentSwitchUi(failed = true, confirmed = switching.previous)
+                agentSwitchUi.value = AgentSwitchUi(failed = true, confirmed = agentSwitchUi.value.previous)
                 val category = (result.exceptionOrNull() as? SwitchAgentFailure)?.category ?: SwitchAgentFailure.Category.Failed
                 RelayLog.w { "event=agent_switch_ui outcome=failed category=$category" }
             }

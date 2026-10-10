@@ -204,6 +204,119 @@ class ThreadViewModelAgentSwitchTest {
             assertTrue(vm.state.value.runConfig.agentSwitchFailed)
         }
 
+    @Test fun unlistedFailureRestoresDisplayInBothDirections() = restoreUnrepresentedDisplay(overflow = false)
+
+    @Test fun overflowFailureRestoresDisplayInBothDirections() = restoreUnrepresentedDisplay(overflow = true)
+
+    @Test fun inheritedFallbackFailureRestoresDisplay() = restoreUnrepresentedDisplay(inherited = true)
+
+    private fun restoreUnrepresentedDisplay(
+        overflow: Boolean = false,
+        inherited: Boolean = false,
+    ) = runTest {
+        val agents = if (inherited) listOf(ConversationAgent.Claude) else ConversationAgent.entries
+        for (agent in agents) {
+            for (localFailure in listOf(false, true)) {
+                val repo = Repo(agent)
+                val saved = if (inherited) "default" else "unlisted\n-${agent.name}" + "x".repeat(140)
+                val label = if (inherited) "Opus" else saved.inert()
+                val target = row(repo.target, repo.targetLabel, repo.other)
+                val rows =
+                    when {
+                        inherited -> listOf(target, row("default", "Inherited", agent).copy(resolvedModel = "claude-opus-hidden"))
+                        overflow -> listOf(target) + List(31) { row("filler-$it", "Filler $it", repo.other) } + row(saved, "Hidden", agent)
+                        else -> listOf(target)
+                    }
+                repo.backing.setModelMenu(CONV, ModelMenu(rows, 0))
+                repo.settings.value = reading("s1", saved, "high")
+                val (vm, _) = collect(repo)
+                assertNull(vm.state.value.runConfig.selectedChoice)
+                assertEquals(label, vm.state.value.runConfig.modelLabel)
+                vm.onModelSelected(repo.target)
+                vm.onOverflowEvent(ThreadEvent.AgentSwitchConfirm)
+                vm.onOverflowEvent(ThreadEvent.AgentSwitchConfirm)
+                repo.settings.value = null
+                runCurrent()
+                repo.throwOnSwitch = localFailure
+                repo.result.complete(Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.BinaryOffline)))
+                runCurrent()
+                val restored = vm.state.value.runConfig
+                assertEquals(label, restored.modelLabel)
+                assertEquals(label, restored.modelSelectionNote)
+                assertNull(restored.selectedChoice)
+                assertNull(restored.confirmedSwitchChoice)
+                assertNull(restored.selectedMetadata)
+                assertTrue(restored.effortChoices.isEmpty())
+                assertEquals("", restored.selectedEffort)
+                assertEquals("", restored.permissionMode)
+                assertNull(restored.capabilities)
+                assertFalse(restored.writable)
+                assertTrue(restored.agentSwitchFailed)
+                assertFalse(restored.pending)
+                assertEquals(listOf(SwitchAgentCall(CONV, repo.other, repo.target, "high")), repo.switches)
+                vm.onEffortSelected("high")
+                vm.onPermissionModeSelected("plan")
+                assertTrue(repo.settingsWrites.isEmpty())
+                // Held readings cannot supersede the confirmed display; fresh authority does so forever.
+                repo.settings.value = reading("s1", saved, "high").copy(held = true)
+                runCurrent()
+                repo.settings.value = null
+                runCurrent()
+                assertEquals(label, vm.state.value.runConfig.modelSelectionNote)
+                repo.settings.value = reading("s1", repo.original, "low")
+                runCurrent()
+                repo.settings.value = null
+                runCurrent()
+                assertEquals(UNKNOWN_RUN_CONFIG_LABEL, vm.state.value.runConfig.modelLabel)
+                assertNull(vm.state.value.runConfig.modelSelectionNote)
+            }
+        }
+    }
+
+    @Test fun replacementRetiresFailureDisplayPermanently() =
+        runTest {
+            for (replaceAgent in listOf(false, true)) {
+                for (whileSending in listOf(false, true)) {
+                    val repo = Repo()
+                    repo.settings.value = reading("s1", "unlisted", "high")
+                    val (vm, _) = collect(repo)
+                    vm.onModelSelected(repo.target)
+                    vm.onOverflowEvent(ThreadEvent.AgentSwitchConfirm)
+                    repo.settings.value = null
+                    runCurrent()
+                    if (whileSending) repo.binding.value = (if (replaceAgent) repo.other else ConversationAgent.Claude) to "s2"
+                    runCurrent()
+                    repo.result.complete(Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.Failed)))
+                    runCurrent()
+                    if (!whileSending) repo.binding.value = (if (replaceAgent) repo.other else ConversationAgent.Claude) to "s2"
+                    runCurrent()
+                    assertEquals(UNKNOWN_RUN_CONFIG_LABEL, vm.state.value.runConfig.modelLabel)
+                    repo.binding.value = ConversationAgent.Claude to "s1"
+                    runCurrent()
+                    assertEquals(UNKNOWN_RUN_CONFIG_LABEL, vm.state.value.runConfig.modelLabel)
+                    assertNull(vm.state.value.runConfig.modelSelectionNote)
+                    assertEquals(1, repo.switches.size)
+                }
+            }
+        }
+
+    @Test fun freshReadingDuringSwitchRetiresPreviousDisplay() =
+        runTest {
+            val repo = Repo()
+            repo.settings.value = reading("s1", "unlisted", "high")
+            val (vm, _) = collect(repo)
+            vm.onModelSelected(repo.target)
+            vm.onOverflowEvent(ThreadEvent.AgentSwitchConfirm)
+            repo.settings.value = reading("s1", "haiku", "low")
+            runCurrent()
+            repo.settings.value = null
+            runCurrent()
+            repo.result.complete(Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.Failed)))
+            runCurrent()
+            assertEquals(UNKNOWN_RUN_CONFIG_LABEL, vm.state.value.runConfig.modelLabel)
+            assertNull(vm.state.value.runConfig.modelSelectionNote)
+        }
+
     @Test fun localExceptionIsSanitizedAndNeverRetried() =
         runTest {
             val repo = Repo()
@@ -676,7 +789,9 @@ class ThreadViewModelAgentSwitchTest {
             switches += SwitchAgentCall(conversationId, agent, model, effort)
             if (throwOnSwitch) throw IllegalStateException("private daemon details")
             try {
-                return result.await()
+                val outcome = result.await()
+                if (throwOnSwitch) throw IllegalStateException("private daemon details")
+                return outcome
             } finally {
                 cancelled = !result.isCompleted
             }

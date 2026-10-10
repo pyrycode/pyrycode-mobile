@@ -353,8 +353,10 @@ data class ThreadRunConfig(
     val agent: ConversationAgent = ConversationAgent.Claude,
     val agentSwitch: ThreadAgentSwitch? = null,
     val agentSwitchFailed: Boolean = false,
-    /** Repository-confirmed pick while the successor settings reading is still unavailable. */
+    /** Display-only radio identity, present only while its own-agent row is rendered. */
     val confirmedSwitchChoice: ThreadModelChoice? = null,
+    /** Bounded confirmed display independent of radio identity; supplies no settings authority. */
+    val confirmedModelLabel: String? = null,
 ) {
     private val ownChoices get() = choices.filter { it.agent == agent }
     private val ownOverflowChoices get() = overflowChoices.filter { it.agent == agent }
@@ -493,7 +495,7 @@ data class ThreadRunConfig(
         get() =
             when {
                 agentSwitch?.sending == true -> agentSwitch.choice.label
-                !settingsAvailable && confirmedSwitchChoice?.agent == agent -> confirmedSwitchChoice.label
+                !settingsAvailable && confirmedModelLabel != null -> confirmedModelLabel
                 !settingsAvailable && pendingModel == null -> UNKNOWN_RUN_CONFIG_LABEL
                 selectedChoice != null -> selectedChoice?.label.orEmpty()
                 inherited ->
@@ -510,7 +512,10 @@ data class ThreadRunConfig(
 
     /** Text for an unrepresented confirmed or pending choice in the sheet, never a radio label. */
     val modelSelectionNote: String?
-        get() = modelLabel.takeIf { settingsAvailable && selectedChoice == null }
+        get() =
+            modelLabel.takeIf {
+                selectedChoice == null && (settingsAvailable || confirmedModelLabel != null && confirmedSwitchChoice == null)
+            }
 
     /** The footer's effort segment. No menu lookup: a level is its own label. With nothing selected it
      *  names the control (#889) rather than claiming "default", which an explicit `null` would contradict. */

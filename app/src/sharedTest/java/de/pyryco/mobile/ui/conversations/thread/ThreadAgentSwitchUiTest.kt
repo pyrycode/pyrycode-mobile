@@ -38,6 +38,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -203,6 +205,85 @@ class ThreadAgentSwitchUiTest {
         }
     }
 
+    @Test fun unlistedClaudeRefusalRestoresStandaloneDisplay() = restoreStandaloneDisplay(ConversationAgent.Claude)
+
+    @Test fun unlistedCodexLocalFailureRestoresStandaloneDisplay() = restoreStandaloneDisplay(ConversationAgent.Codex, localFailure = true)
+
+    @Test fun overflowClaudeLocalFailureRestoresStandaloneDisplay() =
+        restoreStandaloneDisplay(ConversationAgent.Claude, overflow = true, localFailure = true)
+
+    @Test fun overflowCodexRefusalRestoresStandaloneDisplay() = restoreStandaloneDisplay(ConversationAgent.Codex, overflow = true)
+
+    @Test fun inheritedFallbackRefusalRestoresStandaloneDisplay() = restoreStandaloneDisplay(ConversationAgent.Claude, inherited = true)
+
+    private fun restoreStandaloneDisplay(
+        agent: ConversationAgent,
+        overflow: Boolean = false,
+        inherited: Boolean = false,
+        localFailure: Boolean = false,
+    ) {
+        show(agent)
+        val saved = if (inherited) "default" else "unlisted\n-${agent.name}"
+        val label = if (inherited) "Opus" else "unlisted-${agent.name}"
+        rule.runOnIdle {
+            val other = if (agent == ConversationAgent.Claude) ConversationAgent.Codex else ConversationAgent.Claude
+            val target =
+                row(
+                    if (other == ConversationAgent.Claude) "opus" else "gpt-6-luna",
+                    repo.targetLabel,
+                    other,
+                    listOf("low", "high"),
+                )
+            val rows =
+                when {
+                    inherited -> {
+                        val default = row("default", "Inherited", agent, listOf("high"))
+                        listOf(target, default.copy(resolvedModel = "claude-opus-hidden"))
+                    }
+                    overflow -> {
+                        val fillers = List(31) { row("filler-$it", "Filler $it", other, emptyList()) }
+                        listOf(target) + fillers + row(saved, "Hidden", agent, listOf("high"))
+                    }
+                    else -> listOf(target)
+                }
+            repo.backing.setModelMenu(CONV, ModelMenu(rows, 0))
+            repo.settings.value = reading("original", saved, "high")
+        }
+        openConfig()
+        rule.onNodeWithText(label).assertIsDisplayed()
+        model(repo.targetLabel).assertIsNotSelected().performClick()
+        rule.onNodeWithText("Switch").performClick()
+        rule.runOnIdle { repo.settings.value = null }
+        rule.waitForIdle()
+        rule.runOnIdle {
+            repo.throwOnResult = localFailure
+            repo.result.complete(Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.BinaryOffline)))
+        }
+        rule.onNodeWithText("Couldn’t switch agents. Hand-over or queued-message changes may already have occurred.").assertIsDisplayed()
+        rule.onNodeWithText("private daemon details", substring = true).assertDoesNotExist()
+        openConfig()
+        rule.onNodeWithText(label).assertIsDisplayed()
+        model(repo.targetLabel).assertIsNotSelected().assertIsNotEnabled()
+        rule.onNode(hasText("High") and isSelectable()).assertDoesNotExist()
+        rule.onNodeWithText("Manual approval").assertDoesNotExist()
+        rule.runOnIdle {
+            assertEquals(1, repo.switches.size)
+            assertTrue(repo.writes.isEmpty())
+            assertNull(vm.state.value.runConfig.selectedMetadata)
+            assertFalse(vm.state.value.runConfig.writable)
+        }
+        rule.onNodeWithText("Done").performClick()
+        rule.runOnIdle { repo.settings.value = reading("original", saved, "low") }
+        openConfig()
+        rule.onNodeWithText(label).assertIsDisplayed()
+        rule.onNodeWithText("Done").performClick()
+        rule.runOnIdle { repo.settings.value = null }
+        openConfig()
+        rule.onNodeWithText(label).assertDoesNotExist()
+        model(repo.targetLabel).assertIsNotSelected()
+        rule.runOnIdle { assertEquals(1, repo.switches.size) }
+    }
+
     private fun openConfig() {
         rule.onNodeWithContentDescription("Expand status details").performClick()
     }
@@ -271,6 +352,7 @@ class ThreadAgentSwitchUiTest {
         val result = CompletableDeferred<Result<Unit>>()
         val switches = mutableListOf<SwitchAgentCall>()
         val writes = mutableListOf<String?>()
+        var throwOnResult = false
 
         init {
             backing.setModelMenu(
@@ -300,7 +382,9 @@ class ThreadAgentSwitchUiTest {
             effort: String?,
         ): Result<Unit> {
             switches += SwitchAgentCall(conversationId, agent, model, effort)
-            return result.await()
+            val outcome = result.await()
+            if (throwOnResult) throw IllegalStateException("private daemon details")
+            return outcome
         }
 
         override suspend fun setSessionSettings(
