@@ -29,11 +29,40 @@ selection mutation, retry, skip or deadline increase is used.
 
 New live stage records are bounded to fixed operation names and content-free
 phone/peer link state. Diagnostic passes do not establish historical causation.
-The fresh full dispatcher live gate after verification is still required.
-On return, retain its complete counted XML, method-level result and mobile/daemon
-revision metadata beside these assets; record errors and skips as well as failures.
+The returned full dispatcher live evidence is retained below. Historical
+causation remains unresolved; the controlled defect and passing candidate are
+separate evidence.
 
 scripted.xml retains the fresh deterministic send-now twin: 1 executed/passed,
 0 failures/errors/skips, process exit 0. Its tested mobile commit and daemon
 binary revision, dirty-build flag and hash are in provenance.json. This
-scripted fakeclaude result does not replace the pending full live gate.
+scripted fakeclaude result is separate from the real-Claude full live gate.
+
+## Dispatcher full live run
+
+`dispatcher-full.xml` is the exact normalized XML line in the durable
+2026-10-10T02-03-00-622Z_real-claude-gate_#1898.log: 65 executed/passed,
+0 failed/errors/skipped. `dispatcher-method.xml` selects the unchanged Send now
+testcase into a one-case report: 1 executed/passed, 0 failed/errors/skipped.
+It immediately follows interrupted upload in this shared-process full run.
+
+`dispatcher-provenance.json` schema_version 1 names the command, source-file
+and artifact SHA-256 hashes, extraction rules and counted suite/method outcomes.
+Its `mobile` is the actual tested merge e463a39009544f7332091c692580c6e6d55d188a;
+`feature` and `main` are the pre-merge inputs, not the tested mobile revision.
+The matching stderr identifies daemon a536d17b1e182fb5398a5458e3afe6079b37a510
+and Claude Code 2.1.280 with the stream-json runner. The process exited 0.
+The source files remain in the agents repository's logs directory.
+
+The provenance's suite and method objects each contain the artifact name,
+listed/executed/passed/failed/errors/skipped counts and checksum; method also
+names the qualified testcase. Sources pair a durable filename with its checksum.
+Extraction and limitations describe what can be recovered from those sources.
+No executable reader consumes these assets and no existing schema was changed.
+
+The normalized report omits individual timing. Raw per-device XML, phone stage
+logcat and daemon binary/hash/dirty-build metadata disappeared with the gate
+worktree and are not invented here. This is passing full-live evidence for the
+tested candidate, without proof of the historical operation or future reliability.
+Review and the dispatcher live gate must run again after the artifact handoff;
+needs-real-claude stays set.
