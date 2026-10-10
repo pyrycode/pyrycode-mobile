@@ -32,6 +32,7 @@ import androidx.test.runner.AndroidJUnitRunner
  * finishes. Bluetooth stays off: switching it back on would restart the crash loop on an emulator that
  * scripted-all reuses for its next scenario.
  * Disable is unconditional on emulators: a persisted off preference does not cancel pending recovery.
+ * The bounded platform wait must confirm OFF before tests start; disable itself is asynchronous.
  */
 class E2eInstrumentationRunner : AndroidJUnitRunner() {
     private var disableAnimations = false
