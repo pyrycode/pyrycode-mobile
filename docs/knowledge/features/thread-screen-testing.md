@@ -211,6 +211,92 @@ offline asks, one newest-page ask per connected opening and the held response.
 Device execution coordination supplements diagnosis; it does not erase a miss or
 replace full-suite evidence.
 
+**Post-#2018 restoration repair (#2026), 2026-10-10.** The
+[verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2035#issuecomment-6094236218)
+and [measured plan](../../specs/architecture/2026-saved-thread-restore-latency.md)
+establish unnecessary JSON decoder/null-tracking allocation and general timestamp
+parser state as the remaining restore cost. The baseline cache phases
+read/decode/row-validation/metadata/proofs were **7/517/150/23/123 ms**, worker
+**824 ms wall / 416 ms CPU**. A decoder-only configuration reduced allocations but
+still missed the draw bound. Combining it with the strictly calendar-validated
+whole-second UTC timestamp path reduced fragmented offline phases to
+**1/168/10/14/82 ms**, worker **278 ms wall / 269 ms CPU**. The required metadata
+writer reread also benefits. Keep the [decoder separate from encoding and retain
+the legacy timestamp fallback](conversation-cache-layout.md#thread-document-readers-1949);
+canonical hashes and persisted bytes must not change to gain margin.
+
+No repository, scheduler, device probe or fixture change was needed. The timer
+still starts before fresh cache/repository construction on first open, and before
+a fresh ViewModel/composition on reopen with the same repository. Exact newest
+text wholly inside the message viewport and its committed frame remain the
+endpoint, with the original 20-message and 18,000-row / 36,000-entry / 18,000-span
+fixtures, exact rows/marker anchors and zero offline / one held connected newest
+request per opening. Whole-class success cannot replace isolated-method evidence.
+
+The following retained fragmented offline first-open misses supplement every
+earlier miss above. Directories are under `/tmp/builder-2026/`, each with XML,
+selected-method logcat and `run.json`; all exited 1 with **1/0/1/0/0**
+executed/passed/failed/skipped/errors. Originals under
+`/tmp/builder-2006/rework-evidence/` remain untouched.
+
+| Evidence directory | XML timestamp | Cumulative phases (ms) |
+| --- | --- | --- |
+| `prior/post-2018-branch` | 2026-10-09T23:53:04 | 721/848/994/1119 |
+| `prior/post-2018-merge-base` | 2026-10-09T23:54:15 | 922/1212/1511/1688 |
+| `baseline` | 2026-10-10T04:31:30 | 845/1053/1193/1314 |
+| `decode-diagnosis` | 2026-10-10T04:46:43 | 602/800/1010/1153 |
+| `decoder-isolated` | 2026-10-10T05:00:16 | 569/748/946/1139 |
+
+**Isolated focused acceptance.** On source revision
+`b1029033bd5cea81b457e3969a89dd2152791ef0`, each named method ran alone in a
+separate invocation under the existing FIFO device hold:
+
+```sh
+./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#METHOD' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e -Pandroid.testInstrumentationRunnerArguments.disableAnimations=true --console=plain
+```
+
+`METHOD` was separately
+`savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen`
+and `slowRestore_negativeControlRejectsTheSameFirstDrawBound`. Each exited 0,
+**1/1/0/0/0** executed/passed/failed/skipped/errors. Fresh XML
+`TEST-pixel2Api33Atd-_app-.xml` is retained in
+`/tmp/builder-2026/timestamp-isolated/` (timestamp **2026-10-10T05:07:37**) and
+`timestamp-control/` (**2026-10-10T05:07:59**), with selected-method logcat and
+manifests beside it. `/tmp/builder-2026/focused-evidence.json` records commands,
+revision, exits, counts and all cumulative tuples.
+
+**Dispatcher full UI acceptance.** The unchanged
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`
+exited 0 on reviewed head `753bd3bb444a8d7b1e56f171db6f3fc2af114fdc`, which
+differs from the focused source revision only in the plan. Inspected XML
+`/tmp/verifier-2035/evidence/dispatcher-ui.xml` (timestamp **2026-10-10T05:25:51**)
+counts **256/256/0/1/0** executed/passed/failed/skipped/errors; both named methods
+executed and passed individually, **1/1/0/0/0** each. The sole skip remains
+`RenameDialogCaptureTest.renameAtFigmaViewport`. Selected-method logcats are
+retained beside the XML. These are full-suite results, separate from the focused
+runs above.
+
+| Case | Isolated focused phases | Dispatcher full UI phases |
+| --- | --- | --- |
+| Ordinary offline first | 178/199/227/343 | 11/13/21/83 |
+| Ordinary offline reopen | 35/68/104/218 | 8/10/47/125 |
+| Ordinary held newest first | 20/26/55/117 | 11/13/82/171 |
+| Ordinary held newest reopen | 20/26/54/100 | 14/20/76/137 |
+| Fragmented offline first | 293/407/523/609 | 343/439/595/670 |
+| Fragmented offline reopen | 37/118/247/339 | 19/93/225/273 |
+| Fragmented held newest first | 258/346/472/611 | 252/321/452/498 |
+| Fragmented held newest reopen | 29/175/374/493 | 18/87/203/278 |
+| Delayed negative control | 3036/3389/3434/3533 | 3042/3051/3128/3206 |
+
+Tuples remain cumulative **restore/snapshot/complete-content/committed-draw**, in
+wall-clock milliseconds. Both controls passed by rejecting the identical
+**1,000 ms** assertion after the injected **3,000 ms** restore delay. Focused
+cache/proof/coverage/repository/held-worker checks passed **181/181/0/0/0**;
+expanded timestamp compatibility separately passed **1/1/0/0/0**. The dispatcher
+scripted-all gate exited 0, **22/22/0/0/0** (retained
+`/tmp/verifier-2035/evidence/dispatcher-scripted.xml`). This repair adds no
+real-Claude flow or ladder scenario.
+
 ## Folded-row composition reuse (#1954)
 
 `ThreadRowContentTypeTest.foldedRows_exposeDistinctKindsAndSharedMessageTypeInActualListLayout`
