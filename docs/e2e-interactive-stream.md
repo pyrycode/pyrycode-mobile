@@ -2556,6 +2556,23 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
+The existing deletion scenario
+`InteractiveStreamE2ETest.interactiveTurn_deleteConversation_removesFromListAndClosesThread`
+(#1888) waits for its discussion's owning host immediately before Save and Delete confirmation.
+`awaitDeletionMutationReady` accepts a non-null `currentRepository` emission only when it is
+identical to that flow's synchronous `.value`: collection may still publish a retired delegate
+while the authenticated transport/pump is unavailable or a replacement is current. Entry-only
+Connected state can represent intentional idle, and another ready host cannot release this wait.
+Each wait retains `THREAD_TIMEOUT_MS` and cancellation; readiness is an observation, so a later
+disconnect still fails through the mutation/postcondition contract rather than retrying.
+
+After Save, the drive observes the confirmed unique name in the thread header before Back can
+destroy the ViewModel's mutation scope. It then proves displayed list presence, reopens that
+thread, deletes through Channel info and the confirmation dialog, and independently checks list
+return and unique-name absence. This remains an always-on rung-3 real relay/daemon scenario with
+zero Claude turns. No rung-4 twin, production behavior, selectors or scenario sleeps changed.
+See [deletion evidence](#delete-conversation-readiness-1888).
+
 The curated collision scenario remains
 `InteractiveStreamE2ETest.interactiveTurn_twoHostsCollidingConversationId_stayPerHost` (#847, #1998):
 two real paired hosts share a conversation ID while retaining separate rows and threads; renaming A
@@ -2671,6 +2688,69 @@ records the same lost-answer failure in three unchanged-main focused runs and th
 main-only base run, identifies daemon bug pyrycode#2785, and clears the live gate for documentation.
 The full suite retains its one failure; manual USB evidence and the Android 16 driver failure
 above are separate from this automated named pass.
+
+The timeout investigation (#1898) repairs a separate, controlled host-readiness defect.
+`awaitSendNowConnection` waits for both relay and daemon legs of the explicitly addressed
+harness host at the original 30000 ms deadline. A stopped selected host must not block that
+host, and an unrelated connected host must not satisfy its readiness. The real-registry checks
+`RelayConnectionFactoryTest.sendNowReadinessIgnoresStoppedSelectedHost` and
+`sendNowReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected` failed against the selected-host
+wait (**2 executed, 2 failed, 0 errors/skips**) and passed against the explicit-host wait
+(**2 executed, 2 passed, 0 failed/errors/skips**). Selection, retries and deadlines are unchanged.
+See [shared-process fixture isolation](knowledge/features/development-verification-emulator-evidence.md#emulator-and-real-evidence).
+
+Fixed `SendNowStage` labels distinguish list/connection setup, conversation creation and identity,
+composer readiness, warmup and fresh capabilities, peer admission/send, held Bash observation,
+phone queue rendering, peer queue observation, Send now control/tap, peer queue removal,
+original-turn completion, delivered-row rendering and final repository rows. Logcat emits
+`event=send_now_stage` with started/completed/failed status. Timeout failures lazily snapshot
+harness-host registration, whether selection matches, relay/daemon state names, repository
+availability and peer link state. These bounded records contain no identifiers, pairing material,
+prompts or frame payloads. Coroutine/Compose timeouts and nested permission-aware timeout
+assertions retain their cause chain; other failures and cancellation propagate. The final
+repository row read now has an explicit bounded wait. The held foreground Bash, peer queue
+removal, exactly one completion of the original turn, marker in its reply, delivery after the
+tool result and exactly one delivered phone user row without a queued copy remain required.
+
+Historical #1731 evidence proves intermittency, not the timed-out operation: the full run
+executed **64 tests, 13 failed, 0 errors/skips**, with Send now failing after interrupted upload;
+the rerun executed **13 tests, 1 failed, 0 errors/skips**, with Send now passing after create/edit/archive.
+Both used mobile `a7a4b484d7260c4dc7418b85df9c10f2b7245398` and daemon
+`6019328b378cad587f69b7bc94de37febbdf8556`, which already contains the distinct #2820 ordering fix.
+The failure is a bare 30000 ms coroutine timeout without a scenario call site. Its daemon log
+has no Send now delivery event; the passing log has one. Original phone logcat and method-timing
+XML were lost. Stopped predecessor pairings provide a reproduced mechanism, but attributing
+that historical failure to readiness remains an inference. Passing diagnostics do not establish
+historical causation or future reliability.
+
+[Retained evidence](../app/src/androidTest/assets/send-now-1898/README.md) includes historical
+full/rerun XML, controlled before/after XML and the deterministic `send-now` twin's `scripted.xml`
+(**1 executed/passed, 0 failed/errors/skips**, exit 0). `provenance.json` identifies that scripted
+run's mobile `0d8e807a84ec66ae493117a59c0eaa3eecb45af1`, daemon revision, dirty flag and binary hash.
+
+The returned dispatcher full live run used
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`, exit 0:
+**65 executed/passed, 0 failed/errors/skips**. Retained
+[dispatcher-full.xml](../app/src/androidTest/assets/send-now-1898/dispatcher-full.xml) and
+[dispatcher-method.xml](../app/src/androidTest/assets/send-now-1898/dispatcher-method.xml)
+show Send now **1 executed/passed, 0 failed/errors/skips**, immediately after interrupted upload
+in the same process. [Dispatcher provenance](../app/src/androidTest/assets/send-now-1898/dispatcher-provenance.json)
+records the tested mobile merge `e463a39009544f7332091c692580c6e6d55d188a`, daemon
+`a536d17b1e182fb5398a5458e3afe6079b37a510`, Claude Code 2.1.280, source/artifact hashes and extraction
+from `2026-10-10T02-03-00-622Z_real-claude-gate_#1898.log`. Normalized XML retains counted
+outcomes but no individual timing. Raw per-device XML, phone stage logcat and daemon
+binary/hash/dirty-build metadata disappeared with that gate worktree.
+
+The separate final post-artifact [dispatcher live gate](https://github.com/pyrycode/pyrycode-mobile/issues/1898#issuecomment-6093363183)
+used the same command and exited 0: **65 executed/passed, 0 failed/errors/skips**, including
+Send now **1 executed/passed, 0 failed/errors/skips**, again after interrupted upload. Its fresh
+normalized XML is `2026-10-10T03-20-57-273Z_real-claude-gate_#1898.log` in the dispatcher
+repository's `logs/`; it is separate from the committed earlier XML. Matching stderr identifies
+tested mobile `ef667bec15efd3cdfa3721b60ec0e51cf2833624`, with main input
+`1014cfdf0035e802f8bed956a43d0b132f92f1b2`, daemon
+`a536d17b1e182fb5398a5458e3afe6079b37a510` and Claude Code 2.1.280. The XML has no daemon annotation;
+the revision comes from that run's stderr. The final gate satisfies counted full-live execution
+for this candidate; historical attribution remains unresolved.
 
 **What it runs.** The current curated selector passes 64 runnable methods as a comma-separated
 `class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
@@ -3408,6 +3488,63 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+### Delete-conversation readiness (#1888)
+
+The [tested-source diagnosis](https://github.com/pyrycode/pyrycode-mobile/issues/1888#issuecomment-6043311668)
+accounts for two historical stages. #1854 tested merge
+`f77f772c8d56251c3e5da12c1c125d887d2ed872` (parents `3e059504f9` and `970d7c422f`):
+the timeout was the first uniquely renamed list-presence wait, correcting the old branch-head
+Channel info attribution. #1878 tested `9b55c94b107cc263443126396f842a9e72da5b1f`:
+the timeout was post-confirmation `awaitChannelList`. The verifier independently mapped both
+retained stderr stacks against those tested revisions.
+
+Retained daemon logs connect each target to teardown before its missing mutation: #1854's
+`pyry-e2e.NTBfoP/daemon.log` records create/history at 11:36:20.412/.502 +03:00,
+peer-close at .515 and a new handshake at 11:36:21.553, with no target rename;
+#1878's `pyry-e2e.6WLkmJ/daemon.log` records rename/history at 09:13:55.514/.798,
+peer-close at .960, a new handshake at 09:13:57.048 and history at .093, with no target delete.
+Historical phone XML was removed with the gate worktrees; daemon logs alone do not prove UI
+action delivery. The fresh gap controls supplied that missing connection: each submitted once
+with `repository=false legacy_connected=true`, reproducing the respective missing mutation.
+The stable facade rejects unavailable one-shot calls and the guarded ViewModel call catches
+that rejection. No measured window/input defect was established.
+
+The [retained content-free evidence pack](../app/src/androidTest/assets/deletion-1888/README.md)
+preserves source/log provenance, hashed historical identities and XML/logcat excerpts:
+
+| Control | Revision | Artifact directory | Executed | Passed | Failed | Skipped |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| Original Save gap; first list-presence timeout | `f4ff81a73` | `build/dispatcher-tests/live-qnfag9ra` | 1 | 0 | 1 | 0 |
+| Original confirmation gap; dialog closes, thread/discussion remain | `80d5e1b5a` | `build/dispatcher-tests/live-9b_iwrpu` | 1 | 0 | 1 | 0 |
+| Repaired drive with both forced gaps | `e2525a93376c34ab69afce0395057dfd30b856ae` | `build/dispatcher-tests/live-yln6f7vx` | 1 | 1 | 0 | 0 |
+| Earlier clean focused deletion | `425ace87ce391706e3ef1153d2cb7e775f2618fc` | `build/dispatcher-tests/live-iggnztkt` | 1 | 1 | 0 | 0 |
+
+These focused proofs predate the synchronous-identity rework; temporary gap injection and
+window diagnostics are absent from the final drive. The earlier diagnostic full run at
+`5de4f4459` executed 64, passed 62, failed 2, skipped 0: deletion passed, but unrelated
+\#1870 archive presence and daemon `pyrycode#2939` parser-gap failures prevented full acceptance.
+[Counted JVM regression evidence](knowledge/features/development-verification-emulator-evidence.md#emulator-and-real-evidence)
+includes both stale-publication negative controls and all eight final readiness passes.
+
+The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1926#issuecomment-6093256477)
+reviewed `9e05f7352a3115a98ff5b9c69185f3bcc65fd2c9`. The subsequent
+[dispatcher full live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1888#issuecomment-6093482889)
+ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on that
+`feature/1888` head merged with `origin/main` at `4d34974952d874a39295447fa677cb1c6dd207a9`:
+**65 executed, 65 passed, 0 failed, 0 errors, 0 skipped**, exit 0 in 15m 39s.
+Fresh JUnit XML explicitly contains
+`InteractiveStreamE2ETest.interactiveTurn_deleteConversation_removesFromListAndClosesThread`
+with no failure/error/skipped child: **ran and passed**. This satisfies full-live acceptance;
+no separate focused dispatcher run is claimed or required.
+
+The retained report is dispatcher
+`logs/2026-10-10T03-36-21-148Z_real-claude-gate_#1888.log`; matching `.stderr.log` and
+`.meta.log` record the artifact directory `build/dispatcher-tests/live-6dwhqb25` in
+`real-claude-gate-1888` and tested head/main/command. XML has no daemon-revision annotation;
+stderr identifies daemon `a536d17b1e182fb5398a5458e3afe6079b37a510` and that worktree's
+`build/e2e-bin/pyry`. The worktree is gone; documentation inspected retained XML, metadata,
+diagnostic records and committed controls, without running acceptance tests.
 
 ### Answer-host setup independence (#1899)
 
@@ -5675,6 +5812,13 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 ## Follow-ups to ticket
 
+- Deletion readiness (#1888) retains the existing
+  `InteractiveStreamE2ETest.interactiveTurn_deleteConversation_removesFromListAndClosesThread`.
+  Its owning-host and stale-publication guards have JVM regression proof and a fresh passing full
+  live gate; no `DeterministicInteractiveStreamE2ETest` twin was added. Preserve the unique-name
+  presence and both deletion postconditions when changing synchronization; see
+  [counted evidence](#delete-conversation-readiness-1888).
+
 - **Coverage — hardened:** [#1899](https://github.com/pyrycode/pyrycode-mobile/issues/1899)
   removes the preceding-host readiness prerequisite from answer-host setup for
   `InteractiveStreamE2ETest.interactiveTurn_questionAnswer_reachesTheAskingConversation`.
@@ -5986,8 +6130,10 @@ The remaining checks here are specific to a real relay or real Claude execution:
 - **Send now — shipped coverage (#1642):**
   `InteractiveStreamE2ETest.interactiveTurn_sendQueuedNow_reachesRunningTurn` and
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_sendQueuedNow_placesAfterToolResult`
-  cover delivery after a held tool. Full-suite counts, the named pass and the operator's
-  unrelated-failure disposition are recorded under [Live mode](#live-mode-rung-3-live-relay).
+  cover delivery after a held tool. #1898 adds explicit-harness-host readiness and fixed
+  stage/link diagnostics without weakening the proof. Controlled before/after counts, historical
+  attribution limits, retained full/method XML and the separate final full-live pass are recorded
+  in “Send now coverage (#1642)” under [Live mode](#live-mode-rung-3-live-relay).
   #1655 retains the first-confirmation-after-next-turn ordering gap; daemon pyrycode#2785
   owns the lost question-answer failure. Queue-removal-only assertions cannot prove delivery placement.
 

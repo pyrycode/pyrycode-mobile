@@ -1,0 +1,13 @@
+Revision: 80d5e1b5a
+Source: build/dispatcher-tests/live-9b_iwrpu
+Selected: de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread
+Executed: 1; failed: 1; skipped: 0
+
+10-07 20:18:51.439  2501  2576 I DeleteDiagnostic: event=gap_replay phase=delete repository=false legacy_connected=true
+10-07 20:19:21.751  2501  2576 I DeleteDiagnostic: stage=failed_post_delete_list windows=[true:0:true] list=0 send=1 more=[Rect.fromLTRB(933.0, 37.0, 1059.0, 163.0)] menu=0 dialog=0 confirm=[] exists=true
+
+androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 30000 ms
+at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+at de.pyryco.mobile.e2e.InteractiveStreamE2ETest.awaitChannelList(InteractiveStreamE2ETest.kt:8696)
+at de.pyryco.mobile.e2e.InteractiveStreamE2ETest.interactiveTurn_deleteConversation_removesFromListAndClosesThread(InteractiveStreamE2ETest.kt:1577)

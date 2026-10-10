@@ -1442,77 +1442,35 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Delete-conversation twin of the ping happy path (#554, Layer 3): drive the real Delete flow end to
-     * end against a real daemon, exercising the already-shipped #532 `delete` wire (pyrycode#822). Give a
-     * scratch discussion a runtime-unique, list-visible identity via **Rename**, confirm it is **present**
-     * on the channel list, then delete it from the thread — thread overflow → "Channel info" → the sheet's
-     * "Delete" → the "Delete conversation?" dialog → confirm — and assert **both** durable post-conditions:
-     * the unique name is **gone from the list** and the **thread has popped back**.
+     * Real relay/daemon deletion round-trip (#554). Create a discussion, rename it to a runtime-unique
+     * identity, observe it displayed on the list, then re-enter and delete through Channel info and its
+     * confirmation dialog. Independently assert that the thread returns to the list and the name is absent.
      *
-     * **Reachability.** The Delete affordance lives in the `mutationsSupported`-gated Actions block of the
-     * Channel Info sheet, reached from the **ungated** "Channel info" overflow item.
-     * [de.pyryco.mobile.data.repository.RemoteConversationRepository.mutationsSupported] is `true` in relay
-     * mode (PR #572), so the flow is reachable on a plain **discussion** — the same real overflow the
-     * operator uses. Delete is conversation-scoped (keyed by `conversation_id`, replies
-     * `conversation_deleted`), so it carries none of the session-scoped blockers that re-park the sibling
-     * e2es; it is in the clean-buildable camp with #541 / #566.
+     * A discussion needs no promotion or dedicated workspace: Rename controls its identity, while Channel
+     * info exposes Delete whenever remote mutations are supported. The focused dialog field avoids the
+     * thread composer's editable field, and the confirmation button's Cancel sibling identifies the real
+     * dialog action. Scroll the sheet's Delete into view before tapping.
      *
-     * **Durable identity via Rename, not promote.** A scratch discussion is auto-named server-side, so its
-     * name is not test-controlled and asserting one's absence is fragile. Renaming to
-     * [CONVERSATION_NAME_PREFIX]` + System.currentTimeMillis()` gives a runtime-unique, list-visible token
-     * that cannot pre-exist on screen nor collide with conversations accumulated by prior LIVE gate runs.
-     * Rename (not "Save as channel") touches only the name — no dedicated-workspace folder that would
-     * accumulate on the operator's real `~/pyry-workspace` across runs (the #566 accumulation problem). The
-     * renamed discussion stays a discussion and is #1 in `observeConversations(Discussions)`
-     * (`sortedByDescending { lastUsedAt }`, just created) → always inside the visible recents, so its row is
-     * guaranteed present.
+     * Each one-shot write waits for this host's pump-gated repository (#1888); entry-only Connected can
+     * also mean idle. Observe the renamed thread header before Back destroys the ViewModel's scope. These
+     * waits preserve failure reporting and submit each action once, without retries or scenario sleeps.
      *
-     * **The absence is a genuine inversion.** [CONVERSATION_NAME_PREFIX]` + …` is unique, so its presence is
-     * observed on the list (step 5 assert + step 6 re-enter tap) *before* the delete, and its
-     * `assertCountEquals(0)` after (step 9) is a real present→absent flip on the same surface — never a
-     * match-everything, never a delta count or timing (the #481 / #566 token discipline, applied to an
-     * **absence** assertion).
-     *
-     * **The "Delete" collision (the one gotcha).** The sheet's Delete `ActionCell` and the confirm dialog's
-     * button are **both** the literal `"Delete"`, and `ThreadEvent.Delete` leaves the sheet composed behind
-     * the dialog (it sets `pendingDeleteConfirm` without clearing `pendingChannelInfo`), so both "Delete"
-     * nodes are on screen at confirm time. The confirm tap is disambiguated by a compound matcher only the
-     * dialog's button satisfies — its sibling is [DELETE_DIALOG_CANCEL], which the sheet (whose dismiss is a
-     * Close *icon*) has no equivalent of. Never [onFirst] across the two identical "Delete" nodes (z-order
-     * is not guaranteed).
-     *
-     * **Always-on, not `@Ignore`d.** The post-conditions are **durable** structural facts (a conversation is
-     * in the list or not; the thread popped or not) — no transient like #482's spinner — so the scenario
-     * belongs in the always-on gate, matching #481's tool-name row and #541's delimiter.
-     *
-     * **Zero real-claude turns (deliberate divergence from #541 / #566).** Create-discussion, rename, and
-     * delete are daemon round-trips, not claude turns, and the durable identity is the typed name (no live
-     * session content needed to identify it), so this scenario sends **no** ping and spends **no** claude
-     * turn. It still rides the real rung-3 stack (real relay + daemon) and belongs in the LIVE gate: it
-     * catches a broken `delete` / `rename` wire against the production relay. The LIVE gate is a **quartet**
-     * (4 methods) at **still 3 turns** (delete adds a method, not a turn).
+     * Create, rename and delete are daemon round-trips, so the scenario uses zero Claude turns. Its durable
+     * structural postconditions keep it in the always-on LIVE suite.
      */
     @Test
     fun interactiveTurn_deleteConversation_removesFromListAndClosesThread() {
-        // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
         awaitChannelList()
-
-        // 2. Wait for the relay connection to open before creating — rename/delete round-trip to the daemon.
         awaitConnected()
-
-        // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
-        //    plain discussion suffices — "Rename" (mutationsSupported) and "Channel info" (ungated) both reach it.
+        val host =
+            checkNotNull(
+                GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(twoHostArg(ARG_SERVER_ID)),
+            )
         createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
 
-        // 4. Rename the discussion to a runtime-unique, list-visible name. Open the overflow, tap "Rename".
-        //    The RenameDialog opens OVER the thread, whose composer is also an editable field, so
-        //    hasSetTextAction() alone is ambiguous — target the dialog's field by its focus (RenameDialog
-        //    auto-focuses on open; the composer never requested focus), waiting for focus to land. REPLACE
-        //    the pre-filled+selected auto-name (performTextReplacement, not performTextInput) so the field
-        //    holds exactly the unique name, then Save.
         val uniqueName = CONVERSATION_NAME_PREFIX + System.currentTimeMillis()
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -1523,12 +1481,16 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(uniqueName)
+        // Legacy Connected can represent idle; each one-shot write needs this host's open pump (#1888).
+        runBlocking { withTimeout(THREAD_TIMEOUT_MS) { awaitDeletionMutationReady(host.coordinator.currentRepository) } }
         composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
-
-        // 5. Presence check (AC-3): back to the list, wait for it, then confirm the unique name is displayed on
-        //    a recents row. The rename reply (conversation_updated) upserts → observeConversations re-emits with
-        //    the new name; the waitUntil covers that round-trip. This is the genuine presence observation on the
-        //    same surface where absence is later asserted (step 9).
+        // Back destroys the thread ViewModel; observe the successful rename before cancelling its scope.
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule
+                .onAllNodes(hasText(uniqueName) and hasAnyAncestor(hasTestTag("thread-top-bar")))
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
         composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
         awaitChannelList()
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
@@ -1536,18 +1498,10 @@ class InteractiveStreamE2ETest {
         }
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
 
-        // 6. Re-enter the thread by tapping the recents row (a 2nd presence observation — it can only succeed if
-        //    the name is on the list). The merged DiscussionPreviewRow carries the name as text and is clickable.
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
-
-        // 7. Open Channel info → tap the sheet's Delete. "Channel info" is ungated; the sheet's Delete
-        //    ActionCell is unique while only the sheet is open. Tapping it opens the confirm dialog OVER the
-        //    still-composed sheet (ThreadEvent.Delete leaves pendingChannelInfo true) → two "Delete" nodes.
-        //    The Session (#1346), System prompt and MCP servers sections push Actions below the fold, so scroll
-        //    to Delete before tapping; an off-screen tap lands outside the sheet and opens nothing (#1344).
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1557,23 +1511,13 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodesWithText(DELETE_ACTION).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNodeWithText(DELETE_ACTION).performScrollTo().performClick()
-
-        // 8. Confirm the delete. Wait for the dialog's unique title, then tap the CONFIRM "Delete" — the sheet's
-        //    "Delete" is also on screen, so disambiguate by the dialog's sibling "Cancel" button (the sheet has
-        //    none). If the button-row tree differs on first run, pick another unambiguous anchor rooted at the
-        //    dialog title (rung 3 permits selector tuning) — never onFirst() across the two identical "Delete".
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(DELETE_DIALOG_TITLE).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule
-            .onNode(hasText(DELETE_ACTION) and hasAnySibling(hasText(DELETE_DIALOG_CANCEL)))
-            .performClick()
+        runBlocking { withTimeout(THREAD_TIMEOUT_MS) { awaitDeletionMutationReady(host.coordinator.currentRepository) } }
+        composeTestRule.onNode(hasText(DELETE_ACTION) and hasAnySibling(hasText(DELETE_DIALOG_CANCEL))).performClick()
 
-        // 9. Both durable post-conditions (AC-2). After DeleteConfirm → repository.delete → PopBack: wait for the
-        //    list marker (the thread has popped back), then assert the unique name is gone from the list. delete
-        //    completes (conversation_deleted → removeConversation clears all projections) BEFORE PopBack fires
-        //    (sequential in the same coroutine), so the re-projection has landed by the time the list renders →
-        //    a direct assertCountEquals(0). Tolerant: presence/absence, generous timeout — never a delta count.
+        // The successful delete precedes PopBack; verify both navigation and list membership.
         awaitChannelList()
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
     }
@@ -3215,65 +3159,96 @@ class InteractiveStreamE2ETest {
                     serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
                 ),
             )
-        try {
-            awaitChannelList()
-            awaitConnected()
-            val before = hostConversationIds(serverId)
-            createChat()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+
+        fun links(): String {
+            val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+            val bundle = registry.connectionFor(serverId)
+            val status = bundle?.coordinator?.connectionStatus?.value
+            return "phone host=${bundle != null} selected=${bundle != null && registry.selected.value === bundle} " +
+                "relay=${status?.relay?.javaClass?.simpleName ?: "absent"} " +
+                "daemon=${status?.pyrycode?.javaClass?.simpleName ?: "absent"} " +
+                "repository=${bundle?.coordinator?.currentRepository?.value != null}; peer=${peer.linkState()}"
+        }
+
+        fun <T> step(
+            stage: SendNowStage,
+            block: () -> T,
+        ): T {
+            Log.i("E2E", "event=send_now_stage stage=${stage.name} status=started")
+            try {
+                return sendNowStep(stage, ::links, block).also {
+                    Log.i("E2E", "event=send_now_stage stage=${stage.name} status=completed")
+                }
+            } catch (failure: Throwable) {
+                Log.i("E2E", "event=send_now_stage stage=${stage.name} status=failed; ${links()}")
+                throw failure
             }
-            val conversationId = newHostConversationId(serverId, before)
+        }
+
+        try {
+            step(SendNowStage.AwaitList) { awaitChannelList() }
+            step(SendNowStage.AwaitConnection) {
+                runBlocking { awaitSendNowConnection(GlobalContext.get().get(), serverId, CONNECT_TIMEOUT_MS) }
+            }
+            val before = step(SendNowStage.ReadConversations) { hostConversationIds(serverId) }
+            step(SendNowStage.CreateChat) { createChat() }
+            step(SendNowStage.AwaitComposer) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+                }
+            }
+            val conversationId = step(SendNowStage.ReadChatId) { newHostConversationId(serverId, before) }
             // Warm the session and its explicit capability reading before starting the held turn.
-            sendFromPhone(PING_PROMPT)
-            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-            assertTrue("session must report mid-turn support", freshSettings(conversationId).capabilities?.midTurnInput == true)
+            step(SendNowStage.SendWarmup) { sendFromPhone(PING_PROMPT) }
+            step(SendNowStage.AwaitWarmup) { composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS) }
+            val settings = step(SendNowStage.ReadCapabilities) { freshSettings(conversationId) }
+            assertTrue("session must report mid-turn support", settings.capabilities?.midTurnInput == true)
             val marker = "sendnow1642_" + System.currentTimeMillis()
             val queuedPrompt = "In your final reply to this running turn include exactly this marker: $marker"
             val command = "while [ ! -e '$release' ]; do sleep 0.1; done; printf hold_done"
             val prompt =
                 "Run exactly this Bash command with timeout 120000, in the foreground, never background it: $command. " +
                     "Wait for its result. Then reply with any marker supplied while the command was running."
-            runBlocking {
-                peer.open(CONNECT_TIMEOUT_MS)
-                peer.sendMessage(conversationId, prompt, THREAD_TIMEOUT_MS)
-            }
+            step(SendNowStage.OpenPeer) { runBlocking { peer.open(CONNECT_TIMEOUT_MS) } }
+            step(SendNowStage.SendHeldTurn) { runBlocking { peer.sendMessage(conversationId, prompt, THREAD_TIMEOUT_MS) } }
             val allowed = mutableSetOf<String>()
             val running =
-                allowPromptsUntil(
-                    peer,
-                    conversationId,
-                    REPLY_TIMEOUT_MS,
-                    "Bash did not remain running",
-                    allowed,
-                    frame = "tool_progress",
-                ) { it.type == "tool_progress" }
+                step(SendNowStage.AwaitHeldTool) {
+                    allowPromptsUntil(
+                        peer,
+                        conversationId,
+                        REPLY_TIMEOUT_MS,
+                        "Bash did not remain running",
+                        allowed,
+                        frame = "tool_progress",
+                    ) { it.type == "tool_progress" }
+                }
             val turnId = requireNotNull(peer.field(running, "turn_id"))
             assertTrue("held turn ended before queueing", peer.recorded(conversationId).none { it.type == "turn_end" })
-            sendFromPhone(queuedPrompt)
-            awaitQueuedRow(queuedPrompt)
+            step(SendNowStage.QueueMarker) { sendFromPhone(queuedPrompt) }
+            step(SendNowStage.DrawQueuedMarker) { awaitQueuedRow(queuedPrompt) }
             val queued =
-                runBlocking {
-                    withTimeoutDiagnostic({ "Send now: peer never observed the queued entry" }) {
-                        peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.any { it.text == queuedPrompt } }
-                    }
+                step(SendNowStage.ObserveQueuedMarker) {
+                    runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.any { it.text == queuedPrompt } } }
                 }.single { it.text == queuedPrompt }
             val send = hasContentDescription("Send now") and hasAnyAncestor(queuedRow(queuedPrompt))
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(send).fetchSemanticsNodes().isNotEmpty() }
-            composeTestRule.onNode(send).performClick()
-            runBlocking {
-                withTimeoutDiagnostic({ "Send now: peer never observed queue removal after the pointer tap" }) {
-                    peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.none { it.queuedMsgId == queued.queuedMsgId } }
-                }
+            step(SendNowStage.AwaitSendNow) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(send).fetchSemanticsNodes().isNotEmpty() }
+            }
+            step(SendNowStage.TapSendNow) { composeTestRule.onNode(send).performClick() }
+            step(SendNowStage.ObserveQueueRemoval) {
+                runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.none { it.queuedMsgId == queued.queuedMsgId } } }
             }
             val ended =
-                allowPromptsUntil(
-                    peer,
-                    conversationId,
-                    REPLY_TIMEOUT_MS,
-                    "held turn did not finish with the marker",
-                    allowed,
-                ) { it.type == "turn_end" }
+                step(SendNowStage.AwaitTurnEnd) {
+                    allowPromptsUntil(
+                        peer,
+                        conversationId,
+                        REPLY_TIMEOUT_MS,
+                        "held turn did not finish with the marker",
+                        allowed,
+                    ) { it.type == "turn_end" }
+                }
             assertEquals(turnId, peer.field(ended, "turn_id"))
             val frames = peer.recorded(conversationId)
             assertEquals("Send now must stay in the running turn", 1, frames.count { it.type == "turn_end" })
@@ -3285,14 +3260,19 @@ class InteractiveStreamE2ETest {
                     .filter { it.type == "assistant_delta" && peer.field(it, "turn_id") == turnId }
                     .joinToString("") { peer.field(it, "text").orEmpty() }
             assertTrue("the same turn's reply omitted the marker", marker in finalText)
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(inThreadList(queuedPrompt), useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
-                    composeTestRule.onAllNodes(queuedRow(queuedPrompt)).fetchSemanticsNodes().isEmpty()
+            step(SendNowStage.DrawDeliveredMarker) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(inThreadList(queuedPrompt), useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
+                        composeTestRule.onAllNodes(queuedRow(queuedPrompt)).fetchSemanticsNodes().isEmpty()
+                }
             }
             assertDrawnOnce(inThreadList(queuedPrompt))
             val rows =
-                runBlocking { hostRepository().observeMessages(conversationId).first() }
-                    .filterIsInstance<ThreadItem.MessageItem>()
+                step(SendNowStage.ReadDeliveredRows) {
+                    runBlocking {
+                        withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).observeMessages(conversationId).first() }
+                    }.filterIsInstance<ThreadItem.MessageItem>()
+                }
             val toolIndex = rows.indexOfLast { it.message.role == Role.Tool }
             val userIndex = rows.indexOfFirst { it.message.id == queued.messageId }
             assertEquals(1, rows.count { it.message.id == queued.messageId })

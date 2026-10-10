@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "command": "ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live",
+  "finished_at": "2026-10-10T02:18:23.051Z",
+  "selection": "full",
+  "exit": 0,
+  "timed_out": false,
+  "run_error": null,
+  "duration_ms": 920640,
+  "mobile": "e463a39009544f7332091c692580c6e6d55d188a",
+  "feature": "20cd9f52d33a423b4549e108f41f80bd544026f6",
+  "main": "1014cfdf0035e802f8bed956a43d0b132f92f1b2",
+  "daemon": "a536d17b1e182fb5398a5458e3afe6079b37a510",
+  "claude": "2.1.280 (Claude Code)",
+  "backend": "real Claude; stream-json runner; isolated test daemon",
+  "suite": {
+    "artifact": "dispatcher-full.xml",
+    "listed": 65,
+    "executed": 65,
+    "passed": 65,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "sha256": "610c499100cb8fd8db56031d5b3216eed4dc708f1292cbe6d4e882aeffc5e557"
+  },
+  "method": {
+    "artifact": "dispatcher-method.xml",
+    "name": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_sendQueuedNow_reachesRunningTurn",
+    "listed": 1,
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "sha256": "1eb7549bd975d01fa5158bf1e25de9596bc752cdebf725cb824edae7ba4829af"
+  },
+  "prior_method": "interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes",
+  "sources": [
+    {
+      "file": "2026-10-10T02-03-00-622Z_real-claude-gate_#1898.log",
+      "sha256": "610c499100cb8fd8db56031d5b3216eed4dc708f1292cbe6d4e882aeffc5e557"
+    },
+    {
+      "file": "2026-10-10T02-03-00-622Z_real-claude-gate_#1898.stderr.log",
+      "sha256": "92b1d716036c4ce5ddd0c7f47e6dcc3f5b44268b8d6da1ee939e36dfd0c9e481"
+    },
+    {
+      "file": "2026-10-10T02-03-00-622Z_real-claude-gate_#1898.meta.log",
+      "sha256": "3e5d03c85f12888803ab4adef102b6ffe22a2e278a888db455c5f15e2c0051a5"
+    }
+  ],
+  "extraction": {
+    "dispatcher-full.xml": "Exact first XML line of the durable .log, including its newline.",
+    "dispatcher-method.xml": "Unchanged Send now testcase selected from dispatcher-full.xml, wrapped in a recounted one-case testsuite; no timing added.",
+    "revisions": "Tested mobile/daemon/Claude from matching .stderr.log; feature/main/command/exit from .meta.log."
+  },
+  "limitations": [
+    "Normalized dispatcher XML retains testcase outcomes and suite timing, but no method timing or raw per-device XML.",
+    "Gate worktree was removed; phone stage logcat and daemon binary/hash/dirty-build metadata are unavailable in the durable records.",
+    "A passing candidate full run does not establish the historical bare timeout operation or cause; attribution remains an inference.",
+    "Review and dispatcher live execution must run again after this artifact handoff; needs-real-claude remains."
+  ]
+}
