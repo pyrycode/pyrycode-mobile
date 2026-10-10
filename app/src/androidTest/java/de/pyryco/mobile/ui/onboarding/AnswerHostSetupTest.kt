@@ -56,9 +56,12 @@ class AnswerHostSetupTest {
                     store = koin.get()
                     val originalSource = koin.get<ConnectionStateSource>()
                     val registry = koin.get<RelayConnectionRegistry>()
-                    val preceding = runBlocking { store.list() }
+                    val preceding = runBlocking { store.readSnapshot().getOrThrow() }
+                    var primary: Throwable? = null
+                    var fixtureSaved = false
                     try {
                         runBlocking { store.save(previous) }
+                        fixtureSaved = true
                         loadKoinModules(
                             module {
                                 single<ConnectionStateSource> {
@@ -92,21 +95,35 @@ class AnswerHostSetupTest {
                             },
                         )
                         base.evaluate()
+                    } catch (error: Throwable) {
+                        primary = error
+                        throw error
                     } finally {
-                        // The inner Compose rule has closed its Activity and cancelled the pairing VM.
-                        loadKoinModules(
-                            module {
-                                single<ConnectionStateSource> { originalSource }
-                                viewModel {
-                                    val target = get<SavedStateHandle>().get<String>("serverId")?.takeIf { it.isNotEmpty() }
-                                    PairCodeViewModel(get(), registry, registry::pairingStatus, target)
+                        try {
+                            // Restore after the inner Activity, if launched, has closed and cancelled its pairing VM.
+                            loadKoinModules(
+                                module {
+                                    single<ConnectionStateSource> { originalSource }
+                                    viewModel {
+                                        val target = get<SavedStateHandle>().get<String>("serverId")?.takeIf { it.isNotEmpty() }
+                                        PairCodeViewModel(get(), registry, registry::pairingStatus, target)
+                                    }
+                                },
+                            )
+                            runBlocking {
+                                if (fixtureSaved) {
+                                    store
+                                        .readSnapshot()
+                                        .getOrThrow()
+                                        .filter { it.record.serverId == answerId || it.record.serverId == previousId }
+                                        .forEach { store.remove(it.record.serverId) }
                                 }
-                            },
-                        )
-                        runBlocking {
-                            store.remove(answerId)
-                            store.remove(previousId)
-                            assertEquals("cleanup preserves original saved entries/order", preceding, store.list())
+                                assertEquals("cleanup preserves original saved entries/order", preceding, store.readSnapshot().getOrThrow())
+                            }
+                        } catch (cleanup: Throwable) {
+                            val failure = primary
+                            if (failure == null) throw cleanup
+                            failure.addSuppressed(cleanup)
                         }
                     }
                 }

@@ -84,3 +84,8 @@ Pending for the documentation stage:
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-10
+
+## Revisions
+
+- 2026-10-10: Fresh baseline at `75a10c4a4` reproduced exactly 1573 executed, 1572 passed, 1 failed, 2 skipped, 0 errors, exit 1. The named setup method passed; cleanup failed. Its selected logcat orders failed read, failed save, then failed remove. The causal `storageTestKeyLossAndTeardownPreserveAppPairings` probe (test-only patch on that revision) executed once and failed after the real lost-key method and teardown, with a failed app snapshot and suppressed failed removal. This establishes production pairing-key deletion by the private-DataStore test as the cause; encrypted app blobs, including empty collections, outlive that deletion. The internal alias seam and per-test ownership in the Design stand unchanged.
+- 2026-10-10: The failed-save probe executed once and failed because cleanup replaced the original save error with an unowned removal error. The fixture now tracks successful seed persistence, strictly reads the remaining owned IDs before removal, and preserves the primary exception with any cleanup exception suppressed. A failed initial snapshot changes no bindings or storage; a failed save restores bindings without removing unowned IDs. The second-activity check now uses a retained named host instead of an unsaved ID, strengthening stored-name/read-only coverage. The failed-body variant retains the two sequential activity lifetimes.
