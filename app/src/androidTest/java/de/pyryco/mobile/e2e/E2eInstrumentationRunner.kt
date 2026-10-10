@@ -31,6 +31,7 @@ import androidx.test.runner.AndroidJUnitRunner
  * emulator hardware settings, so this runs here, after boot. The dialog setting is put back when the run
  * finishes. Bluetooth stays off: switching it back on would restart the crash loop on an emulator that
  * scripted-all reuses for its next scenario.
+ * Disable is unconditional on emulators: a persisted off preference does not cancel pending recovery.
  */
 class E2eInstrumentationRunner : AndroidJUnitRunner() {
     private var disableAnimations = false
@@ -77,7 +78,7 @@ class E2eInstrumentationRunner : AndroidJUnitRunner() {
     private fun quietSystem() {
         val hideDialogs = shell("settings get global $HIDE_ERROR_DIALOGS").trim()
         shell("settings put global $HIDE_ERROR_DIALOGS 1")
-        if (shell("settings get global bluetooth_on").trim() == "1") shell("cmd bluetooth_manager disable")
+        disableEmulatorBluetooth(::shell)
         shell("am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS")
         restoreDialogs =
             if (hideDialogs.isEmpty() || hideDialogs == "null") {
