@@ -1,4 +1,4 @@
-# #1896: diagnose and repair the held-per-conversation live permission scenario
+# #1896: retain permission-isolation failing-stage diagnostics
 
 ## Files read
 
@@ -13,6 +13,8 @@
 
 ## Context
 
+The maintainer recovery scope on 2026-10-10 is diagnostics only. This checkpoint reviews and verifies the existing test instrumentation and retained evidence in PR #2030; it does not diagnose or repair the intermittent failure. Cause-and-repair work remains open in #2047. Passing repetitions cannot establish a repair, and no further repetition to infer a cause is planned. No production files change.
+
 The initial #1731 stdout summary has 64 executed, 13 failed, 0 skipped; its rerun has 13 executed, 1 failed, 0 skipped and this method passed. Surviving initial stderr contains this method's `TimeoutCancellationException: Timed out waiting for 30000 ms`, but only coroutine scheduler frames. The deleted gate worktree no longer supplies the original per-test logcat or detailed XML. The 30-second failure is not evidence of either 90-second upstream prompt wait failing. No repair cause is established yet; retain this red and diagnose rather than applying the #1480 timeout change speculatively. No decision record is needed.
 
 Overlaps: #1682, #1689, #1690, #1691, #1693, #1695, #1766, #1869, #1879, #1888, and #1900 edit other scenarios in `InteractiveStreamE2ETest`; this change stays local to the held-per-conversation method.
@@ -21,7 +23,7 @@ Overlaps: #1682, #1689, #1690, #1691, #1693, #1695, #1766, #1869, #1879, #1888, 
 
 Add a test-only `PermissionIsolationStage` and `permissionIsolationStep` beside the existing question-answer diagnostic. Wrap each setup, send, upstream arrival, phone-render, arm/confirm, answer-dismissal, and turn-end operation with a distinct fixed label. A timeout becomes an assertion carrying the original exception as cause and lazily read content-free peer link state. The wrapper never retries, changes a deadline, swallows an assertion, or copies daemon-authored text into its message. Record progress using fixed stage labels only, so a surviving logcat can establish the last completed stage.
 
-Run the focused method to obtain stage evidence. Make only the smallest repair supported by that evidence and document its contract and regression here under Revisions before handoff. If the cause is external, link its owning issue as a blocker instead of claiming a repair. Keep this method enabled and its existing two-prompt/armed-answer assertions intact. Do not await A's turn end: B's send moved follow-active to B.
+Review the existing stages and strengthen diagnostic tests to assert exact coroutine timeout object identity and Compose timeout preservation at every stage. Keep this method enabled and its existing two-prompt/armed-answer assertions intact. Preserve every deadline and the original phone scroll/two-tap sequence. Do not await A's turn end: B's send moved follow-active to B. Repairs belong to #2047 after its resume condition is met.
 
 ## State and concurrency model
 
@@ -43,12 +45,26 @@ Only `TimeoutCancellationException` and `ComposeTimeoutException` acquire a fixe
 
 ## Testing strategy
 
-Write and run failing diagnostic unit tests first, then implement the wrapper and scenario instrumentation. Unit tests use virtual time to check deadlines and do not exercise Claude. Run focused modal fold/answer tests if the evidenced repair changes their path. The existing rung-3 method needs a device because it drives real relay and daemon I/O and a physical permission tap. A focused diagnostic execution is builder evidence; a fresh passing dispatcher full live gate is separately pending acceptance. No timeout increase, retry, or skipped assertion is planned. Run lint, assemble, instrumentation compilation, formatting and final pre-verify after merging main.
+The original diagnostic wrapper and scenario instrumentation were test-first. For this recovery, rerun and strengthen `PermissionIsolationStepTest` to check exact cause identity, all fixed stages, unchanged virtual deadlines, safe outer messages, lazy diagnostics, and transparent ordinary assertions/cancellation. Rerun `PermissionIsolationPhoneProbeTest`, `ModalUiStateTest`, and `ThreadScreenModalTest` to retain physical two-tap and conversation-isolation coverage. Unit tests use virtual time and do not exercise Claude. The existing rung-3 method needs a device because it drives real relay and daemon I/O and a physical permission tap. A focused diagnostic execution is builder evidence; a fresh passing dispatcher full live gate is separately pending acceptance. No timeout increase, retry, or skipped assertion is planned. Run lint, assemble, instrumentation compilation, formatting and final pre-verify after merging main.
+
+## Evidence and dispatcher handoff
+
+Safe retained evidence lives under `app/src/test/resources/e2e/permission-isolation-1896/`:
+
+- `original-failure.txt`, `original-suite.xml`, and `original-rerun.xml`: scheduler-only 30-second timeout; 64 executed/13 failed/0 skipped, then 13 executed/1 failed/0 skipped. The method failed initially and passed on rerun.
+- `focused-diagnostic-pass.{txt,xml}`: builder selection, 1 executed/1 passed/0 failed/0 skipped.
+- `shared-process-diagnostic-pass.{txt,xml}`: builder selection, 3 executed/3 passed/0 failed/0 skipped.
+- `direct-predecessor-diagnostic-pass.{txt,xml}`: builder selection, 2 executed/2 passed/0 failed/0 skipped.
+
+The counted XML contains method names and outcomes only; excerpts contain fixed stages, revisions, counts and artifact locations only. Raw frame/prompt/clipboard content, keys, tokens and pairing codes are excluded. Original gate artifacts are gone; historical builder artifact paths in the excerpts are provenance, not a promise those temporary directories survive.
+
+Pending dispatcher-owned acceptance: run a fresh full live gate with `interactiveTurn_permissionPrompts_heldPerConversation` enabled (`## Live tests` is `all`; preserve `needs-real-claude`). Record executed, passed, failed and skipped counts plus this method's result separately from builder results. Retain the gate's fresh `dispatcher.xml`, per-test XML/logcat and matching daemon evidence in its `build/dispatcher-tests/live-*` artifact directory. On return from that gate, the builder must commit sanitized `dispatcher-full-live-pass.xml` and `dispatcher-full-live-pass.txt` here with revisions, counts and artifact locations; those files are pending, not present or passed. Inspect and sanitize before committing any excerpt; do not copy raw logcat/daemon output.
+
+Resume #2047 only when a new failing occurrence supplies the named failing stage, original cause/deadline, counted XML, retained per-test phone logcat and matching daemon evidence, with revision/provenance and safe published locations. Passing selections and this checkpoint do not close #2047.
 
 ## Open Questions
 
-- Which 30-second coroutine operation failed? Surviving stderr cannot answer; resolve through named-stage execution and preserve the evidence.
-- Does the diagnosed condition belong to this scenario, Mobile production, or a sibling repository? Choose the smallest evidenced repair or external blocker after diagnosis.
+None within this diagnostic checkpoint. The historical failing operation and cause remain unresolved and explicitly deferred to #2047 under the resume condition above.
 
 ## Security review
 
@@ -72,3 +88,5 @@ Write and run failing diagnostic unit tests first, then implement the wrapper an
 - 2026-10-10: the instrumented isolated method passed (1/1) and a narrow shared-process selection with the original suite's earlier session-error and selection-copy methods passed (3/3). Neither establishes a repair cause. Add `PermissionIsolationPhoneProbeTest` under shared tests to exercise the scenario's original scroll/physical-two-tap sequence against a short thread and varied inert permission text lengths. This investigates whether a received/rendered permission can lose the confirmation tap behind thread chrome. Preserve any failing probe and its measured bounds; do not attribute the historical occurrence without evidence. No production change or timeout adjustment is authorized by these passing diagnostics.
 - 2026-10-10: all three physical-tap probes passed. The controlled short-thread fixtures do not evidence a missed confirmation tap. Retain the probes as investigation coverage and retain the original physical sequence unchanged; it would be speculative to replace it with another helper as a flake repair.
 - 2026-10-10: the direct original predecessor, `interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip`, and the instrumented permission method both passed in the same process (2/2). Sanitized counted XML and fixed-stage logcat excerpts for all three live selections are retained under `app/src/test/resources/e2e/permission-isolation-1896/`. This method passed on all three diagnostic executions; no new failure was captured. The historical operation and cause remain unresolved, so no production fix, deadline change or flake-repair claim is made. A new failing occurrence with the named stage and per-test/daemon artifacts is still required before implementing a justified repair. Full dispatcher live validation also remains pending; these builder diagnostics do not fulfill that acceptance criterion.
+
+- 2026-10-10 (maintainer recovery): scope is diagnostics only per the updated #1896 contract; original cause-and-repair work remains open in #2047. Reviewed all setup/upstream/render/answer labels and unchanged live assertions. Strengthen exact original-cause tests, rerun focused coverage, and hand off fresh full live validation with separate counts and retained artifacts. No new live repetition or production repair is part of this recovery. Incremental edits are under 100 lines; the complete branch remains under 1600 written lines, with no production file, exported type, signature or consumer migration. No in-flight branch overlaps the recovery files.
