@@ -11,6 +11,9 @@
 - `SwitchAgentCommands.kt`: `switchAgent` settles only after a matching conversation update; sanitized typed failures do not promise rollback.
 - `Conversation.kt`: `Conversation.agent` and `currentSessionId` establish successor identity.
 - `ConversationListProjection.kt`: `applySnapshot` and `upsertConversation` must retain the authoritative transition's session identity omitted by metadata DTOs.
+- `StableConversationRepository.kt`: `switchToLiveOrHeld` cancels detached delegate reads and emits held settings through the disconnected gap.
+- `SessionSettingsCommands.kt`: `readSessionSettings` correlates the authenticated reply to the named conversation; transition invalidation cancels the previous read.
+- `ModelMenuExpectations.kt`: shared live assertions count full-list ambiguity and require a rendered row before expecting a mark.
 - `InteractiveStreamE2ETest.kt`: `usableRows`, `awaitAnnouncedMark` and `inheritedModelLabel` consume the same bounded display-name contract as the merged picker.
 - `ThreadViewModelAgentModelMenuTest.kt`: existing inherited/default, overflow and agent-scoping assertions.
 - `docs/knowledge/features/thread-screen-how-it-works-state.md`: the model-menu agent filter couples menu projection to effort recall.
@@ -51,6 +54,8 @@ All claims and writes run on Main in `viewModelScope`; the switch flow participa
 | Confirmed agent update and successor read | Own-agent metadata only in both directions; `successUsesFreshSuccessorSettings` |
 | External agent update or repeated switch back | Mask stale settings; `externalAgentChangeRejectsOldSessionReadings` |
 | Ordered transition/update, later rename/snapshot, then switch back | Retain authoritative successor identity through the real repository; `realProjectionKeepsSuccessorSettingsWritableThroughUpdatesAndSnapshotsInBothDirections` |
+| Switched agent, disconnect, replacement remote without a transition, held then fresh settings | Non-held conversation-correlated settings establish authority when the new summary omits session identity; `switchedAgentReconnectAcceptsOnlyFreshReplacementSettings` |
+| Acknowledged ordinary model write, delayed read, external agent/session replacement | Invalidate the write identity without settling a phone-local switch; `acknowledgedModelWriteIsInvalidatedByExternalAgentReplacement` |
 | Settlement, fresh settings, newer external selection, unavailable settings | Retire success/failure display fallbacks permanently; `authoritativeReadingsRetireSuccessAndFailureFallbacks` |
 | Recollection/configuration change | Retain ViewModel command, no resend; `recollectionDoesNotResend` |
 | Process death/route exit | No persisted command and owning scope cancellation; `viewModelClearCancelsSwitch` |
@@ -79,11 +84,11 @@ None.
 - [Network/I/O] Reuse #1117's authenticated/capability-gated switch operation, teardown and confirmed correlation. No retry or new socket.
 - [Errors/logs] Only static event/outcome/category codes; never model labels/values, message bodies, tokens, payloads or exception text. Static failure copy makes no rollback promise.
 - [Concurrency] Main-thread synchronous sending claim precedes suspension; reentrant confirms cannot duplicate operations. Pending is independent of reset/settings clears; viewModelScope cancels on destruction.
-- [Session identity] Metadata DTOs omit session IDs. Preserve the authenticated transition's binding on the same conversation row through snapshots/upserts; row removal and connection destruction discard it. Retire a captured fallback only when a fresh reading for its agent supersedes it. No session IDs or labels are logged or persisted.
+- [Session identity] After connection replacement, a non-held conversation-correlated reply establishes authority when the current summary has no transition binding; a known transition binding still requires an exact match, and an absent conversation or held reading establishes no authority. Ordinary pending model writes bind to their initiating agent/session and are invalidated on replacement. Metadata DTOs omit session IDs. Preserve the authenticated transition's binding on the same conversation row through snapshots/upserts; row removal and connection destruction discard it. Retire a captured fallback only when a fresh reading for its agent supersedes it. No session IDs or labels are logged or persisted.
 - [Threat model] Relay delay/drop cannot forge completion through reset progress; repository confirmation remains authoritative. Hostile daemon labels are bounded inert text. Rooted token theft and accessibility/screenshot exposure retain existing transport/OS controls, outside this UI change.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
-**Date:** 2026-10-10
+**Date:** 2026-10-11
 
 ## Revisions
 
@@ -104,6 +109,8 @@ Preservation checks: focused `ThreadViewModelAgentModelMenuTest` and `ThreadView
 Rework overlaps: #1682, #1689, #1690, #1691, #1693, #1695, #1766, #1869, #1879 and #1896 touch other scenarios in `InteractiveStreamE2ETest`; their diffs do not restructure the model-menu helpers. Keep the edits local.
 
 
+2026-10-11 (verifier rework): Findings 1–3 expose connection replacement, an ordinary pending write outliving its agent/session, and live helpers mistaking overflow metadata for a rendered radio. `runConfigFlow` accepts fresh conversation-correlated settings when a replacement connection’s summary has no session binding, while rejecting absent conversations, held readings and mismatches to a known transition. A private pending-model carrier binds each ordinary pick and refusal-switch-back to its agent/session; replacement invalidates it independently of the phone-local agent-switch operation. Extract the live menu expectation functions to shared test source so JVM probes cover unique hidden matches and ambiguity spanning the cap; ambiguity still counts all own-agent rows, but display/marks require visibility. Security review remains PASS after rechecking all categories: transport authentication/correlation and cancellation stay authoritative, held/old-session data cannot enable writes, no new logs, storage, credentials or Android surface. This repair adds no exported production type or consumer migration and no layout change. Existing overlapping e2e branches still change other scenarios, so keep helper edits local.
+
 ## Documentation handoff
 
-Pending for the documentation stage: update `docs/knowledge/features/thread-screen-how-it-works-state.md`, “The model-menu agent filter”, for the merged menu and retained own-agent selection/effort scope; `docs/knowledge/features/thread-composer-footer-effort-recall.md` for the unchanged own-agent recall contract. Live scenario and counted live evidence belong to follow-up #2052, not this deterministic implementation.
+Pending for the documentation stage: update `docs/knowledge/features/thread-screen-how-it-works-state.md`, “The model-menu agent filter”, for the merged menu, retained own-agent selection/effort scope, and fresh authority across connection replacement; `docs/knowledge/features/thread-composer-footer-effort-recall.md` for the unchanged own-agent recall contract. Live scenario and counted live evidence belong to follow-up #2052, not this deterministic implementation.

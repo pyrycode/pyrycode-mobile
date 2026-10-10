@@ -365,7 +365,13 @@ class ThreadViewModel(
 
     /** A model tap whose write has not settled, or `null`. A matching fresh settings reading confirms it;
      *  a rejected write or lost settings context clears it. */
-    private val pendingModel = MutableStateFlow<String?>(null)
+    private data class PendingModel(
+        val value: String,
+        val agent: ConversationAgent,
+        val sessionId: String,
+    )
+
+    private val pendingModel = MutableStateFlow<PendingModel?>(null)
 
     /** The [pendingModel] twin for effort (#807). */
     private val pendingEffort = MutableStateFlow<String?>(null)
@@ -410,7 +416,11 @@ class ThreadViewModel(
                 // #1320: a held reading heads the subscription on a same-host reconnect where `null` used to,
                 // so it ends the pending context the same way.
                 val lost = reading == null || reading.held
-                if (lost || pendingModel.value == reading?.model) pendingModel.value = null
+                pendingModel.value?.let { pending ->
+                    if (lost || reading?.sessionId != pending.sessionId || pending.value == reading?.model) {
+                        pendingModel.compareAndSet(pending, null)
+                    }
+                }
                 pendingEffort.value = null
                 // #650: a `null` or held reading heads every new subscription (host switch, owning-host
                 // reconnect) and `null` follows a failed read; a reading for another session means the session
@@ -473,6 +483,14 @@ class ThreadViewModel(
                 list.firstOrNull { it.id == conversationId }?.let { conversation ->
                     if (previousConversationAgent?.let { it != conversation.agent } == true) agentChanged = true
                     previousConversationAgent = conversation.agent
+                    pendingModel.value?.let { pending ->
+                        if (pending.agent != conversation.agent ||
+                            conversation.currentSessionId.isNotEmpty() && pending.sessionId != conversation.currentSessionId
+                        ) {
+                            pendingModel.compareAndSet(pending, null)
+                            RelayLog.d { "event=model_write_pending outcome=session_replaced" }
+                        }
+                    }
                 }
                 if (hostAvailable.value) {
                     list.firstOrNull { it.id == conversationId }?.currentSessionId?.takeIf { it.isNotEmpty() }?.let {
@@ -510,12 +528,18 @@ class ThreadViewModel(
         ) { settings, menuAndAgent, model, effort, permission ->
             // #1411: the settings ride along to the context-usage combine, which falls back to their token pair.
             val conversation = menuAndAgent.second
+            val agent = conversation?.agent ?: ConversationAgent.Claude
             val freshSettings =
                 settings?.takeUnless {
-                    agentChanged && (it.held || it.sessionId != conversation?.currentSessionId)
+                    // A replacement connection's summary has no session binding. Its fresh correlated
+                    // reply supplies authority; held readings and known transition mismatches cannot.
+                    agentChanged && (
+                        it.held || conversation == null ||
+                            conversation.currentSessionId.isNotEmpty() && it.sessionId != conversation.currentSessionId
+                    )
                 }
-            runConfig(freshSettings, menuAndAgent.first, conversation?.agent ?: ConversationAgent.Claude, model, effort, permission) to
-                freshSettings
+            val pending = model?.takeIf { it.agent == agent && it.sessionId == freshSettings?.sessionId }?.value
+            runConfig(freshSettings, menuAndAgent.first, agent, pending, effort, permission) to freshSettings
         }.combine(agentSwitchUi) { (config, settings), switching ->
             // A fresh reading supersedes the captured settlement label permanently, including failures.
             if (settings != null && !settings.held && switching.confirmed?.agent == config.agent) {
@@ -2896,8 +2920,9 @@ class ThreadViewModel(
         agentSwitchUi.value = AgentSwitchUi()
         // #1360: a model the user picks replaces the way back to the refused one.
         clearRefusalOffer("menu")
-        pendingModel.value = value
-        sendSessionSettings(config.sessionId, model = value) { pendingModel.value = null }
+        val pending = PendingModel(value, config.agent, config.sessionId)
+        pendingModel.value = pending
+        sendSessionSettings(config.sessionId, model = value) { pendingModel.compareAndSet(pending, null) }
     }
 
     private fun dismissAgentSwitch() {
@@ -2967,7 +2992,8 @@ class ThreadViewModel(
         val config = state.value.runConfig
         if (!skipUnlessWritable(config)) return
         refusalOffer.value = offer.copy(failed = false)
-        pendingModel.value = offer.originalModel
+        val pending = PendingModel(offer.originalModel, config.agent, config.sessionId)
+        pendingModel.value = pending
         RelayLog.d { "event=refusal_switch_back outcome=sent" }
         sendSessionSettings(
             config.sessionId,
@@ -2979,7 +3005,7 @@ class ThreadViewModel(
             },
         ) {
             RelayLog.d { "event=refusal_switch_back outcome=failed" }
-            pendingModel.value = null
+            pendingModel.compareAndSet(pending, null)
             refusalOffer.update { if (it?.occurredAt == offer.occurredAt) it.copy(failed = true) else it }
         }
     }

@@ -13,12 +13,14 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.HostReadings
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.SessionPump
 import de.pyryco.mobile.data.repository.SessionSettings
+import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.SwitchAgentCall
 import de.pyryco.mobile.data.repository.SwitchAgentFailure
 import kotlinx.coroutines.CompletableDeferred
@@ -30,6 +32,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -361,6 +365,113 @@ class ThreadViewModelAgentSwitchTest {
             }
         }
 
+    @Test fun switchedAgentReconnectAcceptsOnlyFreshReplacementSettings() =
+        runTest {
+            val held = HostReadings()
+            val menu = Repo().backing
+
+            fun remote(pump: ProjectionPump): ConversationRepository {
+                val live =
+                    RemoteConversationRepository(
+                        pump,
+                        CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)),
+                        negotiatedCapabilities = { setOf("interactive", "multi_agent") },
+                        hostReadings = held,
+                    )
+                return object : ConversationRepository by live {
+                    override fun observeModelMenu(conversationId: String) = menu.observeModelMenu(conversationId)
+                }
+            }
+            val oldPump = ProjectionPump()
+            val current = MutableStateFlow<ConversationRepository?>(remote(oldPump))
+            val stable = StableConversationRepository(current, held)
+            oldPump.push("conversation_updated", oldPump.row(ConversationAgent.Claude))
+            val (vm, _) = collect(stable, current.map { it != null })
+            vm.onModelSelected("gpt-6-luna")
+            vm.onOverflowEvent(ThreadEvent.AgentSwitchConfirm)
+            oldPump.settings = reading("s2", "gpt-6-luna", "high")
+            oldPump.transition("s1", "s2", ConversationAgent.Codex)
+            runCurrent()
+            assertEquals("s2", vm.state.value.runConfig.sessionId)
+            current.value = null
+            runCurrent()
+            assertFalse(vm.state.value.runConfig.writable)
+            val newPump =
+                ProjectionPump().apply {
+                    settings = reading("s3", "gpt-6-sol", "low")
+                    answerSettings = false
+                }
+            current.value = remote(newPump)
+            newPump.push("conversation_updated", newPump.row(ConversationAgent.Codex))
+            runCurrent()
+            assertFalse(vm.state.value.runConfig.settingsAvailable)
+            assertTrue(
+                vm.state.value.runConfig.effortChoices
+                    .isEmpty(),
+            )
+            oldPump.settings = reading("s1", "opus", "high")
+            oldPump.push("conversation_updated", oldPump.row(ConversationAgent.Claude))
+            runCurrent()
+            assertEquals(ConversationAgent.Codex, vm.state.value.runConfig.agent)
+            newPump.replySettings(newPump.sent.last { it.type == "request_session_settings" })
+            runCurrent()
+            val config = vm.state.value.runConfig
+            assertEquals("s3", config.sessionId)
+            assertEquals("GPT-6 Sol", config.modelLabel)
+            assertEquals(listOf("low", "high"), config.effortChoices.map { it.value })
+            assertEquals("low", config.selectedEffort)
+            assertEquals("default", config.permissionMode)
+            assertTrue(config.writable)
+            assertFalse(config.pending)
+            newPump.answerSettings = true
+            vm.onEffortSelected("high")
+            runCurrent()
+            val write =
+                newPump.sent
+                    .last { it.type == "set_session_settings" }
+                    .payload.jsonObject
+            assertEquals("s3", write["session_id"]?.jsonPrimitive?.content)
+            assertEquals("high", write["effort"]?.jsonPrimitive?.content)
+        }
+
+    @Test fun acknowledgedModelWriteIsInvalidatedByExternalAgentReplacement() =
+        runTest {
+            val pump = ProjectionPump()
+            val remote =
+                RemoteConversationRepository(
+                    pump,
+                    CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)),
+                    negotiatedCapabilities = { setOf("interactive", "multi_agent") },
+                )
+            val menu = Repo().backing
+            val repo =
+                object : ConversationRepository by remote {
+                    override fun observeModelMenu(conversationId: String) = menu.observeModelMenu(conversationId)
+                }
+            pump.push("conversation_updated", pump.row(ConversationAgent.Claude))
+            val (vm, _) = collect(repo)
+            pump.answerSettings = false
+            vm.onModelSelected("haiku")
+            runCurrent()
+            assertEquals("haiku", vm.state.value.runConfig.pendingModel)
+            assertEquals(1, pump.sent.count { it.type == "set_session_settings" })
+            pump.transition("s1", "s2", ConversationAgent.Codex)
+            runCurrent()
+            assertNull(vm.state.value.runConfig.pendingModel)
+            assertFalse(vm.state.value.runConfig.settingsAvailable)
+            pump.settings = reading("s2", "gpt-6-sol", "low")
+            pump.replySettings(pump.sent.last { it.type == "request_session_settings" })
+            runCurrent()
+            val config = vm.state.value.runConfig
+            assertEquals("gpt-6-sol", config.selectedModel)
+            assertEquals(ConversationAgent.Codex, config.selectedChoice?.agent)
+            assertFalse(config.pending)
+            assertTrue(config.writable)
+            assertEquals("low", config.selectedEffort)
+            assertEquals("default", config.permissionMode)
+            assertEquals(0, pump.sent.count { it.type == "switch_agent" })
+        }
+
     @Test fun dropdownLabelsUseBoundedInertDisplayNamesForBothAgents() {
         for (agent in ConversationAgent.entries) {
             val row = row("opus", "Claude\nOpus" + "x".repeat(200), agent)
@@ -420,13 +531,17 @@ class ThreadViewModelAgentSwitchTest {
             assertTrue(repo.settingsWrites.isEmpty())
         }
 
-    private fun TestScope.collect(repo: ConversationRepository): Pair<ThreadViewModel, Job> {
+    private fun TestScope.collect(
+        repo: ConversationRepository,
+        available: Flow<Boolean> = flowOf(true),
+    ): Pair<ThreadViewModel, Job> {
         val vm =
             ThreadViewModel(
                 SavedStateHandle(mapOf("serverId" to "host", "conversationId" to CONV)),
                 repo,
                 FakeConnectionStateSource(),
                 ComposerDraftStore(),
+                repositoryAvailable = available,
             )
         val job = backgroundScope.launch { vm.state.collect {} }
         runCurrent()
@@ -438,22 +553,37 @@ class ThreadViewModelAgentSwitchTest {
         override val inbound = channel.receiveAsFlow()
         val sent = mutableListOf<Envelope>()
         var settings = reading("s1", "opus", "high")
+        var answerSettings = true
 
         override fun send(envelope: Envelope): Boolean {
             sent += envelope
-            if (envelope.type == "request_session_settings") {
-                val s = settings
-                val payload =
-                    MobileJson.encodeToJsonElement(
-                        SessionSettingsPayloadDto(s.sessionId, s.model, s.effort, s.yolo, s.permissionMode, 0, 0),
-                    )
-                check(
-                    channel.trySend(Envelope(900, "session_settings", "2026-10-10T10:00:00Z", payload, inReplyTo = envelope.id)).isSuccess,
-                )
+            if (envelope.type == "request_session_settings" && answerSettings) {
+                replySettings(envelope)
             } else if (envelope.type == "set_session_settings") {
                 push("session_settings_updated", """{"session_id":"${settings.sessionId}"}""", envelope.id)
             }
             return true
+        }
+
+        fun replySettings(request: Envelope) {
+            val s = settings
+            val payload =
+                MobileJson.encodeToJsonElement(
+                    SessionSettingsPayloadDto(s.sessionId, s.model, s.effort, s.yolo, s.permissionMode, 0, 0),
+                )
+            check(channel.trySend(Envelope(900, "session_settings", "2026-10-10T10:00:00Z", payload, inReplyTo = request.id)).isSuccess)
+        }
+
+        fun transition(
+            previous: String,
+            successor: String,
+            agent: ConversationAgent,
+        ) {
+            push(
+                "session_transition",
+                """{"conversation_id":"$CONV","previous_session_id":"$previous","new_session_id":"$successor","reason":"clear","occurred_at":"2026-10-10T10:00:00Z"}""",
+            )
+            push("conversation_updated", row(agent))
         }
 
         fun push(
