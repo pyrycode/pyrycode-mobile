@@ -11,6 +11,10 @@
 - `docs/knowledge/features/caching-conversation-repository.md`: row/position ordering and cancellation ownership.
 - `docs/specs/architecture/2039-saved-thread-residual-first-draw.md`: readiness and viewport guards remain baseline, earlier accepted sample remains counterevidence.
 
+## Design source
+
+N/A: the refined issue changes restore scheduling and preserves the shipped visual design; its refinement comment explicitly excludes a Figma requirement. Main subsequently pins this fixture to dark mode in #2062.
+
 ## Context
 
 The build-hp-1 main comparison at `c88a07d6764c5528646eebeb3deb72a9124498c9` misses fragmented first opens at 1630/1388 ms. The supplied offline restore worker takes 904 ms wall / 851 ms CPU with zero queue delay; read/decode/validation/metadata/proofs take 5/496/28/39/331 ms. Connected restore takes 810 wall / 783 CPU, phases 7/414/23/40/320 ms. These samples establish substantial cold-path CPU cost rather than worker queue backlog, but do not yet identify its smallest sufficient repair. Earlier #2039 passes remain counterevidence. No decision record is anticipated.
@@ -36,7 +40,6 @@ Existing IO reads remain under the cache mutex on the injected dispatcher. Repos
 | Reopen with same repository | Same method with fresh ViewModel/composition in both modes |
 | Opening cleared before next opening | Existing lifecycle logs and all eight cases |
 | Delayed cold restore | `slowRestore_negativeControlRejectsTheSameFirstDrawBound`, unchanged 3000 ms delay |
-
 | Empty live snapshot with metadata held | `readableRowsDoNotWaitForOptionalHistoryButLiveMergeDoes`; `savedRowsDoNotWaitForNewestResponse` holds history separately before asserting exact ViewModel rows |
 | First live rows after early cache draw | `readableRowsDoNotWaitForOptionalHistoryButLiveMergeDoes` requires saved unsigned order before merging |
 | Cancel pending metadata merge, then reopen | `repeatedRowsOnlyOpenKeepsSuppressionAndCancelsPendingOrderRead` |
@@ -123,3 +126,9 @@ Fresh XML, command, revision, exit, all case timings and selected logcat for eve
 A separate snapshot of `f2b8c642f` adds sampled tracing only to the first ordinary offline open, without moving its Probe or endpoint. It executes and passes one first-draw method, zero failures/errors/skips; draws are 644/233/253/361/861/823/954/727 ms. The dual-clock trace has no overflow and captures 597 ms main-thread CPU over 754 ms wall (including teardown), primarily Compose test-clock/frame composition and layout; worker CPU is about 20 ms. The captured passing cold render is substantial main-thread work, but it is not a CPU/scheduling measurement of the retained 1271 ms miss. Do not infer that Google-services correlation or a passing retry establishes an environment defect, and do not change subscriptions, warm the composition, or relax readiness/bounds without such evidence.
 
 The implementation, regressions and all retained comparisons are recoverable on `feature/2050`; final rows-only focused tests, lint, assembly, Kotlin compiles and post-merge pre-verification pass. The builder-owned fixed device proof is incomplete/red, so no successful PR handoff is claimed. Remaining work is to diagnose/repair the ordinary cold main-thread miss and readiness timeout, then obtain a green fixed sample while retaining these attempts. Configured dispatcher UI/scripted-all gates and documentation remain explicitly pending later-stage work.
+
+### 2026-10-10 — Resume after the dark-fixture main merge
+
+Four isolated diagnostic snapshots of `8c5ae3703` retain the same Probe/endpoint and add only per-phase reads of the main thread's `/proc` running/queue counters. All four execute/pass one first-draw method each, zero failures/errors/skips. Ordinary cold draws are 532/519/846/564 ms; main running time is 476/488/795/525 ms and guest run-queue delay 4/6/15/9 ms. Those passing counters do not measure or explain the retained 1271 ms miss. The fourth snapshot also retains read-only host quota/emulator counters; guest/host clocks require alignment before using them for per-opening attribution. No composition warming, subscription change, readiness relaxation or speculative ordinary-path repair is justified. All diagnostic additions remain outside the feature branch.
+
+Main #2062 pins `SavedThreadFirstDrawDeviceTest` to dark mode without changing its fixture/timer. Prepare a current-main baseline with that same theme, plus a new fixed seven-invocation sample from the exact committed source without diagnostic additions. Keep the earlier red sample separately; a new green sample will not establish an environmental explanation for its ordinary outlier. Current post-merge focused tests execute/pass 35 tests, zero failures/errors/skips; lint, debug assembly and Android-test compilation pass. Controlled baseline and fixed device results are pending.
