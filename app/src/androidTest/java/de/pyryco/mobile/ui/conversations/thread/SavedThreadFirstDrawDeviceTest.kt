@@ -108,16 +108,19 @@ class SavedThreadFirstDrawDeviceTest {
                 } else {
                     fragmentedHistoryFixture((0 until 18000).toList())
                 }
-            for (online in listOf(false, true)) {
-                withFixture(name, rows, coverage) { root ->
-                    val delegate = HeldNewest()
-                    var repo: CachingConversationRepository? = null
-                    repeat(2) { opening ->
-                        val probe = Probe("$name online=$online opening=$opening", (rows.last() as ThreadItem.MessageItem).message.content)
-                        activeProbe = probe
-                        probes += probe
-                        if (repo == null) repo = repository(root, delegate)
-                        openAndMeasure(requireNotNull(repo), delegate, online, probe, rows, coverage)
+            withFixture(name, rows, coverage) { source ->
+                for (online in listOf(false, true)) {
+                    withFixtureCopy(source) { root ->
+                        val delegate = HeldNewest()
+                        var repo: CachingConversationRepository? = null
+                        repeat(2) { opening ->
+                            val probe =
+                                Probe("$name online=$online opening=$opening", (rows.last() as ThreadItem.MessageItem).message.content)
+                            activeProbe = probe
+                            probes += probe
+                            if (repo == null) repo = repository(root, delegate)
+                            openAndMeasure(requireNotNull(repo), delegate, online, probe, rows, coverage)
+                        }
                     }
                 }
             }
@@ -357,6 +360,19 @@ class SavedThreadFirstDrawDeviceTest {
         if (this is ViewRootForTest) return this
         if (this is ViewGroup) for (index in 0 until childCount) getChildAt(index).composeRoot()?.let { return it }
         return null
+    }
+
+    private fun withFixtureCopy(
+        source: File,
+        block: (File) -> Unit,
+    ) {
+        val root = File(source.parentFile, "first-draw-copy-${SystemClock.elapsedRealtimeNanos()}")
+        try {
+            check(source.copyRecursively(root))
+            block(root)
+        } finally {
+            root.deleteRecursively()
+        }
     }
 
     private fun withFixture(
