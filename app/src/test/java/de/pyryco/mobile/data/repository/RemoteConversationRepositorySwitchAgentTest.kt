@@ -14,6 +14,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
@@ -295,6 +296,21 @@ class RemoteConversationRepositorySwitchAgentTest {
                 assertFailure(repo.switchAgent("c1", ConversationAgent.Codex, ""), SwitchAgentFailure.Category.Unavailable)
                 assertEquals(1, pump.sent.size)
             }
+        }
+
+    @Test
+    fun scopeCancellationBeforeCollectorStartsEndsPendingCalls() =
+        runTest {
+            val scope = CoroutineScope(Job(backgroundScope.coroutineContext[Job]) + StandardTestDispatcher(testScheduler))
+            val (pump, repo) = repository(scope = scope)
+            val call = async(UnconfinedTestDispatcher(testScheduler)) { repo.switchAgent("c1", ConversationAgent.Codex, "") }
+            assertEquals(1, pump.sent.size)
+            scope.cancel()
+            runCurrent()
+            assertTrue("teardown must settle a switch even when the inbound collector never started", call.isCompleted)
+            assertFailure(call.await(), SwitchAgentFailure.Category.Unavailable)
+            assertFailure(repo.switchAgent("c1", ConversationAgent.Codex, ""), SwitchAgentFailure.Category.Unavailable)
+            assertEquals(1, pump.sent.size)
         }
 
     @Test

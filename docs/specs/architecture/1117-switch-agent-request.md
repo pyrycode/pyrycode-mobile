@@ -31,7 +31,7 @@ Stable snapshots its current delegate and forwards all four arguments unchanged;
 
 ## State and concurrency model
 
-A synchronized pending map belongs to one remote connection. Admission, registration and non-suspending send are atomic against end. Confirmation, correlated refusal, cancellation removal and end use the same monitor; there are no nested mutexes or new jobs. Each caller awaits its own deferred in its existing scope and always removes its registration in finally. Cancellation propagates, including cancellation thrown by send. Inbound collector finally and synchronous coordinator teardown both end admission and settle every pending call as unavailable. A fresh connection constructs a fresh ledger. No client deadline or retry: wrap-up can take about 90 seconds. Process death retains no client pending work; server-confirmed state is read on reconnection.
+A synchronized pending map belongs to one remote connection. Admission, registration and non-suspending send are atomic against end. Confirmation, correlated refusal, cancellation removal and end use the same monitor; there are no nested mutexes or new jobs. Each caller awaits its own deferred in its existing scope and always removes its registration in finally. Cancellation propagates, including cancellation thrown by send. Inbound collector finally, its job completion hook (including cancellation before launch starts), and synchronous coordinator teardown end admission and settle every pending call as unavailable. A fresh connection constructs a fresh ledger. No client deadline or retry: wrap-up can take about 90 seconds. Process death retains no client pending work; server-confirmed state is read on reconnection.
 
 ## State transitions and identity reuse
 
@@ -42,6 +42,7 @@ A synchronized pending map belongs to one remote connection. Admission, registra
 | Multiple conversations, duplicate confirmation, late cleanup refusal | Independent targets, completion once and committed success stands: `concurrentTargetsAndCommittedSuccessAreIndependent`. |
 | Repeated request ids across new connections | Each fresh ledger uses its own connection; ended repository refuses admission: `teardownSettlesAllAndRejectsLaterCalls`. |
 | Background, disconnect, collector completion or cancellation | Synchronous end and collector finally settle all; new repo alone can admit: `teardownSettlesAllAndRejectsLaterCalls`, `inboundCompletionAndScopeCancellationEndPendingCalls`. |
+| Scope cancellation before collector starts | Job completion ends admission even when finally cannot run: `scopeCancellationBeforeCollectorStartsEndsPendingCalls`. |
 | Caller cancellation, then another call for the same conversation | Remove only the cancelled registration; stale correlated refusal cannot settle successor: `callerCancellationReleasesRegistration`. |
 | Refused/throwing send, including reentrant teardown | Typed local failure and no retained waiter: `sendFailureAndReentrantTeardownReleasePendingWork`. |
 | Confirmation during synchronous send | Registration precedes send: `confirmationArrivingDuringSendIsNotLost`. |
@@ -74,8 +75,12 @@ None.
 - [Cryptography] Existing Noise IK and encrypted pump remain untouched. Request-id counter is correlation, not a secret or nonce.
 - [Network and I/O] Reuse bounded authenticated envelope transport. Both negotiated gates precede sending; no timeout/retry is introduced because daemon wrap-up is long. Connection end terminates waiters.
 - [Errors, logs, telemetry] MUST FIX addressed in design: generic `RelayRequests.mapError` exposes daemon text, so switches never register in that waiter map and decode refusals through their own sanitized category path. Logs contain only event and outcome.
-- [Concurrency] MUST FIX addressed in design: teardown could race registration after sweeping; one synchronized end/admission boundary prevents orphaned pending calls. Finally removes caller registrations; coordinator ends synchronously before cancelling collector.
+- [Concurrency] MUST FIX addressed in design: teardown could race registration after sweeping; one synchronized end/admission boundary prevents orphaned pending calls. Finally removes caller registrations; coordinator ends synchronously before cancelling collector. A collector job completion hook covers cancellation before the collector body starts.
 - [Threat model] Relay drop/delay is handled by connection teardown and caller cancellation; no request replay. Hostile authenticated frames must pass full decoding and explicit wire identity. Existing transport limits, Keystore wrapping, rooted-device protection and screenshot/keyboard exposure are unchanged and outside this repository-only change.
 
 **Reviewer:** builder (self-review per builder/security-review.md)
 **Date:** 2026-10-10
+
+## Revisions
+
+- 2026-10-10: `scopeCancellationBeforeCollectorStartsEndsPendingCalls` failed with one executed test: cancelling a paused collector before its body starts skips finally and left the new switch deferred pending. Attach an idempotent switch-ledger end to that existing job's completion as well as finally and coordinator teardown. The command adds no new job; every collector completion now disables admission and settles pending switches even when the body never ran.

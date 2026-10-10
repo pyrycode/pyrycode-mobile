@@ -438,20 +438,24 @@ class RemoteConversationRepository(
         // On any collector-termination mode (scope cancel — the primary teardown trigger — inbound
         // completing, or inbound throwing) the `finally` sweeps still-registered pending requests so
         // an awaiting caller fails fast instead of hanging forever (#488).
-        scope.launch {
-            try {
-                pump.inbound.collect { envelope -> onInbound(envelope) }
-            } finally {
+        scope
+            .launch {
+                try {
+                    pump.inbound.collect { envelope -> onInbound(envelope) }
+                } finally {
+                    endSwitchAgentRequests()
+                    endBackgroundTaskStops()
+                    sessionErrorProjection.reset()
+                    replySuggestionProjection.reset()
+                    endDebugBundle()
+                    messageCommands.endAttachmentUploads()
+                    attachmentRetrievals.end()
+                    relayRequests.failAllPending()
+                }
+            }.invokeOnCompletion {
+                // Completion also runs if cancellation prevents the collector body from starting.
                 endSwitchAgentRequests()
-                endBackgroundTaskStops()
-                sessionErrorProjection.reset()
-                replySuggestionProjection.reset()
-                endDebugBundle()
-                messageCommands.endAttachmentUploads()
-                attachmentRetrievals.end()
-                relayRequests.failAllPending()
             }
-        }
     }
 
     private fun onInbound(envelope: Envelope) {
