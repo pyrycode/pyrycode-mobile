@@ -275,7 +275,25 @@ internal class ConversationListProjection {
     fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> =
         projection.map { it.readMarks[conversationId] }.distinctUntilChanged()
 
+    /** Shares the same merged facts as the per-conversation read, without another request or fold. */
+    fun observeHostReadMarks(): Flow<Map<String, ConversationReadMarks>> = projection.map { it.readMarks }.distinctUntilChanged()
+
+    fun recordLatestEntry(
+        conversationId: String,
+        id: ULong,
+    ) {
+        if (id == 0uL) return
+        projection.update { current ->
+            val marks = current.readMarks.toMutableMap()
+            mergeReadMarks(marks, conversationId, ConversationReadMarks(null, id))
+            current.copy(readMarks = marks)
+        }
+    }
+
     fun currentReadMark(conversationId: String): ULong? = projection.value.readMarks[conversationId]?.readUpTo
+
+    /** The same authoritative facts as the flow, without waiting for a consumer's projection. */
+    fun currentReadMarks(conversationId: String): ConversationReadMarks? = projection.value.readMarks[conversationId]
 
     private fun mergeReadMarks(
         marks: MutableMap<String, ConversationReadMarks>,

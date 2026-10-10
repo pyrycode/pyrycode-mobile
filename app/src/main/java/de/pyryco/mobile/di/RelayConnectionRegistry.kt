@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.DebugBundleStatus
 import de.pyryco.mobile.data.repository.DebugBundleTransfer
+import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -134,16 +135,7 @@ class RelayConnectionRegistry(
         hosts.value =
             saved.mapNotNull { (record, displayName) ->
                 entries[record.serverId]?.second?.coordinator?.let { coordinator ->
-                    HostConversationConnection(
-                        record.serverId,
-                        displayName,
-                        coordinator.currentRepository,
-                        coordinator.connectionStatus,
-                        // #877: this host's own attention sources, never the selected host's.
-                        coordinator.liveSessionEvents,
-                        coordinator.hostModals,
-                        coordinator.questionBatches,
-                    )
+                    coordinator.hostConversationConnection(record.serverId, displayName)
                 }
             }
         selection.value =
@@ -230,3 +222,10 @@ class RelayConnectionRegistry(
         val IDLE = ConnectionStatus(RelayLinkStatus.Idle, PyrycodeLinkStatus.Down)
     }
 }
+
+/** The registry's exact-host descriptor; events and synchronous repository reads share one owner. */
+internal fun RelayRepositoryCoordinator.hostConversationConnection(
+    serverId: String,
+    displayName: String?,
+): HostConversationConnection =
+    HostConversationConnection(serverId, displayName, currentRepository, connectionStatus, liveSessionEvents, hostModals, questionBatches)

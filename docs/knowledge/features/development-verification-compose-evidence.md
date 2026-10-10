@@ -32,6 +32,51 @@ A chrome pointer node can exclude underlying siblings without consuming child
 movement; gradual attachment swipes and composer selection drags must cross touch
 slop successfully. A tap-only test misses cancellation of those recognizers.
 
+A valid earlier geometry sample also does not establish a completed reveal while
+content is growing. In #1973, following the newest end let later owned Agent prose
+growth move an earlier paragraph behind the header between measurement and the
+result check. An Agent progress frame does not prove that the fixture's HTTP hold
+has been reached. `questionAnswerTarget` keeps the owned matcher, takes at most
+three fresh measurements/corrections, and rechecks the target and both chrome
+edges after each displacement, including a zero displacement. It returns only
+when the physical center clears the measured header and composer; otherwise the
+chrome guard still fails. This adds no tap, sleep or timeout. Its defaulted evidence
+sink records only geometry and static stages, without content or identifiers.
+
+Peer `turn_end` is not a phone render fence (#1994). Before the first held-Agent
+marker reveal, wait for the phone repository's finalized main newer reply and Idle
+phase using the existing timeout. Later layout can still dispose the revealed row.
+Supply `agent-start:<agentId>` as `questionAnswerTarget`'s optional `lazyKey`:
+a zero-node sample must retain that key in `IndexForKey`, then reveal the same key
+and take fresh geometry within the existing three-measurement budget. Read node
+count and bounds together from one synchronized semantics sample. A removed key
+or ambiguous selector fails; neither is a reason to retry a physical click.
+The live matcher also includes the held task's bounded, inert launch description,
+which must not be logged. Default helper callers retain their existing behavior.
+
+`BackgroundAgentBlocksScreenTest` supplies three independent real-screen probes:
+`lateNewerReplyDisposesMarkerButKeyedRevealStillNavigatesHeldAgent` grows the newer
+reply after the first reveal and establishes a running task, a projected marker
+and zero composed nodes before recovery;
+`keyedMarkerWithHeldDescriptionNavigatesOnlyItsAgent` uses two equally labelled
+markers and proves one chrome-clear pointer tap reaches only the held Agent;
+`removedMarkerFailsInsteadOfBeingTreatedAsLazyDisposal` rejects projection removal.
+The recovery probe fails before repair, before any tap, and passes afterward.
+The historical missing-node trace establishes the first failed tap but contains
+no projection/composition samples, so it cannot identify that occurrence's exact
+update. See [counted evidence](../../e2e-interactive-stream.md#held-agent-marker-reveal-1994).
+
+Use one center pointer tap per open/close transition and prove the resulting state
+independently of lazy disposal. Reveal the owned prose before checking that it
+appears exactly once, then require its lazy-list key absent through `IndexForKey`
+after closing. Semantics absence alone can mean that an open paragraph went off
+screen. `BackgroundAgentProseScreenTest.lateOwnedProseGrowthIsRemeasuredBeforeClosingItsRun`
+injects growth after the first sample on the real screen with a scoped 320×480dp
+fixture and positively asserts that growth covers the paragraph.
+`expandedOwnedRunBehindHeaderIsCorrectedBeforeItsCloseTap` separately covers the
+owned expanded control behind the header and its guarded physical close. See
+[the Agent proof and counted evidence](../../e2e-interactive-stream.md#verification-status).
+
 The [thread chrome evidence](../../../app/src/androidTest/assets/chrome-1646/README.txt)
 uses full `pixel8Api35`, real bars and hardware framebuffer captures for progressive
 backdrop blur; JVM pixels or synthetic-inset geometry cannot prove it. It retains
@@ -39,7 +84,7 @@ explicit underlap at both bars, four current-Figma comparisons, viewport/inset
 sidecars and IME before/open/dismissed/reopened states at newest/history anchors.
 The [final #1646 verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1700#issuecomment-5977891679)
 records the fresh complete gates and confirms the earlier-field real-IME
-open/dismiss/reopen method passed. See [thread testing](thread-screen-testing.md#testing)
+open/dismiss/reopen method passed. See [thread testing](thread-screen-testing-coverage.md#testing)
 for executed/failed/skipped counts and named methods. Those full-suite passes
 resolve the retained focus-repair README's historical failed/busy attempts; they
 are not evidence of a separate focused device rerun.
@@ -259,7 +304,27 @@ record `bottom=0` while the screenshot already shows the keyboard, or the
 reverse. Settle the keyboard state explicitly before capturing a dialog-window
 modal — as the Edit host steps already do with `awaitModalFocus` /
 `awaitModalKeyboard` / `pressBack` — rather than reading the race as a
-structural limit of dialog-window sidecars.
+structural limit of dialog-window sidecars. Activity insets alone cannot establish
+that dialog's keyboard state. The settled Edit channel and Save as channel walk
+(#1862) retains the same focused dialog root, observes visible IME with a positive
+dialog inset, then uses physical Back and checks invisible IME with zero dialog
+inset before and after hardware capture, while confirming the form/footer remain.
+For bar-free frame comparisons, measure visible footer surfaces separately from
+48 dp touch targets and account for the real navigation inset; do not subtract
+the status inset from centered field coordinates. See the
+[retained measurements](../../../app/src/androidTest/assets/design-1220/list/1862-evidence.txt).
+
+The capture fake outlives individual methods. Cleaning up a method's owned fixtures
+cannot make a visible-name selector unique when another method left a same-name
+channel or chat. For temporary promotion routes, use the chat-row tag plus a unique
+route name for both scroll and click, assert the opened conversation ID, then replace
+the form name with the drawn value. Keep same-name decoys unchanged and delete only
+owned fixtures. Also inject second-leg prompt failures into both consumers:
+`HostConversationSource` supplies list creation, while `DesignInputs` supplies the
+thread repository separately. A list-only override can capture Create's failure while
+Save still succeeds. The [prompt-failed audit](../../../app/src/androidTest/assets/design-1220/list/index.md#prompt-failed-frames--1737)
+exercises both paths. Include multiline prompt content when measuring the well;
+a default or one-line capture does not reveal content-dependent height differences.
 
 `ThreadDesignCaptureTest` (#1432) audited the thread, composer and thread
 status states through this harness. It runs in the UI gate on ATD, so a change

@@ -29,11 +29,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -94,6 +97,14 @@ internal const val TOOL_EXPANDED_BODY_TAG = "tool-expanded-body"
 /** Tags a resolved row's result count (#1316), so tests can assert its absence and measure its bound. */
 internal const val TOOL_RESULT_DETAIL_TAG = "tool-row-result-detail"
 
+/** The thread shares saved expansion with unplaced boundary measurements of the same row. */
+internal data class ToolCallExpansion(
+    val expanded: Boolean,
+    val toggle: () -> Unit,
+)
+
+internal val LocalToolCallExpansion = staticCompositionLocalOf<ToolCallExpansion?> { null }
+
 /**
  * One tool call in the thread: a `Bash` description takes the described Figma header, otherwise the
  * simple header draws [toolHeadline]'s lead and subject. Tapping expands the input, the output once
@@ -114,15 +125,18 @@ fun ToolCallRow(
     modifier: Modifier = Modifier,
     subagentDepth: Int = 0,
     joinsNextToolRow: Boolean = false,
+    onTrailingEdge: ((Float) -> Unit)? = null,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
+    val sharedExpansion = LocalToolCallExpansion.current
     ToolCallRowContent(
         toolCall = toolCall,
-        expanded = expanded,
-        onToggle = { expanded = !expanded },
+        expanded = sharedExpansion?.expanded ?: expanded,
+        onToggle = { if (sharedExpansion == null) expanded = !expanded else sharedExpansion.toggle() },
         modifier = modifier,
         subagentDepth = subagentDepth,
         joinsNextToolRow = joinsNextToolRow,
+        onTrailingEdge = onTrailingEdge,
     )
 }
 
@@ -140,6 +154,7 @@ private fun ToolCallRowContent(
     modifier: Modifier = Modifier,
     subagentDepth: Int = 0,
     joinsNextToolRow: Boolean = false,
+    onTrailingEdge: ((Float) -> Unit)? = null,
 ) {
     val clickLabel = stringResource(if (expanded) R.string.tool_row_collapse else R.string.tool_row_expand)
     val subagentDescription =
@@ -149,7 +164,13 @@ private fun ToolCallRowContent(
             modifier
                 .fillMaxWidth()
                 .then(if (joinsNextToolRow) Modifier.overlapNextByBorder() else Modifier.padding(bottom = MessageRowVerticalSpacing))
-                .testTag(TOOL_ROW_TAG),
+                .then(
+                    if (onTrailingEdge != null) {
+                        Modifier.onGloballyPositioned { onTrailingEdge(it.positionInWindow().y + it.size.height) }
+                    } else {
+                        Modifier
+                    },
+                ).testTag(TOOL_ROW_TAG),
         shape = ToolCallShape,
         color = MaterialTheme.colorScheme.background,
         border = BorderStroke(ToolCallBorderWidth, MaterialTheme.colorScheme.primaryContainer),

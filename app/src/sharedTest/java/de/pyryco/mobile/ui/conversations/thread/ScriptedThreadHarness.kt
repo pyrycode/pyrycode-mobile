@@ -89,6 +89,8 @@ class ScriptedThreadHarness(
     /** The open thread's ViewModel; [openConversation] swaps it for another conversation's (#1313). */
     private var vm by mutableStateOf(newVm(conversationId))
 
+    internal var collapseToolUses by mutableStateOf(false)
+
     private fun newVm(conversationId: String) =
         ThreadViewModel(
             savedStateHandle = SavedStateHandle(mapOf("conversationId" to conversationId)),
@@ -142,6 +144,7 @@ class ScriptedThreadHarness(
                     sessionError = open.sessionError.collectAsState().value,
                     localSendStage = open.localSendStage.collectAsState().value,
                     onInterrupt = open::onInterrupt,
+                    collapseToolUses = collapseToolUses,
                 )
             }
         }

@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -137,6 +138,7 @@ internal fun SlashCommandTypeAhead(
     imeVisible: Boolean,
     onComplete: (String) -> Unit,
     resetKey: Any?,
+    onVisibilityChanged: (Boolean) -> Unit = {},
 ) {
     var dismissedFor by remember(resetKey) { mutableStateOf<String?>(null) }
     val currentText by rememberUpdatedState(text)
@@ -148,7 +150,9 @@ internal fun SlashCommandTypeAhead(
     }
 
     val rows = slashCommandTypeAheadRows(text, commands)
-    if (anchor == null || rows.isEmpty() || dismissedFor == text) return
+    val visible = anchor != null && rows.isNotEmpty() && dismissedFor != text
+    SideEffect { onVisibilityChanged(visible) }
+    if (!visible) return
     val shown = rows.take(MAX_SLASH_TYPEAHEAD_ROWS)
     OptionsOverlay(
         options = slashCommandOptions(shown),

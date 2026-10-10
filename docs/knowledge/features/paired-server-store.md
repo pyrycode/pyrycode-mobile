@@ -190,7 +190,7 @@ host's pairing no longer exists" is a store-level fact, and the hook is where th
 fact fans out to other host-keyed app state, the same shape of consequence as the
 revision bump `RelayConnectionRegistry` reconciles into closing the removed id's
 connection bundle. The production binding is
-[`forgetRemovedHost`](conversation-cache.md#removal-on-unpair--forgetremovedhost),
+[`forgetRemovedHost`](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost),
 defined beside `ObservablePairedServerStore` in `di/ObservablePairedServerStore.kt`: it
 clears every composer draft held for the host — see
 [Thread screen § Composer draft ownership](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership) —
@@ -291,7 +291,7 @@ conversations and thread readable and the editor showing `unpairFailed`, a succe
 one empties exactly that host's cache while a second host sharing a case-differing id
 and a same-id conversation keeps its content, and no server id, conversation id or
 cached text reaches a log line. See
-[Conversation cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost).
+[Conversation cache § Removal on unpair](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost).
 
 A third case, `confirmingUnpairRemovesThatHostsAttachmentFilesBeforeTheConfirmationCloses`
 (#900), binds the same production `forgetRemovedHost`, now with a real `AttachmentStore` added
@@ -358,10 +358,10 @@ against the same DataStore before checking both records after reopening.
   [Thread screen § Composer draft ownership](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership)
 - [Clear cached content on removal (#798)](../../specs/architecture/798-clear-cache-on-removal.md) —
   made `onHostRemoved` suspend and awaited, and gave it `forgetRemovedHost` as its production
-  binding; see [Conversation cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost)
+  binding; see [Conversation cache § Removal on unpair](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost)
 - [Clear retained attachment files on unpair (#900)](../../specs/architecture/900-clear-attachments-on-unpair.md) —
   added `forgetRemovedHost`'s third step, removing the host's kept attachment files; see
-  [Conversation cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost)
+  [Conversation cache § Removal on unpair](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost)
   and [Attachment retrieval](attachment-retrieval.md)
 - [ADR 0006 — Keystore wrap-at-rest](../decisions/0006-keystore-wrap-at-rest-device-static-key.md)
 - [Device static keystore](device-static-keystore.md): separate key custody and

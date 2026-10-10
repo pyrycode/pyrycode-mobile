@@ -103,8 +103,22 @@ internal class DurableGapProof(
             rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(newestPost))
             rule.onNodeWithText(newestPost, useUnmergedTree = true).assertIsDisplayed()
             assertEquals("newest row visibility is inert", listOf(true), DurableHistoryProbe.asks())
+            val expected =
+                (0 until batchSize).map { "$prefix-a-${it.toString().padStart(3, '0')}" } +
+                    (0 until batchSize).map { "$prefix-b-${it.toString().padStart(3, '0')}" }
+
+            fun recoveredFixture(): Boolean {
+                val held = DurableHistoryProbe.rows().filterIsInstance<ThreadItem.MessageItem>()
+                val texts = held.map { it.message.content }.toSet()
+                return expected.all { it in texts } &&
+                    held.any {
+                        it.message.role == Role.Assistant && it.message.content.contains(replyText, ignoreCase = true)
+                    }
+            }
             var pulls = 0
-            while (coverageGap()) {
+            // Hidden cache fragments are still unresolved metadata, but cannot initiate reader demand.
+            // Walk the missing fixture content, then independently prove the displayed marker closes.
+            while (!recoveredFixture()) {
                 assertTrue("bounded durable gap walk", pulls < 6)
                 val count = DurableHistoryProbe.asks().size
                 // Semantics scrolling makes the gap visible without a physical gesture.
@@ -121,10 +135,16 @@ internal class DurableGapProof(
                 assertEquals(false, DurableHistoryProbe.asks().last())
             }
             assertTrue("gap spans multiple older pages", pulls >= 2)
+            rule.waitUntil(30_000) {
+                try {
+                    rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Load earlier messages"))
+                    false
+                } catch (missing: AssertionError) {
+                    if (missing.message?.startsWith("No node found that matches") != true) throw missing
+                    true
+                }
+            }
             val posts = messages().filter { it.startsWith(prefix) }
-            val expected =
-                (0 until batchSize).map { "$prefix-a-${it.toString().padStart(3, '0')}" } +
-                    (0 until batchSize).map { "$prefix-b-${it.toString().padStart(3, '0')}" }
             assertEquals("chronological posts, each once", expected, posts)
             val rows = messages()
             val messageRows = DurableHistoryProbe.rows().filterIsInstance<ThreadItem.MessageItem>()

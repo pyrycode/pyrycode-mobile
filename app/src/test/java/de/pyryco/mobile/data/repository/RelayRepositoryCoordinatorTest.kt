@@ -1559,6 +1559,8 @@ class RelayRepositoryCoordinatorTest {
     fun questionSubmission_rejects_retired_sources_and_requests_before_async_projections_catch_up() =
         runTest {
             val env = newEnv()
+            var published: ConversationRepository? = null
+            backgroundScope.launch { env.coordinator.currentRepository.collect { published = it } }
             try {
                 val first = openInteractiveConnection(env)
                 first.push(questionShownEnvelope("conv-1", "qb-1"))
@@ -1568,8 +1570,9 @@ class RelayRepositoryCoordinatorTest {
                 val answers = listOf(QuestionAnswer(0, listOf("A")))
                 val sentBefore = first.sent.size
                 env.connections.value = StubRelayTransport()
-                // The derived repository still says A, but the authoritative transport has already changed.
-                assertSame(source, env.coordinator.currentRepository.value)
+                // Collection still holds A; the synchronous value already rejects its retired transport.
+                assertSame(source, published)
+                assertNull(env.coordinator.currentRepository.value)
                 assertTrue(
                     runCatching { env.coordinator.submitQuestionBatch(source, batch, answers) }.exceptionOrNull() is IllegalStateException,
                 )

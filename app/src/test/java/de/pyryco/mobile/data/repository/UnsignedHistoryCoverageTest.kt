@@ -1,10 +1,15 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.AssistantSegment
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.SegmentDelta
 import de.pyryco.mobile.data.network.MobileJson
 import kotlinx.datetime.Instant
 import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -36,6 +41,50 @@ class UnsignedHistoryCoverageTest {
     )
 
     private fun restore(state: HistoryCoverage) = MobileJson.decodeFromString<HistoryCoverage>(MobileJson.encodeToString(state))
+
+    @Test fun markerInvariant_assistantFragmentsUseUnsignedBoundariesAndRejoinOnlyOnContinuousReceipt() {
+        for (anchor in listOf(boundary, ULong.MAX_VALUE - 2u)) {
+            val row =
+                ThreadItem.MessageItem(
+                    Message(
+                        "t",
+                        "s",
+                        Role.Assistant,
+                        "ac",
+                        Instant.fromEpochSeconds(1),
+                        false,
+                        segment =
+                            AssistantSegment(
+                                "t",
+                                listOf(
+                                    SegmentDelta(0, 1),
+                                    SegmentDelta(2, 1),
+                                ),
+                            ),
+                    ),
+                )
+            val state =
+                HistoryCoverage(
+                    unsignedSpans = listOf(UnsignedHistorySpan(anchor, anchor), UnsignedHistorySpan(anchor + 2u, anchor + 2u)),
+                    unsignedGaps = listOf(UnsignedHistoryGap(anchor, anchor + 2u)),
+                    unsignedRowOrder = row.historyKeys().zip(listOf(anchor, anchor + 2u)).toMap(),
+                )
+            val fragments = state.displayRows(listOf(row)).filterIsInstance<ThreadItem.MessageItem>()
+            assertEquals(listOf("a", "c"), fragments.map { it.message.content })
+            assertEquals(2, fragments.map { it.message.id }.distinct().size)
+            assertEquals(
+                listOf(
+                    "a",
+                    "c",
+                ),
+                restore(state.received(page(anchor))).displayRows(listOf(row)).filterIsInstance<ThreadItem.MessageItem>().map {
+                    it.message.content
+                },
+            )
+            assertEquals(listOf(row), restore(state.received(page(anchor + 1u))).displayRows(listOf(row)))
+            assertEquals("ac", row.message.content)
+        }
+    }
 
     @Test fun receivedIdentityInvariant_maximumSurvivesCoverageSerialization() {
         val encoded = MobileJson.encodeToString(HistoryCoverage().received(page(ULong.MAX_VALUE)))
@@ -160,5 +209,49 @@ class UnsignedHistoryCoverageTest {
         assertTrue(upperOnly.spans.isEmpty())
         assertEquals(0L, upperOnly.highWater)
         assertTrue(upperOnly.unknown)
+    }
+
+    @Test fun signedCompatibilityInvariant_restoredAndCopiedViewsStayIndependentAndOffDisk() {
+        val state =
+            restore(
+                HistoryCoverage(
+                    unsignedSpans = listOf(UnsignedHistorySpan(1u, 2u), UnsignedHistorySpan(boundary, boundary + 1u)),
+                    unsignedGaps = listOf(UnsignedHistoryGap(2u, boundary)),
+                    unsignedCursors = mapOf(2uL to "lower", (boundary + 1u) to "upper"),
+                    unsignedWalks = mapOf(0uL to "start", ULong.MAX_VALUE to "upper"),
+                    unsignedRowOrder = mapOf("lower" to 2uL, "upper" to ULong.MAX_VALUE),
+                    unsignedRowEntries = mapOf("mixed" to setOf(2uL, ULong.MAX_VALUE), "upper" to setOf(ULong.MAX_VALUE)),
+                ),
+            )
+        val encoded = MobileJson.encodeToString(state)
+        assertEquals(listOf(HistorySpan(1, 2), HistorySpan(Long.MAX_VALUE, Long.MAX_VALUE)), state.spans)
+        assertEquals(listOf(HistoryGap(2, Long.MAX_VALUE)), state.gaps)
+        assertEquals(mapOf(2L to "lower"), state.cursors)
+        assertEquals(mapOf(0L to "start"), state.walks)
+        assertEquals(mapOf("lower" to 2L), state.rowOrder)
+        assertEquals(mapOf("mixed" to setOf(2L)), state.rowEntries)
+        assertEquals(Long.MAX_VALUE, state.highWater)
+        assertEquals(1L, state.unknownEdge)
+        assertEquals(encoded, MobileJson.encodeToString(state))
+        val copy = restore(state.copy(unsignedSpans = emptyList(), unsignedRowOrder = emptyMap(), unsignedRowEntries = emptyMap()))
+        assertTrue(copy.spans.isEmpty())
+        assertTrue(copy.rowOrder.isEmpty())
+        assertTrue(copy.rowEntries.isEmpty())
+        assertEquals(0L, copy.highWater)
+        assertEquals(Long.MAX_VALUE, state.highWater)
+    }
+
+    @Test fun spanValidationInvariant_rejectsUnnormalizedClaimsAndAllowsMaximumEndpoints() {
+        for (spans in listOf(
+            listOf(UnsignedHistorySpan(2u, 1u)),
+            listOf(UnsignedHistorySpan(0u, 1u)),
+            listOf(UnsignedHistorySpan(1u, 2u), UnsignedHistorySpan(3u, 4u)),
+            listOf(UnsignedHistorySpan(1u, 3u), UnsignedHistorySpan(2u, 4u)),
+            listOf(UnsignedHistorySpan(4u, 5u), UnsignedHistorySpan(1u, 2u)),
+        )) {
+            assertThrows(IllegalArgumentException::class.java) { HistoryCoverage(unsignedSpans = spans).validated() }
+        }
+        HistoryCoverage(unsignedSpans = listOf(UnsignedHistorySpan(1u, ULong.MAX_VALUE))).validated()
+        HistoryCoverage(unsignedSpans = listOf(UnsignedHistorySpan(ULong.MAX_VALUE, ULong.MAX_VALUE))).validated()
     }
 }

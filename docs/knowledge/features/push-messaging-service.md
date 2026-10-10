@@ -201,17 +201,61 @@ deterministic gates.
 
 **Dedupe runs before the gates, not after.** `AttentionNotifier.handle` records an alert's digest in
 `AlertLedger` first; only a digest new to the ledger is even considered for the foreground, switch, mute
-and permission checks below. So an alert that arrives while the app is foregrounded, while alerts are
-off, or while its conversation is muted, is spent — it can never post later once
+and permission checks below, followed by confirmed-read suppression. So an alert that arrives while
+the app is foregrounded, while alerts are off, or while its conversation is muted, is spent — it can never post later once
 background/enabled/unmuted/permission line up. The ledger holds
 `SHA-256` digests over length-prefixed `(serverId, conversationId, kind, key)`, one per line in
 `noBackupFilesDir/attention_alerts`, capped at the newest 512, written temp-then-rename. This is what
 holds "at most once" across a reconnect's replay, a repeated `modal_shown` frame, a new wake window and
-process death — the same digests survive a process restart because the file does.
+process death — the same digests survive a process restart because the file does. Read suppression
+also spends the alert, and cancellation never erases the ledger or makes a replay eligible again.
 
 **The gates, checked in this order, each read fresh (none is cached):** not foregrounded
 (`ProcessLifecycleOwner`'s state `< STARTED`) → `AppPreferences.notificationsEnabled` → muted (below,
 \#1022) → `POST_NOTIFICATIONS` granted.
+
+### Confirmed daemon read cancellation (#1884)
+
+An initial confirmed snapshot, list refresh or peer read update can remove a posted notification
+without reopening its thread. `HostConversationSource.readMarks` supplies host-first live facts;
+`readMarksOf = source::currentReadMarks` rechecks the authoritative repository before cancellation
+or completion posting. Cancellation targets only the length-prefixed host/conversation digest and
+id `0`, never all notifications. Equal conversation ids on different hosts remain independent.
+Cancellation bypasses all posting gates and is harmless when the notification is absent. It neither
+answers a prompt nor changes Running/WaitingForAnswer: Idle, thread viewing and local persisted
+positions do not prove a daemon read.
+
+For a notification without a known completion checkpoint, both confirmed `readUpTo` and known
+`latestEntryId` must be present, with `readUpTo >= latestEntryId`. Zero and unsigned equality count.
+A known completion instead compares its own envelope `historyEntryId` with the confirmed mark.
+Read 5/latest 6 must suppress a replay of completion 5 and remove it if confirmation arrives after
+posting, even though entry 6 remains unread. Future unread completions and prompt alerts retain the
+existing posting gates; prompts do not undergo completion-read suppression.
+
+Post and cancel share a mutex. Completion coverage is checked after any suspended preference read,
+just before posting. Cancellation reads the current projection inside that mutex and requires both
+its facts and the authoritative host repository to cover the posted checkpoint. A synchronous
+lookup over an asynchronous repository cache is insufficient: reconnect can deliver an unread
+completion from the new repository before that cache publishes it. The source selects through
+`RelayRepositoryCoordinator.liveRepository`, checking owner lifetime, exact transport and the
+current pump's Open state; retired facts cannot suppress or cancel the new repository's alert.
+
+The latest successful post retains its optional unsigned checkpoint in a private digest-keyed map
+under the mutex, and known completions carry decimal checkpoint metadata on the Android notification.
+The map takes precedence because Android enqueue/readback can lag posting or replacement. A present
+null records a prompt or unidentified completion replacement; an absent record permits exact-tag/id
+OS metadata lookup after notifier restart. Successful replacement overwrites both records; failed or
+suppressed posting leaves the previous record intact, and cancellation removes the local record.
+Missing or unparseable metadata uses latest-entry coverage. This adds no ledger format or app-file
+change, notification copy or appearance change; checkpoints are never rendered or logged.
+
+Only changed facts for that host/conversation trigger reconciliation. Duplicate facts or changes on
+another conversation cannot repeatedly clear a prompt posted after a read. A prompt can still be
+removed by a subsequent changed checkpoint covering the conversation's latest entry. Daemons omitting
+read fields keep the existing notification behaviour and local attention fallback: local read
+positions never substitute for confirmed notification coverage. See
+[shared unread and older-daemon fallback](dependency-injection-host-conversation-source.md#attention-state-877)
+and the [cancellation plan](../../specs/architecture/1884-cancel-read-attention-alerts.md).
 
 ### The muted gate (#1022)
 
@@ -238,16 +282,62 @@ checking the matching host first, then `channels + chats`. It differs from `isMu
 a missing host or a missing row returns `null` rather than a fallback agent, because `null` selects the
 neutral copy below instead of silently mislabeling the notification as Claude's.
 
-**The notification itself** is fixed `strings.xml` copy naming the conversation's agent (#1116): a Claude
-conversation reads exactly as before (`notification_turn_completed` / `notification_prompt`), a Codex
+**The fallback and public notification body** use fixed `strings.xml` copy naming the conversation's
+agent (#1116): a Claude conversation reads exactly as before (`notification_turn_completed` / `notification_prompt`), a Codex
 conversation gets `notification_turn_completed_codex` / `notification_prompt_codex`, and a conversation the
 agent lookup above returns `null` for gets the neutral `notification_turn_completed_neutral` /
 `notification_prompt_neutral` ("A reply finished" / "An answer is needed") — a lookup miss reads as unknown,
-never as an assumed Claude. The agent name is one of these fixed, client-owned strings; no daemon-authored
-field drives the body text. The **title** is the conversation's own name (#1330, below) when one is known,
-and the app name otherwise. Tag = `SHA-256(serverId, conversationId)`, id `0`: one notification per
+never as an assumed Claude. The fixed agent name remains client-owned; the private body can instead
+show the locally enriched preview described below. The **title** is the conversation's own name
+(#1330, below) when one is known, and the app name otherwise. Tag = `SHA-256(serverId, conversationId)`, id `0`: one notification per
 conversation per host, so the same conversation id on two hosts posts two notifications, and a later alert
 for the same conversation replaces the earlier one instead of stacking.
+
+### Private reply and action previews (#1725)
+
+The unlocked notification body can show the last nonblank top-level assistant segment for the
+completed turn on the alert's exact host and conversation. Every completion asks for one newest raw
+history page over the encrypted repository, within a three-second total bound, even if local rows
+look settled: a forgiving projection can hide a dropped tail or tool seam. Missing, malformed,
+incomplete, failed or timed-out evidence uses the agent-specific fixed completion body. It never
+borrows a previous turn, legacy whole-turn row or child agent's reply. See the
+[history completeness policy](remote-conversation-repository-assistant-reply-segments.md#notification-preview-evidence-1725).
+
+A permission alert combines the existing modal title and nonblank action prompt, for example
+“Allow Bash? claude wants to run: ./gradlew lint”. These are display fields, not inferred tool
+permissions. A question batch uses only its first question in wire order; a blank first question
+falls back rather than selecting a later one. Missing or cleaned-empty prompts/questions and other
+modal classes use the fixed agent-specific prompt body. No wire field or push payload carries a
+preview: FCM and the relay wake the app, and content arrives through the encrypted daemon connection.
+
+`notificationPreview` renders inert `setContentText` text. Its Markdown tree walk preserves prose,
+link labels and literal code while dropping destinations, reference definitions, HTML tags and
+formatting markers. Keep labels in their original inline context: reparsing a label as a block can
+mistake its literal numbered-list, quote or heading characters for formatting. Whitespace runs,
+including tabs, line breaks and U+0085 NEXT LINE inside code, become one space before remaining
+control and Unicode format characters are dropped. Trimmed-empty output uses fixed copy. The final
+preview contains at most 200 Unicode code points; truncation keeps 199 plus one trailing “…” without
+splitting a surrogate pair. **Known limitation from PR #1946's final verifier review:** a Markdown
+backslash hard break still produces a literal backslash before the normalized space. The sanitizer
+therefore does not yet remove every markup delimiter; literal backslashes inside code must survive
+any repair.
+
+The original notification has `VISIBILITY_PRIVATE`. Its separately built public version contains
+only the same sanitized conversation title (or app-name fallback), small icon and fixed body above.
+Never clone the private notification to redact it: extras, styles or alternate rendering surfaces
+can retain content. Reply, command, path and question previews remain on the unlocked private
+notification only, absent from the public version, logs and persisted alert ledger. The immutable
+tap and completion checkpoint metadata belong to the private notification.
+
+The ledger and initial gates run before independent enrichment jobs. A slow completion lookup
+holds neither the alert collector nor the post/cancel mutex, so other alerts can post immediately.
+A per-host/conversation sequence rejects an older pending alert once a newer eligible alert arrives.
+After enrichment, preferences are re-read outside the mutex; generation, foreground, mute,
+permission and authoritative completion-read coverage are rechecked immediately before posting
+under the same mutex used for shared-read cancellation. Already-read completions are suppressed
+before lookup too. Host removal, repository replacement/disconnect or source disposal cancels
+pending enrichment without a fallback post; notifier disposal cancels its jobs. These checks retain
+ledger-before-gates deduplication, tag replacement, tap routing and #1884 cancellation.
 
 ### The status bar icon (#1669)
 
@@ -339,6 +429,8 @@ single(createdAtStart = true) {
     AttentionNotifier(
         context = androidContext(),
         alerts = source.alerts,
+        readMarks = source.readMarks,
+        readMarksOf = source::currentReadMarks,
         notificationsEnabled = get<AppPreferences>().notificationsEnabled,
         isMuted = { serverId, conversationId -> source.snapshots.value.isMuted(serverId, conversationId) },
         agentOf = { serverId, conversationId -> source.snapshots.value.agentOf(serverId, conversationId) },
@@ -359,14 +451,69 @@ requires the runtime prompt above regardless of the manifest entry).
 
 ### Logging (#685)
 
-`event=attention_alert outcome=posted|duplicate|foreground|disabled|muted|no_permission kind=turn|prompt`,
+`event=attention_alert outcome=posted|duplicate|foreground|disabled|muted|no_permission|read|enriching|superseded kind=turn|prompt`,
 `event=notification_tap_accepted`,
 `event=notification_tap_rejected code=unknown_host|inactive_conversation|navigated_away` (the latter two
 since #1400: a timed-out wait, and a row that resolved after the user left `CHANNEL_LIST`),
 `event=notification_permission_answered granted=…`, `event=attention_alert_ledger outcome=read_failed|write_failed`.
-No id, digest or notification text appears in any of these lines.
+`event=attention_alert_cancelled reason=daemon_read` records read reconciliation (#1884), including
+harmless cancellation when no notification is present. `outcome=read` is completion suppression.
+`event=attention_preview outcome=fallback|unavailable` records content-free enrichment outcomes;
+daemon exception text is omitted. No id, digest, durable checkpoint or notification text appears
+in any of these lines.
 
 ### Testing (#685)
+
+**Preview/privacy proof (#1725).** `AttentionPreviewTest` covers Markdown, label context, literal
+code, Unicode whitespace/control removal and code-point truncation. `AttentionPreviewSourceTest`
+covers exact-turn/host attribution, top-level selection, incomplete evidence, one-page recovery,
+three-second timeout and host/repository retirement. `AttentionNotifierTest` inspects the built
+private/public notifications, recursively checks public extras for content leakage, and covers
+ordering, concurrent delivery, gate rechecks and content-free logs/ledger. Remote/source integration
+regressions prove enrichment does not backfill, merge, persist or advance read facts. The existing
+rung-3 push methods now assert reply/action previews and public redaction alongside wake, tap and
+unchanged-post-time checks; the [ladder](../../e2e-interactive-stream.md#private-push-preview-proof-1725)
+records the fresh counted full live result. The hard-break limitation above remains outside the
+passing sanitizer suite's coverage.
+
+`AttentionNotifierTest.previewsArePrivateAndPublicVersionsContainOnlyFixedCopy` also checks the
+serialized public parcel in UTF-8 and UTF-16LE. Match the exact synthetic fixture path
+`/private/secret`: Robolectric can serialize a local `/private/tmp/.../app/build/...` resource
+path, so a generic `/private` sentinel can fail without preview leakage (#2008). Keep the other
+private-text sentinels, public extras, fixed-copy, private-visibility and ledger assertions intact.
+The [privacy sentinel verification](https://github.com/pyrycode/pyrycode-mobile/pull/2017#issuecomment-6088848226)
+used the same redirected `/private/tmp` build layout for both focused runs: the unchanged method
+executed once and failed at the parcel assertion; the corrected method executed once and passed,
+with zero skipped/errors. The complete notifier class executed and passed 42 tests, with zero
+failed/skipped/errors. A normal build path lacking `/private` does not reproduce the false positive.
+
+**Daemon-read proof (#1884).** `AttentionNotifierTest` inspects actual posted/cancelled Android
+notifications under Robolectric: read-before-post, post-before-read, initial snapshots, duplicate
+updates, unsigned zero/equality, host isolation, cancellation despite closed posting gates, suspended
+preferences, retained ledger, restart, future unread completions and prompt delivery. Its delayed
+readback shadow retains actual posting/cancellation while withholding or holding Android's active
+snapshot, so stale metadata cannot hide a just-posted completion or cancel its replacement.
+`AttentionNotifierSourceTest` drives real repository list/push/replay frames through the production
+source into Android notifications, including late confirmation behind newer unread activity,
+replacement controls, unchanged running/prompt state and older-daemon/replacement fallback.
+`AttentionNotifierCoordinatorTest` delays real coordinator publication with either an R1 or null
+cache while R2 delivers unread activity, then tests stale and current cancellation triggers.
+
+The [verifier's final PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1935#issuecomment-6052232023)
+on `04b554b3ef562135c3c07a6ea93dbbe657f08628` records 49 notification tests executed and passed:
+36 notifier, 11 source and 2 coordinator, with 0 failed and 0 skipped. The full unit/shared report
+had 4,891 executed/passed, 0 failed/errors and 1 existing skip. This deterministic cancellation proof
+needs neither FCM nor background wake setup.
+
+Separately, the dispatcher's fresh full rung-3 live gate on 2026-10-08 tested `feature/1884` at
+`04b554b3ef56` merged with `origin/main` at `4437812e5f0d`, using
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`.
+Its [issue evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1884#issuecomment-6052434765)
+and dispatcher per-method gate report record **65 executed, 65 passed, 0 failed, 0 skipped**;
+`InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` executed and passed.
+This unchanged scenario proves both phone-to-peer and peer-to-phone shared marks, rather than the
+notification cancellation itself. No separate focused live run is claimed. See the
+[shared-mark ladder coverage](../../e2e-interactive-stream.md#peer-read-clears-phone-attention-1883).
 
 - `HostConversationSourceAttentionTest` (`app/src/test`) proves the alert-emission rules in
   [dependency-injection-host-conversation-source.md § Attention alerts](dependency-injection-host-conversation-source.md#attention-alerts-685):

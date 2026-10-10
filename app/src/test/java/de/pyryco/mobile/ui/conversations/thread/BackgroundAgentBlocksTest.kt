@@ -16,10 +16,12 @@ import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadProjection
+import de.pyryco.mobile.data.repository.ThreadReadEvidence
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -69,6 +71,84 @@ class BackgroundAgentBlocksTest {
         agent: String? = null,
         status: String = "completed",
     ) = ThreadItem.BackgroundTaskLifecycle(task, ts, agent, terminal = BackgroundTaskUpdate("", status, "", null))
+
+    @Test fun invariantLoadedParentChainsOwnEverySiblingPermutationOnce() {
+        val children = listOf(row("first", "Read", "a"), row("nested", "Read", "parent"), row("parent", "Agent", "a"))
+        val orders = listOf(children, children.reversed(), listOf(children[1], children[0], children[2]))
+        for (siblings in orders) {
+            for (rootFirst in listOf(true, false)) {
+                val roots = listOf(row("a", "Agent"), start(), row("b", "Agent"), start("task-b", "b"))
+                val others = listOf(row("foreground", "Read"), row("foreign", "Read", "b"), row("reply"))
+                val items = if (rootFirst) roots + siblings + others else siblings + others + roots
+                val projected = project(items)
+                val owned = projected.filterIsInstance<ThreadRow.Delivered>().filter { it.agentBlockId == "a" }
+                assertEquals(
+                    items.filterIsInstance<ThreadItem.MessageItem>().map { it.message.id }.filter {
+                        it in
+                            listOf("a", "first", "nested", "parent")
+                    },
+                    owned.map { (it.item as ThreadItem.MessageItem).message.id },
+                )
+                assertEquals(4, owned.size)
+                assertEquals(projected.size, keys(projected).toSet().size)
+                assertEquals(2, toolNestingDepths(items)["nested"])
+                // Parent loading order never moves a foreground or the other Agent's child into a.
+                assertNull(
+                    projected
+                        .filterIsInstance<ThreadRow.Delivered>()
+                        .single {
+                            (it.item as ThreadItem.MessageItem).message.id ==
+                                "foreground"
+                        }.agentBlockId,
+                )
+                assertEquals(
+                    "b",
+                    projected
+                        .filterIsInstance<ThreadRow.Delivered>()
+                        .single {
+                            (it.item as ThreadItem.MessageItem).message.id ==
+                                "foreign"
+                        }.agentBlockId,
+                )
+            }
+        }
+        for (siblings in listOf(emptyList(), children.take(1))) {
+            val items = listOf(row("a", "Agent"), start(), row("reply")) + siblings
+            val projected = project(items)
+            assertEquals(
+                listOf("a") + siblings.map { it.message.id },
+                projected
+                    .filterIsInstance<ThreadRow.Delivered>()
+                    .filter {
+                        it.agentBlockId ==
+                            "a"
+                    }.map { (it.item as ThreadItem.MessageItem).message.id },
+            )
+            assertTrue(foldToolRuns(projected, emptySet()).none { it is ThreadRow.ToolRun })
+        }
+    }
+
+    @Test fun lifecycleChangingAgentProjectionRequiresThatPresentedVersion() {
+        val root =
+            row("a", "Agent").let {
+                it.copy(message = it.message.copy(toolCall = it.message.toolCall?.copy(status = ToolCallStatus.Running)))
+            }
+        val launch = start()
+        val reply = row("reply")
+        val ended = finish(agent = "a").copy(taskType = "local_agent")
+        val items = listOf(root, launch, reply, ended)
+        val evidence =
+            ThreadReadEvidence(
+                versions = mapOf(root to setOf(1u), launch to setOf(2u), reply to setOf(3u), ended to setOf(4u)),
+                facts = mapOf(1uL to false, 2uL to true, 3uL to false, 4uL to true),
+            )
+        val rows = foldBackgroundAgentBlocks(foldQueuedRows(items, emptyList()), items, null)
+        val actual = rows.filterIsInstance<ThreadRow.Delivered>().first { it.agentBlockId == "a" }.item
+        val qualified = evidence.forBackgroundAgentRows(items, rows)
+        assertEquals(3uL, qualified.checkpoint(reply, 0u))
+        assertNull(qualified.checkpoint(root, 0u))
+        assertEquals(4uL, qualified.checkpoint(actual, 0u))
+    }
 
     private fun roster(vararg ids: String) =
         BackgroundTaskRoster(
@@ -163,7 +243,7 @@ class BackgroundAgentBlocksTest {
     @Test fun runningMovesLoadedFamilyAfterNewUsersAndQueueWithoutMutatingItems() {
         val items = listOf(row("a", "Agent"), start(), row("child", "Read", "a"), row("user"), row("grandchild", "Bash", "child"))
         val rows = project(items, queued = listOf(QueuedMessage(7, "queued", ts, "unknown")))
-        assertEquals(listOf("agent-start:a", "msg:user", "queued-row:2", "msg:a", "msg:child", "msg:grandchild"), keys(rows))
+        assertEquals(listOf("agent-start:a", "msg:user", "queued-row:7:0", "msg:a", "msg:child", "msg:grandchild"), keys(rows))
         assertEquals(ToolCallStatus.Running, message(rows, "a").toolCall?.status)
         assertEquals(ToolCallStatus.Done, (items.first() as ThreadItem.MessageItem).message.toolCall?.status)
         assertEquals(mapOf("child" to 1, "grandchild" to 2), toolNestingDepths(items))
@@ -277,7 +357,7 @@ class BackgroundAgentBlocksTest {
         // Each root draws as itself (#1827 follow-up); only its own two-or-more-child run collapses, and
         // that run never merges with the ordinary tool row or with the other block's rows.
         assertEquals(
-            listOf("agent-start:a", "agent-start:b", "msg:ordinary", "msg:a", "tool-run:a-child1", "msg:b", "tool-run:b-child1"),
+            listOf("agent-start:a", "agent-start:b", "msg:ordinary", "msg:a", "msg:a-child1", "msg:b", "msg:b-child1"),
             keys(folded),
         )
         val expanded = foldToolRuns(projected, setOf("a-child1"))
@@ -291,7 +371,7 @@ class BackgroundAgentBlocksTest {
                 "msg:a-child1",
                 "msg:a-child2",
                 "msg:b",
-                "tool-run:b-child1",
+                "msg:b-child1",
             ),
             keys(expanded),
         )

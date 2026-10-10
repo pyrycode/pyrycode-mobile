@@ -187,7 +187,7 @@ When the total position or height itself is a design target, retain it and
 justify any larger `pixels` allowance from the measured, independently rounded
 segments. Check the component gaps and line boxes separately within one pixel
 so a permissive total cannot hide a spacing regression. The
-[thread geometry examples](thread-screen-testing.md#testing) retain 97dp and
+[thread geometry examples](thread-screen-testing-coverage.md#testing) retain 97dp and
 60dp totals with measured two-pixel allowances; integral-density checks remain
 exact even with that allowance.
 The device also ignores `@Config` qualifiers and Robolectric's 320dp width,
@@ -298,3 +298,15 @@ system dialogs (shipped at `186c399b`). It restores the dialog setting on finish
 Bluetooth off. The [earlier-Other evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence)
 shows the unchanged IME method passing even during a native Bluetooth crash; this mitigation
 does not establish that the emulator service itself is repaired.
+
+## Full-cap storage proofs
+
+Ordinary `./gradlew test` excludes the four `FullRetentionTest` cases that repeatedly
+rewrite and restore 100000 disk rows. Fast retention policy, cache and history tests still run.
+Run `./gradlew test -PfullRetentionTests=true` after changing cache retention or saved history
+position handling. The flag includes those proofs in the ordinary suite.
+
+Pipeline implementations and their tests live in `pyrycode-mobile-agents/scripts`.
+The existing product script paths are compatibility launchers.
+Deploy the agents checkout first and set `AGENTS_REPO_PATH` for a non-sibling installation.
+Test the moved tools with the agents repo's `bin/test-mobile-tools /path/to/pyrycode-mobile`.

@@ -1,0 +1,60 @@
+diff --git a/app/src/sharedTest/java/de/pyryco/mobile/e2e/DiscussionRenameTest.kt b/app/src/sharedTest/java/de/pyryco/mobile/e2e/DiscussionRenameTest.kt
+index 2402553e2..01f8fcae1 100644
+--- a/app/src/sharedTest/java/de/pyryco/mobile/e2e/DiscussionRenameTest.kt
++++ b/app/src/sharedTest/java/de/pyryco/mobile/e2e/DiscussionRenameTest.kt
+@@ -49,36 +49,45 @@ class DiscussionRenameTest {
+     @Test fun delayedDialogDoesNotReplaceComposer() {
+         val composer = mutableStateOf("")
+         val submissions = mutableListOf<String>()
++        val opening = mutableStateOf(false)
++        val visible = mutableStateOf(false)
++        var delayStartedAt: Long? = null
++        var delayFinishedAt: Long? = null
+         compose.setContent {
+             PyrycodeMobileTheme {
+                 val focus = remember { FocusRequester() }
+-                var opening by remember { mutableStateOf(false) }
+-                var visible by remember { mutableStateOf(false) }
+                 var title by remember { mutableStateOf("old name") }
+                 Column {
+                     Text(title)
+                     BasicTextField(composer.value, { composer.value = it }, Modifier.focusRequester(focus))
+-                    Button(onClick = { opening = true }) { Text("Open rename") }
++                    Button(onClick = { opening.value = true }) { Text("Open rename") }
+                 }
+                 LaunchedEffect(Unit) { focus.requestFocus() }
+-                LaunchedEffect(opening) {
+-                    if (opening) {
++                LaunchedEffect(opening.value) {
++                    if (opening.value) {
++                        delayStartedAt = compose.mainClock.currentTime
+                         delay(200)
+-                        visible = true
++                        delayFinishedAt = compose.mainClock.currentTime
++                        visible.value = true
+                     }
+                 }
+-                if (visible) {
++                if (visible.value) {
+                     RenameDialog(title, onSubmit = {
+                         submissions.add(it)
+                         title = it
+-                        visible = false
+-                    }, onDismiss = { visible = false })
++                        visible.value = false
++                    }, onDismiss = { visible.value = false })
+                 }
+             }
+         }
+         compose.waitUntil(1_000) { compose.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().size == 1 }
+         compose.onNodeWithText("Open rename").performClick()
+-        compose.renameDiscussionInDialog("archive-1992", "Name", "Save", 1_000)
++        val waitStartedAt = compose.mainClock.currentTime
++        compose.renameDiscussionInDialog("archive-1992", "Name", "Save", 1_000, diagnostic = {
++            "opening=${opening.value}, visible=${visible.value}, delayStartedAt=$delayStartedAt, " +
++                "delayFinishedAt=$delayFinishedAt, waitStartedAt=$waitStartedAt, clock=${compose.mainClock.currentTime}, " +
++                "autoAdvance=${compose.mainClock.autoAdvance}, composer=${composer.value.length}, submissions=${submissions.size}"
++        })
+         assertEquals("the rename drive must not type into the thread composer", "", composer.value)
+         assertEquals(listOf("archive-1992"), submissions)
+     }

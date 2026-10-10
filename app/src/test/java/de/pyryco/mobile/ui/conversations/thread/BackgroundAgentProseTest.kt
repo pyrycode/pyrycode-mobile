@@ -107,32 +107,42 @@ class BackgroundAgentProseTest {
         val child = text("child", "a")
         val items = listOf(agent, start("a"), text("main"), child, tool("read", "a", "Read"))
         val rows = project(items)
-        val markers =
-            listOf(
-                ThreadHistoryMarker(1, child.historyKeys().first()),
-                ThreadHistoryMarker(2, agent.historyKeys().first()),
-            )
-        val closed = foldHistoryToolRuns(rows, emptySet(), markers)
-        val open = foldHistoryToolRuns(rows, setOf("read"), markers)
-        val reclosed = foldHistoryToolRuns(rows, emptySet(), markers)
-        // Check every row: expanded runs retain both their header and the original first tool.
-        for (display in listOf(closed, open, reclosed, rows)) {
-            val projected = foldedAgentHistoryMarkers(rows, display, markers)
-            assertEquals(listOf(1L, 2L), display.flatMap { historyMarkersFor(it, projected) }.map { it.anchor }.sorted())
-            assertUnique(display)
-            val run = display.filterIsInstance<ThreadRow.ToolRun>().singleOrNull()
-            if (run != null && !run.expanded) {
-                // "a" itself is never folded away (#1827 follow-up); only its "read" child run collapses.
-                assertEquals(listOf("main", "a"), ids(display))
-                assertEquals("read", run.runId)
-                assertEquals(projected, historyMarkersFor(run, projected))
-            } else {
-                assertEquals(ids(rows), ids(display))
-                assertEquals(markers, projected)
-                if (run != null) assertEquals(emptyList<ThreadHistoryMarker>(), historyMarkersFor(run, projected))
-                for ((id, marker) in listOf("child" to markers[0], "a" to markers[1])) {
-                    val row = delivered(display).single { (it.item as? ThreadItem.MessageItem)?.message?.id == id }
-                    assertEquals(listOf(marker), historyMarkersFor(row, projected))
+        for (prepared in listOf(false, true)) {
+            val markers =
+                listOf(
+                    ThreadHistoryMarker(
+                        beforeRow = child.historyKeys().first(),
+                        unsignedAnchor = 1u,
+                        displayRow = child.takeIf { prepared },
+                    ),
+                    ThreadHistoryMarker(
+                        beforeRow = agent.historyKeys().first(),
+                        unsignedAnchor = 2u,
+                        displayRow = agent.takeIf { prepared },
+                    ),
+                )
+            val closed = foldHistoryToolRuns(rows, emptySet(), markers)
+            val open = foldHistoryToolRuns(rows, setOf("read"), markers)
+            val reclosed = foldHistoryToolRuns(rows, emptySet(), markers)
+            // Check every row: expanded runs retain both their header and the original first tool.
+            for (display in listOf(closed, open, reclosed, rows)) {
+                val projected = foldedAgentHistoryMarkers(rows, display, markers)
+                assertEquals(listOf(1L, 2L), display.flatMap { historyMarkersFor(it, projected) }.map { it.anchor }.sorted())
+                assertUnique(display)
+                val run = display.filterIsInstance<ThreadRow.ToolRun>().singleOrNull()
+                if (run != null && !run.expanded) {
+                    // "a" itself is never folded away (#1827 follow-up); only its "read" child run collapses.
+                    assertEquals(listOf("main", "a"), ids(display))
+                    assertEquals("read", run.runId)
+                    assertEquals(projected, historyMarkersFor(run, projected))
+                } else {
+                    assertEquals(ids(rows), ids(display))
+                    assertEquals(markers, projected)
+                    if (run != null) assertEquals(emptyList<ThreadHistoryMarker>(), historyMarkersFor(run, projected))
+                    for ((id, marker) in listOf("child" to markers[0], "a" to markers[1])) {
+                        val row = delivered(display).single { (it.item as? ThreadItem.MessageItem)?.message?.id == id }
+                        assertEquals(listOf(marker), historyMarkersFor(row, projected))
+                    }
                 }
             }
         }

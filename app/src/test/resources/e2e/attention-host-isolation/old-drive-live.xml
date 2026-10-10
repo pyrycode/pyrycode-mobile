@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" tests="1" failures="1" errors="0" skipped="0" time="46.676">
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_otherConversationAttentionPills_waitingAndFinished">
+      <failure />
+    </testcase>
+  </testsuite>
+</testsuites>

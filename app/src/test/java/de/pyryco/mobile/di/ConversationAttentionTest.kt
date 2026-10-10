@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.LiveSessionEvent.TurnState.Phase
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.QuestionBatch
+import de.pyryco.mobile.data.repository.ConversationReadMarks
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -182,6 +183,61 @@ class ConversationAttentionTest {
             state.resolved(),
         )
         assertEquals(HostAttentionState(), state.disconnected())
+    }
+
+    @Test
+    fun unsignedSharedMarksRequireKnownNewerDurableIdentityIncludingZero() {
+        val cases =
+            listOf(
+                ConversationReadMarks(0u, 0u) to false,
+                ConversationReadMarks(0u, 1u) to true,
+                ConversationReadMarks(10u, 10u) to false,
+                ConversationReadMarks(11u, 10u) to false,
+                ConversationReadMarks(0u, null) to false,
+                ConversationReadMarks(Long.MAX_VALUE.toULong(), ULong.MAX_VALUE) to true,
+                ConversationReadMarks(ULong.MAX_VALUE, ULong.MAX_VALUE) to false,
+            )
+        for ((facts, unread) in cases) {
+            val state = HostAttentionState(positions = mapOf("c" to ReadPosition("local", null))).withReadMarks(mapOf("c" to facts))
+            assertEquals(if (unread) mapOf("c" to ConversationAttention.Unread) else emptyMap(), state.resolved())
+        }
+        val legacy = HostAttentionState(positions = mapOf("c" to ReadPosition("local", null)))
+        assertEquals(
+            mapOf("c" to ConversationAttention.Unread),
+            legacy
+                .withReadMarks(
+                    mapOf(
+                        "c" to ConversationReadMarks(null, ULong.MAX_VALUE),
+                    ),
+                ).resolved(),
+        )
+    }
+
+    @Test
+    fun modernOpenRowsAndDuplicateCompletionCannotWriteLocalPositionsOrClearUnread() {
+        val initial =
+            HostAttentionState(positions = mapOf("c" to ReadPosition("legacy", "legacy")))
+                .withReadMarks(mapOf("c" to ConversationReadMarks(3u, 4u)))
+        val opened = initial.opened("c").rowsAdded("c", true, "token")
+        assertEquals(initial, opened)
+        val completed = opened.onEvent(end("c", "turn"), viewing = true)
+        assertEquals(initial.positions, completed.positions)
+        assertEquals(mapOf("c" to ConversationAttention.Unread), completed.resolved())
+        assertEquals(listOf("turn"), completed.counted["c"])
+        assertEquals(completed, completed.onEvent(end("c", "turn"), viewing = false))
+        val read = completed.withReadMarks(mapOf("c" to ConversationReadMarks(4u, 4u)))
+        assertEquals(read, read.rowsAdded("c", false, "later-token"))
+        assertEquals(emptyMap<String, ConversationAttention>(), read.onEvent(end("c", "other"), false).resolved())
+    }
+
+    @Test
+    fun modernReadFactsPreservePromptRunningUnreadPrecedence() {
+        val unread = HostAttentionState().withReadMarks(mapOf("c" to ConversationReadMarks(0u, 1u)))
+        val running = unread.onEvent(state("c", Phase.Thinking), false)
+        assertEquals(mapOf("c" to ConversationAttention.WaitingForAnswer), running.resolve(listOf(modal("c")), emptyList()))
+        assertEquals(mapOf("c" to ConversationAttention.Running), running.resolved())
+        assertEquals(mapOf("c" to ConversationAttention.Unread), running.onEvent(end("c", "turn"), true).resolved())
+        assertEquals(mapOf("c" to ConversationAttention.Unread), running.disconnected().resolved())
     }
 
     private fun HostAttentionState.resolved() = resolve(emptyList(), emptyList())

@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.network.BackgroundTaskRosterPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskRowDto
 import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
@@ -198,6 +199,7 @@ internal class ThreadProjection(
         val liveEndedTurns: Map<String, Set<String>> = emptyMap(),
         // Connection-local placement evidence, never a live event id or durable coverage marker.
         val historyOrder: Map<String, Map<Any, ULong>> = emptyMap(),
+        val readEvidence: Map<String, ThreadReadEvidence> = emptyMap(),
     )
 
     /**
@@ -223,6 +225,66 @@ internal class ThreadProjection(
      * not density.
      */
     private val unrecognizedRowId = AtomicLong(0)
+
+    fun readRows(conversationId: String): List<ThreadItem> = state.value.threads[conversationId].orEmpty()
+
+    fun readCompactionFold(conversationId: String): CompactionFold = compactionFolds.value[conversationId] ?: CompactionFold()
+
+    /** The inbound caller supplies its before-version; a concurrent unrelated row gains no claim. */
+    fun recordReadEnvelope(
+        envelope: Envelope,
+        interactive: Boolean,
+        before: List<ThreadItem>,
+        compaction: CompactionFold = CompactionFold(),
+    ) {
+        val payload = envelope.payload as? kotlinx.serialization.json.JsonObject ?: return
+        val conversation =
+            (payload["conversation_id"] as? kotlinx.serialization.json.JsonPrimitive)
+                ?.takeIf { it.isString }
+                ?.content
+                ?.takeIf { it.isNotEmpty() } ?: return
+        val id = envelope.historyEntryId?.takeIf { it > 0u }
+        if (id == null) {
+            if (envelope.type in READ_METADATA_TYPES) return
+            state.update { current ->
+                val evidence = current.readEvidence[conversation] ?: ThreadReadEvidence()
+                current.copy(
+                    readEvidence =
+                        current.readEvidence + (
+                            conversation to
+                                evidence.copy(
+                                    unidentified =
+                                        evidence.unidentified +
+                                            Triple(
+                                                envelope.type,
+                                                normalizeReadTimestamp(envelope.ts),
+                                                envelope.payload,
+                                            ),
+                                )
+                        ),
+                )
+            }
+            return
+        }
+        val timestamp =
+            try {
+                Instant.parse(envelope.ts)
+            } catch (error: IllegalArgumentException) {
+                null
+            }
+        state.update { current ->
+            val evidence = current.readEvidence[conversation] ?: ThreadReadEvidence()
+            val next =
+                if (timestamp == null) {
+                    evidence.copy(facts = evidence.facts + (id to null))
+                } else {
+                    val entry = HistoryEntry(unsignedId = id, type = envelope.type, payload = envelope.payload, timestamp = timestamp)
+                    val reduced = reduceOrderedHistoryPage(listOf(entry), interactive, before, compaction)
+                    evidence.received(listOf(entry), reduced, current.threads[conversation].orEmpty())
+                }
+            current.copy(readEvidence = current.readEvidence + (conversation to next))
+        }
+    }
 
     /** Apply one `unrecognized_message` envelope (#609): decode it, then fold its row. A malformed one is dropped. */
     fun applyUnrecognizedMessage(envelope: Envelope) {
@@ -309,53 +371,54 @@ internal class ThreadProjection(
         sentNow: Boolean = false,
         queuedMessageId: Long? = null,
     ) {
-        if (message.id in mintedMessageIds.value[conversationId].orEmpty()) trail.delivered(message.id)
+        val messageId = message.ordinaryId ?: message.id
+        if (messageId in mintedMessageIds.value[conversationId].orEmpty()) trail.delivered(messageId)
         state.update { current ->
             val echoes = current.echoQueues[conversationId] ?: OwnEchoQueue()
             var rows = current.threads[conversationId].orEmpty()
             var queues = current.echoQueues
             val modern = queuedMessageId != null
-            val firstPush = message.id !in echoes.pushed && (!modern || queuedMessageId !in echoes.consumedBacklog)
-            val pendingPlacement = message.id in echoes.awaitingPush || message.id in echoes.placementPending
-            if (message.role == Role.User && firstPush && (message.id in echoes.queued || pendingPlacement)) {
+            val firstPush = messageId !in echoes.pushed && (!modern || queuedMessageId !in echoes.consumedBacklog)
+            val pendingPlacement = messageId in echoes.awaitingPush || messageId in echoes.placementPending
+            if (message.role == Role.User && firstPush && (messageId in echoes.queued || pendingPlacement)) {
                 val needsPlacement =
                     (
-                        (message.id in echoes.parked || message.id in echoes.awaitingPush) &&
-                            (modern || message.id !in echoes.reserved || sentNow || message.id in echoes.sendNow)
+                        (messageId in echoes.parked || messageId in echoes.awaitingPush) &&
+                            (modern || messageId !in echoes.reserved || sentNow || messageId in echoes.sendNow)
                     ) ||
-                        ((modern || sentNow) && message.id in echoes.placementPending)
+                        ((modern || sentNow) && messageId in echoes.placementPending)
                 if (needsPlacement) {
-                    rows = rows.moveOwnEchoToEnd(conversationId, message.id)
+                    rows = rows.moveOwnEchoToEnd(conversationId, messageId)
                 }
                 queues = queues + (
                     conversationId to
                         echoes.copy(
-                            queued = echoes.queued - message.id,
-                            delivered = echoes.delivered + message.id,
-                            behindTurn = echoes.behindTurn - message.id,
-                            sendNow = echoes.sendNow - message.id,
-                            awaitingPush = echoes.awaitingPush - message.id,
-                            placementPending = echoes.placementPending - message.id,
-                            reserved = echoes.reserved - message.id,
+                            queued = echoes.queued - messageId,
+                            delivered = echoes.delivered + messageId,
+                            behindTurn = echoes.behindTurn - messageId,
+                            sendNow = echoes.sendNow - messageId,
+                            awaitingPush = echoes.awaitingPush - messageId,
+                            placementPending = echoes.placementPending - messageId,
+                            reserved = echoes.reserved - messageId,
                         )
                 )
             }
             // Queue consumption uses entry identity; row deduplication and ownership stay id-only.
             if (message.role == Role.User) {
-                val entryId = queuedMessageId ?: echoes.backlog.firstOrNull { it.messageId == message.id }?.id
+                val entryId = queuedMessageId ?: echoes.backlog.firstOrNull { it.messageId == messageId }?.id
                 val next = queues[conversationId] ?: echoes
-                val own = message.id in mintedMessageIds.value[conversationId].orEmpty()
+                val own = messageId in mintedMessageIds.value[conversationId].orEmpty()
                 queues = queues + (
                     conversationId to
                         next.copy(
                             backlog = next.backlog.filterNot { it.id == entryId },
                             consumedBacklog = if (entryId != null) next.consumedBacklog + entryId else next.consumedBacklog,
-                            pushed = if (own) next.pushed + message.id else next.pushed,
-                            delivered = if (own) next.delivered + message.id else next.delivered,
+                            pushed = if (own) next.pushed + messageId else next.pushed,
+                            delivered = if (own) next.delivered + messageId else next.delivered,
                         )
                 )
             }
-            val held = rows.any { it is ThreadItem.MessageItem && it.message.id == message.id }
+            val held = rows.any { it is ThreadItem.MessageItem && (it.message.ordinaryId == messageId || it.message.id == message.id) }
             if (!held) rows = rows + ThreadItem.MessageItem(message)
             current.copy(threads = current.threads + (conversationId to rows), echoQueues = queues)
         }
@@ -647,7 +710,7 @@ internal class ThreadProjection(
                             id in mintedMessageIds.value[event.conversationId].orEmpty() &&
                             rows
                                 .filterIsInstance<ThreadItem.MessageItem>()
-                                .firstOrNull { it.message.id == id }
+                                .firstOrNull { it.message.ordinaryId == id }
                                 ?.message
                                 ?.role == Role.User
                     }
@@ -844,7 +907,7 @@ internal class ThreadProjection(
         messageId: String,
     ): List<ThreadItem> {
         if (messageId !in mintedMessageIds.value[conversationId].orEmpty()) return this
-        val index = indexOfFirst { it is ThreadItem.MessageItem && it.message.id == messageId }
+        val index = indexOfFirst { it is ThreadItem.MessageItem && it.message.ordinaryId == messageId }
         val row = getOrNull(index) as? ThreadItem.MessageItem ?: return this
         if (row.message.role != Role.User || index == lastIndex) return this
         return filterIndexed { i, _ -> i != index } + row
@@ -871,7 +934,7 @@ internal class ThreadProjection(
         mintedMessageIds.update { it + (conversationId to (it[conversationId].orEmpty() - messageId)) }
         updateThreads { current ->
             val rows = current[conversationId] ?: return@updateThreads current
-            current + (conversationId to rows.filterNot { it is ThreadItem.MessageItem && it.message.id == messageId })
+            current + (conversationId to rows.filterNot { it is ThreadItem.MessageItem && it.message.ordinaryId == messageId })
         }
     }
 
@@ -922,7 +985,9 @@ internal class ThreadProjection(
                 }
             }
         state.update { current ->
-            val order = reduced.unsignedOrder + current.historyOrder[conversationId].orEmpty()
+            val previousOrder = current.historyOrder[conversationId].orEmpty()
+            val firstEvidence = reduced.unsignedOrder.keys - previousOrder.keys
+            val order = reduced.unsignedOrder + previousOrder
             val existing = current.threads[conversationId].orEmpty()
             val echoes = current.echoQueues[conversationId] ?: OwnEchoQueue()
             val pending = echoes.parked + echoes.awaitingPush + echoes.placementPending
@@ -930,28 +995,44 @@ internal class ThreadProjection(
                 deliveries
                     .filter { it.messageId !in echoes.pushed && it.queuedMsgId !in echoes.consumedBacklog }
                     .mapTo(HashSet()) { it.messageId }
-            // Only pending own user rows have provisional positions; keep their original objects at history's slot.
+            // Pending own echoes use their separate first-delivery exception; keep their original objects.
             val provisional =
                 existing
                     .filterIsInstance<ThreadItem.MessageItem>()
                     .filter {
                         it.message.role == Role.User &&
-                            it.message.id in pending &&
-                            it.message.id in firstDeliveries &&
-                            it.message.id in mintedMessageIds.value[conversationId].orEmpty()
-                    }.associateBy { it.message.id }
-            val receiving = existing.filterNot { it is ThreadItem.MessageItem && it.message.id in provisional }
-            val merged =
-                receiving.mergeUnsignedHistoryRows(reduced.rows, order).map { row ->
-                    if (row is ThreadItem.MessageItem) provisional[row.message.id] ?: row else row
+                            it.message.ordinaryId in pending &&
+                            it.message.ordinaryId in firstDeliveries &&
+                            it.message.ordinaryId in mintedMessageIds.value[conversationId].orEmpty()
+                    }.associateBy { it.message.ordinaryId }
+            val receiving = existing.filterNot { it is ThreadItem.MessageItem && it.message.ordinaryId in provisional }
+            val placementTimestamps =
+                reduced.rows
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .filter { it.message.ordinaryId in provisional }
+                    .associate { it.mergeIdentity() to it.message.timestamp }
+            val incoming =
+                reduced.rows.map { row ->
+                    if (row is ThreadItem.MessageItem) provisional[row.message.ordinaryId] ?: row else row
                 }
+            val merged =
+                receiving.mergeUnsignedHistoryRows(
+                    incoming,
+                    order,
+                    firstEvidence,
+                    rendererOwners = existing,
+                    placementTimestamps = placementTimestamps,
+                )
             val settledEchoes =
                 deliveries.fold(echoes) { echoes, delivery ->
                     val entryId = delivery.queuedMsgId ?: return@fold echoes
                     val id = delivery.messageId
                     val own =
                         id in mintedMessageIds.value[conversationId].orEmpty() &&
-                            merged.filterIsInstance<ThreadItem.MessageItem>().any { it.message.id == id && it.message.role == Role.User }
+                            merged.filterIsInstance<ThreadItem.MessageItem>().any {
+                                it.message.ordinaryId == id &&
+                                    it.message.role == Role.User
+                            }
                     val settled = if (own) setOf(id) else emptySet()
                     echoes.copy(
                         backlog = echoes.backlog.filterNot { it.id == entryId },
@@ -969,6 +1050,12 @@ internal class ThreadProjection(
             current.copy(
                 threads = current.threads + (conversationId to merged.withSettledTurns(endedTurns.value[conversationId].orEmpty())),
                 historyOrder = current.historyOrder + (conversationId to order),
+                readEvidence =
+                    current.readEvidence +
+                        (
+                            conversationId to
+                                (current.readEvidence[conversationId] ?: ThreadReadEvidence()).received(page.entries, reduced, merged)
+                        ),
                 echoQueues = if (deliveries.isEmpty()) current.echoQueues else current.echoQueues + (conversationId to settledEchoes),
             )
         }
@@ -1046,7 +1133,7 @@ internal class ThreadProjection(
                     current.threads[conversationId]
                         .orEmpty()
                         .filterNot {
-                            it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in suppressed
+                            it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.ordinaryId in suppressed
                         }.map { row ->
                             val hint =
                                 (row as? ThreadItem.BackgroundTaskLifecycle)?.let {
@@ -1066,7 +1153,13 @@ internal class ThreadProjection(
                             }
                         }.withParkedEchoesLast(echoes?.parked.orEmpty(), echoes?.backlog.orEmpty().map { it.messageId })
                 val unsignedOrder = current.historyOrder[conversationId].orEmpty()
-                ThreadSnapshot(rows, suppressed, unsignedOrder.signedHistoryOrder(), unsignedOrder)
+                ThreadSnapshot(
+                    rows,
+                    suppressed,
+                    unsignedOrder.signedHistoryOrder(),
+                    unsignedOrder,
+                    (current.readEvidence[conversationId] ?: ThreadReadEvidence()).presentedAs(rows),
+                )
             }.distinctUntilChanged()
 
     /** Reserved store positions cannot change [backlog] display order; only [parkedIds] user rows read last. */
@@ -1075,10 +1168,13 @@ internal class ThreadProjection(
         backlog: List<String>,
     ): List<ThreadItem> {
         if (parkedIds.isEmpty()) return withOnlyLastRowStreaming()
-        val (parked, rest) = partition { it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in parkedIds }
+        val (parked, rest) =
+            partition {
+                it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.ordinaryId in parkedIds
+            }
         // A reused row id takes its first pending entry's FIFO position, never the last one's.
         val order = backlog.withIndex().reversed().associate { it.value to it.index }
-        val queuedRows = parked.sortedBy { order[(it as ThreadItem.MessageItem).message.id] ?: Int.MAX_VALUE }
+        val queuedRows = parked.sortedBy { order[(it as ThreadItem.MessageItem).message.ordinaryId] ?: Int.MAX_VALUE }
         return if (parked.isEmpty()) withOnlyLastRowStreaming() else rest.withOnlyLastRowStreaming() + queuedRows
     }
 
@@ -1244,3 +1340,19 @@ internal class ThreadProjection(
             null
         }
 }
+
+private val READ_METADATA_TYPES =
+    setOf(
+        "context_usage",
+        "session_facts",
+        "session_settings",
+        "session_settings_updated",
+        "model_announced",
+        "model_list",
+        "slash_command_list",
+        "reply_suggestion",
+        "queue_state",
+        "mcp_status",
+        "background_task_roster",
+        "conversation_updated",
+    )

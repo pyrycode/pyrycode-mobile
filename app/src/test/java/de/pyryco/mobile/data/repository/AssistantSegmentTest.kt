@@ -179,7 +179,7 @@ class AssistantSegmentTest {
         }
 
     @Test
-    fun backwardWalk_liveEchoBeforeItsLogEntry_holdsEachDeltaOnce() =
+    fun backwardWalk_firstDurableEvidenceRepairsLiveEchoSeam_andHoldsEachDeltaOnce() =
         runTest {
             // The verifier's case: drawn live as [a, m1, bcd], logged as [abcd, m1], walked from a newest page cut mid-turn.
             val turn = listOf(Delta(0, "a"), Delta(1, "b"), Delta(2, "c"), Delta(3, "d"), End)
@@ -190,7 +190,7 @@ class AssistantSegmentTest {
                 projection.mergeHistoryPage(CONVERSATION, HistoryPage(page(logged.drop(cut)), "c", atStart = false), interactive = true)
                 projection.mergeHistoryPage(CONVERSATION, HistoryPage(page(logged.take(cut)), "", atStart = true), interactive = true)
 
-                assertEquals("cut at $cut", listOf(TURN to "a", "m1" to "wait", "$TURN#1" to "bcd"), projection.rows().summary())
+                assertEquals("cut at $cut", listOf(TURN to "abcd", "m1" to "wait"), projection.rows().summary())
             }
         }
 

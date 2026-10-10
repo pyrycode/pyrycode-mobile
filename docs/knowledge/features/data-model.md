@@ -38,7 +38,7 @@ enum class ConversationAgent { Claude, Codex }
 
 `archived` is `true` once `ConversationRepository.archive(id)` has flipped the flag (#93). Authoritative bit, not derived: Phase 1 stores it on the data class; Phase 4 will parse it from the wire response. Defaulted to `false` so existing constructor sites don't change. Routes the conversation into the `ConversationFilter.Archived` slice and out of `Channels` / `Discussions`; the live tiers carry an explicit `!archived` clause so a hypothetical archived channel can't regress the channel list. The trivial inverse `unarchive(...)` is a follow-up ticket. See [`conversation-repository.md`](conversation-repository.md) for the filter matrix.
 
-`muted` (#999) is the host's per-conversation mute, mirroring `archived`'s wire and defaulting shape exactly: [`ConversationSummaryDto`](mobile-protocol-v2-wire-layer-application-payloads.md) (list rows) and [`ConversationResponseDto`](mobile-protocol-v2-wire-layer-application-payloads.md) (`conversation_created` / `conversation_updated`) both carry `@SerialName("is_muted") val isMuted: Boolean = false` and map it straight to `muted`; the `false` default reads an older daemon's rows — or any reply shape that omits the key — as unmuted, so alerts keep firing rather than going silently suppressed. `ConversationListProjection.upsertConversation` needed no change: it already replaces the whole row, so the record's `muted` wins on every fold. Two consumers now read it: the Edit channel mute checkbox writes it back through `setMuted` (#1021, see [Channel list ViewModel](channel-list-viewmodel.md)), and [`AttentionNotifier`'s muted gate](push-messaging-service.md#the-muted-gate-1022) (#1022) reads it from each alert's own host's [`HostConversationSource.snapshots`](dependency-injection-host-conversation-source.md#attention-alerts-685) row to silence that conversation's alerts. **A field added to this class must be traced through every place a `Conversation` is stored, not only its wire decoders**: #999's first pass mirrored `archived` through the DTOs but missed [the on-disk cache](conversation-cache.md#the-cache-local-record-must-mirror-every-conversation-field-999), which `HostConversationSource` publishes on cold start before the first live list arrives — a real window for a muted channel to alert. Check the cache's `CachedConversation` alongside the DTOs whenever a boolean like this one is added.
+`muted` (#999) is the host's per-conversation mute, mirroring `archived`'s wire and defaulting shape exactly: [`ConversationSummaryDto`](mobile-protocol-v2-wire-layer-application-payloads.md) (list rows) and [`ConversationResponseDto`](mobile-protocol-v2-wire-layer-application-payloads.md) (`conversation_created` / `conversation_updated`) both carry `@SerialName("is_muted") val isMuted: Boolean = false` and map it straight to `muted`; the `false` default reads an older daemon's rows — or any reply shape that omits the key — as unmuted, so alerts keep firing rather than going silently suppressed. `ConversationListProjection.upsertConversation` needed no change: it already replaces the whole row, so the record's `muted` wins on every fold. Two consumers now read it: the Edit channel mute checkbox writes it back through `setMuted` (#1021, see [Channel list ViewModel](channel-list-viewmodel.md)), and [`AttentionNotifier`'s muted gate](push-messaging-service.md#the-muted-gate-1022) (#1022) reads it from each alert's own host's [`HostConversationSource.snapshots`](dependency-injection-host-conversation-source.md#attention-alerts-685) row to silence that conversation's alerts. **A field added to this class must be traced through every place a `Conversation` is stored, not only its wire decoders**: #999's first pass mirrored `archived` through the DTOs but missed [the on-disk cache](conversation-cache-layout.md#the-cache-local-record-must-mirror-every-conversation-field-999), which `HostConversationSource` publishes on cold start before the first live list arrives — a real window for a muted channel to alert. Check the cache's `CachedConversation` alongside the DTOs whenever a boolean like this one is added.
 
 `agent`/`ConversationAgent` ([#1108](https://github.com/pyrycode/pyrycode-mobile/issues/1108)) names which
 agent — `claude` or `codex` — runs a conversation, for a client that has negotiated `multi_agent`
@@ -53,7 +53,7 @@ without the key does **not** fall back to the mapped default: `ConversationListP
 keeps the previously stored `agent` when the record's raw field is `null` and the conversation already has a
 row, since an older daemon omits the key on that reply. See
 [Remote conversation repository — `upsertConversation`](remote-conversation-repository-send-create-promote-rename.md#confirmed-insert-via-conversationlistprojectionupsertconversation-the-projections-second-writer)
-for the fold and [Conversation cache § the cache-local record must mirror every field](conversation-cache.md#the-cache-local-record-must-mirror-every-conversation-field-999)
+for the fold and [Conversation cache § the cache-local record must mirror every field](conversation-cache-layout.md#the-cache-local-record-must-mirror-every-conversation-field-999)
 for a known gap: the on-disk cache does not yet carry `agent`, so a cold-started row reads Claude until the
 live list arrives. A **published `model_list` row's** own `agent` tag maps through a different, deliberately
 disagreeing function — see [Conversation repository § `ModelMenu`/`ModelMenuRow`](conversation-repository-shape.md#shape)
@@ -105,6 +105,7 @@ data class Message(
     val attachments: List<MessageAttachment> = emptyList(),
     val segment: AssistantSegment? = null,
     val parentToolUseId: String = "",
+    val reconciliationId: String? = null,
 )
 
 enum class Role { User, Assistant, Tool }
@@ -128,6 +129,22 @@ data class ToolCall(
     val elapsedSeconds: Int? = null,                    // #812
 )
 ```
+
+`Message.id` is the emitted renderer identity (#1941), used for list keys and navigation.
+`reconciliationId` is the original ordinary-row id when collision allocation changes that emitted
+id; otherwise it is null. The internal `ordinaryId` accessor returns `reconciliationId ?: id`
+only for rows without a segment, and null for segments. Segment overlap remains `(turnId, seq)`.
+Never recover a wire id by stripping `#0` or `~n`: daemon ids can legitimately spell either.
+
+Ordinary logical identity drives history overlap, tool progress/result/denial and repeat-use lookup,
+user updates, queue ownership/suppression and legacy turn settlement. Parent/tool/lifecycle joins
+and queued folds use logical ids while emitting renderer keys for rows, blocks and navigation.
+Read evidence also matches logical identity independently of renderer-only metadata, retaining
+content, role, attachment, parent and tool-state checks; alias equality cannot certify a changed
+content version. `HistoryAliasCorrelationTest` covers these consumers and a changed-content
+negative control. See [renderer allocation](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)
+and [disk replay identity](conversation-cache-layout.md#layout). This field is cache-local domain
+metadata, with no wire DTO change.
 
 `Message.parentToolUseId` (#1826) retains assistant attribution from
 `AssistantDeltaPayloadDto` through `LiveSessionEvent.AssistantDelta`, verbatim with an empty-string

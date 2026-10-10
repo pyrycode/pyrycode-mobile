@@ -112,6 +112,8 @@ sealed interface LiveSessionEvent {
         val terminalReason: String = "",
         val errorCategory: String = "",
         val costUsdTotal: Double? = null,
+        /** Durable identity of this completion's envelope, including its original reconnect replay. */
+        val historyEntryId: ULong? = null,
     ) : LiveSessionEvent
 
     /**

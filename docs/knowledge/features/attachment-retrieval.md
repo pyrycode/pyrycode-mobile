@@ -233,11 +233,11 @@ never fails the others.
 
 **Removal — `removeHost(serverId): Result<Unit>` (#900):** on `ioDispatcher`, `deleteRecursively`s the
 host's whole directory. Failure is decided by the directory's continued existence afterward — the same
-rule [`FileConversationCache.removeHost`](conversation-cache.md#removal-on-unpair--forgetremovedhost)
+rule [`FileConversationCache.removeHost`](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost)
 uses — and a `SecurityException` is also caught as failure; an unknown host is a successful no-op. The
 failure carries a static message with no id or path, and never throws except on cancellation. The store
 itself logs nothing here; the caller,
-[`forgetRemovedHost`](conversation-cache.md#removal-on-unpair--forgetremovedhost), logs the static
+[`forgetRemovedHost`](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost), logs the static
 `event=host_attachments_remove_failed` on failure and does not surface it.
 
 **Served to other apps (#985), never the store as a whole.** A kept file's bytes reach another app only
@@ -401,6 +401,14 @@ message, or a local path.
   `Unavailable` and shows the failed row with Retry, and that Retry, once the link is restored, reaches
   ready under the correct name with the fixture's exact bytes on open and save. The cut is deterministic,
   fired from the `RelayLog` line above rather than a timer.
+- Cross-host live attachment checks must wait for the owning host's authenticated
+  repository, not selected-host relay readiness. In the colliding-id scenario,
+  selected B can be rejected while A is already Noise-Open; conversely, another
+  host's Connected relay leg does not prove A can serve attachments. The #1900
+  rejected-B control failed before the exact-host wait and passed afterward under
+  the same deadline. Keep pending/sent UI absence, host-keyed cache absence and
+  B's remote `NotFound` probe together: a missing tile alone cannot prove storage
+  isolation. See [the ladder's host-isolation evidence](../../e2e-interactive-stream.md#host-isolation-readiness-1900).
 
 ## Related
 

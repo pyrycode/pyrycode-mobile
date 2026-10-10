@@ -81,6 +81,21 @@ anchor (here, the sheet's top) to catch the compounding, and use
 `@GraphicsMode(NATIVE)` — Robolectric's default font metrics do not reproduce
 the trim at all, so an untrimmed test can pass against broken code.
 
+The [shared modal](mobile-modal.md#caller-contract)'s final error uses the same
+local centered, untrimmed style (#1958). The create-channel and save-as-channel
+prompt-failure strings each wrap to two lines at 412 × 892 dp/font scale 1.0:
+the reference box is 40 dp, while default trimming produced 36 dp. Copy
+`bodyMedium` locally to retain 14 sp / 20 sp / 400 / 0.25 sp and font scaling;
+do not compensate with a fixed height or change the global ramp. Keep the
+error colour, exact error semantics and polite live region at the call site.
+Both exact-resource regressions in
+[`MobileModalErrorLayoutTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/components/MobileModalErrorLayoutTest.kt)
+check the no-trim style, metrics and two-line height together with final-item
+spacing and group centering. Native-graphics shared tests and ATD geometry
+checks establish that contract; matching real system-bar pixels requires
+separate real-bar capture evidence, as described in
+[modal verification](mobile-modal.md#focus-and-verification).
+
 Separately, at density 1.0 Android hints text layout by rounding each glyph's
 advance to a whole device pixel. A label-large emphasized (600-weight) run of
 16 glyphs can come out 4 px wider than Figma's unhinted metrics as a result —

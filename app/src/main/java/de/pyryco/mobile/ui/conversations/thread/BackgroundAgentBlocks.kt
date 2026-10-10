@@ -3,7 +3,9 @@ package de.pyryco.mobile.ui.conversations.thread
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadReadEvidence
 
 /** Display-only placement. Lifecycle positions stay in repository order; no tool rows are invented. */
 internal fun foldBackgroundAgentBlocks(
@@ -46,7 +48,7 @@ internal fun foldBackgroundAgentBlocks(
         rows
             .filterIsInstance<ThreadRow.Delivered>()
             .filter { it.isToolRow() }
-            .associateBy { ((it.item as ThreadItem.MessageItem).message.id) }
+            .associateBy { ((it.item as ThreadItem.MessageItem).message.ordinaryId) }
     val roots = linkedMapOf<String, AgentEvidence>()
     for (task in evidence.values) {
         val id = task.toolId?.takeIf { it.isNotEmpty() } ?: continue
@@ -62,7 +64,7 @@ internal fun foldBackgroundAgentBlocks(
 
     // Memoise the ownership of loaded parent chains, including unmatched/cyclic paths.
     val owner = mutableMapOf<String, String?>()
-    for (id in tools.keys) {
+    for (id in tools.keys.filterNotNull()) {
         var current = id
         val path = linkedSetOf<String>()
         while (current !in owner && current !in roots && current in tools && path.add(current)) {
@@ -79,7 +81,7 @@ internal fun foldBackgroundAgentBlocks(
         val message = ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message
         val root =
             when (message?.role) {
-                Role.Tool -> owner[message.id]
+                Role.Tool -> owner[message.ordinaryId]
                 Role.Assistant -> message.parentToolUseId.takeIf { it.isNotEmpty() }?.let { owner[it] }
                 else -> null
             }
@@ -87,7 +89,7 @@ internal fun foldBackgroundAgentBlocks(
             claimed += message.id
             val task = roots.getValue(root)
             val projected =
-                if (message.id == root) {
+                if (message.role == Role.Tool && message.ordinaryId == root) {
                     rootPositions[root] = index
                     message.copy(
                         toolCall =
@@ -99,20 +101,25 @@ internal fun foldBackgroundAgentBlocks(
                 } else {
                     message
                 }
-            blocks.getValue(root) += row.copy(item = ThreadItem.MessageItem(projected), agentBlockId = root)
+            val rendererId = (tools.getValue(root).item as ThreadItem.MessageItem).message.id
+            blocks.getValue(root) += row.copy(item = ThreadItem.MessageItem(projected), agentBlockId = rendererId)
         }
     }
     val settled = roots.filterValues { it.finished }.keys.groupBy { roots.getValue(it).finishPosition ?: (rootPositions.getValue(it) + 1) }
     val result = mutableListOf<ThreadRow>()
     rows.forEachIndexed { index, row ->
         settled[index]?.forEach { result += blocks.getValue(it) }
-        val id = ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message?.id
+        val message = ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message
+        val id = message?.ordinaryId
         when {
             id in roots -> {
                 val task = roots.getValue(checkNotNull(id))
-                result += ThreadRow.AgentStartMarker(id, task.description.orEmpty().take(4096), task.finished)
+                // Own destination distinguishes relocation from a neighbour inserting before this block.
+                val finishAnchor = task.finishPosition?.let { rows.getOrNull(it - 1)?.listKey(0) ?: "thread-start" }
+                result +=
+                    ThreadRow.AgentStartMarker(checkNotNull(message).id, task.description.orEmpty().take(4096), task.finished, finishAnchor)
             }
-            id in claimed -> Unit
+            message?.id in claimed -> Unit
             else -> result += row
         }
     }
@@ -185,3 +192,29 @@ private data class AgentEvidence(
     val finishPosition: Int? = null,
     val launchOrder: Int? = null,
 )
+
+/** Hidden task receipt is nonvisual except when it changes a displayed Agent block. */
+internal fun ThreadReadEvidence.forBackgroundAgentRows(
+    items: List<ThreadItem>,
+    rows: List<ThreadRow>,
+): ThreadReadEvidence {
+    val versions = versions.toMutableMap()
+    val facts = facts.toMutableMap()
+    val roots =
+        rows.filterIsInstance<ThreadRow.Delivered>().filter {
+            (it.item as? ThreadItem.MessageItem)?.message?.id == it.agentBlockId
+        }
+    for (root in roots) {
+        val projected = root.item as? ThreadItem.MessageItem ?: continue
+        val source = items.filterIsInstance<ThreadItem.MessageItem>().firstOrNull { it.message.id == projected.message.id } ?: continue
+        val lifecycle =
+            items.filterIsInstance<ThreadItem.BackgroundTaskLifecycle>().filter {
+                it.toolCallId == projected.message.ordinaryId && it.taskType == "local_agent"
+            }
+        val ids = lifecycle.flatMapTo(HashSet()) { this.versions[it].orEmpty() }
+        ids.forEach { facts[it] = false }
+        val sourceIds = versions.remove(source) ?: continue
+        versions[projected] = sourceIds + ids
+    }
+    return copy(versions = versions, facts = facts)
+}

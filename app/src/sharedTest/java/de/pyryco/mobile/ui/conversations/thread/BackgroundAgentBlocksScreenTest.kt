@@ -1,10 +1,16 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotDisplayed
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
@@ -14,10 +20,14 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.BackgroundTask
@@ -32,13 +42,17 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.repository.BackgroundTaskProjection
 import de.pyryco.mobile.data.repository.FinishedBackgroundTasks
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.questionAnswerTarget
+import de.pyryco.mobile.e2e.verifyAgentRunNavigation
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(AndroidJUnit4::class)
 class BackgroundAgentBlocksScreenTest {
@@ -85,11 +99,12 @@ class BackgroundAgentBlocksScreenTest {
     private fun mount(
         items: List<ThreadItem>,
         collapsed: Boolean = false,
+        compact: Boolean = false,
     ): StateRestorationTester {
         state = state.copy(items = items)
         collapse = collapsed
         val restoration = StateRestorationTester(compose)
-        restoration.setContent {
+        val content: @Composable () -> Unit = {
             PyrycodeMobileTheme {
                 ThreadScreen(
                     state = state,
@@ -101,12 +116,130 @@ class BackgroundAgentBlocksScreenTest {
                 )
             }
         }
+        restoration.setContent {
+            if (compact) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 480.dp)), content)
+            } else {
+                content()
+            }
+        }
         return restoration
     }
 
     private fun list() = compose.onNode(hasScrollToIndexAction())
 
     private fun marker() = compose.onNodeWithText("Go to agent ↓")
+
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test
+    fun lateNewerReplyDisposesMarkerButKeyedRevealStillNavigatesHeldAgent() {
+        val reply = ThreadItem.MessageItem(Message("reply", "s", Role.Assistant, "Short reply", ts, true))
+        mount(
+            listOf(tool("a", "Agent"), launch(), user("Newer"), reply, tool("child", "Read", "a"), tool("child2", "Glob", "a")),
+            true,
+            compact = true,
+        )
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        var grew = false
+        val target =
+            compose.questionAnswerTarget(ownedMarker, lazyKey = "agent-start:a") { stage ->
+                println(stage)
+                if ("stage=before" in stage && !grew) {
+                    grew = true
+                    compose.runOnIdle {
+                        state =
+                            state.copy(
+                                items =
+                                    state.items.map { item ->
+                                        if (item ==
+                                            reply
+                                        ) {
+                                            reply.copy(
+                                                message =
+                                                    reply.message.copy(
+                                                        content = (0 until 30).joinToString("\n\n") { "Newer reply paragraph $it" },
+                                                        isStreaming = false,
+                                                    ),
+                                            )
+                                        } else {
+                                            item
+                                        }
+                                    },
+                            )
+                    }
+                    compose.waitForIdle()
+                    val index = list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("agent-start:a")
+                    val composed = compose.onAllNodes(ownedMarker).fetchSemanticsNodes().size
+                    val projected =
+                        foldBackgroundAgentBlocks(foldQueuedRows(state.items, state.queuedMessages), state.items, state.backgroundTasks)
+                            .filterIsInstance<ThreadRow.AgentStartMarker>()
+                            .single { it.agentId == "a" }
+                    assertTrue("the held Agent must still be running", !projected.finished)
+                    println(
+                        "event=first_marker stage=late_reply task_running=${!projected.finished} newer_streaming=false marker_index=$index composed=$composed",
+                    )
+                    assertTrue("held marker must remain projected", index >= 0)
+                    assertEquals("late reply must dispose the initially revealed marker", 0, composed)
+                }
+            }
+        assertTrue("late reply must exercise the reveal/tap boundary", grew)
+        val bounds = target.fetchSemanticsNode().boundsInRoot
+        val top =
+            compose
+                .onNodeWithTag("thread-top-bar")
+                .fetchSemanticsNode()
+                .boundsInRoot.bottom
+        val bottom =
+            compose
+                .onNodeWithTag("thread-composer")
+                .fetchSemanticsNode()
+                .boundsInRoot.top
+        assertTrue("physical marker tap must clear chrome", bounds.center.y > top && bounds.center.y < bottom)
+        target.performTouchInput { click(center) }
+        compose.onNodeWithTag("background-agent:a").assertIsDisplayed()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
+        assertTrue(
+            "scroll-only navigation must keep the child run closed",
+            list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:child2") < 0,
+        )
+    }
+
+    @Test fun keyedMarkerWithHeldDescriptionNavigatesOnlyItsAgent() {
+        val children =
+            (0 until 24).map { n ->
+                ThreadItem.MessageItem(Message("owned$n", "s", Role.Assistant, "Owned paragraph $n", ts, false, parentToolUseId = "a"))
+            }
+        mount(
+            listOf(
+                tool("a", "Agent"),
+                launch(),
+                tool("b", "Agent"),
+                launch().copy(taskId = "tb", toolCallId = "b", description = "Other agent"),
+            ) + (0 until 24).map { user("Newer $it") } + children,
+        )
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        list().performScrollToNode(ownedMarker)
+        compose.onAllNodes(hasText("Go to agent ↓") and hasClickAction()).assertCountEquals(2)
+        compose.onNodeWithTag("background-agent:a").assertIsNotDisplayed()
+        val target = compose.questionAnswerTarget(ownedMarker, lazyKey = "agent-start:a")
+        target.performTouchInput { click(center) }
+        compose.onNodeWithTag("background-agent:a").assertIsDisplayed()
+        compose.onNodeWithTag("background-agent:b").assertIsNotDisplayed()
+    }
+
+    @Test fun removedMarkerFailsInsteadOfBeingTreatedAsLazyDisposal() {
+        mount(listOf(tool("a", "Agent"), launch(), user("Newer")), true)
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        val failure =
+            assertThrows(AssertionError::class.java) {
+                compose.questionAnswerTarget(ownedMarker, lazyKey = "agent-start:a") { stage ->
+                    if ("stage=before" in stage) {
+                        compose.runOnIdle { state = state.copy(items = listOf(user("Replacement"))) }
+                    }
+                }
+            }
+        assertEquals("tap target left the projected list", failure.message)
+    }
 
     @Test fun finishedRosterReplacementKeepsMarkerAndNavigationInCollapsedRun() {
         val tasks = BackgroundTaskProjection(FinishedBackgroundTasks().apply { mark("c", "t") })
@@ -355,6 +488,28 @@ class BackgroundAgentBlocksScreenTest {
         // The run still opens on its own tap -- only the marker's auto-expand side effect was removed.
         compose.onNodeWithText("Using tools: 2", substring = true).performClick()
         compose.onNodeWithText("Read", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test fun settledNavigationThenOwnedPointerTapsOpenAndCloseALongChildRun() {
+        val paragraphs =
+            (0 until 24).map { n ->
+                ThreadItem.MessageItem(Message("prose$n", "s", Role.Assistant, "Owned paragraph $n", ts, false, parentToolUseId = "a"))
+            }
+        mount(
+            listOf(tool("a", "Agent"), launch(), tool("child", "Read", "a"), tool("child2", "Glob", "a")) +
+                paragraphs + finish() + user("Later"),
+            true,
+        )
+        compose.verifyAgentRunNavigation(
+            agentId = "a",
+            runId = "child",
+            childIds = listOf("child", "child2") + paragraphs.map { it.message.id },
+            ownedChild = hasText("Owned paragraph 0") and hasAnyAncestor(hasTestTag("background-agent-child:a")),
+            goLabel = "Go to agent ↓",
+            expandLabel = "Show tool uses",
+            collapseLabel = "Hide tool uses",
+            evidence = { println(it) },
+        )
     }
 
     @Test fun rosterBeforeStartMovesBlockAndBackfillNeverDuplicatesIt() {

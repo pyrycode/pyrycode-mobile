@@ -10,6 +10,16 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.net.Uri
 import android.provider.MediaStore
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -44,6 +54,7 @@ import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.SavedStateHandle
 import androidx.test.espresso.Espresso
@@ -64,6 +75,7 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.repository.AttachmentContent
 import de.pyryco.mobile.data.repository.AttachmentFetchResult
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
@@ -80,6 +92,7 @@ import de.pyryco.mobile.data.repository.LiveRefusalEvent
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.SessionCapabilities
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.SlashCommandMenu
 import de.pyryco.mobile.data.repository.SlashCommandMenuRow
@@ -90,10 +103,13 @@ import de.pyryco.mobile.di.ConversationViewing
 import de.pyryco.mobile.e2e.ActivityIntentStub
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
+import de.pyryco.mobile.ui.conversations.components.QueuedMessageRow
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.PickedAttachment
 import de.pyryco.mobile.ui.conversations.thread.ThreadHistoryTail
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.threadColors
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -852,6 +868,7 @@ class ThreadDesignCaptureTest {
             runBlocking { preferences.setCollapseToolUses(false) }
             openThread()
             inputs.contextUsage.value = CONTEXT
+            fake().setSessionSettingsReading(CONVERSATION, queuedSettings(true))
             thinking()
             // No messageId, so both fold as unmatched rows after the thread's items.
             val frameRows =
@@ -861,7 +878,8 @@ class ThreadDesignCaptureTest {
                 )
             queue.value = frameRows
             await("Then push a draft PR.")
-            design.capture(FOLDER, "queued-messages", "696:4677")
+            rule.onAllNodesWithContentDescription("Send now").assertCountEquals(2)
+            design.capture(FOLDER, "queued-messages", "848:9517")
 
             queue.value = frameRows +
                 QueuedMessage(
@@ -881,6 +899,94 @@ class ThreadDesignCaptureTest {
             runBlocking { preferences.setCollapseToolUses(previousCollapse) }
         }
     }
+
+    /** Real-device pixels for #1918: both actions and Cancel-only in both static palettes. */
+    @Test fun queuedActions_lightDarkAndCancelOnlyAt412By892() {
+        openThread()
+        val palette = mutableStateOf(ThemeMode.LIGHT)
+        val sendNow = mutableStateOf(true)
+        // MainActivity pins dark; mount the same component under explicit palettes for this capture.
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            (design.view.context as ComponentActivity).setContent {
+                PyrycodeMobileTheme(darkTheme = palette.value == ThemeMode.DARK, dynamicColor = false) {
+                    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.threadColors.background) {
+                        Column(Modifier.systemBarsPadding().padding(vertical = 24.dp)) {
+                            listOf(
+                                "Then push a draft PR.",
+                                "Can you also update the migration tests once you're done?",
+                            ).forEach { text ->
+                                QueuedMessageRow(text, {}, onSendNow = if (sendNow.value) ({}) else null)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (theme in listOf(ThemeMode.LIGHT, ThemeMode.DARK)) {
+            for (enabled in listOf(true, false)) {
+                rule.runOnIdle {
+                    palette.value = theme
+                    sendNow.value = enabled
+                }
+                rule.waitUntil(5_000) {
+                    rule.onAllNodesWithContentDescription("Send now").fetchSemanticsNodes().size == if (enabled) 2 else 0
+                }
+                rule.onAllNodesWithContentDescription("Drop this queued message").assertCountEquals(2)
+                rule.onAllNodesWithTag("queued-cancel-glyph", useUnmergedTree = true)[0].assertIsDisplayed()
+                rule.waitForIdle()
+                val instrumentation = InstrumentationRegistry.getInstrumentation()
+                instrumentation.uiAutomation.waitForIdle(500, 5_000)
+                val output =
+                    File(
+                        checkNotNull(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")),
+                        "queued-actions-1918",
+                    ).apply { mkdirs() }
+                val name = "${theme.name.lowercase()}-${if (enabled) "send-cancel" else "cancel-only"}"
+                val bars =
+                    design.view.rootWindowInsets.getInsets(
+                        android.view.WindowInsets.Type
+                            .systemBars(),
+                    )
+                val realBars = bars.top > 0 && bars.bottom > 0
+                if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
+                    assertTrue("queued captures require real system bars", realBars)
+                    assertTrue("queued captures require hardware rendering", design.view.isHardwareAccelerated)
+                }
+                if (!realBars) {
+                    File(
+                        output,
+                        "$name.txt",
+                    ).writeText("figma=848:9517 theme=$theme sendNow=$enabled syntheticBars=true geometryOnly=true\n")
+                    continue
+                }
+                val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+                try {
+                    val colors =
+                        (0 until bitmap.height step 8).flatMap { y ->
+                            (0 until bitmap.width step 8).map { x -> bitmap.getPixel(x, y) }
+                        }
+                    assertTrue("capture must contain rendered content", colors.toSet().size > 10)
+                    val background = bitmap.getPixel(4, bitmap.height / 2)
+                    val brightness = Color.red(background) + Color.green(background) + Color.blue(background)
+                    assertTrue("capture uses $theme palette", if (theme == ThemeMode.LIGHT) brightness > 600 else brightness < 150)
+                    File(output, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                    File(output, "$name.txt").writeText(
+                        "figma=848:9517 theme=$theme wallpaper=false sendNow=$enabled " +
+                            "sizePx=${bitmap.width}x${bitmap.height} viewportDp=412x892 " +
+                            "hardwareAccelerated=${design.view.isHardwareAccelerated} " +
+                            "actions=primary bubbleAndClockAlpha=0.6\n",
+                    )
+                } finally {
+                    bitmap.recycle()
+                }
+            }
+        }
+    }
+
+    private fun queuedSettings(enabled: Boolean) =
+        settings("sonnet").copy(
+            capabilities = SessionCapabilities(emptyList(), emptyList(), midTurnInput = enabled),
+        )
 
     /** #1619: the message attachment states `696:4913`, then the empty thread `696:4989`. */
     @Test fun attachmentAndEmptyFramesAt412By892() {

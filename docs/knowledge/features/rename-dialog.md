@@ -19,3 +19,35 @@ Save is enabled only when the trimmed text is nonblank and differs from `initial
 [`RenameDialogTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/RenameDialogTest.kt) covers selection, copy, validation, trimmed Save and Done, dismissal, compact 320 × 640 dp width, and enlarged text. [`MobileModalTest`](../../../app/src/androidTest/java/de/pyryco/mobile/ui/components/MobileModalTest.kt) checks the Rename field and footer with a visibly open IME at that compact size, including pointer submission. [`RenameDialogCaptureTest`](../../../app/src/androidTest/java/de/pyryco/mobile/ui/conversations/components/RenameDialogCaptureTest.kt) produced the [Pixel 8 capture](../../../app/src/androidTest/assets/rename-1278/emulator-rename-412x892.png); its [focused XML](../../../app/src/androidTest/assets/rename-1278/device-results.xml) records one executed, zero failed, zero skipped. The API 33 ATD image returned a blank framebuffer for capture despite rendering semantics, so use the Pixel 8 image for pixel comparisons. The thread's existing `InteractiveStreamE2ETest.interactiveTurn_renameConversation_relabelsTopBarAndListRow` covers the live rename path.
 
 The field starts prefilled, so tests use `performTextReplacement` when asserting replacement. `performTextInput` can append to the existing value and make a changed-name assertion pass for the wrong reason.
+
+For live setup, wait for the labelled editable field inside the dialog rather than any focused
+editable node: the composer may retain focus until the modal appears. A matching field value
+proves only editing; require dismissal and the non-editable title outside the dialog to prove
+rename completion. `DiscussionRenameTest` (#1992) covers delayed dialog appearance, matching
+field without confirmation, reopening, owning-host reconnect and diagnostic failure preservation.
+The two-host Archive scenario shares its driver and checks the owning repository immediately
+before one Save; see [live contract and counted evidence](../../e2e-interactive-stream.md#verification-status).
+
+`renameDiscussionInDialog` offers an optional `onDialogFieldAbsent` fixture hook
+(#2014): callers supplying it get an initial labelled in-dialog field probe, and
+the hook runs once if that field is absent, before the unchanged timed wait.
+Live callers leave it unset. `delayedDialogDoesNotReplaceComposer` holds the
+opening timer until this observation, proves no dialog, a focused empty composer,
+an armed timer and zero submissions, then releases virtual time. The helper still
+replaces only the labelled dialog field, taps one Save, requires dismissal and
+confirms the external title; the fixture checks an empty composer afterward and
+one exact submission. Follow the [clock-boundary guidance](development-verification-test-scheduling.md#test-scheduling-and-harnesses)
+instead of racing the fixture timer against wall-clock polling.
+
+The [retained evidence](../../../app/src/test/resources/e2e/discussion-rename-2014/README.md)
+records constrained before/after exact-method runs: 1 executed/failed before,
+1 executed/passed after, both with zero errors/skips. A removed focused-editable-field
+negative control executed 1 and failed awaiting Save with composer length 12 and
+zero submissions, proving the delayed fixture still detects contamination.
+Committed-source acceptance executed/passed the exact method (1), the complete
+`DiscussionRenameTest` class (5) and existing `RenameDialogTest` (14), each with
+zero failures/errors/skips. The class XML includes the owning-host readiness gap,
+matching-field-without-completion, reopening with one submission per name and
+original-timeout preservation when diagnostics fail. The [verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2025#issuecomment-6091301997)
+confirms these results; the timer diagnosis does not establish the trigger of the
+older anonymous failures.

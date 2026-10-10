@@ -1,6 +1,6 @@
 # MessageBubble
 
-Stateless row primitive (#128) rendering a single `Message` in the conversation thread surface. Three visual variants dispatched off `Message.role`: a right-aligned bubble for `Role.User` (plain text) and a left-aligned bubble for `Role.Assistant` (markdown-rendered via [`MarkdownText`](./markdown-text.md) since #129 — CommonMark element set, boxed since #644), both through one shared `Message` component; and a tap-to-expand `surfaceContainerHigh` card for `Role.Tool`, routed via [`ToolCallRow`](./tool-call-row.md) since #131. User and assistant bubbles can end with a **meta row** — that message's own locale-formatted date/time (#644). In the thread only that timestamp stays hidden until tapped, with at most one visible and none on a streaming reply (#1621, revised by #1817). Copy and reply (#1818) are always beside the bubble, left of user messages and right of assistant messages, including streaming replies. Assistant content reveals progressively with a blinking caret when `Message.isStreaming = true` (#184), through stabilized, formatted markdown since #1766. Eventual call site is the `LazyColumn(reverseLayout = true)` body of [`ThreadScreen`](./thread-screen.md).
+Stateless row primitive (#128) rendering a single `Message` in the conversation thread surface. Three visual variants dispatched off `Message.role`: a right-aligned bubble for `Role.User` (plain text) and a left-aligned bubble for `Role.Assistant` (markdown-rendered via [`MarkdownText`](./markdown-text.md) since #129 — CommonMark element set, boxed since #644), both through one shared `Message` component; and a tap-to-expand `surfaceContainerHigh` card for `Role.Tool`, routed via [`ToolCallRow`](./tool-call-row.md) since #131. User and assistant bubbles can end with a **meta row** — that message's own locale-formatted date/time (#644). In the thread only that timestamp stays hidden until tapped, with at most one visible and none on a streaming reply (#1621, revised by #1817). Copy and reply (#1818, #1982) are beside bubbles tall enough to contain 48dp targets, left of user messages and right of assistant messages, including streaming replies. Assistant content reveals progressively with a blinking caret when `Message.isStreaming = true` (#184), through stabilized, formatted markdown since #1766. Eventual call site is the `LazyColumn(reverseLayout = true)` body of [`ThreadScreen`](./thread-screen.md).
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). Files: `MessageBubble.kt` (both role bubbles, the streaming pair) and `MessageMetaRow.kt` (the meta row + copy control, since #644 — `internal` rather than file-private so [#657](../codebase/657.md)'s per-code-block copy control can reuse it). Sibling of [`DiscussionPreviewRow`](./discussion-preview-row.md), [`ConversationRow`](./conversation-row.md), `ArchiveRow.kt`.
 
@@ -76,20 +76,34 @@ At `toolNestingDepth = 0` (every non-tool row, and a top-level or unmatched-pare
 
 ### Shared `Message` container (since #644)
 
-`MessageContainer` measures the bubble first with a custom `Layout`, then measures
-its action column at the bubble's height. It places the bubble at the role's edge
-and the actions beside it: left of user messages, right of assistant messages
-(#1817, [Figma 620:1577 / 808:12242](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=620-1577)).
-The column is 13dp wide with a 12dp bubble-to-column gap. Copy sits above reply
-(#1818), glyph centres 25dp apart, and the pair is centred vertically beside the
-bubble. Tool and queued rows have no actions.
+`MessageContainer` derives the action arrangement from the surface's natural
+intrinsic height at the original stacked-layout width, then measures the surface
+once at the selected width (#1982). Below 96dp it selects compact actions; at
+exactly 96dp or above it keeps the stacked arrangement. Compact reservation can
+rewrap content beyond 96dp without changing that selection. Intrinsic queries
+inspect only the surface, never the subcomposed controls.
 
-The 20dp gutters leave 372dp at the 412dp reference width. Delivered bubbles reserve
-a private 40dp far-side inset plus the 12dp gap and 13dp column, giving a **307dp**
-bubble maximum (215dp at 320dp). There is no extra phone-width cap. Short finished
-bodies hug content; streaming bodies retain their fill behavior. The shared
-`MessageRoleInset = 100.dp` still serves queued rows and must not be changed to
-adjust delivered bubbles. Tool rows keep their existing geometry.
+Actions sit left of user messages and right of assistant messages
+([Figma 620:1577 / 808:12242](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=620-1577)).
+The stacked arrangement retains its 13dp visual lane and 12dp bubble-to-lane gap:
+Copy above Reply, glyph centres 25dp apart, pair vertically centred. Compact
+uses the approved side-by-side exception, Copy then Reply left-to-right, each
+glyph centred in its own adjoining 48×48dp target, pair vertically centred.
+Tool and queued rows have no delivered-message actions.
+
+The 20dp gutters leave 372dp at the 412dp reference width. Stacked bubbles reserve
+a private 40dp far-side inset plus the 12dp gap and 13dp lane, giving a **307dp**
+maximum (215dp at 320dp). Compact reserves 96dp for the targets plus the same gap
+and inset, giving a **224dp** maximum (132dp at 320dp). There is no extra phone-width
+cap. Short finished bodies hug content; streaming bodies retain their fill
+behavior. The shared `MessageRoleInset = 100.dp` still serves queued rows and must
+not be changed to adjust delivered bubbles. Tall stacked bubbles and tool rows
+keep their existing width and spacing.
+
+Surface and layout height are natural content height at the selected width,
+including padding, attachments and any visible timestamp. Neither has an
+action-driven minimum. The component retains the 16dp visible inter-row gap and
+the newest bubble's 12dp rest gap above the status band.
 
 The bubble's column aligns content to Start for both roles, with the timestamp
 alone aligned to the role's side. It retains 20dp horizontal and 16dp vertical
@@ -209,20 +223,23 @@ streaming text ahead of progressive display, through `setBoundedText`. The share
 `CopyTextControl` remains compact with its existing ambient tint and padding, and
 uses the same safeguard; it copies the block's source rather than the message.
 
-Each side action has its own adjoining 48×48dp target (#1895); the pair's touch
-layout is 48×96dp. The 11×12dp `ic_copy` and 13×12dp `ic_reply` glyphs sit
-12.5dp above and below the shared edge, preserving their 25dp centre gap and
-bubble-relative centring without widening the drawn 13dp column or bubble.
-A tap just above the shared edge copies and just below it replies. There is no
-zero minimum-touch-target override. Horizontal target overflow remains unclipped
-and is placed after the bubble, so taps in the overlap act rather than toggle time.
+Each side action has its own adjoining 48×48dp target. Compact targets form a
+96×48dp pair; stacked targets form a 48×96dp pair. Stacked targets extend outward
+from the 13dp visual lane, with their near edges meeting the surface edge without
+entering bubble content. Their glyphs retain the existing 11×12dp `ic_copy` and
+13×12dp `ic_reply` assets, 25dp centre separation and primary tint. Both arrangements
+keep targets inside the screen and the owning surface's vertical extent, separate
+from each other and neighbouring messages. Edge taps invoke only the owning
+copy or reply callback and never toggle time.
 
-Short visible bubble surfaces have a 96dp minimum height, with their body/meta
-column vertically centred. Both targets fit inside that surface and its message
-row, keeping adjacent short rows' targets separate. Increasing only the row's
-blank space below a short surface breaks the visible 12dp newest-bubble rest gap;
-enlarge the surface instead. Long surfaces retain their content spacing and
-width contracts. See [minimum-dimension and pointer coverage](message-bubble-testing.md#testing).
+A measured surface below 48dp composes neither targets nor glyphs (#1982).
+Finalized empty/whitespace Assistant markdown can leave only the existing 32dp
+padding; adding a height floor would violate natural height. The guard uses
+rendered height rather than source text, and controls return on remeasurement
+when content, attachments or a visible timestamp can contain them. Merely leaving
+controls unplaced retains their semantics, so `SubcomposeLayout` omits their
+composition entirely. Horizontal reservation and arrangement selection still
+apply while controls are absent. See [geometry and pointer coverage](message-bubble-testing.md#testing).
 
 Reply (#1818) hands the immutable `Message` at tap time to `onReply`; the default
 is inert, so previews and standalone mounts need no fixture. `ThreadScreen` turns
@@ -301,7 +318,7 @@ internal const val MESSAGE_BUBBLE_TEST_TAG = "message-bubble"
 
 `ToolNestingIndent` (since #896, `private val ToolNestingIndent = MessageAreaRowSpacing`) is declared just above this block rather than inside it — it aliases the existing row-spacing constant rather than being a new dp literal, so the two can't drift out of sync.
 
-**`UserBubbleShape` and `UserBubbleMaxWidth` are gone** — the pre-#644 asymmetric 20/20/6/20 "tail" corner radius and the 320dp cap are both superseded by the shared `BubbleShape` (uniform 6dp) and the delivered inset plus action-column reservation above. There is no longer a separate max-width constant for either role: the inset *is* the mechanism, and 307dp is the delivered bubble maximum at the 412dp reference width.
+**`UserBubbleShape` and `UserBubbleMaxWidth` are gone** — the pre-#644 asymmetric 20/20/6/20 "tail" corner radius and the 320dp cap are both superseded by the shared `BubbleShape` (uniform 6dp) and the delivered inset plus action-column reservation above. There is no longer a separate max-width constant for either role: the inset *is* the mechanism, and the delivered maxima at 412dp are 307dp stacked and 224dp compact.
 
 The blink period stays file-private. The caret glyph is `internal` in `MarkdownText.kt` since #1766, shared by the streaming renderer and its tests. The word rate and catch-up budget are also private; `STREAMING_REVEAL_STEP_MS` and the pure `nextStreamingRevealLength` helper are internal so the step tests can pin cadence and word boundaries.
 

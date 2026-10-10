@@ -1,0 +1,63 @@
+Ticket #1862: settled Edit channel / Default and Save as channel / Prefilled
+
+Provenance
+Captured 2026-10-08 on feature/1862, base main f702aa78cc038ce7e0c97c02e79bed1b65d68dc2,
+plan commit 355a98ffe5ed531e6ecaee10440710492d351ffc plus the sequencing implementation.
+Captured ListDesignCaptureTest source blob: fa7e2845e6f203181c8c6cba15ab50b4f1df3e4e.
+Spotless subsequently changed import order and assertion wrapping only; production is unchanged.
+Configured full pixel8Api35: Pixel 8, API 35, google_apis_playstore; runtime sdk_gphone64_arm64.
+Default 412x892 px/dp, density 1, font scale 1, static dark, hardwareAccelerated=true,
+syntheticBars=false. Real status and navigation insets: 24 px each. Both Activity and dialog
+IME bottoms are zero; dialogImeVisible=false. Both forms observed open IME with positive
+dialog inset before physical Back, retained the same focused dialog, and checked hidden/zero
+IME before and after hardware capture. The compact 320x700 / font scale 1.5 walk preserves
+Archive channel reachability while the keyboard is open and both forms' footer reachability.
+
+Command (exit 0)
+./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ListDesignCaptureTest#listFramesAt412By892,de.pyryco.mobile.design.ListDesignCaptureTest#listFramesAt320By700LargeText' -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain
+Fresh 1862-results.xml timestamp: 2026-10-08T07:13:14 UTC.
+2 executed, 2 passed, 0 failed, 0 errors, 0 skipped.
+ListDesignCaptureTest.listFramesAt412By892 ran and passed (132.165 s).
+ListDesignCaptureTest.listFramesAt320By700LargeText ran and passed (141.314 s).
+Default Edit PNG/sidecar captured 07:11:38 UTC; Save captured 07:12:01 UTC.
+Compact Edit captured 07:09:33 UTC; Save captured 07:09:52 UTC.
+Only these two forms' fresh captures were copied from
+app/build/intermediates/managed_device_android_test_additional_output/debugAndroidTest/pixel8Api35DebugAndroidTest/design-1220/list/.
+Other committed audit surfaces retain their previous evidence. The initial red run executed
+listFramesAt412By892 once: 1 failed, 0 errors/skips, hidden dialog IME assertion failed.
+
+Measurements (native scale, rectangles use exclusive right/bottom edges)
+Only Edit channel / Default 671:5415 and Save as channel / Prefilled 671:5718 are judged.
+Figma get_design_context, get_metadata and get_screenshot retrieved 2026-10-08.
+Edit Figma name well y=294.5..346.5, prompt well y=386.5..498.5; app exact fill bands
+y=295..347 and 387..499. Save Figma y=358.5..410.5 and 450.5..562.5; app exact fill
+bands y=359..411 and 451..563. The fractional Figma edges have antialiasing; opaque
+bands omit those partial pixels. Name-well-bottom to prompt-well-top: 40 dp in both
+frames and both captures. The whole field blocks are separated by 12 dp (20 dp prompt
+label box plus its 8 dp well gap makes the 40 dp surface gap). PASS within 2 dp.
+
+Both frames: Cancel (119,828)..(211,868), 92x40 dp; OK (231,828)..(293,868), 62x40 dp.
+Both captures: Cancel (119,804)..(210,844), 91x40 dp; OK (230,804)..(293,844), 63x40 dp.
+Visible horizontal gap is 20 dp in both. Width differences are 1 dp; heights exact.
+Figma bottom clearance: 892-868=24 dp. App: 892-24 navigation inset-844=24 dp.
+The real navigation bar moves the bottom-anchored footer 24 px up; the real status bar
+moves the header 24 px down. The centered content's midpoint is preserved. Do not
+subtract the status inset from field coordinates or treat footer touch bounds as surfaces.
+Surface sizes and spacing PASS within 2 dp. Footer crop comparisons translate the
+frame by the navigation inset: app (100,784)..(312,868), frame (100,808)..(312,892).
+Full side-by-sides/overlays retain raw bars and coordinates without rescaling.
+
+Colour/type verdict: exact frame role tokens MATCH. Opaque sampled shell #001D34,
+labels #CFE4FF and primary #9DCBFC match both PNGs. Wells #002642 composite #003355
+at 41% over the shell; field text uses onBackground #E0E2E8 and OK uses onPrimary #003355.
+Source maps header to titleLarge 22/28/400/0, labels to labelLarge 14/20/600/0.1,
+field text to bodyMedium 14/20/400/0.25 and footer to bodyLarge 16/24/500/0.5
+(size/line height/weight/tracking), matching Figma's Roboto role tokens.
+Demo names/prompt text and the focused name cursor/handle are fixture content, not judged.
+No remaining requested visual mismatch; no follow-up ticket required.
+
+Pending documentation stage
+app/src/androidTest/assets/design-1220/list/index.md: correct the Measuring note, since
+dialog sidecars do not always report bottom=0 and unsettled timing can produce image/inset
+disagreement. Update only Edit channel and Save as channel entries with this provenance,
+measurements and verdicts. Routine dispatcher ATD checks are not this real-bar pixel proof.

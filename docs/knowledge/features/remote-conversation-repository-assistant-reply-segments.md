@@ -23,10 +23,31 @@ fold order, so the lengths sum to `content.length`. It carries no text, so its `
 
 **The segment key.** `segmentKey(turnId, openingSeq)` is the bare `turnId` when the opening delta's `seq` is
 `0` — every turn's text starts there, so this is always the turn's first segment — and `"<turnId>#<openingSeq>"`
-otherwise. Both live and a replayed page derive the same key from the same opening delta, with no shared
-state between them. A row cached before segments existed carries no record and is keyed by the bare id, so it
-reads as a turn's first segment under the new scheme too, and the pre-existing [#425](../codebase/425.md)
-key-uniqueness guard keeps matching it unchanged.
+otherwise. This is a canonical admission key, not a promise that emitted `Message.id` has
+that spelling. History and cache reconciliation can allocate an alias for an admitted collision.
+
+**Surviving renderer ownership (#1941).** After reconciliation and seam joining, allocation reserves
+exact emitted ids for surviving displayed/cache owners, then surviving receiving rows, before
+newcomers. An opening segment displayed as `t` keeps `t` when an unmatched legacy whole-turn `t`
+arrives separately; the legacy newcomer gets `t#0` or an unused `t#0~n`. In the reverse arrival order
+the legacy owner keeps `t`. Existing `#0` aliases and `~n` suffixes survive reconstruction and unrelated
+merges. Newcomers retain a usable incoming alias where possible; remaining claims prioritize ordinary
+rows, opening segments, then other segments. Allocation neither drops admitted rows nor adds copies. Logical-owner claims are indexed locally
+to the merge; no connection-wide alias registry is needed.
+
+Overlap uses explicit ordinary identity or segment `(turnId, seq)`, never parsed alias text: daemon
+ids may themselves spell aliases. Original-page replay and empty input preserve identities and
+multiplicity. Admission, hostile-collision rejection, text/state reconciliation and ordering remain
+separate from allocation. Continuity applies to a row that survives separately; removed, replaced,
+split or absorbed rows have no such promise. Reconnect claims must include rows already drawn by the
+[cache wrapper](caching-conversation-repository.md#how-the-restore-merges-with-live-rows), even when the
+fresh projection is unseeded. Ordinary aliases retain their replay identity through the
+[cache-local record](conversation-cache-layout.md#layout).
+
+`HistoryMessageIdentityTest` probes both history/cache arrival orders, occupied alternatives,
+preexisting suffixes, prefix/middle/suffix overlaps, original/empty replay and real-file restoration.
+Assertions compare complete rows and logical multiplicity as well as unique ids: uniqueness alone
+would miss an old key transferring to another row.
 
 **Two guards keep the key unique**, since it is also the thread's `LazyColumn` key and a daemon chooses
 `turn_id` freely (it could pick one that spells another turn's `"<turnId>#<seq>"`, a `tool_use_id`, or a
@@ -48,12 +69,13 @@ it before `distinctUntilChanged`, so every reader of the projection sees a segme
 follows it — a tool call, a user message, whatever put that row there. See
 [Streaming assistant turns § the known gap](streaming-assistant-turns.md#finished-rows-are-now-per-segment-not-one-bubble-per-turn-1350)
 for the one composition point downstream of `observe` this does not cover.
-`turn_end` (`withFinalizedTurn`) still settles **every** streaming segment of the turn, plus a bare-id row
-with no segment record — not only the last one — since a daemon bug or a race can otherwise leave an earlier
-segment stuck streaming.
+`turn_end` (`withFinalizedTurn`) settles **every** streaming segment of the turn, plus ordinary
+assistant rows matched by logical turn id, including aliases — not only the last one. A daemon
+bug or a race can otherwise leave an earlier segment stuck streaming.
 
 **`withAssistantDelta`'s `passOver: Set<String> = emptySet()` ([#1558](https://github.com/pyrycode/pyrycode-mobile/issues/1558)).**
-The "last row" a delta extends is picked by `indexOfLast`, skipping any user row whose id is in `passOver` —
+The "last row" a delta extends is picked by `indexOfLast`, skipping user rows whose ordinary
+logical id is in `passOver` —
 so a delta lands on the running reply even when a user row this device minted sits after it in store order
 but reads below it (a [queued own echo](queued-backlog.md#own-echo-position-a-queued-message-draws-below-the-turn-it-waits-behind-1558)).
 `ThreadProjection.applyAssistantDelta` passes its conversation's `parked + awaitingPush` user ids; this history reducer's own
@@ -93,8 +115,9 @@ joins. The joined row keeps `older`'s id, timestamp and session (it saw the segm
 delivered to both lanes is counted once, located from `newer`'s own record and clamped to its content so a
 mismatched record cuts short instead of throwing), and takes `newer`'s streaming flag, since the newer lane
 knows whether the turn has ended. `withJoinedSegments()` walks a merged list once and applies this to every
-adjacent pair, returning the same list when nothing joined. Joining only ever removes the later row and keeps
-the earlier row's already-unique id, so it can never mint a duplicate key.
+adjacent pair, returning the same list when nothing joined. Joining removes the later row. The final
+allocator restores surviving owner claims and resolves reconstructed-key collisions; a joined or
+absorbed row has no separate-key continuity guarantee.
 
 ### The `(turnId, seq)` dedupe — the receiver owns a turn from its lowest `seq`
 
@@ -150,7 +173,7 @@ turn without held attribution takes the first non-empty incoming hint. It applie
 **every held and incoming reconstruction or replacement candidate**, including conflicting non-empty
 hints. Selecting a winner in a lookup but filling only empty candidates loses the held parent when an
 older incoming opener becomes the reconstructed row, or a legacy whole-turn row replaces it.
-The lookup uses `segment.turnId`, falling back to the bare assistant message id for a legacy row,
+The lookup uses `segment.turnId`, falling back to the ordinary logical assistant id for a legacy row,
 and is local to this conversation's merge. Atom copies and `withJoinedSegments` retain the hint;
 an unattributed opener cannot erase a known parent on rejoin. These copies change attribution only,
 leaving text, duplicate identity, row keys and held-row relative order to the existing merge rules.
@@ -160,8 +183,43 @@ prefix/middle/suffix overlap in both arrival directions, non-recoverable legacy 
 repeated merges. Assertions cover parent, text, keys and held separators/order, alongside older-page
 prepend, duplicate live replay and conversation isolation. Comparing the attributed script with its
 parentless counterpart catches accidental changes to identity or placement. See
-[the cache thread document](conversation-cache.md#layout) for disk-only unknown attribution and
+[the cache thread document](conversation-cache-layout.md#layout) for disk-only unknown attribution and
 in-memory reconnect retention.
+
+### Notification preview evidence (#1725)
+
+A thread projection is deliberately forgiving, so its settled rows are not proof that a reply's
+last segment is complete. Dropped malformed deltas can leave a plausible prefix; dropped tool or
+stopped-turn boundaries can join prose that should be separate. Notification enrichment therefore
+always asks internal `RemoteConversationRepository.requestAttentionHistory(conversationId)` for
+one newest raw page (empty cursor, daemon-selected limit) within the source's three-second total
+bound. It shares `readHistoryPage`'s encrypted request, with no merge, persistence or latest-entry
+advance. Ordinary `observeMessages` can backfill and public `requestHistory` merges/advances facts;
+neither is an appropriate read-only notification seam. The ephemeral supplier and host/repository
+cancellation are owned by the
+[host source](dependency-injection-host-conversation-source.md#attention-alerts-685), with independent
+jobs and per-conversation ordering in the
+[notifier](push-messaging-service.md#private-reply-and-action-previews-1725).
+
+Before reduction can authorize content, every page entry must carry the exact string conversation
+id without filtering, durable ids must be consecutive newest-first, and a valid matching `turn_end`
+must name the target turn and its known alert checkpoint when present. Reduction then needs a
+non-null read fact for every supported row producer/update. This includes **every `turn_end`**, not
+just the matching completion: an intervening error end can append a `StoppedTurn` boundary. A
+malformed end lacking `stop_reason` can otherwise disappear silently, joining “Before” and “After”
+despite consecutive delta sequences and a valid final completion. The regression rejects that page;
+its valid-boundary control selects only “After”.
+
+Only settled assistant rows with `segment.turnId` equal to the completed turn and empty
+`parentToolUseId` qualify. Their delta sequences together must start at zero with no gap or duplicate,
+and recorded lengths must sum to each row's content length. Select the last nonblank qualifying
+segment, never a legacy row, previous turn or child reply. Missing, malformed, colliding, silently
+dropped, incomplete, failed or timed-out evidence returns no preview and leaves fixed notification
+copy; no older page or cached prefix substitutes for it. Keep the stricter certification local to
+notifications: it does not change forgiving thread/history decoding, merges or reconnect ordering.
+`AttentionPreviewSourceTest` covers malformed tool seams, attribution, trailing deltas and stopped
+boundaries; remote integration tests recover valid raw evidence while leaving the unchanged local
+truncated/joined projection alone.
 
 ### The cache's segment record
 

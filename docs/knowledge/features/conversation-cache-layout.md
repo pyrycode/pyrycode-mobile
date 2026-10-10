@@ -1,0 +1,255 @@
+# Conversation cache — Layout
+
+Split from [Conversation cache](conversation-cache.md); this topic retains the section anchors.
+
+## Layout
+
+```
+<root>/<sha256hex(serverId)>/conversations.json
+<root>/<sha256hex(serverId)>/threads/<sha256hex(conversationId)>.json   (#797)
+<root>/<sha256hex(serverId)>/read-positions.json                       (#877)
+```
+
+A server id is daemon-supplied and opaque, so it is never pasted into a path: the host
+directory name is the lowercase hex SHA-256 of the id's UTF-8 bytes. That means no `/`, no
+`..`, no NUL and no reserved name can ever reach a path component, and no server id enters the
+filesystem namespace at all — proven by a test that writes a `../../etc/passwd`-shaped server
+id and asserts every stored file stays under the canonical root. A **conversation id is hashed
+the same way** and filed under its host's directory rather than in a flat namespace, so
+`removeHost`'s existing recursive delete of the host directory covers `threads/` for free with
+no separate removal step. The hash is namespace derivation, not a security boundary — the
+property relied on is collision resistance, not secrecy.
+
+The stored document is a versioned envelope (`version: Int`, `conversations: List<...>`),
+mirroring `StoredPairings`. The cache-local record type — not `@Serializable` annotations on
+`Conversation` itself — is deliberate: see
+[data model § What's deliberately absent](data-model.md#whats-deliberately-absent). `lastUsedAt`
+is stored as `Instant.toString()` / parsed back with `Instant.parse(...)`, not epoch millis, so
+the round-trip is exact to the nanosecond rather than truncated to millisecond precision.
+
+### The cache-local record must mirror every `Conversation` field (#999)
+
+Being cache-local cuts both ways: nothing forces `CachedConversation` to track a field added to
+`Conversation`, so a new domain field silently stops surviving a restart unless someone remembers
+to extend the record by hand. `CachedConversation`/`Conversation.toRecord()`/
+`CachedConversation.toDomain()` carry `muted: Boolean = false` beside `archived` for this reason —
+[data model § `Conversation`](data-model.md#conversation)'s first pass mirrored `archived` through
+the wire DTOs and missed this cache, and `HostConversationSource` publishes
+`store.readConversations(...)` as the host's rows on start, before any live list arrives, so a
+restored muted channel would have read `muted = false` and alerted on cold start. The `= false`
+default keeps a document written before this field existed readable, the same reasoning as every
+other additive field in this cache (see `CachedAttachment` above). Adding a boolean like this to
+`Conversation` means updating this record and both mapping functions, not only the DTOs — check
+here first, before the wire layer, since a cache miss is the harder failure to notice.
+
+**Known gap, not yet fixed: `agent` ([#1108](https://github.com/pyrycode/pyrycode-mobile/issues/1108)).**
+`Conversation.agent` was added without touching this cache — deliberately out of that ticket's scope, since
+nothing renders the field yet and the mobile does not negotiate `multi_agent`, so the key never actually
+arrives today. `CachedConversation` still has no `agent`, so `CachedConversation.toDomain()` produces the
+default `ConversationAgent.Claude` on every restore, and `HostConversationSource` publishes that row on cold
+start before the live list arrives — the same window this section describes for `muted`, but left open here
+because there is no observed failure yet to fix against (Evidence-Based Fix Selection). The ticket that first
+reads `Conversation.agent` for the model picker or the agent switch should either persist it next to `muted`
+here or gate on the live list before trusting a cold-started value.
+
+The thread document is the same shape, file-private to `FileConversationCache.kt`:
+`CachedThread(version: Int, rows: List<CachedThreadRow>, history: CachedHistoryPosition? = null)`,
+`CachedThreadRow(message: CachedMessage? = null, boundary: CachedBoundary? = null, banner:
+CachedBanner? = null, compaction: CachedCompaction? = null, refusal: CachedRefusal? = null)` —
+exactly one of the five is set, mapping
+`ThreadItem.MessageItem` / `ThreadItem.SessionBoundary` / [`Banner`](banner-notice-row.md) /
+[`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874-1358) /
+[`ModelRefusal`](model-refusal-row.md) (never `UnrecognizedMessage`, which `cacheableThreadRows`
+drops before a `CachedThreadRow` is ever built; `ThreadItem.toRecord()` throws if it ever reaches
+it). The three newer fields (#1353) default to `null`, so a document written before this ticket —
+holding only `message`/`boundary` rows — still decodes, and the stored `version` stays 1.
+`CachedMessage(id, sessionId, role, content, timestamp, tool: CachedToolCall? = null, attachments:
+List<CachedAttachment> = emptyList())` carries no `isStreaming` field — a restored row is always
+settled, so the field would have nothing to encode. `CachedToolCall(toolName, input, output,
+status, inputFields: Map<String, String> = emptyMap())` — `inputFields` added by #1575 so a restored
+`Bash` row keeps its described/simple [header](tool-call-row.md#subject-and-elapsed-text) instead of
+falling back to the `input_summary` précis; the default keeps a document written before #1575 (no
+`inputFields` key) readable with empty fields, the same additive pattern as `CachedMessage.attachments`
+(#983). `parentToolUseId`, `denial` and `resultDetail` stay uncached. `CachedBoundary(previousSessionId,
+newSessionId, reason, occurredAt, workspaceCwd:
+String? = null)` round out the two original row kinds. `CachedBanner(level, text, truncated,
+occurredAt)`, `CachedCompaction(preTokens: Long? = null, postTokens: Long? = null, manual,
+occurredAt)` and `CachedRefusal(originalModel, fallbackModel: String? = null, banner,
+bannerTruncated, occurredAt)` carry every field their domain row holds, stored verbatim as message
+content already is — the render path owns stripping either way, not the cache. Enums serialize by
+name; `Instant` fields (`timestamp`, `occurredAt`) follow `lastUsedAt`'s ISO-text convention, not
+epoch millis. `occurredAt` is also each of the three new kinds' dedupe key — the same field
+`ThreadRow.listKey()`, `HistoryPageReducer`'s `holdsBanner`/`holdsCompactionBoundary`/
+`holdsModelRefusal` and `decodeThread` below all join on.
+
+`CachedMessage.reconciliationId: String? = null` (#1941) round-trips the original ordinary id
+through both mappings alongside the emitted `id`. The optional null default keeps older records
+readable under version 1. Retaining only an emitted collision alias would make an original daemon
+page look like a new ordinary row after process death. Explicit metadata preserves replay matching
+without parsing aliases that could themselves be real daemon ids. Segment identity still comes
+from `CachedSegment`; when reconciliation converts legacy content to segments, ordinary-only
+metadata is cleared. See [Message identities](data-model.md#message) and
+[restore ownership](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+
+Assistant attribution (`Message.parentToolUseId`, #1826) is also absent from disk serialization;
+The reconciliation field above does not add attribution storage or change the document version. Cache-only assistant rows
+therefore restore with unknown (empty) attribution. Same-conversation wire/history evidence enriches
+those rows in memory through `mergeCachedRows`, including legacy rows without recoverable segment
+records. The wrapper retains reconciled rows across reconnect, so a later unattributed cache copy
+cannot erase a known parent. A process restart can lose that hint until fresh evidence arrives.
+See [parent precedence through seams and merges](remote-conversation-repository-assistant-reply-segments.md#parent-attribution-through-seams-and-merges-1826)
+for conflict handling. File-cache round-trip and wrapper probes verify omission from stored bytes,
+restoration as empty, enrichment and reconnect retention without a cache migration.
+
+`CachedAttachment(attachmentId, displayName: String? = null, mimeType: String? = null)` (#983) maps
+`Message.attachments` 1:1; `explicitNulls = false` omits a `null` hint on encode rather than writing
+`"displayName":null`, and a document written before this field existed decodes with `attachments =
+emptyList()` through the same `ignoreUnknownKeys`/default-field mechanism every prior additive cache
+field has used. Like `MessageAttachment`, its generated `toString` is overridden to print only
+`attachmentId` — the name and MIME hint are untrusted display text (see [data model §
+`Message`](data-model.md#message)) and this file-private class is exactly the kind of type a stray
+log call could otherwise reach.
+
+`CachedHistoryPosition(cursor, atStart, coverage = null)` mirrors the domain position without a
+schema-version change. `CachedThread.history` still defaults to null, and older position records
+decode with null coverage. Its `toString` prints only `atStart`; `HistoryCoverage.toString` prints
+span/gap counts and the unknown flag, never opaque cursors, identity proofs or entry content.
+
+### Thread document readers (#1949)
+
+`readThread` and `readHistoryPosition` share one immutable `DecodedThread` under
+`FileConversationCache`'s existing mutex. Each read still opens the current document
+from disk. Since #2018 the retained value holds the exact document byte array; a
+bounded byte buffer compares freshly opened bytes through EOF before reuse. Reuse
+requires both the same host/conversation document path and identical bytes, including
+length; file length and modification time alone cannot establish freshness. A second
+cache instance's same-size/same-time replacement must therefore be observed. This retains only one document, not an unbounded thread cache.
+
+Mutations clear the retained decode before running. Missing files clear it, and changed
+bytes or a different path retires it before decoding. An unreadable document cannot
+supply cached rows or position: a successful fresh read remains a prerequisite for
+reuse. Host changes cannot borrow another host's decode even with colliding conversation
+ids. No schema, durable retention or coroutine ownership changes accompany this reuse.
+
+Valid documents decode directly into typed `CachedThread` records with the string
+parser (#2018), avoiding a large optional-history JSON tree followed by a second
+metadata decode. The temporary UTF-8 string is released after decoding; only the
+bytes and validated value are retained. Stream decoding was measured slower and
+is not the reader path. On serialization failure, `CachedThreadRead` decodes typed
+rows with optional `history` as a JSON element, retaining malformed-metadata and
+legacy omitted-`spans` compatibility. Version and domain-row validation precede
+metadata acceptance; malformed or structurally invalid optional metadata yields
+readable rows with no position, while invalid rows withhold both. Field order and
+unknown fields do not change that boundary. Metadata writers share this decoder.
+
+Row validation uses one identity-set pass and rejects every running tool and
+kind-specific duplicate as before. Coverage validation checks already-normalized
+unsigned spans in stored order and each gap against its neighbouring spans; it
+must reject reversed, overlapping, adjacent or unsorted spans rather than repair
+them by sorting/merging. Maximum unsigned endpoints remain valid. Fresh-byte tests
+include same-length replacements across buffer/multibyte boundaries, valid
+whitespace growth/truncation and rejection of a trailing second JSON document.
+
+Coverage remains checked against every retained direct proof and any legacy binding.
+When no legacy aliases exist, only alias-specific work is skipped. `retainedBy` reuses
+the immutable coverage only after every claim matches its freshly calculated proof;
+missing claims and delta-proof replacements still use the pruning/update path. Hash
+inputs, full SHA-256 digests and lowercase hex encoding remain compatible with persisted
+records. Proof and restore-order batches each own a local digest, reset by `digest()`
+between independent inputs; it never crosses a suspension point or thread boundary.
+
+See [decode freshness tests](conversation-cache-testing.md#testing) and the
+[committed-frame restore regression](thread-screen-testing.md#saved-thread-first-draw-1949).
+
+### History coverage compatibility views (#2018)
+
+Unsigned stored spans, gaps, cursors, walks, row order and entry claims remain the
+authoritative coverage representation. Signed compatibility collections and their
+span-derived `highWater`/`unknownEdge` are computed once on demand with thread-safe
+`lazy`, avoiding unused copies during unsigned restore. Public getter types and
+signed clipping/filtering are unchanged: spans clip at `Long.MAX_VALUE`, while
+unrepresentable ids are omitted from the applicable views. Each copied coverage
+owns independent lazy views; accessing them does not add disk fields.
+`UnsignedHistoryCoverageTest.signedCompatibilityInvariant_restoredAndCopiedViewsStayIndependentAndOffDisk`
+pins these properties alongside existing signed/unsigned validation tests.
+
+### The thread document's two writers (#1354)
+
+Both writers rewrite one thread document under the file cache's `Mutex`, preserving the other
+half. Since #2018 they encode the same `CachedThread` serializer/configuration directly
+to a buffered UTF-8 temporary-file stream, close it, then perform the existing atomic
+replacement. This avoids whole-document string/byte write buffers without changing
+version, fields, row order, proofs, retention or error classification. Other document
+writers keep their text encoding. Since #1832 they also validate durable claims
+against the rows actually retained:
+
+- **`writeThread`** receives untrimmed drawn rows, applies `cacheableThreadRows`, reads the stored
+  position through the header-only decode, and calls `coverage.retainedBy(kept)`. Changed or removed
+  row proofs invalidate every associated producing entry id, including tool-use/result producers.
+  Row-limit trimming resets backwards cursor/`atStart` while preserving conservative gap metadata.
+  Without coverage it retains #1354's trim behavior of dropping the position altogether.
+- **`writeHistoryPosition`** reads the stored rows through the validated decode and checks/binds
+  coverage against them before replacement. One validated domain-row list is reused
+  for old-metadata validation and incoming claim retention/binding; the original
+  stored records are serialized. A corrupt row document supplies no retained rows;
+  a null clear of a never-written document remains a no-op. The wrapper must have written rows
+  first: the file lock prevents torn read-modify-write, but does not by itself order two caller
+  operations. Its [rows-before-state mutex](caching-conversation-repository.md#the-saved-history-position-1354)
+  supplies that ordering and preserves the trim reset in the subsequent state write.
+
+Deferred observer scheduling (#1967) does not change this document format. The wrapper's
+`historyWrites` mutex orders coalesced row writes, coverage row/state saves and confirmed
+removal. Both row writers publish actual successful cacheable rows into a shared baseline,
+including across observer restarts. Coverage row success satisfies candidates through the
+maximum captured history/selected drawn generation; worker publication order cannot make an
+older candidate eligible to overwrite newer coverage. Observer success preserves that boundary.
+Satisfaction advances even when the following position save fails, because its rows reached disk.
+
+Capture order alone cannot distinguish retained coverage from a save captured before observer
+entry that completes during restoration. The wrapper captures the successful `coverageRevision`
+before reads and advances it only after a successful coverage row write; observer writes preserve
+it. Already retained coverage cannot make an unchanged failed restore erase rows. A coverage save
+completed during this collection can instead permit a newer intentional removal. See [the
+wrapper's saved-history rules](caching-conversation-repository.md#the-saved-history-position-1354)
+for candidate eligibility. Generations, revisions and baselines are destination-local metadata,
+not serialized fields.
+
+Both row mutations and their successful baseline bookkeeping finish together non-cancellably
+under the wrapper lock. Atomic replacement may commit before a cancellable dispatcher return
+reports success; losing that result would let final flush compare with stale rows and skip a
+newer removal. Lock acquisition remains cancellable. Confirmed deletion marks its tombstone,
+waits for any started mutation and removes its results; pending and cleanup writes check the
+tombstone inside the same lock. A refused daemon deletion leaves cache state intact.
+
+Ordinary row proofs hash the exact cache-policy record, including retained tool output and
+attachments; an earliest order id or message text alone cannot prove all mutable producers.
+Assistant deltas use fragment-specific proofs. A received delta already present inside a legacy
+whole-turn row binds to ordered, non-overlapping text offsets and the retained whole-row hash.
+The whole-row hash proves custody of that row, not each delta: every alias also needs overflow-safe
+bounds and a matching fragment hash, with slices ordered by unsigned durable id. Restore and stale
+writers apply the same checks; overlapping, reversed or mismatched slices cannot retain claims.
+Only hashes, offsets and lengths persist; received delta text remains transient. Such a match
+proves retention, never legacy completeness. Missing or changed proofs remove claims, so cache
+policy exclusions cannot silently certify discarded cacheable content. Received non-rendering
+entries can still establish spans without storing their raw envelopes.
+
+`BackgroundTaskLifecycle` stays excluded before the row limit and serialization and adds no
+persisted record. It survives only in the [wrapper's in-memory connection base](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+
+**Trim accounting must use serialization's exclusions.** `threadRowsWereTrimmed` compares the
+kept count with settled rows excluding `UnrecognizedMessage` and `BackgroundTaskLifecycle`.
+Counting excluded markers would falsely clear cursor/stop below the cap. Pre-trimming in a caller
+would instead hide genuine loss. Test the complete wrapper row/state operation through a fresh
+file-cache restore: testing `writeThread` alone can pass while a later state write restores the
+cursor or `atStart` that trimming just invalidated.
+
+### Read positions (#877)
+
+The read-position document is a versioned envelope over an **array**, not an object:
+`CachedReadPositions(version: Int, positions: List<CachedReadPosition>)`,
+`CachedReadPosition(conversationId, completedTurnId, readTurnId: String? = null)`. An array
+keeps every daemon-authored conversation id a JSON *value*, matching the rest of this cache's
+never-an-id-as-a-key discipline (see § Layout above — a conversation id is hashed for a path
+for the same reason). `decodePositions` rejects a document whose entries do not have distinct
+`conversationId`s, the same duplicate-identity rule `readConversations` applies to
+`Conversation.id`, rather than picking a winner.

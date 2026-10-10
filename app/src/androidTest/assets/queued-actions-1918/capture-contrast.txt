@@ -1,0 +1,6 @@
+light-send-cancel: 4 glyphs, minimum contrast 6.12:1 against adjacent canvas pixels
+light-cancel-only: 2 glyphs, minimum contrast 6.12:1 against adjacent canvas pixels
+dark-send-cancel: 4 glyphs, minimum contrast 11.41:1 against adjacent canvas pixels
+dark-cancel-only: 2 glyphs, minimum contrast 11.41:1 against adjacent canvas pixels
+queued-messages: 4 glyphs, minimum contrast 10.80:1 against adjacent canvas pixels
+queued-long: 6 glyphs, minimum contrast 8.38:1 against adjacent canvas pixels

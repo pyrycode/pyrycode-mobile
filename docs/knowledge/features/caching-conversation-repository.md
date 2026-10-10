@@ -40,7 +40,9 @@ class CachingConversationRepository(
     private val cache: ConversationCache,
     private val serverId: String,
     private val attachments: AttachmentStore? = null,
-) : ConversationRepository by delegate {
+    private val processingDispatcher: CoroutineDispatcher = Dispatchers.Default,
+) : ConversationRepository by delegate, ThreadSnapshotSource {
+    override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot>
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>>
     override suspend fun delete(conversationId: String)
     override suspend fun retrieveAttachment(conversationId: String, attachmentId: String): AttachmentRetrievalResult
@@ -49,14 +51,14 @@ class CachingConversationRepository(
 }
 ```
 
-Kotlin class delegation (`by delegate`) means every member except `observeMessages`, `delete`
+Kotlin class delegation (`by delegate`) means every member except the thread observers, `delete`
 (#798), `retrieveAttachment` (#899) and the saved history position (`readHistoryPosition`/
 `writeHistoryPosition`, #1354, see § The saved history position below) is plain pass-through — stall, queue, API retry, compaction,
 thinking, usage limit, modals, archive, unarchive and every other one-shot keep their live-only
 behaviour unchanged. Nothing restored can reopen a permission prompt or restart an indicator,
-because nothing outside those three overrides is touched at all. Archive and unarchive deliberately
+because those live-only observables are not restored. Archive and unarchive deliberately
 stay delegation: they are not removals, so neither can reach a cache-clearing path (see [Conversation
-cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) for the
+cache § Removal on unpair](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost) for the
 wording this mirrors).
 
 `requestHostSystemPrompt` and `setHostSystemPrompt` (#1774) also pass through by
@@ -91,17 +93,17 @@ bound, single-flight and failure handling; this file only covers the wiring.
 
 ## How the restore merges with live rows
 
-`observeMessages` merges through
+`observeThreadSnapshot` (also used by `observeMessages`) merges through
 [`mergeUnsignedCachedRows`](remote-conversation-repository-reads-and-thread-store-history-paging.md)
 (`HistoryPageReducer.kt`), a sibling of the history walk's `mergeUnsignedHistoryRows` built for this
 wrapper's own direction: paging normally prepends an *older* page onto what is on screen; here the
 restored rows are the older set and the live projection is the receiver:
 
 ```
-drawn = snapshot.rows.mergeUnsignedCachedRows(restoredWithoutSuppressedUserEchoes, baseOrder + snapshot.unsignedHistoryOrder)
+drawn = snapshot.rows.mergeUnsignedCachedRows(restoredWithoutSuppressedUserEchoes, baseOrder + snapshot.unsignedHistoryOrder, rendererOwners = lastDrawn)
 ```
 
-`mergeUnsignedCachedRows` shares `mergeUnsignedHistoryRows`'s join (`message_id` for a message, covering a
+`mergeUnsignedCachedRows` shares `mergeUnsignedHistoryRows`'s join (ordinary logical id for a message, covering a
 `tool_use_id` and a `turn_id`; the `(previousSessionId, newSessionId, occurredAt)` triple for a
 boundary) and its [attachment-reference hint fill](remote-conversation-repository-reads-and-thread-store-history-paging.md),
 so a restored row the daemon re-delivers is never drawn twice and a sent row's names come back even
@@ -127,6 +129,24 @@ for rows without durable order; live rows are never sorted. The lookup stays key
 threads. The fixed connection merge base and
 the deliberate-removal suppression below are unchanged, so a removed live row is not resurrected.
 
+Renderer ownership is independent of that fixed content/placement base (#1941).
+`observeThreadSnapshot` supplies `lastDrawn` as owner claims; coverage writes supply the selected
+drawn base or file fallback. Claims reserve ids only for identities surviving reconciliation,
+before live receiver claims and newcomer allocation, including empty and overlap-only merges.
+They supply no content, admission or placement and cannot resurrect a removed row. A fresh,
+unseeded projection can hold an unmatched legacy row whose bare id belongs to a displayed cached
+opening segment: treating the fresh live receiver as the only owner would transfer the reader's
+key to the newcomer. See [segment allocation](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
+
+Renderer collisions never decide admission (#1979). A cached assistant delta `(turnId, seq)`
+and an ordinary user row with the same renderer id survive together in either arrival direction,
+even when their text is identical. Typed `mergeIdentity` admits missing identities and suppresses
+replayed identities before `withUniqueMessageKeys` allocates keys. The displayed cached segment
+keeps its key; an aliased ordinary row keeps its original `ordinaryId` through `reconciliationId`,
+so replay of the unaliased row finds it again. Occupied alias candidates remain with their owners.
+Allocation cannot discard content or change retained-row order; neighbour and unsigned durable
+bounds still determine placement. See [ordinary identity](data-model.md#message).
+
 Unsigned positions preserve ordering across the signed boundary and through `ULong.MAX_VALUE`,
 including held rows on both sides of an unresolved gap and split assistant deltas. The signed
 restore adapter and unsigned adapter share one identity resolver for delta splitting and hashed
@@ -141,26 +161,48 @@ leading evidence waits for its first overlapping neighbour, and subsequent ancho
 backward. History and cache merges keep their different ordinary-row placement rules.
 
 Overlap deduplication must retain anchors even when incoming assistant text is discarded or keeps
-only an older prefix. Typed identities and `(turnId, seq)` overlap locate surviving neighbours; a
-segment superseded by a whole-turn row anchors to that whole turn after cleanup. Sharing identity
-lookup alone does not prove reconnect order: regressions must cover leading evidence, backward
-anchors, differently keyed segments and whole-turn overlap in both merge directions, including
-terminal-before-start, replay and older-page prepend.
+only an older prefix. `ThreadRowAnchors` indexes typed `mergeIdentity`, so an aliased user anchors
+through ordinary identity rather than a same-key segment. For an original segment spanning several
+retained rows, leading lifecycle evidence precedes its earliest represented neighbour and trailing
+evidence follows its latest. Preserve that combined range: atomizing lifecycle input can place a
+leading marker at a later retained row before another sequence supplies the earlier neighbour.
+Proven legacy sequence records attach through ordinary identity to the original assistant row
+before lifecycle placement; segments superseded by a whole turn resolve to that surviving whole turn.
+Keep leading evidence, backward anchors, differently keyed segments, whole-turn overlap in both
+directions, terminal-before-start, replay and older-page prepend in the lifecycle regressions.
+
+The enabled `CoalescedThreadWritesTest.identityInvariant_collidingRendererKeysKeepBothIdentitiesThroughPendingReconnect`
+checks direct admission, observation, empty disconnect/reconnect while a write is pending, ordinary
+identity and successful fresh-file restore with stable keys/order. `HistoryMessageIdentityTest`
+adds both arrival directions and replay (`identityInvariant_unsignedCacheCollisionRetainsBothArrivalDirectionsAndReplay`),
+occupied aliases (`ownershipInvariant_unsignedCacheCollisionPreservesDisplayedSegmentAndOccupiedAliases`),
+neighbour/durable bounds (`placementInvariant_unsignedCacheCollisionKeepsNeighboursAndDurableBounds`),
+ordinary lifecycle anchors (`placementInvariant_unsignedCacheLifecycleAnchorsUseOrdinaryIdentityBesideSameKeySegment`),
+combined ranges (`placementInvariant_lifecycleUsesCombinedSplitSegmentRange_inHistoryAndCacheReplay`)
+and fresh restore/replay (`reconnectInvariant_unsignedCacheCollisionSurvivesFreshRestoreAndReplay`).
+The lifecycle probes cover both unsigned history and cache lanes without moving retained rows.
+
+[PR #2023's verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/2023#issuecomment-6090873234)
+and its fresh unit XML confirm all these methods executed and passed in the full unit run:
+5,156 executed/passed, 0 failed/errors/skipped. The four acceptance suites contributed 97 passes
+(17 identity, 22 reconciliation, 21 unsigned history, 37 coalesced writes). This is full-suite
+evidence, not a separate focused run; no scripted or real-Claude pass is claimed.
 
 The evidence remains invisible: `foldQueuedRows` excludes it before tool grouping/rendering,
 `ThreadProjection.observeRowCounts` excludes it from visible-growth signals, and Channel info's
 creation timestamp skips it. Scalar lifecycle writes preserve queue/echo bookkeeping through the
 same atomic `ProjectionState`. Process death loses these markers; reconnect/history can reconstruct
-them. The disk schema stays unchanged, and [cache filtering and trim accounting](conversation-cache.md#the-thread-documents-two-writers-1354)
+them. The disk schema stays unchanged, and [cache filtering and trim accounting](conversation-cache-layout.md#the-thread-documents-two-writers-1354)
 both exclude them, so evidence alone cannot clear a saved history position.
 
 For queue delivery (#1642), `ThreadSnapshotSource` supplies visible rows and
 `suppressedUserMessageIds` together through Remote → Stable → Caching. The cache filters only
-restored `Role.User` messages whose ids are suppressed while awaiting a delivered push.
+restored `Role.User` messages whose ordinary logical ids are suppressed while awaiting a delivered push.
 Missing live rows alone never justify deleting unrelated offline history or cache-only rows.
 The original base remains available for attachment hints when delivery arrives; suppression
 is connection-local and is never serialized. Repositories without this contract retain the
-list-only fallback with empty suppression.
+list-only fallback with empty suppression. Renderer aliases must never shield a suppressed echo
+from filtering, either in observation or history-position writes.
 
 Rows and suppression must come from the same `ThreadProjection.ProjectionState` generation.
 Independent StateFlows could pair old tap-time rows with newly cleared suppression during
@@ -170,27 +212,22 @@ real file cache cover local/peer Send now, reopen, removal → tools → push, d
 history retention; `VerifierSnapshotRaceTest.reopenDuringDelivery_neverEmitsUnsuppressedTapTimeRows`
 controls the subscription/delivery interleaving that ordinary final-order assertions missed.
 
-**The merge is key-indexed, not quadratic (#1353, verifier rework).** `mergeCachedRows` builds a
-`HashMap<Any, Int>` once per call, mapping each live row's `joinIdentity()` to the first live index
-holding it, then looks each cached row up in that map — O(live + cached) rather than the original
-O(cached × live) `indexOfFirst { listOf(it).alreadyHolds(row) }` scan. This mattered only once
-`MAX_CACHED_THREAD_ROWS` moved from 200 to 100000 in the same ticket (see [Conversation cache § What's
-deliberately not here](conversation-cache.md#whats-deliberately-not-here)): `observeMessages` calls
-`mergeCachedRows` on every emission of the delegate, in-flight `assistant_delta` updates included,
-with no `flowOn` between `RemoteConversationRepository` and the `ViewModel`'s `stateIn`, so the merge
-runs on `Main.immediate`. At a 200-row cap the quadratic scan was cheap; at 100000 — a normal size for
-a persistent channel after weeks of tool-call-heavy use — it was roughly a million lambda calls plus
-a one-element-list allocation per pair on every streaming delta, well past a 16 ms frame. The lesson:
-lifting a cap on a cached or persisted collection changes the cost of whatever already runs over that
-collection on each live emission, not only what gets written — the planned change (the cache format)
-and the thing it broke (an unrelated merge function's complexity) were in different files, so neither
-the plan's own file list nor its "no new writes during streaming" state-and-concurrency note caught it.
-`joinIdentity()` encodes the same six keys `alreadyHolds` and the `holds*` predicates already use
-(message id; boundary `(previousSessionId, newSessionId, occurredAt)`; unrecognized id; banner
-`occurredAt`; compaction `occurredAt`; refusal `(fallbackModel != null, occurredAt)`), each led by its
-kind so rows of different kinds can't collide — a second encoding of the same identity, flagged
-non-blocking in review as worth deriving from one source later, but pinned equivalent for now by
-`HistoryPageReducerTest.mergeCached_eachKindJoinsItsLiveTwinOnItsKeyAlone`.
+**Keep per-emission work indexed and off the collector.** Raising
+`MAX_CACHED_THREAD_ROWS` from 200 to 100000 (#1353) exposed the old quadratic
+cache/live lookup: the fix indexed live identities once rather than scanning all live rows
+for every cached row. The current unsigned merge retains indexed identity/order lookups.
+A larger retention cap changes the cost of every live update, including streaming deltas,
+not only disk writes.
+
+Before [#1966](../../specs/architecture/1966-cached-thread-worker.md), observer processing
+inherited the collector dispatcher, normally `Main.immediate` through the ViewModel.
+Restore-order lookup, suppression filtering, merge/rebase and cache-policy filtering/comparison
+now use the injected `processingDispatcher`, defaulting to `Dispatchers.Default`.
+Moving only the merge would still leave long-list equality on the collector: both the
+snapshot observer's cache-policy comparison and the list-only observer's distinct
+comparison run on the worker. Worker scheduling is separate from write coalescing and UI
+pacing; the controlled probes establish scheduling and main progress, not measured device
+frame times.
 
 **Why a plain prepend broke on a row only the cache holds (PR #987, verifier rework).** An attachment
 offer (#983) is the first kind of row the daemon never replays — the cache is its only retention —
@@ -226,22 +263,22 @@ accumulating union for the original restored-snapshot design.
 
 The base also retains durable ordering: restore seeds `baseOrder` from persisted coverage, and
 a connection boundary combines it with the last live order. Each merge receives
-`baseOrder + snapshot.historyOrder`. Rows and ordering therefore survive reconnect together.
+`baseOrder + snapshot.unsignedHistoryOrder`. Rows and ordering therefore survive reconnect together.
 Drawn rows are emitted and retained in `drawnThreads` before a cache write. The observer hands
 untrimmed `drawn` to `writeThread`, under the shared `historyWrites` mutex with a tombstone check
-inside the lock. Only a successful write advances `lastWritten`; static failure logging exposes
-no rows, ids or cursors.
+inside the lock. Only a successful write advances the shared persisted baseline; static failure
+logging exposes no rows, ids or cursors.
 
 An empty visible snapshot with nonempty suppression is a pending-delivery reading within the
 same connection, not a disconnect. Rebasing there would lose the fixed restore base and its
 attachment metadata. The filtered drawn rows are emitted and cached, so reopening cannot
 resurrect a hidden queued echo before its delivered push.
 
-After the rebase, `cacheableThreadRows(drawn)` equals whatever the previous emission already
-wrote, so a disconnect **writes nothing** — the only exception is retrying an earlier failed
-write. `settledThreadRows` (not `cacheableThreadRows`) is the rebase's own function: it drops only
-in-flight rows and applies no row-count bound, so a thread longer than
-[`MAX_CACHED_THREAD_ROWS`](conversation-cache.md#the-contract) does not visibly shrink on screen
+After the rebase, `cacheableThreadRows(drawn)` matches the previous accepted candidate, so
+a disconnect creates no new settled change or quiet-period delay. Already pending rows still
+persist, and an earlier failed write remains retryable. `settledThreadRows` (not
+`cacheableThreadRows`) is the rebase's own function: it drops only in-flight rows and applies no row-count bound, so a thread longer than
+[`MAX_CACHED_THREAD_ROWS`](conversation-cache-contract.md#the-contract) does not visibly shrink on screen
 the moment its connection drops.
 
 **Accepted residual:** the rebased base can carry a queued send's echo that the live side would
@@ -264,17 +301,17 @@ silently disappearing; this cannot produce a duplicate key or a crash. Deferred,
 
 The write is the thread **as drawn** — restored-plus-live with exclusions applied — never the
 live projection alone: right after a reconnect the live side holds only the newest page, and
-writing it alone would shrink the cache. [`cacheableThreadRows`](conversation-cache.md#the-contract)
+writing it alone would shrink the cache. [`cacheableThreadRows`](conversation-cache-contract.md#the-contract)
 is the single definition of what may reach disk, shared with `ConversationCache`'s own write path
 so the two can never disagree; the wrapper only decides *when* to call it, and, since #1354,
 `writeThread` itself applies `cacheableThreadRows` to what it is handed — see below.
 
 **`observeMessages` hands `writeThread` the drawn rows, not the already-trimmed cacheable ones
-(#1354).** The wrapper's own `cacheable` is still what it compares against `lastWritten` to decide
+(#1354).** The wrapper compares its `cacheable` rows against successful persisted rows to decide
 *whether* to write, but the call itself passes `drawn`, because `writeThread`'s own contract is to
 do the trimming and to drop a saved history position when that trim moves the oldest kept row away
 from it (see [Conversation cache § The thread document's two
-writers](conversation-cache.md#the-thread-documents-two-writers-1354)). A first version of this
+writers](conversation-cache-layout.md#the-thread-documents-two-writers-1354)). A first version of this
 change kept passing `cacheable` here, which meant the cache never actually saw a thread get
 trimmed — a verifier finding on PR #1470: the direct-to-cache test that wrote 100001 rows passed,
 but a thread that reached the same size through this wrapper kept a position that no longer
@@ -282,39 +319,76 @@ matched the oldest saved row, a silent, permanent gap in a very long saved chann
 cache rule that depends on the shape of its input has to be tested through its real caller, not
 only called directly with the shape the rule expects.
 
-An observer write happens only when `cacheableThreadRows(drawn)` differs from `lastWritten` (initially the
-restored snapshot). That means:
+Since [#1967](../../specs/architecture/1967-coalesced-thread-writes.md), a collection-owned
+writer accepts immutable candidates after downstream emission returns. Cache-policy filtering
+and comparison run on `processingDispatcher`; a suspended downstream consumer still delays
+acceptance, but disk I/O no longer delays processing or delivery of subsequent snapshots.
 
-- Opening a conversation offline writes nothing — `drawn == restored`.
-- An `assistant_delta` stream writes nothing until the turn settles, because every intermediate
-  emission's cacheable set is unchanged until an in-flight row's exclusion condition clears.
-- A disconnect writes nothing, per the rebase above, unless retrying an earlier failed write.
+Settled changes separated by less than 100 ms form a burst. After 100 ms without a changed
+cacheable candidate, the writer persists the latest rows. It holds one replaceable pending
+candidate rather than a queue of whole-thread writes. A running write may finish first; newer
+pending candidates replace each other while it runs. Returning to the successful persisted rows
+also replaces obsolete pending work and can avoid I/O altogether.
 
-A failed write logs one static event (`RelayLog.d { "event=thread_cache_write_failed" }`) and does
-**not** advance `lastWritten`, so the next drawn change retries it. Nothing about a row, a
-conversation id or a server id is ever logged.
+Unchanged or streaming-only updates do not restart the delay. Opening offline creates no work
+when the drawn rows equal restoration; streaming/running rows alone trigger no persistence.
+Disconnect rebases retain the accepted settled rows without creating a new change. A coverage
+save completed during this collection can make a later removal eligible even when it matches
+restoration; the lifecycle rule is explained under [the saved history position](#the-saved-history-position-1354).
+
+A failed write logs only `event=thread_cache_write_failed`, leaves the successful baseline
+unchanged and enables retry on the next snapshot, including an unchanged one, or on final flush.
+It does not retry autonomously while idle. No rows, ids, cursors or exception details enter this
+event. Successful storage alone advances the comparison baseline shared by both row writers.
 
 ## State and concurrency
 
-No scope is owned and nothing is launched. `observeMessages` returns a cold flow with local
-merge-base/last-written state. The wrapper retains latest drawn rows per conversation for history
-saves. A wrapper-level `historyWrites` mutex serializes observer writes, coverage-null position
-writes, the complete coverage row/state operation and confirmed deletion. The file cache's own
-mutex protects each disk operation; lock order is wrapper then file cache, with no callback into
-the wrapper. Cancellation belongs to the caller except confirmed-removal cleanup.
+Each cold snapshot flow owns its merge base, ordering, last drawn rows and a structured
+`coroutineScope` with a writer child on `processingDispatcher`. Sequential worker hops finish
+processing each captured snapshot before taking another; merge generations are never conflated
+or cancelled in favour of newer input. Only pending disk work is conflated. The collection's
+bounded timer signals readiness; it does no merge or cache-policy work. No application or
+repository scope owns the writer.
+
+Only rows are replaced in the emitted snapshot; suppression, unsigned order and read evidence
+remain those of the captured generation. Restored rows create no sight claims, history requests
+or read commands. The list-only observer compares rows on the worker and emits distinct lists
+on the collector. Snapshot generations are allocated at upstream capture, before worker
+processing can suspend; held drawn rows carry that generation into coverage saves.
+
+The wrapper's `historyWrites` mutex serializes observer writes, coverage-null position writes,
+the complete coverage row/state operation and confirmed deletion. Lock order is wrapper then
+file cache, with no callback into the wrapper. Both row writers publish their successful
+`persistedThreads` baseline under this lock; it survives collection restarts. A writer also
+remembers its completed candidate by identity, so cleanup cannot repeat that completed write
+after another collector persists newer rows. Later candidates still compare against the shared
+successful rows, not an obsolete collection-local baseline.
+
+Lock acquisition and snapshot processing remain cancellable. Once either row writer starts a
+mutation, the mutation and its successful baseline update finish together in `NonCancellable`
+under `historyWrites`. Atomic replacement can commit before a cancellable dispatcher return
+delivers success: joining a cancelled writer alone would otherwise leave disk and baseline
+inconsistent and could skip a newer removal during flush. Failed writes update no baseline.
+
+Normal upstream completion, upstream failure and collector cancellation run non-cancellable
+cleanup: cancel/join the timer and writer, then attempt the latest accepted pending candidate
+once unless already completed, persisted, satisfied by coverage or deleted. Cleanup waits for
+actual I/O, leaves no orphan writer and never loops on storage failure. Cancellation then
+propagates. A snapshot interrupted before acceptance creates no flush work. This guarantees
+orderly cleanup with successful storage, not persistence through force-stop or process death.
 
 ## `delete` — removing the cache alongside the daemon (#798)
 
 The delegate deletes first; refusal propagates before touching cache state. After success the
 wrapper marks its thread-safe destination-local tombstone, then waits non-cancellably for
-`historyWrites`, clears held drawn metadata and removes the cached conversation under this
-wrapper's host id. A failed removal logs a static event and does not turn daemon success into a
+`historyWrites`, clears held drawn and persisted-generation metadata and removes the cached
+conversation under this wrapper's host id. A failed removal logs a static event and does not turn daemon success into a
 reported deletion failure. Archive/unarchive remain delegation.
 
 **A pre-I/O tombstone check is insufficient (#1832).** A writer can pass it, suspend, and recreate
-rows after removal. Every writer checks the tombstone under the shared mutex; deletion waits for
-an in-flight writer, then removes its results. This includes fallback row reads, observer writes,
-coverage-null writes and the interval between row and state writes. Once removal returns,
+rows after removal. Scheduled writes and final flushes check the tombstone under the shared
+mutex; deletion waits for an in-flight non-cancellable mutation, then removes its results.
+This includes fallback row reads, observer writes, coverage-null writes and the interval between row and state writes. Once removal returns,
 suspended writers cannot recreate the document. A fresh destination has a fresh tombstone set.
 
 ## The saved history position (#1354)
@@ -346,6 +420,25 @@ persists. Delta matches inside legacy whole turns prove retention, not completen
 Their whole-row proof alone is insufficient: restore and stale binding also require bounded,
 non-overlapping slices in unsigned durable order with matching fragment hashes. Removing a
 maximum-id producer terminates the retained interval rather than wrapping its successor to zero.
+
+**Capture order and save completion answer different questions (#1967).** After a successful
+coverage row write, `persistedThreads` records its actual cacheable rows and satisfies observer
+candidates through the maximum of the history snapshot's capture generation and the selected
+drawn base's generation. A candidate captured before that boundary cannot rewrite newer rows
+or coverage merely because its worker resumes later. Later drawn generations remain eligible.
+Observer successes replace the shared row baseline while preserving coverage satisfaction;
+otherwise resubscription could compare against older coverage rows and skip a needed write.
+
+Each successful coverage row write also advances `coverageRevision`, even if the subsequent
+position write fails or is cancelled. The observer captures that successful revision at entry,
+before restoration can suspend. Retained coverage completed before entry cannot alone turn an
+unchanged empty or streaming-only failed restore into a write. A save completed during restoration
+can supersede this collection's candidate, even if captured before entry: a later generation
+that intentionally removes its rows must remain eligible. Changed candidates and failed-write
+retries remain independent of this exception. Capture generations reject stale work; successful
+completion revisions distinguish overlapping saves from already retained coverage. Neither is a
+wire or disk field. Row success publishes rows, satisfaction and revision together in the
+non-cancellable section described above; position failure cannot undo that successful row write.
 
 The complete operation passes untrimmed rows and uses shared cache-policy trim accounting. If
 rows exceed the cap, the later position write also resets backwards cursor to empty and `atStart`
@@ -415,96 +508,7 @@ containers needed it. Any future container built the same way inherits this requ
 
 ## Testing
 
-[`CachingConversationRepositoryTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/repository/CachingConversationRepositoryTest.kt) —
-JVM unit tests against a fake `ConversationCache` and a `MutableStateFlow`-backed delegate. Cases:
-
-- offline (delegate emits empty): draws restored rows verbatim and writes nothing;
-- reconnect: the live newest page merges over restored ids/boundaries with no duplicate key, older
-  restored rows precede;
-- a streaming delta sequence writes only once the row settles; an unchanged settled set writes
-  nothing;
-- failed read → live rows only, no blank thread; failed write → the next change retries it;
-- **a disconnect keeps the rows drawn during the connection and writes nothing** — the regression
-  test for the rework above; it fails with the rebase disabled and passes with it;
-- **a reconnect after a disconnect merges over everything drawn so far** — covers the connection
-  that follows a rebase;
-- non-thread flows are pure delegation (e.g. `observeStall` / `observeQueue` untouched by the
-  cache);
-- **a cold restore keeps a cache-only row in place (#983):** cache `[m1, a1, offer, a2]` under a
-  live page `[m1, a1, a2]` draws, and writes back, `[m1, a1, offer, a2]` — both the drawn thread and
-  the cache write-back are asserted, since the write-when-changed rule would otherwise persist the
-  regression it was written to catch;
-- an empty-then-page reconnect (disconnect, then a fresh page) keeps the same anchoring;
-- a cache-only row with no anchor above it (an older row a newest page does not reach) still goes in
-  front, matching the pre-#983 behaviour for that case;
-- a sent row's names, dropped by the live side's history-replayed copy, come back through the cache
-  merge's hint fill.
-
-Six further cases (#798), added on a real `FileConversationCache` (`TemporaryFolder`) so "the rest is
-readable" is proved against the real hashed-directory layout rather than a fake: a permanent delete
-removes exactly that conversation's cached metadata and thread and leaves a same-id conversation under
-a different host untouched; a delete the daemon refuses (a throwing `delegate.delete`) leaves the
-cache intact and propagates; archiving then unarchiving through the wrapper leaves cached metadata and
-thread readable (`archive`/`unarchive` are plain delegation, so this is really a regression guard on
-class delegation staying intact); a thread collected through the wrapper does not write a late row
-back after its conversation is deleted (the `deleted` set); and a cache whose `removeConversation`
-fails still lets `delete` return, logs the one static event, and leaks no server or conversation id
-into a captured log line.
-
-Further cases on the real `FileConversationCache` (#1354): a position written through
-`writeHistoryPosition` survives a concurrent row write from `observeMessages` and reads back under
-this wrapper's `serverId`; a deleted conversation's position write is skipped, the same `deleted`
-guard the row writer already has; and a drawn thread trimmed at `MAX_CACHED_THREAD_ROWS` and
-written through `observeMessages` itself drops its saved position — the regression test for the
-verifier finding above, which fails if `observeMessages` goes back to pre-trimming before the
-`writeThread` call.
-
-One further case (#899): `retrieveAttachment` goes through a fake `AttachmentStore`-shaped fetch with
-this wrapper's own `serverId` and the delegate's `fetchAttachment` as the fetch function — a wiring
-regression guard, not a proof of the store's own behaviour (that lives in
-[`AttachmentStoreTest`](attachment-retrieval.md#testing)).
-
-Four further cases (#1353): a `FileConversationCache`-backed restore draws a banner, a compaction
-divider and a model refusal in their original positions alongside a message and a boundary, offline
-— pinning that the real file-backed cache round-trips the three kinds end to end, not only the fakes
-above; and one case per kind where the live page re-delivers the same cached row (same identity,
-different incidental fields) and it draws once, in place, through `mergeCachedRows`'s `alreadyHolds`
-join rather than twice. `HistoryPageReducerTest.mergeCached_eachKindJoinsItsLiveTwinOnItsKeyAlone`
-pins the same join at the `joinIdentity()`/`heldAt` level (see § How the restore merges with live
-rows above) for all six kinds, including that a refusal of the other frame type stays a separate
-row.
-
-`HistoryDurabilityTest` covers coverage/row-write failures and interruption; the real-file
-`HistoryCacheReworkTest` guards the three complete-operation traps from #1832:
-
-- Disjoint older-gap insertion stays chronological through observer/fallback merges, reconnect and
-  fresh restore, including persisted marker placement.
-- Saved `atStart` and saved cursor remain reset after trimming through both writes; fresh restore
-  drives ordinary backwards demand rather than merely inspecting a row writer's output.
-- Gated deletion during fallback reads, between row/state writes, coverage-null writes and observer
-  writes cannot recreate disk content; late writes are also rejected.
-
-These probes use production merges and fresh file-cache instances. Device proof is separate: #1833's
-live, scripted and external force-stop runs, recorded in the [#1833
-evidence](../../e2e-interactive-stream.md#verification-status). The JVM probes do not establish
-those results.
-
-`UnsignedHistoryCoverageTest` and `UnsignedHistoryCacheTest` exercise signed-boundary/max-id
-adjacency, maximum removal, overlap and split gap anchors, partial fills across fresh restores,
-split-delta deduplication, positive signed documents, malformed metadata, trim resets and failed
-writes. Restore probes assert no history request or read command. Legacy-alias regressions include
-valid controls and reject overlapping slices, unsafe bounds, mismatched hashes, reversed durable
-order and missing slice metadata on both restore and stale writes.
-
-No Compose UI test for the original restore: restored rows draw through the same composables a
-live row does, below the
-existing [`ConnectionBanner`](connection-banner.md) in its offline state. Live continuity across
-a real reconnect — a loaded conversation staying readable while its host link is cut and
-reconciling a peer's turn once the link is restored — is proven live by
-[#850](https://github.com/pyrycode/pyrycode-mobile/issues/850)
-(`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`); this
-wrapper's scripted coverage (`stream`, `reconnect`, `replay-order`) ran green with zero real turns,
-per the dispatcher gate on PR #837's re-review.
+See [Caching conversation repository — testing](caching-conversation-repository-testing.md) for worker scheduling, restore, reconnect and coalesced persistence coverage.
 
 ## Related
 
@@ -525,14 +529,14 @@ per the dispatcher gate on PR #837's re-review.
 - [Attachment retrieval](attachment-retrieval.md) (#899) — `AttachmentStore`, the host-keyed store this
   wrapper's `retrieveAttachment` delegates to: its layout, single-flight, bound and failure handling
 - [Paired server store § Wiring & usage](paired-server-store.md#wiring--usage) and [Conversation
-  cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) — the
+  cache § Removal on unpair](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost) — the
   sibling removal path, `forgetRemovedHost`, that this wrapper's `delete` does not go through
 - [Ticket #1354](https://github.com/pyrycode/pyrycode-mobile/issues/1354) and its plan,
   `docs/specs/architecture/1354-saved-history-position.md` — the saved history position
   (`readHistoryPosition`/`writeHistoryPosition`, § above), the `observeMessages` → `writeThread`
   untrimmed-rows contract, extended by #1832's durable coverage and row-before-state ordering; see
   [Conversation cache § The
-  thread document's two writers](conversation-cache.md#the-thread-documents-two-writers-1354) for
+  thread document's two writers](conversation-cache-layout.md#the-thread-documents-two-writers-1354) for
   the cache-side half
 - Split from [#647](https://github.com/pyrycode/pyrycode-mobile/issues/647); ticket
   [#797](../../specs/architecture/797-thread-row-cache.md) (this doc);

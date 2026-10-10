@@ -7,13 +7,13 @@ that parent document is the map, this child covers the oldest-end history slot i
 ### The oldest-end history demand (#777)
 
 `requestHistory` ([remote repository § the walk that finally calls
-`requestHistory`](remote-conversation-repository-reads-and-thread-store-history-paging.md#the-walk-that-finally-calls-requesthistory-777))
+`requestHistory`](remote-conversation-repository-history-walk.md#the-walk-that-finally-calls-requesthistory-777))
 had no caller until #777 wired the screen to `ThreadViewModel.onDemandOlderHistory()` via a defaulted
 `onDemandOlderHistory: () -> Unit = {}` parameter (`MainActivity` binds `vm::onDemandOlderHistory`, the
 only consumer). #777 drove that call from a scroll-position `snapshotFlow` that fired whenever the oldest
 loaded row came into view, and the opening and every reconnect asked unconditionally beside it (owned by
 `ThreadViewModel`, see [remote repository §
-the walk that finally calls `requestHistory`](remote-conversation-repository-reads-and-thread-store-history-paging.md#the-walk-that-finally-calls-requesthistory-777)).
+the walk that finally calls `requestHistory`](remote-conversation-repository-history-walk.md#the-walk-that-finally-calls-requesthistory-777)).
 [#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) replaced all of that with a single
 trigger, copying desktop's rule: older pages load only on a reader's own pull toward older messages, on
 both apps, and never because a screen opened, a connection returned, a page arrived, or a row scrolled
@@ -51,8 +51,9 @@ The newest reply now retains durable entry coverage and page-edge cursors. A sid
 independent backwards cursor/stop untouched; a newest page that is also that walk's next page seeds
 it normally. High-water and known/unknown gaps survive restore and reconnect. Coverage concerns
 received entry ids, including non-rendering envelopes, never row ids or live frames. Overlap or
-adjacency creates no hole; overlap elsewhere never erases a known hole. A known marker closes only
-when coverage joins its older durable anchor. Nonempty legacy caches remain unknown despite saved
+adjacency creates no hole; overlap elsewhere never erases a known hole. A known gap closes only
+when coverage joins its older durable anchor; marker visibility does not certify coverage.
+Nonempty legacy caches remain unknown despite saved
 `atStart`, matching rows or verified overlap; only `at_start`, including an empty terminal page,
 closes that unknown region. Empty uncovered caches get no conservative marker. See
 [Resuming from the saved position](remote-conversation-repository-reads-and-thread-store-history-paging.md#resuming-from-the-saved-position-1354)
@@ -60,36 +61,87 @@ for the coverage and migration contract.
 
 **Gap markers reuse the oldest-end loading label style.** `HistoryGapRow` shows “Load earlier
 messages”, centred in `bodySmall` / `onSurfaceVariant` with the same gutter and padding, without a
-count. Entries are not messages: one assistant reply can span many envelopes. Markers sit before
-their newer content, between held older/newer rows. Display-only assistant fragments allow a marker
-inside a split turn; tool folding keeps the first newer tool row visible. Non-rendering spans can
-place a standalone marker at the newest content edge, including a thread with no message rows.
+count. Entries are not messages: one assistant reply can span many envelopes. Since
+[#1917](../../specs/architecture/1917-fragmented-history-projection.md), an internal marker sits
+before the first displayed row in the covered span immediately newer than its gap, only when both
+immediately adjacent spans contain delivered content. Display-only assistant fragments count and
+retain text on both sides of a hole. Lifecycle evidence and queued echoes cannot occupy a span or
+target a marker; prompt and tail rows are not history. Projection uses `foldQueuedRows` with the
+same queue snapshot and one-to-one correlation as rendering, carrying eligibility through fragment
+copies. Queue changes update placement even when held items do not change.
+
+Nonempty displayed history gets at most one marker above its oldest row: the nearest unresolved
+edge at or before its oldest durable position, with a known gap preferred over unknown coverage
+at a shared edge. Empty eligible history has no gap markers. Gaps missing either adjacent side
+produce no internal marker or per-gap row-key scan. Hidden gaps remain authoritative and can become
+visible when their adjacent content is later displayed; absence of a marker never certifies coverage.
+
+**Preparation and targeting stay off main.** Each projection prepares a held row's history keys
+once, reusing delta keys for assistant fragments and marker lookup. Binary searches of normalized
+unsigned spans and first-row indexes replace gap-by-row/delta scans. `threadContent` combines item,
+queue and coverage snapshots, then uses `mapLatest` and an injected Default worker for eligibility,
+fragment preparation, hashing and projection. Cancellation checks stop superseded work; an older
+projection cannot publish over a later input, and destination exit cancels pending work through
+`viewModelScope`. The no-gap/no-unknown path needs no keys. Projection itself initiates no fetch.
+
+Projected markers carry a prepared display-row reference beside the stable history key and exact
+unsigned anchor. Tool folding uses identity sets and collision-safe message ids (Agent attribution
+can copy message rows), so render consumers do not hash every row again for each gap. Ordinary tool
+folding keeps the targeted first newer row visible. Manually constructed markers without a prepared
+target retain the history-key fallback; moving hashing to a worker alone would leave that render
+hot path on main.
 
 A joined background-agent block is the exception to that split
 ([#1827](thread-screen-subagent-tool-rows.md#attributed-assistant-prose-in-agent-blocks-1827)).
 `foldHistoryToolRuns` keeps the block whole across a gap, because splitting it let child prose escape
 its closed Agent run. `foldedAgentHistoryMarkers` instead moves a marker attached to a hidden block row
-onto the closed run header. The marker keeps its original anchor and cursor, so a pull there asks for
+onto the closed run header by retargeting its prepared row reference. The marker keeps its stable
+history key, original anchor and cursor, so a pull there asks for
 the same gap. An expanded run header claims no marker: opening the run returns each marker to its
 original delivered row. A header that also kept its first tool's marker drew one durable gap twice
 when open, and unique row keys alone did not catch it. `BackgroundAgentProseTest` and
 `BackgroundAgentProseScreenTest` attach gaps to the first Agent tool and to child prose, and assert
 each anchor appears exactly once through closed, open, closed and collapse-off states.
 
-A real reader pull toward a visible marker calls the defaulted `onDemandHistoryGap(anchor)`
-callback, wired by `MainActivity` to `ThreadViewModel.onDemandHistoryGap`. Measured marker bounds
-select the first marker crossed toward older content when several are visible, before considering
-ordinary oldest-end demand. Merely revealing a marker, semantics scrolling or receiving a page
+**Unsigned gap targeting (#1911) preserves one identity from placement through dispatch.**
+`ThreadHistoryMarker.unsignedAnchor` is authoritative through `ULong.MAX_VALUE`, including after
+restoration. Projection uses `unsignedGaps`, `unsignedUnknownEdge` and `unsignedPositions`; measured
+height keys, row tags and folded-agent markers keep that same unsigned anchor. Zero identifies only
+authoritative unknown coverage, never uncertainty introduced by the signed compatibility view.
+The signed marker constructor and checked `anchor` accessor remain for lower-range callers; upper
+positions must use `unsignedAnchor` rather than wrapping or substituting an id.
+
+A real reader pull calls `onDemandUnsignedHistoryGap(anchor)`, wired by `MainActivity` to
+`ThreadViewModel.onDemandUnsignedHistoryGap`. The appended, defaulted screen callback forwards
+representable anchors to the existing signed callback; the signed ViewModel method remains a
+lower-range adapter. Measured marker bounds select the first marker crossed toward older content
+when several are visible, before considering ordinary oldest-end demand. Stale or missing anchors
+are rejected before claiming the shared request slot. Dispatch and settlement use `cursorForUnsigned`,
+`receivedUnsigned` and `refusedUnsigned`, retaining the selected anchor across the signed boundary
+and through the maximum id. Merely revealing a marker, semantics scrolling or receiving a page
 asks nothing. Each pull costs at most one page, including cursorless walks that reread a covered
 page. Each gap keeps its own opaque cursor and leaves the backwards walk's cursor/stop alone;
-saved `AtStart` cannot block gap demand. A refused cursor retains its marker and waits for the next
-pull, using the latest usable newest-page cursor or empty cursor. Once a touch selects a gap,
+saved `AtStart` cannot block gap demand. A typed invalid-cursor refusal invalidates only the refused
+opaque cursor, retains its marker and waits for the next pull, using the latest usable newest-page
+cursor or empty cursor. Once a touch selects a gap,
 its latch gates every further history demand through that drag and its continuing fling, before
 consulting marker visibility. Page settlement can remove the marker, and movement can take it
 offscreen; neither may redirect the same touch into the independent backwards walk. A fresh
 touch resets selection. Four controlled-response `ThreadScreenHistoryTest` regressions cover
 marker removal and movement offscreen during both drag and fling; keeping the marker present
-throughout a test would miss this fallthrough.
+throughout a test would miss this fallthrough. Shared physical-fling fixtures convert their dp/s
+velocity using the test rule's density; a fixed pixel/s value can stop short on a managed device
+while passing under Robolectric.
+
+`unsignedMarkersTargetFirstCrossedGap` and `unsignedGapSettlementKeepsSelectedTouch` exercise exact
+upper-range tags and physical pulls. The signed fixture
+`markersAreBetweenContent_andAReaderPullTargetsTheFirstCrossedGap` omits the unsigned callback so it
+checks the production default adapter. The [#1911 verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1924#issuecomment-6044984944)
+and fresh affected-class XML confirm all three passed on managed Android 13: 26 executed/passed,
+0 failed, 0 skipped. The configured device-only UI gate excludes these shared methods; its separate
+run passed 199 executed tests, with 0 failed and 1 skipped. This is affected-class device evidence,
+not execution of the named methods inside that gate. Rung-3 durable-gap operator-flow evidence
+remains owned by #1833; #1911 adds no live scenario.
 
 The shared `inFlight` flag still drives the oldest-end Loading row during newest/gap asks, even
 when the independent backwards walk is at `AtStart`; this is the existing #1572 visual quirk.
@@ -201,7 +253,7 @@ widened the **same slot** to four mutually exclusive states, and [#1352](https:/
 widened it again to five, still without adding rows — the one-slot invariant is enforced by construction,
 since `when (state.historyTail)` emits at most one `item(key = HISTORY_TAIL_KEY)`. Despite the heading's
 name carried over from #778, there is no restart left on the screen side either: see [remote repository §
-the retry and the two restarts](remote-conversation-repository-reads-and-thread-store-history-paging.md#the-retry-and-the-two-restarts-778)
+the retry and the two restarts](remote-conversation-repository-history-walk.md#the-retry-and-the-two-restarts-778)
 for why #1352 removed both.
 
 - **`ThreadUiState.historyLoading: Boolean` was replaced outright by `historyTail: ThreadHistoryTail`**

@@ -1,0 +1,61 @@
+{
+  "blocker_issue": 2014,
+  "merged_repair": "f3186e5a5ed013540cf74ff410e9e36dcd75b775",
+  "source_note": "Exact run had a clean tree. Class run additionally had the retained exact-run XML untracked; executable source was unchanged.",
+  "runs": [
+    {
+      "phase": "post-2014-exact",
+      "mobile": "6ccb18ea3c4160a95e21221a01c3f86787ad30c1",
+      "merged_main": "f3186e5a5ed013540cf74ff410e9e36dcd75b775",
+      "command": [
+        "./gradlew",
+        "testDebugUnitTest",
+        "--tests",
+        "de.pyryco.mobile.e2e.DiscussionRenameTest.delayedDialogDoesNotReplaceComposer",
+        "--rerun",
+        "--console=plain"
+      ],
+      "exit_code": 0,
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "timestamp_utc": "2026-10-10T00:23:47.547Z",
+      "raw_xml": "post-2014-exact.xml",
+      "raw_xml_sha256": "3b25f4965844f696acdac2a6b3d21da679b998e07df10c8ca26ad7f229174651",
+      "methods": [
+        "delayedDialogDoesNotReplaceComposer"
+      ]
+    },
+    {
+      "phase": "post-2014-class",
+      "mobile": "6ccb18ea3c4160a95e21221a01c3f86787ad30c1",
+      "merged_main": "f3186e5a5ed013540cf74ff410e9e36dcd75b775",
+      "command": [
+        "./gradlew",
+        "testDebugUnitTest",
+        "--tests",
+        "de.pyryco.mobile.e2e.DiscussionRenameTest",
+        "--rerun",
+        "--console=plain"
+      ],
+      "exit_code": 0,
+      "executed": 5,
+      "passed": 5,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "timestamp_utc": "2026-10-10T00:24:13.129Z",
+      "raw_xml": "post-2014-class.xml",
+      "raw_xml_sha256": "2e739ed4cd0707e168ca83a3dd21a2c87675998907a9de0357d93bd0dbc0284b",
+      "methods": [
+        "reopenedDialogSubmitsEachNameOnce",
+        "matchingFieldDoesNotProveRename",
+        "delayedDialogDoesNotReplaceComposer",
+        "owningHostGapDoesNotLoseRenameWhenAnotherHostIsReady",
+        "diagnosticFailurePreservesOriginalTimeout"
+      ]
+    }
+  ]
+}

@@ -19,9 +19,10 @@ than the thread. `reduceOrderedHistoryPage` decodes the page once, outside the u
 with authoritative `unsignedOrder` and `unsignedClaims` for rows and individual assistant deltas,
 taken from the contextual fold, so a failed compaction divider gets its falling edge's id. Since #1909,
 `mergeUnsignedHistoryRows` compares exact `ULong` positions across `Long.MAX_VALUE` through the unsigned
-maximum. Inside the one `ProjectionState` update, it inserts only rows the thread lacks, so an older, newer or middle page lands in daemon order and a repeat page changes nothing.
-Established held rows retain their positions; pending own echoes with first modern delivery
-evidence use the exception below. The merge never sorts the whole thread by timestamp. A missing
+maximum. Inside the one `ProjectionState` update, it inserts missing rows and repairs eligible
+provisional assistant deltas as described below; a repeat page changes nothing. Established held rows
+retain their relative order, with separate exceptions for first durable assistant evidence and pending
+own echoes with first modern delivery evidence. The merge never sorts the whole thread by timestamp. A missing
 row goes after its nearest shared predecessor or before its nearest shared successor. Held rows with known log ids bound that slot, so a
 reused message id or a malformed entry cannot pull a row past a known position. With no shared row, log ids
 and then timestamps choose the slot. The unsigned placement map lives in `ProjectionState.historyOrder`
@@ -32,18 +33,34 @@ durable claims. A boundary that fills a pending divider in place carries its uns
 to its new identity. `ThreadSnapshot` publishes rows, suppression and `unsignedHistoryOrder` from this
 same generation, deriving signed `historyOrder` only for representable positions.
 
-Late durable evidence for an already held live delta can still strand it beyond its history separator.
-This also reproduces with lower-range ids and remains tracked by [#1913](https://github.com/pyrycode/pyrycode-mobile/issues/1913).
-Unsigned overlap probes establish the held delta's durable position before surrounding pages; they do
-not prove that unresolved provisional placement is repaired.
+**First durable assistant evidence (#1913).** A held `(turnId, seq)` delta is provisional until its
+first durable history position arrives. If that position conflicts with a known held durable neighbour,
+the merge extracts the delta even from a folded segment and reinserts its held version within exact
+unsigned bounds, including across a user or tool separator. First evidence without such a conflict
+keeps its slot. Previously durable deltas and unevidenced live-only atoms remain anchors in their
+relative order; replay or a conflicting later claim cannot grant another repair. The projection derives
+eligibility from the page's `unsignedOrder` minus prior scoped claims inside the same CAS update that
+publishes rows and accumulated claims. Prior values win conflicts, and a CAS retry recalculates eligibility.
+Timestamps, renderer keys and replay event ids never establish claims; sequence numbers identify deltas
+and allow adjacent rejoining, but cannot substitute for durable positions. Signed and cache merge entry
+points supply no first-evidence relocation permission. This assistant exception is independent of the
+pending-own-user-echo first-delivery rule below.
+
+Fresh admitted assistant deltas also obey durable bounds: a provisional sequence or shared-page
+neighbour cannot override them. Probe sparse held sequences as well as relocation alone. With held
+`user(id 4), ac(seq 0,2)`, an overlap admitting `b(seq 1/id 2)` while first evidencing `c(seq 2/id 3)`
+must produce `bc, user, a`; first evidence for `a(id 1)` then produces `abc, user`. Checking only repaired
+held atoms misses a fresh delta escaping its bound. Partial-page fixtures must retain the complete
+page's durable ids; renumbering cuts tests conflicting claims rather than consistent arrival permutations.
 
 Assistant text merges per delta, identified by `(turnId, seq)`. Segments split into single-delta pieces by
-their recorded lengths; only missing sequences enter, before, between or after held ones. Adjacent pieces of
+their recorded lengths; missing sequences enter and eligible held atoms relocate without replacing their
+text, timestamp, attribution or streaming state. Adjacent pieces of
 one turn then join again, so text stays on the correct side of a tool or user row, and ended turns stay
 settled through the existing post-merge pass. Held text wins any overlap. A legacy whole-turn row without
 sequence records suppresses only text it demonstrably contains. Renderer keys stay unique without dropping
-text: ordinary ids claim keys first, then each turn's opener, then other segments, and a segment whose key a
-different identity holds takes a `~n` suffix.
+text: surviving displayed/held claims precede newcomers, which take unused aliases or suffixes.
+See [renderer ownership](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
 
 **Signed consumers must retain omitted-content uncertainty (#1909).** The positive unsigned
 [domain identity](data-model.md#historyentry--received-durable-identity-1909) is authoritative. Signed
@@ -66,8 +83,20 @@ or signed spans: an empty cache cannot prove completeness. Regression coverage m
 file cache and ViewModel, receive a later signed terminal page and demand older history again; testing
 `received` alone or keeping one cacheable row misses this restore failure. Unsigned persistence and
 restored order are described under [saved position](#resuming-from-the-saved-position-1354).
-The UI gap-anchor migration remains #1911 and foreground acknowledgement #1912; conservative signed
-guards do not establish upper-range marker targeting or seen state.
+The completed [unsigned gap path (#1911)](#resuming-from-the-saved-position-1354) consumes authoritative
+coverage independently of these signed guards. Conservative completeness guards establish
+no seen state: coverage proves receipt, never sight.
+
+**Read evidence from history pages (#1912).** `reduceOrderedHistoryPage` returns, beside
+rows, each durable id's claim on the row it produced and a fact per entry: visible,
+understood nonvisual or unknown. Nonvisual means the entry decoded through its existing
+payload decoder and is deliberately drawn without a row, such as state frames, info
+banners, model and command menus, MCP and usage reports and background-task lifecycle.
+A malformed or unsupported entry is unknown and blocks any read checkpoint past it, even
+when later visible content exists. A page also clears a live unidentified barrier whose
+type, canonical timestamp and payload it matches. A merge or re-delivery never turns an
+earlier barrier into seen content or lowers a claim. The checkpoint rules themselves are
+under [daemon conversation read marks](remote-conversation-repository.md#daemon-conversation-read-marks).
 
 **History establishes modern queued delivery (#1655).** A stored user `message` with a valid
 `queued_msg_id` can arrive with its answering delta 0 before the first live push, even before
@@ -76,12 +105,16 @@ and consumes that exact entry in the **requested conversation**, independently o
 routing id. Omitted/malformed identity and non-user rows do not establish modern delivery.
 Queue-entry consumption does not broaden the renderer's message-id deduplication.
 
-Only first-delivery, pending, minted held user echoes have provisional positions. Remove those
-rows from the receiving list before `mergeUnsignedHistoryRows`, insert by incoming daemon
-order/delivery timestamp, then restore their exact held objects. Using their tap timestamps or
-retaining a legacy reserved slot can put an echo above the waiting turn's tool row. Content,
-attachment hints and original timestamp survive; idle, foreign/non-user and already delivered
-held rows keep their positions. This exception also handles two own echoes on the same page.
+For own echoes, only first-delivery, pending, minted held rows have provisional positions.
+Remove them from the receiving placement list, substitute their held objects into incoming rows
+**before allocation**, and supply original held rows as renderer owners (#1941). Restoring objects
+after allocation can duplicate a newcomer's key. Capture original delivery timestamps separately
+by logical identity: incoming insertion and the run minimum use those clocks, not retained tap
+clocks. With multiple provisional rows, a substituted minimum can also move an unrelated fresh
+neighbour. Held receiver clocks and assistant first-evidence relocation stay unchanged. Content,
+attachment hints and original timestamp survive; idle, foreign/non-user and delivered rows keep
+positions. The two `HistoryAliasCorrelationTest.unchangedOrderInvariant_*` probes cover distinct
+send/delivery clocks, two echoes with a newcomer before/between/after, and original/empty replay.
 
 Commit placement, exact entry consumption, first-delivery row identity and cleared queued/
 suppressed/reserved eligibility in the same CAS update. Otherwise the first replayed live push
@@ -185,31 +218,23 @@ failure mode) is unchanged. A stored `send_message` entry has no mapper of its o
 directly to a `Role.User` `Message` inline in the reducer, since `role` is not a wire field on that
 payload (the sender is the operator by construction).
 
-**Three join keys, and the merge's key is deliberately the renderer's key, not structural equality.**
-The wire SSOT (pyrycode `docs/protocol-mobile.md` § *Conversation history (v2)*, sub-section *Joining a
-page to the live stream*) names three keys: durable `HistoryEntry.unsignedId` for page-against-page,
-the pair `(type, ts)` for page-against-live (not implemented by this ticket; the
-merge instead re-derives presence per row kind), and `message_id` for a stored `send_message` against its
-local echo. `mergeUnsignedHistoryRows` never joins a `HistoryEntry.unsignedId` to a live `Envelope.eventId`: durable
-positions order received content, while replay ids belong to a different sequence. Deduplication, per
-`ThreadItem` kind, still checks **the same key `ThreadScreen`'s `LazyColumn` uses to key
-that row** — not `==`. This mattered in practice: the obvious dedup for a `SessionBoundary` is structural
-equality (every field is payload-derived, so a page twin equals its live twin), and it passes every
-overlap test — but at the time `ThreadScreen` keyed a boundary row on `(previousSessionId, newSessionId)`
-alone and read neither `reason` nor `occurredAt`, so a page carrying two boundaries sharing that pair and
-differing only in `occurredAt` would pass an equality check and still hand the `LazyColumn` two rows with
-one key, which throws. The general lesson: when a list row has a client-visible identity, dedup upstream
-on *that* identity, or the two can silently disagree. [#775](../codebase/775.md) later found that the
-pair alone is not a safe join key either — an idle-evicted session keeps its id, so a session evicted
-twice legitimately sends the pair twice with different instants, and both boundaries are real. The join
-key (`holdsBoundary`, `internal` since #775) and the list key both moved to the full
-`(previousSessionId, newSessionId, occurredAt)` triple, so the merge admits the second eviction instead
-of dropping it. A `MessageItem` joins on `message_id` alone, id-only and
-role-agnostic — one key serves a stored `message`/`send_message` entry, a `tool_use_id`, and a `turn_id`,
-and it is also `appendMessages`' existing live-lane dedup rule. An `UnrecognizedMessage` joins on its id,
-which the reducer derives as `"history-${entry.unsignedId}"` from the durable per-conversation log id — stable
-across re-reduction, and disjoint from the live lane's per-process-counter `"unrecognized-<n>"` namespace
-(see [Unrecognized message row](unrecognized-message-row.md)) so the two cannot collide by coincidence.
+**Typed reconciliation identity and renderer ownership (#1979).** Durable `HistoryEntry.unsignedId`
+orders received content; it never joins to live `Envelope.eventId`. Assistant deltas join by
+`(turnId, seq)`, ordinary messages by `ordinaryId` (`reconciliationId ?: id`), boundaries by
+`(previousSessionId, newSessionId, occurredAt)`, and unrecognized rows by their stable derived id
+`"history-${entry.unsignedId}"`. Ordinary message identity remains role-agnostic. These identities
+are independent of renderer aliases and structural equality. The boundary triple prevents repeated
+idle evictions of the same session pair from being dropped (#775).
+
+A cached assistant segment and a distinct ordinary user row can share a renderer id and identical
+text without being duplicates. Both are admitted, in either direction, before unique renderer keys
+are allocated. Same-identity replay adds neither rows nor delta text; demonstrated legacy whole-turn
+reconciliation remains authoritative. Surviving displayed owners reserve their keys before receiver
+claims and newcomers; a user alias preserves ordinary identity/content for original-id replay.
+Alias allocation cannot decide admission or reorder held content. See [cache ownership and collision
+regressions](caching-conversation-repository.md#how-the-restore-merges-with-live-rows) and
+[ordinary identity](data-model.md#message).
+
 Ordinary missing rows enter through the ordered merge described above; the receiving thread is
 never globally re-sorted. First modern deliveries of pending own echoes use that section's
 explicit provisional-position exception. Duplicate ordinary rows keep
@@ -240,6 +265,13 @@ rows through replay and older-page prepend. This preserves terminal-before-start
 sorting by phase. Anchor lookup uses typed row identities and assistant `(turnId, seq)` overlap, never
 text or timestamps. Differently keyed or partly discarded segments still represent retained neighbours.
 
+`ThreadRowAnchors` uses `mergeIdentity` for ordinary lookup, so a same-key assistant segment
+cannot stand in for an aliased user. Lifecycle input retains each original segment's full range of
+surviving neighbours: leading evidence uses the minimum retained position and trailing evidence the
+maximum. Splitting that input into atoms can flush a leading marker against a later row before an
+earlier sequence is considered. Attach demonstrated legacy sequence records through `ordinaryId`
+to the original assistant rows before placement, preserving their segment boundaries.
+
 Choose anchors **after** removing segments superseded by whole-turn rows: a suffix of a retained
 whole turn must resolve to that whole-turn row. Anchoring a finish to a temporary suffix and removing
 that suffix later can strand the finish at the front. The lifecycle regressions cover both history and
@@ -247,6 +279,19 @@ that suffix later can strand the finish at the front. The lifecycle regressions 
 segment overlap in both directions, retained-launch variants, replay and older-page prepend. Ordinary
 assistant delta anchoring and segment joining treat markers as transparent; hidden evidence cannot
 split text or create visible rows. Descriptions and summaries remain inert and unlogged.
+
+The direct collision, ordinary-anchor and combined-range regressions in `HistoryMessageIdentityTest`
+cover both unsigned merge lanes and replay; the cache section names each method and records the
+full-suite counts. The enabled
+`CoalescedThreadWritesTest.identityInvariant_collidingRendererKeysKeepBothIdentitiesThroughPendingReconnect`
+and `HistoryMessageIdentityTest.reconnectInvariant_unsignedCacheCollisionSurvivesFreshRestoreAndReplay`
+cover empty disconnect, pending persistence and fresh-file identity/key restoration.
+`AssistantParentAttributionTest.collidingTurnKeys_doNotOverwriteHeldLaneAttributionOrGainAuthority`
+requires lossless content, held keys, typed replay and lane-specific parents in both directions;
+users never gain assistant authority. It and the unchanged
+`BackgroundTaskLifecycleTest.wholeTurnArrivingOverRetainedSegments_anchorsFinishAfterWholeTurnInHistoryAndReconnect`
+also executed/passed in the full run (12 attribution and 31 lifecycle methods, 0 failed/errors/skipped),
+as recorded in [the verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/2023#issuecomment-6090873234).
 
 **A page cannot promote a `Running` tool row to `Done`/`Failed` — only the live lane can, for now.** A
 page carrying a `tool_result` for a tool row the thread already holds as `Running` (the ask-versus-answer
@@ -281,131 +326,7 @@ mid-turn local echo, the cache's segment record, and the #1419 `turn_end`-before
 
 ## The walk that finally calls `requestHistory` (#777)
 
-[#645](../codebase/645.md) shipped the fold and left `requestHistory` with no caller. [#777](../codebase/777.md)
-adds the caller, and it lives **beside `ThreadViewModel`**, not in this repository — the contract above is
-unchanged, and this section exists because the demand's design leans on guarantees this document already
-records.
-
-- **`ThreadHistoryDemand`** (`ui/conversations/thread/ThreadHistoryDemand.kt`) is a pure value — cursor,
-  pages-loaded count, in-flight flag, and a `HistoryWalkStop?` (`AtStart` / `NotAdvancing` / `PageCap` /
-  `Failed`, `null` while still walking). As shipped by #777, `ThreadViewModel` asked with it in `init`
-  (empty cursor = newest) and again each time the thread screen reported the reader had reached the oldest
-  loaded row. [#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) removed both triggers: older
-  pages now load only on the reader's own gesture, never on open — see
-  [§ the retry and the two restarts (#778)](#the-retry-and-the-two-restarts-778) below and
-  [Thread screen § the oldest-end history demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777)
-  for what replaced the scroll-driven ask.
-- **The walk reads `requestHistory`'s returned `HistoryPage` for `cursor` and `atStart` only.**
-  `settled(pageCursor: String, atStart: Boolean)` takes the two scalars rather than the whole `HistoryPage`
-  — `ThreadHistoryDemand.kt` imports neither `HistoryPage` nor `HistoryEntry`, so no daemon-authored entry
-  text can structurally reach the walk's state. This is the caller-side half of "nothing needs a second
-  fold": `RemoteConversationRepository.requestHistory` already merged the page into `threadByConversation`
-  before returning (the § above), and `ThreadViewModel` reads that merged result through the existing
-  `observeMessages` collector exactly as it does today — the walk never touches an entry.
-- **One outstanding request per conversation, claimed CAS-style.** `ThreadViewModel` claims the slot with a
-  `MutableStateFlow.compareAndSet` retry loop, not a read-then-assign — the settle runs in a launched
-  coroutine, so a plain check-then-act would open a window for two concurrent asks. An ask arriving while
-  one is in flight is dropped, never queued.
-- **Two termination rules, and only one is a security bound.** `atStart` is the wire's only true
-  termination signal and is checked before the cursor comparison, because the wire leaves the returned
-  cursor empty whenever `atStart` is true. `pageCursor.isEmpty() || pageCursor == cursor` (`NotAdvancing`)
-  is an **honest-bug guard only** — a daemon alternating between two distinct cursor values defeats it
-  while still answering `atStart = false` forever. The load-bearing bound against a deliberately
-  adversarial daemon is the client-side `MAX_HISTORY_PAGES = 100` cap in `settled()`, which does not read
-  anything the daemon sent to decide when to stop. The cap is per `ThreadViewModel` instance (so per
-  screen-open), with a fresh count on every open — **leaving and re-entering a thread does not start a
-  fresh walk any more.** As shipped by #777 it did: nothing survived a screen close. [#1354](#resuming-from-the-saved-position-1354)
-  changed that by saving the walk's position (not the count) beside the cached rows, so re-entering a
-  saved thread continues its cursor from where the last visit left off while the page budget still
-  resets to 100 for the new open.
-- **A failed ask keeps the cursor and page count, clears in-flight, and stops asking — no retry, as
-  shipped here.** `failed()` set `stoppedBy = Failed` without touching `cursor` or `pagesLoaded`, so every
-  row already loaded and the walk's position survived a failure. `HistoryWalkStop` was an enum rather than
-  a `Boolean` specifically so [#778](../codebase/778.md) could reopen `Failed` alone — `AtStart` /
-  `NotAdvancing` / `PageCap` stayed terminal. Nothing here retried, restarted on reconnect, or persisted
-  the cursor **across a screen close**: the projections above are connection-scoped
-  (`threadByConversation` starts empty on each connection), so a cursor surviving a reconnect would be a
-  stale-cursor bug rather than a resume point. [#778](#the-retry-and-the-two-restarts-778) reopened the
-  reconnect gap; [#1354](#resuming-from-the-saved-position-1354) later gave the *in-memory* cursor a
-  disk-backed twin that does survive a screen close, on the far side of a received page rather than a
-  failed one — see that section for why a failed ask still writes nothing to it.
-- **The opening ask stayed unconditional as #777 shipped it**, resolving the plan's second Open Question:
-  `mergeHistoryRows` (the § above) already skips any row the thread holds, keyed on the renderer's own row
-  key, so a first page overlapping the `backfill_since` replay ring was fully absorbed with no duplicate
-  rows. [#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) answered the question differently
-  by removing the opening ask altogether — older history loads only on request, on both apps, so there is
-  no first page to suppress or keep. The dedup argument still holds for every ask that remains: a page the
-  reader does ask for that overlaps the ring is still fully absorbed with no duplicate rows.
-
-## The retry and the two restarts (#778)
-
-[#777](../codebase/777.md) left `Failed` as a one-way door: a page that failed left every loaded row and
-the cursor in place but stopped the walk forever, and a reconnect left the walk holding a cursor the new
-connection's projections could never honour. [#778](../codebase/778.md) reopened that door with a retry and
-two self-triggered restarts. [#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) then removed
-both restarts outright: their shared premise — that a cursor cannot outlive its connection — was wrong. The
-cursor names a position in the daemon's append-only on-disk log (pyrycode `docs/protocol-mobile.md`, "The
-cursor"), not in the connection, and the rows already drawn survive a reconnect as
-`CachingConversationRepository.observeMessages`'s base. Only the retry survives from #778, joined by a new
-always-available recovery path: any failure, not only a retryable one, now lets a fresh gesture ask again.
-The design lives beside `ThreadViewModel`, not in this repository, and this section records only what it
-depends on here.
-
-- **`HistoryWalkStop.Failed` split into `RetryableFailure` and `PermanentFailure`** (#778), unchanged by
-  #1352, on `RelayErrorException.retryable` — `requestHistory`'s own contract names `history.unavailable`
-  as the **only** retryable code; the unknown-conversation `IllegalArgumentException` and the
-  closed-session `IllegalStateException` this repository's KDoc documents both settle permanently. `AtStart`
-  / `NotAdvancing` / `PageCap` are unchanged and stay terminal.
-- **`ThreadHistoryDemand` still reads `requestHistory`'s return for `cursor` and `atStart` only** — the
-  retry asks through the same `requestHistory` call this document describes above, so a retried page folds
-  into `threadByConversation` exactly the way any other page does, via `mergeHistoryPage`'s existing
-  dedup-by-renderer-key. Nothing on the caller side needed a second fold, and `ThreadHistoryDemand.kt` still
-  imports neither `HistoryPage` nor `HistoryEntry`.
-- **Neither failure is a one-way door any more (#1352).** `ThreadHistoryDemand.canAsk` holds after
-  `RetryableFailure` and after `PermanentFailure` alike — only the three terminal stops (`AtStart`,
-  `NotAdvancing`, `PageCap`) refuse a further ask. `asking()` claims the outstanding-request slot and
-  clears a failure stop in the same step, so both a fresh gesture after any failure and the Retry press
-  resume from the same `cursor` and `pagesLoaded`, loading the page that failed. The `retrying()`
-  transition #778 added is gone; `onRetryOlderHistory` now claims the slot through `asking()` under
-  `canRetry`, which is unchanged and still gates on `RetryableFailure` only, since Retry must stay inert
-  against a non-retryable failure.
-- **No restart exists any more, and none is needed.** #778's two restarts — an injected
-  `repositoryAvailable: Flow<Boolean>` transitioning back to `true` re-asking the newest page, and a
-  refused cursor doing the same — and the monotonic `walk` generation that protected a restarted walk from
-  a superseded connection's late settle are all removed. With exactly one ask ever in flight (the CAS claim
-  in `claimHistorySlot`) and no path left that asks by itself, every settle belongs to the walk's current
-  ask; a settle landing after a reconnect is valid precisely because the cursor it answers survived that
-  reconnect, so there is nothing left for a generation counter to protect against. The #861 fix to the
-  second trigger — deriving `repositoryAvailable` from `bundle.coordinator.currentRepository.map { it !=
-  null }` rather than the socket-level `ConnectionStateSource`, because a relay host's repository is
-  published only at `PumpState.Open`, later than the socket's `Connected` — is **not** undone: the same
-  flow now backs the new `hostAvailable: StateFlow<Boolean>` (desktop's `connectedConversationHostNow`)
-  that gates every ask instead of restarting one. A gesture or a Retry press while `hostAvailable` is
-  `false` sends nothing — logged as `event=history_ask_skipped reason=offline` for a gesture — and the
-  oldest-end slot shows the new offline notice unless the walk has already reached the start of history;
-  see
-  [Thread screen § the oldest-end history demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
-- **A refused cursor (`history.invalid_cursor`) resets to the newest page without asking (#1352),
-  replacing #778's refused-cursor restart.** `cursorRefused()` clears `cursor` back to `""`, releases the
-  outstanding-request slot and clears any stop, carrying `pagesLoaded` forward so a daemon that refuses
-  every cursor cannot buy a fresh budget. Nothing asks when this fires: where #778 answered a refusal by
-  re-asking immediately, #1352 instead waits for the reader's next qualifying gesture (or a Retry press,
-  now gated on the ordinary `canAsk`/`canRetry` path like any other ask) to carry the empty cursor forward,
-  per the ticket's "older history loads only on request" rule. A refusal of the newest-page ask (an already
-  empty cursor) still has nothing to fall back to and settles as an ordinary failure instead. Since
-  [#1354](#resuming-from-the-saved-position-1354), the same refusal also resets the **saved backwards** position, so a stale cursor
-  cannot steer
-  the next pull or open. Since #1832 it retains durable coverage and gap cursors; only a position
-  without coverage uses `writeHistoryPosition(conversationId, null)`.
-- **The `repositoryAvailable` collector in `ThreadViewModel.init` stays, but only for its #1311 side
-  effect.** It still collects `repositoryAvailable.distinctUntilChanged().drop(1)`, but since #1352 that
-  collector exists solely to call `closeLocalSendWindow("reconnect")` — it no longer restarts the walk.
-
-The screen-side half — the gesture that replaced #777's oldest-row scroll trigger, and the one oldest-end
-slot's five states including the new offline notice — is
-[Thread screen § the oldest-end history demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777)
-and
-[§ the oldest-end history retry and restart](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-retry-and-restart-778).
+See [Remote conversation repository — history walk and retry](remote-conversation-repository-history-walk.md) for the backwards walk, failure recovery and retired reconnect restarts.
 
 ## Resuming from the saved position (#1354)
 
@@ -444,11 +365,20 @@ targetable rather than inheriting the same old anchor.
 Positive signed cache documents retain rows and usable coverage under the unchanged serialized
 field names. Signed construction and lower-range readers remain source-compatible: spans expose
 only their representable portion and gaps/cursor anchors omit unrepresentable ids. Upper-range
-evidence sets sticky `unsignedIncomplete` so the signed UI stays conservatively unknown and cannot
-restore `AtStart`. Authoritative `unsignedUnknown` can still close on `at_start`; the compatibility
+evidence sets sticky `unsignedIncomplete` so signed completeness stays conservatively unknown and
+cannot restore `AtStart`. Authoritative `unsignedUnknown` can still close on `at_start`; the compatibility
 flag does not erase unsigned coverage or restored order. Malformed optional metadata discards the
 saved position independently of readable retained rows, which restore as legacy unknown.
 Restoration, position writes and page receipt send no read command and initiate no history fetch.
+
+**Restored gap targeting is unsigned end to end (#1911).** The ViewModel projects markers from
+`unsignedGaps`, `unsignedUnknownEdge` and `unsignedPositions`, preserving the exact anchor across
+`Long.MAX_VALUE` through `ULong.MAX_VALUE`. Only authoritative `unsignedUnknown` supplies the zero
+anchor; sticky signed uncertainty does not create a durable marker. Reader selection sends that
+same unsigned anchor to `cursorForUnsigned`; page coverage and cursor refusal use `receivedUnsigned`
+and `refusedUnsigned`. Restoring rows/coverage or receiving a page creates no older demand. The
+[#1842 readiness and settlement handoff](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777)
+still drains only already-counted newest arrivals.
 
 Each gap retains an opaque walk cursor, starting from the page immediately above it. A cursorless
 hole uses the nearest stored page-edge cursor above it; cursors are never constructed from entry
@@ -461,7 +391,8 @@ resets only that walk when coverage exists, preserving gaps and their cursors fo
 
 **Legacy rows prove identity, not completeness.** A nonempty cache without coverage is unknown,
 with or without saved `atStart`. Its rows remain readable. After the newest page, one conservative
-marker sits at the verified span's older edge unless that page reports `at_start`. Pulls move the
+marker can sit at the verified span's older edge, subject to displayed-row eligibility, unless
+that page reports `at_start`. Pulls move the
 edge backwards. Matching a legacy whole-turn row or overlapping a verified span never closes
 ordinary legacy unknown coverage without an older durable anchor: only `at_start`, including an empty
 terminal page, does. Sticky signed-view uncertainty cannot be closed by terminal pages. Arbitrary
@@ -469,11 +400,27 @@ legacy holes cannot be inferred before received pages establish spans.
 An empty uncovered cache ignores old cursor/stop metadata unless `unsignedIncomplete` is set; flagged
 coverage and its usable cursor survive even with no retained rows or signed spans.
 
-Markers sit between held older and newer content, before their newer row. A non-rendering newer
-span can leave a standalone marker at the newest content edge. Assistant deltas on opposite sides
-of a hole use display-only fragments so the marker fits between them without changing retained
-repository rows. Known and unknown markers sharing a row/edge sort by their durable newer edge,
-keeping unknown coverage chronologically older. See [reader targeting](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777)
+**Visible markers are a projection of unresolved coverage (#1917).** An internal marker requires
+delivered content in both immediately adjacent covered spans and targets the first displayed row
+in the newer span. Lifecycle evidence and queued echoes cannot establish either occupancy or targets;
+queue changes reproject placement. Nonempty displayed history shows at most one marker above its
+oldest row, selecting the nearest unresolved edge at or before its oldest durable position and
+preferring a known gap over unknown coverage at a shared edge. Empty eligible history shows none.
+Hidden gaps retain their exact unsigned anchors and opaque cursors across restore and reconnect;
+marker disappearance does not join spans or certify missing content. Cache schema, retention and
+persistence policy are unchanged; the suspected cache-retention fragmentation source is unconfirmed.
+
+Assistant deltas on opposite sides of a hole use display-only fragments so an eligible marker fits
+between them without changing retained repository rows. Fragment boundaries use unsigned delta order
+and adjacent received-span endpoints,
+not the retained demand anchor. After partial fill that anchor can lie inside the extended older
+span: deltas at `A` and `A+4`, followed by `A+1`, must display `A,A+1` / marker / `A+4` while still
+targeting `A`. Comparing against `A` would rejoin held text across the unresolved hole and put the
+marker before the whole reply; serialization would preserve that error. The partial-fill and
+serialized-restoration ViewModel regressions assert fragment content, exact placement and unchanged
+opaque cursor identity across the signed boundary, upper range and maximum boundary. Projected
+markers sort by durable newer edge; the oldest-edge rule suppresses unknown coverage when a known
+gap shares that edge. See [reader targeting](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777)
 for the first-crossed gesture rule.
 
 The repository still performs the one atomic row merge; coverage inspection never renders a page
@@ -486,9 +433,10 @@ suppression and `unsignedHistoryOrder` from the same projection generation. See 
 reconciled cacheable rows before coverage/position, replacing #1354's accepted window where
 position could reach disk before rows. Failed row writes cannot advance claims; interruption between writes leaves older,
 conservative state. Trimming and changed/missing retained rows invalidate coverage, and the later
-state write must retain the trim's backwards cursor/stop reset. See [the two file writers](conversation-cache.md#the-thread-documents-two-writers-1354)
+state write must retain the trim's backwards cursor/stop reset. See [the two file writers](conversation-cache-layout.md#the-thread-documents-two-writers-1354)
 and [the wrapper's saved position](caching-conversation-repository.md#the-saved-history-position-1354).
-[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) supplies the device proof these JVM
+[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) retains ownership of the rung-3 live
+durable-gap operator-flow proof; #1911 adds no live scenario. It supplies the device proof these JVM
 tests cannot. After the owned daemon restarts with its durable home kept and its replay ring
 emptied, both the real-Claude offline-read method and its scripted twin show one newest ask without
 a gesture, a remaining gap marker, one older page per physical reader pull, and every missed post

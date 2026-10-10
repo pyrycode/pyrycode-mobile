@@ -1,5 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import de.pyryco.mobile.data.repository.ThreadItem
+
 /**
  * How many pages one screen-open may walk before the client stops asking (#777).
  *
@@ -17,11 +19,25 @@ package de.pyryco.mobile.ui.conversations.thread
  */
 internal const val MAX_HISTORY_PAGES = 100
 
-/** Local marker identity plus the hashed logical row immediately above the uncovered interval. */
+/** Exact unsigned demand anchor with its logical history key and prepared display target. */
 data class ThreadHistoryMarker(
-    val anchor: Long,
     val beforeRow: String,
-)
+    val unsignedAnchor: ULong,
+    /** Prepared display-only target; compatibility markers resolve through [beforeRow]. */
+    val displayRow: ThreadItem? = null,
+) {
+    constructor(anchor: Long, beforeRow: String) : this(
+        beforeRow,
+        anchor.also { require(it >= 0) { "invalid signed history anchor" } }.toULong(),
+    )
+
+    /** Lower-range compatibility only; upper ids must be read through [unsignedAnchor]. */
+    val anchor: Long
+        get() {
+            check(unsignedAnchor <= Long.MAX_VALUE.toULong()) { "unsigned history anchor requires unsigned consumer" }
+            return unsignedAnchor.toLong()
+        }
+}
 
 /**
  * Why a history walk stopped, or `null` while it is still walking (#777, split by #778).

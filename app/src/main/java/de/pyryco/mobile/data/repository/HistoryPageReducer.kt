@@ -38,6 +38,7 @@ import de.pyryco.mobile.data.model.SegmentDelta
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ToolDenial
+import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
@@ -83,10 +84,11 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.T
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_UNRECOGNIZED_MESSAGE
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.decodeFromJsonElement
+import java.security.MessageDigest
 import java.util.TreeMap
 
 /**
- * Index of the [ThreadItem.MessageItem] in this thread whose [Message.id] is [id] and [Message.role]
+ * Index of the ordinary [ThreadItem.MessageItem] whose [Message.ordinaryId] is [id] and [Message.role]
  * is [role], or -1 if none — the row guard shared by the id+role tool folds. The
  * `is ThreadItem.MessageItem` type-guard namespaces message rows from [ThreadItem.SessionBoundary]
  * rows, so a fold never mistakes a boundary for a message (and the `as` after a hit is always safe).
@@ -94,7 +96,7 @@ import java.util.TreeMap
 internal fun List<ThreadItem>.indexOfMessage(
     id: String,
     role: Role,
-): Int = indexOfFirst { it is ThreadItem.MessageItem && it.message.id == id && it.message.role == role }
+): Int = indexOfFirst { it is ThreadItem.MessageItem && it.message.ordinaryId == id && it.message.role == role }
 
 /**
  * Append [message] as a [ThreadItem.MessageItem], deduping by `message_id`: a first-seen id is appended
@@ -102,14 +104,19 @@ internal fun List<ThreadItem>.indexOfMessage(
  * occurrence, last write wins). The `is ThreadItem.MessageItem` guard skips any interleaved
  * [ThreadItem.SessionBoundary] so a `message_id` never matches a boundary row.
  *
- * Dedup here is **id-only, role-agnostic** — deliberately not routed through [indexOfMessage] — because
+ * Dedup here is **logical-id-only, role-agnostic** — deliberately not routed through [indexOfMessage] — because
  * that is what `appendMessages` has always done and routing it through the role-taking helper would
- * change semantics. It is also the key `ThreadScreen`'s `LazyColumn` uses for a message row.
+ * change semantics. An ordinary logical match keeps its renderer key and alias metadata. The existing
+ * renderer collision fallback still replaces a row when no ordinary logical match exists.
  */
 internal fun List<ThreadItem>.withMessage(message: Message): List<ThreadItem> {
-    val index = indexOfFirst { it is ThreadItem.MessageItem && it.message.id == message.id }
+    val ordinary = message.ordinaryId
+    val logicalIndex = if (ordinary != null) indexOfFirst { it is ThreadItem.MessageItem && it.message.ordinaryId == ordinary } else -1
+    val index = logicalIndex.takeIf { it >= 0 } ?: indexOfFirst { it is ThreadItem.MessageItem && it.message.id == message.id }
     return if (index >= 0) {
-        toMutableList().apply { this[index] = ThreadItem.MessageItem(message) }
+        val held = (this[index] as ThreadItem.MessageItem).message
+        val updated = if (logicalIndex >= 0) message.copy(id = held.id, reconciliationId = held.reconciliationId) else message
+        toMutableList().apply { this[index] = ThreadItem.MessageItem(updated) }
     } else {
         this + ThreadItem.MessageItem(message)
     }
@@ -130,7 +137,7 @@ internal fun List<ThreadItem>.withToolUse(
     event: LiveSessionEvent.ToolUse,
     timestamp: Instant,
 ): List<ThreadItem> =
-    if (any { it is ThreadItem.MessageItem && it.message.id == event.toolUseId }) {
+    if (any { it is ThreadItem.MessageItem && (it.message.ordinaryId == event.toolUseId || it.message.id == event.toolUseId) }) {
         this
     } else {
         this +
@@ -283,7 +290,7 @@ internal fun List<ThreadItem>.withAssistantDelta(
     val anchor =
         rows.indexOfLast { row ->
             row !is ThreadItem.BackgroundTaskLifecycle &&
-                !(row is ThreadItem.MessageItem && row.message.role == Role.User && row.message.id in passOver)
+                !(row is ThreadItem.MessageItem && row.message.role == Role.User && row.message.ordinaryId in passOver)
         }
     val last = (rows.getOrNull(anchor) as? ThreadItem.MessageItem)?.message
     val segment = last?.segment
@@ -297,7 +304,7 @@ internal fun List<ThreadItem>.withAssistantDelta(
         return rows.toMutableList().apply { this[anchor] = ThreadItem.MessageItem(extended) }
     }
     val key = segmentKey(event.turnId, event.seq)
-    if (rows.any { it is ThreadItem.MessageItem && it.message.id == key }) return rows
+    if (rows.any { it is ThreadItem.MessageItem && (it.message.id == key || it.message.ordinaryId == key) }) return rows
     return rows +
         ThreadItem.MessageItem(
             Message(
@@ -359,7 +366,7 @@ internal fun List<ThreadItem>.withSettledTurns(turnIds: Set<String>): List<Threa
     fun ofTurn(message: Message): Boolean =
         message.role == Role.Assistant &&
             message.isStreaming &&
-            (message.segment?.turnId?.let { it in turnIds } ?: (message.id in turnIds))
+            (message.segment?.turnId?.let { it in turnIds } ?: (message.ordinaryId in turnIds))
     if (turnIds.isEmpty() || none { it is ThreadItem.MessageItem && ofTurn(it.message) }) return this
     return map { row ->
         if (row is ThreadItem.MessageItem && ofTurn(row.message)) ThreadItem.MessageItem(row.message.copy(isStreaming = false)) else row
@@ -490,6 +497,8 @@ internal class ReducedHistoryPage(
     val rows: List<ThreadItem>,
     val unsignedOrder: Map<Any, ULong>,
     val unsignedClaims: Map<Any, Set<ULong>>,
+    val readFacts: Map<ULong, Boolean?> = emptyMap(),
+    val readClaims: Map<Any, Set<ULong>> = emptyMap(),
 ) {
     val order: Map<Any, Long> get() = unsignedOrder.signedHistoryOrder()
     val claims: Map<Any, Set<Long>>
@@ -504,12 +513,16 @@ internal class ReducedHistoryPage(
 internal fun reduceOrderedHistoryPage(
     entries: List<HistoryEntry>,
     interactive: Boolean,
+    initialRows: List<ThreadItem> = emptyList(),
+    initialCompaction: CompactionFold = CompactionFold(),
 ): ReducedHistoryPage {
-    var compaction = CompactionFold()
+    var compaction = initialCompaction
     val order = HashMap<Any, ULong>()
     val claims = HashMap<Any, MutableSet<ULong>>()
+    val readFacts = HashMap<ULong, Boolean?>()
+    val readClaims = HashMap<Any, MutableSet<ULong>>()
     val rows =
-        entries.asReversed().fold(emptyList<ThreadItem>()) { rows, entry ->
+        entries.asReversed().fold(initialRows) { rows, entry ->
             val next =
                 if (interactive && (entry.type == TYPE_COMPACTING || entry.type == TYPE_COMPACTION_BOUNDARY)) {
                     rows.withCompactionEntry(entry, compaction).let { (next, fold) ->
@@ -519,6 +532,8 @@ internal fun reduceOrderedHistoryPage(
                 } else {
                     rows.withHistoryEntry(entry, interactive)
                 }
+            val nonvisual = understoodNonvisualEntry(entry, interactive)
+            readFacts[entry.unsignedId] = if (nonvisual == true) true else null
             if (next !== rows) {
                 next.forEachIndexed { index, row ->
                     val previous = rows.getOrNull(index)
@@ -530,6 +545,10 @@ internal fun reduceOrderedHistoryPage(
                         } else {
                             entry.unsignedId
                         }
+                    if (row != previous) {
+                        if (nonvisual != true || row.isReadContent() && row !is ThreadItem.Banner) readFacts[entry.unsignedId] = false
+                        readClaims.getOrPut(row.mergeIdentity()) { HashSet() }.add(entry.unsignedId)
+                    }
                     val segment = (row as? ThreadItem.MessageItem)?.message?.segment
                     if (segment == null) {
                         order.putIfAbsent(row.mergeIdentity(), logId)
@@ -557,7 +576,7 @@ internal fun reduceOrderedHistoryPage(
             }
             next
         }
-    return ReducedHistoryPage(rows, order, claims)
+    return ReducedHistoryPage(rows, order, claims, readFacts, readClaims)
 }
 
 /**
@@ -810,7 +829,11 @@ internal fun List<ThreadItem>.mergeOrderedHistoryRows(
 internal fun List<ThreadItem>.mergeUnsignedHistoryRows(
     rows: List<ThreadItem>,
     order: Map<Any, ULong>,
-): List<ThreadItem> = mergeRows(rows, order)
+    firstEvidence: Set<Any> = emptySet(),
+    rendererOwners: List<ThreadItem> = emptyList(),
+    placementTimestamps: Map<Any, Instant> = emptyMap(),
+): List<ThreadItem> =
+    mergeRows(rows, order, firstEvidence = firstEvidence, rendererOwners = rendererOwners, placementTimestamps = placementTimestamps)
 
 /** Insert fresh history or reconnect evidence beside its neighbours; held markers never move on replay. */
 private fun List<ThreadItem>.withHistoryLifecyclePositions(
@@ -861,7 +884,8 @@ internal fun List<ThreadItem>.mergeCachedRows(
 internal fun List<ThreadItem>.mergeUnsignedCachedRows(
     cached: List<ThreadItem>,
     order: Map<Any, ULong>,
-): List<ThreadItem> = mergeRows(cached, order, cacheRestore = true)
+    rendererOwners: List<ThreadItem> = emptyList(),
+): List<ThreadItem> = mergeRows(cached, order, cacheRestore = true, rendererOwners = rendererOwners)
 
 /** Resolve persisted hashes once when restoring a base, rather than on every live delta emission. */
 internal fun List<ThreadItem>.receivedHistoryOrder(positions: Map<String, Long>): Map<Any, Long> = resolveHistoryOrder(positions)
@@ -874,9 +898,10 @@ private fun <T> List<ThreadItem>.resolveHistoryOrder(positions: Map<String, T>):
         emptyMap()
     } else {
         buildMap {
+            val digest = MessageDigest.getInstance("SHA-256")
             this@resolveHistoryOrder.deltaRows().forEach { row ->
                 val identity = row.mergeIdentity()
-                positions[historyIdentity(identity)]?.let { put(identity, it) }
+                positions[historyIdentity(identity, digest)]?.let { put(identity, it) }
             }
         }
     }
@@ -891,8 +916,15 @@ private fun List<ThreadItem>.mergeRows(
     incoming: List<ThreadItem>,
     order: Map<Any, ULong>,
     cacheRestore: Boolean = false,
+    firstEvidence: Set<Any> = emptySet(),
+    rendererOwners: List<ThreadItem> = emptyList(),
+    placementTimestamps: Map<Any, Instant> = emptyMap(),
 ): List<ThreadItem> {
-    if (incoming.isEmpty()) return this
+    if (incoming.isEmpty()) return if (rendererOwners.isEmpty()) this else withUniqueMessageKeys(this, incoming, rendererOwners)
+
+    // Retained provisional metadata must not replace the incoming delivery's placement evidence.
+    fun ThreadItem.placementTimestamp(): Instant = placementTimestamps[mergeIdentity()] ?: mergeTimestamp()
+
     val parents =
         assistantParents().apply {
             incoming.assistantParents().forEach { (turn, parent) -> putIfAbsent(turn, parent) }
@@ -905,6 +937,8 @@ private fun List<ThreadItem>.mergeRows(
     val heldAtoms = if (legacy.records.isEmpty()) heldDeltas else heldDeltas.withLegacyRecords(legacy.records).deltaRows()
     val incomingAtoms = if (legacy.records.isEmpty()) incomingDeltas else incomingDeltas.withLegacyRecords(legacy.records).deltaRows()
     val legacyMatches = legacy.identities
+    // Only a first durable claim that conflicts with a known neighbour releases a held delta's slot.
+    val relocating = heldAtoms.provisionalPlacementConflicts(order, firstEvidence - legacyMatches, incomingAtoms)
     // If a legacy row replaces known text in the middle, retain that slot rather than prepend it.
     val legacyByTurn =
         incomingAtoms
@@ -919,6 +953,7 @@ private fun List<ThreadItem>.mergeRows(
     val placedLegacy = HashSet<String>()
     val base =
         heldAtoms.mapNotNull { row ->
+            if (row.mergeIdentity() in relocating) return@mapNotNull null
             if (row.mergeIdentity() !in legacyMatches) return@mapNotNull row
             val segment = (row as? ThreadItem.MessageItem)?.message?.segment ?: return@mapNotNull row
             val legacy = legacyByTurn[segment.turnId] ?: return@mapNotNull null
@@ -931,7 +966,7 @@ private fun List<ThreadItem>.mergeRows(
                 null
             }
         }
-    val rows = incomingAtoms
+    val rows = incomingAtoms.map { relocating[it.mergeIdentity()] ?: it }
     val positions = HashMap<Any, Int>(base.size)
     val turns = HashMap<String, TreeMap<Int, Int>>()
     base.forEachIndexed { index, row ->
@@ -964,8 +999,7 @@ private fun List<ThreadItem>.mergeRows(
         following[index] = next
         positions[rows[index].mergeIdentity()]?.let { next = it }
     }
-    val runTimestamp = rows.minOfOrNull { it.mergeTimestamp() } ?: Instant.DISTANT_PAST
-    val heldMessageIds = base.filterIsInstance<ThreadItem.MessageItem>().associateBy { it.message.id }
+    val runTimestamp = rows.minOfOrNull { it.placementTimestamp() } ?: Instant.DISTANT_PAST
     val slots = HashMap<Int, MutableList<ThreadItem>>()
     val lifecycle = mutableListOf<ThreadItem.BackgroundTaskLifecycle>()
     val admitted = positions.keys.toMutableSet()
@@ -985,18 +1019,7 @@ private fun List<ThreadItem>.mergeRows(
         }
         val message = (row as? ThreadItem.MessageItem)?.message
         val segment = message?.segment
-        val keyTwin = message?.let { heldMessageIds[it.id]?.message }
-        if (segment != null && keyTwin != null && keyTwin.segment?.turnId != segment.turnId) {
-            // Only a same-turn legacy opener may use the explicit #0 alias. Other collisions lose incoming text.
-            val legacyOpener = segment.firstSeq == 0 && keyTwin.role == Role.Assistant && keyTwin.id == segment.turnId
-            if (!legacyOpener || "${segment.turnId}#0" in heldMessageIds) return@forEachIndexed
-        }
-        if (segment == null &&
-            keyTwin?.segment != null &&
-            (message.role != Role.Assistant || message.id != keyTwin.segment.turnId)
-        ) {
-            return@forEachIndexed
-        }
+        // Typed admission above determines overlap; renderer collisions are allocated after placement.
         val turn = segment?.let { turns[it.turnId] }
         val lower = segment?.let { turn?.lowerEntry(it.firstSeq)?.value }
         val upper = segment?.let { turn?.higherEntry(it.firstSeq)?.value }
@@ -1006,7 +1029,7 @@ private fun List<ThreadItem>.mergeRows(
         val logBefore = logId?.let { logPositions.lowerEntry(it)?.value?.plus(1) }
         val logAfter = logId?.let { logPositions.higherEntry(it)?.value }
         val logBounds = if (logBefore == null && logAfter == null) null else (logBefore ?: 0)..(logAfter ?: base.size)
-        val logSlot = logBounds?.let { maxOf(it.first, minOf(it.last, clocks.insertionSlot(row.mergeTimestamp()))) }
+        val logSlot = logBounds?.let { maxOf(it.first, minOf(it.last, clocks.insertionSlot(row.placementTimestamp()))) }
         val neighbour =
             previous?.plus(1) ?: following[index].takeIf { it >= 0 }?.let {
                 // Leading restored rows preceded live-only rows before the cache was written.
@@ -1015,10 +1038,10 @@ private fun List<ThreadItem>.mergeRows(
         var slot =
             when {
                 lower != null ->
-                    maxOf(lower + 1, neighbour ?: logSlot ?: clocks.insertionSlot(row.mergeTimestamp())).coerceAtMost(
+                    maxOf(lower + 1, neighbour ?: logSlot ?: clocks.insertionSlot(row.placementTimestamp())).coerceAtMost(
                         upper ?: base.size,
                     )
-                upper != null -> minOf(upper, neighbour ?: logSlot ?: clocks.insertionSlot(row.mergeTimestamp()))
+                upper != null -> minOf(upper, neighbour ?: logSlot ?: clocks.insertionSlot(row.placementTimestamp()))
                 neighbour != null -> neighbour
                 logSlot != null -> logSlot
                 else -> clocks.insertionSlot(runTimestamp)
@@ -1027,11 +1050,14 @@ private fun List<ThreadItem>.mergeRows(
         lower?.let { slot = maxOf(slot, it + 1) }
         upper?.let { slot = minOf(slot, it) }
         slot = maxOf(floor, slot).coerceAtMost(base.size)
+        // Provisional sequence/page neighbours cannot overrule a fresh or repaired delta's durable bounds.
+        if (segment != null && logBounds != null && !logBounds.isEmpty()) slot = slot.coerceIn(logBounds)
         slots.getOrPut(slot) { mutableListOf() } += row
         floor = slot
     }
     if (slots.isEmpty() && lifecycle.isEmpty() && legacyMatches.isEmpty() && legacy.records.isEmpty()) {
-        return hinted.withBackgroundTaskLaunches()
+        val unchanged = if (rendererOwners.isEmpty()) hinted else hinted.withUniqueMessageKeys(hinted, attributedIncoming, rendererOwners)
+        return unchanged.withBackgroundTaskLaunches()
     }
     val ordinary =
         buildList {
@@ -1040,9 +1066,42 @@ private fun List<ThreadItem>.mergeRows(
                 add(row)
             }
             slots[base.size]?.let(::addAll)
-        }.withJoinedSegments().withUniqueMessageKeys()
-    val merged = ordinary.withHistoryLifecyclePositions(incoming, lifecycle).withBackgroundTaskLaunches()
+        }.withJoinedSegments().withUniqueMessageKeys(hinted, attributedIncoming, rendererOwners)
+    // Keep each segment's combined neighbour range; recovered legacy rows carry only proven sequences.
+    val lifecyclePage = attributedIncoming.withLegacyRecords(legacy.records)
+    val merged = ordinary.withHistoryLifecyclePositions(lifecyclePage, lifecycle).withBackgroundTaskLaunches()
     return if (merged == hinted) hinted else merged
+}
+
+/** Keep unbounded live placement intact; durable neighbours alone justify a first-evidence repair. */
+private fun List<ThreadItem>.provisionalPlacementConflicts(
+    order: Map<Any, ULong>,
+    firstEvidence: Set<Any>,
+    incoming: List<ThreadItem>,
+): Map<Any, ThreadItem> {
+    if (firstEvidence.isEmpty()) return emptyMap()
+    val incomingIdentities = incoming.mapTo(HashSet()) { it.mergeIdentity() }
+    val following = arrayOfNulls<ULong>(size)
+    var next: ULong? = null
+    for (index in indices.reversed()) {
+        following[index] = next
+        order[this[index].mergeIdentity()]?.let { next = minOf(next ?: it, it) }
+    }
+    return buildMap {
+        var previous: ULong? = null
+        forEachIndexed { index, row ->
+            val identity = row.mergeIdentity()
+            val position = order[identity] ?: return@forEachIndexed
+            if (identity in firstEvidence &&
+                identity in incomingIdentities &&
+                (row as? ThreadItem.MessageItem)?.message?.segment != null &&
+                ((previous?.let { it > position } == true) || (following[index]?.let { it < position } == true))
+            ) {
+                put(identity, row)
+            }
+            previous = maxOf(previous ?: position, position)
+        }
+    }
 }
 
 private fun List<Instant>.insertionSlot(timestamp: Instant): Int {
@@ -1056,7 +1115,7 @@ private fun List<Instant>.insertionSlot(timestamp: Instant): Int {
 }
 
 /** Attribution is scoped to the caller's conversation and never participates in row/sequence identity. */
-private fun Message.assistantTurnId(): String? = if (role == Role.Assistant) segment?.turnId ?: id else null
+private fun Message.assistantTurnId(): String? = if (role == Role.Assistant) segment?.turnId ?: reconciliationId ?: id else null
 
 private fun List<ThreadItem>.assistantParents(): MutableMap<String, String> =
     HashMap<String, String>().apply {
@@ -1099,7 +1158,11 @@ private fun List<ThreadItem>.deltaRows(): List<ThreadItem> =
         val message = (row as? ThreadItem.MessageItem)?.message
         val segment = message?.segment
         if (message == null || segment == null || segment.deltas.isEmpty()) {
-            listOf(row)
+            if (message != null && segment == null && message.reconciliationId != null) {
+                listOf(ThreadItem.MessageItem(message.copy(id = message.reconciliationId)))
+            } else {
+                listOf(row)
+            }
         } else {
             var offset = 0
             segment.deltas.map { delta ->
@@ -1109,6 +1172,7 @@ private fun List<ThreadItem>.deltaRows(): List<ThreadItem> =
                 ThreadItem.MessageItem(
                     message.copy(
                         id = segmentKey(segment.turnId, delta.seq),
+                        reconciliationId = null,
                         content = text,
                         segment = segment.copy(deltas = listOf(delta.copy(length = text.length))),
                     ),
@@ -1126,7 +1190,7 @@ private class LegacyMatches(
 private fun List<ThreadItem>.withLegacyRecords(records: Map<String, AssistantSegment>): List<ThreadItem> =
     map { row ->
         val message = (row as? ThreadItem.MessageItem)?.message
-        val record = message?.takeIf { it.role == Role.Assistant && it.segment == null }?.let { records[it.id] }
+        val record = message?.takeIf { it.role == Role.Assistant && it.segment == null }?.let { records[it.ordinaryId] }
         if (message == null || record == null) row else ThreadItem.MessageItem(message.copy(segment = record))
     }
 
@@ -1180,58 +1244,74 @@ private fun legacyDeltaMatches(
     return LegacyMatches(matches, records)
 }
 
-/**
- * One renderer key per row, without losing a row whose key another identity already uses. Ordinary message ids
- * claim their keys first and a repeated id is the same row. A turn's opening segment then claims its bare turn
- * key, or the explicit `#0` alias beside a legacy whole-turn row. Other segments claim [segmentKey]. A segment
- * whose key another logical identity holds, as when splitting a turn gives its suffix a key another turn or
- * message already uses, keeps its text under a `~n` suffix instead of being dropped; a repeated
- * `(turn, sequence)` is the same segment.
- */
-private fun List<ThreadItem>.withUniqueMessageKeys(): List<ThreadItem> {
-    val reserved = filterIsInstance<ThreadItem.MessageItem>().filter { it.message.segment == null }.mapTo(HashSet()) { it.message.id }
+/** Reserve surviving held renderer ids before assigning ids to admitted newcomers. */
+private fun List<ThreadItem>.withUniqueMessageKeys(
+    held: List<ThreadItem>,
+    incoming: List<ThreadItem>,
+    rendererOwners: List<ThreadItem>,
+): List<ThreadItem> {
+    val ownerKeys = rendererOwners.filterIsInstance<ThreadItem.MessageItem>().associate { it.mergeIdentity() to it.message.id }
+    val heldKeys = held.filterIsInstance<ThreadItem.MessageItem>().associate { it.mergeIdentity() to it.message.id }
+    val incomingKeys = incoming.filterIsInstance<ThreadItem.MessageItem>().associate { it.mergeIdentity() to it.message.id }
     val keys = arrayOfNulls<String>(size)
     val claimed = HashSet<String>()
-    val segments = HashSet<Pair<String, Int>>()
 
-    fun preferred(message: Message): String {
-        val segment = message.segment ?: return message.id
-        return if (segment.firstSeq == 0 && message.id in reserved) "${segment.turnId}#0" else message.id
+    // Displayed/cache and provisional claims can outlive the receiving projection's placement list.
+    forEachIndexed { index, row ->
+        if (row !is ThreadItem.MessageItem) return@forEachIndexed
+        val key = ownerKeys[row.mergeIdentity()] ?: return@forEachIndexed
+        if (claimed.add(key)) keys[index] = key
+    }
+    // Atomization uses canonical ids for admission; recover remaining receiver aliases here.
+    forEachIndexed { index, row ->
+        if (row !is ThreadItem.MessageItem || keys[index] != null) return@forEachIndexed
+        val key = heldKeys[row.mergeIdentity()] ?: return@forEachIndexed
+        if (claimed.add(key)) keys[index] = key
     }
 
     fun claim(
         index: Int,
-        message: Message,
-        alternative: Boolean,
+        row: ThreadItem.MessageItem,
     ) {
-        val identity = message.segment?.let { it.turnId to it.firstSeq }
-        if (identity != null && identity in segments) return
-        val key = preferred(message)
-        keys[index] =
-            when {
-                claimed.add(key) -> key
-                alternative -> generateSequence(1) { it + 1 }.map { "$key~$it" }.first(claimed::add)
-                else -> return
+        if (keys[index] != null) return
+        val message = row.message
+        val key = incomingKeys[row.mergeIdentity()] ?: message.id
+        if (claimed.add(key)) {
+            keys[index] = key
+            return
+        }
+        val segment = message.segment
+        val alternative =
+            if ((segment?.firstSeq == 0 && key == segment.turnId) ||
+                (segment == null && message.role == Role.Assistant && key == message.id)
+            ) {
+                "${segment?.turnId ?: message.id}#0"
+            } else {
+                key
             }
-        identity?.let(segments::add)
+        keys[index] =
+            if (claimed.add(alternative)) alternative else generateSequence(1) { it + 1 }.map { "$alternative~$it" }.first(claimed::add)
+    }
+    // Preserve newcomer priority, but never let it displace a surviving held claim.
+    forEachIndexed { index, row ->
+        if (row is ThreadItem.MessageItem && row.message.segment == null) claim(index, row)
     }
     forEachIndexed { index, row ->
-        val message = (row as? ThreadItem.MessageItem)?.message ?: return@forEachIndexed
-        if (message.segment == null) claim(index, message, alternative = false)
+        if (row is ThreadItem.MessageItem && row.message.segment?.firstSeq == 0) claim(index, row)
     }
     forEachIndexed { index, row ->
-        val message = (row as? ThreadItem.MessageItem)?.message ?: return@forEachIndexed
-        val segment = message.segment ?: return@forEachIndexed
-        if (segment.firstSeq == 0 && message.id == segment.turnId) claim(index, message, alternative = false)
+        if (row is ThreadItem.MessageItem) claim(index, row)
     }
-    forEachIndexed { index, row ->
-        val message = (row as? ThreadItem.MessageItem)?.message ?: return@forEachIndexed
-        if (message.segment != null && keys[index] == null) claim(index, message, alternative = true)
-    }
-    return mapIndexedNotNull { index, row ->
-        val message = (row as? ThreadItem.MessageItem)?.message ?: return@mapIndexedNotNull row
-        val key = keys[index] ?: return@mapIndexedNotNull null
-        if (key == message.id) row else row.copy(message = message.copy(id = key))
+    return mapIndexed { index, row ->
+        val message = (row as? ThreadItem.MessageItem)?.message ?: return@mapIndexed row
+        val key = keys[index] ?: return@mapIndexed row
+        val originalId = message.reconciliationId ?: message.id
+        val reconciliationId = originalId.takeIf { message.segment == null && key != it }
+        if (key == message.id && reconciliationId == message.reconciliationId) {
+            row
+        } else {
+            row.copy(message = message.copy(id = key, reconciliationId = reconciliationId))
+        }
     }
 }
 
@@ -1248,9 +1328,13 @@ private class ThreadRowAnchors(
 
     init {
         rows.forEachIndexed { index, row ->
-            identities.putIfAbsent(row.joinIdentity(), index)
+            identities.putIfAbsent(row.mergeIdentity(), index)
             val message = (row as? ThreadItem.MessageItem)?.message
-            if (message?.role == Role.Assistant && message.segment == null) wholeTurns.putIfAbsent(message.id, index)
+            if (message?.role == Role.Assistant &&
+                message.segment == null
+            ) {
+                wholeTurns.putIfAbsent(message.reconciliationId ?: message.id, index)
+            }
             val segment = message?.segment
             if (segment != null) {
                 val turn = sequences.getOrPut(segment.turnId) { HashMap() }
@@ -1275,7 +1359,7 @@ private class ThreadRowAnchors(
             if (last >= 0) return first..last
         }
         segment?.let { wholeTurns[it.turnId] }?.let { return it..it }
-        return identities[row.joinIdentity()]?.let { it..it }
+        return identities[row.mergeIdentity()]?.let { it..it }
     }
 }
 
@@ -1353,12 +1437,12 @@ private fun List<ThreadItem>.withAttachmentHintsFrom(rows: List<ThreadItem>): Li
         rows
             .filterIsInstance<ThreadItem.MessageItem>()
             .filter { it.message.attachments.isNotEmpty() }
-            .associate { it.message.id to it.message.attachments }
+            .associate { (it.message.reconciliationId ?: it.message.id) to it.message.attachments }
     if (twins.isEmpty()) return this
     var changed = false
     val filled =
         map { row ->
-            val twin = (row as? ThreadItem.MessageItem)?.let { twins[it.message.id] } ?: return@map row
+            val twin = (row as? ThreadItem.MessageItem)?.let { twins[it.message.reconciliationId ?: it.message.id] } ?: return@map row
             val attachments = row.message.attachments.map { it.withHintsFrom(twin) }
             if (attachments == row.message.attachments) {
                 row
@@ -1380,7 +1464,7 @@ private fun MessageAttachment.withHintsFrom(twin: List<MessageAttachment>): Mess
 private fun ThreadItem.joinIdentity(): Any =
     when (this) {
         is ThreadItem.BackgroundTaskLifecycle -> listOf("background-task", taskId, terminal != null)
-        is ThreadItem.MessageItem -> listOf("message", message.id)
+        is ThreadItem.MessageItem -> listOf("message", message.reconciliationId ?: message.id)
         is ThreadItem.SessionBoundary -> listOf("boundary", previousSessionId, newSessionId, occurredAt)
         is ThreadItem.UnrecognizedMessage -> listOf("unrecognized", id)
         is ThreadItem.Banner -> listOf("banner", occurredAt)

@@ -13,7 +13,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 
 class UnsignedHistoryTest {
@@ -115,21 +114,323 @@ class UnsignedHistoryTest {
             }
         }
 
-    @Ignore("blocked on #1913: late durable evidence strands a held live delta across its history separator")
     @Test
     fun lateDurableEvidence_doesNotStrandLiveDeltaBeyondItsHistorySeparator() =
         runTest {
+            for (positions in listOf(listOf(1uL, 2uL, 3uL, 4uL), listOf(boundary - 1u, boundary, boundary + 1u, ULong.MAX_VALUE))) {
+                val projection = ThreadProjection()
+                projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 1, "b"))
+                val entries =
+                    listOf(delta(positions[0], 0, "a"), delta(positions[1], 1, "b"), user(positions[2]), delta(positions[3], 2, "c"))
+                for (entry in entries.reversed()) {
+                    projection.mergeHistoryPage("c", page(entry), true)
+                    if (entry == entries[1]) assertEquals(listOf("b", name(positions[2]), "c"), projection.observe("c").first().texts())
+                }
+                repeat(2) { projection.mergeHistoryPage("c", page(*entries.toTypedArray()), true) }
+                val rows = projection.observe("c").first()
+                assertEquals(listOf("ab", name(positions[2]), "c"), rows.texts())
+                assertEquals(listOf(0, 1, 2), rows.seqs())
+            }
+        }
+
+    @Test
+    fun firstEvidenceInvariant_sparseFoldedSegmentAdmitsMissingDeltaWithinDurableBounds() =
+        runTest {
+            for (positions in listOf(listOf(1uL, 2uL, 3uL, 4uL), listOf(boundary - 1u, boundary, boundary + 1u, ULong.MAX_VALUE))) {
+                val entries =
+                    listOf(delta(positions[0], 0, "a"), delta(positions[1], 1, "b"), delta(positions[2], 2, "c"), user(positions[3]))
+                val projection = ThreadProjection()
+                projection.mergeHistoryPage("c", page(entries[3]), true)
+                projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 0, "a"))
+                projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 2, "c"))
+                projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c", "t", "end_turn"))
+                assertEquals(listOf(name(positions[3]), "ac"), projection.observe("c").first().texts())
+                val pages = listOf(page(entries[1], entries[2]), page(entries[0]), page(*entries.toTypedArray()))
+                for ((index, incoming) in (pages + pages.last() + page()).withIndex()) {
+                    val before = projection.observeSnapshot("c").first()
+                    projection.mergeHistoryPage("c", incoming, true)
+                    val after = projection.observeSnapshot("c").first()
+                    val expected = if (index == 0) listOf("bc", name(positions[3]), "a") else listOf("abc", name(positions[3]))
+                    assertEquals("positions=$positions merge=$index", expected, after.rows.texts())
+                    assertPlacementInvariants("sparse overlap merge=$index", before, after, incoming)
+                    assertEquals(if (index == 0) listOf(1, 2, 0) else listOf(0, 1, 2), after.rows.seqs())
+                    assertTrue(after.rows.filterIsInstance<ThreadItem.MessageItem>().none { it.message.isStreaming })
+                    if (index >= 2) {
+                        assertEquals(before.rows, after.rows)
+                        assertEquals(before.unsignedHistoryOrder, after.unsignedHistoryOrder)
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun firstEvidenceInvariant_sparsePageCutsAndPermutationsKeepUnevidencedAnchors() =
+        runTest {
+            for (positions in listOf(listOf(1uL, 2uL, 3uL, 4uL), listOf(boundary - 1u, boundary, boundary + 1u, ULong.MAX_VALUE))) {
+                val entries =
+                    listOf(delta(positions[0], 0, "changed a"), delta(positions[1], 1, "b"), delta(positions[2], 2, "changed c"))
+                val separator = user(positions[3])
+                for (cuts in 0 until 4) {
+                    val pages = mutableListOf<MutableList<HistoryEntry>>(mutableListOf())
+                    entries.forEachIndexed { index, entry ->
+                        if (index > 0 && cuts and (1 shl (index - 1)) != 0) pages.add(mutableListOf())
+                        pages.last().add(entry)
+                    }
+                    for (arrival in permutations(pages.indices.toList())) {
+                        val projection = ThreadProjection()
+                        projection.mergeHistoryPage("c", page(separator), true)
+                        projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 0, "a"))
+                        projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 2, "c"))
+                        val label = "sparse positions=$positions cuts=$cuts arrival=$arrival"
+                        for (index in arrival) {
+                            val before = projection.observeSnapshot("c").first()
+                            val incoming = page(*pages[index].toTypedArray())
+                            projection.mergeHistoryPage("c", incoming, true)
+                            assertPlacementInvariants(label, before, projection.observeSnapshot("c").first(), incoming)
+                        }
+                        val established = projection.observeSnapshot("c").first()
+                        assertEquals(label, listOf("abc", name(positions[3])), established.rows.texts())
+                        assertEquals(label, listOf(0, 1, 2), established.rows.seqs())
+                        repeat(2) { projection.mergeHistoryPage("c", page(*(entries + separator).toTypedArray()), true) }
+                        projection.mergeHistoryPage("c", page(), true)
+                        val replayed = projection.observeSnapshot("c").first()
+                        assertEquals(label, established.rows, replayed.rows)
+                        assertEquals(label, established.unsignedHistoryOrder, replayed.unsignedHistoryOrder)
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun firstEvidenceInvariant_pageCutsAndPermutationsConverge_withoutMovingRetainedAtoms() =
+        runTest {
+            for (positions in listOf(listOf(1uL, 2uL, 3uL, 4uL), listOf(boundary - 1u, boundary, boundary + 1u, ULong.MAX_VALUE))) {
+                val entries =
+                    listOf(delta(positions[0], 0, "a"), delta(positions[1], 1, "incoming"), user(positions[2]), delta(positions[3], 2, "c"))
+                for (cuts in 0 until 8) {
+                    val pages = mutableListOf<MutableList<HistoryEntry>>(mutableListOf())
+                    entries.forEachIndexed { index, entry ->
+                        if (index > 0 && cuts and (1 shl (index - 1)) != 0) pages.add(mutableListOf())
+                        pages.last().add(entry)
+                    }
+                    for (arrival in permutations(pages.indices.toList())) {
+                        for (folded in listOf(false, true)) {
+                            val projection = ThreadProjection()
+                            val seqs = if (folded) listOf(0, 1, 2) else listOf(1)
+                            for (seq in seqs) {
+                                projection.applyAssistantDelta(
+                                    LiveSessionEvent.AssistantDelta("c", "t", seq, "abc"[seq].toString()),
+                                )
+                            }
+                            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c", "t", "end_turn"))
+                            val label = "positions=$positions cuts=$cuts arrival=$arrival folded=$folded"
+                            for (index in arrival) {
+                                val before = projection.observeSnapshot("c").first()
+                                val incoming = page(*pages[index].toTypedArray())
+                                projection.mergeHistoryPage("c", incoming, true)
+                                val after = projection.observeSnapshot("c").first()
+                                assertPlacementInvariants(label, before, after, incoming)
+                                assertTrue(label, after.rows.filterIsInstance<ThreadItem.MessageItem>().none { it.message.isStreaming })
+                            }
+                            val beforeReplay = projection.observeSnapshot("c").first()
+                            assertEquals(label, listOf("ab", name(positions[2]), "c"), beforeReplay.rows.texts())
+                            assertEquals(label, listOf(0, 1, 2), beforeReplay.rows.seqs())
+                            assertTrue(label, beforeReplay.rows.filterIsInstance<ThreadItem.MessageItem>().none { it.message.isStreaming })
+                            repeat(2) { projection.mergeHistoryPage("c", page(*entries.toTypedArray()), true) }
+                            projection.mergeHistoryPage("c", page(), true)
+                            val afterReplay = projection.observeSnapshot("c").first()
+                            assertEquals(label, beforeReplay.rows, afterReplay.rows)
+                            assertEquals(label, beforeReplay.unsignedHistoryOrder, afterReplay.unsignedHistoryOrder)
+                        }
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun firstEvidenceInvariant_extractsMiddleOfFoldedSegment_andLeavesUnevidencedAtomsAnchored() =
+        runTest {
             val projection = ThreadProjection()
-            projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 1, "b"))
-            val entries = listOf(delta(1u, 0, "a"), delta(2u, 1, "b"), user(3u), delta(4u, 2, "c"))
-            for (entry in entries.reversed()) projection.mergeHistoryPage("c", page(entry), true)
-            repeat(2) { projection.mergeHistoryPage("c", page(*entries.toTypedArray()), true) }
-            assertEquals(
-                listOf("ab", name(3u), "c"),
-                projection.observe("c").first().filterIsInstance<ThreadItem.MessageItem>().map {
-                    it.message.content
+            projection.mergeHistoryPage("c", page(user(3u), delta(4u, 3, "d")), true)
+            val held =
+                listOf<ThreadItem>()
+                    .withAssistantDelta(LiveSessionEvent.AssistantDelta("c", "late", 0, "a"), at)
+                    .withAssistantDelta(LiveSessionEvent.AssistantDelta("c", "late", 1, "b"), at)
+                    .withAssistantDelta(LiveSessionEvent.AssistantDelta("c", "late", 2, "c"), at)
+            projection.appendMessages(
+                held.filterIsInstance<ThreadItem.MessageItem>().map {
+                    "c" to
+                        it.message.copy(isStreaming = false, parentToolUseId = "parent")
                 },
             )
+            val incoming = page(delta(2u, 1, "changed", turn = "late"))
+            val before = projection.observeSnapshot("c").first()
+            projection.mergeHistoryPage("c", incoming, true)
+            val after = projection.observeSnapshot("c").first()
+            assertPlacementInvariants("folded middle", before, after, incoming)
+            assertEquals(listOf("b", name(3u), "d", "ac"), after.rows.texts())
+            val late =
+                after.rows
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .map { it.message }
+                    .filter { it.segment?.turnId == "late" }
+            assertTrue(late.all { !it.isStreaming && it.parentToolUseId == "parent" && it.timestamp == at })
+            assertEquals(
+                listOf(1, 0, 2),
+                late.flatMap {
+                    it.segment
+                        ?.deltas
+                        .orEmpty()
+                        .map { it.seq }
+                },
+            )
+            assertEquals(setOf(listOf("delta", "late", 1)), after.unsignedHistoryOrder.keys - before.unsignedHistoryOrder.keys)
+        }
+
+    @Test
+    fun firstClaimInvariant_overlappingDifferentTextAndLaterConflictingClaimsCannotRepairTwice() =
+        runTest {
+            val entries = listOf(delta(1u, 0, "a"), delta(2u, 1, "b"), user(3u), delta(4u, 2, "c"))
+            for (overlap in listOf(entries.take(3), entries.drop(1), entries)) {
+                val projection = ThreadProjection()
+                projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 1, "held"))
+                projection.mergeHistoryPage("c", page(entries[3], entries[2]), true)
+                val before = projection.observeSnapshot("c").first()
+                val incoming = page(*overlap.toTypedArray())
+                projection.mergeHistoryPage("c", incoming, true)
+                assertPlacementInvariants("overlap", before, projection.observeSnapshot("c").first(), incoming)
+                projection.mergeHistoryPage("c", page(*entries.toTypedArray()), true)
+                val established = projection.observeSnapshot("c").first()
+                assertEquals(listOf("aheld", name(3u), "c"), established.rows.texts())
+                val conflict = page(delta(ULong.MAX_VALUE, 1, "replacement"), entries[0], entries[2], entries[3])
+                repeat(2) {
+                    projection.mergeHistoryPage("c", conflict, true)
+                    val after = projection.observeSnapshot("c").first()
+                    assertPlacementInvariants("conflicting replay", established, after, conflict)
+                    assertEquals(established.rows, after.rows)
+                    assertEquals(established.unsignedHistoryOrder, after.unsignedHistoryOrder)
+                }
+                projection.mergeHistoryPage("c", page(entries[1], entries[1]), true)
+                projection.mergeHistoryPage("c", page(), true)
+                assertEquals(established.rows, projection.observe("c").first())
+            }
+        }
+
+    @Test
+    fun scopeInvariant_liveReplayAndProjectionReplacementRequireTheirOwnFirstDurableEvidence() =
+        runTest {
+            val entries = listOf(delta(1u, 0, "a"), delta(2u, 1, "b"), user(3u), delta(4u, 2, "c"))
+            val hostA = ThreadProjection()
+            hostA.mergeHistoryPage("c", page(*entries.toTypedArray()), true)
+            // An identical turn/sequence in another conversation and another host starts provisional.
+            for ((projection, conversation) in listOf(hostA to "other", ThreadProjection() to "c")) {
+                projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta(conversation, "t", 1, "b"))
+                projection.mergeHistoryPage(conversation, page(entries[3], entries[2]), true)
+                val provisional = projection.observeSnapshot(conversation).first()
+                repeat(2) { projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta(conversation, "t", 1, "replayed")) }
+                assertEquals(provisional, projection.observeSnapshot(conversation).first())
+                assertFalse(provisional.unsignedHistoryOrder.containsKey(listOf("delta", "t", 1)))
+                projection.mergeHistoryPage(conversation, page(entries[1]), true)
+                assertEquals(listOf("b", name(3u), "c"), projection.observe(conversation).first().texts())
+                projection.mergeHistoryPage(conversation, page(entries[0]), true)
+                assertEquals(listOf("ab", name(3u), "c"), projection.observe(conversation).first().texts())
+            }
+            assertEquals(listOf("ab", name(3u), "c"), hostA.observe("c").first().texts())
+            hostA.remove("c")
+            assertTrue(
+                hostA
+                    .observeSnapshot("c")
+                    .first()
+                    .unsignedHistoryOrder
+                    .isEmpty(),
+            )
+            for (reloaded in listOf(hostA, ThreadProjection())) {
+                reloaded.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 1, "b"))
+                assertTrue(
+                    reloaded
+                        .observeSnapshot("c")
+                        .first()
+                        .unsignedHistoryOrder
+                        .isEmpty(),
+                )
+                for (entry in entries.reversed()) reloaded.mergeHistoryPage("c", page(entry), true)
+                repeat(2) { reloaded.mergeHistoryPage("c", page(*entries.toTypedArray()), true) }
+                assertEquals(listOf("ab", name(3u), "c"), reloaded.observe("c").first().texts())
+                assertEquals(listOf(0, 1, 2), reloaded.observe("c").first().seqs())
+            }
+        }
+
+    @Test
+    fun placementPermissionInvariant_orderMapAloneCannotMoveHeldDelta() =
+        runTest {
+            val projection = ThreadProjection()
+            projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 1, "b"))
+            projection.mergeHistoryPage("c", page(user(3u), delta(4u, 2, "c")), true)
+            val held = projection.observeSnapshot("c").first()
+            val late = reduceOrderedHistoryPage(page(delta(2u, 1, "changed")).entries, true)
+            val order = late.unsignedOrder + held.unsignedHistoryOrder
+            assertEquals(listOf(name(3u), "bc"), held.rows.texts())
+            assertEquals(held.rows, held.rows.mergeUnsignedHistoryRows(late.rows, order))
+            assertEquals(held.rows, held.rows.mergeOrderedHistoryRows(late.rows, order.mapValues { it.value.toLong() }))
+            assertEquals(held.rows, held.rows.mergeUnsignedCachedRows(late.rows, order))
+        }
+
+    @Test
+    fun heldContentInvariant_repairedAtomSurvivesACollidingRendererKey() =
+        runTest {
+            val projection = ThreadProjection()
+            projection.mergeHistoryPage("c", page(user(3u, "late#1")), true)
+            val folded =
+                listOf<ThreadItem>()
+                    .withAssistantDelta(LiveSessionEvent.AssistantDelta("c", "late", 0, "a"), at)
+                    .withAssistantDelta(LiveSessionEvent.AssistantDelta("c", "late", 1, "b"), at)
+                    .withAssistantDelta(LiveSessionEvent.AssistantDelta("c", "late", 2, "c"), at)
+            projection.appendMessages(folded.filterIsInstance<ThreadItem.MessageItem>().map { "c" to it.message })
+            val before = projection.observeSnapshot("c").first()
+            val incoming = page(delta(2u, 1, "changed", turn = "late"))
+            repeat(2) { projection.mergeHistoryPage("c", incoming, true) }
+            val after = projection.observeSnapshot("c").first()
+            assertPlacementInvariants("renderer collision", before, after, incoming)
+            assertEquals(listOf("b", "late#1", "ac"), after.rows.texts())
+            assertEquals(listOf(1, 0, 2), after.rows.seqs())
+        }
+
+    @Test
+    fun scopeInvariant_replacementBetweenAnyTwoPagesReloadsWithoutBorrowingClaims() =
+        runTest {
+            val entries = listOf(delta(1u, 0, "a"), delta(2u, 1, "b"), user(3u), delta(4u, 2, "c"))
+            for (cut in 0..entries.size) {
+                val original = ThreadProjection()
+                original.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 1, "b"))
+                for (entry in entries.reversed().take(cut)) original.mergeHistoryPage("c", page(entry), true)
+                val held = original.observeSnapshot("c").first()
+                val replacement = ThreadProjection()
+                replacement.appendMessages(held.rows.filterIsInstance<ThreadItem.MessageItem>().map { "c" to it.message })
+                assertTrue(
+                    replacement
+                        .observeSnapshot("c")
+                        .first()
+                        .unsignedHistoryOrder
+                        .isEmpty(),
+                )
+                replacement.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 1, "replayed"))
+                assertTrue(
+                    replacement
+                        .observeSnapshot("c")
+                        .first()
+                        .unsignedHistoryOrder
+                        .isEmpty(),
+                )
+                for (entry in entries.reversed()) {
+                    val before = replacement.observeSnapshot("c").first()
+                    val incoming = page(entry)
+                    replacement.mergeHistoryPage("c", incoming, true)
+                    assertPlacementInvariants("replacement after $cut pages", before, replacement.observeSnapshot("c").first(), incoming)
+                }
+                repeat(2) { replacement.mergeHistoryPage("c", page(*entries.toTypedArray()), true) }
+                assertEquals(listOf("ab", name(3u), "c"), replacement.observe("c").first().texts())
+                assertEquals(listOf(0, 1, 2), replacement.observe("c").first().seqs())
+            }
         }
 
     @Test
@@ -298,6 +599,51 @@ class UnsignedHistoryTest {
             assertEquals("history-18446744073709551615", (rows.single() as ThreadItem.UnrecognizedMessage).id)
         }
 
+    private fun assertPlacementInvariants(
+        label: String,
+        before: ThreadSnapshot,
+        after: ThreadSnapshot,
+        incoming: HistoryPage,
+    ) {
+        val prior = before.rows.atoms()
+        val result = after.rows.atoms()
+        val evidence = reduceOrderedHistoryPage(incoming.entries, true).unsignedOrder.keys - before.unsignedHistoryOrder.keys
+        val retained = prior.keys.filterNot { it in evidence && (it as? List<*>)?.firstOrNull() == "delta" }
+        assertEquals(label, retained, result.keys.filter { it in retained })
+        assertEquals(label, result.keys.size, after.rows.logicalIdentities().size)
+        prior.forEach { (identity, text) -> assertEquals(label, text, result[identity]) }
+        before.unsignedHistoryOrder.forEach { (identity, position) -> assertEquals(label, position, after.unsignedHistoryOrder[identity]) }
+        val durable = result.keys.filter { it in after.unsignedHistoryOrder }
+        assertEquals(label, durable.sortedBy { after.unsignedHistoryOrder[it] }, durable)
+        val expected = prior.keys + reduceOrderedHistoryPage(incoming.entries, true).rows.atoms().keys
+        assertEquals(label, expected.toSet(), result.keys.toSet())
+        val keys = after.rows.names()
+        assertEquals(label, keys.distinct(), keys)
+    }
+
+    private fun List<ThreadItem>.logicalIdentities(): List<Any> =
+        flatMap { row ->
+            val segment = (row as? ThreadItem.MessageItem)?.message?.segment
+            segment?.deltas?.map { listOf("delta", segment.turnId, it.seq) } ?: listOf(row.mergeIdentity())
+        }
+
+    private fun List<ThreadItem>.atoms(): Map<Any, String> =
+        linkedMapOf<Any, String>().apply {
+            for (row in this@atoms) {
+                val message = (row as? ThreadItem.MessageItem)?.message
+                val segment = message?.segment
+                if (segment == null) {
+                    put(row.mergeIdentity(), message?.content.orEmpty())
+                } else {
+                    var offset = 0
+                    for (delta in segment.deltas) {
+                        put(listOf("delta", segment.turnId, delta.seq), message.content.substring(offset, offset + delta.length))
+                        offset += delta.length
+                    }
+                }
+            }
+        }
+
     private fun user(
         id: ULong,
         name: String = name(id),
@@ -308,7 +654,8 @@ class UnsignedHistoryTest {
         id: ULong,
         seq: Int,
         text: String,
-    ): HistoryEntry = entry(id, "assistant_delta", """{"conversation_id":"c","turn_id":"t","seq":$seq,"text":"$text"}""")
+        turn: String = "t",
+    ): HistoryEntry = entry(id, "assistant_delta", """{"conversation_id":"c","turn_id":"$turn","seq":$seq,"text":"$text"}""")
 
     private fun entry(
         id: ULong,
@@ -320,6 +667,15 @@ class UnsignedHistoryTest {
     private fun page(vararg entries: HistoryEntry): HistoryPage = HistoryPage(entries.sortedByDescending { it.unsignedId }, "cursor", false)
 
     private fun name(id: ULong): String = "m$id"
+
+    private fun List<ThreadItem>.texts() = filterIsInstance<ThreadItem.MessageItem>().map { it.message.content }
+
+    private fun List<ThreadItem>.seqs() =
+        filterIsInstance<ThreadItem.MessageItem>().flatMap { row ->
+            row.message.segment?.deltas.orEmpty().map {
+                it.seq
+            }
+        }
 
     private fun List<ThreadItem>.names() = filterIsInstance<ThreadItem.MessageItem>().map { it.message.id }
 

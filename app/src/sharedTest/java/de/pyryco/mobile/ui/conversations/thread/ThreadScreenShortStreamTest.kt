@@ -4,7 +4,6 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
@@ -13,8 +12,10 @@ import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -47,7 +48,7 @@ class ThreadScreenShortStreamTest {
             ModalUiState.Hidden,
         )
 
-        assertTopAnchored(composeRule.onNodeWithText(MESSAGE))
+        assertTopAnchored(composeRule.onNodeWithTag(MESSAGE_BUBBLE_TEST_TAG, useUnmergedTree = true))
     }
 
     @Test
@@ -89,11 +90,11 @@ class ThreadScreenShortStreamTest {
     private fun assertTopAnchored(node: SemanticsNodeInteraction) {
         val region = composeRule.onNodeWithTag("thread-message-region").bounds()
         val content = node.bounds()
-        val minTopGap = with(composeRule.density) { MESSAGE_AREA_TOP_INSET.toPx() }
-        val maxTopGap = with(composeRule.density) { MAX_TOP_GAP.toPx() }
+        val expectedTopGap = with(composeRule.density) { MESSAGE_AREA_TOP_INSET.toPx() }
         val topGap = content.top - region.top
         val bottomGap = region.bottom - content.bottom
-        assertTrue("content starts $topGap px below the region top, outside $minTopGap..$maxTopGap", topGap in minTopGap..maxTopGap)
+        // The header's independently rounded segments plus 28dp clearance accumulate 1.375px at density 2.625.
+        assertEquals("the outer content starts at the header-plus-28dp inset", expectedTopGap, topGap, 2f)
         assertTrue("the empty space ($bottomGap px) lies below the content, not above ($topGap px)", bottomGap > topGap)
     }
 
@@ -102,12 +103,7 @@ class ThreadScreenShortStreamTest {
     private companion object {
         const val MESSAGE = "Let's write the release notes."
 
-        // The list's top inset (#1562): the stream starts below it, where it sat before the region grew up to
-        // the header's rule.
+        // The fixture's 69dp header plus the list's 28dp clearance; bubble text padding is not part of the inset.
         val MESSAGE_AREA_TOP_INSET = 69.dp + 28.dp
-
-        // The inset plus the row's own gutter and bubble padding; a bottom-anchored short stream sits hundreds
-        // of dp lower.
-        val MAX_TOP_GAP = MESSAGE_AREA_TOP_INSET + 32.dp
     }
 }

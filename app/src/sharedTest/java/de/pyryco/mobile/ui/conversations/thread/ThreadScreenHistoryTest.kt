@@ -57,6 +57,93 @@ class ThreadScreenHistoryTest {
     val composeRule = createComposeRule()
 
     @Test
+    fun unsignedMarkersTargetFirstCrossedGap() {
+        val items = rows(3)
+        val lower = Long.MAX_VALUE.toULong()
+        val upper = ULong.MAX_VALUE - 1u
+        val markers =
+            listOf(
+                ThreadHistoryMarker(beforeRow = items[1].historyKeys().first(), unsignedAnchor = lower),
+                ThreadHistoryMarker(beforeRow = items[2].historyKeys().first(), unsignedAnchor = upper),
+            )
+        var oldest = 0
+        val demands = mutableListOf<ULong>()
+        setScreen(
+            { threadState(items, ThreadHistoryTail.None).copy(historyMarkers = markers) },
+            onDemand = { oldest++ },
+            onUnsignedGap = { demands += it },
+        )
+        for (anchor in listOf(lower, upper)) composeRule.onNodeWithTag("history-gap:$anchor").assertIsDisplayed()
+        composeRule.runOnIdle { assertTrue(demands.isEmpty()) }
+        val marker = composeRule.onNodeWithTag("history-gap:$upper").fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            composeRule
+                .onNodeWithText("Row 2.")
+                .fetchSemanticsNode()
+                .boundsInRoot.bottom <= marker.top,
+        )
+        assertTrue(
+            marker.bottom <=
+                composeRule
+                    .onNodeWithText("Row 3.")
+                    .fetchSemanticsNode()
+                    .boundsInRoot.top,
+        )
+        pullTowardOlder()
+        composeRule.runOnIdle {
+            assertEquals(listOf(upper), demands)
+            assertEquals(0, oldest)
+        }
+    }
+
+    @Test
+    fun unsignedGapSettlementKeepsSelectedTouch() {
+        val items = rows(3)
+        val lower = Long.MAX_VALUE.toULong() + 1u
+        val upper = ULong.MAX_VALUE - 1u
+        val remaining = ThreadHistoryMarker(beforeRow = items[1].historyKeys().first(), unsignedAnchor = lower)
+        var state by mutableStateOf(
+            threadState(items, ThreadHistoryTail.None).copy(
+                historyMarkers =
+                    listOf(
+                        remaining,
+                        ThreadHistoryMarker(beforeRow = items[2].historyKeys().first(), unsignedAnchor = upper),
+                    ),
+            ),
+        )
+        var oldest = 0
+        val demands = mutableListOf<ULong>()
+        setScreen({ state }, onDemand = { oldest++ }, onUnsignedGap = {
+            demands += it
+            state = state.copy(historyTail = ThreadHistoryTail.Loading)
+        })
+        val region = composeRule.onNodeWithTag(MESSAGE_REGION_TAG)
+        region.performTouchInput {
+            down(Offset(center.x, height * 0.2f))
+            moveBy(Offset(0f, 40f), delayMillis = 400)
+        }
+        composeRule.runOnIdle {
+            assertEquals(listOf(upper), demands)
+            state = state.copy(historyTail = ThreadHistoryTail.None, historyMarkers = listOf(remaining))
+        }
+        composeRule.onNodeWithTag("history-gap:$upper").assertIsNotDisplayed()
+        region.performTouchInput {
+            moveBy(Offset(0f, 40f), delayMillis = 400)
+            advanceEventTime(200)
+            up()
+        }
+        composeRule.runOnIdle {
+            assertEquals(listOf(upper), demands)
+            assertEquals(0, oldest)
+        }
+        pullTowardOlder(fraction = 0.1f)
+        composeRule.runOnIdle {
+            assertEquals(listOf(upper, lower), demands)
+            assertEquals(0, oldest)
+        }
+    }
+
+    @Test
     fun markersAreBetweenContent_andAReaderPullTargetsTheFirstCrossedGap() {
         val items = rows(3)
         val markers = listOf(ThreadHistoryMarker(1, items[1].historyKeys().first()), ThreadHistoryMarker(2, items[2].historyKeys().first()))
@@ -165,11 +252,13 @@ class ThreadScreenHistoryTest {
         composeRule.onNodeWithTag("history-gap:20").assertIsDisplayed()
         val region = composeRule.onNodeWithTag(MESSAGE_REGION_TAG)
         composeRule.mainClock.autoAdvance = false
+        // Keep the fling's dp/s speed equal on Robolectric and the managed device.
+        val flingVelocity = 5000f * composeRule.density.density
         region.performTouchInput {
             swipeWithVelocity(
                 start = Offset(center.x, height * 0.2f),
                 end = Offset(center.x, height * 0.4f),
-                endVelocity = 5000f,
+                endVelocity = flingVelocity,
             )
         }
         composeRule.runOnIdle {
@@ -777,19 +866,34 @@ class ThreadScreenHistoryTest {
         onDemand: () -> Unit,
         onRetryOlder: () -> Unit = {},
         onGap: (Long) -> Unit = {},
+        onUnsignedGap: ((ULong) -> Unit)? = null,
     ) {
         composeRule.setContent {
             PyrycodeMobileTheme {
-                ThreadScreen(
-                    state = state(),
-                    onBack = {},
-                    onSendMessage = {},
-                    connectionState = ConnectionState.Connected,
-                    onRetry = {},
-                    onDemandOlderHistory = onDemand,
-                    onDemandHistoryGap = onGap,
-                    onRetryOlderHistory = onRetryOlder,
-                )
+                if (onUnsignedGap == null) {
+                    ThreadScreen(
+                        state = state(),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        onDemandOlderHistory = onDemand,
+                        onDemandHistoryGap = onGap,
+                        onRetryOlderHistory = onRetryOlder,
+                    )
+                } else {
+                    ThreadScreen(
+                        state = state(),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        onDemandOlderHistory = onDemand,
+                        onDemandHistoryGap = onGap,
+                        onDemandUnsignedHistoryGap = onUnsignedGap,
+                        onRetryOlderHistory = onRetryOlder,
+                    )
+                }
             }
         }
     }

@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.ordinaryId
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
@@ -119,7 +120,10 @@ class AssistantParentAttributionTest {
                     val projection = ThreadProjection()
                     val first = if (parentOnHeld) held else held.map { it.copy(parentToolUseId = "") }
                     val second = if (parentOnHeld) complete.map { it.copy(parentToolUseId = "") } else complete
-                    projection.mergeHistoryPage("c", HistoryPage(entries(first), "", false), true)
+                    // Page cuts retain the complete page's durable ids rather than renumbering held deltas.
+                    val firstEntries =
+                        entries(first).zip(first.asReversed()) { entry, event -> entry.copy(unsignedId = (event.seq + 1).toULong()) }
+                    projection.mergeHistoryPage("c", HistoryPage(firstEntries, "", false), true)
                     repeat(2) { projection.mergeHistoryPage("c", HistoryPage(entries(second), "", true), true) }
                     val rows = projection.observe("c").first().messages()
                     assertEquals(listOf("t"), rows.map { it.id })
@@ -279,17 +283,38 @@ class AssistantParentAttributionTest {
     fun collidingTurnKeys_doNotOverwriteHeldLaneAttributionOrGainAuthority() {
         val first = emptyList<ThreadItem>().withAssistantDelta(delta("a#1", 0, "X", "agent-x"), TS)
         val second = emptyList<ThreadItem>().withAssistantDelta(delta("a", 1, "A", "agent-a"), TS)
-        assertEquals(first, first.mergeHistoryRows(second))
-        val merged = second.mergeCachedRows(first).messages()
-        val parentlessFirst = first.map { (it as ThreadItem.MessageItem).copy(message = it.message.copy(parentToolUseId = "")) }
-        val parentlessSecond = second.map { (it as ThreadItem.MessageItem).copy(message = it.message.copy(parentToolUseId = "")) }
-        val baseline = parentlessSecond.mergeCachedRows(parentlessFirst).messages()
-        assertEquals(baseline.map { it.id to it.content }, merged.map { it.id to it.content })
-        assertEquals(listOf("agent-x", "agent-a"), merged.map { it.parentToolUseId })
-        assertEquals(merged.map { it.id }.distinct(), merged.map { it.id })
         val user = listOf(ThreadItem.MessageItem(user("a#1")))
-        assertEquals(user, user.mergeHistoryRows(first))
-        assertEquals("", user.messages().single().parentToolUseId)
+        for (cache in listOf(false, true)) {
+            fun merge(
+                held: List<ThreadItem>,
+                incoming: List<ThreadItem>,
+            ) = if (cache) held.mergeCachedRows(incoming) else held.mergeHistoryRows(incoming)
+            for ((held, incoming) in listOf(first to second, second to first, user to first, first to user)) {
+                val rows = merge(held, incoming)
+                val merged = rows.messages()
+                assertEquals(2, merged.size)
+                assertEquals(2, merged.map { it.id }.distinct().size)
+                assertEquals((held + incoming).map { it.mergeIdentity() }.toSet(), rows.map { it.mergeIdentity() }.toSet())
+                val heldIdentity = held.single().mergeIdentity()
+                assertEquals(held.single(), rows.single { it.mergeIdentity() == heldIdentity })
+                val baseline = merge(held.withoutParents(), incoming.withoutParents()).messages()
+                assertEquals(baseline.map { it.id to it.content }, merged.map { it.id to it.content })
+                val assistants = merged.filter { it.role == Role.Assistant }
+                val expectedParents = (held + incoming).messages().filter { it.role == Role.Assistant }
+                assertEquals(
+                    expectedParents.associate { requireNotNull(it.segment).turnId to (it.content to it.parentToolUseId) },
+                    assistants.associate { requireNotNull(it.segment).turnId to (it.content to it.parentToolUseId) },
+                )
+                merged.filter { it.role == Role.User }.forEach {
+                    assertEquals("a#1", it.ordinaryId)
+                    assertEquals(user.messages().single(), it.copy(id = "a#1", reconciliationId = null))
+                    assertEquals("", it.parentToolUseId)
+                }
+                for (replay in listOf(held, incoming, held + incoming, incoming + held, emptyList())) {
+                    assertEquals(rows, merge(rows, replay))
+                }
+            }
+        }
     }
 
     private fun delta(

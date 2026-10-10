@@ -452,6 +452,31 @@ class RemoteConversationRepository(
     }
 
     private fun onInbound(envelope: Envelope) {
+        val payload = envelope.payload as? JsonObject
+        val conversation = (payload?.get("conversation_id") as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
+        val before = threadProjection.readRows(conversation)
+        val compaction = threadProjection.readCompactionFold(conversation)
+        // A completion consumer can resume inside tryEmit: its durable identity must already be known.
+        if (envelope.type == TYPE_TURN_END) recordLatestEntry(envelope, conversation)
+        try {
+            routeInbound(envelope)
+        } finally {
+            recordLatestEntry(envelope, conversation)
+            threadProjection.recordReadEnvelope(envelope, CAPABILITY_INTERACTIVE in negotiatedCapabilities(), before, compaction)
+        }
+    }
+
+    private fun recordLatestEntry(
+        envelope: Envelope,
+        conversation: String,
+    ) {
+        if (!contributesToUnreadWatermark(envelope.type)) return
+        envelope.historyEntryId
+            ?.takeIf { it > 0u && conversation.isNotEmpty() }
+            ?.let { conversationListProjection.recordLatestEntry(conversation, it) }
+    }
+
+    private fun routeInbound(envelope: Envelope) {
         if (conversationCommands.routeReadMarkReply(envelope)) return
         if (messageCommands.routeDebugBundle(envelope)) return
         if (messageCommands.routeAttachmentUpload(envelope)) return
@@ -1014,7 +1039,7 @@ class RemoteConversationRepository(
                 TYPE_ASSISTANT_DELTA -> MobileJson.decodeFromJsonElement<AssistantDeltaPayloadDto>(envelope.payload).toEvent()
                 TYPE_TOOL_USE -> MobileJson.decodeFromJsonElement<ToolUsePayloadDto>(envelope.payload).toEvent()
                 TYPE_TOOL_RESULT -> MobileJson.decodeFromJsonElement<ToolResultPayloadDto>(envelope.payload).toEvent()
-                TYPE_TURN_END -> MobileJson.decodeFromJsonElement<TurnEndPayloadDto>(envelope.payload).toEvent()
+                TYPE_TURN_END -> MobileJson.decodeFromJsonElement<TurnEndPayloadDto>(envelope.payload).toEvent(envelope.historyEntryId)
                 else -> null
             }
         } catch (e: IllegalArgumentException) {
@@ -1139,6 +1164,24 @@ class RemoteConversationRepository(
         cursor: String,
         limit: Int,
     ): HistoryPage {
+        val page = readHistoryPage(conversationId, cursor, limit)
+        page.entries
+            .asSequence()
+            .filter { contributesToUnreadWatermark(it.type) }
+            .maxOfOrNull { it.unsignedId }
+            ?.let { conversationListProjection.recordLatestEntry(conversationId, it) }
+        threadProjection.mergeHistoryPage(conversationId, page, CAPABILITY_INTERACTIVE in negotiatedCapabilities())
+        return page
+    }
+
+    /** Notification enrichment fetches one newest page without changing rows, coverage or read facts. */
+    internal suspend fun requestAttentionHistory(conversationId: String): HistoryPage = readHistoryPage(conversationId, "", 0)
+
+    private suspend fun readHistoryPage(
+        conversationId: String,
+        cursor: String,
+        limit: Int,
+    ): HistoryPage {
         val request =
             Envelope(
                 id = relayRequests.nextRequestId(),
@@ -1152,9 +1195,7 @@ class RemoteConversationRepository(
         // Throws on a server `error` / not-Open session before the decode below. The reply is the
         // {entries,cursor,at_start} page; a malformed one throws here and mutates nothing.
         val reply = relayRequests.sendAndAwaitReply(request)
-        val page = MobileJson.decodeFromJsonElement<HistoryPagePayloadDto>(reply).toHistoryPage()
-        threadProjection.mergeHistoryPage(conversationId, page, CAPABILITY_INTERACTIVE in negotiatedCapabilities())
-        return page
+        return MobileJson.decodeFromJsonElement<HistoryPagePayloadDto>(reply).toHistoryPage()
     }
 
     /** The run configuration of a conversation's session (#590); see [SessionSettingsCommands.observeSessionSettings]. */
@@ -1453,6 +1494,12 @@ class RemoteConversationRepository(
 
     override fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> =
         conversationListProjection.observeReadMarks(conversationId)
+
+    override fun observeHostReadMarks(): Flow<Map<String, ConversationReadMarks>> = conversationListProjection.observeHostReadMarks()
+
+    /** Used by notification post/cancel checks that may outrun the host read-fact collector. */
+    internal fun currentReadMarks(conversationId: String): ConversationReadMarks? =
+        conversationListProjection.currentReadMarks(conversationId)
 
     override suspend fun markConversationRead(
         conversationId: String,

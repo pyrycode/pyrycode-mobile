@@ -165,6 +165,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
     out-of-reference decision.
   - An `audited` row's verdict can include gaps its audit recorded as accepted by decision rather than routed;
     the row says so.
+  - `outside reference` is an app state explicitly excluded by a recorded design decision.
   - `out of scope` is drawn by the platform, not the app.
   - `not shipped` is a frame for a feature the app does not have; it does not count toward parity.
   - `retired` is a frame replaced by a later one.
@@ -206,7 +207,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Conversation status dot: Waiting, Running, Unread | `15:8` | audited, mismatch (verified against the frame's dot nodes by #1524) | › Channel List (Colour) | #738 | #1486, #1524 |
 | Disconnected, re-pair-required and update-required host rows | `672:3493` | frame only | `list/index.md` › Gaps | #840, #1336, #842, #1009 | #1504 |
 | Waiting marks while prompts wait | `640:2440` | audited, unverified | `prompts/index.md` › Switch chats while prompts wait (`switch-list.png` captured, marks unjudged) | #1338 | #1507 |
-| Create-chat failure snackbar | none | gap | #1504's comment | #958 | #1504 |
+| Create-chat failure snackbar | Error frame `685:4337` + Pill `347:6619` (decision on #1592) | no separate frame | [Create chat failure — Error-pill reuse](list/index.md#create-chat-failure--error-pill-reuse-6854337) (#1604) | #958 | #1592, #1604 |
 
 ### Thread, composer and footer
 
@@ -280,8 +281,9 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Archive, Channels tab | `18:2` | audited, mismatch | `list/index.md` › Archive | #1265 | #1487 |
 | Archive, Discussions tab | none | gap | `list/index.md` › Gaps | #1265 | #1487 |
 | Archive, empty Channels and Discussions | `673:3577`, `673:3621` | frame only | › Gaps | #1265 | #1504 |
-| Restore snackbars | none | gap | #1504's comment | #1265 | #1504 |
-| Loading ("Loading…") and load error ("Couldn't load archived discussions: …") | none | gap | #1504's second comment | #1265 | #1504 |
+| Archive restore failure | Error frame `685:4337` + Pill `347:6619` (decision on #1592) | no separate frame | [Restore failure — Error-pill reuse](list/index.md#restore-failure--error-pill-reuse-6854337) (#1604) | #1265 | #1592, #1604 |
+| `Restored <name>` | outside the visual reference (decision on #1592) | outside reference | Default Material confirmation snackbar | #1265 | #1592 |
+| Archive loading ("Loading…") and load error ("Couldn't load archived discussions: …") | Centred text from Archive empty `673:3577` / `673:3621`, without tabs (decision on #1592) | no separate frame | Reference reuse; no new comparison | #1265 | #1592 |
 
 ### Channel Info
 
@@ -303,18 +305,27 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Surface or state | Node | Status | Audit row | Owner | Linked issues |
 |---|---|---|---|---|---|
 | Edit host, keyboard closed and open | `533:2369` | audited, mismatch | `list/index.md` › Modal › Edit host | #1277 | #1489 |
-| Edit host save and unpair failure messages | none | gap | #1504's comment | #1277 | #1504 |
-| Edit host saving | none | gap | #1504's second comment | #1277 | #1504 |
+| Edit host inline failures (`edit_host_save_failed`, `edit_host_unpair_failed`) | Modal `489:1942`, end-of-content error as Pairing — Verification failed, retry `654:4932` (decision on #1592) | no separate frame | Reference reuse; no new comparison | #1277 | #1592 |
+| Edit host saving | Modal `489:1942` + Loading/Primary Button `654:2975`, as Pairing — Connecting `654:4882` (decision on #1592) | no separate frame | Reference reuse; no new comparison | #1277 | #1592 |
 | Unpair host confirmation | `671:5620` | frame only | `list/index.md` › Gaps | #745 | #1504, #1489 |
 | Edit channel | `671:5415` | frame only | › Gaps | #667 | #1504 |
-| Edit channel saving, archive failed, save failed, host unavailable | none | gap | #1504's second comment | #667 | #1504 |
+| Edit channel saving | Modal `489:1942` + Loading/Primary Button `654:2975`, as Pairing — Connecting `654:4882` (decision on #1592) | no separate frame | Reference reuse; no new comparison | #667 | #1592 |
+| Edit channel inline failures (`archive_failed`, `edit_channel_save_failed`) | Modal `489:1942`, end-of-content error as Pairing — Verification failed, retry `654:4932` (decision on #1592) | no separate frame | Reference reuse; no new comparison | #667 | #1592 |
+| Edit channel host unavailable / disabled OK | Create channel / Empty `671:5558` (decision on #1592) | no separate frame | Reference reuse; no new comparison | #667 | #1592 |
 | Edit chat | `671:5499` | frame only | › Gaps | #827 | #1504 |
-| Edit chat saving, archive failed, save failed, host unavailable | none | gap | #1504's second comment | #827 | #1504 |
+| Edit chat saving | Modal `489:1942` + Loading/Primary Button `654:2975`, as Pairing — Connecting `654:4882` (decision on #1592) | no separate frame | Reference reuse; no new comparison | #827 | #1592 |
+| Edit chat inline failures (`archive_failed`, `edit_chat_save_failed`) | Modal `489:1942`, end-of-content error as Pairing — Verification failed, retry `654:4932` (decision on #1592) | no separate frame | Reference reuse; no new comparison | #827 | #1592 |
+| Edit chat host unavailable / disabled OK | Create channel / Empty `671:5558` (decision on #1592) | no separate frame | Reference reuse; no new comparison | #827 | #1592 |
 | Create channel | `671:5558` | frame only | › Gaps | #958 | #1504 |
-| Create channel saving, create failed, prompt failed with the name locked, host unavailable | none | gap | #1504's second comment | #958 | #1504 |
+| Create channel saving | Modal `489:1942` + Loading/Primary Button `654:2975`, as Pairing — Connecting `654:4882` (decision on #1592) | no separate frame | Reference reuse; no new comparison | #958 | #1592 |
+| Create channel inline failures (`create_channel_failed`) | Modal `489:1942`, end-of-content error as Pairing — Verification failed, retry `654:4932` (decision on #1592) | no separate frame | Reference reuse; no new comparison | #958 | #1592 |
+| Create channel host unavailable / disabled OK | Create channel / Empty `671:5558` (decision on #1592) | no separate frame | Reference reuse; no new comparison | #958 | #1592 |
+| Create channel / Prompt failed | `784:7095` | audited, mismatch | [List states › Prompt-failed frames](list/index.md#prompt-failed-frames--1737) (#1737) | #958 | #1737, #1957, #1958 |
 | Rename | `671:5664` | frame only | › Gaps | #957 | #1504 |
 | Save as channel | `671:5718` | frame only | › Gaps | #957 | #1504 |
-| Save as channel saving, save failed, prompt failed with the name locked | none | gap | #1504's second comment | #957 | #1504 |
+| Save as channel saving | Modal `489:1942` + Loading/Primary Button `654:2975`, as Pairing — Connecting `654:4882` (decision on #1592) | no separate frame | Reference reuse; no new comparison | #957 | #1592 |
+| Save as channel inline failures (`save_as_channel_failed`) | Modal `489:1942`, end-of-content error as Pairing — Verification failed, retry `654:4932` (decision on #1592) | no separate frame | Reference reuse; no new comparison | #957 | #1592 |
+| Save as channel / Prompt failed | `784:7134` | audited, mismatch | [List states › Prompt-failed frames](list/index.md#prompt-failed-frames--1737) (#1737) | #957 | #1737, #1957, #1958 |
 
 ### Run configuration
 
@@ -368,9 +379,12 @@ interactive states, and the launch splash window, and routed them to #1539. Its 
 drew the section Reachable states · #1539 `696:4676` and recorded the rest as needing no separate frame, so
 those rows are now `frame only` or `no separate frame`, and #1539 owns their capture. The Run configuration
 sheet's pending, read-only, menu-unavailable, truncated-menu, note and not-reported states, found after that
-decision, have no frame either; a comment on #1539 routes them there as `gap` rows. Archive's loading and
-load-error states and the form modals' saving, failure, host-unavailable and name-locked states have no frame
-in List states `670:5299`, which draws each form at rest; a second comment on #1504 routes them there. The
+decision, have no frame either; a comment on #1539 routes them there as `gap` rows. #1592 resolved the list-side saving, inline failure, host-unavailable and Archive loading/load-error
+states through reference reuse, recorded in the inventory with their drawing components. Create-chat and
+Archive restore failures reuse Error/Pill and were captured by #1604. `Restored <name>` stays outside the
+visual reference as a default Material confirmation snackbar. Only the two name-locked prompt failures
+gained new frames (`784:7095`, `784:7134`); #1737 audited both and routed their measured mismatches to
+\#1957 and #1958. These decisions do not establish parity for other states. The
 Rename dialog has no saving or failure state. A sweep of `ui/` for `loading =` and `error =` bindings,
 `UiState.Loading` and `UiState.Error` branches and `showSnackbar(` calls maps every hit to a row above or to
 an unreachable or retired surface.
@@ -430,7 +444,7 @@ State of every issue linked above, read with `gh issue view` against `main` at `
 | #1501 | closed | prompt spacing and button heights |
 | #1502 | open | capture the prompt edge states `668:3051` |
 | #1503 | open | Settings rows spacing |
-| #1504 | open | capture the List states `670:5299` and list snackbars; Archive loading and error, form saving and failure states (comment) |
+| #1504 | closed | original List states `670:5299` captures; #1592 decided the later state references, #1604 captured failure notices, and #1737 audited the two prompt-failed frames |
 | #1506 | open | pair-code error text and ellipsis |
 | #1507 | open | capture the list's waiting marks against `640:2440` |
 | #1509 | closed | short stream starts under the header |

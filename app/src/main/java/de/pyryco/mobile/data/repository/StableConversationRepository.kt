@@ -56,6 +56,7 @@ import kotlinx.coroutines.flow.flowOf
 class StableConversationRepository(
     private val currentRepository: StateFlow<ConversationRepository?>,
     private val heldReadings: HostReadings? = null,
+    private val readRetries: ReadCheckpointRetries? = null,
 ) : ConversationRepository,
     ThreadSnapshotSource {
     /**
@@ -317,6 +318,17 @@ class StableConversationRepository(
     ): Result<ULong> {
         val repository = currentRepository.value ?: return Result.failure(IllegalStateException(NOT_CONNECTED))
         return repository.markConversationRead(conversationId, upTo)
+    }
+
+    override suspend fun acknowledgeReadCheckpoint(
+        conversationId: String,
+        checkpoint: ULong,
+    ) {
+        if (readRetries != null) {
+            readRetries.qualify(currentRepository, conversationId, checkpoint)
+        } else {
+            markConversationRead(conversationId, checkpoint)
+        }
     }
 
     override suspend fun delete(conversationId: String): Unit = live.delete(conversationId)

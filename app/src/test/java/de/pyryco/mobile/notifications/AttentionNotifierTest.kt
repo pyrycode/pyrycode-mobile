@@ -5,6 +5,7 @@ import android.app.Application
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.Intent
+import android.service.notification.StatusBarNotification
 import androidx.core.content.ContextCompat
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -15,16 +16,22 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.di.AttentionAlert
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -36,6 +43,10 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
+import org.robolectric.shadows.ShadowNotificationManager
 import org.xmlpull.v1.XmlPullParser
 import java.io.File
 import kotlin.math.roundToInt
@@ -53,14 +64,31 @@ class AttentionNotifierTest {
     private val manager get() = app.getSystemService(NotificationManager::class.java)
     private val alerts = MutableSharedFlow<AttentionAlert>(extraBufferCapacity = 16)
     private val enabled = MutableStateFlow(true)
+    private val readMarks = MutableStateFlow<Map<String, Map<String, ConversationReadMarks>>>(emptyMap())
+    private var readMarksOf: (
+        String,
+        String,
+    ) -> ConversationReadMarks? = { server, conversation -> readMarks.value[server]?.get(conversation) }
     private var foreground = false
     private val muted = mutableSetOf<Pair<String, String>>()
     private val agents = mutableMapOf(("host-a" to "conv") to ConversationAgent.Claude, ("host-b" to "conv") to ConversationAgent.Claude)
     private val names = mutableMapOf<Pair<String, String>, String>()
     private lateinit var ledger: File
+    private val oldSink = RelayLog.sink
+    private val oldEnabled = RelayLog.enabled
+    private val logs = mutableListOf<String>()
+
+    @After
+    fun restoreLogs() {
+        RelayLog.sink = oldSink
+        RelayLog.enabled = oldEnabled
+        assertTrue(logs.none { line -> listOf("Reply secret", "gradlew", "/private", "Which secret", "Late reply").any { it in line } })
+    }
 
     @Before
     fun setUp() {
+        RelayLog.enabled = true
+        RelayLog.sink = { _, _, text -> logs += text }
         shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
         ledger = File(folder.root, "attention_alerts")
     }
@@ -80,6 +108,139 @@ class AttentionNotifierTest {
             val intent = shadowOf(tap).savedIntent
             assertEquals(MainActivity::class.java.name, intent.component?.className)
             assertEquals(HostConversationTarget("host-a", "conv"), NotificationTap.target(intent))
+        }
+
+    @Test
+    fun previewsArePrivateAndPublicVersionsContainOnlyFixedCopy() =
+        withNotifier {
+            names["host-a" to "conv"] = " Conversation\u0000 "
+            listOf(
+                TURN to "Reply secret **words**",
+                TURN.copy(kind = AttentionAlert.Kind.Prompt) to "Allow Bash? run: /private/secret ./gradlew lint",
+                TURN.copy(kind = AttentionAlert.Kind.Prompt) to "Which secret question?",
+            ).forEachIndexed { index, (alert, content) ->
+                alerts.emit(alert.copy(key = "preview-$index", preview = { content }))
+                val private = posted().single()
+                assertEquals(Notification.VISIBILITY_PRIVATE, private.visibility)
+                assertEquals(notificationPreview(content), private.extras.getString(Notification.EXTRA_TEXT))
+                val public = requireNotNull(private.publicVersion)
+                assertEquals("Conversation", public.extras.getString(Notification.EXTRA_TITLE))
+                val fixed =
+                    if (alert.kind ==
+                        AttentionAlert.Kind.TurnCompleted
+                    ) {
+                        R.string.notification_turn_completed
+                    } else {
+                        R.string.notification_prompt
+                    }
+                assertEquals(app.getString(fixed), public.extras.getString(Notification.EXTRA_TEXT))
+                assertEquals(null, public.contentIntent)
+                assertTrue(
+                    public.extras.keySet().none { key ->
+                        val value =
+                            public.extras
+                                .get(key)
+                                ?.toString()
+                                .orEmpty()
+                        listOf("secret", "gradlew", "/private", "Which", "Reply").any { it in value }
+                    },
+                )
+                val parcel = android.os.Parcel.obtain()
+                try {
+                    public.writeToParcel(parcel, 0)
+                    val bytes = parcel.marshall()
+                    listOf(Charsets.UTF_8, Charsets.UTF_16LE).forEach { charset ->
+                        val serialized = bytes.toString(charset)
+                        assertTrue(listOf("secret", "gradlew", "/private/secret", "Which", "Reply").none { it in serialized })
+                    }
+                } finally {
+                    parcel.recycle()
+                }
+                assertFalse(ledger.readText().contains(content))
+            }
+        }
+
+    @Test
+    fun publicFallbackKeepsAgentCopyAndAppNameForEmptyTitlesAndPreviews() =
+        withNotifier {
+            names["host-a" to "conv"] = "\u0000 "
+            listOf(
+                ConversationAgent.Claude to R.string.notification_turn_completed,
+                ConversationAgent.Codex to R.string.notification_turn_completed_codex,
+                null to R.string.notification_turn_completed_neutral,
+            ).forEachIndexed { index, (agent, fixed) ->
+                if (agent == null) agents.remove("host-a" to "conv") else agents["host-a" to "conv"] = agent
+                alerts.emit(TURN.copy(key = "fallback-$index", preview = { "\u0000\t" }))
+                val notification = posted().single()
+                assertEquals(app.getString(fixed), notification.extras.getString(Notification.EXTRA_TEXT))
+                assertEquals(app.getString(fixed), notification.publicVersion.extras.getString(Notification.EXTRA_TEXT))
+                assertEquals(app.getString(R.string.app_name), notification.publicVersion.extras.getString(Notification.EXTRA_TITLE))
+            }
+        }
+
+    @Test
+    fun alreadyReadCompletionNeverStartsPreviewEnrichment() =
+        withNotifier {
+            var lookups = 0
+            marks("host-a", "conv", 5u, 5u)
+            alerts.emit(
+                TURN.copy(historyEntryId = 5u, preview = {
+                    lookups++
+                    "Read reply"
+                }),
+            )
+            assertEquals(0, lookups)
+            assertTrue(posted().isEmpty())
+        }
+
+    @Test
+    fun duplicatesAndForegroundAlertsNeverEvaluateThePreviewSupplier() =
+        withNotifier {
+            var lookups = 0
+            val alert =
+                TURN.copy(preview = {
+                    lookups++
+                    "Private reply"
+                })
+            foreground = true
+            alerts.emit(alert)
+            foreground = false
+            alerts.emit(alert)
+            assertEquals(0, lookups)
+            assertTrue(posted().isEmpty())
+            alerts.emit(alert.copy(key = "new"))
+            alerts.emit(alert.copy(key = "new"))
+            assertEquals(1, lookups)
+            assertEquals(1, posted().size)
+        }
+
+    @Test
+    fun slowEnrichmentDoesNotBlockOtherAlertsOrReplaceANewerPrompt() =
+        withNotifier {
+            val reply = kotlinx.coroutines.CompletableDeferred<String?>()
+            alerts.emit(TURN.copy(preview = { reply.await() }))
+            alerts.emit(TURN.copy(conversationId = "other", key = "other", preview = { "Other reply" }))
+            assertEquals("Other reply", posted().single().extras.getString(Notification.EXTRA_TEXT))
+            alerts.emit(TURN.copy(kind = AttentionAlert.Kind.Prompt, key = "modal:new", preview = { "New prompt" }))
+            reply.complete("Late reply")
+            assertEquals(setOf("Other reply", "New prompt"), posted().map { it.extras.getString(Notification.EXTRA_TEXT) }.toSet())
+        }
+
+    @Test
+    fun gatesAndReadMarksAreCheckedAfterEnrichmentAndRetiredHostsDoNotPost() =
+        withNotifier {
+            val reply = kotlinx.coroutines.CompletableDeferred<String?>()
+            alerts.emit(TURN.copy(historyEntryId = 5u, preview = { reply.await() }))
+            readMarks.value = mapOf("host-a" to mapOf("conv" to ConversationReadMarks(5u, 5u)))
+            reply.complete("Read reply")
+            assertTrue(posted().isEmpty())
+            alerts.emit(TURN.copy(key = "retired", preview = { "Retired reply" }, isCurrent = { false }))
+            assertTrue(posted().isEmpty())
+            val held = kotlinx.coroutines.CompletableDeferred<String?>()
+            alerts.emit(TURN.copy(key = "foreground", preview = { held.await() }))
+            foreground = true
+            held.complete("Hidden reply")
+            assertTrue(posted().isEmpty())
         }
 
     @Test
@@ -345,6 +506,230 @@ class AttentionNotifierTest {
         }
 
     @Test
+    fun aConfirmedPeerReadCancelsTheRealPostedNotificationAndRepeatedUpdatesAreHarmless() =
+        withNotifier {
+            marks("host-a", "conv", 4u, 5u)
+            alerts.emit(TURN)
+            assertEquals(1, posted().size)
+            marks("host-a", "conv", 5u, 5u)
+            assertTrue(posted().isEmpty())
+            marks("host-a", "conv", 5u, 5u)
+            marks("host-a", "absent", 0u, 0u)
+            alerts.emit(TURN)
+            assertTrue(posted().isEmpty())
+        }
+
+    @Test
+    fun readBeforeCompletionSpendsItsLedgerEntryAndFutureUnreadTurnsAndPromptsStillPost() {
+        withNotifier {
+            marks("host-a", "conv", 5u, 5u)
+            alerts.emit(TURN)
+            assertTrue(posted().isEmpty())
+            marks("host-a", "conv", 5u, 6u)
+            alerts.emit(TURN)
+            assertTrue(posted().isEmpty())
+            alerts.emit(TURN.copy(key = "t2"))
+            assertEquals(1, posted().size)
+            marks("host-a", "conv", 6u, 6u)
+            assertTrue(posted().isEmpty())
+            alerts.emit(AttentionAlert("host-a", "conv", AttentionAlert.Kind.Prompt, "modal:new"))
+            assertEquals(app.getString(R.string.notification_prompt), posted().single().extras.getString(Notification.EXTRA_TEXT))
+            // An unchanged checkpoint or an unrelated host's update must not erase this new prompt.
+            marks("host-a", "conv", 6u, 6u)
+            marks("host-b", "conv", 9u, 9u)
+            assertEquals(1, posted().size)
+        }
+        manager.cancelAll()
+        withNotifier {
+            readMarks.value = emptyMap()
+            alerts.emit(TURN)
+            alerts.emit(TURN.copy(key = "t2"))
+            assertTrue(posted().isEmpty())
+        }
+    }
+
+    @Test
+    fun anInitialConfirmedSnapshotCancelsANotificationLeftByAnEarlierProcess() {
+        withNotifier {
+            alerts.emit(TURN)
+            assertEquals(1, posted().size)
+        }
+        marks("host-a", "conv", 8u, 8u)
+        withNotifier { assertTrue(posted().isEmpty()) }
+    }
+
+    @Test
+    fun lateConfirmationReconcilesAPostedCompletionsCheckpointAfterNotifierRestart() {
+        withNotifier {
+            marks("host-a", "conv", null, 6u)
+            alerts.emit(TURN.copy(historyEntryId = 5u))
+            assertEquals(1, posted().size)
+        }
+        marks("host-a", "conv", 5u, 6u)
+        withNotifier {
+            assertTrue(posted().isEmpty())
+            alerts.emit(TURN.copy(historyEntryId = 5u))
+            assertTrue(posted().isEmpty())
+        }
+    }
+
+    @Test
+    fun lateCompletionCoverageRetainsUnsignedCheckpointIdentityIncludingZero() =
+        withNotifier {
+            listOf(0uL, Long.MAX_VALUE.toULong() + 1u).forEachIndexed { index, checkpoint ->
+                marks("host-a", "conv", null, checkpoint + 1u)
+                alerts.emit(TURN.copy(key = "checkpoint-$index", historyEntryId = checkpoint))
+                assertEquals(1, posted().size)
+                marks("host-a", "conv", checkpoint, checkpoint + 1u)
+                assertTrue(posted().isEmpty())
+            }
+        }
+
+    @Test
+    fun aLaggingConfirmedProjectionCannotCancelACompletionTheCurrentRepositoryStillReportsUnread() {
+        var current = ConversationReadMarks(4u, 6u)
+        readMarksOf = { _, _ -> current }
+        withNotifier {
+            alerts.emit(TURN.copy(historyEntryId = 5u))
+            marks("host-a", "conv", 5u, 6u)
+            assertEquals(1, posted().size)
+            current = ConversationReadMarks(5u, 7u)
+            marks("host-a", "conv", 5u, 7u)
+            assertTrue(posted().isEmpty())
+        }
+    }
+
+    @Test
+    @Config(shadows = [LaggingActiveNotificationManager::class])
+    fun lateConfirmationCancelsEvenBeforeAndroidReadbackExposesThePostedCompletion() =
+        withNotifier {
+            marks("host-a", "conv", null, 6u)
+            (shadowOf(manager) as LaggingActiveNotificationManager).snapshot = emptyArray()
+            alerts.emit(TURN.copy(historyEntryId = 5u))
+            assertEquals(1, posted().size)
+            assertTrue(manager.activeNotifications.isEmpty())
+            marks("host-a", "conv", 5u, 6u)
+            assertTrue(posted().isEmpty())
+        }
+
+    @Test
+    @Config(shadows = [LaggingActiveNotificationManager::class])
+    fun staleAndroidReadbackCannotCancelThePromptReplacingACoveredCompletion() =
+        withNotifier {
+            marks("host-a", "conv", 4u, 6u)
+            alerts.emit(TURN.copy(historyEntryId = 5u))
+            (shadowOf(manager) as LaggingActiveNotificationManager).snapshot = manager.activeNotifications
+            alerts.emit(AttentionAlert("host-a", "conv", AttentionAlert.Kind.Prompt, "replacement"))
+            val prompt = posted().single()
+            assertEquals(app.getString(R.string.notification_prompt), prompt.extras.getString(Notification.EXTRA_TEXT))
+            marks("host-a", "conv", 5u, 6u)
+            assertEquals(prompt, posted().single())
+        }
+
+    @Test
+    @Config(shadows = [LaggingActiveNotificationManager::class])
+    fun staleAndroidReadbackCannotCancelTheNewerUnreadCompletionReplacingACoveredReplay() =
+        withNotifier {
+            marks("host-a", "conv", 4u, 6u)
+            alerts.emit(TURN.copy(historyEntryId = 5u))
+            (shadowOf(manager) as LaggingActiveNotificationManager).snapshot = manager.activeNotifications
+            alerts.emit(TURN.copy(key = "newer", historyEntryId = 7u))
+            val newer = posted().single()
+            marks("host-a", "conv", 5u, 7u)
+            assertEquals(newer, posted().single())
+            marks("host-a", "conv", 7u, 7u)
+            assertTrue(posted().isEmpty())
+        }
+
+    @Test
+    fun cancellationIsHostIsolatedAndIndependentOfAllPostingGates() =
+        withNotifier {
+            alerts.emit(TURN)
+            alerts.emit(TURN.copy(serverId = "host-b"))
+            foreground = true
+            enabled.value = false
+            muted += "host-a" to "conv"
+            shadowOf(app).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
+            marks("host-a", "conv", 1u, 1u)
+            val target = NotificationTap.target(shadowOf(posted().single().contentIntent).savedIntent)
+            assertEquals(HostConversationTarget("host-b", "conv"), target)
+        }
+
+    @Test
+    fun missingReadFactsRetainLegacyBehaviourAndAnUncoveredLatestDoesNotCancel() =
+        withNotifier {
+            alerts.emit(TURN)
+            marks("host-a", "conv", null, 5u)
+            assertEquals(1, posted().size)
+            marks("host-a", "conv", 5u, null)
+            assertEquals(1, posted().size)
+            marks("host-a", "conv", 4u, 5u)
+            assertEquals(1, posted().size)
+            marks("host-a", "conv", null, null)
+            alerts.emit(TURN.copy(key = "legacy"))
+            assertEquals(1, posted().size)
+        }
+
+    @Test
+    fun coverageUsesUnsignedDurableIdsIncludingZeroAndEquality() =
+        withNotifier {
+            marks("host-a", "conv", 0u, 0u)
+            alerts.emit(TURN)
+            assertTrue(posted().isEmpty())
+            marks("host-a", "conv", 0u, ULong.MAX_VALUE)
+            alerts.emit(TURN.copy(key = "large"))
+            assertEquals(1, posted().size)
+            marks("host-a", "conv", ULong.MAX_VALUE, ULong.MAX_VALUE)
+            assertTrue(posted().isEmpty())
+        }
+
+    @Test
+    fun aLaggingCoveredProjectionCannotCancelANewUnreadNotification() {
+        var current = ConversationReadMarks(5u, 6u)
+        readMarksOf = { _, _ -> current }
+        withNotifier {
+            alerts.emit(TURN)
+            assertEquals(1, posted().size)
+            marks("host-a", "conv", 5u, 5u)
+            assertEquals(1, posted().size)
+            current = ConversationReadMarks(6u, 6u)
+            marks("host-a", "conv", 6u, 6u)
+            assertTrue(posted().isEmpty())
+        }
+    }
+
+    @Test
+    fun aReadDuringASuspendedPreferenceGateCannotBeUndoneByItsPendingPost() =
+        runTest {
+            val preference = Channel<Boolean>()
+            val notifier = notifier(UnconfinedTestDispatcher(testScheduler), preference.receiveAsFlow())
+            try {
+                alerts.emit(TURN)
+                assertTrue(posted().isEmpty())
+                marks("host-a", "conv", 5u, 5u)
+                preference.send(true)
+                assertTrue(posted().isEmpty())
+                marks("host-a", "conv", 5u, 6u)
+                alerts.emit(TURN.copy(key = "later"))
+                preference.send(true)
+                assertEquals(1, posted().size)
+            } finally {
+                notifier.dispose()
+                preference.close()
+            }
+        }
+
+    private fun marks(
+        server: String,
+        conversation: String,
+        read: ULong?,
+        latest: ULong?,
+    ) {
+        readMarks.value =
+            readMarks.value + (server to (readMarks.value[server].orEmpty() + (conversation to ConversationReadMarks(read, latest))))
+    }
+
+    @Test
     fun anUnreadableLedgerStartsEmpty() {
         ledger.mkdirs()
         withNotifier {
@@ -378,24 +763,39 @@ class AttentionNotifierTest {
 
     private fun withNotifier(block: suspend TestScope.() -> Unit) =
         runTest {
-            val notifier =
-                AttentionNotifier(
-                    app,
-                    alerts,
-                    enabled,
-                    { server, conversation -> (server to conversation) in muted },
-                    { server, conversation -> agents[server to conversation] },
-                    { server, conversation -> names[server to conversation] },
-                    { foreground },
-                    ledger,
-                    UnconfinedTestDispatcher(testScheduler),
-                )
+            val notifier = notifier(UnconfinedTestDispatcher(testScheduler))
             try {
                 block()
             } finally {
                 notifier.dispose()
             }
         }
+
+    private fun notifier(
+        dispatcher: kotlinx.coroutines.CoroutineDispatcher,
+        preference: Flow<Boolean> = enabled,
+    ) = AttentionNotifier(
+        app,
+        alerts,
+        preference,
+        { server, conversation -> (server to conversation) in muted },
+        { server, conversation -> agents[server to conversation] },
+        { server, conversation -> names[server to conversation] },
+        { foreground },
+        ledger,
+        dispatcher,
+        readMarks = readMarks,
+        readMarksOf = readMarksOf,
+    )
+
+    /** The OS can still expose the previous notification while its enqueue worker processes a replacement. */
+    @Implements(NotificationManager::class)
+    class LaggingActiveNotificationManager : ShadowNotificationManager() {
+        var snapshot: Array<StatusBarNotification>? = null
+
+        @Implementation
+        override fun getActiveNotifications(): Array<StatusBarNotification> = snapshot ?: super.getActiveNotifications()
+    }
 
     private companion object {
         val TURN = AttentionAlert("host-a", "conv", AttentionAlert.Kind.TurnCompleted, "t1")

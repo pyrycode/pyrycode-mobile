@@ -1,5 +1,7 @@
 package de.pyryco.mobile.di
 
+import androidx.compose.runtime.BroadcastFrameClock
+import androidx.compose.runtime.withFrameNanos
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
@@ -48,13 +50,16 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.thread.AttachmentRead
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
+import de.pyryco.mobile.ui.conversations.thread.ThreadContentScheduling
 import de.pyryco.mobile.ui.conversations.thread.ThreadEvent
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.drop
@@ -65,6 +70,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -94,6 +100,8 @@ import org.koin.core.parameter.parametersOf
 import org.koin.dsl.binds
 import org.koin.dsl.module
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.CoroutineContext
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RelayConnectionFactoryTest {
@@ -1042,9 +1050,56 @@ class RelayConnectionFactoryTest {
         }
 
     @Test
+    fun destinationCacheUsesConfiguredWorker() =
+        runTest {
+            val f = Fixture(this)
+            val registry = f.registry()
+            val dispatches = AtomicInteger()
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val worker =
+                object : CoroutineDispatcher() {
+                    override fun dispatch(
+                        context: CoroutineContext,
+                        block: Runnable,
+                    ) {
+                        dispatches.incrementAndGet()
+                        dispatcher.dispatch(context, block)
+                    }
+                }
+            val destinations =
+                ThreadDestinationFactory(
+                    useRelay = true,
+                    registry = registry,
+                    fake = FakeConversationRepository(),
+                    store = f.store,
+                    decorateRepository = { it },
+                    cache = InertConversationCache,
+                    attachmentReader = lazy { AttachmentReader { AttachmentRead.Unreadable } },
+                    contentScheduling = ThreadContentScheduling(worker),
+                )
+            try {
+                val rows = destinations.repository("A").observeMessages("c").first()
+                assertTrue(rows.isEmpty())
+                assertTrue("The destination cache must dispatch to its configured worker", dispatches.get() > 0)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
     fun destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect() =
         runTest {
             Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val frames = BroadcastFrameClock()
+            val scheduling = ThreadContentScheduling(StandardTestDispatcher(testScheduler)) { frames.withFrameNanos { it } }
+            var frameNanos = 0L
+
+            fun presentFrame() {
+                frameNanos += 16_666_667L
+                frames.sendFrame(frameNanos)
+                runCurrent()
+            }
             val questionScheduler = kotlinx.coroutines.test.TestCoroutineScheduler()
             val f = Fixture(this).also { it.stopTaskSupport = true }
             val registry = f.registry()
@@ -1064,6 +1119,7 @@ class RelayConnectionFactoryTest {
                         single { registry }
                         single { f.store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
                         single { prefs }
+                        single { scheduling }
                         single {
                             de.pyryco.mobile.ui.conversations.thread
                                 .QuestionDraftStore(StandardTestDispatcher(questionScheduler))
@@ -1135,6 +1191,15 @@ class RelayConnectionFactoryTest {
                     ),
                 )
                 runCurrent()
+                assertTrue(
+                    a.state.value.queuedMessages
+                        .isEmpty(),
+                )
+                assertTrue(
+                    b.state.value.queuedMessages
+                        .isEmpty(),
+                )
+                presentFrame()
                 assertEquals(
                     "A queue",
                     a.state.value.queuedMessages
@@ -1298,6 +1363,7 @@ class RelayConnectionFactoryTest {
                 runCurrent()
                 replyRows(nextA, "A reconnected")
                 runCurrent()
+                presentFrame()
                 assertEquals("A reconnected", a.state.value.displayName)
                 assertEquals("B content", b.state.value.displayName)
                 nextA.emit(shown)
@@ -1332,6 +1398,7 @@ class RelayConnectionFactoryTest {
                             single { registry }
                             single { f.store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
                             single { prefs }
+                            single { scheduling }
                             single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
                         },
                     )
@@ -1346,6 +1413,7 @@ class RelayConnectionFactoryTest {
                     backgroundScope.launch { demo.isThinking.collect {} }
                     backgroundScope.launch { demo.connectionState.collect {} }
                     runCurrent()
+                    presentFrame()
                     val frames = f.transports.map { it.outbound.size }
                     demo.onOverflowEvent(ThreadEvent.RenameSubmit("Demo renamed"))
                     demo.onInterrupt()
@@ -1369,7 +1437,11 @@ class RelayConnectionFactoryTest {
                     demoApp.close()
                 }
             } finally {
-                vms.forEach { it.viewModelScope.cancel() }
+                // Cache writer finalization can resume on Main after cancellation; finish it before reset.
+                vms.forEach {
+                    it.viewModelScope.coroutineContext.job
+                        .cancelAndJoin()
+                }
                 app.close()
                 registry.dispose()
                 runCurrent()

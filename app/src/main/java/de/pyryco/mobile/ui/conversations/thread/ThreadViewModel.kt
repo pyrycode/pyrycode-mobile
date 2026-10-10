@@ -45,8 +45,11 @@ import de.pyryco.mobile.data.repository.SlashCommandMenu
 import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadReadEvidence
+import de.pyryco.mobile.data.repository.ThreadSnapshot
 import de.pyryco.mobile.data.repository.UsageLimitReading
-import de.pyryco.mobile.data.repository.historyKeys
+import de.pyryco.mobile.data.repository.projectDisplay
+import de.pyryco.mobile.data.repository.threadSnapshots
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
@@ -68,12 +71,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -86,18 +92,20 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
+import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.floor
 
@@ -187,6 +195,9 @@ class ThreadViewModel(
     // #1340: folds this phone's own prompt actions into [hostModal] at once (the coordinator's
     // recordModalAction). Defaulted inert, so the fake-backed graph and existing tests keep their prompts.
     private val recordModalAction: (ModalAction) -> Unit = {},
+    private val projectionDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    // The destination factory installs worker/vsync scheduling; standalone semantic tests stay synchronous.
+    private val contentScheduling: ThreadContentScheduling? = null,
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -304,12 +315,6 @@ class ThreadViewModel(
      * attachment actions. Carries the loaded source, so it never waits on [attachmentStates] recomposing.
      */
     val attachmentLoads: Flow<AttachmentLoaded> = attachmentLoadChannel.receiveAsFlow()
-
-    // #507: snapshot the repository's mutation-capability once at construction (the mode is static per
-    // build config — a Koin fake-vs-relay swap, never a runtime toggle). Reading through the facade here
-    // is where its null-connection → false fail-safe-deny takes effect. Captured once so the combine value
-    // and the initialValue can never disagree.
-    private val mutationsSupported: Boolean = repository.mutationsSupported
 
     private val pendingWorkspacePicker = MutableStateFlow(false)
 
@@ -698,6 +703,12 @@ class ThreadViewModel(
                 if (!available) lastKnownSessionId = ""
             }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    // One receipt subscription feeds both the rows and their read evidence, so opening a thread backfills once.
+    private val receivedThread =
+        repository
+            .threadSnapshots(conversationId)
+            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(replayExpirationMillis = 0), replay = 1)
+
     /**
      * The thread rows (#337): the #313 finished-message projection from [ConversationRepository.observeMessages]
      * folded together with the live `assistant_delta` stream so an in-flight turn renders as a single
@@ -709,48 +720,111 @@ class ThreadViewModel(
      * id-correlated: see [ThreadFold.reduce]. With the inert empty-flow default the `merge` yields only the
      * `observeMessages` arm, so the thread behaves exactly as #313.
      */
-    private val threadItems: Flow<List<ThreadItem>> =
-        merge(
-            repository.observeMessages(conversationId).map(ThreadInput::Finished),
-            liveSessionEvents.map { ThreadInput.Live(it) },
-        ).scan(ThreadFold(emptyList(), null)) { fold, input -> fold.reduce(input, conversationId) }
-            .map { it.render() }
-            .distinctUntilChanged()
-            // #1357: a session transition reaches this thread only as a new boundary row.
-            .onEach(::noteNewestBoundary)
+    private val threadItems: Flow<FoldedThread> =
+        flow {
+            var fold = ThreadFold(emptyList(), null)
+            var evidence = ThreadReadEvidence()
+            emit(FoldedThread(emptyList(), evidence))
+            merge(
+                receivedThread.map {
+                    // Boundary effects stay on main at receipt, before a worker backlog can delay them.
+                    noteNewestBoundary(it.rows)
+                    FoldInput.Received(it)
+                },
+                liveSessionEvents.map {
+                    // A first synthetic row also establishes the pre-existing nonempty baseline.
+                    if (it is LiveSessionEvent.AssistantDelta && it.conversationId == conversationId) {
+                        boundaryBaselineSeen = true
+                    }
+                    FoldInput.Live(ThreadInput.Live(it))
+                },
+            )
+                // Fuses with merge's intake channel: worker suspension must never stall either source
+                // or receipt-side boundary effects. The live source drops oldest events under pressure;
+                // only complete folded states may conflate. Collection cancellation discards this queue.
+                .buffer(Channel.UNLIMITED)
+                .collect { input ->
+                    val reading =
+                        withContext(contentScheduling?.worker ?: Dispatchers.Main.immediate) {
+                            val event =
+                                when (input) {
+                                    is FoldInput.Received -> {
+                                        evidence = input.snapshot.readEvidence
+                                        ThreadInput.Finished(input.snapshot.rows)
+                                    }
+                                    is FoldInput.Live -> input.input
+                                }
+                            fold = fold.reduce(event, conversationId)
+                            val rows = fold.render()
+                            FoldedThread(rows, evidence.presentedAs(rows))
+                        }
+                    emit(reading)
+                }
+        }.distinctUntilChanged()
 
     /**
      * The thread's content surface: the [threadItems] rows folded with the conversation's queued-message
      * backlog (#461). [ConversationRepository.observeQueue] is a thread-content stream (an ordered list of
      * not-yet-sent user text, the same category as [items]) rather than a transient cross-cutting signal,
      * so it is surfaced on [ThreadUiState] — not as a sibling [StateFlow] like [isStalled]. Combined here
-     * so the five-arm typed `state` combine keeps one content arm; both inputs seed immediately (the `scan`
-     * seeds `emptyList()`, `observeQueue` seeds `emptyList()`) and each already carries
-     * `distinctUntilChanged`, so this never stalls and adds no operator.
+     * so the five-arm typed `state` combine keeps one content arm. The fold and queue seed empty content.
+     * Rows and their exact receipt evidence share one complete value through worker display preparation
+     * and frame pacing; unrelated action/dialog flows do not wait for a frame.
      */
+    @OptIn(ExperimentalCoroutinesApi::class)
     private val threadContent: Flow<ThreadContent> =
         combine(
             threadItems,
             repository.observeQueue(conversationId),
             historyDemand,
             hostAvailable,
-            historyCoverage,
-        ) { items, queued, demand, connected, coverage ->
-            val display = coverage.displayRows(items)
-            val positions = coverage.positions()
-            val markers =
-                (coverage.gaps.map { it.anchor to it.edge } + listOfNotNull(coverage.unknownEdge?.let { 0L to it }))
-                    .sortedBy { it.second }
-                    .map { (anchor, edge) ->
-                        val row =
-                            display
-                                .firstOrNull { row -> row.historyKeys().any { (positions[it] ?: 0) >= edge } }
-                                ?.historyKeys()
-                                ?.firstOrNull()
-                        ThreadHistoryMarker(anchor, row.orEmpty())
+            flow<HistoryCoverage?> {
+                emit(null)
+                historySeed.join()
+                historyCoverage.collect { emit(it) }
+            },
+        ) { reading, queued, demand, connected, coverage ->
+            Triple(
+                reading.items,
+                coverage ?: HistoryCoverage(),
+                ThreadContent(
+                    reading.items,
+                    queued,
+                    demand.tail(connected),
+                    emptyList(),
+                    coverage?.let { reading.evidence.copy(gaps = it.unsignedGaps) },
+                ),
+            )
+        }.mapLatest { (items, coverage, content) ->
+            if (coverage.unsignedGaps.isEmpty() && !coverage.unsignedUnknown) {
+                content
+            } else {
+                withContext(projectionDispatcher) {
+                    val context = currentCoroutineContext()
+                    // Use the render fold's one-to-one queue correlation and lifecycle filtering.
+                    val delivered = IdentityHashMap<ThreadItem, Unit>()
+                    foldQueuedRows(items, content.queued).forEach { row ->
+                        context.ensureActive()
+                        if (row is ThreadRow.Delivered) delivered[row.item] = Unit
                     }
-            ThreadContent(display, queued, demand.tail(connected), markers)
-        }
+                    val display =
+                        coverage.projectDisplay(
+                            items,
+                            checkActive = { context.ensureActive() },
+                            isDisplayed = { it in delivered },
+                        )
+                    RelayLog.d { "event=history_display_projected rows=${display.rows.size} markers=${display.markers.size}" }
+                    content.copy(
+                        items = display.rows,
+                        historyMarkers =
+                            display.markers.map {
+                                ThreadHistoryMarker(beforeRow = it.beforeRow, unsignedAnchor = it.anchor, displayRow = it.displayRow)
+                            },
+                    )
+                }
+            }
+        }.distinctUntilChanged()
+            .paceThreadContent(contentScheduling)
 
     val state: StateFlow<ThreadUiState> =
         combine(
@@ -784,9 +858,10 @@ class ThreadViewModel(
                 lastUsedAt = conv?.lastUsedAt,
                 sessionCount = conv?.sessionHistory?.size ?: 0,
                 runConfig = runConfig.forLiveSession(lastKnownSessionId),
-                mutationsSupported = mutationsSupported,
+                mutationsSupported = repository.mutationsSupported,
                 historyTail = content.historyTail,
                 historyMarkers = content.historyMarkers,
+                readEvidence = content.evidence,
             )
         }.combine(slashCommandMenu) { uiState, menu ->
             val slashCommandsAccepted = uiState.runConfig.capabilities?.slashCommands ?: true
@@ -804,15 +879,23 @@ class ThreadViewModel(
         }.combine(mcpStatusReading) { uiState, mcp ->
             uiState.copy(mcpStatus = mcp)
         }.combine(combine(channelEditor.state, hostAvailable, ::Pair)) { uiState, (editor, available) ->
-            uiState.copy(channelEditor = editor, hostAvailable = available)
+            // The stable facade denies mutations between connections. Re-read on owner arrival:
+            // capturing that denial at construction would hide Rename/Edit for this destination's life.
+            uiState.copy(
+                channelEditor = editor,
+                hostAvailable = available,
+                mutationsSupported = available && repository.mutationsSupported,
+            )
+        }.combine(repository.observeReadMarks(conversationId)) { uiState, marks ->
+            uiState.copy(readUpTo = marks?.readUpTo)
         }.stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
+            started = SharingStarted.WhileSubscribed(),
             initialValue =
                 ThreadUiState(
                     conversationId = conversationId,
                     displayName = conversationId,
-                    mutationsSupported = mutationsSupported,
+                    mutationsSupported = repository.mutationsSupported,
                 ),
         )
 
@@ -1914,9 +1997,9 @@ class ThreadViewModel(
     private suspend fun recordCoverage(
         page: HistoryPage,
         newest: Boolean = false,
-        target: Long? = null,
+        target: ULong? = null,
     ) {
-        historyCoverage.update { it.received(page, newest, target) }
+        historyCoverage.update { it.receivedUnsigned(page, newest, target) }
         if (historyCoverage.value.unsignedIncomplete) {
             historyDemand.update { if (it.stoppedBy == HistoryWalkStop.AtStart) it.copy(stoppedBy = null) else it }
         }
@@ -1928,11 +2011,21 @@ class ThreadViewModel(
     }
 
     fun onDemandHistoryGap(anchor: Long) {
+        if (anchor >= 0) onDemandUnsignedHistoryGap(anchor.toULong())
+    }
+
+    fun onDemandUnsignedHistoryGap(anchor: ULong) {
         if (!historySeed.isCompleted || !hostAvailable.value) return
         val coverage = historyCoverage.value
-        if (anchor == 0L && coverage.unknownEdge == null || anchor != 0L && coverage.gaps.none { it.anchor == anchor }) return
+        if (anchor == 0uL &&
+            coverage.unsignedUnknownEdge == null ||
+            anchor != 0uL &&
+            coverage.unsignedGaps.none { it.anchor == anchor }
+        ) {
+            return
+        }
         claimHistorySlot { if (!it.inFlight) it.askingNewest() else null } ?: return
-        val cursor = coverage.cursorFor(anchor)
+        val cursor = coverage.cursorForUnsigned(anchor)
         viewModelScope.launch {
             try {
                 recordCoverage(
@@ -1945,7 +2038,7 @@ class ThreadViewModel(
                 throw error
             } catch (error: RelayErrorException) {
                 if (error.code == HISTORY_INVALID_CURSOR && cursor.isNotEmpty()) {
-                    historyCoverage.update { it.refused(anchor) }
+                    historyCoverage.update { it.refusedUnsigned(anchor) }
                     val walk = historyDemand.value
                     repository.writeHistoryPosition(
                         conversationId,
@@ -3049,8 +3142,19 @@ class ThreadViewModel(
         }
     }
 
+    private var highestQualifiedRead = 0uL
+
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
+            is ThreadEvent.NewestContentPresented -> {
+                // The composition sampled sight and daemon support together before dispatch.
+                val checkpoint = event.checkpoint
+                if (checkpoint <= highestQualifiedRead) return
+                highestQualifiedRead = checkpoint
+                viewModelScope.launch(
+                    start = CoroutineStart.UNDISPATCHED,
+                ) { repository.acknowledgeReadCheckpoint(conversationId, checkpoint) }
+            }
             is ThreadEvent.BackgroundTaskToggle -> toggleBackgroundTask(event.taskId)
             is ThreadEvent.BackgroundTaskStop -> sendBackgroundTaskStop(event.taskId)
             ThreadEvent.Archive -> {
@@ -3231,7 +3335,23 @@ class ThreadViewModel(
         val queued: List<QueuedMessage>,
         val historyTail: ThreadHistoryTail,
         val historyMarkers: List<ThreadHistoryMarker>,
+        val evidence: ThreadReadEvidence?,
     )
+
+    private data class FoldedThread(
+        val items: List<ThreadItem>,
+        val evidence: ThreadReadEvidence,
+    )
+
+    private sealed interface FoldInput {
+        data class Received(
+            val snapshot: ThreadSnapshot,
+        ) : FoldInput
+
+        data class Live(
+            val input: ThreadInput.Live,
+        ) : FoldInput
+    }
 
     private data class TransientDialogs(
         val renameVisible: Boolean,
