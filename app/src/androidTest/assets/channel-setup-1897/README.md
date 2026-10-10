@@ -82,10 +82,11 @@ the old drive in an isolated checkout for reproduction; select just
 counted red. The repair is confined to test code. All downstream live functional assertions and
 the scenario's guaranteed fixture restoration/deletion remain in place.
 
-## Pending dispatcher proof
+## Dispatcher full-live proof
 
-The ticket assigns the fresh full live gate to the dispatcher after verification. It must include
-`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack`
-executed and passed, and record actual mobile/daemon revisions, fresh XML/artifact location and
-full-suite executed/failed/skipped counts. The historical rerun and controlled fixture do not
-fulfil this live acceptance criterion.
+The fresh dispatcher full suite on 2026-10-10 executed and passed
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack`:
+65 executed/passed, 0 failed/errors/skipped. The
+[evergreen verification record](../../../../../docs/e2e-interactive-stream.md#empty-host-channel-setup-1897)
+identifies the tested mobile/daemon revisions and fresh dispatcher report/artifact paths.
+This completes the live handoff; the historical rerun and controlled fixture remain separate evidence.

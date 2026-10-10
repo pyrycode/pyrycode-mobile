@@ -290,6 +290,13 @@ Attributed background-agent prose (#1827) is covered at rung 3 by
    then empties the prompt from Edit channel and polls the host until its reading comes back `null`,
    opens Channel info and checks for an empty box at "0 / 8192 bytes", before restoring through the
    selected host's list-toolbar Archive entry and finding the edited name on the list.
+   Setup is host-scoped (#1897): after archiving the harness host's fixtures, the shared
+   `createChannelFromEmptyHost` drive waits for that exact host's list snapshot to be loaded and
+   channel-empty, then scrolls to and taps its host-qualified Channels plus. Global tier tags span
+   all hosts and only composed rows; their absence cannot establish target-host emptiness.
+   Missing, unloaded and stale-nonempty snapshots must hold the drive. Default-folder, prompt
+   read/edit/reset/clear, archive/restore and guaranteed fixture restoration/deletion remain covered
+   at the original deadlines. See [controlled and full-live evidence](#empty-host-channel-setup-1897).
    **Archive order** (#1332 — `interactiveTurn_archiveTwoChats_listsSecondArchivedFirst`): archives two
    freshly created chats on a live daemon, the newer-by-last-use one first and the older one second, then
    opens Archive and asserts the second-archived chat is on top — proving the daemon's `archived_at` stamp,
@@ -3524,6 +3531,42 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+### Empty-host channel setup (#1897)
+
+The [investigation](https://github.com/pyrycode/pyrycode-mobile/issues/1897#issuecomment-6093391574)
+maps the retained 30-second Compose timeout to the global-zero-channel-row wait before Channels
+plus on feature `f3728e7752` / main `e4ecbb099d`, daemon
+`6019328b378cad587f69b7bc94de37febbdf8556`. Original full run: **64 executed, 13 failed,
+0 skipped**, this method failed. Failed-only rerun: **13 executed, 1 failed, 0 skipped**, this
+method passed; that was not a passing full suite. Original phone row ownership was not retained.
+Another host's channel is a controlled cause of the faulty drive, a hypothesis for the historical
+occurrence; stale target UI cannot be ruled out from those historical artifacts.
+
+`EmptyHostChannelSetupTest` renders the real list with target A loaded/empty and selected B's
+channel visible. The old global wait failed: **1 executed, 1 failed, 0 skipped**. The repaired
+shared drive emitted exactly `TreeHostChannelAddTapped(A)` while B's channel remained; JVM and
+Android 13 regressions each recorded **4 executed/passed, 0 failed/errors/skipped**. The other
+three cases hold absent, unloaded and stale-nonempty A until a loaded empty update. Stack,
+tested-source excerpt, old-drive patch and counted XML are retained in the
+[evidence README](../app/src/androidTest/assets/channel-setup-1897/README.md).
+
+The fresh [dispatcher full-live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1897#issuecomment-6093900742)
+on 2026-10-10 ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`:
+**65 executed, 65 passed, 0 failed/errors/skipped**, exit 0, 917.6 seconds. Fresh JUnit XML explicitly
+contains the passing
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack`
+with no failure, error or skipped child. Tested feature head was
+`5c8ef298195444b23d379acfd751af3a55997851`, merged with main `0feba2e059dd`; matching stderr
+identifies actual mobile merge `c455352f1e7a065be5d691a9d45732c1d72decbb` and daemon
+`a536d17b1e182fb5398a5458e3afe6079b37a510`, binary `real-claude-gate-1897/build/e2e-bin/pyry`.
+The XML has no daemon annotation; the revision comes from that run's stderr, not an earlier run.
+
+Retained reports on the dispatcher host are
+`/Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/2026-10-10T04-30-57-780Z_real-claude-gate_#1897.log`
+(JUnit XML) and matching `.stderr.log` (revisions and artifact directory). The latter records
+`/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/real-claude-gate-1897/build/dispatcher-tests/live-fnoyas61`.
+This fresh full-suite execution completes the live handoff; no separate focused live run is claimed.
+
 ### Stop permission stage evidence (#1925)
 
 The change repairs the missing diagnostic evidence around the pre-Stop permission wait; the
@@ -5875,6 +5918,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Empty-host channel setup (#1897):** The existing rung-3
+  `InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack` uses the
+  loaded target-host snapshot and host-qualified Channels plus, with unchanged functional coverage
+  and guaranteed cleanup. Shared JVM/device regressions cover the multi-host and stale-data cases;
+  no `DeterministicInteractiveStreamE2ETest` twin was added. The
+  [fresh full-live named pass](#empty-host-channel-setup-1897) completes acceptance; no coverage
+  follow-up remains. The pre-ship command stays `python3 scripts/android-test-gate.py live`.
 
 - **Stop permission evidence (#1925):** The existing rung-3
   `InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`
