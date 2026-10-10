@@ -44,6 +44,7 @@ A synchronized pending map belongs to one remote connection. Admission, registra
 | Background, disconnect, collector completion or cancellation | Synchronous end and collector finally settle all; new repo alone can admit: `teardownSettlesAllAndRejectsLaterCalls`, `inboundCompletionAndScopeCancellationEndPendingCalls`. |
 | Caller cancellation, then another call for the same conversation | Remove only the cancelled registration; stale correlated refusal cannot settle successor: `callerCancellationReleasesRegistration`. |
 | Refused/throwing send, including reentrant teardown | Typed local failure and no retained waiter: `sendFailureAndReentrantTeardownReleasePendingWork`. |
+| Confirmation during synchronous send | Registration precedes send: `confirmationArrivingDuringSendIsNotLost`. |
 | Caller cancelled before invocation | No send: `alreadyCancelledCallerSendsNothing`. |
 
 Configuration changes and flow recollection add no operation jobs or replay; cancellation follows the caller, and observations keep the existing projection behavior.

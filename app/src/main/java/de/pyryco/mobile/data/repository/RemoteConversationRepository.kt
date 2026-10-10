@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.diagnostics.MessageTrail
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
@@ -274,6 +275,7 @@ class RemoteConversationRepository(
             conversationList = conversationListProjection,
             threadProjection = threadProjection,
             deviceName = deviceName,
+            negotiatedCapabilities = negotiatedCapabilities,
         )
 
     /**
@@ -440,6 +442,7 @@ class RemoteConversationRepository(
             try {
                 pump.inbound.collect { envelope -> onInbound(envelope) }
             } finally {
+                endSwitchAgentRequests()
                 endBackgroundTaskStops()
                 sessionErrorProjection.reset()
                 replySuggestionProjection.reset()
@@ -556,7 +559,10 @@ class RemoteConversationRepository(
                         RelayLog.w { "event=conversation_read_update outcome=malformed" }
                         null
                     }
-                record?.let(conversationListProjection::upsertConversation)
+                record?.let {
+                    conversationListProjection.upsertConversation(it)
+                    conversationCommands.confirmAgentSwitch(it, envelope.payload)
+                }
                 relayRequests.waiter(envelope.inReplyTo)?.complete(envelope.payload)
             }
             TYPE_WORKSPACE_UPDATED -> {
@@ -636,6 +642,7 @@ class RemoteConversationRepository(
                 // unsolicited error) is a no-op in both.
                 envelope.inReplyTo?.let { id ->
                     relayRequests.waiter(id)?.completeExceptionally(relayRequests.mapError(envelope.payload))
+                    conversationCommands.refuseAgentSwitch(id, envelope.payload)
                     modelMenuProjection.applyRefusal(id, envelope.payload)
                     // The MCP asks (#1343) register in their own ledger, disjoint by the same one counter.
                     mcpStatusProjection.applyRefusal(id, envelope.payload)
@@ -1514,6 +1521,15 @@ class RemoteConversationRepository(
         conversationId: String,
         name: String,
     ): Conversation = conversationCommands.rename(conversationId, name)
+
+    override suspend fun switchAgent(
+        conversationId: String,
+        agent: ConversationAgent,
+        model: String,
+        effort: String?,
+    ): Result<Unit> = conversationCommands.switchAgent(conversationId, agent, model, effort)
+
+    internal fun endSwitchAgentRequests() = conversationCommands.endAgentSwitches()
 
     /** Apply a run-configuration change over `set_session_settings` (#543); see [SessionSettingsCommands.setSessionSettings]. */
     override suspend fun setSessionSettings(

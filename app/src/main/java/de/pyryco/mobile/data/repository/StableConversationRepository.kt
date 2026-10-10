@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
@@ -337,6 +338,16 @@ class StableConversationRepository(
         conversationId: String,
         name: String,
     ): Conversation = live.rename(conversationId, name)
+
+    override suspend fun switchAgent(
+        conversationId: String,
+        agent: ConversationAgent,
+        model: String,
+        effort: String?,
+    ): Result<Unit> {
+        val repository = currentRepository.value ?: return Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.Unavailable))
+        return repository.switchAgent(conversationId, agent, model, effort)
+    }
 
     override suspend fun setSessionSettings(
         sessionId: String,
