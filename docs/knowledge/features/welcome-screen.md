@@ -135,7 +135,11 @@ Welcome title and resolved application/activity labels. `AttentionNotifierTest`
 pins the same literal for the notification fallback: comparing it only to
 `app_name` would pass even if the resource still contained the old name. Welcome
 capture selectors must distinguish the product title from the unchanged demo
-channel name.
+channel name. Before measuring changing insets,
+`welcomeConsumesChangingSystemBarsExactlyOnce` waits up to five seconds for the displayed Welcome
+title (#2006). Activity startup reads the saved host and completes DataStore workspace migration
+before exposing Welcome; Compose idling alone does not await that work. A passing full suite can
+miss this race, so keep the readiness wait ahead of the unchanged display, label and inset assertions.
 
 `WelcomeAppearanceDeviceTest` launches real `MainActivity` in dark mode with
 wallpaper colors disabled at 412 × 892 and 360 × 800 dp, at 160 dpi. It checks
