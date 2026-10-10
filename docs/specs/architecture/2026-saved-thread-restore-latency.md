@@ -80,3 +80,17 @@ Retain revision, command, exit, XML timestamp, executed/passed/failed/skipped/er
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-10
+
+## Revisions
+
+### 2026-10-10 — Isolated baseline and decoder allocation target
+
+Fresh unchanged isolated execution failed at fragmented offline first open: 845/1053/1193/1314 ms cumulative restore/snapshot/complete/draw. Cache read/decode/validation/metadata/proofs measured 7/517/150/23/123 ms; the worker used 824 ms wall and 416 ms CPU. Exit 1, one executed/failed, zero passed/skipped/errors; XML timestamp `2026-10-10T04:31:30` and selected-method logcat are retained under `/tmp/builder-2026/baseline/`. Historical #2006 and merge-base misses were also copied to `/tmp/builder-2026/prior/` without changing their originals.
+
+Typed JSON decoding is the largest timed cache phase. The serialization library creates an implicit-null element marker and a separate object decoder when `explicitNulls` is false; the saved-thread records and `HistoryCoverage` already give every nullable field a default. Use an immutable decoder-only `Json(MobileJson)` with `explicitNulls = true` for typed thread records, the independent fallback and optional metadata. This removes unnecessary per-record decoder/marker allocation without changing decoded defaults. Keep conversation/read-position readers, every writer and canonical row-proof encoding on unchanged `MobileJson`; changing encoding would alter persisted hashes. Required fields remain required, legacy omitted spans retain their existing fallback, and all row/version/structure/proof checks remain in the same timed operation.
+
+Before this repair, the full-size fresh-cache rows/claims regression passed, and the new omitted/explicit-null metadata and timestamp-compatibility methods passed 2/2 with no failures, skips or errors; fresh XML is under `/tmp/builder-2026/pre-compatibility/`. A temporary delegated history serializer measures metadata's share of decode in the queued diagnostic run; remove it after reading that result, keeping its XML/logcat. No device probe or fixture change is made.
+
+Security review remains PASS: only the decoder configuration changes; nullable defaults are explicit in the inspected thread DTOs, required metadata rejection is pinned by the pre-repair tests, and encoding/freshness/proof validation boundaries are unchanged. Recount remains below 850 written lines, one production file, zero exported types/signature migrations and unchanged reject branches. Final focused device evidence must establish sufficient wall-clock margin; the allocation analysis alone is not acceptance proof.
+
+The delegated diagnostic also reproduced the isolated miss: 602/800/1010/1153 ms cumulative; cache 3/298/107/25/134 ms, with optional-history decoding accounting for 151 ms of the 298 ms decode phase. The worker used 579 ms wall / 490 ms CPU. Exit 1, 1/0/1/0/0 executed/passed/failed/skipped/errors, XML timestamp `2026-10-10T04:46:43`, retained under `/tmp/builder-2026/decode-diagnosis/`. Both row and history parsing contribute; remove the temporary diagnostic serializer and apply the decoder-only configuration to both, retaining existing phase logs and all validation.

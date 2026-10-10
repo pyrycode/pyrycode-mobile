@@ -24,8 +24,8 @@ import kotlinx.datetime.Instant
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
-import kotlinx.serialization.builtins.nullable
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -329,10 +329,10 @@ class FileConversationCache(
 
     private fun decodeThreadRecord(bytes: ByteArray): CachedThread =
         try {
-            MobileJson.decodeFromString<CachedThread>(bytes.toString(Charsets.UTF_8))
+            threadReadJson.decodeFromString<CachedThread>(bytes.toString(Charsets.UTF_8))
         } catch (_: SerializationException) {
             // Optional metadata must not participate in row decoding; legacy omitted spans remain compatible.
-            val fallback = MobileJson.decodeFromString<CachedThreadRead>(bytes.toString(Charsets.UTF_8))
+            val fallback = threadReadJson.decodeFromString<CachedThreadRead>(bytes.toString(Charsets.UTF_8))
             CachedThread(fallback.version, fallback.rows, decodeHistory(fallback.history))
         }
 
@@ -397,7 +397,7 @@ class FileConversationCache(
     private fun storedHistoryOrNull(document: File): CachedHistoryPosition? {
         if (!document.isFile) return null
         return try {
-            val raw = MobileJson.decodeFromString<CachedThreadHeader>(document.readText())
+            val raw = threadReadJson.decodeFromString<CachedThreadHeader>(document.readText())
             raw.takeIf { it.version == VERSION }?.history?.let(::decodeHistory)
         } catch (error: Exception) {
             failureCode(error) ?: throw error
@@ -419,7 +419,7 @@ class FileConversationCache(
                 } else {
                     raw
                 }
-            MobileJson.decodeFromJsonElement<CachedHistoryPosition>(compatible).also { it.coverage?.validated(rows) }
+            threadReadJson.decodeFromJsonElement<CachedHistoryPosition>(compatible).also { it.coverage?.validated(rows) }
         } catch (error: Exception) {
             val code = failureCode(error) ?: throw error
             RelayLog.d { "conversation_cache operation=read_history_metadata status=failed code=$code" }
@@ -633,19 +633,12 @@ private fun CachedConversation.toDomain() =
 private data class CachedThread(
     val version: Int,
     val rows: List<CachedThreadRow>,
-    @Serializable(with = MeasuredHistorySerializer::class)
     val history: CachedHistoryPosition? = null,
 )
 
-private object MeasuredHistorySerializer : kotlinx.serialization.KSerializer<CachedHistoryPosition?> by
-CachedHistoryPosition.serializer().nullable {
-    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): CachedHistoryPosition? {
-        val started = System.nanoTime()
-        return CachedHistoryPosition.serializer().nullable.deserialize(decoder).also {
-            RelayLog.d { "event=thread_history_decoded elapsed_ms=${(System.nanoTime() - started) / 1_000_000}" }
-        }
-    }
-}
+// Every nullable thread field has a default, so decoding needs no implicit-null tracking.
+// Keep encoding on MobileJson: its omitted nulls define the persisted bytes and row proofs.
+private val threadReadJson = Json(MobileJson) { explicitNulls = true }
 
 /** Read rows directly while leaving malformed optional metadata independent of row readability. */
 @Serializable
