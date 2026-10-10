@@ -35,6 +35,18 @@ No new product state or jobs. Compose arrival and Android window/input readiness
 
 Every scenario exception remains a failing test. Diagnostics use static stage codes and booleans/counts/bounds, never pairing payloads, credentials, daemon text or conversation names. Any failed diagnostic record is explicitly identified while preserving the scenario exception.
 
+## State transitions and identity reuse
+
+| Event | Required observation and coverage |
+| --- | --- |
+| Owning host disconnects before Save, then reconnects with a replacement delegate | One rename on the replacement only: `renameDuringGap_waitsAndReachesTheNewDelegateExactlyOnce`. |
+| Owning host disconnects before confirmation, then reconnects | One delete on the replacement only: `deleteDuringGap_waitsAndReachesTheNewDelegateExactlyOnce`. |
+| Another host is ready or reconnects while the owner is unavailable | Neither mutation is released; each submits once when its owner returns: `anotherReadyHost_doesNotReleaseTheOwningHostWait`. |
+| Wait times out, then the same host reconnects | Timeout remains a failure and no mutation submits later: `missingHost_preservesTheCallersTimeout`. |
+| Wait is cancelled, then the same host reconnects | Cancellation remains cancellation and no mutation submits later: `cancelledWait_doesNotSubmitAfterReconnect`. |
+| Host is already ready | Immediate single submission: `readyHost_submitsWithoutWaitingOrRepeating`. |
+| Rename completes before Back destroys the thread scope; the discussion is reopened and deleted | The existing live deletion method observes the renamed header, displayed list presence, confirmation, return to list and absence. Dispatcher full live gate remains pending. |
+
 ## Testing strategy
 
 - Run a fresh diagnostic through the isolated live harness as needed to establish both stages; no passing diagnostic run substitutes for root-cause evidence.
@@ -73,3 +85,9 @@ Both Open Questions are resolved: repository unavailability, rather than a measu
 ### 2026-10-07 — guarded real-device proof
 
 Revision `e2525a93376c34ab69afce0395057dfd30b856ae` forced both connection gaps in one live deletion drive and passed: 1 executed, 1 passed, 0 failed, 0 skipped; raw evidence `build/dispatcher-tests/live-yln6f7vx`. The same actions were submitted once after each guard, with list presence and both final postconditions intact. Sanitized passing XML/logcat provenance is retained beside the negative controls. Temporary gap injection, its coroutine scope and failure window probe are removed; no production changes were necessary. Final written work remains below the 550-line estimate and every sizing boundary.
+
+### 2026-10-10 — refined acceptance audit
+
+The renewed ticket preserves the existing repair and evidence. Strengthen the timeout regression to attempt both guarded mutations and reconnect after the timeout, asserting no late submission; explicitly assert cancellation and exercise both mutations in the host-isolation regression. This clarifies the existing contract without changing the readiness helper or live drive. Neither helper nor regression overlaps another remote numeric feature branch. Forecast remains below 550 written lines, with no production edits, signature migration or additional deliverable.
+
+The current builder checks are focused readiness, Channel info and overflow tests, lint, APK assembly, androidTest compilation and forced Spotless, followed by `scripts/pre-verify.py --gradle` after the final main merge. The earlier whole-unit-suite requirement is superseded by the current builder role; the dispatcher owns full deterministic suites and the fresh passing full live gate. No separate focused live run is required by the refined ticket.
