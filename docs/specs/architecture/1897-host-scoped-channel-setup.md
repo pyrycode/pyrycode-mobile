@@ -35,3 +35,7 @@ Sizing: one setup/synchronization deliverable, approximately 350 written lines i
 ## Documentation handoff
 
 Pending documentation stage: `docs/e2e-interactive-stream.md`, “Channel create, edit and archive” and verification status, record the repaired host-scoped setup, controlled evidence and fresh dispatcher full live result. `docs/knowledge/features/development-verification-emulator-evidence.md`, “Emulator and real evidence”, record that tier-tag absence across a shared lazy list cannot prove one host's emptiness.
+
+## Revisions
+
+2026-10-10: controlled old-drive reproduction failed at the global tier-tag wait (1 executed/failed, 0 skipped); repaired JVM and device regressions each passed 4/4. Retain historical stack, source excerpt and counted historical/controlled/device XML under `app/src/androidTest/assets/channel-setup-1897/`. Actual written work is approximately 480 lines including these evidence copies, within every sizing boundary; the helper design and scenario coverage remain as planned. Original row ownership remains unobserved. Dispatcher full live evidence remains pending.
