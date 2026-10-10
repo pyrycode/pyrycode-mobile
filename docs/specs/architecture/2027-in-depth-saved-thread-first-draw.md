@@ -74,3 +74,11 @@ Run isolated first draw, isolated negative control and ticket-required in-depth 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-10
+
+## Revisions
+
+### 2026-10-10 — Residual reproduced; retain every case and worker lifecycle
+
+On plan revision `383323251`, isolated first draw exited 1 with 1/0/1/0/0 executed/passed/failed/skipped/errors (XML timestamp 2026-10-10T05:56:50). Fragmented offline first-open cumulative phases were 711/997/1135/1264 ms; cache phases 1/342/33/35/216 ms, IO worker 631 ms wall / 328 ms CPU. Separate control exited 0, 1/1/0/0/0 (2026-10-10T05:57:11), at 3018/3142/3153/3261 ms. Evidence is retained under `/tmp/builder-2027/baseline-isolated/` and `baseline-control/`, alongside copied post-#2026 misses. Animations were disabled, so their setting does not explain this reproduction. The in-depth comparison is running against this unchanged APK.
+
+The method currently aborts on its first timing miss, hiding later case timings. Collect each probe and assert the unchanged bound across all eight after fixture cleanup; no case is retried and every miss fails the method. Add content-free IO/default-worker queue/wall/CPU and ViewModel installation/teardown events to distinguish current measured work from prior-opening cleanup. Capture the probe before each cache read so a late completion cannot mark another opening's restore time. This is diagnostic instrumentation, not an established production repair, and adds no exported type or timing exclusion. Existing isolated failure is the red regression. Security review remains PASS: logs use only fixture labels and durations, ownership and validation remain unchanged. Estimated total remains below 450 lines.
