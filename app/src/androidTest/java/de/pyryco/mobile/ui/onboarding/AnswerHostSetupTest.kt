@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.onboarding
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
+import androidx.lifecycle.SavedStateHandle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
@@ -96,8 +97,8 @@ class AnswerHostSetupTest {
                         loadKoinModules(
                             module {
                                 single<ConnectionStateSource> { originalSource }
-                                viewModel { parameters ->
-                                    val target: String? = parameters.getOrNull()
+                                viewModel {
+                                    val target = get<SavedStateHandle>().get<String>("serverId")?.takeIf { it.isNotEmpty() }
                                     PairCodeViewModel(get(), registry, registry::pairingStatus, target)
                                 }
                             },

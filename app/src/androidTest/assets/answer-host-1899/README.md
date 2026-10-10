@@ -47,6 +47,32 @@ and Koin definitions were restored. Source JUnit SHA-256:
 `/tmp/builder-1899/green-device.xml`. Red helper revision: `54fd1bd52`; green changes only the
 unrelated readiness wait plus its explanatory comment. No deadline/assertion/retry changed.
 
+## Fixture cleanup regression (verifier finding 1)
+
+The original one-method green did not prove that the restored Koin binding preserved navigation
+targets. `AnswerHostSetupCleanupTest.targetedPairingAfterFixtureTeardownKeepsItsHostGuard` evaluates
+the actual setup fixture and its Compose rule completely, then starts a separate Compose activity
+in the same instrumentation process, without replacing Koin. Production `PyryNavHost` must resolve
+the requested host from `SavedStateHandle`, show its id read-only and reject a valid different-host
+code before fingerprint confirmation. An empty-target route must still accept that code through
+confirmation with an editable name. Neither route saves anything.
+
+Pre-fix command selected `de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest` through the same
+managed-device command above. Exit 1 at `2026-10-10T01:57:39`: **1 executed, 1 failed, 0 errors,
+0 skipped**. After setup teardown, the target's Host name was empty and editable. `cleanup-red.xml`
+retains the sanitized failure; original XML is `/tmp/builder-1899/cleanup-red-device.xml`, SHA-256
+`a685da18585f422159594c97dd396a9e02985cafe52bd7974f5c6c6e5154a6f9`.
+
+After restoring the production-equivalent `SavedStateHandle` lookup and empty-target normalization,
+the command selected both classes with
+`-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest,de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest`.
+Exit 0 at `2026-10-10T01:58:31`: **2 executed, 2 passed, 0 failed, 0 errors, 0 skipped**.
+The cleanup regression passed in 6.192 seconds; setup independence passed in 2.241 seconds.
+`cleanup-green.xml` retains both counted cases; original XML is
+`/tmp/builder-1899/cleanup-green-device.xml`, SHA-256
+`219b3ee70a1bc01b4ca71705ba2d48f22ae57f49633e8306db806c63afe29923`.
+Both runs used managed `pixel2Api33Atd`, API 33 / AOSP ATD, with no real Claude turns.
+
 ## Live acceptance
 
 Builder controlled evidence is separate from live acceptance. The dispatcher must separately run
