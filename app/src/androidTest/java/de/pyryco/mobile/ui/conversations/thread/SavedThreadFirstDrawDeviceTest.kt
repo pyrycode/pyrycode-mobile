@@ -339,6 +339,22 @@ class SavedThreadFirstDrawDeviceTest {
         }
         try {
             composeRule.waitUntil(15000) { probe.drawn.get() > 0 }
+            // Independent history validation may finish after the recorded committed frame.
+            val expectedAnchors =
+                coverage
+                    ?.unsignedGaps
+                    ?.map { it.anchor }
+                    ?.let { listOf(0uL) + it }
+                    .orEmpty()
+            composeRule.waitUntil(15000) {
+                val state =
+                    selected.value
+                        ?.vm
+                        ?.state
+                        ?.value
+                state?.historyMarkers?.map { it.unsignedAnchor } == expectedAnchors &&
+                    delegate.asks.size == if (online) beforeAsks + 1 else beforeAsks
+            }
             composeRule.runOnIdle {
                 val state = requireNotNull(selected.value).vm.state.value
                 assertEquals(rows, state.items)
