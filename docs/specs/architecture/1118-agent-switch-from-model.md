@@ -78,3 +78,9 @@ None.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-10
+
+## Revisions
+
+2026-10-10: Implementation inspection found a contradictory product contract. Merged PR #1196 removed Model, Effort and Permission footer buttons; `ThreadComposerFooter` now renders Context, Actions, Attach and Run configuration only. `footerMenu(Model)` and the shared callback remain as older projections, but no operator can open that footer model menu. The supplied Figma switching frame and Run configuration frame agree with the current footer. The planned two-entry-point UI proof cannot be implemented while retaining the approved layout. Route for refinement: restrict selection to Run configuration, or supply a new footer-model affordance and Figma anchor. Partial projection/switch state code is retained on this branch; UI proof, live follow-up and PR handoff are unfinished.
+
+Preservation checks: focused `ThreadViewModelAgentModelMenuTest` and `ThreadViewModelAgentSwitchTest` executed 24 tests, all passed with zero skips. `spotlessApply` passed. These establish partial ViewModel behavior only; no shared UI proof or final builder gate has run.

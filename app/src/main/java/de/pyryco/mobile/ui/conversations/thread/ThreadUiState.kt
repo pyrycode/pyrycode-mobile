@@ -115,6 +115,10 @@ sealed interface ThreadEvent {
     }
 
     /** The Run configuration sheet opened (#1309); the thread re-reads its settings. */
+    data object AgentSwitchConfirm : ThreadEvent
+
+    data object AgentSwitchDismiss : ThreadEvent
+
     data object RunConfigOpen : ThreadEvent
 
     data object SaveAsChannel : ThreadEvent
@@ -249,7 +253,17 @@ data class ThreadModelChoice(
     val supportsAutoMode: Boolean = false,
     /** Exact concrete identifier for inherited-default resolution; never used as a write value. */
     val resolvedModel: String = "",
+    val agent: ConversationAgent = ConversationAgent.Claude,
 )
+
+/** A captured, inert model-menu pick; only explicit confirmation starts the operation. */
+data class ThreadAgentSwitch(
+    val source: ConversationAgent,
+    val choice: ThreadModelChoice,
+    val sending: Boolean = false,
+) {
+    override fun toString(): String = "ThreadAgentSwitch(sending=$sending)"
+}
 
 /** One selectable reasoning-effort level of one [ThreadModelChoice] (#807). Same split as its parent:
  *  [value] is the verbatim write argument, [label] the inert render of it. */
@@ -336,7 +350,14 @@ data class ThreadRunConfig(
     /** The raw model claude announced (#1308), `""` when none or cut. A comparison key only: never written or shown raw. */
     val announcedModel: String = "",
     val agent: ConversationAgent = ConversationAgent.Claude,
+    val agentSwitch: ThreadAgentSwitch? = null,
+    val agentSwitchFailed: Boolean = false,
+    /** Repository-confirmed pick while the successor settings reading is still unavailable. */
+    val confirmedSwitchChoice: ThreadModelChoice? = null,
 ) {
+    private val ownChoices get() = choices.filter { it.agent == agent }
+    private val ownOverflowChoices get() = overflowChoices.filter { it.agent == agent }
+
     /** What the surfaces show: a pending tap while one is outstanding, the confirmed reading otherwise. */
     val selectedModel: String get() = pendingModel ?: savedModel
 
@@ -399,7 +420,7 @@ data class ThreadRunConfig(
     val selectedChoice: ThreadModelChoice?
         get() {
             if (!settingsAvailable && pendingModel == null) return null
-            if (!inherited) return choices.firstOrNull { it.value == selectedModel }
+            if (!inherited) return ownChoices.singleOrNull { it.value == selectedModel }
             val announced = announcedKey
             if (announced.isNotEmpty()) {
                 val family = announced.modelFamily()
@@ -410,15 +431,15 @@ data class ThreadRunConfig(
                         { family.isNotEmpty() && it.value.modelFamily() == family },
                     )
                 for (matches in tiers) {
-                    val rendered = choices.filter(matches)
-                    val candidates = rendered.size + overflowChoices.count(matches)
+                    val rendered = ownChoices.filter(matches)
+                    val candidates = rendered.size + ownOverflowChoices.count(matches)
                     if (candidates > 0) return rendered.singleOrNull()?.takeIf { candidates == 1 }
                 }
                 return null
             }
             val resolved = defaultResolution
             if (!inheritedResolutionUnique || resolved.isEmpty()) return null
-            return choices.filter { it.resolvedModel == resolved }.singleOrNull()
+            return ownChoices.filter { it.resolvedModel == resolved }.singleOrNull()
         }
 
     /**
@@ -442,7 +463,7 @@ data class ThreadRunConfig(
             if (!settingsAvailable && pendingModel == null) {
                 null
             } else if (inherited) {
-                inheritedChoice
+                inheritedChoice?.takeIf { it.agent == agent }
             } else {
                 selectedChoice
             }
@@ -457,7 +478,7 @@ data class ThreadRunConfig(
 
     /** Whether a model or effort write is outstanding: the surfaces keep it visibly distinct from confirmed
      *  state. A permission write is [pendingPermission], kept apart so it gates only its own control. */
-    val pending: Boolean get() = pendingModel != null || pendingEffort != null
+    val pending: Boolean get() = agentSwitch?.sending == true || pendingModel != null || pendingEffort != null
 
     /** Whether a write can be addressed at all — the `""`-session-id read-only gate. */
     val writable: Boolean get() = sessionId.isNotEmpty()
@@ -470,6 +491,8 @@ data class ThreadRunConfig(
     val modelLabel: String
         get() =
             when {
+                agentSwitch?.sending == true -> agentSwitch.choice.label
+                !settingsAvailable && confirmedSwitchChoice?.agent == agent -> confirmedSwitchChoice.label
                 !settingsAvailable && pendingModel == null -> UNKNOWN_RUN_CONFIG_LABEL
                 selectedChoice != null -> selectedChoice?.label.orEmpty()
                 inherited ->

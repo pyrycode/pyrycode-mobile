@@ -75,6 +75,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -100,6 +101,7 @@ import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.components.EditChannelModal
+import de.pyryco.mobile.ui.components.MobileModal
 import de.pyryco.mobile.ui.components.chromeBackdrop
 import de.pyryco.mobile.ui.components.defaultChromeShadow
 import de.pyryco.mobile.ui.conversations.components.AgentStartMarker
@@ -137,6 +139,7 @@ import de.pyryco.mobile.ui.conversations.components.ToolRunRow
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
+import de.pyryco.mobile.ui.conversations.components.agentName
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
 import de.pyryco.mobile.ui.theme.threadColors
 import dev.chrisbanes.haze.HazeState
@@ -378,6 +381,10 @@ fun ThreadScreen(
         changeWorkspaceErrors.collect { errorNotices.enqueue(this, changeWorkspaceFailedMessage) }
     }
     val sessionSettingsFailedMessage = stringResource(R.string.session_settings_failed)
+    val agentSwitchFailedMessage = stringResource(R.string.thread_agent_switch_failed)
+    LaunchedEffect(state.runConfig.agentSwitchFailed, errorNotices) {
+        if (state.runConfig.agentSwitchFailed) errorNotices.enqueue(this, agentSwitchFailedMessage)
+    }
     LaunchedEffect(sessionSettingsErrors, errorNotices) {
         sessionSettingsErrors.collect { errorNotices.enqueue(this, sessionSettingsFailedMessage) }
     }
@@ -525,6 +532,7 @@ fun ThreadScreen(
                     ThreadStatusArea(
                         apiRetry = apiRetry,
                         resetting = resetting,
+                        switching = state.runConfig.agentSwitch?.takeIf { it.sending },
                         isCompacting = isCompacting,
                         isStalled = isStalled,
                         isThinking = isThinking,
@@ -1283,6 +1291,27 @@ fun ThreadScreen(
                 },
         )
     }
+    state.runConfig.agentSwitch?.takeUnless { it.sending }?.let { confirmation ->
+        MobileModal(
+            title = stringResource(R.string.thread_agent_switch_title, agentName(confirmation.choice.agent)),
+            onDismissRequest = { onOverflowEvent(ThreadEvent.AgentSwitchDismiss) },
+            onSubmit = { onOverflowEvent(ThreadEvent.AgentSwitchConfirm) },
+            submitLabel = stringResource(R.string.thread_agent_switch_action),
+        ) {
+            Text(
+                stringResource(
+                    R.string.thread_agent_switch_body,
+                    agentName(confirmation.source),
+                    confirmation.choice.label,
+                    agentName(confirmation.choice.agent),
+                ),
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
     if (sheetVisible) {
         StatusSheet(
             choices = state.runConfig.choices,
@@ -1498,6 +1527,7 @@ private fun ThreadStatusArea(
     taskCount: Int,
     onTasksClick: () -> Unit,
     agent: ConversationAgent,
+    switching: ThreadAgentSwitch?,
 ) {
     // #1312: one always-composed band. The glyph is its first child in every state, so a reading change or
     // the task pill never gives the snowflake a new composition node and its turn never restarts.
@@ -1511,7 +1541,7 @@ private fun ThreadStatusArea(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (waitingForAnswers) {
+        if (waitingForAnswers && switching == null) {
             Image(
                 painterResource(R.drawable.ic_question_glyph),
                 contentDescription = null,
@@ -1519,11 +1549,28 @@ private fun ThreadStatusArea(
                 modifier = Modifier.size(14.dp, 16.dp),
             )
         } else {
-            ThreadStatusGlyph(turning = isBusy || localSendStage != LocalSendStage.None)
+            ThreadStatusGlyph(turning = switching != null || isBusy || localSendStage != LocalSendStage.None)
         }
         // Always present, so the pill keeps the band's right end while no reading shows.
         Box(Modifier.weight(1f).testTag(STATUS_READING_TEST_TAG)) {
-            if (waitingForAnswers || waitingForPermission) {
+            if (switching != null) {
+                Text(
+                    stringResource(
+                        if (resetting?.phase ==
+                            ResetStatus.Phase.WrappingUp
+                        ) {
+                            R.string.thread_agent_switch_wrapping_up
+                        } else {
+                            R.string.thread_agent_switch_pending
+                        },
+                        agentName(switching.choice.agent),
+                        agentName(switching.source),
+                    ),
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            } else if (waitingForAnswers || waitingForPermission) {
                 Text(
                     stringResource(
                         if (waitingForAnswers) R.string.question_waiting_for_answers else R.string.thread_status_waiting_for_permission,

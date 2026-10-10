@@ -31,7 +31,7 @@ import org.junit.Test
 
 /**
  * #1110: one merged `multi_agent` menu is the same for every conversation, and each conversation lists
- * only its own agent's rows — in the footer and the Status sheet alike, since both read
+ * both known agents' rows — in the footer and the Status sheet alike, since both read
  * [ThreadRunConfig.choices].
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -47,11 +47,11 @@ class ThreadViewModelAgentModelMenuTest {
     }
 
     @Test
-    fun claudeConversation_listsOnlyClaudeRows_andKeepsDroppedModels() =
+    fun claudeConversation_listsBothAgents_andKeepsDroppedModels() =
         runTest {
             val config = runConfigFor(ConversationAgent.Claude)
 
-            assertEquals(listOf("sonnet", "opus"), config.choices.map { it.value })
+            assertEquals(listOf("sonnet", "opus", "gpt-6-luna", "gpt-6-sol"), config.choices.map { it.value })
             assertEquals(5, config.droppedModels)
         }
 
@@ -72,7 +72,7 @@ class ThreadViewModelAgentModelMenuTest {
 
             assertEquals(listOf("sonnet", "opus"), config.choices.map { it.value })
             assertEquals("sonnet", config.selectedChoice?.value)
-            assertEquals("Sonnet", config.modelLabel)
+            assertEquals("sonnet", config.modelLabel)
         }
 
     @Test
@@ -95,17 +95,17 @@ class ThreadViewModelAgentModelMenuTest {
         }
 
     @Test
-    fun codexConversation_listsOnlyCodexRows_inDaemonOrder_withTheDaemonsNames() =
+    fun codexConversation_listsBothAgents_inDaemonOrder_withTheDaemonsNames() =
         runTest {
             val config = runConfigFor(ConversationAgent.Codex)
 
-            assertEquals(listOf("gpt-6-luna", "gpt-6-sol"), config.choices.map { it.value })
-            assertEquals(listOf("GPT-6 Luna", "GPT-6 Sol"), config.choices.map { it.label })
-            assertEquals("gpt-6-luna-2026", config.choices.first().detail)
+            assertEquals(listOf("sonnet", "opus", "gpt-6-luna", "gpt-6-sol"), config.choices.map { it.value })
+            assertEquals(listOf("sonnet", "opus", "GPT-6 Luna", "GPT-6 Sol"), config.choices.map { it.label })
+            assertEquals("gpt-6-luna-2026", config.choices[2].detail)
         }
 
     @Test
-    fun claudeRowsUseRawValueFamiliesAndFallBackToPublishedNames() =
+    fun bothAgentsUsePublishedNames() =
         runTest {
             val menu =
                 ModelMenu(
@@ -118,26 +118,38 @@ class ThreadViewModelAgentModelMenuTest {
                     droppedModels = 0,
                 )
 
-            assertEquals(listOf("Fable", "Numbered tier"), runConfigFor(ConversationAgent.Claude, menu).choices.map { it.label })
-            assertEquals(listOf("Vendor Sol face"), runConfigFor(ConversationAgent.Codex, menu).choices.map { it.label })
+            assertEquals(
+                listOf(
+                    "Fable tier",
+                    "Numbered tier",
+                    "Vendor Sol face",
+                ),
+                runConfigFor(ConversationAgent.Claude, menu).choices.map {
+                    it.label
+                },
+            )
+            assertEquals(
+                listOf("Fable tier", "Numbered tier", "Vendor Sol face"),
+                runConfigFor(ConversationAgent.Codex, menu).choices.map { it.label },
+            )
         }
 
     @Test
-    fun longClaudeFamilyIsBoundedWithoutChangingTheWriteValue() =
+    fun longDisplayNameIsBoundedWithoutChangingTheWriteValue() =
         runTest {
             val rawValue = "claude-" + "a".repeat(200)
-            val menu = ModelMenu(listOf(row(rawValue, ConversationAgent.Claude)), 0)
+            val menu = ModelMenu(listOf(row(rawValue, ConversationAgent.Claude, displayName = "a".repeat(200))), 0)
 
             val choice = runConfigFor(ConversationAgent.Claude, menu).choices.single()
             assertEquals(rawValue, choice.value)
             assertEquals(128, choice.label.length)
-            assertEquals("A" + "a".repeat(127), choice.label)
+            assertEquals("a".repeat(128), choice.label)
         }
 
     @Test
-    fun codexConversation_leavesOutClaudesDroppedModels() =
+    fun codexConversation_includesMergedDroppedModels() =
         runTest {
-            assertEquals(0, runConfigFor(ConversationAgent.Codex).droppedModels)
+            assertEquals(5, runConfigFor(ConversationAgent.Codex).droppedModels)
         }
 
     @Test
@@ -160,7 +172,7 @@ class ThreadViewModelAgentModelMenuTest {
         }
 
     @Test
-    fun hiddenChoices_countsTheFilteredList() =
+    fun hiddenChoices_countsTheMergedKnownAgentList() =
         runTest {
             val manyClaude = (1..40).map { row("claude-$it", ConversationAgent.Claude) }
             val menu = ModelMenu(rows = manyClaude + MERGED.rows.filter { it.agent == ConversationAgent.Codex }, droppedModels = 0)
@@ -168,9 +180,9 @@ class ThreadViewModelAgentModelMenuTest {
             val codex = runConfigFor(ConversationAgent.Codex, menu = menu)
             val claude = runConfigFor(ConversationAgent.Claude, menu = menu)
 
-            assertEquals(0, codex.hiddenChoices)
-            assertEquals(2, codex.choices.size)
-            assertEquals(8, claude.hiddenChoices)
+            assertEquals(10, codex.hiddenChoices)
+            assertEquals(32, codex.choices.size)
+            assertEquals(10, claude.hiddenChoices)
         }
 
     @Test
@@ -193,12 +205,12 @@ class ThreadViewModelAgentModelMenuTest {
         }
 
     @Test
-    fun theConversationsAgentArriving_refiltersTheMenu() =
+    fun theConversationsAgentArriving_preservesMenuAndScopesSelection() =
         runTest {
             val repo = AgentRepo(ConversationAgent.Claude)
             val vm = collectedVm(repo, MERGED, savedModel = "opus")
             assertEquals(
-                listOf("sonnet", "opus"),
+                listOf("sonnet", "opus", "gpt-6-luna", "gpt-6-sol"),
                 vm.state.value.runConfig.choices
                     .map { it.value },
             )
@@ -207,7 +219,7 @@ class ThreadViewModelAgentModelMenuTest {
             runCurrent()
 
             assertEquals(
-                listOf("gpt-6-luna", "gpt-6-sol"),
+                listOf("sonnet", "opus", "gpt-6-luna", "gpt-6-sol"),
                 vm.state.value.runConfig.choices
                     .map { it.value },
             )
