@@ -22,10 +22,15 @@ internal class ThreadUpdateDecoder(
     fun decode(envelope: Envelope): List<ThreadDecodeOutcome<ThreadUpdateDto>> {
         val expired = assembler.expire()
         val raw = envelope.payload as? JsonObject
-        val conversation = (raw?.get("conversation_id") as? JsonPrimitive)?.takeIf { it.isString }?.content
-        val metadata = raw?.let { metadata(envelope.type, it) }
-        if (raw == null || metadata == null) return expired + assembler.reject(assembler.ownerOf(raw) ?: conversation, "malformed")
-        return expired + assembler.accept(envelope.type, raw, metadata, { ThreadUpdateDto.decode(envelope.type, it) }, { it.metadata() })
+        if (raw == null) return expired + assembler.reject(null, "malformed")
+        return expired +
+            assembler.accept(
+                envelope.type,
+                raw,
+                { metadata(envelope.type, it) },
+                { ThreadUpdateDto.decode(envelope.type, it) },
+                { it.metadata() },
+            )
     }
 
     fun expire(): List<ThreadDecodeOutcome.Repair> = assembler.expire()

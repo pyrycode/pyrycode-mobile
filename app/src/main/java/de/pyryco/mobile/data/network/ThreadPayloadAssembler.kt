@@ -67,21 +67,24 @@ internal class ThreadPayloadAssembler(
     fun <T> accept(
         type: String,
         payload: JsonObject,
-        metadata: JsonObject,
+        metadataFor: (JsonObject) -> JsonObject?,
         decode: (JsonObject) -> T?,
         metadataOf: (T) -> JsonObject,
     ): ThreadDecodeOutcome<T> {
-        val conversation = metadata.threadString("conversation_id")
+        val conversation = (payload["conversation_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
         if (abandoned) return reject(conversation, "abandoned")
         val originalOwner = ownerOf(payload)
         if (originalOwner != null && originalOwner != conversation) return reject(originalOwner, "metadata")
-        if ("continuation" !in payload) {
+        val ordinary = "continuation" !in payload
+        if (ordinary) {
             if (conversation in pending) return reject(conversation, "sequence")
-            if (payload.toString().length > maxPayloadBytes ||
-                payload.toString().toByteArray(Charsets.UTF_8).size > maxPayloadBytes
-            ) {
+            if (boundedThreadJsonSize(payload, maxPayloadBytes) == null) {
                 return reject(conversation, "capacity")
             }
+        }
+        val metadata = metadataFor(payload) ?: return reject(conversation, "malformed")
+        val owner = metadata.threadString("conversation_id")
+        if (ordinary) {
             val value = decode(payload) ?: return reject(conversation, "malformed")
             RelayLog.i { "event=thread_decode code=complete" }
             return ThreadDecodeOutcome.Complete(value)
@@ -102,10 +105,10 @@ internal class ThreadPayloadAssembler(
                 return reject(conversation, "malformed")
             }
         if (part.total !in 1..maxPayloadBytes.toLong() || part.data.length > maxPayloadBytes) return reject(conversation, "capacity")
-        var assembly = pending[conversation]
+        var assembly = pending[owner]
         if (assembly == null) {
             if (part.index != 0L || part.offset != 0L) return reject(conversation, "sequence")
-            val metadataSize = metadata.toString().toByteArray(Charsets.UTF_8).size
+            val metadataSize = boundedThreadJsonSize(metadata, maxPayloadBytes) ?: return reject(conversation, "capacity")
             if (pending.size >= maxAssemblies ||
                 metadataSize > maxPayloadBytes ||
                 bufferedBytes + metadataSize > maxBufferedBytes
@@ -113,7 +116,7 @@ internal class ThreadPayloadAssembler(
                 return reject(conversation, "capacity")
             }
             assembly = Assembly(type, metadata, part.updateId, part.total.toInt(), nowMillis(), metadataSize)
-            pending[conversation] = assembly
+            pending[owner] = assembly
             bufferedBytes += metadataSize
             RelayLog.i { "event=thread_assembly code=start" }
         }
@@ -128,11 +131,15 @@ internal class ThreadPayloadAssembler(
         if (assembly.nextIndex >= maxParts) return reject(conversation, "capacity")
         val data = part.data.toByteArray(Charsets.UTF_8)
         if (data.size.toLong() > assembly.total.toLong() - assembly.bytes.size()) return reject(conversation, "length")
-        if (bufferedBytes + data.size > maxBufferedBytes) return reject(conversation, "capacity")
+        if (assembly.metadataBytes.toLong() + assembly.bytes.size() + data.size > maxPayloadBytes ||
+            bufferedBytes + data.size > maxBufferedBytes
+        ) {
+            return reject(conversation, "capacity")
+        }
         assembly.bytes.write(data)
         bufferedBytes += data.size
         assembly.nextIndex++
-        if (!part.final) return ThreadDecodeOutcome.Pending(conversation)
+        if (!part.final) return ThreadDecodeOutcome.Pending(owner)
         if (assembly.bytes.size() != assembly.total) return reject(conversation, "length")
         val bytes = assembly.bytes.toByteArray()
         val digest =
@@ -144,15 +151,11 @@ internal class ThreadPayloadAssembler(
                 }.digest(bytes)
                 .toHexString()
         if (digest != assembly.updateId) return reject(conversation, "integrity")
-        val logical =
-            try {
-                MobileJson.parseToJsonElement(bytes.toString(Charsets.UTF_8)) as? JsonObject
-            } catch (_: IllegalArgumentException) {
-                null
-            }
+        val serialized = bytes.toString(Charsets.UTF_8)
+        val logical = parseThreadJson(serialized)
         val value = logical?.let(decode) ?: return reject(conversation, "malformed")
         if (metadataOf(value) != assembly.metadata) return reject(conversation, "metadata")
-        discard(conversation)
+        discard(owner)
         RelayLog.i { "event=thread_assembly code=complete bytes=${bytes.size}" }
         return ThreadDecodeOutcome.Complete(value)
     }

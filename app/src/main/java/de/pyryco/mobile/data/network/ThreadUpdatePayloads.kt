@@ -157,3 +157,209 @@ private fun validThreadJson(root: JsonElement): Boolean {
     }
     return true
 }
+
+/** Count compact JSON bytes without recursive serialization or allocating the encoded payload. */
+internal fun boundedThreadJsonSize(
+    root: JsonElement,
+    maximum: Int,
+): Int? {
+    var bytes = 0L
+
+    fun charge(count: Long): Boolean {
+        bytes += count
+        return bytes <= maximum
+    }
+
+    fun string(
+        text: String,
+        quoted: Boolean,
+    ): Boolean {
+        if (quoted && !charge(2)) return false
+        var index = 0
+        while (index < text.length) {
+            val char = text[index++]
+            val size =
+                when {
+                    quoted && (char == '"' || char == '\\' || char in "\b\t\n\u000c\r") -> 2
+                    quoted && char < ' ' -> 6
+                    char < '\u0080' -> 1
+                    char < '\u0800' -> 2
+                    char.isHighSurrogate() && index < text.length && text[index].isLowSurrogate() -> {
+                        index++
+                        4
+                    }
+                    char.isSurrogate() -> 1 // Matches Java UTF-8 replacement in the existing serializer.
+                    else -> 3
+                }
+            if (!charge(size.toLong())) return false
+        }
+        return true
+    }
+    val remaining = ArrayDeque<Iterator<JsonElement>>()
+    remaining.add(listOf(root).iterator())
+    while (remaining.isNotEmpty()) {
+        val iterator = remaining.last()
+        if (!iterator.hasNext()) {
+            remaining.removeLast()
+            continue
+        }
+        when (val value = iterator.next()) {
+            is JsonObject -> {
+                if (!charge(2L + value.size + (value.size - 1).coerceAtLeast(0))) return null
+                for (key in value.keys) if (!string(key, true)) return null
+                remaining.add(value.values.iterator())
+            }
+            is JsonArray -> {
+                if (!charge(2L + (value.size - 1).coerceAtLeast(0))) return null
+                remaining.add(value.iterator())
+            }
+            is JsonPrimitive -> if (!string(value.content, value.isString)) return null
+        }
+    }
+    return bytes.toInt()
+}
+
+private enum class ThreadJsonState {
+    Value,
+    Done,
+    FirstKey,
+    Key,
+    Colon,
+    ObjectValue,
+    ObjectEnd,
+    FirstElement,
+    Element,
+    ArrayEnd,
+}
+
+private class ThreadJsonFrame(
+    var state: ThreadJsonState,
+    val fields: MutableMap<String, JsonElement>? = null,
+    val elements: MutableList<JsonElement>? = null,
+) {
+    var key: String? = null
+}
+
+/** Stack-safe strict parsing; use MobileJson only for validated leaves, never nested containers. */
+internal fun parseThreadJson(text: String): JsonObject? {
+    var index = 0
+
+    fun leaf(token: String): JsonPrimitive? =
+        try {
+            MobileJson.parseToJsonElement(token) as? JsonPrimitive
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+
+    fun string(): JsonPrimitive? {
+        val start = index
+        if (text.getOrNull(index++) != '"') return null
+        while (index < text.length) {
+            val char = text[index++]
+            if (char == '"') return leaf(text.substring(start, index))
+            if (char < ' ') return null
+            if (char == '\\') {
+                when (text.getOrNull(index++)) {
+                    '"', '\\', '/', 'b', 'f', 'n', 'r', 't' -> Unit
+                    'u' ->
+                        repeat(4) {
+                            val hex = text.getOrNull(index++) ?: return null
+                            if (hex !in '0'..'9' && hex !in 'a'..'f' && hex !in 'A'..'F') return null
+                        }
+                    else -> return null
+                }
+            }
+        }
+        return null
+    }
+    val frames = ArrayDeque<ThreadJsonFrame>()
+    frames.add(ThreadJsonFrame(ThreadJsonState.Value))
+    var root: JsonElement? = null
+
+    fun replace(state: ThreadJsonState) {
+        frames.last().state = state
+    }
+
+    fun append(value: JsonElement) {
+        val parent = frames.last()
+        when {
+            parent.fields != null -> parent.fields[requireNotNull(parent.key)] = value
+            parent.elements != null -> parent.elements.add(value)
+            else -> root = value
+        }
+    }
+
+    fun close() {
+        val frame = frames.removeLast()
+        append(frame.fields?.let(::JsonObject) ?: JsonArray(requireNotNull(frame.elements)))
+    }
+    while (frames.isNotEmpty()) {
+        while (index < text.length && text[index] in " \t\n\r") index++
+        val char = text.getOrNull(index)
+        when (val state = frames.last().state) {
+            ThreadJsonState.Done -> return if (index == text.length) root as? JsonObject else null
+            ThreadJsonState.FirstKey, ThreadJsonState.Key -> {
+                if (state == ThreadJsonState.FirstKey && char == '}') {
+                    index++
+                    close()
+                } else {
+                    frames.last().key = (string() ?: return null).content
+                    replace(ThreadJsonState.Colon)
+                }
+            }
+            ThreadJsonState.Colon -> {
+                if (char != ':') return null
+                index++
+                replace(ThreadJsonState.ObjectValue)
+            }
+            ThreadJsonState.ObjectEnd, ThreadJsonState.ArrayEnd -> {
+                if (char == ',') {
+                    index++
+                    replace(if (state == ThreadJsonState.ObjectEnd) ThreadJsonState.Key else ThreadJsonState.Element)
+                } else if (char == if (state == ThreadJsonState.ObjectEnd) '}' else ']') {
+                    index++
+                    close()
+                } else {
+                    return null
+                }
+            }
+            else -> {
+                if (state == ThreadJsonState.FirstElement && char == ']') {
+                    index++
+                    close()
+                    continue
+                }
+                replace(
+                    when (state) {
+                        ThreadJsonState.Value -> ThreadJsonState.Done
+                        ThreadJsonState.ObjectValue -> ThreadJsonState.ObjectEnd
+                        else -> ThreadJsonState.ArrayEnd
+                    },
+                )
+                when (char) {
+                    '{', '[' -> {
+                        index++
+                        frames.add(
+                            if (char ==
+                                '{'
+                            ) {
+                                ThreadJsonFrame(ThreadJsonState.FirstKey, fields = mutableMapOf())
+                            } else {
+                                ThreadJsonFrame(ThreadJsonState.FirstElement, elements = mutableListOf())
+                            },
+                        )
+                    }
+                    '"' -> append(string() ?: return null)
+                    else -> {
+                        val start = index
+                        while (index < text.length && text[index] !in " \t\n\r,]}:") index++
+                        val token = text.substring(start, index)
+                        if (token !in setOf("null", "true", "false") && !threadJsonNumber.matches(token)) return null
+                        append(leaf(token) ?: return null)
+                    }
+                }
+            }
+        }
+    }
+    return null
+}

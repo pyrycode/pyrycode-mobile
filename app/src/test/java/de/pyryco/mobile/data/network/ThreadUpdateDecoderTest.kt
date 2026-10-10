@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.network
 
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -11,6 +12,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -190,6 +192,114 @@ class ThreadUpdateDecoderTest {
         val p = parts(added, raw, 31)
         p.dropLast(1).forEach { pending(decoder.decode(it)) }
         assertEquals(raw, complete(decoder.decode(p.last())).raw)
+    }
+
+    @Test
+    fun hostileNestingNeverUsesRecursiveSerialization() {
+        for (objectNesting in listOf(true, false)) {
+            var nested: JsonElement = JsonNull
+            repeat(6000) { nested = if (objectNesting) JsonObject(mapOf("x" to nested)) else JsonArray(listOf(nested)) }
+            val addition = addition()
+            val raws =
+                listOf(
+                    added to replace(addition, "item", replace(addition.getValue("item").jsonObject, "content", nested)),
+                    changed to replace(change(), "changes", JsonObject(mapOf("content" to nested))),
+                )
+            for ((type, raw) in raws) {
+                assertSame(raw, complete(newDecoder().decode(envelope(type, raw))).raw)
+                val result = newDecoder(maxPayloadBytes = 256).decode(envelope(type, raw)).single() as ThreadDecodeOutcome.Repair
+                assertEquals("capacity", result.code)
+            }
+        }
+    }
+
+    @Test
+    fun ordinaryByteBoundCountsEscapesAndUtf8Exactly() {
+        val raw = suffix("\u0000\n\t\"\\🌲é")
+        val size = raw.toString().toByteArray(Charsets.UTF_8).size
+        complete(newDecoder(maxPayloadBytes = size).decode(envelope(append, raw)))
+        val result = newDecoder(maxPayloadBytes = size - 1).decode(envelope(append, raw)).single() as ThreadDecodeOutcome.Repair
+        assertEquals("capacity", result.code)
+    }
+
+    @Test
+    fun multipartNestingUsesStackSafeAdmission() {
+        val raw = change(obj("""{"content":null}"""))
+        for ((open, close) in listOf("{\"x\":" to "}", "[" to "]")) {
+            val serialized = raw.toString().replace("\"content\":null", "\"content\":" + open.repeat(6000) + "null" + close.repeat(6000))
+            val p = parts(changed, raw, 4000, serialized)
+            p.dropLast(1).forEach { pending(decoder.decode(it)) }
+            var content = requireNotNull(complete(decoder.decode(p.last())).changes).getValue("content")
+            repeat(6000) { content = if (open == "[") (content as JsonArray).single() else content.jsonObject.getValue("x") }
+            assertEquals(JsonNull, content)
+        }
+    }
+
+    @Test
+    fun correctlyHashedUnescapedControlsNeverComplete() {
+        val raw = change(obj("""{"content":{"nested":"MARKER"}}"""))
+        for (control in 0..31) {
+            val serialized = raw.toString().replace("MARKER", "before${control.toChar()}after")
+            val p = parts(changed, raw, 13, serialized)
+            val d = newDecoder()
+            p.dropLast(1).forEach { pending(d.decode(it)) }
+            val result = d.decode(p.last()).single() as ThreadDecodeOutcome.Repair
+            assertEquals("c", result.conversationId)
+            assertEquals("malformed", result.code)
+            assertTrue(d.abandon().isEmpty())
+        }
+    }
+
+    @Test
+    fun legalEscapedControlsRetainExactContent() {
+        val text = (0..31).map(Int::toChar).joinToString("") + "🌲\\\""
+        val raw = change(JsonObject(mapOf("content" to JsonPrimitive(text))))
+        for (serialized in listOf(raw.toString(), raw.toString().replace("\\n", "\\u000a").replace("\\t", "\\u0009"))) {
+            val p = parts(changed, raw, 13, serialized)
+            p.dropLast(1).forEach { pending(decoder.decode(it)) }
+            assertEquals(raw, complete(decoder.decode(p.last())).raw)
+        }
+    }
+
+    @Test
+    fun originalJsonGrammarIsStrictWithoutCoercingUnknownValues() {
+        val raw = change(obj("""{"content":null}"""))
+        val values = listOf("{}", "[]", """{"a\"b":[true,false,null,-1.2300e+9999,{"key":"\\\/"}]}""")
+        for (value in values) {
+            val serialized = " \n\t" + raw.toString().replace("\"content\":null", "\"content\":$value") + "\r "
+            val p = parts(changed, raw, 19, serialized)
+            p.dropLast(1).forEach { pending(decoder.decode(it)) }
+            assertEquals(obj(serialized), complete(decoder.decode(p.last())).raw)
+        }
+        for (value in listOf("[1,]", "{\"x\":true,}", "[1 2]", "{\"x\" true}", "{\"x\":}", "01", "+1", "1.", "1e", "\"\\x\"")) {
+            val serialized = raw.toString().replace("\"content\":null", "\"content\":$value")
+            val p = parts(changed, raw, 19, serialized)
+            p.dropLast(1).forEach { pending(decoder.decode(it)) }
+            assertEquals("malformed", (decoder.decode(p.last()).single() as ThreadDecodeOutcome.Repair).code)
+            assertTrue(decoder.expire().isEmpty())
+        }
+    }
+
+    @Test
+    fun combinedMetadataAndPayloadLimitIsInclusiveAndReclaimed() {
+        val raw = suffix("")
+        val size = raw.toString().toByteArray().size
+        val metadataSize = metadata(append, raw).toString().toByteArray().size
+        val p = parts(append, raw, size - 1)
+        val tooSmall = newDecoder(maxPayloadBytes = size, maxBufferedBytes = size * 2)
+        assertEquals("capacity", (tooSmall.decode(p.first()).single() as ThreadDecodeOutcome.Repair).code)
+        assertTrue(tooSmall.abandon().isEmpty())
+        val exact = newDecoder(maxPayloadBytes = size + metadataSize, maxBufferedBytes = size + metadataSize)
+        pending(exact.decode(p.first()))
+        complete(exact.decode(p.last()))
+        pending(exact.decode(p.first()))
+        complete(exact.decode(p.last()))
+        val short = newDecoder(maxPayloadBytes = size + metadataSize - 1, maxBufferedBytes = size + metadataSize, maxAssemblies = 1)
+        pending(short.decode(p.first()))
+        assertEquals("capacity", (short.decode(p.last()).single() as ThreadDecodeOutcome.Repair).code)
+        val other = parts(append, suffix("", "d"), size - 1)
+        pending(short.decode(other.first()))
+        assertEquals("d", short.abandon().single().conversationId)
     }
 
     @Test
