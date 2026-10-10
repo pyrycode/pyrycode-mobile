@@ -72,9 +72,23 @@ class DeletionMutationReadinessTest {
     fun missingHost_preservesTheCallersTimeout() =
         runTest {
             val current = MutableStateFlow<ConversationRepository?>(null)
-            val wait = async { runCatching { withTimeout(100) { awaitDeletionMutationReady(current) } } }
+            val stable = StableConversationRepository(current)
+            val wait =
+                async {
+                    runCatching {
+                        withTimeout(100) {
+                            awaitDeletionMutationReady(current)
+                            stable.rename(CHAT, "unique discussion")
+                            stable.delete(CHAT)
+                        }
+                    }
+                }
             advanceUntilIdle()
             assertTrue(wait.await().exceptionOrNull() is TimeoutCancellationException)
+            val fresh = RecordingRepository()
+            current.value = fresh
+            advanceUntilIdle()
+            assertTrue("Timed-out actions must not submit after reconnect", fresh.calls.isEmpty())
         }
 
     @Test
@@ -95,6 +109,7 @@ class DeletionMutationReadinessTest {
             val fresh = RecordingRepository()
             current.value = fresh
             advanceUntilIdle()
+            assertTrue(delete.isCancelled)
             assertTrue(fresh.calls.isEmpty())
         }
 
@@ -102,14 +117,33 @@ class DeletionMutationReadinessTest {
     fun anotherReadyHost_doesNotReleaseTheOwningHostWait() =
         runTest {
             val owner = MutableStateFlow<ConversationRepository?>(null)
-            val other = MutableStateFlow<ConversationRepository?>(RecordingRepository())
-            val wait = async { awaitDeletionMutationReady(owner) }
+            val otherRepository = RecordingRepository()
+            val other = MutableStateFlow<ConversationRepository?>(otherRepository)
+            val stable = StableConversationRepository(owner)
+            val rename =
+                async {
+                    awaitDeletionMutationReady(owner)
+                    stable.rename(CHAT, "unique discussion")
+                }
+            val delete =
+                async {
+                    awaitDeletionMutationReady(owner)
+                    stable.delete(CHAT)
+                }
             runCurrent()
-            other.value = RecordingRepository()
+            val otherReplacement = RecordingRepository()
+            other.value = otherReplacement
             runCurrent()
-            assertFalse(wait.isCompleted)
-            owner.value = RecordingRepository()
-            wait.await()
+            assertFalse(rename.isCompleted)
+            assertFalse(delete.isCompleted)
+            val fresh = RecordingRepository()
+            owner.value = fresh
+            rename.await()
+            delete.await()
+            assertEquals(1, fresh.calls.count { it == "rename" })
+            assertEquals(1, fresh.calls.count { it == "delete" })
+            assertTrue(otherRepository.calls.isEmpty())
+            assertTrue(otherReplacement.calls.isEmpty())
         }
 
     @Test
