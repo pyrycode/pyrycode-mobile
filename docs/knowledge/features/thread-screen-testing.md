@@ -428,6 +428,121 @@ gate report; it does not run these two methods. No live daemon/Claude scenario
 was added or required. The automatic post-merge main sweep remains dispatcher-owned
 and pending; it is not a branch acceptance gate. Documentation obtained no device runs.
 
+**Residual isolated failure and combined repair (#2039), 2026-10-10.**
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2041#issuecomment-6097258649)
+and [controlled comparisons](../../specs/architecture/2039-saved-thread-residual-first-draw.md#revisions)
+establish two contributors after #2027: unrelated device CPU contention and
+unnecessary first-composition viewport allocation. Comparable worker CPU with
+inflated wall time and zero queue delay does not establish a cache-work regression.
+Pre-Probe CPU sampling observed twelve busy windows at **3–45% idle**, followed
+by ready windows at **96/96/87/87%**; the timed cache/repository/ViewModel did not
+yet exist. Bluetooth OFF/focus snapshots did not diagnose this load, and disabling
+Bluetooth recovery still missed both fragmented first opens (**1231/1199 ms**).
+No single OS service or GC is established as the cause of every missed millisecond.
+
+`ThreadListViewport.relocationFor` now checks for a previous agent marker before
+building placement-key sets or scanning new blocks: without that prerequisite,
+its later finished-marker predicate cannot relocate an agent. `onRowsChanged`
+prunes measured keys only when measurements exist. An empty map cannot lose a key.
+These guards remove roughly **8 MB** of post-snapshot allocation: first-open total
+fell from about **200 to 192 MB**, reopen from **88 to 81 MB**, with restore/snapshot
+allocation unchanged. Independent 18000-row guarded-list regressions failed on
+the old paths and pass with each guard. Existing relocation, reader-anchor and
+following tests protect later callbacks with markers/measurements; the visual
+and persistence contracts remain unchanged.
+
+Before each original Probe, including the slow control, test-only
+`awaitEmulatorCpuIdle` requires four consecutive **250 ms** CPU windows at least
+**80% idle**, resetting on renewed busy activity. It reads `/proc/stat`, excluding
+already-counted guest ticks, without warming cache/restore/composition. Responsive
+continuous load fails the **30-second** readiness timeout rather than weakening
+or skipping the **1000 ms** draw assertion. The verifier's nonblocking limitation
+remains: synchronous shell acquisition/pipe `readLine()` cannot be interrupted by
+that coroutine timeout; responsive-sampler tests do not prove stalled-sampler
+cancellation. No stall occurred in the retained runs.
+
+**Retained counterevidence.** The supplied main baseline at
+`d3ecf87758e20f97e5226f5c52934c551c14a128` passed three isolated invocations
+before `baseline-4/5` failed, each **1 executed / 0 passed / 1 failed / 0 errors /
+0 skipped**. Fragmented offline first-open tuples were **719/902/1091/1225** and
+**1002/1299/1637/1923 ms**; baseline-5 also drew held newest at **1814 ms**.
+Branch misses at **1181/1162/1965 ms** remain alongside those passes.
+A cancelled zero-execution invocation is excluded from test proof.
+
+Every comparison remains under
+`/Users/juhanailmoniemi/.codex/publish/pyrycode-mobile/builder-2039/evidence/`:
+`REPORT.md` records cumulative tuples and commands; per-attempt manifests, fresh
+XML, source diffs and full/selected worker/GC/lifecycle logs retain revisions,
+exits and counts. `prior/` preserves supplied evidence; the verifier checked all
+**546** checksum entries. Raw non-FIFO reproduction, sampled tracing and
+phase diagnosis overlapping compilation are diagnostic only. Explicit setup GC
+still missed (**1860/1873 ms**); its collection-disabled pass was counterevidence.
+Streaming proof passed but removed only **4.8 MB** and increased CPU; streaming
+decode removed **1.1 MB** and still missed (**1064 ms**). Both were rejected.
+Releasing unused fixture coverage reduced live heap about **8 MB**, but its fixed
+sample (`acceptance-b`) passed four/failed one (**1428 ms**); full coverage is
+retained in the final repair. No serializer, cache codec, coverage-release,
+Bluetooth-shutdown, trace or manual-GC change remains.
+
+Guards alone (`acceptance-a`) passed one/failed four of five isolated methods;
+the whole class passed the control/failed first draw (**2185/2097 ms** first opens).
+Readiness alone (`acceptance-c`) passed four/failed one: held-connected reopen
+was **58/243/378/1001 ms** despite **98/96/92/94%** idle setup. Its restore worker
+used **30 wall / 26 CPU / 0 queue ms**; content-to-commit took **623 ms**, overlapping
+**107 ms** young GC, insufficient to explain the whole interval. Neither isolated
+contributor is a sufficient repair. The combined source below is a new controlled
+comparison, not replacement retries of those failed samples.
+
+**Counted final builder sample, separate from regular UI.** `acceptance-d` at
+`c72eebcba05ac6cedcb8a65811c59c7e3fda6674` uses the same Pixel 2 API 33 ATD,
+FIFO `device_hold`, disabled animations and isolated commands shown above, with
+the original full fixtures. Five isolated first-draw invocations each exited 0,
+**1/1/0/0/0**; maxima were **654, 703, 659, 617, 642 ms**. The separate isolated
+slow control exited 0, **1/1/0/0/0**; the whole class exited 0, **2/2/0/0/0**,
+maximum **618 ms**. Counts here are **executed/passed/failed/errors/skipped**.
+Fresh XML timestamps for attempts 1–7 are **09:59:01, 09:59:35, 10:00:09,
+10:00:46, 10:01:20, 10:01:41, 10:02:16 UTC**, 2026-10-10. Focused controls passed
+**56/56/0/0/0**: 18 list-follow, 23 agent-viewport, 11 screen-follow and four
+readiness tests (parsing, malformed counters, busy-window reset and timeout).
+
+**Dispatcher regular UI acceptance.** On reviewed head
+`5550800e2068f9a86961c1856a81fb7ea1261cf8` (only the plan changed after the
+builder sample), `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`
+exited 0: **256/256/0/0/1**. Inspected XML under
+`/Users/juhanailmoniemi/.codex/publish/pyrycode-mobile/verifier-2039/regular-ui/`
+has timestamp **2026-10-10T11:52:31**, 257 reported cases including the sole skip.
+Both `savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen`
+and `slowRestore_negativeControlRejectsTheSameFirstDrawBound` executed once and
+passed, each **1/1/0/0/0**; both selected logs are beside the XML. This completes
+the configured regular UI handoff independently of the builder's isolated/in-depth
+comparison. Scripted-all separately passed **22/22/0/0/0** and does not select
+these methods. No daemon or real-Claude scenario is required.
+
+All tuples below are cumulative **restore/snapshot/complete-content/committed-draw**,
+monotonic ms. Each isolated control and class/UI control passed by rejecting the
+identical 1000 ms bound with the injected 3000 ms restore delay inside the timer.
+
+| Case | Isolated 1 | Isolated 2 | Isolated 3 | Isolated 4 | Isolated 5 | Whole class | Regular UI |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Ordinary offline first | 160/182/199/289 | 166/177/194/275 | 148/170/187/282 | 227/253/269/368 | 156/177/205/296 | 60/68/86/160 | 22/28/46/84 |
+| Ordinary offline reopen | 53/62/78/143 | 58/61/78/147 | 33/48/74/151 | 55/64/80/142 | 53/62/78/137 | 49/58/75/136 | 19/33/43/90 |
+| Ordinary held newest first | 52/61/78/141 | 48/62/73/148 | 33/41/58/123 | 49/58/89/143 | 47/56/86/140 | 51/61/77/134 | 10/14/33/72 |
+| Ordinary held newest reopen | 42/51/67/126 | 45/53/69/122 | 45/68/84/143 | 46/55/71/120 | 56/60/77/130 | 38/48/65/126 | 19/26/56/93 |
+| Fragmented offline first | 372/479/589/654 | 387/519/623/703 | 360/473/588/659 | 334/444/551/617 | 348/454/560/642 | 351/457/555/618 | 360/467/565/616 |
+| Fragmented offline reopen | 61/151/261/320 | 45/141/265/328 | 64/151/243/304 | 65/155/248/305 | 70/155/261/323 | 63/149/240/302 | 21/97/188/229 |
+| Fragmented held newest first | 309/381/456/522 | 356/450/532/589 | 322/395/488/544 | 284/355/452/508 | 398/470/561/618 | 310/388/491/540 | 271/343/433/487 |
+| Fragmented held newest reopen | 41/116/194/255 | 60/163/267/326 | 43/123/213/272 | 58/135/222/280 | 57/146/250/306 | 56/131/211/258 | 38/122/202/237 |
+| Delayed control | — | — | — | — | — | 3039/3171/3206/3281 | 3005/3025/3045/3075 |
+
+The separate isolated control (`acceptance-d-6`) was **3045/3180/3195/3255 ms**.
+All eight cases retain **20 ordinary messages**, **18000 displayed fragmented rows /
+36000 durable entries / 18000 spans**, exact saved rows and every marker anchor,
+zero offline/one held-connected newest request per opening and the held response.
+First open times fresh cache/repository construction and restoration; reopen keeps
+only its mode's repository and creates a fresh ViewModel/composition. Exact newest
+text wholly within the viewport through frame commit remains the endpoint.
+Documentation inspected retained reports and ran no device tests.
+
 ## Folded-row composition reuse (#1954)
 
 `ThreadRowContentTypeTest.foldedRows_exposeDistinctKindsAndSharedMessageTypeInActualListLayout`
@@ -529,93 +644,8 @@ pass, not a separate focused ping run or a zero-failure initial full suite.
 
 ## Reader geometry during background Agent relocation (#1955)
 
-`BackgroundAgentViewportTest` mounts the real `ThreadScreen`; Android-visible
-`BackgroundAgentViewportDeviceTest` overrides select all 23 shared methods into
-the routine UI gate. Native View draws are sampled at explicitly advanced frames
-from publication through settlement. Followers must remain at index/offset zero in
-every rendered frame. Readers retain stationary row membership and coordinates
-within one physical pixel, except for the asserted normal newest-end clamp, and
-remain unfollowed afterward. Idle-only assertions could pass after an intervening
-jump. These probes establish [viewport transfer](thread-screen-how-it-works-list-and-status-row.md),
-while the retained E2E scenarios establish placement/navigation integration.
-
-Keep the moving block bottom-most visible with collapse on and off, offscreen moves,
-multiple completions, another running block, simultaneous stationary growth and a
-viewport wholly inside a tall child. Delayed-receipt probes publish the finished
-roster first, then its receipt in history or at the newest end. Block-crossing probes
-cover both still-running and already-finished neighbours, including direct and split
-completion; terminal replays must remain inert. A neighbour's insertion changes a
-stationary finished block's predecessor without moving that block's own destination.
-
-Boundary probes must prove cold geometry rather than merely pass with warmed heights.
-The cold-measurement fixture calibrates in a retired composition, then creates a
-fresh list directly inside `tall-a`; its measurement observer rejects older completing
-block rows before completion. A tall remaining running block prevents clamping from
-hiding an incorrect boundary. Separate probes invalidate an expanded offscreen tool's
-cached neighbour and restore saved expansion into a cold cache. Unplaced measurement
-must share actual saved tool expansion, not the default of a new state owner.
-Negative controls on the preceding implementation lose stationary finished B's
-visible membership and shift expanded boundaries by 96 physical pixels.
-
-Retain the logical reverse-layout offset negation and exclude wholly newest-side
-chrome-hidden anchors. Observe the relocation generation only after placement, with
-intermediate follow bookkeeping suppressed; otherwise a key transfer or end clamp
-can be mistaken for reader input. Simultaneous stationary-anchor growth needs its
-old height carried into #1942's correction as well as the padding delta.
-
-**Counted evidence, 2026-10-09.** The
-[final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2016#issuecomment-6088220558)
-on `ef4b4b21657f` confirms matching sets of 23 viewport methods in fresh JVM XML and
-full Android UI XML. Each method below executed once and passed; counts are
-**executed/failed/skipped**. Documentation also inspected the preserved final builder
-JVM report in `/tmp/builder-1955/rework3/focused-jvm/` and Android report in
-`/tmp/builder-1955/rework3/viewport-question-device/`: each viewport class is
-**23 executed, 23 passed, 0 failed, 0 skipped**.
-
-| Named method | JVM | Full Android UI gate |
-| --- | --- | --- |
-| `completionAcrossFinishedBlock_preservesTallStationaryChild` | 1/0/0 | 1/0/0 |
-| `delayedReceiptAtNewest_followerKeepsNewestEveryFrame` | 1/0/0 | 1/0/0 |
-| `delayedReceiptAtNewest_readerKeepsStationaryRows` | 1/0/0 | 1/0/0 |
-| `delayedReceipt_followerKeepsNewestEveryFrame` | 1/0/0 | 1/0/0 |
-| `delayedReceipt_readerKeepsStationaryRows_collapsed` | 1/0/0 | 1/0/0 |
-| `delayedReceipt_readerKeepsStationaryRows_uncollapsed` | 1/0/0 | 1/0/0 |
-| `followerCompletion_keepsNewestEveryRenderedFrame` | 1/0/0 | 1/0/0 |
-| `followerCompletion_withAnotherRunningBlock_keepsNewestEveryFrame` | 1/0/0 | 1/0/0 |
-| `followerMultipleCompletions_keepNewestEveryFrame` | 1/0/0 | 1/0/0 |
-| `fullViewportCompletion_fillsVacancyAndClamps` | 1/0/0 | 1/0/0 |
-| `fullViewportCompletion_retainsOlderBoundaryAgainstRemainingBlock` | 1/0/0 | 1/0/0 |
-| `fullViewportCompletion_withColdMeasurements_retainsOlderBoundary` | 1/0/0 | 1/0/0 |
-| `fullViewportCompletion_withInvalidatedExpandedTool_retainsBoundary` | 1/0/0 | 1/0/0 |
-| `fullViewportCompletion_withRestoredExpandedTool_retainsBoundary` | 1/0/0 | 1/0/0 |
-| `multipleCompletions_keepStationaryReader` | 1/0/0 | 1/0/0 |
-| `newestReceiptAcrossRunningBlock_followerKeepsNewestEveryFrame` | 1/0/0 | 1/0/0 |
-| `newestReceiptAcrossRunningBlock_readerKeepsStationaryRows_collapsed` | 1/0/0 | 1/0/0 |
-| `newestReceiptAcrossRunningBlock_readerKeepsStationaryRows_uncollapsed` | 1/0/0 | 1/0/0 |
-| `offscreenCompletion_preservesStationaryRows` | 1/0/0 | 1/0/0 |
-| `splitCompletionAcrossFinishedBlock_preservesTallStationaryChild` | 1/0/0 | 1/0/0 |
-| `visibleCompletion_preservesStationaryRows_collapsed` | 1/0/0 | 1/0/0 |
-| `visibleCompletion_preservesStationaryRows_uncollapsed` | 1/0/0 | 1/0/0 |
-| `visibleCompletion_withStationaryGrowth_preservesTopEveryFrame` | 1/0/0 | 1/0/0 |
-
-The dispatcher full UI command
-`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui` passed:
-**245 executed, 245 passed, 0 failed, 1 skipped**. The sole skip was
-`RenameDialogCaptureTest.renameAtFigmaViewport`; none of the viewport methods skipped.
-Required existing JVM classes passed with executed/failed/skipped counts:
-`BackgroundAgentBlocksTest` **21/0/0**, `BackgroundAgentBlocksScreenTest` **15/0/0**,
-`ThreadListFollowTest` **16/0/0**, `ThreadScreenFollowTest` **11/0/0** and
-`ThreadReaderGeometryTest` **6/0/0**; `ToolCallRowTest` also passed **26/0/0**.
-The full UI gate retained the six streaming-geometry device passes and the repaired
-`QuestionBatchModalTest.ime_keeps_the_last_other_field_and_actions_reachable_at_320_by_700`
-pass (**1/0/0**). Its synthetic append explicitly selects the draft end after IME
-reveal, retaining exact `draft typed`, focus, visibility and action reachability
-assertions. Real IME behavior needs the device probe.
-
-Fresh full scripted and live runs, including each retained named background-agent
-method's **1/0/0** result, are recorded in
-[background-agent acceptance evidence](../../e2e-interactive-stream.md#background-agent-viewport-preservation-1955).
-Documentation ran only the docs guard.
+See [background-agent viewport testing](thread-screen-testing-background-agent-viewport.md#reader-geometry-during-background-agent-relocation-1955)
+for the 23 shared/Android frame probes, cold-boundary controls and counted evidence.
 
 ## Detailed coverage
 
