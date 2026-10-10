@@ -95,7 +95,7 @@ class ThreadComposerFooterTest {
     ) {
         state = state(runConfig = runConfig, mutationsSupported = mutationsSupported, absentActions = absentActions)
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 if (shown) {
                     ThreadScreen(
                         state = state,
@@ -324,7 +324,7 @@ class ThreadComposerFooterTest {
     fun contextSegment_accessibilityDistinguishesNormalWarningAndHigh() {
         var percent by mutableStateOf<Int?>(69)
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadComposerFooter(
                     runConfig = baseConfig.copy(contextPercent = percent),
                     onOpen = {},

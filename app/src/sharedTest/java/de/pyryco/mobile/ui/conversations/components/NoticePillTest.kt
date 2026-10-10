@@ -29,7 +29,7 @@ class NoticePillTest {
     @Test fun bothVariantsRetainFullSingleLineBox() {
         rule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(1f, 1f)) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     Column {
                         NoticePill("Default", isError = false, onDismiss = {})
                         NoticePill("Error", isError = true)
@@ -53,7 +53,7 @@ class NoticePillTest {
         val label = "Long notice that wraps across several lines of text"
         rule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(1f, 1.5f)) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     Column {
                         NoticePill(label, false, Modifier.width(120.dp), maxLines = 2, onDismiss = { dismissed++ })
                         NoticePill("Error", true, onClick = { clicked++ })

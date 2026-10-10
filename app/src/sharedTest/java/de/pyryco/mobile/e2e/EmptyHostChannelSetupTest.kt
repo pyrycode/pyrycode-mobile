@@ -41,7 +41,7 @@ class EmptyHostChannelSetupTest {
         val hosts = listOf(host("target"), host("other", listOf(otherChannel)))
         val events = mutableListOf<ChannelListEvent>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ChannelListScreen(
                     HostChannelListState(
                         hosts = hosts.map(::entry),
@@ -81,7 +81,7 @@ class EmptyHostChannelSetupTest {
         var hosts by mutableStateOf(listOfNotNull(initialTarget, other))
         val events = mutableListOf<ChannelListEvent>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ChannelListScreen(HostChannelListState(hosts.map(::entry)), onEvent = { events += it })
             }
         }

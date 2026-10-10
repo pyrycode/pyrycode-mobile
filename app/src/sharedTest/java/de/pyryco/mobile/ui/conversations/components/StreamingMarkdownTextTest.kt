@@ -67,7 +67,7 @@ class StreamingMarkdownTextTest {
 
     private fun renderBoth(observer: StreamingMarkdownObserver? = null) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme(darkTheme = false) {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Surface {
                     Column {
                         Box(Modifier.width(BODY_WIDTH).testTag(STREAMING_TAG)) {
@@ -377,7 +377,7 @@ class StreamingMarkdownTextTest {
 
     private fun renderBubble() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme(darkTheme = false) {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Surface {
                     Box(Modifier.width(BUBBLE_WIDTH).testTag(BUBBLE_TAG)) {
                         MessageBubble(bubbleMessage.value, metaRowVisible = false)

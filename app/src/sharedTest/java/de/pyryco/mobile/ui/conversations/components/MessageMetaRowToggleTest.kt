@@ -100,7 +100,7 @@ class MessageMetaRowToggleTest {
     ) {
         expectedCopies = items().count { it.role != Role.Tool }
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CompositionLocalProvider(
                     LocalClipboardManager provides clipboard,
                     LocalUriHandler provides uriHandler,

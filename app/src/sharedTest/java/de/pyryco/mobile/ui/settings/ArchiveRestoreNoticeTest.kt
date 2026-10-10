@@ -79,7 +79,7 @@ class ArchiveRestoreNoticeTest {
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
                 CompositionLocalProvider(LocalAccessibilityManager provides accessibility) {
-                    PyrycodeMobileTheme {
+                    PyrycodeMobileTheme(darkTheme = true) {
                         if (visible.value) {
                             ArchivedDiscussionsScreen(
                                 ArchivedDiscussionsUiState.Loaded(listOf(row), emptyList(), ArchiveTab.Channels),

@@ -40,7 +40,7 @@ class CreateChannelModalTest {
 
     private fun show() {
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CreateChannelModal(
                     serverId = "pyrybox",
                     cwd = "/w/one",

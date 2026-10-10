@@ -341,7 +341,7 @@ class MessageBubbleTest {
         composeTestRule.mainClock.autoAdvance = false
         val arrived = mutableStateOf("word ".repeat(400)) // A 2000-character initial backlog.
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 MessageBubble(
                     message(Role.Assistant, arrived.value, isStreaming = true),
                     metaRowVisible = false,
@@ -391,7 +391,7 @@ class MessageBubbleTest {
     fun sideCopy_at412dp_keepsThe307dpBubble_andDarkGeometry() = assertSideGeometry(412, true)
 
     @Test
-    fun sideCopy_at320dp_wrapsWithoutOverlap_andLightGeometry() = assertSideGeometry(320, false)
+    fun sideCopy_at320dp_wrapsWithoutOverlap_andDarkGeometry() = assertSideGeometry(320, true)
 
     @OptIn(ExperimentalTestApi::class)
     private fun assertSideGeometry(
@@ -459,7 +459,7 @@ class MessageBubbleTest {
         val content = mutableStateOf("**arrived** source")
         val clipboard = RecordingClipboard()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CompositionLocalProvider(LocalClipboardManager provides clipboard) {
                     MessageBubble(message(Role.Assistant, content.value, isStreaming = true), metaRowVisible = false)
                 }
@@ -477,7 +477,7 @@ class MessageBubbleTest {
         val source = "**bold** and [link](https://example.com)"
         val clipboard = RecordingClipboard()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CompositionLocalProvider(LocalClipboardManager provides clipboard) {
                     MessageBubble(message(Role.Assistant, source), metaRowVisible = false)
                 }

@@ -62,7 +62,7 @@ class ThreadTransientErrorTest {
         val sendFlow = sends.receiveAsFlow()
         rule.setContent {
             CompositionLocalProvider(LocalAccessibilityManager provides accessibility) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     if (visible) {
                         ThreadScreen(
                             state = ThreadUiState("c1", "Thread"),
@@ -114,7 +114,7 @@ class ThreadTransientErrorTest {
     @Test
     fun shortErrorPill_preservesTheDesigns24dpLineBox() {
         rule.setContent {
-            PyrycodeMobileTheme(dynamicColor = false) { TransientErrorPill("Couldn't open file") }
+            PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) { TransientErrorPill("Couldn't open file") }
         }
         assertEquals(
             24f,

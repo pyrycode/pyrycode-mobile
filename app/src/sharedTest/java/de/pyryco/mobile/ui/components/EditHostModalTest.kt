@@ -98,7 +98,7 @@ class EditHostModalTest {
         fontScale: Float = 1f,
     ) {
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 if (small || figma) {
                     val size = if (small) smallSize else figmaSize
                     DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(size)) {
@@ -409,7 +409,7 @@ class EditHostModalTest {
         val fontScale = mutableFloatStateOf(1f)
         var clicks = 0
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale.floatValue)) {
                     UnpairAction(onClick = { clicks++ })
                 }
@@ -457,7 +457,7 @@ class EditHostModalTest {
 
     @Test
     fun unpairActionIsTheFramesFortyEightDpWithTheOutlineEightBelowItsTop() {
-        rule.setContent { PyrycodeMobileTheme { UnpairAction(onClick = {}) } }
+        rule.setContent { PyrycodeMobileTheme(darkTheme = true) { UnpairAction(onClick = {}) } }
         val action = rule.onNodeWithText(string(R.string.edit_host_unpair)).getUnclippedBoundsInRoot()
         val outline = rule.onNodeWithTag(EDIT_HOST_UNPAIR_OUTLINE_TAG, useUnmergedTree = true).getUnclippedBoundsInRoot()
         // 533:2369's Actions frame: 8 px top padding over the 40 px button, 48 px in all, and the touch target

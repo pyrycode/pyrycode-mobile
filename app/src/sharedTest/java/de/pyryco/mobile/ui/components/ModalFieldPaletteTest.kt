@@ -110,10 +110,4 @@ class ModalFieldPaletteTest {
         show(darkTheme = true)
         assertBothFocusStates()
     }
-
-    @Test
-    fun lightFieldsKeepTheirExistingPaletteInBothFocusStates() {
-        show(darkTheme = false)
-        assertBothFocusStates()
-    }
 }

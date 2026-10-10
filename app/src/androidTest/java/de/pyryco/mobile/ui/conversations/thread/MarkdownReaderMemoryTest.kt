@@ -43,7 +43,7 @@ class MarkdownReaderMemoryTest {
         val document = MarkdownDocument("Big.md", "a".repeat(MAX_MARKDOWN_READER_BYTES))
         rule.setContent {
             var readerOpen by remember { mutableStateOf(true) }
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 if (readerOpen) {
                     MarkdownReaderScreen(document, onBack = { readerOpen = false })
                 } else {

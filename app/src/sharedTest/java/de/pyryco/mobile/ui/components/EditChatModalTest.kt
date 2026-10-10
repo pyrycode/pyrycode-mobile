@@ -57,7 +57,7 @@ class EditChatModalTest {
 
     private fun show() {
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 EditChatModal(
                     conversationId = "conversation-1",
                     initialName = initialName.value,
@@ -127,7 +127,7 @@ class EditChatModalTest {
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(280.dp, 560.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.5f)) {
-                    PyrycodeMobileTheme {
+                    PyrycodeMobileTheme(darkTheme = true) {
                         EditChatModal("chat", "Release notes", {}, {}, { archives++ })
                     }
                 }
