@@ -1,0 +1,29 @@
+SOURCE 0-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest-targetedPairingAfterFixtureTeardownKeepsItsHostGuard.txt
+10-10 15:04:31.562 TestRunner: started: targetedPairingAfterFixtureTeardownKeepsItsHostGuard(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+10-10 15:04:31.649 paired_store operation=save status=ok
+10-10 15:04:33.026 event=pair_code_prepared
+10-10 15:04:33.130 event=pair_code_save_started
+10-10 15:04:33.135 paired_store operation=save status=ok
+10-10 15:04:33.144 paired_store operation=rename status=ok
+10-10 15:04:33.179 event=pair_code_connection_wait
+10-10 15:04:33.183 event=pair_code_connected
+10-10 15:04:33.562 paired_store operation=remove status=ok
+10-10 15:04:33.570 paired_store operation=remove status=ok
+10-10 15:04:34.025 event=pair_code_failed code=target_mismatch
+10-10 15:04:34.160 event=pair_code_back
+10-10 15:04:34.758 event=pair_code_prepared
+10-10 15:04:34.851 event=pair_code_back
+10-10 15:04:35.093 event=pair_code_back
+10-10 15:04:35.288 TestRunner: finished: targetedPairingAfterFixtureTeardownKeepsItsHostGuard(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+SOURCE 1-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest-offlinePrecedingHostDoesNotBlockAnswerHostPairing.txt
+10-10 15:04:35.289 TestRunner: started: offlinePrecedingHostDoesNotBlockAnswerHostPairing(de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest)
+10-10 15:04:35.299 paired_store operation=save status=ok
+10-10 15:04:36.025 event=pair_code_prepared
+10-10 15:04:36.129 event=pair_code_save_started
+10-10 15:04:36.134 paired_store operation=save status=ok
+10-10 15:04:36.140 paired_store operation=rename status=ok
+10-10 15:04:36.170 event=pair_code_connection_wait
+10-10 15:04:36.172 event=pair_code_connected
+10-10 15:04:36.417 paired_store operation=remove status=ok
+10-10 15:04:36.422 paired_store operation=remove status=ok
+10-10 15:04:36.428 TestRunner: finished: offlinePrecedingHostDoesNotBlockAnswerHostPairing(de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest)

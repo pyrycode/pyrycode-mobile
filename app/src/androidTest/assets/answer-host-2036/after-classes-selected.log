@@ -1,0 +1,88 @@
+SOURCE 0-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest-failedFixtureRestoresBindingsAndPreservesAppPairings.txt
+10-10 15:19:11.787 TestRunner: started: failedFixtureRestoresBindingsAndPreservesAppPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+10-10 15:19:11.797 paired_store operation=save status=ok
+10-10 15:19:11.802 paired_store operation=rename status=ok
+10-10 15:19:11.808 paired_store operation=save status=ok
+10-10 15:19:11.826 paired_store operation=rename status=ok
+10-10 15:19:11.836 paired_store operation=save status=ok
+10-10 15:19:12.389 paired_store operation=remove status=ok
+10-10 15:19:13.380 event=pair_code_failed code=target_mismatch
+10-10 15:19:13.507 event=pair_code_back
+10-10 15:19:14.235 event=pair_code_prepared
+10-10 15:19:14.345 event=pair_code_back
+10-10 15:19:14.585 event=pair_code_back
+10-10 15:19:14.719 paired_store operation=remove status=ok
+10-10 15:19:14.725 paired_store operation=remove status=ok
+10-10 15:19:14.728 TestRunner: finished: failedFixtureRestoresBindingsAndPreservesAppPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+SOURCE 1-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest-failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings.txt
+10-10 15:19:11.566 TestRunner: started: failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+10-10 15:19:11.580 paired_store operation=save status=ok
+10-10 15:19:11.630 paired_store operation=rename status=ok
+10-10 15:19:11.640 paired_store operation=save status=ok
+10-10 15:19:11.654 paired_store operation=rename status=ok
+10-10 15:19:11.742 paired_store operation=remove status=ok
+10-10 15:19:11.781 paired_store operation=remove status=ok
+10-10 15:19:11.786 TestRunner: finished: failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+SOURCE 2-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest-storageTestKeyLossAndTeardownPreserveAppPairings.txt
+10-10 15:19:14.729 TestRunner: started: storageTestKeyLossAndTeardownPreserveAppPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+10-10 15:19:14.735 paired_store operation=save status=ok
+10-10 15:19:14.740 paired_store operation=rename status=ok
+10-10 15:19:14.745 paired_store operation=save status=ok
+10-10 15:19:14.749 paired_store operation=rename status=ok
+10-10 15:19:14.753 event=answer_host_key_probe stage=before_lost_key_test
+10-10 15:19:14.758 paired_store operation=save status=ok
+10-10 15:19:14.762 paired_store operation=read status=failed code=keystore
+10-10 15:19:14.762 event=answer_host_key_probe stage=after_lost_key_test
+10-10 15:19:14.763 event=answer_host_key_probe stage=after_storage_teardown
+10-10 15:19:14.770 paired_store operation=save status=ok
+10-10 15:19:15.518 event=pair_code_prepared
+10-10 15:19:15.621 event=pair_code_save_started
+10-10 15:19:15.630 paired_store operation=save status=ok
+10-10 15:19:15.635 paired_store operation=rename status=ok
+10-10 15:19:15.658 event=pair_code_connection_wait
+10-10 15:19:15.661 event=pair_code_connected
+10-10 15:19:15.860 paired_store operation=remove status=ok
+10-10 15:19:15.867 paired_store operation=remove status=ok
+10-10 15:19:16.352 event=pair_code_failed code=target_mismatch
+10-10 15:19:16.485 event=pair_code_back
+10-10 15:19:17.018 event=pair_code_prepared
+10-10 15:19:17.106 event=pair_code_back
+10-10 15:19:17.351 event=pair_code_back
+10-10 15:19:17.554 paired_store operation=remove status=ok
+10-10 15:19:17.561 paired_store operation=remove status=ok
+10-10 15:19:17.566 TestRunner: finished: storageTestKeyLossAndTeardownPreserveAppPairings(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+SOURCE 3-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest-targetedPairingAfterFixtureTeardownKeepsItsHostGuard.txt
+10-10 15:19:17.567 TestRunner: started: targetedPairingAfterFixtureTeardownKeepsItsHostGuard(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+10-10 15:19:17.574 paired_store operation=save status=ok
+10-10 15:19:17.578 paired_store operation=rename status=ok
+10-10 15:19:17.581 paired_store operation=save status=ok
+10-10 15:19:17.586 paired_store operation=rename status=ok
+10-10 15:19:17.595 paired_store operation=save status=ok
+10-10 15:19:18.302 event=pair_code_prepared
+10-10 15:19:18.405 event=pair_code_save_started
+10-10 15:19:18.410 paired_store operation=save status=ok
+10-10 15:19:18.416 paired_store operation=rename status=ok
+10-10 15:19:18.416 event=pair_code_connection_wait
+10-10 15:19:18.438 event=pair_code_connected
+10-10 15:19:18.641 paired_store operation=remove status=ok
+10-10 15:19:18.647 paired_store operation=remove status=ok
+10-10 15:19:19.118 event=pair_code_failed code=target_mismatch
+10-10 15:19:19.252 event=pair_code_back
+10-10 15:19:19.768 event=pair_code_prepared
+10-10 15:19:19.856 event=pair_code_back
+10-10 15:19:20.084 event=pair_code_back
+10-10 15:19:20.198 paired_store operation=remove status=ok
+10-10 15:19:20.206 paired_store operation=remove status=ok
+10-10 15:19:20.210 TestRunner: finished: targetedPairingAfterFixtureTeardownKeepsItsHostGuard(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+SOURCE 4-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest-offlinePrecedingHostDoesNotBlockAnswerHostPairing.txt
+10-10 15:19:20.211 TestRunner: started: offlinePrecedingHostDoesNotBlockAnswerHostPairing(de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest)
+10-10 15:19:20.217 paired_store operation=save status=ok
+10-10 15:19:20.885 event=pair_code_prepared
+10-10 15:19:20.986 event=pair_code_save_started
+10-10 15:19:20.992 paired_store operation=save status=ok
+10-10 15:19:20.997 paired_store operation=rename status=ok
+10-10 15:19:20.997 event=pair_code_connection_wait
+10-10 15:19:21.024 event=pair_code_connected
+10-10 15:19:21.246 paired_store operation=remove status=ok
+10-10 15:19:21.256 paired_store operation=remove status=ok
+10-10 15:19:21.259 TestRunner: finished: offlinePrecedingHostDoesNotBlockAnswerHostPairing(de.pyryco.mobile.ui.onboarding.AnswerHostSetupTest)

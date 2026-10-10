@@ -1,0 +1,39 @@
+{
+  "revision": "75a10c4a43c2d1b3fb7aca07f70c8218797ffd09",
+  "dirty": [
+    " M app/src/androidTest/java/de/pyryco/mobile/data/crypto/KeystorePairedServerStoreTest.kt",
+    " M app/src/androidTest/java/de/pyryco/mobile/ui/onboarding/AnswerHostSetupCleanupTest.kt",
+    " M app/src/androidTest/java/de/pyryco/mobile/ui/onboarding/AnswerHostSetupTest.kt",
+    " M app/src/main/java/de/pyryco/mobile/data/crypto/KeystorePairedServerStore.kt",
+    " M docs/specs/architecture/2036-answer-host-keystore-isolation.md"
+  ],
+  "diff_sha256": "a86337c7aff5ff672f7d8d284a6659075f9f59777f3961344bf6120220dd4d10",
+  "command": [
+    "./gradlew",
+    ":app:pixel2Api33AtdDebugAndroidTest",
+    "--rerun",
+    "-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest#failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings",
+    "-Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e",
+    "-Pandroid.testInstrumentationRunnerArguments.disableAnimations=true",
+    "--console=plain"
+  ],
+  "exit": 0,
+  "counts": {
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "named": [
+    {
+      "classname": "de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest",
+      "name": "failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings",
+      "status": "passed"
+    }
+  ],
+  "failures": [],
+  "reports": [
+    "TEST-pixel2Api33Atd-_app-.xml"
+  ]
+}

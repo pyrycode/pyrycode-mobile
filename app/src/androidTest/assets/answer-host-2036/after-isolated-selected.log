@@ -1,0 +1,23 @@
+SOURCE 0-logcat-de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest-targetedPairingAfterFixtureTeardownKeepsItsHostGuard.txt
+10-10 15:18:43.288 TestRunner: started: targetedPairingAfterFixtureTeardownKeepsItsHostGuard(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
+10-10 15:18:43.310 paired_store operation=save status=ok
+10-10 15:18:43.333 paired_store operation=rename status=ok
+10-10 15:18:43.337 paired_store operation=save status=ok
+10-10 15:18:43.343 paired_store operation=rename status=ok
+10-10 15:18:43.404 paired_store operation=save status=ok
+10-10 15:18:44.616 event=pair_code_prepared
+10-10 15:18:44.722 event=pair_code_save_started
+10-10 15:18:44.731 paired_store operation=save status=ok
+10-10 15:18:44.786 paired_store operation=rename status=ok
+10-10 15:18:44.788 event=pair_code_connection_wait
+10-10 15:18:44.790 event=pair_code_connected
+10-10 15:18:45.281 paired_store operation=remove status=ok
+10-10 15:18:45.290 paired_store operation=remove status=ok
+10-10 15:18:45.782 event=pair_code_failed code=target_mismatch
+10-10 15:18:45.914 event=pair_code_back
+10-10 15:18:46.481 event=pair_code_prepared
+10-10 15:18:46.578 event=pair_code_back
+10-10 15:18:46.815 event=pair_code_back
+10-10 15:18:47.021 paired_store operation=remove status=ok
+10-10 15:18:47.029 paired_store operation=remove status=ok
+10-10 15:18:47.035 TestRunner: finished: targetedPairingAfterFixtureTeardownKeepsItsHostGuard(de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest)
