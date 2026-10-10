@@ -31,6 +31,16 @@ build mode. See [build commands](../../../README.md#build) and
   `setSessionSettingsCalls` holds the verbatim request). The call always succeeds — there is no unknown-id
   throw, unlike every other mutator — because the fake has no notion of "unhosted session" to reject
   against. See [`../codebase/543.md`](../codebase/543.md).
+- **`switchAgent` (#1117)** records every call in `switchAgentCalls` as a
+  `SwitchAgentCall` containing the supplied conversation id, agent, model and
+  effort unchanged. Tests may inspect those fields; its `toString()` is the static
+  `SwitchAgentCall`, so diagnostics do not reveal arguments. Set
+  `switchAgentFailure` to a typed failure for deterministic caller refusals;
+  null selects success. Success atomically updates only the named conversation's
+  agent. Configured failure leaves state unchanged; an unknown id returns typed
+  `ConversationNotFound`. `SwitchAgentDelegationTest` checks recording, both
+  directions and unchanged state on failure. This seam supports caller tests;
+  it does not reproduce daemon wrap-up or prove the live flow owned by #1118.
 - **`setMuted(conversationId, muted)`** (#1000) is a single-map flip, the same scaffold `archive`/
   `unarchive` use: `state.update { records -> val record = records[id] ?: throw unknown(id); records +
   (id to record.copy(conversation = record.conversation.copy(muted = muted))) }`. Unknown id throws inside
