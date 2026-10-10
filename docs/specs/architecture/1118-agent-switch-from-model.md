@@ -1,4 +1,4 @@
-# Switch a channel's agent from either model picker
+# Switch a channel's agent from Run configuration
 
 ## Files read
 
@@ -18,7 +18,7 @@
 
 **Figma:** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=578-3442 and https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=578-3248
 
-The confirmation uses the shared mobile modal: target-agent title and close glyph, divider, centered bodyMedium copy, outlined Cancel and filled Switch. Reuse the existing shell's modalContainer/onPrimaryContainer and primary action tokens. The switching status uses the existing animated status glyph and primary bodySmall text, naming the outgoing note during wrap-up. Agent and model names are dynamic; the client adds the slower-first-reply warning alongside cost and full-bypass warnings. Retain the existing picker layouts from Options overlay `533:1958` and Run configuration `600:1694`, read with screenshots before planning.
+The confirmation uses the shared mobile modal: target-agent title and close glyph, divider, centered bodyMedium copy, outlined Cancel and filled Switch. Reuse the existing shell's modalContainer/onPrimaryContainer and primary action tokens. The switching status uses the existing animated status glyph and primary bodySmall text, naming the outgoing note during wrap-up. Agent and model names are dynamic; the client adds the slower-first-reply warning alongside cost and full-bypass warnings. Retain Run configuration `600:1694`, opened from the footer Tune icon. All three current frames were read with design context and screenshots on re-entry. The ticket explicitly requires the shared MobileModal shell; its current full-height presentation is reused, including its existing exported close glyph, rather than introducing separate compact-modal geometry.
 
 ## Context
 
@@ -28,7 +28,7 @@ The daemon publishes both agents' models. An own-agent pick remains a settings w
 
 Add source-compatible row-agent metadata to `ThreadModelChoice`. Project known-agent rows in daemon order, hide default metadata, cap rendering at 32, and count full-list overflow plus daemon drops for both conversation agents. Use bounded inert daemon display names. Selection/default resolution and metadata filter by the conversation agent, including candidates beyond the cap.
 
-Add one `ThreadAgentSwitch` carrier (source agent, picked choice, sending flag) to `ThreadRunConfig`, plus Confirm/Dismiss events on `ThreadEvent`. The ViewModel owns a hot nullable switch flow and a failure flag. Both picker entry points keep `onModelSelected`; an other-agent pick opens the shared confirmation without writing. Confirm claims sending synchronously and sends exactly one `switchAgent` call with the route conversation, row agent and raw value. Effort is supplied only when nonempty and published by the target row. Pending label comes from the captured choice; model, effort, permission and refusal-switch-back writes are blocked during switching. No optimistic agent update.
+Add one `ThreadAgentSwitch` carrier (source agent, picked choice, sending flag) to `ThreadRunConfig`, plus Confirm/Dismiss events on `ThreadEvent`. The ViewModel owns a hot nullable switch flow and a failure flag. Run configuration keeps `onModelSelected`; an other-agent pick opens the shared confirmation without writing. Confirm claims sending synchronously and sends exactly one `switchAgent` call with the route conversation, row agent and raw value. Effort is supplied only when nonempty and published by the target row. Pending label comes from the captured choice; model, effort, permission and refusal-switch-back writes are blocked during switching. No optimistic agent update.
 
 After any observed agent change, accept settings only from that conversation's fresh current session. This prevents old saved choices, effective effort, permission/capability readings and recall crossing the agent transition, including switches initiated by another client. Before any switch, ordinary reset handling retains its existing settings projection. Repository success clears switching state and requests fresh settings; unavailable readings remain unknown until that successor read arrives.
 
@@ -56,7 +56,7 @@ Use `Result<Unit>` from the existing repository. Classify sanitized SwitchAgentF
 
 ## Testing strategy
 
-Write red projection/routing tests before implementation, then focused ViewModel tests with a controllable fake result and fresh/stale settings and conversation flows. Extend existing agent-menu expectations for the approved merged list. Shared Robolectric UI tests exercise both picker entry points, confirmation actions, pending labels/status precedence and errors. Run existing footer, StatusSheet, connection/status and model/effort tests affected by the projection. No new device-only test: these interactions need no real IME/storage/pixels. File or reuse the specified real-daemon multi-agent rung-3 follow-up before handoff; it owns harness prerequisites and counted live evidence. This ticket claims deterministic coverage only.
+Write red projection/routing tests before implementation, then focused ViewModel tests with a controllable fake result and fresh/stale settings and conversation flows. Extend existing agent-menu expectations for the approved merged list. Shared Robolectric UI tests open Run configuration from the footer Tune icon and exercise confirmation actions, pending labels/status precedence and errors. Run existing footer, StatusSheet, connection/status and model/effort tests affected by the projection. No new device-only test: these interactions need no real IME/storage/pixels. File or reuse the specified real-daemon multi-agent rung-3 follow-up before handoff; it owns harness prerequisites and counted live evidence. This ticket claims deterministic coverage only.
 
 ## Open Questions
 
@@ -84,3 +84,5 @@ None.
 2026-10-10: Implementation inspection found a contradictory product contract. Merged PR #1196 removed Model, Effort and Permission footer buttons; `ThreadComposerFooter` now renders Context, Actions, Attach and Run configuration only. `footerMenu(Model)` and the shared callback remain as older projections, but no operator can open that footer model menu. The supplied Figma switching frame and Run configuration frame agree with the current footer. The planned two-entry-point UI proof cannot be implemented while retaining the approved layout. Route for refinement: restrict selection to Run configuration, or supply a new footer-model affordance and Figma anchor. Partial projection/switch state code is retained on this branch; UI proof, live follow-up and PR handoff are unfinished.
 
 Preservation checks: focused `ThreadViewModelAgentModelMenuTest` and `ThreadViewModelAgentSwitchTest` executed 24 tests, all passed with zero skips. `spotlessApply` passed. These establish partial ViewModel behavior only; no shared UI proof or final builder gate has run.
+
+2026-10-10 (refined re-entry): The updated issue limits all model selection and live proof to Run configuration, resolving the former footer-affordance contradiction. Continue the preserved implementation and add `ThreadAgentSwitchUiTest` for both directions, dismissal routes, pending status/control labeling, failure and successor readings. The existing shared full-height modal is the required styling source; the compact confirmation frame supplies content, typography and actions. No in-flight file overlaps found on re-entry. Total forecast remains about 1200 written lines, one exported carrier plus two event objects, no consumer migration and eight outcome branches.
