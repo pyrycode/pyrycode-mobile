@@ -1,0 +1,26 @@
+Sanitized retained dispatcher stderr excerpt, #1731 initial live gate.
+Source basename: 2026-10-07T06-50-40-098Z_real-claude-gate_#1731.stderr.log
+Source SHA-256: b4e69612301450a93149c6806efb5813e0699bbf511928b1f9b1680b8240219b
+Mobile revision: a7a4b484d7260c4dc7418b85df9c10f2b7245398
+Daemon revision: 6019328b378cad587f69b7bc94de37febbdf8556
+Claude revision: 2.1.280
+
+Execute de.pyryco.mobile.e2e.InteractiveStreamE2ETest.interactiveTurn_questionAnswer_reachesTheAskingConversation: FAILED
+java.lang.AssertionError: question-answer step 'pair answer host on phone' timed out; no open session: none settled yet; redialing
+Caused by: kotlinx.coroutines.TimeoutCancellationException: Timed out waiting for 30000 ms
+
+Original dispatcher XML: 64 executed, 13 failed, 0 skipped; named method failed.
+Same-tree rerun dispatcher XML: 13 executed, 1 failed, 0 skipped; named method passed.
+Rerun stderr SHA-256: dc2dae8e89806a84710d36f7dd5988429109eb3e888e7cb8802e8c9dfac66ac1
+These historical counts were independently read from the retained dispatcher XML in the .log files.
+The unopened peer state is not phone state. The post-test DESTROYED activity/focus snapshot is teardown state.
+Historical per-test phone logcat and timed device XML were unavailable in the removed live-2agr4iho worktree.
+
+Retained daemon-answer.log handshake accepts, timestamp/event only (connection ids and names omitted):
+2026-10-07T10:04:09.479+03:00 event=v2.handshake.accept
+2026-10-07T10:04:13.931+03:00 event=v2.handshake.accept
+2026-10-07T10:04:56.221+03:00 event=v2.handshake.accept
+2026-10-07T10:05:12.832+03:00 event=v2.handshake.accept
+2026-10-07T10:15:26.113+03:00 event=v2.handshake.accept
+2026-10-07T10:15:26.501+03:00 event=v2.handshake.accept
+There is no retained method interval with which to correlate these; none is assigned to this phone/method.

@@ -7627,12 +7627,12 @@ class InteractiveStreamE2ETest {
     }
 
     /** Pair the answer daemon by code, as #687 pairs its host. This pairing is the phone's only privileged one. */
-    private fun pairAnswerHost() {
+    internal fun pairAnswerHost(pairCode: String = answerArg(ARG_ANSWER_PAIR_CODE)) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         awaitChannelList()
-        awaitConnected()
+        // Pairing verifies the new host; a preceding host may be offline independently.
         instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
-        pairHostByCode(answerArg(ARG_ANSWER_PAIR_CODE), ANSWER_HOST_NAME)
+        pairHostByCode(pairCode, ANSWER_HOST_NAME)
     }
 
     /**

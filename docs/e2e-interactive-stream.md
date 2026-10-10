@@ -1568,6 +1568,15 @@ credential, `claude` missing, the isolated HOME failing to build, either pairing
 static `ANSWER_UNMET` code that fails only these two methods, naming the cause — it never skips and never
 fails the rest of the run.
 
+Answer-host pairing starts after list arrival and camera permission, without waiting for the
+preceding compatibility-selected host to connect (#1899). That observation follows the latest
+surviving saved host, whose readiness is independent of the new pairing. `pairHostByCode` still
+uses the real paste-code/fingerprint flow, and `PairCodeViewModel` still saves and verifies the
+exact new host before returning to the list. The repair removes only the unrelated prerequisite;
+physical option/Continue taps, remote/answered dismissal, chosen-label inclusion and other-label
+exclusion, peer removal of the second question without a phone tap, both completed turns and
+teardown remain intact. See [setup evidence](#answer-host-setup-independence-1899).
+
 The permission-answer scenario opens two conversations (A, B) on the answer daemon. A prompt raised in A
 (`ANSWER_PERMISSION_PROMPT`, a `python3` command whose output token the prompt text never contains) shows
 in A's stream with every decision-context field the frame carries and `always_allow.offered = true`.
@@ -3399,6 +3408,64 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+### Answer-host setup independence (#1899)
+
+**Historical attribution.** At mobile `a7a4b484d7260c4dc7418b85df9c10f2b7245398`, the
+`PairPhone` 30000 ms coroutine timeout was the compatibility `awaitConnected` before code
+pairing, not a question interaction. Historical source distinguishes it from Compose waits
+and the ViewModel's handled target-verification deadline. The retained #1731 initial suite
+had **64 executed, 13 failed, 0 skipped**, including this failure; its same-tree rerun had
+**13 executed, 1 failed, 0 skipped**, with the question-answer method passing. The lower-level
+reason the preceding host was unavailable remains unknown. Unopened peer state, post-teardown
+DESTROYED snapshots and daemon handshakes without a method interval cannot establish phone
+transport or lifecycle state. Sanitized stderr, source hashes and counted regression XML are
+[committed together](../app/src/androidTest/assets/answer-host-1899/README.md).
+
+**Builder controlled evidence.** On managed `pixel2Api33Atd`, API 33 / AOSP ATD,
+`AnswerHostSetupTest.offlinePrecedingHostDoesNotBlockAnswerHostPairing` held compatibility
+Offline while exercising the actual live helper. With the wait present at `54fd1bd52`:
+**1 executed, 1 failed, 0 errors/skipped**, the historical timeout before target verification.
+After removing only that wait: **1 executed/passed, 0 failed/errors/skipped**. The regression
+requires the real parser, fingerprint confirmation, encrypted save/name and one exact-target
+verification; controlled readiness does not prove a live Noise handshake or Claude reply.
+Original XML locations are `/tmp/builder-1899/red-device.xml` and `green-device.xml`;
+committed `red.xml`/`green.xml` retain sanitized counted cases and the README retains hashes.
+
+The [verifier's cleanup finding](https://github.com/pyrycode/pyrycode-mobile/pull/2029#issuecomment-6092311027)
+exposed a second defect: restoring a parameters-based Koin binding lost navigation's
+`SavedStateHandle["serverId"]` target. The same-process
+`AnswerHostSetupCleanupTest.targetedPairingAfterFixtureTeardownKeepsItsHostGuard` first
+completes the actual setup fixture/activity, then navigates in a second activity without
+replacing Koin. Before repair: **1 executed, 1 failed, 0 errors/skipped**, an empty editable
+target name. After restoring the production-equivalent lookup and empty-target normalization:
+**2 executed/passed, 0 failed/errors/skipped** across both device classes, proving target
+naming/read-only behavior, wrong-host rejection before confirmation, editable empty-target
+pairing and unchanged saved entries. Originals are `/tmp/builder-1899/cleanup-red-device.xml`
+and `cleanup-green-device.xml`; committed `cleanup-{red,green}.xml` retain counts/cases.
+The [final verifier](https://github.com/pyrycode/pyrycode-mobile/pull/2029#issuecomment-6092904969)
+confirmed both methods passed in the UI gate (**256 executed/passed, 0 failed, 1 skipped**),
+scripted-all passed (**22 executed/passed, 0 failed/skipped**) and the existing pairing unit
+classes passed **17 executed/passed, 0 failed/errors/skipped**.
+
+**Fresh full live acceptance.** The [dispatcher PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1899#issuecomment-6093055580)
+ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`feature/1899` at `03a23d3f4e0b92cc3d3ef6a92b7d98aa6a54fc91`, merged with main
+`1014cfdf0035`: **65 executed, 65 passed, 0 failed, 0 errors, 0 skipped**, exit 0.
+The retained JUnit explicitly contains
+`InteractiveStreamE2ETest.interactiveTurn_questionAnswer_reachesTheAskingConversation`
+with no failure/error/skipped child: **PASS in this full suite**, not a focused rerun.
+All five live answer-host helper consumers remain enabled. The diagnostic log reports daemon
+`a536d17b1e182fb5398a5458e3afe6079b37a510` and Claude `2.1.280`; JUnit has no daemon annotation.
+
+Retained report and diagnostic logs are on the dispatcher host under
+`/Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/`, basenames
+`2026-10-10T02-41-34-039Z_real-claude-gate_#1899.log` and
+`2026-10-10T02-41-34-039Z_real-claude-gate_#1899.stderr.log`. Documentation read the counted
+JUnit and revision lines in these logs. The gate reported copied XML/per-test artifacts at
+`real-claude-gate-1899/build/dispatcher-tests/live-izhle_o8/` under the mobile worktree root;
+that removed gate-worktree directory was unavailable during documentation. The retained
+report supplies the named pass and counts, but no fresh phone logcat inspection is claimed.
 
 ### Host-isolation readiness (#1900)
 
@@ -5607,6 +5674,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — hardened:** [#1899](https://github.com/pyrycode/pyrycode-mobile/issues/1899)
+  removes the preceding-host readiness prerequisite from answer-host setup for
+  `InteractiveStreamE2ETest.interactiveTurn_questionAnswer_reachesTheAskingConversation`.
+  Exact-target verification and both phone/peer answer contracts remain enabled. Controlled
+  setup and same-process cleanup red/green evidence are separate from the fresh full live
+  **65 executed/passed, 0 failed/skipped** named pass [recorded above](#answer-host-setup-independence-1899).
+  No scenario or `DeterministicInteractiveStreamE2ETest` twin was added; no coverage or
+  acceptance follow-up remains. The pre-ship command stays `python3 scripts/android-test-gate.py live`.
 
 - **Stale Agent navigation cancellation (#1956):** Preserved rung-3
   `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
