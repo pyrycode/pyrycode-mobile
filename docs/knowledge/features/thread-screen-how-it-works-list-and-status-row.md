@@ -112,7 +112,7 @@ to retain the previous following state across the completed transfer or clamp.
 Publishing it earlier would expose incomplete geometry; treating a clamp as reader
 input would wrongly enable following. Raw geometry displacement remains separately
 accounted in `compensatedScroll`. See
-[shared and Android frame coverage](thread-screen-testing.md#reader-geometry-during-background-agent-relocation-1955).
+[shared and Android frame coverage](thread-screen-testing-background-agent-viewport.md#reader-geometry-during-background-agent-relocation-1955).
 
 The body shape since [#246](../codebase/246.md) iterated `state.items.asReversed()` with stable composite keys and dispatched at the `ThreadItem` sealed-interface level. **Since [#782](../codebase/782.md) the list walks `ThreadRow`s, not `ThreadItem`s directly:** `val rows = remember(state.items, state.queuedMessages) { foldQueuedRows(state.items, state.queuedMessages) }` joins the thread's items against the daemon's queued backlog (see
 [Queued backlog rendering § The render-time join](queued-backlog-section.md#the-render-time-join-782)),
