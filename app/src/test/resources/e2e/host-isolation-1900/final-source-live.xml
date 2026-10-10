@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="0" tests="1" failures="0" errors="0" skipped="0" time="11.855">
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost" time="10.776" />
+  </testsuite>
+</testsuites>

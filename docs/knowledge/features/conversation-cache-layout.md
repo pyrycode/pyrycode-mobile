@@ -142,6 +142,28 @@ metadata acceptance; malformed or structurally invalid optional metadata yields
 readable rows with no position, while invalid rows withhold both. Field order and
 unknown fields do not change that boundary. Metadata writers share this decoder.
 
+Since #2026, thread records, their independent fallback, header reads and optional
+metadata use immutable decoder-only `threadReadJson = Json(MobileJson) { explicitNulls = true }`.
+Every nullable field in those records has a default, so omitted and explicit-null
+values retain their meanings without per-record implicit-null tracking allocations.
+Required fields remain required. Conversation/read-position readers, all writers
+and canonical row-proof encoding stay on `MobileJson`, including its omitted-null
+encoding: changing the encoder would change persisted proof inputs. Keep decoder
+configuration separate from canonical encoding when optimizing restore.
+
+All six thread row kinds use `parseThreadInstant` (#2026). Only fixed-width
+`YYYY-MM-DDTHH:mm:ssZ` text takes the allocation-saving path: ASCII components are
+read without substrings, validated by standard `LocalDateTime.of`, then converted
+from UTC epoch seconds to the domain `Instant`. Other forms and invalid fast-path
+components fall through to the original `Instant.parse`; fractions, offsets,
+extended years, leap seconds and hour 24 retain that parser's existing behavior.
+No custom calendar arithmetic or accepted-input widening is involved. This also
+reduces the mandatory metadata writer reread's allocation before cold restore.
+`DecodedThreadRestoreTest.persistedTimestampParsingRetainsCalendarValidationAndLegacyFormats`
+pins the fallback and calendar behavior. Freshness, version, row/metadata rejection
+and canonical proof checks remain in the same synchronous operation; see
+[measured first-draw evidence](thread-screen-testing.md#allocation-margin-and-retained-evidence-2018).
+
 Row validation uses one identity-set pass and rejects every running tool and
 kind-specific duplicate as before. Coverage validation checks already-normalized
 unsigned spans in stored order and each gap against its neighbouring spans; it

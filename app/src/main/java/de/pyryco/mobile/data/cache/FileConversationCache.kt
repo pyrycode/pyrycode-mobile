@@ -25,6 +25,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -36,6 +37,9 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.time.DateTimeException
+import java.time.LocalDateTime
+import java.time.ZoneOffset
 
 /**
  * [ConversationCache] backed by one JSON document per host under an app-private directory.
@@ -328,10 +332,10 @@ class FileConversationCache(
 
     private fun decodeThreadRecord(bytes: ByteArray): CachedThread =
         try {
-            MobileJson.decodeFromString<CachedThread>(bytes.toString(Charsets.UTF_8))
+            threadReadJson.decodeFromString<CachedThread>(bytes.toString(Charsets.UTF_8))
         } catch (_: SerializationException) {
             // Optional metadata must not participate in row decoding; legacy omitted spans remain compatible.
-            val fallback = MobileJson.decodeFromString<CachedThreadRead>(bytes.toString(Charsets.UTF_8))
+            val fallback = threadReadJson.decodeFromString<CachedThreadRead>(bytes.toString(Charsets.UTF_8))
             CachedThread(fallback.version, fallback.rows, decodeHistory(fallback.history))
         }
 
@@ -396,7 +400,7 @@ class FileConversationCache(
     private fun storedHistoryOrNull(document: File): CachedHistoryPosition? {
         if (!document.isFile) return null
         return try {
-            val raw = MobileJson.decodeFromString<CachedThreadHeader>(document.readText())
+            val raw = threadReadJson.decodeFromString<CachedThreadHeader>(document.readText())
             raw.takeIf { it.version == VERSION }?.history?.let(::decodeHistory)
         } catch (error: Exception) {
             failureCode(error) ?: throw error
@@ -418,7 +422,7 @@ class FileConversationCache(
                 } else {
                     raw
                 }
-            MobileJson.decodeFromJsonElement<CachedHistoryPosition>(compatible).also { it.coverage?.validated(rows) }
+            threadReadJson.decodeFromJsonElement<CachedHistoryPosition>(compatible).also { it.coverage?.validated(rows) }
         } catch (error: Exception) {
             val code = failureCode(error) ?: throw error
             RelayLog.d { "conversation_cache operation=read_history_metadata status=failed code=$code" }
@@ -635,6 +639,10 @@ private data class CachedThread(
     val history: CachedHistoryPosition? = null,
 )
 
+// Every nullable thread field has a default, so decoding needs no implicit-null tracking.
+// Keep encoding on MobileJson: its omitted nulls define the persisted bytes and row proofs.
+private val threadReadJson = Json(MobileJson) { explicitNulls = true }
+
 /** Read rows directly while leaving malformed optional metadata independent of row readability. */
 @Serializable
 private data class CachedThreadRead(
@@ -840,7 +848,7 @@ private fun CachedThreadRow.toDomain(): ThreadItem {
                 sessionId = message.sessionId,
                 role = message.role,
                 content = message.content,
-                timestamp = Instant.parse(message.timestamp),
+                timestamp = parseThreadInstant(message.timestamp),
                 isStreaming = false,
                 toolCall = message.tool?.let { ToolCall(it.toolName, it.input, it.output, it.status, it.inputFields) },
                 attachments = message.attachments.map { MessageAttachment(it.attachmentId, it.displayName, it.mimeType) },
@@ -849,27 +857,68 @@ private fun CachedThreadRow.toDomain(): ThreadItem {
         )
     }
     boundary?.let {
-        return ThreadItem.SessionBoundary(it.previousSessionId, it.newSessionId, it.reason, Instant.parse(it.occurredAt), it.workspaceCwd)
+        return ThreadItem.SessionBoundary(
+            it.previousSessionId,
+            it.newSessionId,
+            it.reason,
+            parseThreadInstant(it.occurredAt),
+            it.workspaceCwd,
+        )
     }
-    banner?.let { return ThreadItem.Banner(it.level, it.text, it.truncated, Instant.parse(it.occurredAt)) }
+    banner?.let { return ThreadItem.Banner(it.level, it.text, it.truncated, parseThreadInstant(it.occurredAt)) }
     compaction?.let {
         return ThreadItem.CompactionBoundary(
             it.preTokens,
             it.postTokens,
             it.manual,
-            Instant.parse(it.occurredAt),
+            parseThreadInstant(it.occurredAt),
             it.failed,
         )
     }
-    stopped?.let { return ThreadItem.StoppedTurn(it.turnId, it.reason, it.category, Instant.parse(it.occurredAt)) }
+    stopped?.let { return ThreadItem.StoppedTurn(it.turnId, it.reason, it.category, parseThreadInstant(it.occurredAt)) }
     val refusal = checkNotNull(refusal)
     return ThreadItem.ModelRefusal(
         refusal.originalModel,
         refusal.fallbackModel,
         refusal.banner,
         refusal.bannerTruncated,
-        Instant.parse(refusal.occurredAt),
+        parseThreadInstant(refusal.occurredAt),
     )
+}
+
+/** Whole-second UTC records need no general format-parser state; other forms retain the legacy parser. */
+private fun parseThreadInstant(text: String): Instant {
+    if (text.length == 20 &&
+        text[4] == '-' &&
+        text[7] == '-' &&
+        text[10] == 'T' &&
+        text[13] == ':' &&
+        text[16] == ':' &&
+        text[19] == 'Z'
+    ) {
+        fun number(
+            start: Int,
+            length: Int = 2,
+        ): Int {
+            var value = 0
+            for (index in start until start + length) {
+                val digit = text[index] - '0'
+                if (digit !in 0..9) return -1
+                value = value * 10 + digit
+            }
+            return value
+        }
+        val year = number(0, 4)
+        if (year >= 0) {
+            try {
+                val date = LocalDateTime.of(year, number(5), number(8), number(11), number(14), number(17))
+                return Instant.fromEpochSeconds(date.toEpochSecond(ZoneOffset.UTC))
+            } catch (_: DateTimeException) {
+                // The original parser owns rejection, including leap seconds and 24:00:00.
+            }
+        }
+    }
+    return Instant.parse(text)
 }
 
 /**
