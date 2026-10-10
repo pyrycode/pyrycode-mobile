@@ -21,18 +21,25 @@ class PermissionIsolationStepTest {
             for (stage in PermissionIsolationStage.entries) {
                 val started = currentTime
                 var reads = 0
+                var original: TimeoutCancellationException? = null
                 val failure =
                     runCatching {
                         permissionIsolationStep(stage, {
                             reads += 1
                             LINK
                         }) {
-                            withTimeout(30_000) { awaitCancellation() }
+                            try {
+                                withTimeout(30_000) { awaitCancellation() }
+                            } catch (timeout: TimeoutCancellationException) {
+                                original = timeout
+                                throw timeout
+                            }
                         }
                     }.exceptionOrNull()
                 assertTrue(failure is AssertionError)
                 assertEquals("permission-isolation step '${stage.label}' timed out; $LINK", failure?.message)
                 assertTrue(failure?.cause is TimeoutCancellationException)
+                assertSame(original, failure?.cause)
                 assertEquals(30_000, currentTime - started)
                 assertEquals(1, reads)
             }
@@ -40,20 +47,22 @@ class PermissionIsolationStepTest {
 
     @Test
     fun `phone rendering timeout retains the cause without copying its content`() {
-        val timeout = ComposeTimeoutException("untrusted prompt fixture")
-        val failure =
-            runCatching {
-                permissionIsolationStep(PermissionIsolationStage.DrawA, { LINK }) { throw timeout }
-            }.exceptionOrNull()
-        assertEquals("permission-isolation step 'draw A permission on phone' timed out; $LINK", failure?.message)
-        assertSame(timeout, failure?.cause)
+        for (stage in PermissionIsolationStage.entries) {
+            val timeout = ComposeTimeoutException("untrusted prompt/frame fixture")
+            val failure =
+                runCatching {
+                    permissionIsolationStep(stage, { LINK }) { throw timeout }
+                }.exceptionOrNull()
+            assertEquals("permission-isolation step '${stage.label}' timed out; $LINK", failure?.message)
+            assertSame(timeout, failure?.cause)
+        }
     }
 
     @Test
     fun `successful steps and ordinary failures do not read diagnostics`() {
         val value = Any()
         assertSame(value, permissionIsolationStep(PermissionIsolationStage.CreateA, { error("must stay lazy") }) { value })
-        for (failure in listOf(IllegalStateException("refused"), CancellationException("cancelled"))) {
+        for (failure in listOf(IllegalStateException("refused"), CancellationException("cancelled"), AssertionError("isolation"))) {
             val caught =
                 runCatching {
                     permissionIsolationStep(PermissionIsolationStage.CreateA, { error("must stay lazy") }) { throw failure }
