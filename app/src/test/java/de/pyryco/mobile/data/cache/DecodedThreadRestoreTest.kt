@@ -83,6 +83,8 @@ class DecodedThreadRestoreTest {
                     "2026-10-10T23:59:60Z",
                     "2026-10-10T23:59:61Z",
                     "2026-10-10T0x:00:00Z",
+                    "20x6-10-10T00:00:00Z",
+                    "2026-1x-10T00:00:00Z",
                     "2026/10/10T00:00:00Z",
                 )
             for (text in timestamps) {
