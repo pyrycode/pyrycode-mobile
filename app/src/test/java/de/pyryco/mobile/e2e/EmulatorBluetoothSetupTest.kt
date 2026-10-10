@@ -6,7 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class EmulatorBluetoothSetupTest {
-    @Test fun offStateAfterRecoveryStillCancelsTheQueuedRestart() =
+    @Test fun offStateAfterRecoveryStillRequestsShutdown() =
         runTest {
             val commands = mutableListOf<String>()
             disableEmulatorBluetooth { command ->

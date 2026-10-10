@@ -25,15 +25,16 @@ import kotlinx.coroutines.runBlocking
  * values back when it finishes (2026-10-05). `scripts/android-test-gate.py` passes it for the device-only
  * screen tests and the scripted scenarios on its own emulators. It never applies on a physical phone.
  *
- * On an emulator every run also switches Bluetooth off, hides system crash dialogs and closes any already
+ * On an emulator every run also requests Bluetooth shutdown, hides system crash dialogs and closes any already
  * showing (2026-10-05). The API 33 ATD image's Bluetooth service can crash-loop after boot, and its "keeps
  * stopping" dialog took window focus from whichever test ran then (#1135, #1157, #1166, #1217, #1232, #1235,
  * #1277). The app declares no Bluetooth permission and no test uses it. The Gradle managed device takes no
  * emulator hardware settings, so this runs here, after boot. The dialog setting is put back when the run
- * finishes. Bluetooth stays off: switching it back on would restart the crash loop on an emulator that
+ * finishes. The runner never re-enables Bluetooth: doing so would restart the crash loop on an emulator that
  * scripted-all reuses for its next scenario.
  * Disable is unconditional on emulators: a persisted off preference does not cancel pending recovery.
  * A bounded state check must confirm OFF before tests start; disable itself is asynchronous.
+ * An OFF snapshot does not rule out later system recovery; selected-test logs retain that activity.
  */
 class E2eInstrumentationRunner : AndroidJUnitRunner() {
     private var disableAnimations = false

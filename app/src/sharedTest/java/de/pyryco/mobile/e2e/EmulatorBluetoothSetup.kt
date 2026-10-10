@@ -16,7 +16,7 @@ internal suspend fun disableEmulatorBluetooth(shell: (String) -> String) {
     }
     withTimeout(10_000) {
         awaitOff()
-        // API 33 recovery sets OFF before queuing a restart. Cancel after that transition too.
+        // API 33 recovery can queue a restart when setting OFF; request shutdown after that transition too.
         shell("cmd bluetooth_manager disable")
         awaitOff()
     }
