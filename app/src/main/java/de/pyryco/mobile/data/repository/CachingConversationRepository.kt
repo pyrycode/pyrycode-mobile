@@ -221,7 +221,7 @@ class CachingConversationRepository(
             // A save captured before entry can still complete while restoration suspends.
             val collectionCoverageRevision = persistedThreads[conversationId]?.coverageRevision ?: 0
             var base = cache.readThread(serverId, conversationId)
-            var baseOrder = withContext(processingDispatcher) { emptyMap<Any, ULong>() }
+            var baseOrder = emptyMap<Any, ULong>()
             var restoredOrder = false
             var lastOrder = emptyMap<Any, ULong>()
             var lastDrawn = base
