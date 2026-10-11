@@ -1463,6 +1463,45 @@ Sourcing](knowledge/features/thread-composer-footer.md#sourcing) and [Thread com
 effort recall](knowledge/features/thread-composer-footer-effort-recall.md) for the production ranking and
 recall rules these methods assert against.
 
+### Remembered effort acknowledgement barrier (#2075)
+
+The existing rung-3
+`InteractiveStreamE2ETest#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel`
+keeps its two real-Claude turns, restart persistence, recall before each first
+message, applied effort after each turn, empty saved model, explicit saved-effort
+protection and failure cleanup. Priming now waits for section settlement **and**
+the actual remembered-effort value; the shared section wait cannot accept unrelated
+text while Effort is applying. Both acknowledgement/fresh-read and delayed-storage
+orderings have [controlled regression evidence](knowledge/features/thread-composer-footer-effort-recall.md#remembered-effort-recall-686).
+No `DeterministicInteractiveStreamE2ETest` twin was added.
+
+The [fresh dispatcher full-live gate](https://github.com/pyrycode/pyrycode-mobile/issues/2075#issuecomment-6106491190)
+on 2026-10-11 ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`:
+**65 executed, 65 passed, 0 failed, 0 skipped**. Its retained JUnit report explicitly
+includes this method as passed; this was a full-suite run, not a focused retry.
+Mobile `feature/2075` was `398909331159`, merged with main `0acab7ce274b`.
+The matching diagnostic log records daemon
+`a536d17b1e182fb5398a5458e3afe6079b37a510`, despite the dispatcher's summary lacking
+a `daemon-revision` annotation. Reports are
+`2026-10-11T06-49-08-127Z_real-claude-gate_#2075.log` and its matching `.stderr.log`
+in the dispatcher repository's `logs/` directory.
+
+Fixed `RememberedEffort` diagnostics distinguish fixture preparation, priming
+acknowledgement/persistence, graph restart, chat/channel recall before send,
+first-turn applied readings, explicit-choice protection and cleanup. They emit
+static stage/outcome codes and preserve the original failure cause. However, the
+fresh gate's referenced `build/dispatcher-tests/live-robi4mcf` artifact directory
+is no longer present, and the retained report/diagnostic log does not include
+these stage records. Retaining that run's stage diagnostics remains a verification
+handoff; the named pass and revisions above are established independently.
+
+The archived #1869 occurrence remains unattributed: its failing stage and daemon
+revision are unavailable. The old wait existed on reported mobile `f98d50139d`
+(main `6629a7a538`) and unchanged passing mobile `0acab7ce274b`. The earlier
+unchanged focused pass on daemon `a536d17b1e18` (1 executed/passed, 0 failed/skipped)
+does not establish its cause. #2075 repairs independently reproduced harness races.
+
 The **operator-bypass permission** scenario (#687 —
 `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`) rides the curated `LIVE=1`
 list in the earlier coverage state (`LIVE_MINIMUM` was 34, [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981)
@@ -6128,6 +6167,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Remembered effort acknowledgement/persistence (#2075):** The existing rung-3
+  `InteractiveStreamE2ETest#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel`
+  passed in the [fresh full live suite](#remembered-effort-acknowledgement-barrier-2075).
+  Shared `RunConfigurationWaitTest` controls cover both settlement orderings;
+  no `DeterministicInteractiveStreamE2ETest` twin was added. Verification still
+  needs to retain the fresh run's `RememberedEffort` stage diagnostics. Historical
+  #1869 attribution remains unproven. The pre-ship command remains
+  `python3 scripts/android-test-gate.py live`.
 
 - **Empty-host channel setup (#1897):** The existing rung-3
   `InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack` uses the
