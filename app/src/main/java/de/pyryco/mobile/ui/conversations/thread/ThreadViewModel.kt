@@ -701,6 +701,7 @@ class ThreadViewModel(
         val expanded: Set<String> = emptySet(),
         val pending: Set<String> = emptySet(),
         val authoritative: AuthoritativeThreadPresentation? = null,
+        val authoritativeBinding: Any? = null,
     )
 
     private val taskControlLock = Any()
@@ -748,15 +749,28 @@ class ThreadViewModel(
         taskControls.value = current.copy(expanded = current.expanded.intersect(eligible.keys), pending = taskStopAttempts.keys.toSet())
     }
 
-    private fun presentAuthoritativeThread(presentation: AuthoritativeThreadPresentation?) {
-        if (presentation != null && (presentation.host != serverId || presentation.conversation != conversationId)) return
+    private fun presentAuthoritativeThread(event: ThreadEvent.AuthoritativeThreadPresented) {
+        val presentation = event.presentation
+        if (presentation.host != serverId || presentation.conversation != conversationId) return
         synchronized(taskControlLock) {
             val old = taskControls.value
-            if (old.authoritative?.scope != presentation?.scope) {
+            if (old.authoritative?.scope != presentation.scope) {
                 taskStopAttempts.clear()
                 taskStopOwners.clear()
             }
-            publishTaskControls(old.copy(authoritative = presentation))
+            publishTaskControls(old.copy(authoritative = presentation, authoritativeBinding = event.binding))
+        }
+    }
+
+    private fun retireAuthoritativeThread(binding: Any) {
+        synchronized(taskControlLock) {
+            val old = taskControls.value
+            // A fresh lambda can publish to this same owner before its predecessor retires.
+            if (old.authoritativeBinding !== binding) return
+            taskStopAttempts.clear()
+            taskStopOwners.clear()
+            publishTaskControls(old.copy(authoritative = null, authoritativeBinding = null))
+            RelayLog.d { "event=thread_task_actions code=retired" }
         }
     }
 
@@ -3453,7 +3467,8 @@ class ThreadViewModel(
             }
             is ThreadEvent.BackgroundTaskToggle -> toggleBackgroundTask(event.taskId)
             is ThreadEvent.BackgroundTaskStop -> sendBackgroundTaskStop(event)
-            is ThreadEvent.AuthoritativeThreadPresented -> presentAuthoritativeThread(event.presentation)
+            is ThreadEvent.AuthoritativeThreadPresented -> presentAuthoritativeThread(event)
+            is ThreadEvent.AuthoritativeThreadRetired -> retireAuthoritativeThread(event.binding)
             ThreadEvent.Archive -> {
                 // Close the Channel Info Sheet if Archive was tapped from it (a harmless no-op from the
                 // overflow menu, where it is already false); the send + success-only PopBack live in

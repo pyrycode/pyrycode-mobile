@@ -30,9 +30,16 @@ sealed interface ThreadEvent {
     }
 
     data class AuthoritativeThreadPresented(
-        val presentation: AuthoritativeThreadPresentation?,
+        val presentation: AuthoritativeThreadPresentation,
+        val binding: Any = Any(),
     ) : ThreadEvent {
         override fun toString(): String = "AuthoritativeThreadPresented(<redacted>)"
+    }
+
+    data class AuthoritativeThreadRetired(
+        val binding: Any,
+    ) : ThreadEvent {
+        override fun toString(): String = "AuthoritativeThreadRetired(<redacted>)"
     }
 
     data class BackgroundTaskStop(

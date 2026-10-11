@@ -213,6 +213,40 @@ private const val PERMISSION_ROW_COUNT = 2
 /** The refused-answer notice's slot in the thread (#1340). */
 internal const val PERMISSION_REJECTION_TEST_TAG = "thread-permission-rejection"
 
+/** Retain the published receiver through recomposition; callback identity does not identify its owner. */
+private class AuthoritativeThreadActionPublisher {
+    private class Binding(
+        val presentation: AuthoritativeThreadPresentation,
+        val receiver: (ThreadEvent) -> Unit,
+        val token: Any = Any(),
+    )
+
+    private var published: Binding? = null
+
+    fun present(
+        presentation: AuthoritativeThreadPresentation?,
+        receiver: (ThreadEvent) -> Unit,
+    ) {
+        val previous = published
+        if (presentation == null) {
+            retire()
+            return
+        }
+        if (previous?.presentation === presentation && previous.receiver == receiver) return
+        val next = Binding(presentation, receiver)
+        // Publish first: on the same ViewModel, retirement of the old binding is then a no-op.
+        receiver(ThreadEvent.AuthoritativeThreadPresented(presentation, next.token))
+        published = next
+        previous?.receiver?.invoke(ThreadEvent.AuthoritativeThreadRetired(previous.token))
+    }
+
+    fun retire() {
+        val previous = published ?: return
+        published = null
+        previous.receiver(ThreadEvent.AuthoritativeThreadRetired(previous.token))
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun ThreadScreen(
@@ -351,12 +385,12 @@ fun ThreadScreen(
     val taskCount = authoritative?.tasks?.liveCount ?: state.backgroundTaskCount
     val interactionScope = authoritative?.scope ?: state.conversationId
     var authoritativeExpandedTasks by rememberSaveable(interactionScope) { mutableStateOf(emptySet<String>()) }
-    var suppliedActionsPublished by remember(onOverflowEvent) { mutableStateOf(false) }
-    LaunchedEffect(authoritative, onOverflowEvent) {
-        if (authoritative != null || suppliedActionsPublished) {
-            onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(authoritative))
-            suppliedActionsPublished = authoritative != null
-        }
+    val actionPublisher = remember { AuthoritativeThreadActionPublisher() }
+    SideEffect { actionPublisher.present(authoritative, onOverflowEvent) }
+    DisposableEffect(actionPublisher) {
+        onDispose { actionPublisher.retire() }
+    }
+    LaunchedEffect(authoritative) {
         if (authoritative != null) {
             RelayLog.d {
                 "event=thread_presentation code=projected rows=${authoritative.rows.size} tasks=${authoritative.tasks.tasks.size}"

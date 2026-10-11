@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.view.View
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -352,6 +353,17 @@ class AuthoritativeThreadScreenTest {
             de.pyryco.mobile.data.repository
                 .FakeConnectionStateSource(),
             ComposerDraftStore(),
+            backgroundTasks = {
+                kotlinx.coroutines.flow.flowOf(
+                    de.pyryco.mobile.data.model.BackgroundTaskRoster(
+                        listOf(
+                            de.pyryco.mobile.data.model
+                                .BackgroundTask("legacy", null, "local_bash", "legacy task", null, null, null, false),
+                        ),
+                        0,
+                    ),
+                )
+            },
             backgroundTaskStopSupported = kotlinx.coroutines.flow.flowOf(true),
             stopBackgroundTask = { conversation, task ->
                 stops += conversation to task
@@ -362,9 +374,13 @@ class AuthoritativeThreadScreenTest {
     private fun mountActionPresentation(
         presentation: () -> AuthoritativeThreadPresentation?,
         receiver: () -> ((ThreadEvent) -> Unit),
+        owners: List<ThreadViewModel> = emptyList(),
+        mounted: () -> Boolean = { true },
     ) {
         compose.setContent {
+            owners.forEach { owner -> LaunchedEffect(owner) { owner.state.collect {} } }
             PyrycodeMobileTheme(darkTheme = true) {
+                if (!mounted()) return@PyrycodeMobileTheme
                 ThreadScreen(
                     state =
                         ThreadUiState(
@@ -437,6 +453,120 @@ class AuthoritativeThreadScreenTest {
         compose.waitForIdle()
         assertEquals(listOf("conversation" to "recorded-task"), stopsB)
         assertTrue(stopsA.isEmpty())
+    }
+
+    private fun recordedStop(presentation: AuthoritativeThreadPresentation) =
+        ThreadEvent.BackgroundTaskStop(
+            "recorded-task",
+            presentation.scope,
+            presentation.tasks.tasks
+                .single()
+                .toolCallId,
+        )
+
+    private fun tapRecordedStop() {
+        compose.onNodeWithText("1 task running").performClick()
+        compose.onNode(hasText("agent-1") and hasText("Running") and hasClickAction()).performClick()
+        compose.onNodeWithText("Stop task").performClick()
+        compose.waitForIdle()
+    }
+
+    @Test fun simultaneousCallbackReplacementAndRouteRemovalRetiresPublishedOwnerAndRestoresActions() {
+        val presentation =
+            projectAuthoritativeThread("host", "conversation", authoritativeSnapshot(authoritativeAgent(1, task = "recorded-task")))
+        var supplied by mutableStateOf<AuthoritativeThreadPresentation?>(presentation)
+        val stops = mutableListOf<Pair<String, String>>()
+        val owner = taskActionOwner(stops)
+        var receiver by mutableStateOf<(ThreadEvent) -> Unit>(owner::onOverflowEvent)
+        mountActionPresentation({ supplied }, { receiver }, listOf(owner))
+        compose.runOnIdle {
+            supplied = null
+            receiver = { owner.onOverflowEvent(it) }
+        }
+        compose.runOnIdle { owner.onOverflowEvent(recordedStop(presentation)) }
+        compose.waitForIdle()
+        assertTrue(stops.isEmpty())
+        compose.runOnIdle {
+            owner.onOverflowEvent(ThreadEvent.BackgroundTaskToggle("legacy"))
+            owner.onOverflowEvent(ThreadEvent.BackgroundTaskStop("legacy"))
+        }
+        compose.waitForIdle()
+        assertEquals(listOf("conversation" to "legacy"), stops)
+
+        compose.runOnIdle { supplied = presentation }
+        tapRecordedStop()
+        assertEquals(listOf("conversation" to "legacy", "conversation" to "recorded-task"), stops)
+        assertEquals(setOf("recorded-task"), owner.state.value.pendingBackgroundTaskIds)
+        compose.runOnIdle {
+            supplied = null
+            receiver = { owner.onOverflowEvent(it) }
+        }
+        compose.runOnIdle { owner.onOverflowEvent(recordedStop(presentation)) }
+        compose.waitForIdle()
+        assertTrue(
+            owner.state.value.pendingBackgroundTaskIds
+                .isEmpty(),
+        )
+        assertEquals(2, stops.size)
+    }
+
+    @Test fun ownerTransferRetiresOldFactsAndPendingWhileCurrentOwnerSendsOnce() {
+        val presentation =
+            projectAuthoritativeThread("host", "conversation", authoritativeSnapshot(authoritativeAgent(1, task = "recorded-task")))
+        val stopsA = mutableListOf<Pair<String, String>>()
+        val stopsB = mutableListOf<Pair<String, String>>()
+        val ownerA = taskActionOwner(stopsA)
+        val ownerB = taskActionOwner(stopsB)
+        var receiver by mutableStateOf<(ThreadEvent) -> Unit>(ownerA::onOverflowEvent)
+        mountActionPresentation({ presentation }, { receiver }, listOf(ownerA, ownerB))
+        tapRecordedStop()
+        assertEquals(setOf("recorded-task"), ownerA.state.value.pendingBackgroundTaskIds)
+        compose.runOnIdle { receiver = ownerB::onOverflowEvent }
+        compose.waitForIdle()
+        assertTrue(
+            ownerA.state.value.pendingBackgroundTaskIds
+                .isEmpty(),
+        )
+        compose.runOnIdle {
+            ownerA.onOverflowEvent(recordedStop(presentation))
+            ownerA.onOverflowEvent(ThreadEvent.BackgroundTaskToggle("legacy"))
+            ownerA.onOverflowEvent(ThreadEvent.BackgroundTaskStop("legacy"))
+        }
+        compose.waitForIdle()
+        assertEquals(listOf("conversation" to "recorded-task", "conversation" to "legacy"), stopsA)
+        compose.onNodeWithText("Stop task").performClick()
+        compose.waitForIdle()
+        compose.runOnIdle { receiver = { ownerB.onOverflowEvent(it) } }
+        compose.onNodeWithText("Stop task").performClick()
+        compose.waitForIdle()
+        assertEquals(listOf("conversation" to "recorded-task"), stopsB)
+        assertEquals(setOf("recorded-task"), ownerB.state.value.pendingBackgroundTaskIds)
+    }
+
+    @Test fun compositionExitRetiresPublishedOwnerAndReentryRestoresRecordedStop() {
+        val presentation =
+            projectAuthoritativeThread("host", "conversation", authoritativeSnapshot(authoritativeAgent(1, task = "recorded-task")))
+        val stops = mutableListOf<Pair<String, String>>()
+        val owner = taskActionOwner(stops)
+        var mounted by mutableStateOf(true)
+        mountActionPresentation({ presentation }, { owner::onOverflowEvent }, listOf(owner), { mounted })
+        tapRecordedStop()
+        compose.runOnIdle { mounted = false }
+        compose.waitForIdle()
+        assertTrue(
+            owner.state.value.pendingBackgroundTaskIds
+                .isEmpty(),
+        )
+        compose.runOnIdle {
+            owner.onOverflowEvent(recordedStop(presentation))
+            owner.onOverflowEvent(ThreadEvent.BackgroundTaskToggle("legacy"))
+            owner.onOverflowEvent(ThreadEvent.BackgroundTaskStop("legacy"))
+        }
+        compose.waitForIdle()
+        assertEquals(listOf("conversation" to "recorded-task", "conversation" to "legacy"), stops)
+        compose.runOnIdle { mounted = true }
+        tapRecordedStop()
+        assertEquals(listOf("conversation" to "recorded-task", "conversation" to "legacy", "conversation" to "recorded-task"), stops)
     }
 
     @Test fun mainTurnReadStatusIsIndependentOfPinnedBackgroundPlacement() {
