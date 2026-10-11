@@ -62,8 +62,23 @@ persisted task-replacing Intent, picker absence and unchanged draft assertions
 remain intact. There is no retry, deadline increase, ignored method, global Main
 replacement or disabled lifecycle enforcement.
 
-The repaired full configured UI gate is **pending dispatcher/verifier execution**.
-It must retain the final tested commit, fresh XML, executed/passed/failed/error/skipped
-counts and an explicitly executed/passed
-`de.pyryco.mobile.ui.conversations.share.SharingShortcutsDeviceTest#dynamicTargetHasShareContractAndLauncherIntentOpensWithoutChangingDraft`.
-The baseline full pass and repaired focused passes do not satisfy that acceptance.
+The repaired full configured UI gate handoff is **complete**. The
+[verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/2110#issuecomment-6115101072)
+records `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`
+on `ada13ce7e0091da85495876e5a6fbdb4f331b65b`, exit 0:
+**260 executed, 260 passed, 0 failed, 0 errors, 1 skipped**. Both
+`de.pyryco.mobile.ui.conversations.share.SharingShortcutsDeviceTest#dynamicTargetHasShareContractAndLauncherIntentOpensWithoutChangingDraft`
+and `#workerCompletionKeepsStartupAndNavigationOnMainThread` executed and passed,
+neither skipped. This was a fresh full configured run, separate from the baseline
+and focused checks above.
+
+The original fresh report in the verifier worktree was
+`app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/TEST-pixel2Api33Atd_0-_app-.xml`,
+timestamp `2026-10-11T23:20:51`. Complete sanitized XML is retained in
+`/work/Projects/pyrycode-mobile-agents/logs/verifier-gate_#2094_7.log` and
+`/tmp/verifier-2110/dispatcher-ui.xml`, SHA-256
+`b65932aa79675b5d751bf53ca6b33975df9406a4938eb6c87abcf92256feb28a`.
+The dispatcher pass record binds the gates to that commit; the verdict records
+its location and the companion scripted result (22 executed/passed, zero
+failures/errors/skips). #2057 still requires its own fresh gates and real-Claude
+acceptance after this repair lands.
