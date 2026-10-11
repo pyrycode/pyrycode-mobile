@@ -289,7 +289,7 @@ internal fun List<ThreadItem>.withAssistantDelta(
     val delta = SegmentDelta(event.seq, event.text.length)
     val anchor =
         rows.indexOfLast { row ->
-            row !is ThreadItem.BackgroundTaskLifecycle &&
+            !row.isAssistantContinuityMetadata() &&
                 !(row is ThreadItem.MessageItem && row.message.role == Role.User && row.message.ordinaryId in passOver)
         }
     val last = (rows.getOrNull(anchor) as? ThreadItem.MessageItem)?.message
@@ -319,6 +319,10 @@ internal fun List<ThreadItem>.withAssistantDelta(
             ),
         )
 }
+
+/** Retained evidence that composes to no row must not interrupt assistant text or its streaming state. */
+private fun ThreadItem.isAssistantContinuityMetadata(): Boolean =
+    this is ThreadItem.BackgroundTaskLifecycle || this is ThreadItem.Banner && level == BannerLevel.Info
 
 /**
  * The id of the segment of [turnId] that the delta numbered [openingSeq] opens (#1350): the bare turn id
@@ -375,11 +379,11 @@ internal fun List<ThreadItem>.withSettledTurns(turnIds: Set<String>): List<Threa
 
 /**
  * This thread with every streaming message row but the last one settled (#1350): a segment stops
- * streaming the moment any row follows it, whichever lane or merge put that row there, so only the
+ * streaming the moment a visible row follows it, whichever lane or merge put that row there, so only the
  * thread's newest segment can draw as in progress. Returns this very list when nothing changes.
  */
 internal fun List<ThreadItem>.withOnlyLastRowStreaming(): List<ThreadItem> {
-    val lastVisible = indexOfLast { it !is ThreadItem.BackgroundTaskLifecycle }
+    val lastVisible = indexOfLast { !it.isAssistantContinuityMetadata() }
     val stale = withIndex().any { (index, row) -> index != lastVisible && row is ThreadItem.MessageItem && row.message.isStreaming }
     if (!stale) return this
     return mapIndexed { index, row ->
@@ -1389,7 +1393,7 @@ private fun List<ThreadItem>.withJoinedSegments(): List<ThreadItem> {
         deltas = mutableListOf()
     }
     for (row in this) {
-        if (row is ThreadItem.BackgroundTaskLifecycle) {
+        if (row.isAssistantContinuityMetadata()) {
             out += row
             continue
         }

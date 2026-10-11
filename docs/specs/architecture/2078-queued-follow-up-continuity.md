@@ -83,3 +83,19 @@ Run lint, assembleDebug, Android-test compilation, Spotless and the final merged
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-11
+
+## Revisions
+
+### 2026-10-11 — captured banner boundary and queue-aware merge
+
+The isolated reproduction showed `Responding`, a correctly parked own echo, and the held raw segment still streaming before its third delta. A banner after the echo was the actual last-row anchor. The phase-only hypothesis above was disproved for this reproduction; the experimental raw-segment fallback was removed. `settleQueuedEchoes` and `RemoteConversationRepository` keep their existing phase and idle-first contracts.
+
+The revised design treats retained `BannerLevel.Info` rows, which compose to nothing, like invisible background lifecycle evidence in `withAssistantDelta`, `withOnlyLastRowStreaming` and `withJoinedSegments`. Visible notices and warnings remain separators. No banner text, id or timing heuristic participates in this rule.
+
+`pendingEchoOnEitherSideOfHistoryMerge_isNotASeparator` also failed with an extra suffix segment when a stored send echo overlapped held pending placement. Inside the existing merge CAS, exclude parked/awaiting-push own echo copies from both inputs, join the remaining rows, then restore the exact held user objects after them. A page's first modern delivery exempts its echo from this exclusion, preserving authoritative delivery placement. Idle echoes and settled deliveries stay ordinary boundaries. Incoming ordinary rows colliding with a retained pending echo's identity are excluded regardless of the incoming role, preserving the held ownership and renderer key. No reducer parameter or consumer API changes are needed.
+
+This replaces the original concurrency proposal: queue intent and held pending rows are read from the same merge CAS generation; page decoding remains pure and outside it. No new job, dispatcher or suspension. The security review remains PASS: classification uses a closed banner enum and conversation-local pending ids, never daemon text; temporary diagnostic instrumentation is removed.
+
+Coverage updates resolve both Open Questions. `queueState_heldReplyWithInfoBanner_keepsItsAnchor` covers banner-before/after-queue arrival, duplicate snapshots/deltas and turn end. `infoBanners_preserveLiveHistoryAndReconnectSegments` covers live streaming, page reduction, both history/cache merge directions and deduplicated invisible evidence. `pendingEchoOnEitherSideOfHistoryMerge_isNotASeparator` covers queued and suppressed copies on both sides and repeated merge, then a live suffix. `queuedEchoHistoryOverlap_preservesHeldReply` covers empty, one-row, prefix, middle and suffix pages. Existing modern delivery, drop, conversation isolation, cache overlap and no-phase idle tests remain controls; no additional cache wrapper state is needed. The no-open-phase row in the original transition table is superseded by the responding/banner row above.
+
+Revised size: approximately 450 written lines including plan, tests and device checkpoints; two production files, no new exported types or consumer migration, three acceptance criteria and no new reject branches. The design remains one legacy continuity deliverable.

@@ -4758,6 +4758,49 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf("peer-1", queued), messageIds(thread.last()))
         }
 
+    @Test
+    fun queueState_heldReplyWithInfoBanner_keepsItsAnchor() =
+        runTest {
+            for (bannerBeforeQueue in listOf(false, true)) {
+                val pump = FakeSessionPump()
+                val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+                val thread = collectMessages(repo, "c-1")
+                runCurrent()
+                pump.push(turnStateEnvelope("c-1", "responding"))
+                runCurrent()
+                pump.push(assistantDeltaEnvelope("c-1", "held", 0, "Hello, "))
+                runCurrent()
+                pump.push(assistantDeltaEnvelope("c-1", "held", 1, "streamed "))
+                runCurrent()
+                val held = (thread.last().single() as ThreadItem.MessageItem).message
+                assertEquals("Hello, streamed ", held.content)
+                assertTrue(held.isStreaming)
+                val queued = sendAndAck(repo, pump, "c-1", "follow-up")
+                val snapshot = queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "follow-up", TS, messageId = queued)))
+                if (bannerBeforeQueue) pump.push(bannerEnvelope("c-1", "info"))
+                pump.push(snapshot)
+                if (!bannerBeforeQueue) pump.push(bannerEnvelope("c-1", "info"))
+                runCurrent()
+                assertEquals(listOf(held.id, queued), thread.last().filterIsInstance<ThreadItem.MessageItem>().map { it.message.id })
+                assertTrue((thread.last().first() as ThreadItem.MessageItem).message.isStreaming)
+                pump.push(snapshot)
+                runCurrent()
+                pump.push(assistantDeltaEnvelope("c-1", "held", 2, "world"))
+                runCurrent()
+                assertEquals(listOf(held.id, queued), thread.last().filterIsInstance<ThreadItem.MessageItem>().map { it.message.id })
+                val extended = (thread.last().first() as ThreadItem.MessageItem).message
+                assertEquals("Hello, streamed world", extended.content)
+                assertTrue(extended.isStreaming)
+                pump.push(assistantDeltaEnvelope("c-1", "held", 2, "world"))
+                runCurrent()
+                assertEquals(extended, (thread.last().first() as ThreadItem.MessageItem).message)
+                pump.push(turnEndEnvelope("c-1", "held", "end_turn"))
+                runCurrent()
+                assertEquals(listOf(held.id, queued), thread.last().filterIsInstance<ThreadItem.MessageItem>().map { it.message.id })
+                assertFalse((thread.last().first() as ThreadItem.MessageItem).message.isStreaming)
+            }
+        }
+
     // #1636: with no turn_state open, the queued echo waits behind nothing, so it keeps its tap-time slot above
     // the reply that streams before the delivery confirmation, and the reply stays one segment.
     @Test

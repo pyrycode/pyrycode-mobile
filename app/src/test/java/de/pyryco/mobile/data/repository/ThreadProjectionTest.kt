@@ -13,11 +13,209 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ThreadProjectionTest {
+    @Test
+    fun busyQueuedEchoes_doNotEraseRealSeparators() =
+        runTest {
+            for (separator in listOf("tool", "user", "session", "notice", "warning")) {
+                val projection = ThreadProjection()
+                val queue = QueueProjection()
+                val thread = collect(projection, "c1")
+                projection.applyAssistantDelta(delta("held", 0, "A"))
+                runCurrent()
+                sendOwn(projection, "mine", "waiting")
+                projection.onQueueState(queue, 42L to "mine", turnOpen = true)
+                runCurrent()
+                assertTrue((thread.last().first() as ThreadItem.MessageItem).message.isStreaming)
+                when (separator) {
+                    "tool" -> projection.applyToolUse(toolUse("held", "tool"))
+                    "user" -> projection.appendLiveMessage("c1", userMessage("delivered", "actual delivery", PUSHED_AT))
+                    "notice", "warning" ->
+                        projection.applyBanner(
+                            Envelope(
+                                type = "banner",
+                                id = 1L,
+                                ts = PUSHED_AT.toString(),
+                                payload =
+                                    MobileJson.parseToJsonElement(
+                                        """{"conversation_id":"c1","level":"$separator","text":"visible","truncated":false,"stops_turn":false}""",
+                                    ),
+                            ),
+                        )
+                    else ->
+                        projection.appendSessionBoundary(
+                            "c1",
+                            ThreadItem.SessionBoundary("old", "new", BoundaryReason.Clear, PUSHED_AT),
+                        )
+                }
+                runCurrent()
+                assertFalse((thread.last().first() as ThreadItem.MessageItem).message.isStreaming)
+                projection.applyAssistantDelta(delta("held", 1, "B"))
+                runCurrent()
+                val messages = thread.last().filterIsInstance<ThreadItem.MessageItem>().map { it.message }
+                assertEquals(listOf("held", "held#1"), messages.filter { it.role == Role.Assistant }.map { it.id })
+                assertEquals(listOf("A", "B"), messages.filter { it.role == Role.Assistant }.map { it.content })
+                assertEquals("mine", messages.last().id)
+            }
+        }
+
+    @Test
+    fun busyQueuedEchoes_keepFifoAndStickyIdlePlacement() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            sendOwn(projection, "idle", "idle first")
+            projection.onQueueState(queue, 40L to "idle", turnOpen = false)
+            runCurrent()
+            projection.applyAssistantDelta(delta("held", 0, "A"))
+            runCurrent()
+            sendOwn(projection, "second", "second")
+            sendOwn(projection, "first", "first")
+            projection.onQueueState(queue, 40L to "idle", 41L to "first", 42L to "second", turnOpen = true)
+            runCurrent()
+            assertEquals(listOf("idle", "held", "first", "second"), ids(thread.last()))
+            assertTrue((thread.last()[1] as ThreadItem.MessageItem).message.isStreaming)
+            projection.onQueueState(queue, 40L to "idle", 41L to "first", 42L to "second", turnOpen = true)
+            runCurrent()
+            projection.applyAssistantDelta(delta("held", 1, "B"))
+            runCurrent()
+            assertEquals(listOf("idle", "held", "first", "second"), ids(thread.last()))
+            assertEquals("AB", (thread.last()[1] as ThreadItem.MessageItem).message.content)
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "held", "end_turn"))
+            runCurrent()
+            projection.appendLiveMessage("c1", userMessage("first", "first", PUSHED_AT), queuedMessageId = 41L)
+            runCurrent()
+            projection.applyAssistantDelta(delta("answer", 0, "C"))
+            runCurrent()
+            projection.onQueueState(queue, 40L to "idle", 41L to "first", 42L to "second", turnOpen = true)
+            runCurrent()
+            assertEquals(listOf("idle", "held", "first", "answer", "second"), ids(thread.last()))
+            projection.applyAssistantDelta(delta("answer", 1, "D"))
+            runCurrent()
+            assertEquals(listOf("idle", "held", "first", "answer", "second"), ids(thread.last()))
+            assertEquals("CD", (thread.last()[3] as ThreadItem.MessageItem).message.content)
+        }
+
+    @Test
+    fun pendingEchoOnEitherSideOfHistoryMerge_isNotASeparator() =
+        runTest {
+            for (suppressed in listOf(false, true)) {
+                val projection = ThreadProjection()
+                val queue = QueueProjection()
+                val thread = collect(projection, "c1")
+                projection.applyAssistantDelta(delta("held", 0, "A"))
+                runCurrent()
+                sendOwn(projection, "mine", "waiting")
+                projection.onQueueState(queue, 42L to "mine")
+                runCurrent()
+                if (suppressed) {
+                    projection.onQueueState(queue)
+                    runCurrent()
+                }
+                val page =
+                    HistoryPage(
+                        listOf(
+                            HistoryEntry(
+                                3L,
+                                "assistant_delta",
+                                MobileJson.parseToJsonElement(
+                                    """{"conversation_id":"c1","turn_id":"held","seq":1,"text":"B"}""",
+                                ),
+                                PUSHED_AT,
+                            ),
+                            HistoryEntry(
+                                2L,
+                                "send_message",
+                                MobileJson.parseToJsonElement(
+                                    """{"conversation_id":"c1","message_id":"mine","text":"waiting"}""",
+                                ),
+                                PUSHED_AT,
+                            ),
+                            HistoryEntry(
+                                1L,
+                                "assistant_delta",
+                                MobileJson.parseToJsonElement(
+                                    """{"conversation_id":"c1","turn_id":"held","seq":0,"text":"A"}""",
+                                ),
+                                PUSHED_AT,
+                            ),
+                        ),
+                        "",
+                        true,
+                    )
+                repeat(2) {
+                    projection.mergeHistoryPage("c1", page, true)
+                    runCurrent()
+                    val rows = thread.last().filterIsInstance<ThreadItem.MessageItem>().map { it.message }
+                    assertEquals(if (suppressed) listOf("held") else listOf("held", "mine"), rows.map { it.id })
+                    assertEquals("AB", rows.first().content)
+                    assertTrue(rows.first().isStreaming)
+                }
+                projection.applyAssistantDelta(delta("held", 2, "C"))
+                runCurrent()
+                assertEquals("ABC", (thread.last().first() as ThreadItem.MessageItem).message.content)
+            }
+        }
+
+    @Test
+    fun queuedEchoHistoryOverlap_preservesHeldReply() =
+        runTest {
+            for (suppressed in listOf(false, true)) {
+                for (slice in listOf(emptyList(), listOf(0), listOf(1), listOf(2), listOf(0, 1, 2), listOf(1, 2))) {
+                    val projection = ThreadProjection()
+                    val queue = QueueProjection()
+                    val thread = collect(projection, "c1")
+                    projection.applyAssistantDelta(delta("held", 0, "A"))
+                    runCurrent()
+                    projection.applyAssistantDelta(delta("held", 1, "B"))
+                    runCurrent()
+                    val held = (thread.last().single() as ThreadItem.MessageItem).message
+                    val own = sendOwn(projection, "mine", "waiting")
+                    projection.onQueueState(queue, 42L to "mine", turnOpen = true)
+                    runCurrent()
+                    if (suppressed) {
+                        projection.onQueueState(queue, turnOpen = true)
+                        runCurrent()
+                    }
+                    val page =
+                        HistoryPage(
+                            slice.reversed().map { seq ->
+                                HistoryEntry(
+                                    seq + 1L,
+                                    "assistant_delta",
+                                    MobileJson.parseToJsonElement(
+                                        """{"conversation_id":"c1","turn_id":"held","seq":$seq,"text":"${"ABC"[seq]}"}""",
+                                    ),
+                                    PUSHED_AT,
+                                )
+                            },
+                            cursor = "",
+                            atStart = true,
+                        )
+                    repeat(2) {
+                        projection.mergeHistoryPage("c1", page, interactive = true)
+                        runCurrent()
+                        val rows = thread.last().filterIsInstance<ThreadItem.MessageItem>()
+                        assertEquals(if (suppressed) listOf(held.id) else listOf(held.id, own.id), rows.map { it.message.id })
+                        assertEquals(if (2 in slice) "ABC" else "AB", rows.first().message.content)
+                        assertTrue(rows.first().message.isStreaming)
+                    }
+                    projection.applyAssistantDelta(delta("held", 2, "C"))
+                    runCurrent()
+                    assertEquals("ABC", (thread.last().first() as ThreadItem.MessageItem).message.content)
+                    projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "held", "end_turn"))
+                    runCurrent()
+                    assertFalse((thread.last().first() as ThreadItem.MessageItem).message.isStreaming)
+                }
+            }
+        }
+
     @Test
     fun modernDelivery_delayedDrainsAcrossBothReplies_preserveFifoAndSegments() =
         runTest { assertModernDeliverySequence(removeBeforePush = false) }

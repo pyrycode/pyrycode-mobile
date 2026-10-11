@@ -1005,16 +1005,28 @@ internal class ThreadProjection(
                             it.message.ordinaryId in firstDeliveries &&
                             it.message.ordinaryId in mintedMessageIds.value[conversationId].orEmpty()
                     }.associateBy { it.message.ordinaryId }
-            val receiving = existing.filterNot { it is ThreadItem.MessageItem && it.message.ordinaryId in provisional }
+            // A pending echo is placement intent, not a delivered user boundary, on either merge side.
+            val passOver = (echoes.parked + echoes.awaitingPush) - firstDeliveries
+
+            fun ThreadItem.isPendingEcho(): Boolean =
+                this is ThreadItem.MessageItem && message.role == Role.User && message.ordinaryId in passOver
+            val heldPending = existing.filter { it.isPendingEcho() }
+            val receiving =
+                existing.filterNot {
+                    it.isPendingEcho() || it is ThreadItem.MessageItem && it.message.ordinaryId in provisional
+                }
             val placementTimestamps =
                 reduced.rows
                     .filterIsInstance<ThreadItem.MessageItem>()
                     .filter { it.message.ordinaryId in provisional }
                     .associate { it.mergeIdentity() to it.message.timestamp }
             val incoming =
-                reduced.rows.map { row ->
-                    if (row is ThreadItem.MessageItem) provisional[row.message.ordinaryId] ?: row else row
-                }
+                reduced.rows
+                    .filterNot {
+                        it is ThreadItem.MessageItem && it.message.ordinaryId in passOver
+                    }.map { row ->
+                        if (row is ThreadItem.MessageItem) provisional[row.message.ordinaryId] ?: row else row
+                    }
             val merged =
                 receiving.mergeUnsignedHistoryRows(
                     incoming,
@@ -1022,7 +1034,7 @@ internal class ThreadProjection(
                     firstEvidence,
                     rendererOwners = existing,
                     placementTimestamps = placementTimestamps,
-                )
+                ) + heldPending
             val settledEchoes =
                 deliveries.fold(echoes) { echoes, delivery ->
                     val entryId = delivery.queuedMsgId ?: return@fold echoes
