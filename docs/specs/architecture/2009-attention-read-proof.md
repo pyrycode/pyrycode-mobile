@@ -86,7 +86,7 @@ The original daemon real-store export at `d49b8392e00b8de4273998393413594d57f300
 
 The original B assertion does not retain the daemon revision, phone read/latest or attention projection, and its stderr is not on this host. This comparison diagnoses A's receipt condition, not the historical B cause. Keep B's existing live assertions and distinguish confirmation, phone receipt and projection on failure. A-only runs cannot declare B cleared. The dispatcher must run the full live gate through both stages against a daemon containing #3167, record actual counts and retain the named result.
 
-Security re-review: PASS. Fixture contents are synthetic and identifiers/timestamps normalized; raw payloads and credentials are never retained. The strict receipt and presentation barriers, cancellation and existing timeouts remain unchanged. Total written work remains below 700 lines, with no public types, migrations or new production branches.
+Security re-review: PASS. Fixture contents are synthetic and identifiers/timestamps normalized; raw payloads and credentials are never retained. The strict receipt and presentation barriers, cancellation and existing timeouts remain unchanged. Total written work remains below 800 lines, with no public types, migrations or new production branches.
 
 ### 2026-10-11 — Focused live causal reproduction and repair check
 
@@ -97,3 +97,9 @@ Repaired `f570f2f871ca50ab1f1739cc0f142f375682d05e`: 1 executed, 1 passed, 0 fai
 The closed owning daemon issue #3167 is now linked as a cross-repository blocker and was read back. No new daemon issue or Mobile production repair is needed for the evidenced A cause. B's historical cause remains unestablished because its retained daemon/phone projection facts are absent; the focused pass demonstrates the current B contract, not a retrospective cause. Its independent confirmation/receipt/projection assertions remain required in the fresh dispatcher full live gate. Retained counted artifacts and invocation provenance live under `app/src/androidTest/assets/read-2009/`. Full live counts/result and the requested documentation section remain explicitly pending for their owning stages.
 
 Exact-repair attribution: the first parent of daemon merge `a3ca005f05e95650d10b7e07cb5d190252acbd1a` is the failing `d49b8392e00b8de4273998393413594d57f30047`. Running the same real-store exporter at that exact merge passed (1 executed/1 passed), restored all eight receipt IDs and checkpoint 8, and matched the retained repaired fixture after the documented synthetic normalization. Thus later daemon commits are unnecessary for the evidenced A repair.
+
+### 2026-10-11 — Final main merge verification
+
+Merged main `a6840a356e8d5f02e62f888e5d1961b273d93475` as Mobile `f56b32d3398d13e48a34c6d693cf4b8e11930724`. Its authoritative thread presenter changes the foreground read path, so the named live method was rerun against the same repaired daemon archive `f570f2f871ca50ab1f1739cc0f142f375682d05e`: 1 executed, 1 passed, 0 failed/errors/skipped. Fresh retained stage booleans confirm both A's phone acknowledgment and B's confirmed read received by the phone, with both rows Idle and phone on list. The archive-built binary lacks embedded VCS metadata; its archive revision and actual binary/source hashes are recorded in invocations.json. This is focused post-merge evidence; full dispatcher live acceptance and documentation remain pending.
+
+The same seven focused unit classes were rerun after this merge: 80 executed, 80 passed, 0 failures/errors/skips. No implementation or assertion changed after the paired live comparison, apart from formatting; subsequent edits retain counted evidence and record provenance.

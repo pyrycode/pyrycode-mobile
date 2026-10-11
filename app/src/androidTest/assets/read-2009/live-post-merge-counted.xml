@@ -1,0 +1,5 @@
+<testsuites tests="1" failures="0" errors="0" skipped="0" time="19.837" timestamp="2026-10-11T10:44:25" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" tests="1" failures="0" errors="0" skipped="0" time="19.56" timestamp="2026-10-11T10:44:25" hostname="localhost">
+    <testcase name="interactiveTurn_attentionDot_followsARealTurn" classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" time="19.56" />
+  </testsuite>
+</testsuites>
