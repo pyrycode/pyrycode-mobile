@@ -41,3 +41,18 @@ No XML properties, system output, credentials, pairing payloads, clipboard conte
 Full scripted-all/live acceptance remains pending with the dispatcher, separately from these builder rework results.
 Both full gates must execute/pass their named session-error recovery method and retain counts, XML/logcat and safe per-arm evidence.
 Preserve needs-real-claude and PR Live tests all. Documentation handoff remains pending; #2048 remains open.
+
+Focused scripted command: GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.project.kotlin.daemon.jvmargs=-Xmx4096m" ANDROID_GATE_WAIT_SECONDS=2700 timeout 3000 python3 scripts/android-test-gate.py scripted session-error
+Gate exit 0: 1 executed/passed, 0 failures/errors/skips. Named pass: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog
+Harness-reported mobile revision: f045e4f4c096f3ad359f9a66326235c2c5b9444b; diagnostic/scenario sources are unchanged from c91e0df37.
+Daemon revision: 63aabec70dad3948c916332a139eb22533b8f4b8; scripted fakeclaude, zero real Claude turns.
+Device wait: 200 seconds. Original XML/logcat: build/dispatcher-tests/scripted-3u5gn_ol/
+Copied XML/logcat: /tmp/builder-1977/rework-20261011/scripted-3u5gn_ol/
+Scripted dispatcher.xml sha256=4ea1de1dbdfdcbbf88b44fd3df944bce8523b3bbb8bdab46ea8dbbfff3f86595
+Per-arm private control/input evidence: build/session-error-evidence/pyry-e2e.jGMzWX/
+Both completed arms retain daemon/Runner/session identities; retained held/fresh inputs 1/0, dropped inputs 0/1.
+All existing queue/delivery identity, error/status, teardown and preceding-host restoration assertions passed.
+38 safe phone phase records cover both arms; each begins fixture_start with readiness=false and finishes list_return.
+The committed arm summary contains booleans, counts, static events and a daemon revision; no identities or frame text are copied.
+Controller stdout is unavailable after successful harness cleanup; its publication boundary passed all 11 controlled unit checks.
+This focused run does not replace pending full dispatcher scripted-all/live acceptance.
