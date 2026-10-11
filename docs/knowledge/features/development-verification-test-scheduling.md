@@ -256,7 +256,7 @@ Main after reset, reporting `UncaughtExceptionsBeforeTest` at the next registry
 test. Keep host/content/queue/action/reconnect assertions intact while fixing
 scheduling and teardown. See the
 [review and counted regression evidence](https://github.com/pyrycode/pyrycode-mobile/pull/2024#issuecomment-6091171021)
-and [saved-thread phase evidence](thread-screen-testing.md#allocation-margin-and-retained-evidence-2018).
+and [saved-thread phase evidence](thread-screen-testing-saved-first-draw.md#allocation-margin-and-retained-evidence-2018).
 
 The #726 proof holds only when it runs on the thread that later calls `resetMain()` — #892 found a
 case where it does not. With an `UnconfinedTestDispatcher` installed as `Main`, a resumption resumes
@@ -288,6 +288,24 @@ the changed function into a scratch file, add strict shell options and test it w
 stubbed helpers. Exercise preflight guards with nonexistent `PYRY_BIN` and relay
 paths so the script cannot start a real process. Keep the scratch file outside the
 worktree.
+
+The shared daemon-controller launch must also work under macOS Bash 3.2 with
+`set -euo pipefail` when optional flags are absent. Expanding an empty optional
+array under nounset failed before instrumentation in ordinary scripted and both
+real-Claude modes, even though configured stream selections passed (#1985).
+`DAEMON_CONTROL_ARGS` is seeded with required controller options before optional
+fixed suffix/completion release paths are appended. Preserve quoted argument
+boundaries and the separation from the daemon command.
+
+`EmulatorControllerLaunchTest` runs the actual top-level launch block with
+`/bin/bash` and a stub controller for scripted ping, default real-Claude, live
+real-Claude, stream and reopen-stream. Its five cases check readiness, exact
+optional arguments, paths with spaces and retained live TLS flags without a daemon
+or credentials. The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2076#issuecomment-6107772890)
+records all five passing within `python3 -m unittest discover -s scripts`:
+**88 executed, 88 passed, 0 failed, 0 skipped**. These launch probes prove command
+construction; real-Claude operation remains a separate gate. The repaired full
+scripted gate passed **22/0/0**, including both ping methods, **2/0/0**.
 
 Shell teardown must preserve the original test result. A final optional check
 such as `[ -n "$ISO_HOME" ] && ...` can return failure when no isolated home exists,

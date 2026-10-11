@@ -29,8 +29,23 @@ sealed interface ThreadEvent {
         override fun toString(): String = "BackgroundTaskToggle(taskId=<redacted>)"
     }
 
+    data class AuthoritativeThreadPresented(
+        val presentation: AuthoritativeThreadPresentation,
+        val binding: Any = Any(),
+    ) : ThreadEvent {
+        override fun toString(): String = "AuthoritativeThreadPresented(<redacted>)"
+    }
+
+    data class AuthoritativeThreadRetired(
+        val binding: Any,
+    ) : ThreadEvent {
+        override fun toString(): String = "AuthoritativeThreadRetired(<redacted>)"
+    }
+
     data class BackgroundTaskStop(
         val taskId: String,
+        val authoritativeScope: String? = null,
+        val authoritativeItemId: String? = null,
     ) : ThreadEvent {
         override fun toString(): String = "BackgroundTaskStop(taskId=<redacted>)"
     }
@@ -167,6 +182,7 @@ data class ThreadUiState(
     val showRenameDialog: Boolean = false,
     val saveAsChannelDialog: SaveAsChannelDialogState? = null,
     val items: List<ThreadItem> = emptyList(),
+    val authoritativeThread: AuthoritativeThreadPresentation? = null,
     val readEvidence: de.pyryco.mobile.data.repository.ThreadReadEvidence? = null,
     val readUpTo: ULong? = null,
     val queuedMessages: List<QueuedMessage> = emptyList(),
