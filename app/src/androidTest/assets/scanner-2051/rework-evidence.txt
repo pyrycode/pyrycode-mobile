@@ -1,0 +1,79 @@
+#2051 scripted rework comparison, 2026-10-11
+Host: Juhanas-MacBook-Air.local; device: pixel2Api33Atd (managed API 33 ATD).
+These are fresh standalone focused runs, not full-suite or repair passes.
+Each normal gate acquired device coordination, forced fresh execution, disabled animations,
+and ran a single selected method against an isolated scripted daemon (zero Claude turns).
+Command for each stream run: python3 scripts/android-test-gate.py scripted stream
+Command for each reopen run: python3 scripts/android-test-gate.py scripted reopen-stream
+Gate and Gradle exits: 1 for each run; instrumentation completed the selected failing method.
+Counts per run: 1 recorded, 1 executed, 0 passed, 1 failed, 0 errors, 0 skipped.
+Failure: kotlinx.coroutines.TimeoutCancellationException: Timed out waiting for 90000 ms.
+This is a completed test timeout, distinct from the historical HP emulator SIGSEGV/loss.
+XML timestamps below are copied as reported (original XML omits a timezone).
+Event timestamps below are converted from explicit daemon offsets to UTC.
+
+branch/stream: revision 9b558e00a3c48a0b3f3bb54ff7cc716ad7e0a2e9
+  XML timestamp: 2026-10-11T10:14:21; testcase duration: 95.031 seconds.
+  Original gate artifacts: /Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2051/build/dispatcher-tests/scripted-3b_erd4i
+  Preserved raw XML/logcat: /tmp/builder-2051/rework-9b558e00a/branch-stream
+  Original daemon/relay logs: /private/var/folders/k0/gc07w9ws319b07n0plnw6y8r0000gn/T/pyry-e2e.88ONBa
+  Retained counted XML: rework-branch-stream-counted.xml
+  Static daemon event: 2026-10-11T10:12:47.669000Z send_message.enqueued
+  Static daemon event: 2026-10-11T10:12:50.918000Z stream_turn.delivery_hold
+  Static daemon event: 2026-10-11T10:12:50.918000Z send_message.enqueued
+  Host watcher reported: released second stream fragment.
+
+branch/reopen-stream: revision 9b558e00a3c48a0b3f3bb54ff7cc716ad7e0a2e9
+  XML timestamp: 2026-10-11T10:16:29; testcase duration: 95.248 seconds.
+  Original gate artifacts: /Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2051/build/dispatcher-tests/scripted-s2pr4sxf
+  Preserved raw XML/logcat: /tmp/builder-2051/rework-9b558e00a/branch-reopen-stream
+  Original daemon/relay logs: /private/var/folders/k0/gc07w9ws319b07n0plnw6y8r0000gn/T/pyry-e2e.71KyVP
+  Retained counted XML: rework-branch-reopen-stream-counted.xml
+  Static daemon event: 2026-10-11T10:14:55.310000Z send_message.enqueued
+  Static daemon event: 2026-10-11T10:14:58.895000Z stream_turn.delivery_hold
+  Static daemon event: 2026-10-11T10:14:58.895000Z send_message.enqueued
+  Host watcher reported: released second stream fragment; terminal third-enqueue release was not reported for reopen-stream.
+
+main/stream: revision 11ed225d27026e9e59abe634adc49c338dd41c51
+  XML timestamp: 2026-10-11T10:18:41; testcase duration: 96.222 seconds.
+  Original gate artifacts: /tmp/builder-2051/baseline-rework/build/dispatcher-tests/scripted-ljy_dtws
+  Preserved raw XML/logcat: /tmp/builder-2051/rework-9b558e00a/main-stream
+  Original daemon/relay logs: /private/var/folders/k0/gc07w9ws319b07n0plnw6y8r0000gn/T/pyry-e2e.kshGAo
+  Retained counted XML: rework-main-stream-counted.xml
+  Static daemon event: 2026-10-11T10:17:07.282000Z send_message.enqueued
+  Static daemon event: 2026-10-11T10:17:10.777000Z stream_turn.delivery_hold
+  Static daemon event: 2026-10-11T10:17:10.777000Z send_message.enqueued
+  Host watcher reported: released second stream fragment.
+
+main/reopen-stream: revision 11ed225d27026e9e59abe634adc49c338dd41c51
+  XML timestamp: 2026-10-11T10:21:07; testcase duration: 94.744 seconds.
+  Original gate artifacts: /tmp/builder-2051/baseline-rework/build/dispatcher-tests/scripted-6s2poibv
+  Preserved raw XML/logcat: /tmp/builder-2051/rework-9b558e00a/main-reopen-stream
+  Original daemon/relay logs: /private/var/folders/k0/gc07w9ws319b07n0plnw6y8r0000gn/T/pyry-e2e.XJrXnx
+  Retained counted XML: rework-main-reopen-stream-counted.xml
+  Static daemon event: 2026-10-11T10:19:33.269000Z send_message.enqueued
+  Static daemon event: 2026-10-11T10:19:36.841000Z stream_turn.delivery_hold
+  Static daemon event: 2026-10-11T10:19:36.841000Z send_message.enqueued
+  Host watcher reported: released second stream fragment; terminal third-enqueue release was not reported for reopen-stream.
+
+Daemon revision in all runs: a94775d2664b5a6c483e5d12aeb61f6a0bc5cb8e.
+Relay source revision: a7a05d1f123d42fa17ac23b5e4d10a8f741a4911.
+Source/configuration and daemon/relay/fakeclaude binary equality: independently SHA-256 checked.
+The branch differs from main only in scanner evidence assets and its plan; scenarios do not read those assets.
+Matching main failures establish inherited failures, not scanner evidence regressions.
+Both methods enqueue a follow-up during a held reply. #2078 owns the matching legacy queued-echo repair;
+#1985 / PR #2076 owns the separate direct-release fixture change. Exact timeout cause is not proved here.
+No projection, harness, assertion, timeout, retry, coverage or host configuration was changed.
+
+Current dispatcher UI result (attributed to the posted verifier verdict, not rerun or re-parsed here):
+https://github.com/pyrycode/pyrycode-mobile/pull/2079#issuecomment-6107929975 (2026-10-11T10:10:22Z).
+Revision 9b558e00a3c48a0b3f3bb54ff7cc716ad7e0a2e9; Juhanas-MacBook-Air.local; gate exit 0.
+ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui
+259 recorded, 258 executed/passed, 0 failures/errors, 1 existing rename skip.
+fullSizeDarkFrames, compactDarkFrames and compactEnlargedTextFrames each executed/passed.
+Original reported artifacts: verifier-2051/build/dispatcher-tests/ui-6rq8zlir/dispatcher.xml
+and 0-TEST-pixel2Api33Atd_0-_app-.xml beside it. That worktree is absent during this rework.
+Saved-history failure did not recur in that gate. Historical HP suites remain failed comparisons.
+
+Handoff: wait on the linked repair; after it lands, rerun both focused commands and the normal dispatcher gates.
+No fresh repair PASS or scripted-all PASS is claimed. Documentation-stage handoff remains pending.
