@@ -224,6 +224,20 @@ user ids, preserving the running segment; a real intervening tool or delivered m
 still start another segment. Parking starts at the first queue snapshot, so the existing
 pre-snapshot tap/delta window remains; it is not retroactively inferred from tap time.
 
+History reconciliation retains pending user objects in the receiving list, including hidden
+`awaitingPush` rows. Inside the same merge CAS, `parked + awaitingPush` ids pass through to
+`mergeUnsignedHistoryRows` and its segment join; their incoming ordinary copies are discarded
+regardless of incoming role. The join passes over only those owned user rows, preserving
+assistant text without turning idle echoes, delivered users, tools or session boundaries into
+transparent rows. Invisible Info banners also preserve the reply anchor and streaming state;
+visible Notice and Warning banners remain separators (#2078).
+
+Do not remove pending echoes and append them after reconciliation: that loses a reserved legacy
+slot and excludes hidden rows from renderer-key allocation. The complete result goes through
+`withUniqueMessageKeys`, reserving held canonical or aliased keys before newcomer allocation,
+including occupied fallback collisions. Revealing a suppressed echo must not create duplicate
+Compose keys or transfer its held key to an assistant. Ownership remains conversation-local.
+
 Rows, placement eligibility, entry consumption and suppression share one `ProjectionState`
 CAS generation. A removed unreserved busy echo can wait hidden in `awaitingPush`; the
 [cache reader](caching-conversation-repository.md#how-the-restore-merges-with-live-rows)
@@ -235,7 +249,9 @@ next turn, so placement follows the daemon's delivery rather than the tap.
 History can be the **first authoritative modern delivery**, before the live push or even the
 waiting turn's live end. For a first field-present stored user delivery, `mergeHistoryPage`
 removes only pending minted held user echoes from the receiving list, merges their history
-rows using daemon log order/delivery timestamps, then restores their exact held objects.
+rows using daemon log order/delivery timestamps with the exact held objects substituted
+for incoming copies. These first deliveries are excluded from the pending pass-over set,
+so they remain genuine reply boundaries and participate in complete-result key allocation.
 Tap timestamps must not choose these provisional rows' delivered positions. The same atomic
 merge consumes the exact entry and clears queued, suppressed and reserved eligibility.
 Established deliveries, idle echoes and foreign/non-user held rows retain their receiving
@@ -260,7 +276,11 @@ the reservation; explicit `sent_now` or local Send now intent retains push place
 Unreserved closed-turn removal can settle provisionally, with `placementPending` until the
 first push. This preserves the drain-first/push-first regression where deltas 0 and 1
 precede confirmation and delta 2 follows in one answering segment, plus idle and Send now
-behavior. A transport that always confirms before delta 0 hides this race.
+behavior. Repeated nonempty history merges before confirmation and after it must preserve
+the reserved slot, original echo metadata/key and answering reply identity/text/streaming.
+Passing over a pending echo during segment joining does not move it: unreserved queued rows
+still read in FIFO order, while a reserved row stays before its answering turn on confirmation.
+A transport that always confirms before delta 0, or a user-only overlap page, hides this race.
 
 The fallback does not promise to resolve legacy confirmations delayed across a whole answering
 turn or ambiguous consumption of distinct entries sharing a message id, as recorded in
