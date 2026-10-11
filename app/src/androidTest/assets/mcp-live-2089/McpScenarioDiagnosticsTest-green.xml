@@ -1,0 +1,10 @@
+<testsuite name="de.pyryco.mobile.e2e.McpScenarioDiagnosticsTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-11T20:34:36.166Z" hostname="Juhanas-MacBook-Air.local" time="0.16">
+  <properties />
+  <testcase name="repeatedStageDoesNotRetainPreviousFailureOrSnapshot" classname="de.pyryco.mobile.e2e.McpScenarioDiagnosticsTest" time="0.017" />
+  <testcase name="unavailableSnapshotCannotReplaceTheScenarioFailure" classname="de.pyryco.mobile.e2e.McpScenarioDiagnosticsTest" time="0.006" />
+  <testcase name="successReturnsTheValueWithoutSamplingFailureEvidence" classname="de.pyryco.mobile.e2e.McpScenarioDiagnosticsTest" time="0.009" />
+  <testcase name="everyOperationFailureNamesItsStageAndPreservesTheCause" classname="de.pyryco.mobile.e2e.McpScenarioDiagnosticsTest" time="0.002" />
+  <testcase name="coroutineTimeoutIsPreservedWithoutAnotherDeadlineOrRetry" classname="de.pyryco.mobile.e2e.McpScenarioDiagnosticsTest" time="0.124" />
+  <system-out />
+  <system-err />
+</testsuite>

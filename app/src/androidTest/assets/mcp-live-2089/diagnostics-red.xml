@@ -1,0 +1,20 @@
+<testsuite name="de.pyryco.mobile.e2e.McpScenarioDiagnosticsTest" tests="5" skipped="0" failures="5" errors="0" timestamp="2026-10-11T20:32:50.801Z" hostname="Juhanas-MacBook-Air.local" time="0.21">
+  <properties />
+  <testcase name="repeatedStageDoesNotRetainPreviousFailureOrSnapshot" classname="de.pyryco.mobile.e2e.McpScenarioDiagnosticsTest" time="0.012">
+    <failure message="java.lang.AssertionError: expected:&lt;1&gt; but was:&lt;0&gt;" type="java.lang.AssertionError" />
+  </testcase>
+  <testcase name="unavailableSnapshotCannotReplaceTheScenarioFailure" classname="de.pyryco.mobile.e2e.McpScenarioDiagnosticsTest" time="0.002">
+    <failure message="java.lang.AssertionError: expected same:&lt;java.lang.AssertionError: original assertion&gt; was not:&lt;null&gt;" type="java.lang.AssertionError" />
+  </testcase>
+  <testcase name="successReturnsTheValueWithoutSamplingFailureEvidence" classname="de.pyryco.mobile.e2e.McpScenarioDiagnosticsTest" time="0.025">
+    <failure message="java.lang.AssertionError: expected:&lt;[event=mcp_scenario stage=McpReport status=started, event=mcp_scenario stage=McpReport status=completed]&gt; but was:&lt;[]&gt;" type="java.lang.AssertionError" />
+  </testcase>
+  <testcase name="everyOperationFailureNamesItsStageAndPreservesTheCause" classname="de.pyryco.mobile.e2e.McpScenarioDiagnosticsTest" time="0.003">
+    <failure message="java.lang.AssertionError" type="java.lang.AssertionError" />
+  </testcase>
+  <testcase name="coroutineTimeoutIsPreservedWithoutAnotherDeadlineOrRetry" classname="de.pyryco.mobile.e2e.McpScenarioDiagnosticsTest" time="0.163">
+    <failure message="java.lang.AssertionError: expected same:&lt;kotlinx.coroutines.TimeoutCancellationException: Timed out after 137ms of _virtual_ (kotlinx.coroutines.test) time. To use the real time, wrap 'withTimeout' in 'withContext(Dispatchers.Default.limitedParallelism(1))'&gt; was not:&lt;kotlinx.coroutines.TimeoutCancellationException: Timed out after 137ms of _virtual_ (kotlinx.coroutines.test) time. To use the real time, wrap 'withTimeout' in 'withContext(Dispatchers.Default.limitedParallelism(1))'&gt;" type="java.lang.AssertionError" />
+  </testcase>
+  <system-out />
+  <system-err />
+</testsuite>

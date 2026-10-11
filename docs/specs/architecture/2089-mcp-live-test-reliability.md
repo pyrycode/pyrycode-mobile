@@ -39,3 +39,6 @@ Write shared JVM regressions for stage attribution, success behavior, lazy snaps
 - What caused the historical connection wait to remain unavailable? Lost phone/daemon evidence and passing short replays leave this unresolved.
 - Does the historical-prefix replay reproduce the connection loss, and which side terminates first? Correlate retained phone and daemon timestamps if it does.
 - Which test or product seam requires the repair? No behavior repair is selected until evidence answers this.
+
+## Revisions
+- 2026-10-11: Add an explicit sheet-anchor check within SheetOpening and a separate ShowBuiltIn checkpoint with a checked-state assertion. A successful menu tap alone cannot prove the sheet opened, and report arrival cannot prove the local filter changed. These diagnostic fences strengthen the existing contract without replacing either the real report or displayed built-in row assertions. All existing deadlines remain unchanged.

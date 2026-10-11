@@ -749,31 +749,70 @@ class InteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn() {
-        awaitChannelList()
-        awaitConnected()
-        createChat()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
-        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
-        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+        val serverId = twoHostArg(ARG_SERVER_ID)
 
-        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
+        fun connectionSnapshot(): String {
+            val registry = GlobalContext.getOrNull()?.getOrNull<RelayConnectionRegistry>()
+            val target = registry?.connectionFor(serverId)
+            val selected = registry?.selected?.value
+            val targetStatus = target?.coordinator?.connectionStatus?.value
+            val selectedStatus = selected?.coordinator?.connectionStatus?.value
+            return "targetPresent=${target != null} selectedTarget=${target != null && target === selected} " +
+                "targetRelay=${targetStatus?.relay?.javaClass?.simpleName ?: "absent"} " +
+                "targetDaemon=${targetStatus?.pyrycode?.javaClass?.simpleName ?: "absent"} " +
+                "targetRepository=${target?.coordinator?.currentRepository?.value != null} " +
+                "selectedRelay=${selectedStatus?.relay?.javaClass?.simpleName ?: "absent"} " +
+                "selectedDaemon=${selectedStatus?.pyrycode?.javaClass?.simpleName ?: "absent"}"
         }
-        composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).onFirst().performClick()
+
+        fun <T> step(
+            stage: McpScenarioStage,
+            block: () -> T,
+        ): T = mcpScenarioStep(stage, ::connectionSnapshot, { Log.i("McpScenario", it) }, block)
+
+        step(McpScenarioStage.ListArrival) { awaitChannelList() }
+        step(McpScenarioStage.Connection) { awaitConnected() }
+        step(McpScenarioStage.ChatSetup) {
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        step(McpScenarioStage.PingDelivery) {
+            composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+        }
+        step(McpScenarioStage.SheetOpening) {
+            composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).onFirst().performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithTag(CHANNEL_INFO_AGENT_VERSION_TAG).fetchSemanticsNodes().isNotEmpty()
+            }
+        }
 
         // The Show built-in row appears only once a report has arrived for this conversation.
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithContentDescription(MCP_SHOW_BUILT_IN).fetchSemanticsNodes().isNotEmpty()
+        step(McpScenarioStage.McpReport) {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithContentDescription(MCP_SHOW_BUILT_IN).fetchSemanticsNodes().isNotEmpty()
+            }
         }
-        composeTestRule.onNodeWithContentDescription(MCP_SHOW_BUILT_IN).performScrollTo().performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(MCP_BUILT_IN_APPROVE).fetchSemanticsNodes().isNotEmpty()
+        step(McpScenarioStage.ShowBuiltIn) {
+            composeTestRule
+                .onNodeWithContentDescription(MCP_SHOW_BUILT_IN)
+                .performScrollTo()
+                .performClick()
+                .assertIsOn()
         }
-        composeTestRule.onNodeWithText(MCP_BUILT_IN_APPROVE).performScrollTo().assertIsDisplayed()
+        step(McpScenarioStage.BuiltInRow) {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(MCP_BUILT_IN_APPROVE).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithText(MCP_BUILT_IN_APPROVE).performScrollTo().assertIsDisplayed()
+        }
     }
 
     /**
