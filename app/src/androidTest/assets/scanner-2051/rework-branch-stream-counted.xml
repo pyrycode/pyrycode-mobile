@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" tests="1" failures="1" errors="0" skipped="0" timestamp="2026-10-11T10:14:21" hostname="Juhanas-MacBook-Air.local">
+  <testcase classname="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" name="interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread" time="95.031">
+    <failure type="kotlinx.coroutines.TimeoutCancellationException" message="Timed out waiting for 90000 ms" />
+  </testcase>
+</testsuite>
