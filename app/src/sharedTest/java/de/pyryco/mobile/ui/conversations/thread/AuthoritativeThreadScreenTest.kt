@@ -344,6 +344,101 @@ class AuthoritativeThreadScreenTest {
         assertEquals(listOf("conversation" to "recorded-task"), stops)
     }
 
+    private fun taskActionOwner(stops: MutableList<Pair<String, String>>) =
+        ThreadViewModel(
+            androidx.lifecycle.SavedStateHandle(mapOf("serverId" to "host", "conversationId" to "conversation")),
+            de.pyryco.mobile.data.repository
+                .FakeConversationRepository(),
+            de.pyryco.mobile.data.repository
+                .FakeConnectionStateSource(),
+            ComposerDraftStore(),
+            backgroundTaskStopSupported = kotlinx.coroutines.flow.flowOf(true),
+            stopBackgroundTask = { conversation, task ->
+                stops += conversation to task
+                Result.success(Unit)
+            },
+        )
+
+    private fun mountActionPresentation(
+        presentation: () -> AuthoritativeThreadPresentation?,
+        receiver: () -> ((ThreadEvent) -> Unit),
+    ) {
+        compose.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                ThreadScreen(
+                    state =
+                        ThreadUiState(
+                            "conversation",
+                            "Channel",
+                            authoritativeThread = presentation(),
+                            backgroundTaskStopSupported = true,
+                        ),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                    onOverflowEvent = receiver(),
+                )
+            }
+        }
+    }
+
+    @Test fun retainedPresentationRebindsRecordedStopToNewReceiverAndPreservesPendingAttempts() {
+        val presentation =
+            projectAuthoritativeThread("host", "conversation", authoritativeSnapshot(authoritativeAgent(1, task = "recorded-task")))
+        val stopsA = mutableListOf<Pair<String, String>>()
+        val stopsB = mutableListOf<Pair<String, String>>()
+        val ownerA = taskActionOwner(stopsA)
+        val ownerB = taskActionOwner(stopsB)
+        var receiver by mutableStateOf<(ThreadEvent) -> Unit>(ownerA::onOverflowEvent)
+        mountActionPresentation({ presentation }, { receiver })
+        compose.runOnIdle { receiver = ownerB::onOverflowEvent }
+        compose.onNodeWithText("1 task running").performClick()
+        compose.onNode(hasText("agent-1") and hasText("Running") and hasClickAction()).performClick()
+        compose.onNodeWithText("Stop task").performClick()
+        compose.waitForIdle()
+        assertEquals(listOf("conversation" to "recorded-task"), stopsB)
+        assertTrue(stopsA.isEmpty())
+
+        // A fresh callback to the same owner republishes facts without retiring its pending send.
+        compose.runOnIdle { receiver = { ownerB.onOverflowEvent(it) } }
+        compose.onNodeWithText("Stop task").performClick()
+        compose.waitForIdle()
+        assertEquals(listOf("conversation" to "recorded-task"), stopsB)
+        assertTrue(stopsA.isEmpty())
+    }
+
+    @Test fun removingAuthoritativeRouteClearsFactsOnReboundReceiver() {
+        val presentation =
+            projectAuthoritativeThread("host", "conversation", authoritativeSnapshot(authoritativeAgent(1, task = "recorded-task")))
+        var supplied by mutableStateOf<AuthoritativeThreadPresentation?>(presentation)
+        val stopsA = mutableListOf<Pair<String, String>>()
+        val stopsB = mutableListOf<Pair<String, String>>()
+        val ownerA = taskActionOwner(stopsA)
+        val ownerB = taskActionOwner(stopsB)
+        var receiver by mutableStateOf<(ThreadEvent) -> Unit>(ownerA::onOverflowEvent)
+        mountActionPresentation({ supplied }, { receiver })
+        compose.runOnIdle { receiver = ownerB::onOverflowEvent }
+        val stop =
+            ThreadEvent.BackgroundTaskStop(
+                "recorded-task",
+                presentation.scope,
+                presentation.tasks.tasks
+                    .single()
+                    .toolCallId,
+            )
+        compose.runOnIdle { supplied = null }
+        compose.runOnIdle { ownerB.onOverflowEvent(stop) }
+        compose.waitForIdle()
+        assertTrue(stopsB.isEmpty())
+
+        compose.runOnIdle { supplied = presentation }
+        compose.runOnIdle { ownerB.onOverflowEvent(stop) }
+        compose.waitForIdle()
+        assertEquals(listOf("conversation" to "recorded-task"), stopsB)
+        assertTrue(stopsA.isEmpty())
+    }
+
     @Test fun mainTurnReadStatusIsIndependentOfPinnedBackgroundPlacement() {
         mount(
             authoritativeAgent(1),

@@ -351,8 +351,8 @@ fun ThreadScreen(
     val taskCount = authoritative?.tasks?.liveCount ?: state.backgroundTaskCount
     val interactionScope = authoritative?.scope ?: state.conversationId
     var authoritativeExpandedTasks by rememberSaveable(interactionScope) { mutableStateOf(emptySet<String>()) }
-    var suppliedActionsPublished by remember { mutableStateOf(false) }
-    LaunchedEffect(authoritative) {
+    var suppliedActionsPublished by remember(onOverflowEvent) { mutableStateOf(false) }
+    LaunchedEffect(authoritative, onOverflowEvent) {
         if (authoritative != null || suppliedActionsPublished) {
             onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(authoritative))
             suppliedActionsPublished = authoritative != null

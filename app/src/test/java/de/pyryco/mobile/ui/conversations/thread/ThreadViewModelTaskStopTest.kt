@@ -331,6 +331,43 @@ class ThreadViewModelTaskStopTest {
             )
         }
 
+    @Test fun authoritativeRouteRemovalClearsPendingAndRejectsStaleStop() =
+        runTest {
+            val f = fixture()
+            val p =
+                projectAuthoritativeThread(
+                    "host-secret",
+                    "conversation-secret",
+                    authoritativeSnapshot(authoritativeAgent(1, task = "recorded")),
+                )
+            val stop =
+                ThreadEvent.BackgroundTaskStop(
+                    "recorded",
+                    p.scope,
+                    p.tasks.tasks
+                        .single()
+                        .toolCallId,
+                )
+            f.vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(p))
+            f.vm.onOverflowEvent(stop)
+            advanceUntilIdle()
+            assertEquals(setOf("recorded"), f.vm.state.value.pendingBackgroundTaskIds)
+
+            f.vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(null))
+            f.vm.onOverflowEvent(stop)
+            advanceUntilIdle()
+            assertTrue(
+                f.vm.state.value.pendingBackgroundTaskIds
+                    .isEmpty(),
+            )
+            assertEquals(listOf("conversation-secret" to "recorded"), f.calls)
+
+            f.vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(p))
+            f.vm.onOverflowEvent(stop)
+            advanceUntilIdle()
+            assertEquals(listOf("conversation-secret" to "recorded", "conversation-secret" to "recorded"), f.calls)
+        }
+
     @Test fun authoritativeStopRejectsForeignOwnersStaleIdentityAndLostCapability() =
         runTest {
             val f = fixture()
