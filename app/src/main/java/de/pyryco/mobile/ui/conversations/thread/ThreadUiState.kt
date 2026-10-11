@@ -21,6 +21,8 @@ sealed interface ThreadEvent {
         val checkpoint: ULong,
         val presentation: AuthoritativeThreadPresentation? = null,
         val binding: Any? = null,
+        val rowKey: String? = null,
+        val seenRowRevisions: Map<String, Long> = emptyMap(),
     ) : ThreadEvent {
         override fun toString(): String = "NewestContentPresented(<redacted>)"
     }

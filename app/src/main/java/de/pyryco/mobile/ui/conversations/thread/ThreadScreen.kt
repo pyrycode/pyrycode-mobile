@@ -819,12 +819,13 @@ fun ThreadScreen(
                         val readItem = readRow?.item
                         val readKey = newestRenderedRow?.listKey(rows.indexOf(newestRenderedRow))
                         val authoritativeCandidates =
-                            remember(authoritative?.scope, rows) {
+                            remember(authoritative, rows) {
                                 if (authoritative == null) {
                                     emptyList()
                                 } else {
                                     rows.filterIsInstance<ThreadRow.Delivered>().map { row ->
-                                        ThreadReadCandidate(row.listKey(0), row.item).apply {
+                                        val key = row.listKey(0)
+                                        ThreadReadCandidate(key, row.item, authoritative.shownRowRevisions[key]).apply {
                                             if (row.summaryText != null) revealed = true
                                         }
                                     }
@@ -832,7 +833,7 @@ fun ThreadScreen(
                             }
                         val readCandidate =
                             if (authoritative != null) {
-                                authoritativeCandidates.firstOrNull { it.row == readItem }
+                                authoritativeCandidates.firstOrNull { it.key == readKey }
                             } else {
                                 remember(readKey, readRow) {
                                     if (readItem != null && readKey != null) ThreadReadCandidate(readKey, readItem) else null
@@ -965,7 +966,7 @@ fun ThreadScreen(
                                 if (measuring) {
                                     null
                                 } else if (authoritative != null) {
-                                    authoritativeCandidates.firstOrNull { it.row == (row as? ThreadRow.Delivered)?.item }
+                                    authoritativeCandidates.firstOrNull { it.key == row.listKey(0) }
                                 } else {
                                     readCandidate?.takeIf { row == readRow }
                                 }

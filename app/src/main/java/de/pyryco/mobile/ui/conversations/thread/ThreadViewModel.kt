@@ -3495,7 +3495,10 @@ class ThreadViewModel(
                         presentation.host != serverId ||
                         presentation.conversation != conversationId ||
                         !state.value.hostAvailable ||
-                        presentation.readCheckpoint(event.row, state.value.readMarks, presentation.items.toSet()) != checkpoint
+                        presentation.rows.none { row ->
+                            row is ThreadRow.Delivered && row.listKey(0) == event.rowKey && row.item == event.row
+                        } ||
+                        presentation.readCheckpoint(event.rowKey, state.value.readMarks, event.seenRowRevisions) != checkpoint
                     ) {
                         RelayLog.d { "event=thread_read_sight code=retired_or_unqualified" }
                         return

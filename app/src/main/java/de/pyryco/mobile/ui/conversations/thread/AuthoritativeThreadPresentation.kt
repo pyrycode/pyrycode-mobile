@@ -35,23 +35,26 @@ class AuthoritativeThreadPresentation internal constructor(
     internal val backgroundBlocks: Map<String, AuthoritativeAgentPlacement>,
     internal val foregroundTool: ToolCall?,
     internal val certifiedCheckpoint: Long?,
-    internal val shownRowRevisions: Map<ThreadItem, Long>,
+    internal val shownRowRevisions: Map<String, Long>,
 ) {
     /** Revisions impose conservative sight requirements; only the certified boundary supplies coverage. */
     internal fun readCheckpoint(
-        newest: ThreadItem,
+        newestKey: String?,
         marks: ConversationReadMarks?,
-        seen: Set<ThreadItem>,
+        seen: Map<String, Long>,
     ): ULong? {
         if (marks?.threadSupported != true) return null
         val shown = marks.lastShownVersion ?: return null
         val confirmed = marks.readUpTo ?: return null
         val coverage = certifiedCheckpoint?.toULong() ?: return null
-        if (shown == 0uL || shown <= confirmed || coverage < shown || newest !in shownRowRevisions || newest !in seen) return null
+        if (shown == 0uL || shown <= confirmed || coverage < shown || newestKey == null) return null
+        val newestRevision = shownRowRevisions[newestKey] ?: return null
+        if (rows.lastOrNull()?.listKey(0) != newestKey || seen[newestKey] != newestRevision) return null
         if (shownRowRevisions.values.any { it.toULong() > coverage }) return null
-        val required = shownRowRevisions.filterValues { it.toULong() >= shown }.keys
         // The summary can be newer than every supplied shown row: complete sight is then unproven.
-        if (required.isEmpty() || !seen.containsAll(required)) return null
+        if (shownRowRevisions.values.none { it.toULong() >= shown }) return null
+        val required = shownRowRevisions.filterValues { it.toULong() > confirmed }
+        if (required.any { (key, revision) -> seen[key] != revision }) return null
         return minOf(coverage, shown)
     }
 
@@ -226,7 +229,7 @@ internal fun projectAuthoritativeThread(
             ((adapted[item.id]?.item as? ThreadItem.MessageItem)?.message?.toolCall)?.takeIf { it.status == ToolCallStatus.Running }
         },
         snapshot.checkpoint.takeIf { snapshot.epoch != null && !snapshot.repairNeeded && !snapshot.resetNeeded && it >= 0 },
-        visible.mapNotNull { item -> adapted[item.id]?.item?.let { it to item.rev } }.toMap(),
+        visible.mapNotNull { item -> adapted[item.id]?.let { it.listKey(0) to item.rev } }.toMap(),
     )
 }
 

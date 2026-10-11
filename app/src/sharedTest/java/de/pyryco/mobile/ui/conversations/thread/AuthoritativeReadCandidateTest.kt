@@ -29,7 +29,7 @@ class AuthoritativeReadCandidateTest {
     @Test fun delayedRevealAndRetiredGenerationCallbacksCannotQualifyNewContent() {
         val snapshot = authoritativeSnapshot(authoritativeItem(1, rev = 8)).copy(checkpoint = 8)
         val p = projectAuthoritativeThread("h", "c", snapshot)
-        val retired = ThreadReadCandidate("m", p.items.single())
+        val retired = ThreadReadCandidate(p.rows.single().listKey(0), p.items.single(), 8)
         val candidate = mutableStateOf(retired)
         val state =
             mutableStateOf(
@@ -43,7 +43,7 @@ class AuthoritativeReadCandidateTest {
         compose.setContent {
             CompositionLocalProvider(LocalLifecycleOwner provides owner) {
                 val list = rememberLazyListState()
-                LazyColumn(state = list) { item(key = "m") { Box(Modifier.size(100.dp)) } }
+                LazyColumn(state = list) { item(key = candidate.value.key) { Box(Modifier.size(100.dp)) } }
                 ThreadReadViewport(state.value, list, candidate.value, mutableStateOf(Rect(0f, 0f, 600f, 600f)), 10.dp, 10.dp, true) {
                     if (it is ThreadEvent.NewestContentPresented) events += it
                 }
@@ -72,7 +72,7 @@ class AuthoritativeReadCandidateTest {
                 "c",
                 snapshot.copy(generation = 1, checkpoint = 9, items = listOf(authoritativeItem(1, rev = 9))),
             )
-        val replacement = ThreadReadCandidate("m", next.items.single())
+        val replacement = ThreadReadCandidate(next.rows.single().listKey(0), next.items.single(), 9)
         compose.runOnIdle {
             candidate.value = replacement
             state.value =
