@@ -22,12 +22,15 @@ Original per-test phone logs and /tmp/pyry-e2e.XTdbYg daemon evidence were unava
 Fresh baseline on Mobile b44067bbd991b7d68e0418f88cc2a9e721671c61, daemon 8091a4730d42f43029eb0b955442dc300106030f, Claude 2.1.280:
 Focused named method: 1 executed/passed, 0 failed/errors/skipped; exit 0; build/dispatcher-tests/live-5k57b1h7/dispatcher.xml and adjacent named logcat.
 Stop/attachment/MCP predecessor replay: 3 executed/passed, 0 failed/errors/skipped; exit 0; build/dispatcher-tests/live-_53qvf2j/dispatcher.xml and adjacent logcats.
-Historical 62-method prefix: pending; build/dispatcher-tests/live-htk9e3x4/. MCP drive unchanged in the installed APK; new diagnostic helper was present but unused.
+Historical 62-method prefix: interrupted with SIGTERM, exit 143, after the unchanged ping method 38 made no completion for more than seven minutes. 37 completed: 36 passed, 1 unrelated background-agent failure, 0 skipped. MCP did not execute. Partial counts/instrumentation and phone logs: build/dispatcher-tests/live-htk9e3x4/. MCP drive unchanged in the installed APK; new diagnostic helper was present but unused. This is not a full gate result.
+Prefix daemon evidence: /var/folders/k0/gc07w9ws319b07n0plnw6y8r0000gn/T/pyry-e2e.ZH3XIK/daemon.log and daemon-b.log; copied with stalled ping evidence at /tmp/builder-2089/prefix-stalled/.
+Existing #2010 reused for the stalled ping observation: https://github.com/pyrycode/pyrycode-mobile/issues/2010#issuecomment-6113616215. No shared cause or dependency on its repair is established.
+Instrumented remaining 24-method suffix: pending; excludes the stalled predecessor for investigation only, not full-live acceptance.
 Prefix test APK SHA-256: 3c8b3f8f0a866e66bda2a2ce45fe837214e64016e74343dfb63967263e53ef93
 Prefix application APK SHA-256: 966e7493a9c9de6c13f8478f314006ff6f922d1fa8b763015a3f3c39c49876bb
 
 Diagnostic regression red: 5 executed, 5 failed, 0 errors/skipped against the passthrough helper; diagnostics-red.xml.
 Diagnostic regression green: 5 executed/passed, 0 failed/errors/skipped; McpScenarioDiagnosticsTest-green.xml.
 Existing MCP coverage green: ThreadScreenMcpServersTest 15/15; ThreadViewModelMcpServersTest 8/8; no failures/errors/skips; adjacent green XML files.
-Commands: testDebugUnitTest with those three class selectors; spotlessApply; lint assembleDebug compileDebugAndroidTestKotlin. All diagnostic green/build commands exited 0.
+Commands: testDebugUnitTest with those three class selectors; spotlessApply; lint assembleDebug compileDebugAndroidTestKotlin; spotlessCheck --rerun-tasks --console=plain. All diagnostic green/build/format commands exited 0.
 Fresh full post-verifier live acceptance belongs to the dispatcher and remains pending.
