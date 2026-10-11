@@ -180,7 +180,7 @@ class RemoteConversationRepository(
      * `conversations` snapshot, and the mutations and the `message` / `conversation_updated` /
      * `workspace_updated` / `session_transition` arms fold into it once they have decoded their frame.
      */
-    private val conversationListProjection = ConversationListProjection()
+    private val conversationListProjection = ConversationListProjection { CAPABILITY_THREAD in negotiatedCapabilities() }
 
     /**
      * The per-conversation status readings, one small projection per wire event: stall (#395), queue

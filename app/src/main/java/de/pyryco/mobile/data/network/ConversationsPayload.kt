@@ -58,6 +58,9 @@ data class ConversationSummaryDto(
     @SerialName("read_up_to")
     @Serializable(with = ReadMarkIdSerializer::class)
     val readUpTo: ULong? = null,
+    @SerialName("last_shown_version")
+    @Serializable(with = ShownVersionSerializer::class)
+    val lastShownVersion: ULong? = null,
     @SerialName("latest_entry_id")
     @Serializable(with = ReadMarkIdSerializer::class)
     val latestEntryId: ULong? = null,
