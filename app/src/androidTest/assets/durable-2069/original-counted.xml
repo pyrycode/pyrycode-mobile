@@ -1,0 +1,10 @@
+<testsuites>
+  <testsuite name="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" tests="2" failures="2" errors="0" skipped="0">
+    <testcase classname="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" name="interactiveTurn_seededChannel_durableGapCatchUp">
+      <failure message="original daemon omitted durable receipt; retained coverage/read barrier" />
+    </testcase>
+    <testcase classname="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" name="interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread">
+      <failure message="original daemon omitted durable receipt; retained coverage/read barrier" />
+    </testcase>
+  </testsuite>
+</testsuites>

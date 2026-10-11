@@ -247,7 +247,7 @@ internal class TappingConversationRepository(
         limit: Int,
     ): HistoryPage {
         DurableHistoryProbe.asked(conversationId, cursor.isEmpty())
-        return delegate.requestHistory(conversationId, cursor, limit).also { DurableHistoryProbe.received(conversationId) }
+        return delegate.requestHistory(conversationId, cursor, limit).also { DurableHistoryProbe.received(conversationId, it) }
     }
 }
 
