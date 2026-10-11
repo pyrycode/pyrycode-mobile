@@ -31,7 +31,10 @@ Suffix test APK SHA-256: c3f7f307fada6a8042cf185c5c2940521d36e797970cd87d4299129
 Suffix application APK SHA-256: 966e7493a9c9de6c13f8478f314006ff6f922d1fa8b763015a3f3c39c49876bb
 Suffix unrelated failures: backgroundAgent_replyStaysUnderAgent (#2013), backgroundTurnEnd_pushPostsOneAlertThatOpensThread (investigate alongside #2055), rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel (#2095). No MCP causal relationship established.
 Two preceding suffix attempts exited 75 after 300 seconds of device occupancy each, with zero executed. The third acquired the device after 65 seconds. These are acquisition outcomes, not test failures.
-Final instrumented 61-method historical-prefix investigation: pending. Only the earlier stalled ping drive is excluded; this is not configured full-live acceptance.
+Final instrumented 61-method historical-prefix investigation: 61 executed, 54 passed, 7 unrelated failures, 0 errors/skipped; exit 1. MCP executed and passed all eight stages. Only the earlier stalled ping drive is excluded within the historical prefix; this is not configured full-live acceptance. Report/phone logs: build/dispatcher-tests/live-rq_m20a1/. Daemon logs: /tmp/builder-2089/instrumented-prefix-evidence/ and /var/folders/k0/gc07w9ws319b07n0plnw6y8r0000gn/T/pyry-e2e.jpfifL/.
+Prefix gate printed Mobile bda8cc31e3decbe19975bd37df09cd1f1e7ffd93; MCP diagnostic code unchanged in later evidence commits. Prefix test APK SHA-256: 5e0eca642921af8d22a85d9c9520c8ab9a448d7c4bae37a054322e409e5757e8; application APK hash unchanged.
+Prefix unrelated failures: backgroundAgent_followsBottomUntilFinished (#2009); reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn (#2099); permissionHeldTool_statusAreaNamesRunningTool (#2100); sessionError_recoversDroppedAndRetainedBacklog (#1977); both background-push methods (#2055); rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel (#2095). New #2099/#2100 are verified in Backlog with priority:low; existing priorities unchanged.
+Named-case extract and stage records: instrumented-prefix-mcp.xml and instrumented-prefix-stages.txt. Original cause and behavior repair remain unresolved; another failing named execution with correlated stage/connection, phone and daemon evidence is required.
 Prefix test APK SHA-256: 3c8b3f8f0a866e66bda2a2ce45fe837214e64016e74343dfb63967263e53ef93
 Prefix application APK SHA-256: 966e7493a9c9de6c13f8478f314006ff6f922d1fa8b763015a3f3c39c49876bb
 
@@ -40,3 +43,6 @@ Diagnostic regression green: 5 executed/passed, 0 failed/errors/skipped; McpScen
 Existing MCP coverage green: ThreadScreenMcpServersTest 15/15; ThreadViewModelMcpServersTest 8/8; no failures/errors/skips; adjacent green XML files.
 Commands: testDebugUnitTest with those three class selectors; spotlessApply; lint assembleDebug compileDebugAndroidTestKotlin; spotlessCheck --rerun-tasks --console=plain. All diagnostic green/build/format commands exited 0.
 Fresh full post-verifier live acceptance belongs to the dispatcher and remains pending.
+
+Final prefix dispatcher XML SHA-256: 3fa8b77299cee0f1c340cb53f91e4e070603ae91992e702a9dbdd4c8c233d23a
+Final prefix named phone log SHA-256: d8d17b733a06a76837322a988ea33c37aa3f3156cfb753f63590434b42f93198
