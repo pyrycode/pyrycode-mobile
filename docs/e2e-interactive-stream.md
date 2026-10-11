@@ -3138,6 +3138,11 @@ The configured `scripted-all` gate includes `ping` and retains both methods:
 
 ### Scripted ping durable-gap proof (#1842)
 
+The ping method also proves the foreground correlated read and list-only peer attention
+clear. Its #2070 diagnostics identify the selected reply's claims, receipt holes and
+stored gaps without logging content; assertions, ordered selection, coverage checks and
+deadlines remain intact. See [receipt-continuity evidence](#scripted-ping-receipt-continuity-2070).
+
 Run `python3 scripts/android-test-gate.py scripted ping` to execute both
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`
 and `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`.
@@ -3530,6 +3535,71 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+### Scripted ping receipt continuity (#2070)
+
+The [verifier's PASS on PR #2071](https://github.com/pyrycode/pyrycode-mobile/pull/2071)
+certifies the daemon-owned queued-send repair without changing Mobile production rules.
+The original settled reply retained claims 9/10 but lacked delivery receipt 8; repeated
+observations retained hole (7,9), ruling out observation timing and lost-version claims.
+Daemon [#3167](https://github.com/pyrycode/pyrycode/issues/3167), merged at
+`a3ca005f05e95650d10b7e07cb5d190252acbd1a`, accounts for queued-send acceptance/delivery
+through existing nonvisual receipts. The repaired reply has receipts 1–12, checkpoint 12
+and no unknowns, unidentified entries or stored gaps.
+
+On 2026-10-11 the unchanged ordered selection ran on managed Pixel 2 API 33 ATD:
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted ping`.
+Both methods belong to `DeterministicInteractiveStreamE2ETest`; every run uses zero
+real Claude turns.
+
+| Ordered-pair evidence | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original daemon `b75aea7948b3`, app `f079a4595240` | 2 | 0 | 2 | 0 | 0 |
+| Older configured daemon `a536d17b1e18` control | 2 | 2 | 0 | 0 | 0 |
+| Repaired daemon `a3ca005f05e9`, app `ffb7b9a12098` | 2 | 2 | 0 | 0 | 0 |
+
+The older control predates queued-send facts and is not repair acceptance. The repaired
+pair used relay `a7a05d1f123d42fa17ac23b5e4d10a8f741a4911` and app
+`ffb7b9a12098592733d764a60cb36682d6e2624f`. Each repaired method executed/passed 1,
+with 0 failed/errors/skipped:
+
+- `interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`: the displayed
+  reply's repository checkpoint receives foreground correlated confirmation. A fresh post
+  stays unread on the list until the peer confirms reading that exact post, then attention
+  clears without phone reopen. All existing assertions and coverage checks passed.
+- `interactiveTurn_seededChannel_durableGapCatchUp`: passed completely in this fresh
+  pair. [#2069](https://github.com/pyrycode/pyrycode-mobile/issues/2069) owns its final
+  disposition independently; both original methods failed, and no reverse dependency was added.
+
+Retained [original XML](../app/src/androidTest/assets/read-2070/original-daemon-counted.xml)
+and [repaired XML](../app/src/androidTest/assets/read-2070/repaired-daemon-counted.xml)
+name both methods. The [manifest](../app/src/androidTest/assets/read-2070/invocations.json)
+contains exact environment-qualified commands, full app/daemon/relay revisions, binary/APK
+hashes and original artifact paths. Repaired raw artifacts were under
+`build/dispatcher-tests/scripted-xg79z1pa/`, including `0-TEST-pixel2Api33Atd-_app-.xml`.
+Raw builder XML/binaries are no longer available at the absolute worktree paths; the
+verifier inspected retained counted reports and diagnostics but could not revalidate those hashes.
+The [controlled red XML](../app/src/androidTest/assets/read-2070/unit-receipt-hole-red-counted.xml)
+records 1 executed/failed, 0 passed/errors/skipped when delivery receipt 3 was omitted
+(expected checkpoint 7, actual null). Restoring the exported real-store fixture made the
+six-class [focused unit selection](../app/src/androidTest/assets/read-2070/unit-repaired-counted.xml)
+pass 53 executed/passed, 0 failed/errors/skipped, including all three new projection probes.
+Receipt-only arrival, unknown/malformed receipts and unseen-version controls remain conservative.
+
+The dispatcher configured gate on `9e39c124b1cc588392fa50eb7eb4ed3a5161e7eb` passed at
+`2026-10-11T02:47:14.446Z`:
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`.
+Its counted report records **22 executed/passed, 0 failed/errors/skipped**. Both ping and
+durable-gap methods above executed/passed 1, failed/errors/skipped 0, in
+`build/dispatcher-tests/scripted-all-jv7n7so8/ping-0-TEST-installed.xml`;
+`dispatcher.xml` records the suite totals. These named passes are in the full configured
+suite, not a separate focused dispatcher run. As the verifier records, binary metadata
+and checkpoint-10 diagnostics identify the older configured daemon `a536d17b1e18`, rather
+than the repaired revision requested by the plan/PR. Counted configured-gate execution
+satisfies the method-execution check; receipt-repair acceptance rests on the repaired
+ordered pair above. No full suite against the repaired daemon is claimed. There is no
+remaining #2069 failure in this configured run. The existing real-Claude operator proofs
+and pre-ship live command remain unchanged.
 
 ### Empty-host channel setup (#1897)
 
@@ -4106,7 +4176,7 @@ full-run device artifacts were in `build/dispatcher-tests/live-0vm8oz36/`.
 \#1969's subsequent full live-proof results and missing daemon revision are recorded above.
 The permanent mobile receipt and
 confirmation regressions are described in
-[remote repository testing](knowledge/features/remote-conversation-repository.md#testing).
+[remote repository testing](knowledge/features/remote-conversation-repository-testing.md#testing).
 
 **Shared daemon unread (#1883, 2026-10-08).** The dispatcher ran fresh full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
@@ -6348,6 +6418,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   run, not a full-suite pass. Retained dispatcher reports are
   `2026-10-04T08-35-25-235Z_real-claude-gate_#1631.log` and its `-rerun_#1631.log` counterpart.
 
+
+- **Scripted read receipt continuity (#2070):**
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`
+  retains the foreground and peer-read twin of the existing `InteractiveStreamE2ETest`
+  operator proofs. Daemon #3167 closes the queued-send receipt hole; Mobile barriers and
+  all device assertions remain intact. [Counted evidence](#scripted-ping-receipt-continuity-2070)
+  distinguishes repaired ordered-pair acceptance from the older-daemon configured gate.
+  #2069 owns the separate durable-gap disposition; no new scenario or selector is added.
 
 - **Shared unread (#1883):**
   `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` now proves
