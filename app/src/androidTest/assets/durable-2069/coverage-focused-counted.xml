@@ -1,0 +1,78 @@
+<testsuites>
+  <testsuite name="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" tests="10" failures="0" errors="0" skipped="0">
+    <testcase name="signedCompatibilityInvariant_restoredAndCopiedViewsStayIndependentAndOffDisk" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.002" />
+    <testcase name="deltaInvariant_splitRowsReplayOnceWithExactUnsignedClaimsAndOrder" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.009" />
+    <testcase name="holeInvariant_overlapAndMiddleSplitsKeepEachOlderAnchorAcrossRestores" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.01" />
+    <testcase name="legacyUnknownInvariant_overlapAndReplaysCloseOnlyAtStart" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.0" />
+    <testcase name="adjacencyInvariant_boundaryAndMaximumMergeInEitherArrivalOrderWithoutOverflow" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.001" />
+    <testcase name="signedCompatibilityInvariant_neverProjectsUpperClaimsOrCompleteCoverage" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.001" />
+    <testcase name="receivedIdentityInvariant_maximumSurvivesCoverageSerialization" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.0" />
+    <testcase name="retentionInvariant_removingMaximumCannotWrapAndCertifyTheWholeIdSpace" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.003" />
+    <testcase name="spanValidationInvariant_rejectsUnnormalizedClaimsAndAllowsMaximumEndpoints" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.001" />
+    <testcase name="markerInvariant_assistantFragmentsUseUnsignedBoundariesAndRejoinOnlyOnContinuousReceipt" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.001" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" tests="10" failures="0" errors="0" skipped="0">
+    <testcase name="signedCompatibilityInvariant_restoredAndCopiedViewsStayIndependentAndOffDisk" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.002" />
+    <testcase name="deltaInvariant_splitRowsReplayOnceWithExactUnsignedClaimsAndOrder" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.009" />
+    <testcase name="holeInvariant_overlapAndMiddleSplitsKeepEachOlderAnchorAcrossRestores" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.01" />
+    <testcase name="legacyUnknownInvariant_overlapAndReplaysCloseOnlyAtStart" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.0" />
+    <testcase name="adjacencyInvariant_boundaryAndMaximumMergeInEitherArrivalOrderWithoutOverflow" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.001" />
+    <testcase name="signedCompatibilityInvariant_neverProjectsUpperClaimsOrCompleteCoverage" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.001" />
+    <testcase name="receivedIdentityInvariant_maximumSurvivesCoverageSerialization" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.0" />
+    <testcase name="retentionInvariant_removingMaximumCannotWrapAndCertifyTheWholeIdSpace" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.003" />
+    <testcase name="spanValidationInvariant_rejectsUnnormalizedClaimsAndAllowsMaximumEndpoints" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.001" />
+    <testcase name="markerInvariant_assistantFragmentsUseUnsignedBoundariesAndRejoinOnlyOnContinuousReceipt" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest" time="0.001" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.data.repository.HistoryDisplayProjectionTest" tests="7" failures="0" errors="0" skipped="0">
+    <testcase name="restoredLargeCoverage_preparesEachRowOnce_andPreservesIdentityOrderAndMultiplicity" classname="de.pyryco.mobile.data.repository.HistoryDisplayProjectionTest" time="0.198" />
+    <testcase name="knownGapWinsSharedUnknownEdge_andUpperUnsignedAnchorIsExact" classname="de.pyryco.mobile.data.repository.HistoryDisplayProjectionTest" time="0.001" />
+    <testcase name="hiddenGapInvariant_emptyOrMissingAdjacentSpansNeverInventInternalMarkers" classname="de.pyryco.mobile.data.repository.HistoryDisplayProjectionTest" time="0.035" />
+    <testcase name="leadingLifecycleInvariant_targetsFirstDisplayedRow_andNeverOccupiesASpan" classname="de.pyryco.mobile.data.repository.HistoryDisplayProjectionTest" time="0.004" />
+    <testcase name="cancelledFragmentPreparation_stopsBeforeRemainingDeltas_withoutChangingHeldRowsOrCoverage" classname="de.pyryco.mobile.data.repository.HistoryDisplayProjectionTest" time="0.004" />
+    <testcase name="splitSegmentInvariant_preservesContentAndCollisionSafeKeys_withoutGapTimesDeltaWork" classname="de.pyryco.mobile.data.repository.HistoryDisplayProjectionTest" time="0.007" />
+    <testcase name="restoredSparseCoverage_projectsOnlyAdjacentContent_andOneNearestOldestEdge" classname="de.pyryco.mobile.data.repository.HistoryDisplayProjectionTest" time="0.005" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadHistoryProjectionWorkerTest" tests="6" failures="0" errors="0" skipped="0">
+    <testcase name="restoredLargeAndSparseViewModelProjectsExactRows_withoutProjectionDrivenRequests" classname="de.pyryco.mobile.ui.conversations.thread.ThreadHistoryProjectionWorkerTest" time="0.216" />
+    <testcase name="queueTransitionInvariant_reprojectsOldestAndInternalTargets_withoutFetchingOrMovingHeldRows" classname="de.pyryco.mobile.ui.conversations.thread.ThreadHistoryProjectionWorkerTest" time="0.037" />
+    <testcase name="leadingLifecycleInvariant_oldestAndInternalMarkersReachRenderedDeliveredRows" classname="de.pyryco.mobile.ui.conversations.thread.ThreadHistoryProjectionWorkerTest" time="0.014" />
+    <testcase name="queuedEligibilityInvariant_oldestPositionAndBothAdjacentSpansUseOnlyDeliveredRows" classname="de.pyryco.mobile.ui.conversations.thread.ThreadHistoryProjectionWorkerTest" time="0.104" />
+    <testcase name="mainProgressInvariant_pendingWorkerAllowsDraftEdit_latestInputWins_andExitCancels" classname="de.pyryco.mobile.ui.conversations.thread.ThreadHistoryProjectionWorkerTest" time="0.024" />
+    <testcase name="internalTargetInvariant_skipsQueuedFirstRowWithinAnOccupiedSpan" classname="de.pyryco.mobile.ui.conversations.thread.ThreadHistoryProjectionWorkerTest" time="0.018" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" tests="26" failures="0" errors="0" skipped="0">
+    <testcase name="unsignedGapSettlementKeepsSelectedTouch" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="4.263" />
+    <testcase name="gapPageSettlingThenFlingingPastItsMarkerKeepsTheSelectedWalk" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.279" />
+    <testcase name="gapPageSettlingThenDraggingPastItsMarkerKeepsTheSelectedWalk" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.26" />
+    <testcase name="a_pull_on_a_thread_too_short_to_scroll_asks_once" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.076" />
+    <testcase name="semanticsAfterATouchEndsCannotReuseItsProvenance" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.051" />
+    <testcase name="a_long_thread_prefetches_only_near_its_oldest_end" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.12" />
+    <testcase name="offline_notice_is_shown_at_the_oldest_end" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.069" />
+    <testcase name="a_pull_on_an_empty_thread_asks_once" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.082" />
+    <testcase name="loading_row_is_shown_at_the_oldest_end_only_while_a_page_is_in_flight" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.082" />
+    <testcase name="gapPageRemovingItsMarkerKeepsTheContinuingFlingOnTheSelectedWalk" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.145" />
+    <testcase name="pageArrivingDuringAHeldDragPreservesAnchorAndOnlyFurtherMovementAsks" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.109" />
+    <testcase name="retry_row_is_shown_for_a_retryable_failure_and_its_press_reaches_the_callback" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.06" />
+    <testcase name="markersAreBetweenContent_andAReaderPullTargetsTheFirstCrossedGap" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.06" />
+    <testcase name="dead_end_row_is_shown_for_a_permanent_failure_with_nothing_to_press" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.046" />
+    <testcase name="gapPageRemovingItsMarkerKeepsTheHeldDragOnTheSelectedWalk" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.13" />
+    <testcase name="a_pull_while_a_page_is_loading_asks_nothing" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.062" />
+    <testcase name="dragEnteringTwoViewportRangePrefetchesWhileOldestIsStillHidden" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.045" />
+    <testcase name="unsignedMarkersTargetFirstCrossedGap" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.079" />
+    <testcase name="aNonRenderingNewerSpanHasAPullableMarker_withoutAskingOnArrival" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.061" />
+    <testcase name="viewportResizeAndMixedRowsChangeRangeButOnlyMovementAsks" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.041" />
+    <testcase name="fullThreadPrefetchArrivalKeepsTheVisibleRowAndLetsTheReaderEnterOlderRows" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.246" />
+    <testcase name="flingEnteringRangeFromOutsideAsksOnlyAfterTouchRelease" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.083" />
+    <testcase name="reaching_the_oldest_row_or_cycling_the_tail_asks_nothing" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.131" />
+    <testcase name="a_prepended_page_leaves_the_row_the_reader_is_looking_at_where_it_was" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.08" />
+    <testcase name="the_prefetch_band_is_two_current_viewports_from_the_oldest_end" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="3.871" />
+    <testcase name="retryRow_keepsItsLabelsFullLineBox_andLeavesTheStandard16dpGapBelowIt" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.034" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.data.repository.ScriptedDurableGapCoverageTest" tests="5" failures="0" errors="0" skipped="0">
+    <testcase name="passivePageReceiptObservationResetsAtConversationAndReconnectBoundaries" classname="de.pyryco.mobile.data.repository.ScriptedDurableGapCoverageTest" time="0.067" />
+    <testcase name="hiddenGapRemainsAuthoritativeAndReturnsWhenAdjacentContentIsDelivered" classname="de.pyryco.mobile.data.repository.ScriptedDurableGapCoverageTest" time="0.065" />
+    <testcase name="contentRecoveryAndTerminalOverlapsCannotCloseAnUnreceivedEligibleGapAcrossReconnect" classname="de.pyryco.mobile.data.repository.ScriptedDurableGapCoverageTest" time="0.011" />
+    <testcase name="repairedNonrenderingReceiptJoinsOlderAnchorAndRemovesMarkerWithoutMoreContent" classname="de.pyryco.mobile.data.repository.ScriptedDurableGapCoverageTest" time="0.003" />
+    <testcase name="duplicateAndReorderedReceiptPagesPreserveCachedNeighboursAndSettledReply" classname="de.pyryco.mobile.data.repository.ScriptedDurableGapCoverageTest" time="0.014" />
+  </testsuite>
+</testsuites>
