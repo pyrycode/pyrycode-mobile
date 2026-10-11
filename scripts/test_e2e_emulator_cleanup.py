@@ -21,7 +21,7 @@ class EmulatorCleanupTest(unittest.TestCase):
                                ISO_HOME=str(home) if isolated else "",
                                WATCHER_PID="", DAEMON_PID="", RELAY_PID="")
                     result = subprocess.run(
-                        ["bash", "-c", "set -euo pipefail\nlog() { :; }\n" + cleanup
+                        ["bash", "-c", "set -euo pipefail\nlog() { :; }\ncapture_run_evidence() { :; }\n" + cleanup
                          + "\ntrap cleanup EXIT\nexit " + str(code)],
                         env=env, capture_output=True, text=True,
                     )

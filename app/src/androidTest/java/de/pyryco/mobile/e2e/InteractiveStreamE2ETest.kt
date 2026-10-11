@@ -246,6 +246,9 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
  */
 @RunWith(AndroidJUnit4::class)
 class InteractiveStreamE2ETest {
+    @get:Rule
+    val methodIntervalRule = LiveMethodIntervalRule({ Log.i("E2EEvidence", it) })
+
     init {
         grantNotificationPermission()
     }
@@ -6239,6 +6242,39 @@ class InteractiveStreamE2ETest {
         val inserted = mutableListOf<Uri>()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.addMonitor(stub)
+        var evidenceX: String? = null
+        var evidenceY: String? = null
+
+        fun capture(stage: String) {
+            runCatching {
+                val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+                val host = registry.connectionFor(serverId)
+                val frames = evidenceX?.let(peer::recorded).orEmpty()
+                Log.i(
+                    "E2EEvidence",
+                    "method=interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes " +
+                        "stage=$stage utc_ms=${System.currentTimeMillis()} chat_x=${evidenceX ?: "unknown"} " +
+                        "chat_y=${evidenceY ?: "unknown"} phone_ready=${host?.coordinator?.currentRepository?.value != null} " +
+                        "phone_selected=${host != null && registry.selected.value === host} " +
+                        "phone_relay=${host
+                            ?.supervisor
+                            ?.relayStatus
+                            ?.value
+                            ?.let { it::class.simpleName } ?: "unknown"} " +
+                        "peer_open=${peer.linkState().startsWith("session open")} peer_frames=${frames.size} " +
+                        "peer_delivery=${frames.count { it.type == "send_delivered" }} " +
+                        "peer_terminal=${frames.count { it.type == "turn_end" }} " +
+                        "peer_modals=${frames.count { it.type == "modal_shown" }}",
+                )
+            }.onFailure {
+                runCatching {
+                    Log.i(
+                        "E2EEvidence",
+                        "method=interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes stage=$stage phase=unknown",
+                    )
+                }
+            }
+        }
         try {
             val stamp = System.currentTimeMillis()
             val png = pngFixture()
@@ -6257,6 +6293,9 @@ class InteractiveStreamE2ETest {
             awaitConnected()
             val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
             val (chatY, _) = answerChat(serverId, ATTACH_OTHER_NAME_PREFIX)
+            evidenceX = chatX
+            evidenceY = chatY
+            capture("chats_created")
             assertPeerAnswers(peer, chatX)
             openChatRow(nameX)
 
@@ -6276,10 +6315,14 @@ class InteractiveStreamE2ETest {
                     composeTestRule.onAllNodes(hasContentDescription(it)).fetchSemanticsNodes().isNotEmpty()
                 }
             }
+            capture("before_send")
             sendFromPhone(PING_PROMPT)
+            capture("after_send")
 
             // 3. The message reaches claude, and its turn ends: the host logs the user turn on delivery.
             allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the attachment turn in X did not end") { it.type == "turn_end" }
+
+            capture("turn_completed")
 
             // 4. AC-1: the peer's view of X holds one user message naming two ids, each fetching its fixture's
             // exact bytes; Y gained nothing.
@@ -6291,6 +6334,7 @@ class InteractiveStreamE2ETest {
             assertEquals("digests of the files the peer fetched", setOf(sha256(png), sha256(document)), digests.toSet())
             assertEquals("user messages in the other conversation", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
         } finally {
+            capture("before_cleanup")
             instrumentation.removeMonitor(stub)
             deleteFixtures(inserted)
             peer.close()

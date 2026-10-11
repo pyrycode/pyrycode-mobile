@@ -43,9 +43,20 @@ class FocusRecordListener : RunListener() {
 
     override fun testStarted(description: Description?) {
         stages.clear()
+        interval(description, "start")
+    }
+
+    private fun interval(
+        description: Description?,
+        stage: String,
+    ) {
+        runCatching {
+            description?.let { Log.i("E2EEvidence", "method=${testName(it)} stage=$stage utc_ms=${System.currentTimeMillis()}") }
+        }
     }
 
     override fun testFailure(failure: Failure) {
+        interval(failure.description, "failure")
         val test = testName(failure.description)
         val record =
             try {
