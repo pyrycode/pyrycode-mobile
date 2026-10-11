@@ -1055,16 +1055,17 @@ else
     "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}")
 fi
 FAULT_PORT_FILE="${WORK_DIR}/daemon-fault-port"
-STREAM_CONTROL_ARGS=()
+# Seed required arguments so Bash 3.2 nounset never expands an empty array.
+DAEMON_CONTROL_ARGS=(--port-file "${FAULT_PORT_FILE}" --log "${DAEMON_LOG}"
+  --ready-token 'relay: conn established' --control-socket "${ISO_HOME:-${HOME}}/.pyry/${PYRY_NAME}.sock")
 if [ -n "${DETERMINISTIC}" ] && [ "${DROP_B_FENCE}" = "phone-checkpoint" ]; then
-  STREAM_CONTROL_ARGS+=(--stream-release-file "${REPLAY_RELEASE}")
+  DAEMON_CONTROL_ARGS+=(--stream-release-file "${REPLAY_RELEASE}")
   if [ "${SCENARIO}" = "reopen-stream" ]; then
-    STREAM_CONTROL_ARGS+=(--stream-result-release-file "${E2E_HELD_RESULT_RELEASE}")
+    DAEMON_CONTROL_ARGS+=(--stream-result-release-file "${E2E_HELD_RESULT_RELEASE}")
   fi
 fi
-python3 "${REPO_ROOT}/scripts/e2e-daemon-fault.py" --port-file "${FAULT_PORT_FILE}" --log "${DAEMON_LOG}" \
-  --ready-token 'relay: conn established' --control-socket "${ISO_HOME:-${HOME}}/.pyry/${PYRY_NAME}.sock" \
-  "${STREAM_CONTROL_ARGS[@]}" -- "${DAEMON_COMMAND[@]}" >"${WORK_DIR}/daemon-fault.log" 2>&1 &
+python3 "${REPO_ROOT}/scripts/e2e-daemon-fault.py" "${DAEMON_CONTROL_ARGS[@]}" \
+  -- "${DAEMON_COMMAND[@]}" >"${WORK_DIR}/daemon-fault.log" 2>&1 &
 DAEMON_PID=$!
 FAULT_DEADLINE=$((SECONDS + 10))
 until [ -s "${FAULT_PORT_FILE}" ]; do

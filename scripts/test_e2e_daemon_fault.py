@@ -1,6 +1,7 @@
 """Process ownership proof for the e2e Offline Retry fault controller."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -11,6 +12,73 @@ from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parent
+
+
+class EmulatorControllerLaunchTest(unittest.TestCase):
+    def check_launch(self, deterministic, live, scenario, fence, controls):
+        harness = (ROOT / "e2e-emulator.sh").read_text()
+        launch = harness[harness.index("DAEMON_COMMAND=(env)"):harness.index("# The second test daemon")]
+        with tempfile.TemporaryDirectory(prefix="e2e controller ") as temporary:
+            directory = Path(temporary)
+            captured = directory / "controller-arguments"
+            isolated = directory / "isolated home" if deterministic else ""
+            environment = {
+                **os.environ, "DETERMINISTIC": deterministic, "LIVE": live,
+                "SCENARIO": scenario, "DROP_B_FENCE": fence,
+                "WORK_DIR": temporary, "REPO_ROOT": str(ROOT.parent),
+                "DAEMON_LOG": str(directory / "daemon.log"), "ISO_HOME": str(isolated),
+                "PYRY_NAME": "e2e-launch-probe", "PYRY_BIN": "/synthetic pyry",
+                "DAEMON_RELAY_URL": "ws://127.0.0.1:1", "FAKE_BIN": "/synthetic fakeclaude",
+                "FIXTURE_FILE": "/synthetic opening", "FIXTURE_FILE_2": "/synthetic ending" if controls else "",
+                "REPLAY_RELEASE": str(directory / "release-second-fragment"),
+                "CONTROLLER_CAPTURE": str(captured),
+            }
+            # Run the real top-level launch with macOS's Bash 3.2, without a daemon or credentials.
+            # The stub records argument boundaries and acknowledges controller readiness only.
+            result = subprocess.run(
+                ["/bin/bash", "-c", """set -euo pipefail
+python3() {
+  printf '%s\\0' "$@" > "$CONTROLLER_CAPTURE"
+  printf '12345' > "$FAULT_PORT_FILE"
+}
+die() { printf '%s\\n' "$1" >&2; exit 1; }
+""" + launch + '\nwait "$DAEMON_PID"'],
+                env=environment, capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            arguments = captured.read_bytes().decode().split("\0")[:-1]
+            delimiter = arguments.index("--")
+            controller_home = str(isolated) if deterministic else os.environ["HOME"]
+            expected = [
+                str(ROOT / "e2e-daemon-fault.py"), "--port-file", str(directory / "daemon-fault-port"),
+                "--log", str(directory / "daemon.log"), "--ready-token", "relay: conn established",
+                "--control-socket", str(Path(controller_home) / ".pyry/e2e-launch-probe.sock"),
+            ]
+            if controls:
+                expected += ["--stream-release-file", str(directory / "release-second-fragment")]
+                if scenario == "reopen-stream":
+                    expected += ["--stream-result-release-file", str(directory / "release-terminal-result")]
+            self.assertEqual(expected, arguments[:delimiter])
+            daemon = arguments[delimiter + 1:]
+            self.assertEqual("env", daemon[0])
+            self.assertIn("/synthetic pyry", daemon)
+            self.assertIn("-pyry-name=e2e-launch-probe", daemon)
+            self.assertEqual(not live, "PYRY_ALLOW_INSECURE_RELAY=1" in daemon)
+
+    def test_scripted_ping_launches_without_optional_stream_controls(self):
+        self.check_launch("1", "", "ping", "enqueue", False)
+
+    def test_default_real_claude_launches_without_optional_stream_controls(self):
+        self.check_launch("", "", "ping", "enqueue", False)
+
+    def test_live_real_claude_launches_without_optional_stream_controls(self):
+        self.check_launch("", "1", "ping", "enqueue", False)
+
+    def test_stream_launch_preserves_suffix_release_argument(self):
+        self.check_launch("1", "", "stream", "phone-checkpoint", True)
+
+    def test_reopen_stream_launch_preserves_both_release_arguments(self):
+        self.check_launch("1", "", "reopen-stream", "phone-checkpoint", True)
 
 
 class DaemonFaultTest(unittest.TestCase):
