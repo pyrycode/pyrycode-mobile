@@ -1,0 +1,74 @@
+[
+  {
+    "id": 1,
+    "type": "send_accepted",
+    "shown": true,
+    "text_bytes": 5
+  },
+  {
+    "id": 2,
+    "type": "model_list",
+    "shown": false,
+    "text_bytes": 0
+  },
+  {
+    "id": 3,
+    "type": "slash_command_list",
+    "shown": false,
+    "text_bytes": 0
+  },
+  {
+    "id": 4,
+    "type": "mcp_status",
+    "shown": false,
+    "text_bytes": 0
+  },
+  {
+    "id": 5,
+    "type": "main_turn_opened",
+    "shown": false,
+    "text_bytes": 0
+  },
+  {
+    "id": 6,
+    "type": "turn_state",
+    "shown": false,
+    "text_bytes": 0
+  },
+  {
+    "id": 7,
+    "type": "message",
+    "shown": true,
+    "text_bytes": 5
+  },
+  {
+    "id": 8,
+    "type": "send_delivered",
+    "shown": true,
+    "text_bytes": 0
+  },
+  {
+    "id": 9,
+    "type": "assistant_delta",
+    "shown": true,
+    "text_bytes": 4
+  },
+  {
+    "id": 10,
+    "type": "turn_end",
+    "shown": false,
+    "text_bytes": 0
+  },
+  {
+    "id": 11,
+    "type": "turn_state",
+    "shown": false,
+    "text_bytes": 0
+  },
+  {
+    "id": 12,
+    "type": "context_usage",
+    "shown": false,
+    "text_bytes": 0
+  }
+]

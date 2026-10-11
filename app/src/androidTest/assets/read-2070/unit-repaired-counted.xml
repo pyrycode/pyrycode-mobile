@@ -1,0 +1,67 @@
+<testsuites>
+  <testsuite name="de.pyryco.mobile.data.repository.ScriptedPingReadEvidenceTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-11T02:30:21.222Z" hostname="Juhanas-MacBook-Air.local" time="0.143">
+    <testcase name="repairedDaemonQueuedReceiptsQualifyOnlyTheExactRepresentedReply" classname="de.pyryco.mobile.data.repository.ScriptedPingReadEvidenceTest" time="0.13" />
+    <testcase name="deliveredReceiptHoleBlocksTheBoundSettledReplyAcrossRepeatedObservation" classname="de.pyryco.mobile.data.repository.ScriptedPingReadEvidenceTest" time="0.004" />
+    <testcase name="onlyUnderstoodReceiptCanCloseTheHoleWithoutGrantingAnUnseenVersion" classname="de.pyryco.mobile.data.repository.ScriptedPingReadEvidenceTest" time="0.007" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.data.repository.ThreadReadClaimsTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-10-11T02:30:21.516Z" hostname="Juhanas-MacBook-Air.local" time="0.011">
+    <testcase name="ordinaryBackgroundLifecycleTailIsNonvisualButMalformedReceiptBlocks" classname="de.pyryco.mobile.data.repository.ThreadReadClaimsTest" time="0.001" />
+    <testcase name="unidentifiedContentNeedsOrdinaryReceivedIdentityAndOffscreenRowsProveNoSight" classname="de.pyryco.mobile.data.repository.ThreadReadClaimsTest" time="0.001" />
+    <testcase name="understoodUsageWindowReceiptsExtendPresentationButMalformedWindowsRemainBarriers" classname="de.pyryco.mobile.data.repository.ThreadReadClaimsTest" time="0.0" />
+    <testcase name="finalizedRowClaimsTheTurnEndVersionAsWellAsEveryDelta" classname="de.pyryco.mobile.data.repository.ThreadReadClaimsTest" time="0.001" />
+    <testcase name="persistedReceiptGapBlocksAReconnectedNewestRowUntilTheGapIsFilled" classname="de.pyryco.mobile.data.repository.ThreadReadClaimsTest" time="0.0" />
+    <testcase name="decodedStateMetadataDoesNotBlockVisibleReplyButMalformedMetadataDoes" classname="de.pyryco.mobile.data.repository.ThreadReadClaimsTest" time="0.001" />
+    <testcase name="receivedNonvisualTailExtendsOnlyContinuousUnderstoodEntries" classname="de.pyryco.mobile.data.repository.ThreadReadClaimsTest" time="0.001" />
+    <testcase name="presentedToolUseDoesNotGrantUnseenToolResult" classname="de.pyryco.mobile.data.repository.ThreadReadClaimsTest" time="0.001" />
+    <testcase name="overlapOrderAndRepeatedPagesPreserveExactClaims" classname="de.pyryco.mobile.data.repository.ThreadReadClaimsTest" time="0.001" />
+    <testcase name="missingIdentityReconcilesNoncanonicalValidFractionalTimestamp" classname="de.pyryco.mobile.data.repository.ThreadReadClaimsTest" time="0.001" />
+    <testcase name="oldPresentedStreamingVersionDoesNotAcknowledgeLaterUnseenDeltas" classname="de.pyryco.mobile.data.repository.ThreadReadClaimsTest" time="0.0" />
+    <testcase name="durableIdentitySurvivesEnvelopeWithoutUsingConnectionOrReplayIds" classname="de.pyryco.mobile.data.repository.ThreadReadClaimsTest" time="0.003" />
+    <testcase name="knownMalformedEntryAndReceivedGapBlockEvenLaterVisibleContent" classname="de.pyryco.mobile.data.repository.ThreadReadClaimsTest" time="0.0" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.data.repository.ThreadReadRuntimeReceiptsTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-11T02:30:21.528Z" hostname="Juhanas-MacBook-Air.local" time="0.009">
+    <testcase name="runtimeReceiptRepairsTheDiagnosedHoleWithoutChangingContent" classname="de.pyryco.mobile.data.repository.ThreadReadRuntimeReceiptsTest" time="0.002" />
+    <testcase name="invariantMissingLiveIdentityNeedsHistoryAndFreshConnectionHasNoSight" classname="de.pyryco.mobile.data.repository.ThreadReadRuntimeReceiptsTest" time="0.002" />
+    <testcase name="invariantOnlyUnderstoodIdentifiedReceiptsAccountForTheHole" classname="de.pyryco.mobile.data.repository.ThreadReadRuntimeReceiptsTest" time="0.0" />
+    <testcase name="invariantReplayAndOverlappingHistoryPreserveExactClaims" classname="de.pyryco.mobile.data.repository.ThreadReadRuntimeReceiptsTest" time="0.004" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.data.repository.ConversationReadMarksTest" tests="29" skipped="0" failures="0" errors="0" timestamp="2026-10-11T02:30:21.370Z" hostname="Juhanas-MacBook-Air.local" time="0.136">
+    <testcase name="invariantReorderedAndOverlappingHistoryCannotRegressReadFactsOrMixIdentities" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.03" />
+    <testcase name="invariantFakeDurableIdsAndReadMarksSurviveChangeWorkspace" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.006" />
+    <testcase name="invariantReconnectBetweenEachArrivalAllowsOnlyNewGenerationFacts" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.009" />
+    <testcase name="invariantEveryOtherDurableTypeIncludingUnknownStillRaisesBothReceiptWatermarks" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.014" />
+    <testcase name="confirmedWriteSendsExactUnsignedIntegerAndWaitsForItsClampedReply" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.006" />
+    <testcase name="invariantFilteredUnreadDoesNotBypassUnknownMalformedMissingOrGapEvidence" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.01" />
+    <testcase name="invariantEmptyAndOverlappingListsCannotEraseKnownFactsOrMixIdentities" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.003" />
+    <testcase name="disconnectedSendAndMidAwaitTeardownFailWithoutAdvance" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.002" />
+    <testcase name="unsuccessfulLiveTurnEndBindsActualSummaryWithoutGrantingChangedReport" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.002" />
+    <testcase name="liveAndReplayDurableReceiptRaisesLatestIndependentlyOfViewport" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.001" />
+    <testcase name="runtimeReceiptHistoryRequiresCorrelatedDaemonReadConfirmation" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.005" />
+    <testcase name="malformedWrongTypeOrWrongTargetRepliesNeverSucceedOrMutateFacts" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.005" />
+    <testcase name="invariantMonotonicFactsSurviveEverySnapshotPushOrderAndReplay" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.005" />
+    <testcase name="stableWriteKeepsOriginalDelegateAndDisconnectedDoesNotSend" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.001" />
+    <testcase name="serverRefusalsAreSanitizedAndNeverAdvance" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.003" />
+    <testcase name="slashCommandMetadataWithoutHistoryIdentityDoesNotBlockReceivedReply" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.001" />
+    <testcase name="invariantStatusTailCannotReturnThroughHistoryAfterReconnectAtAnyReceiptStep" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.008" />
+    <testcase name="invariantTwoHostsAndFreshGenerationsNeverShareReadFacts" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.002" />
+    <testcase name="invariantEachExcludedLiveAndReplayTypeKeepsReceiptWithoutRaisingUnread" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.005" />
+    <testcase name="explicitNullIsUnavailableAndPartialFactsStayDistinct" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.001" />
+    <testcase name="callerCancellationPropagatesAndDoesNotRetry" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.001" />
+    <testcase name="absenceIsNotZeroAndUnsignedIdsNeverOverflow" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.001" />
+    <testcase name="invariantEachExcludedHistoryTypeAndStatusOnlyPagePreserveOriginalEntries" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.007" />
+    <testcase name="liveCompactionEdgesAndBoundaryFillRequireTheirPresentedVersions" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.002" />
+    <testcase name="fakeClampsInItsDurableHistorySpaceAndKeepsMarksMonotonic" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.0" />
+    <testcase name="ordinaryCorrelatedUpdatesExposeMarksWithoutClearingLatest" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.002" />
+    <testcase name="malformedFieldsNeverCreateCheckpointAndCollectorKeepsOtherMetadata" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.002" />
+    <testcase name="nonvisualBannerTailRetainsPresentedStreamingContentClaims" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.001" />
+    <testcase name="invariantFakeDurableIdsAndReadMarksSurviveStartNewSession" classname="de.pyryco.mobile.data.repository.ConversationReadMarksTest" time="0.001" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.data.repository.ReadCheckpointRetriesTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-11T02:30:21.507Z" hostname="Juhanas-MacBook-Air.local" time="0.008">
+    <testcase name="olderDaemonNeverReceivesPendingCommand" classname="de.pyryco.mobile.data.repository.ReadCheckpointRetriesTest" time="0.004" />
+    <testcase name="failuresAndClampedRepliesRetainPendingButDoNotRepeatOnRecomposition" classname="de.pyryco.mobile.data.repository.ReadCheckpointRetriesTest" time="0.002" />
+    <testcase name="pendingMaximumSurvivesOfflineAndScreenClosureWithoutCrossingHosts" classname="de.pyryco.mobile.data.repository.ReadCheckpointRetriesTest" time="0.002" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadReadSubscriptionTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-11T02:30:21.538Z" hostname="Juhanas-MacBook-Air.local" time="0.036">
+    <testcase name="rowsAndEvidenceShareOneReceiptSubscriptionAcrossUpdates" classname="de.pyryco.mobile.ui.conversations.thread.ThreadReadSubscriptionTest" time="0.036" />
+  </testsuite>
+</testsuites>
