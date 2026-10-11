@@ -79,3 +79,7 @@ Pending documentation stage: `docs/e2e-interactive-stream.md`, “What rung 3 is
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-12
+
+## Revisions
+
+- 2026-10-12: implemented the capture preparation only. The shared `peerAttachmentFrameEvidence` fold scans at most 4096 latest frames, keeps total/sample counts separate, counts ack/stored replies globally (they need not contain a conversation ID), and leaves chat-specific counts unknown until a chat exists. Its bounded/malformed-payload controls failed before implementation and passed afterward. The corrected timeout negative control failed specifically with “missing attribution for PeerOpen”; the enabled observer covers all six distinct 30-second boundaries without changing Throwable identity or virtual elapsed time. Red XML is retained at `/tmp/builder-2090/attribution-and-counts-red.xml`. The eight new tests passed alongside 29 peer/interval tests (37 executed/passed, zero failures/skips); 43 focused Python harness tests passed, including both new exporter controls. Android-test compilation and lint passed. A max-line-length formatting finding was repaired; formatting and debug assembly then passed. Current diagnostics preserve all scenario assertions and make no causal repair claim. Historical HP capture remains pending open #2108, followed by localization, a cause-backed regression/repair and the full dispatcher live acceptance.

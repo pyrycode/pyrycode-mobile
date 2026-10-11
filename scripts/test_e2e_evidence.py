@@ -157,6 +157,55 @@ class EvidenceRetentionTest(unittest.TestCase):
         self.assertEqual('unknown', manifest['observations']['daemon-b.log']['state'])
         self.assertLess(sum(p.stat().st_size for p in self.archive().iterdir()), 4 * 1024 * 1024)
 
+    def test_peer_stages_survive_bounded_noisy_logs(self):
+        path = self.repo / 'app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/logcat-target.txt'
+        stages = ('PeerOpen', 'InitialChannelList', 'InitialPhoneConnection', 'ChatCreation', 'ChatRename',
+                  'Upload', 'SendAcknowledgement', 'TurnCompletion', 'GraphRestart', 'CacheClearing',
+                  'RestartChannelList', 'PostRestartPhoneConnection', 'ThreadOpening', 'HistoryRetrieval',
+                  'FileOpen', 'FileSave', 'SavedOverlay', 'BeforeCleanup')
+        ending = ''.join('E2EEvidence: method=interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload '
+            'stage=' + stage + ' phase=failed observation=available utc_ms=30000 chat_x=' + UUID +
+            ' attachment_id=' + UUID + ' target_host_sha256=' + 'a' * 64 + ' selected_host_sha256=' + 'b' * 64 +
+            ' phone_host=true phone_ready=false phone_selected=false phone_relay=Connected phone_daemon=Reconnecting'
+            ' peer_open=true peer_links=2 peer_frames=4097 peer_sampled=4096 peer_chat_frames=8'
+            ' peer_stored=1 peer_ack=1 peer_history=0 peer_terminal=1 cache_cleared=true\n' for stage in stages)
+        path.write_text('irrelevant\n' * 210000 + ending)
+        result = self.run_cleanup(7)
+        self.assertEqual(7, result.returncode, result.stderr)
+        rows = [json.loads(line) for line in (self.archive() / 'phone-peer.jsonl').read_text().splitlines()]
+        self.assertEqual(list(stages), [r.get('stage') for r in rows])
+        for row in rows:
+            self.assertEqual('failed', row['phase'])
+            self.assertEqual('available', row['observation'])
+            self.assertEqual('b' * 64, row['selected_host_sha256'])
+            self.assertEqual(UUID, row['attachment_id'])
+            self.assertEqual('4096', row['peer_sampled'])
+            self.assertEqual('true', row['cache_cleared'])
+        manifest = json.loads((self.archive() / 'manifest.json').read_text())
+        self.assertTrue(any(v.get('truncated') and v.get('layout') == 'head_tail'
+                            for v in manifest['observations'].values()))
+
+    def test_peer_projection_is_field_specific_and_excludes_credentials(self):
+        path = self.repo / 'app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/logcat-target.txt'
+        path.write_text('E2EEvidence: method=interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload '
+            'stage=SendAcknowledgement phase=failed observation=unknown phone_ready=unknown '
+            'target_host_sha256=secret-token selected_host_sha256=' + UUID + ' peer_links=Connected '
+            'peer_frames=-1 phone_relay=PeerOpen attachment_id=secret-key token=secret-token filename=private.txt\n'
+            'E2EEvidence: method=interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload '
+            'stage=Connected phase=PeerOpen observation=Connected phone_ready=123\n')
+        result = self.run_cleanup(7)
+        self.assertEqual(7, result.returncode, result.stderr)
+        rows = [json.loads(line) for line in (self.archive() / 'phone-peer.jsonl').read_text().splitlines()]
+        self.assertEqual('SendAcknowledgement', rows[0]['stage'])
+        self.assertEqual('unknown', rows[0]['observation'])
+        for key in ('target_host_sha256', 'selected_host_sha256', 'peer_links', 'peer_frames', 'phone_relay', 'attachment_id'):
+            self.assertNotIn(key, rows[0])
+        for key in ('stage', 'phase', 'observation', 'phone_ready'):
+            self.assertNotIn(key, rows[1])
+        contents = '\n'.join(p.read_text() for p in self.archive().iterdir())
+        for secret in ('secret-token', 'secret-key', 'private.txt'):
+            self.assertNotIn(secret, contents)
+
 
 if __name__ == '__main__':
     unittest.main()

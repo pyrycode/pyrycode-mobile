@@ -92,6 +92,10 @@ class SecondClientPeer(
     /** Whether the peer's session is open, and on which link; for failure messages. Counts and labels only. */
     fun linkState(): String = link.describe()
 
+    /** A bounded observation only; ack/stored replies need not carry a conversation ID. */
+    internal fun attachmentEvidence(conversationId: String?): Map<String, String> =
+        peerAttachmentFrameEvidence(received.value, conversationId, linkState())
+
     /**
      * Post [text] to [conversationId] as this device, naming [attachmentIds] if any (#1016), and wait for the
      * daemon's `ack`.

@@ -31,7 +31,30 @@ EVENTS = frozenset(('pyrycode starting', 'pyrycode stopped', 'spawning claude', 
 FIELDS = frozenset(('time', 'level', 'conversation_id', 'session_id', 'message_id', 'attachment_id',
     'server_id', 'conn_id', 'session', 'queued_msg_id', 'attachment_count', 'queued_at', 'uptime', 'ts', 'accepted_at', 'occurred_at', 'id', 'turn_id', 'accepted_entry_id', 'delivery_entry_id', 'pid', 'size', 'bytes', 'count', 'attempt', 'code', 'status', 'retryable', 'duration_ms'))
 PHONE_FIELDS = frozenset(('method', 'stage', 'start_ms', 'finish_ms', 'utc_ms', 'chat_x', 'chat_y', 'phone_ready', 'phone_relay',
-    'phone_selected', 'peer_frames', 'peer_delivery', 'peer_terminal', 'peer_modals', 'peer_open', 'phase'))
+    'phone_selected', 'peer_frames', 'peer_delivery', 'peer_terminal', 'peer_modals', 'peer_open', 'phase',
+    'observation', 'attachment_id', 'target_host_sha256', 'selected_host_sha256', 'phone_host', 'phone_daemon',
+    'peer_links', 'peer_sampled', 'peer_chat_frames', 'peer_stored', 'peer_ack', 'peer_history', 'cache_cleared'))
+PHONE_STAGES = frozenset(('before_cleanup', 'chats_created', 'before_send', 'after_send', 'turn_completed',
+    'start', 'finish', 'failure', 'interval', 'PeerOpen', 'InitialChannelList', 'InitialPhoneConnection',
+    'ChatCreation', 'ChatRename', 'Upload', 'SendAcknowledgement', 'TurnCompletion', 'GraphRestart',
+    'CacheClearing', 'RestartChannelList', 'PostRestartPhoneConnection', 'ThreadOpening', 'HistoryRetrieval',
+    'FileOpen', 'FileSave', 'SavedOverlay', 'BeforeCleanup'))
+PHONE_VALUES = {
+    'stage': PHONE_STAGES,
+    'phase': frozenset(('started', 'completed', 'failed', 'observed', 'unknown')),
+    'observation': frozenset(('available', 'unknown')),
+    **{key: frozenset(('true', 'false', 'unknown')) for key in
+       ('phone_host', 'phone_ready', 'phone_selected', 'peer_open', 'cache_cleared')},
+    **{key: frozenset(('Connected', 'Connecting', 'Offline', 'Idle', 'DaemonAbsent', 'PairingRejected',
+                      'UpdateRequired', 'Reconnecting', 'unknown')) for key in ('phone_relay', 'phone_daemon')},
+}
+PHONE_PATTERNS = {
+    **{key: re.compile(r'(?:[0-9a-f]{64}|unknown)') for key in ('target_host_sha256', 'selected_host_sha256')},
+    **{key: re.compile(r'(?:' + UUID.pattern[1:-1] + r'|unknown)') for key in ('chat_x', 'chat_y', 'attachment_id')},
+    **{key: re.compile(r'(?:[0-9]{1,9}|unknown)') for key in ('peer_links', 'peer_frames', 'peer_sampled',
+       'peer_chat_frames', 'peer_stored', 'peer_ack', 'peer_history', 'peer_delivery', 'peer_terminal', 'peer_modals')},
+    **{key: re.compile(r'(?:[0-9]{1,19}|unknown)') for key in ('utc_ms', 'start_ms', 'finish_ms')},
+}
 HISTORY_TYPES = frozenset(('send_accepted', 'send_delivered', 'send_failed', 'turn_end', 'message',
                           'main_turn', 'main_turn_opened', 'session_started', 'session_start', 'turn_started'))
 
@@ -112,7 +135,9 @@ def log_records(data, phone=False):
         except ValueError:
             continue
         if phone:
-            record = safe_fields(pairs, PHONE_FIELDS)
+            record = {k: v for k, v in pairs.items() if k in PHONE_FIELDS and
+                      (k in PHONE_VALUES and v in PHONE_VALUES[k] or
+                       k in PHONE_PATTERNS and PHONE_PATTERNS[k].fullmatch(v))}
             if METHOD.fullmatch(pairs.get('method', '')):
                 record['method'] = pairs['method']
         else:
@@ -231,7 +256,9 @@ def capture(args):
     for name in ('scripts/e2e-emulator.sh', 'scripts/e2e-evidence.py',
                  'app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt',
                  'app/src/androidTest/java/de/pyryco/mobile/e2e/FocusRecordListener.kt',
-                 'app/src/sharedTest/java/de/pyryco/mobile/e2e/LiveMethodIntervalRule.kt'):
+                 'app/src/sharedTest/java/de/pyryco/mobile/e2e/LiveMethodIntervalRule.kt',
+                 'app/src/sharedTest/java/de/pyryco/mobile/e2e/PeerAttachmentEvidence.kt',
+                 'app/src/androidTest/java/de/pyryco/mobile/e2e/SecondClientPeer.kt'):
         source_files[name] = binary_hash(args.repo / name)
     config = {'device': args.device, 'instance': args.instance, 'started_ns': args.started,
               'captured_ns': time.time_ns(), 'phase': args.phase, 'sources': sources, 'source_files': source_files, 'binaries': binaries}

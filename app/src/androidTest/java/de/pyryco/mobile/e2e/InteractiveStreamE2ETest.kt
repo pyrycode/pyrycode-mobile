@@ -6567,53 +6567,127 @@ class InteractiveStreamE2ETest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.addMonitor(stub)
         var relaunched: ActivityScenario<MainActivity>? = null
+        var evidenceX: String? = null
+        var attachmentId: String? = null
+        var cacheCleared: Boolean? = null
+        val evidence =
+            PeerAttachmentEvidence({
+                val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+                val host = registry.connectionFor(serverId)
+                val selected = registry.selected.value
+                val selectedId =
+                    registry.hostConnections.value
+                        .take(128)
+                        .firstOrNull {
+                            selected != null && registry.connectionFor(it.serverId) === selected
+                        }?.serverId
+                val status = host?.coordinator?.connectionStatus?.value
+                mapOf(
+                    "target_host_sha256" to sha256(serverId.toByteArray()),
+                    "selected_host_sha256" to (selectedId?.let { sha256(it.toByteArray()) } ?: "unknown"),
+                    "chat_x" to (evidenceX ?: "unknown"),
+                    "attachment_id" to (attachmentId ?: "unknown"),
+                    "phone_host" to (host != null).toString(),
+                    "phone_ready" to (host?.coordinator?.currentRepository?.value != null).toString(),
+                    "phone_selected" to (host != null && selected === host).toString(),
+                    "phone_relay" to (status?.relay?.let { it::class.simpleName } ?: "unknown"),
+                    "phone_daemon" to (status?.pyrycode?.let { it::class.simpleName } ?: "unknown"),
+                    "cache_cleared" to (cacheCleared?.toString() ?: "unknown"),
+                ) + peer.attachmentEvidence(evidenceX)
+            }, { Log.i("E2EEvidence", it) })
         try {
             val stamp = System.currentTimeMillis()
             val document = documentFixture("peer-$stamp")
             val documentName = ATTACH_FILE_PREFIX + "peer-$stamp.txt"
 
             // 1. X is a fresh named chat the phone does not open; the peer uploads into it and names the file.
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
-            awaitChannelList()
-            awaitConnected()
-            val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
-            runBlocking {
-                val id = peer.uploadAttachment(chatX, documentName, TEXT_MIME, document, REPLY_TIMEOUT_MS)
-                peer.sendMessage(chatX, PING_PROMPT, THREAD_TIMEOUT_MS, attachmentIds = listOf(id))
+            evidence.step(PeerAttachmentStage.PeerOpen) { runBlocking { peer.open(CONNECT_TIMEOUT_MS) } }
+            evidence.step(PeerAttachmentStage.InitialChannelList) { awaitChannelList() }
+            evidence.step(PeerAttachmentStage.InitialPhoneConnection) { awaitConnected() }
+            val nameX = ATTACH_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            // Same callOnLive retry and shared deadline as answerChat; retain the ID before rename.
+            var chatStage = PeerAttachmentStage.ChatCreation
+            evidence.record(chatStage, "started")
+            val chatX =
+                try {
+                    val bundle =
+                        checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+                    runBlocking {
+                        withTimeout(THREAD_TIMEOUT_MS) {
+                            bundle.coordinator.currentRepository.callOnLive(REDIAL_WAIT_MS) { repository ->
+                                chatStage = PeerAttachmentStage.ChatCreation
+                                evidence.record(chatStage, "started")
+                                val id = repository.createDiscussion().id
+                                evidenceX = id
+                                evidence.record(chatStage, "completed")
+                                chatStage = PeerAttachmentStage.ChatRename
+                                evidence.record(chatStage, "started")
+                                repository.rename(id, nameX).also { evidence.record(chatStage, "completed") }
+                            }
+                        }
+                    }.id
+                } catch (failure: Throwable) {
+                    evidence.record(chatStage, "failed")
+                    throw failure
+                }
+            val id =
+                evidence.step(PeerAttachmentStage.Upload) {
+                    runBlocking { peer.uploadAttachment(chatX, documentName, TEXT_MIME, document, REPLY_TIMEOUT_MS) }
+                        .also { attachmentId = it }
+                }
+            evidence.step(PeerAttachmentStage.SendAcknowledgement) {
+                runBlocking { peer.sendMessage(chatX, PING_PROMPT, THREAD_TIMEOUT_MS, attachmentIds = listOf(id)) }
             }
-            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the peer's attachment turn in X did not end") { it.type == "turn_end" }
+            evidence.step(PeerAttachmentStage.TurnCompletion) {
+                allowPromptsUntil(
+                    peer,
+                    chatX,
+                    WAIT_TURN_TIMEOUT_MS,
+                    "the peer's attachment turn in X did not end",
+                ) { it.type == "turn_end" }
+            }
 
             // 2. Restart with X's thread cache cleared, so the row can only come from history replay.
             relaunched =
-                restartApp {
-                    val cache = GlobalContext.get().get<ConversationCache>()
-                    runBlocking {
-                        cache.writeThread(serverId, chatX, emptyList()).getOrThrow()
-                        assertTrue("X's thread cache was not cleared", cache.readThread(serverId, chatX).isEmpty())
+                evidence.step(PeerAttachmentStage.GraphRestart) {
+                    restartApp {
+                        evidence.step(PeerAttachmentStage.CacheClearing) {
+                            val cache = GlobalContext.get().get<ConversationCache>()
+                            runBlocking {
+                                cache.writeThread(serverId, chatX, emptyList()).getOrThrow()
+                                assertTrue("X's thread cache was not cleared", cache.readThread(serverId, chatX).isEmpty())
+                                cacheCleared = true
+                            }
+                        }
                     }
                 }
-            awaitChannelList()
-            awaitConnected()
-            openChatRow(nameX)
+            evidence.step(PeerAttachmentStage.RestartChannelList) { awaitChannelList() }
+            evidence.step(PeerAttachmentStage.PostRestartPhoneConnection) { awaitConnected() }
+            evidence.step(PeerAttachmentStage.ThreadOpening) { openChatRow(nameX) }
 
             // 3. AC-2: pull for X's history; the retrieved name shows once, and open and save both carry the
             //    fixture's bytes.
-            awaitReadyAttachmentRow(documentName, REPLY_TIMEOUT_MS, poll = ::pullForOlderHistory)
-            composeTestRule.onAllNodes(readyAttachmentRow(documentName)).assertCountEquals(1)
-            assertOpensAndSaves(stub, documentName, sha256(document), inserted)
-            // #1851: successful saving confirms at the top, using the inert Default surface.
-            val savedPill =
-                composeTestRule
-                    .onNodeWithText(savedNotice)
-                    .assert(hasTestTag("transient_confirmation_notice"))
-                    .assertIsDisplayed()
-                    .assertHasNoClickAction()
-                    .getUnclippedBoundsInRoot()
-            val bar = composeTestRule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot()
-            assertTrue("saved confirmation is below the top bar", savedPill.top >= bar.bottom)
-            assertEquals("saved confirmation uses the right overlay gutter", 20f, (bar.right - savedPill.right).value, 2f)
-            composeTestRule.onAllNodesWithTag("thread_confirmation_snackbar").assertCountEquals(0)
+            evidence.step(PeerAttachmentStage.HistoryRetrieval) {
+                awaitReadyAttachmentRow(documentName, REPLY_TIMEOUT_MS, poll = ::pullForOlderHistory)
+                composeTestRule.onAllNodes(readyAttachmentRow(documentName)).assertCountEquals(1)
+            }
+            assertOpensAndSaves(stub, documentName, sha256(document), inserted, evidence)
+            evidence.step(PeerAttachmentStage.SavedOverlay) {
+                // #1851: successful saving confirms at the top, using the inert Default surface.
+                val savedPill =
+                    composeTestRule
+                        .onNodeWithText(savedNotice)
+                        .assert(hasTestTag("transient_confirmation_notice"))
+                        .assertIsDisplayed()
+                        .assertHasNoClickAction()
+                        .getUnclippedBoundsInRoot()
+                val bar = composeTestRule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot()
+                assertTrue("saved confirmation is below the top bar", savedPill.top >= bar.bottom)
+                assertEquals("saved confirmation uses the right overlay gutter", 20f, (bar.right - savedPill.right).value, 2f)
+                composeTestRule.onAllNodesWithTag("thread_confirmation_snackbar").assertCountEquals(0)
+            }
         } finally {
+            evidence.record(PeerAttachmentStage.BeforeCleanup, "observed")
             instrumentation.removeMonitor(stub)
             deleteFixtures(inserted)
             peer.close()
@@ -7245,25 +7319,35 @@ class InteractiveStreamE2ETest {
         name: String,
         digest: String,
         inserted: MutableList<Uri>,
+        evidence: PeerAttachmentEvidence? = null,
     ) {
-        stub.answer(Intent.ACTION_VIEW) { Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null) }
-        val views = stub.answered.count { it.action == Intent.ACTION_VIEW }
-        composeTestRule.onNode(readyAttachmentRow(name)).performClick()
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { stub.answered.count { it.action == Intent.ACTION_VIEW } > views }
-        val view = stub.answered.last { it.action == Intent.ACTION_VIEW }
-        val opened = checkNotNull(view.data) { "ACTION_VIEW carried no URI" }
-        assertEquals("the scheme of the URI handed to the viewer", ContentResolver.SCHEME_CONTENT, opened.scheme)
-        assertTrue("the viewer got no read grant", (view.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0)
-        assertEquals("digest of the opened file", digest, sha256(readUri(opened)))
-
-        val target = insertDownload(ATTACH_FILE_PREFIX + "saved-${System.nanoTime()}.bin", "application/octet-stream", null, inserted)
-        stub.answer(Intent.ACTION_CREATE_DOCUMENT) { Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(target)) }
-        composeTestRule.onNode(readyAttachmentRow(name)).performTouchInput { longClick() }
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            listOf(savedNotice, saveFailedNotice).any { composeTestRule.onAllNodesWithText(it).fetchSemanticsNodes().isNotEmpty() }
+        fun step(
+            stage: PeerAttachmentStage,
+            block: () -> Unit,
+        ) {
+            if (evidence == null) block() else evidence.step(stage, block)
         }
-        composeTestRule.onAllNodesWithText(saveFailedNotice).assertCountEquals(0)
-        assertEquals("digest of the saved file", digest, sha256(readUri(target)))
+        step(PeerAttachmentStage.FileOpen) {
+            stub.answer(Intent.ACTION_VIEW) { Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null) }
+            val views = stub.answered.count { it.action == Intent.ACTION_VIEW }
+            composeTestRule.onNode(readyAttachmentRow(name)).performClick()
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { stub.answered.count { it.action == Intent.ACTION_VIEW } > views }
+            val view = stub.answered.last { it.action == Intent.ACTION_VIEW }
+            val opened = checkNotNull(view.data) { "ACTION_VIEW carried no URI" }
+            assertEquals("the scheme of the URI handed to the viewer", ContentResolver.SCHEME_CONTENT, opened.scheme)
+            assertTrue("the viewer got no read grant", (view.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0)
+            assertEquals("digest of the opened file", digest, sha256(readUri(opened)))
+        }
+        step(PeerAttachmentStage.FileSave) {
+            val target = insertDownload(ATTACH_FILE_PREFIX + "saved-${System.nanoTime()}.bin", "application/octet-stream", null, inserted)
+            stub.answer(Intent.ACTION_CREATE_DOCUMENT) { Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(target)) }
+            composeTestRule.onNode(readyAttachmentRow(name)).performTouchInput { longClick() }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                listOf(savedNotice, saveFailedNotice).any { composeTestRule.onAllNodesWithText(it).fetchSemanticsNodes().isNotEmpty() }
+            }
+            composeTestRule.onAllNodesWithText(saveFailedNotice).assertCountEquals(0)
+            assertEquals("digest of the saved file", digest, sha256(readUri(target)))
+        }
     }
 
     /**
