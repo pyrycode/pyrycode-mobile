@@ -37,7 +37,7 @@ The connection-scoped repository collector and atomic projection retain ownershi
 
 | Event | Coverage |
 | --- | --- |
-| Diagnosed receipt/version transition, completed reply, delayed observation | New controlled `scriptedReplyRetainsItsExactCheckpoint` regression plus the unchanged ordered ping method |
+| Diagnosed receipt/version transition, completed reply, delayed observation | `deliveredReceiptHoleBlocksTheBoundSettledReplyAcrossRepeatedObservation`, `repairedDaemonQueuedReceiptsQualifyOnlyTheExactRepresentedReply` and the unchanged ordered ping method |
 | Unaccounted receipt and malformed/unknown receipt | New negative control beside the causal regression; existing `knownMalformedEntryAndReceivedGapBlockEvenLaterVisibleContent` and runtime receipt controls |
 | Held newer unseen version, replay and overlapping history | New causal probes plus `oldPresentedStreamingVersionDoesNotAcknowledgeLaterUnseenDeltas`, `overlapOrderAndRepeatedPagesPreserveExactClaims` and runtime receipt probes |
 | Fresh connection, reused conversation on another host, receipt without sight | Existing runtime receipt, `ConversationReadMarksTest` and `ReadCheckpointRetriesTest` controls |
@@ -57,8 +57,8 @@ Run focused tests, lint, debug assembly, Android test compilation if its source 
 
 ## Open Questions
 
-- Which exact reply version and received ID sequence produces the null checkpoint? Resolve from original paired execution and contextual projection evidence.
-- Is the causal repair Mobile-owned? External ownership requires a linked blocker instead of a workaround.
+- Resolved: the settled reply has exact claims 9/10; received delivery ID 8 is missing. Repeated observation does not change the hole or claims.
+- Resolved: daemon #3167 owns and repairs queued-send receipt publication and paging; Mobile production behavior remains unchanged.
 
 ## Documentation handoff
 
@@ -101,3 +101,19 @@ Security re-review: PASS. No production change, new receipt classifier or allowa
 This is a recovery branch pending daemon #3167, not a completed repair. Normal builder completion checks, repaired original pair, dispatcher scripted-all and documentation remain pending after the blocker closes.
 
 Recovery validation: the two new probes and existing read-claims, runtime-receipt, marks, retries and subscription classes executed 52 tests, all passed with zero failures/errors/skips. `assembleDebug`, `compileDebugAndroidTestKotlin` and forced `spotlessCheck` passed. Retain the focused unit command and counted XML with the paired evidence. Lint and final post-merge pre-verification remain for the successful resumed handoff.
+
+### 2026-10-11 — Resume against merged queued-send receipts
+
+Daemon #3167 is closed, merged at `a3ca005f05e95650d10b7e07cb5d190252acbd1a`. The configured live sibling checkout remains older, so use an isolated archive of that merge for test binaries. Preserve Mobile production behavior and all existing ordered-pair assertions, coverage checks and deadlines.
+
+Export the real-store completed-turn page using the merged daemon's `TestQueuedLegacyReceipts_CompletedTurn` setup, `testQueuedReceiptIdentity` and `testLegacySerializedPage`. Retain its serialized bytes as `app/src/test/resources/daemon-contract/queued-read-repaired.json`. The page accounts for acceptance ID 1 and delivery ID 3 with empty info banners; user ID 2 and reply IDs 5/6 retain their exact claims, and idle ID 7 may extend the checkpoint. Add `repairedDaemonQueuedReceiptsQualifyOnlyTheExactRepresentedReply` through the real DTO decoder and projection. First execute its checkpoint assertion with delivery ID 3 omitted and observe null; then restore the exported page and require checkpoint 7. Receipt-only arrival, unseen version, duplicate and overlapping receipt controls must remain conservative. Existing probes retain the original observed IDs and malformed/unknown controls.
+
+Security re-review: PASS. The only new input is a fixed synthetic real-store fixture decoded through the existing wire boundary. No production allowance, new sight, transport, credential, persistence or lifecycle change; generated turn IDs identify synthetic fixture data only. Device diagnostics remain content-free. Total forecast below 700 written lines, zero exported production declarations or consumer migrations.
+
+Fresh ordered-pair evidence and final validation will be recorded here before handoff. Dispatcher owns scripted-all and documentation; #2069 continues to own the durable-gap outcome independently.
+
+The controlled omitted-delivery fixture ran once and failed with expected checkpoint 7, actual null. Restoring the real exported receipt page made it pass; the six focused classes executed 53 tests, all passed with zero failures/errors/skips. Fresh counted XML is retained beside the original evidence, with provenance and commands in `invocations.json`.
+
+The unchanged ordered `scripted ping` pair against daemon `a3ca005f` and relay `a7a05d1f` at app `ffb7b9a12` executed both methods: 2 passed, zero failures/errors/skips. The ping reply still has claims 9/10, now with receipts 1 through 12, no holes, unknowns, unidentified entries or stored gaps, and checkpoint 12. Its foreground correlated-read and list-only peer-read attention assertions passed completely. The durable-gap method also passed completely; this result is handed to #2069 without creating a dependency. Counted XML, content-free reply diagnostics, source/binary/APK hashes and artifact paths are retained under `app/src/androidTest/assets/read-2070/`.
+
+Lint, debug assembly, Android test compilation and formatting apply passed. Final post-merge assembly, forced formatting and pre-verification remain required before PR handoff. Dispatcher scripted-all must separately report the ping method's executed/passed/failed/skipped counts against the repaired daemon; no full dispatcher gate result is claimed here.

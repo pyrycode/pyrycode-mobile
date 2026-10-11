@@ -1,16 +1,60 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.network.HistoryPagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.toHistoryPage
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
+import kotlinx.serialization.decodeFromString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Content-free shape of the original paired failure; daemon #3167 owns the missing receipt. */
+/** Original missing-receipt shape and daemon #3167's real-store compatibility repair. */
 class ScriptedPingReadEvidenceTest {
+    @Test
+    fun repairedDaemonQueuedReceiptsQualifyOnlyTheExactRepresentedReply() =
+        runTest {
+            val bytes = requireNotNull(javaClass.getResource("/daemon-contract/queued-read-repaired.json")).readText()
+            val page = MobileJson.decodeFromString<HistoryPagePayloadDto>(bytes).toHistoryPage()
+            val conversation = "11111111-1111-4111-8111-111111111111"
+            val projection = ThreadProjection()
+            projection.mergeHistoryPage(conversation, page, true)
+            val snapshot = projection.observeSnapshot(conversation).first()
+            val reply = snapshot.rows.filterIsInstance<ThreadItem.MessageItem>().last()
+            assertEquals(7uL, snapshot.readEvidence.checkpoint(reply, 0u))
+            assertEquals(setOf(5uL, 6uL), snapshot.readEvidence.versions[reply])
+            assertEquals(
+                (1uL..7uL).toList(),
+                snapshot.readEvidence.facts.keys
+                    .sorted(),
+            )
+            assertEquals(2, snapshot.rows.count { it.isReadContent() })
+            assertTrue(!reply.message.isStreaming)
+            val receipts = page.entries.filter { it.type == "banner" }
+            assertEquals(setOf(1uL, 3uL), receipts.map { it.unsignedId }.toSet())
+            val receiptOnly = ThreadProjection()
+            receiptOnly.mergeHistoryPage(conversation, page.copy(entries = receipts), true)
+            assertNull(
+                receiptOnly
+                    .observeSnapshot(conversation)
+                    .first()
+                    .readEvidence
+                    .checkpoint(reply, 0u),
+            )
+            val unseen = reply.copy(message = reply.message.copy(content = "unseen"))
+            for (overlap in listOf(receipts, page.entries.take(2), page.entries.subList(2, 5), page.entries.takeLast(2), page.entries)) {
+                projection.mergeHistoryPage(conversation, page.copy(entries = overlap), true)
+                val repeated = projection.observeSnapshot(conversation).first()
+                assertEquals(snapshot.rows, repeated.rows)
+                assertEquals(snapshot.readEvidence.versions, repeated.readEvidence.versions)
+                assertEquals(7uL, repeated.readEvidence.checkpoint(reply, 0u))
+                assertNull(repeated.readEvidence.checkpoint(unseen, 0u))
+            }
+        }
+
     @Test
     fun deliveredReceiptHoleBlocksTheBoundSettledReplyAcrossRepeatedObservation() =
         runTest {

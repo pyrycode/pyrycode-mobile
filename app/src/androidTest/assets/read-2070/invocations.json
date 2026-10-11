@@ -35,7 +35,7 @@
   "original_test_apk_sha256": "0bdabbca36b2a5e24c76b57fe485827b69df620eadfa6266041cfb3be8f35d95",
   "blocker": "https://github.com/pyrycode/pyrycode/issues/3167",
   "durable_gap_owner": "https://github.com/pyrycode/pyrycode-mobile/issues/2069",
-  "pending": "Paired rerun against fixed daemon and dispatcher scripted-all; no passing suite claimed",
+  "pending": "Dispatcher scripted-all with explicit ping executed/passed/failed/skipped counts, and documentation handoff.",
   "focused_unit_classes": [
     "de.pyryco.mobile.data.repository.ScriptedPingReadEvidenceTest",
     "de.pyryco.mobile.data.repository.ThreadReadClaimsTest",
@@ -52,5 +52,83 @@
     "errors": 0,
     "skipped": 0
   },
-  "recovery_checks": "assembleDebug, compileDebugAndroidTestKotlin, forced spotlessCheck all passed; completion checks remain pending after daemon repair"
+  "recovery_checks": "assembleDebug, compileDebugAndroidTestKotlin, forced spotlessCheck all passed; completion checks remain pending after daemon repair",
+  "repaired": {
+    "app_commit": "ffb7b9a12098592733d764a60cb36682d6e2624f",
+    "daemon_revision": "a3ca005f05e95650d10b7e07cb5d190252acbd1a",
+    "daemon_source": "Unmodified git archive of merged daemon #3167; scratch fixture exporter added only after the gate built the daemon binary (Go test source excluded from that build). Live sibling checkout untouched.",
+    "relay_revision": "a7a05d1f123d42fa17ac23b5e4d10a8f741a4911",
+    "command": "ANDROID_GATE_WAIT_SECONDS=2700 ANDROID_HOME=/Users/juhanailmoniemi/Library/Android/sdk JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' PYRYCODE_SRC=/tmp/builder-2070/daemon-repaired PYRYCODE_RELAY_SRC=/Users/juhanailmoniemi/Workspace/Projects/pyrycode-relay python3 scripts/android-test-gate.py scripted ping",
+    "exit": 0,
+    "counts": {
+      "executed": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "per_method": {
+      "interactiveTurn_seededChannel_durableGapCatchUp": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "artifacts": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2070/build/dispatcher-tests/scripted-xg79z1pa",
+    "raw_xml": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2070/build/dispatcher-tests/scripted-xg79z1pa/0-TEST-pixel2Api33Atd-_app-.xml",
+    "retained_counted_xml": "app/src/androidTest/assets/read-2070/repaired-daemon-counted.xml",
+    "hashes": {
+      "build/dispatcher-tests/scripted-xg79z1pa/0-TEST-pixel2Api33Atd-_app-.xml": "1aac28d71b69dcbe2111c59054c998489342845f0012fb5dc5938e6797966fcf",
+      "build/e2e-bin/pyry": "4a7b133e2c9ccffcd2836fa9c51165a25616e5e8a23782b7b34c7d794862e084",
+      "build/e2e-bin/pyrycode-relay": "8277b9675c8360d230892d9c96773f1c91af86da935e3b7db07a2e9e4f32d3ce",
+      "app/build/outputs/apk/debug/app-debug.apk": "622dcacacbf4abeb25c767bf151f6d0cc7eac7d4407bcaf59796f53dd311721a",
+      "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk": "81fce873e7e979531893d23ade0db91ef320d133578a0ed323b81eff0e5016d6",
+      "app/src/androidTest/java/de/pyryco/mobile/e2e/DeterministicInteractiveStreamE2ETest.kt": "390494869f81d8bcd5d2b0b90ec1b1249f954fae649b72bb5bed77455c6f42de"
+    },
+    "durable_gap_outcome": "Passed completely in this fresh pair; #2069 owns final durable-gap disposition. No reverse dependency.",
+    "claude_turns": 0
+  },
+  "controlled_red": {
+    "command": "ANDROID_HOME=/Users/juhanailmoniemi/Library/Android/sdk JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew testDebugUnitTest --tests de.pyryco.mobile.data.repository.ScriptedPingReadEvidenceTest.repairedDaemonQueuedReceiptsQualifyOnlyTheExactRepresentedReply --console=plain",
+    "exit": 1,
+    "counts": {
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "mutation": "Delivery banner receipt ID 3 removed from the exported real-store page; expected checkpoint 7, actual null",
+    "raw_xml": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2070/app/build/test-results/testDebugUnitTest/TEST-de.pyryco.mobile.data.repository.ScriptedPingReadEvidenceTest.xml"
+  },
+  "repaired_fixture": {
+    "daemon_revision": "a3ca005f05e95650d10b7e07cb5d190252acbd1a",
+    "producer": "TestQueuedLegacyReceipts_CompletedTurn setup + testQueuedReceiptIdentity + testLegacySerializedPage; TestMobile2070Export scratch exporter",
+    "command": "GOCACHE=/tmp/builder-2070/go-cache go test ./cmd/pyry -run ^TestMobile2070Export$ -count=1",
+    "source_exporter": "/tmp/builder-2070/daemon-repaired/cmd/pyry/mobile_2070_export_test.go",
+    "exporter_sha256": "0f86e96b2419ae1ee46c1d92a4e109c6612d352defa479f59edd3f21cd0a9c5a",
+    "fixture_sha256": "6c64d0730bba9a9a8032eb750d732984897f293d9e1185eec2db54313c35a2aa",
+    "retained_fixture_sha256": "f5aca29695b93a7d400597004cb87095162a4a500579306355ca7645c3d96a67"
+  },
+  "focused_repaired_unit": {
+    "counts": {
+      "executed": 53,
+      "passed": 53,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "command": "ANDROID_HOME=/Users/juhanailmoniemi/Library/Android/sdk JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew testDebugUnitTest --tests de.pyryco.mobile.data.repository.ScriptedPingReadEvidenceTest --tests de.pyryco.mobile.data.repository.ThreadReadClaimsTest --tests de.pyryco.mobile.data.repository.ThreadReadRuntimeReceiptsTest --tests de.pyryco.mobile.data.repository.ConversationReadMarksTest --tests de.pyryco.mobile.data.repository.ReadCheckpointRetriesTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadReadSubscriptionTest --console=plain",
+    "exit": 0,
+    "xml_directory": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2070/app/build/test-results/testDebugUnitTest"
+  }
 }
