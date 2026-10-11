@@ -68,3 +68,47 @@ Run the configured UI gate once for baseline diagnosis, then the fresh isolated 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-11
+
+## Revisions
+
+### 2026-10-11 — controlled apply boundary
+
+The initial controlled worker completion failed the startup Main assertion while
+its graph composed on the next Main-clock frame. Holding Main during completion
+still exposed off-main startup resumption but left graph delivery deferred. The
+fixture now also calls `Snapshot.sendApplyNotifications` on the completion worker,
+matching the worker-side apply boundary in the historical and fresh isolated
+failure stacks. Main is held only for the bounded, joined worker turn; no scheduler
+is advanced from the worker. The contract still requires startup continuation and
+all graph compositions on Main, with lifecycle enforcement enabled.
+
+### 2026-10-11 — diagnosis and final fixture
+
+Resolved both Open Questions. At `3918ef87d14d6add0013c9f4d5538c0d22d87c5e`,
+the baseline configured device-only gate passed 259 executed tests with one skip;
+the fresh isolated original method failed once with the retained main-thread
+lifecycle exception. Both initial and task-replacement startup began on Main and
+logged readiness on workers in these runs. Suite order and the neighbouring cases
+are retained, but prior-method shared state is not required to trigger this failure.
+The historical occurrence's exact scheduling interleaving remains unknown.
+
+The minimal controlled producer consistently resumed on its completion worker
+with the default rule and failed its Main assertion. Its graph was observed on
+Main in that run. The bounded Main-hold and explicit snapshot-apply investigation
+variants also failed the startup assertion without forcing off-main graph delivery;
+they are retained as diagnostics and removed from the shipped fixture. The final
+regression keeps the original minimal fixture, including both startup and graph
+Looper assertions. The real launcher method's fresh failure separately supplies
+the `NavHost.setGraph` worker-composition evidence.
+
+Supplying `StandardTestDispatcher` changes only the affected rule's composition
+effect context. The identical minimal regression then passed once: worker completion
+was off Main, startup resumed on Main, and the graph composed on Main. No production
+routing, dispatcher globals, test flags, deadlines or lifecycle enforcement changed.
+Evidence lives under `app/src/test/resources/verification/shortcut-composition-2094/`;
+manifests contain the tested revision and exact test-source dirty patch for every
+execution. The fresh repaired full configured UI gate remains dispatcher/verifier
+work, including exact shortcut-method execution, commit, XML and all outcome counts.
+
+The final formatted affected class executed both methods and passed 2/2 with no
+failures, errors or skips. The existing IO-backed routing class passed 15/15.
