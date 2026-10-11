@@ -159,7 +159,7 @@ val MobileJson: Json = Json {
 }
 ```
 
-**Always (de)serialize via `MobileJson`, never a fresh `Json {}`.** A default `Json` would break the wire two ways: it omits fields equal to their Kotlin default (dropping `"v":2`), and it emits `"in_reply_to":null` instead of omitting the key. Both are invisible at compile time and pinned by guard tests. `ignoreUnknownKeys = true` is a conscious lenient-decode choice: a client tolerating server-added fields is safer for forward-compat than hard-failing.
+**Use `MobileJson` for typed serialization, never a fresh `Json {}`.** A default `Json` would break the wire two ways: it omits fields equal to their Kotlin default (dropping `"v":2`), and it emits `"in_reply_to":null` instead of omitting the key. Both are invisible at compile time and pinned by guard tests. `ignoreUnknownKeys = true` is a conscious lenient-decode choice: a client tolerating server-added fields is safer for forward-compat than hard-failing. Supplied thread continuations use the strict, stack-safe admission boundary described below before delegating validated primitive leaves to `MobileJson`.
 
 ### Reply suggestion validation (#1865)
 
@@ -181,6 +181,91 @@ The authoritative wire contract remains pyrycode `docs/protocol-mobile.md`, head
 applies interactive gating and revision ordering and excludes this state from replay and
 history. Daemon text remains inert data and never enters logs; the
 [reading type](conversation-repository-shape.md#shape) redacts all fields in `toString()`.
+
+### Supplied thread updates and continuation admission
+
+`ThreadUpdateDecoder` (#2042) supplies structurally validated facts for
+`thread_item_added`, `thread_item_changed` and `thread_text_append`. The authoritative
+contract is the daemon's [supplied delivery contract](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#daemon-thread-updates-v2-supplied-delivery-contract)
+and [ADR 042](https://github.com/pyrycode/pyrycode/blob/main/docs/knowledge/decisions/042-daemon-built-thread.md).
+`CAPABILITY_THREAD` names the supplied `thread` token; the generic hello-ack capability
+list already retains it. Production hello advertisement, dispatch and live proof belong
+to [#1988](https://github.com/pyrycode/pyrycode-mobile/issues/1988).
+
+`ThreadItemDto.raw` and `ThreadUpdateDto.raw` retain the original JSON objects,
+including unknown fields and nested content. Unknown kinds, statuses and summaries
+remain inert data; missing agent/session attribution stays absent. Required identity,
+order, revision and version integers use canonical unquoted tokens in the contract's
+safe-integer range, with exact string and boolean token checks. Valid unknown numeric
+tokens remain verbatim, including exponents beyond floating-point range.
+
+Patches retain the whole `changes` object. A missing key means unchanged; empty string,
+false, zero, empty object and explicit null remain replacements. Replacing `content`
+replaces its whole JSON value, including null, rather than merging nested keys.
+Text appends retain the exact suffix, including an empty string. Item applicability,
+base-revision checks, replay handling and mutation belong to the authoritative store;
+fragment index/offset never supply item order or revision.
+
+`ThreadDecodeOutcome` exposes a value only through `Complete`. `Pending` identifies
+the conversation still assembling; `Repair` identifies its owner when recoverable
+and carries a static rejection code. Neither exposes an item revision or completed
+conversation version. `decode()` returns a list because expiry of other conversations
+can accompany the current frame's outcome. Consumers must handle every outcome.
+
+Presence of `continuation`, even null or malformed, selects assembly before ordinary
+DTO decoding. Parts require nonempty valid UTF-8 data, consecutive indexes and byte
+offsets, and identical envelope type, epoch, routing/version/revision metadata,
+base-revision presence, digest and total length. One conversation cannot replace its
+unfinished assembly with another identity; an ordinary update arriving during assembly
+also repairs and discards it without emitting either update. Separate conversations
+can interleave. A retained digest resolves changed or missing routing back to the
+original repair owner, so hostile metadata cannot leave that owner's buffer stranded.
+
+Final completion requires exact byte length, the SHA-256 digest of type + NUL + original
+payload bytes, strict original JSON, a valid DTO and decoded metadata matching the
+repeated metadata. A correct digest proves integrity, not valid JSON or authentication.
+Permissive tree parsing can erase the distinction between illegal raw controls and
+legal escapes, and can admit invalid number tokens such as `00`. Validate the original
+syntax before that information disappears. `parseThreadJson` validates syntax and builds
+containers iteratively, using `MobileJson` only for validated primitive leaves; checking
+syntax then invoking a recursive container parser still permits stack overflow.
+Legal escaped controls, escaped Unicode and unknown nested JSON remain intact.
+
+Ordinary admission counts compact JSON UTF-8 bytes iteratively with early exit before
+metadata/DTO decoding. Serializing a small but deeply nested tree to measure its size
+can overflow the stack before enforcing the bound. Both sizing and multipart container
+construction must remain stack-safe; the decoder's hostile-nesting, original-control
+and combined-capacity regressions cover these distinct admission paths.
+
+Default limits are 8 MiB per logical assembly, 16 MiB aggregate charged storage,
+32 pending conversations, 4096 parts per update and 30 seconds from the first part.
+Limits are positive and injectable. Retained metadata bytes **plus** buffered UTF-8
+fragment bytes must fit the inclusive per-assembly bound before each write; independently
+bounding metadata and payload would admit storage over that limit. Aggregate storage
+uses a running counter, including retained metadata, and terminal paths release the
+charge. Sequence, metadata, length, capacity, digest/JSON and timeout failures discard
+pending data and return repair, never partial facts. Diagnostics contain static codes
+and byte counts; DTO/outcome string representations redact contents, and parser
+exceptions are discarded without logging their text.
+
+### Thread decoder consumer lifecycle
+
+Create a fresh decoder/assembler per source host and connection generation, with calls
+serialized by the owning connection collector. Instances share no assembly state.
+The synchronous API owns no timer or background job: call `expire()` while idle as
+well as handling the expiry outcomes produced by `decode()`. The deadline is absolute
+from the first part; a slow trickle does not extend it, and a missing final part needs
+an idle tick to release storage without another frame.
+
+Call `abandon()` on connection teardown and handle its owning-conversation repairs.
+Abandonment clears buffers and permanently closes that instance; late parts cannot
+revive it. Reconnect requires a new instance. Before fresh catch-up, call
+`discard(conversationId)` to release that conversation's unfinished assembly without
+affecting other owners. These are consumer obligations, not transport wiring supplied
+by the codec. `ThreadPayloadAssembler` accepts decoding/metadata callbacks for reuse
+by [#2040's page codec](https://github.com/pyrycode/pyrycode-mobile/issues/2040);
+page requests/responses and store application remain outside this live-update boundary.
+See [remote repository](remote-conversation-repository.md) for the consumer area.
 
 ### Base64 + pubkey helpers
 
