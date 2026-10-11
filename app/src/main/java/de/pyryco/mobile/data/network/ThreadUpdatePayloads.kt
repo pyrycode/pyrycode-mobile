@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.network
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -17,28 +18,42 @@ internal const val TYPE_THREAD_TEXT_APPEND = "thread_text_append"
  */
 internal class ThreadItemDto private constructor(
     val raw: JsonObject,
+    optionalFields: JsonObject = raw,
 ) {
     val id: Long = raw.threadInteger("id")
     val kind: String = raw.threadString("kind")
     val rev: Long = raw.threadInteger("rev")
-    val order: Long? = raw.optionalInteger("order")
-    val endedOrder: Long? = raw.optionalInteger("ended_order")
-    val session: String? = raw.optionalString("session")
-    val agent: String? = raw.optionalString("agent")
-    val noChild: Boolean? = raw.optionalBoolean("no_child")
-    val turn: String? = raw.optionalString("turn")
-    val parent: Long? = raw.optionalInteger("parent")
+    val order: Long? = optionalFields.optionalInteger("order")
+    val endedOrder: Long? = optionalFields.optionalInteger("ended_order")
+    val session: String? = optionalFields.optionalString("session")
+    val agent: String? = optionalFields.optionalString("agent")
+    val noChild: Boolean? = optionalFields.optionalBoolean("no_child")
+    val turn: String? = optionalFields.optionalString("turn")
+    val parent: Long? = optionalFields.optionalInteger("parent")
     val status: String = raw.threadString("status")
     val active: Boolean = raw.threadBoolean("active")
     val shown: Boolean = raw.threadBoolean("shown")
     val summary: String = raw.threadString("summary")
-    val subtype: String? = raw.optionalString("subtype")
+    val subtype: String? = optionalFields.optionalString("subtype")
     val content: JsonElement = requireNotNull(raw["content"])
 
     override fun toString(): String = "ThreadItemDto(content=***)"
 
     companion object {
         internal fun decode(raw: JsonObject): ThreadItemDto = ThreadItemDto(raw)
+
+        /** Patch null clears retain exact raw presence while typed optional facts become unset. */
+        internal fun decodeReplacement(raw: JsonObject): ThreadItemDto =
+            ThreadItemDto(
+                raw,
+                JsonObject(
+                    raw.filterNot { (key, value) ->
+                        key in
+                            setOf("order", "ended_order", "session", "agent", "no_child", "turn", "parent", "subtype") &&
+                            value == JsonNull
+                    },
+                ),
+            )
     }
 }
 

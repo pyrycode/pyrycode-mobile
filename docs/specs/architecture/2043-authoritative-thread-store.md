@@ -76,3 +76,7 @@ None.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-11
+
+## Revisions
+
+- 2026-10-11: Exact optional-field null clears cannot be represented by the original full-item-only factory. Add `ThreadItemDto.decodeReplacement`, preserving raw JSON and reading null optional facts as unset only for replacements. Ordinary wire decoding remains strict and unchanged. This adds one narrowly scoped production file to the original file estimate, with no exported type or consumer migration.
