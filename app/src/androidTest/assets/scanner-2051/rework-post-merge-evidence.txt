@@ -1,0 +1,40 @@
+#2051 post-merge scripted verification, 2026-10-11
+Host: Juhanas-MacBook-Air.local; managed device: pixel2Api33Atd (API 33 Google ATD).
+Tested repository revision reported by both harness runs: 87b188751a7148374b498058bfbcb56c9ab3e912.
+Merged upstream main: a6840a356e8d5f02e62f888e5d1961b273d93475 (#1985 / PR #2076).
+Merge commit: f8a08c1f8a5a56f22ce9788762c1e2ed463f553a; subsequent 87b188751 changes only the plan.
+Daemon revision: a94775d2664b5a6c483e5d12aeb61f6a0bc5cb8e; scripted fakeclaude, zero real Claude turns.
+The normal gate obtained device coordination and forced fresh single-method execution with animations disabled.
+The upstream display fixtures now release fragments directly at phone checkpoints through DaemonFaultControl.
+Each selected method passed its unchanged display assertions without the former queued-follow-up release trigger.
+These passes resolve the two named gate failures, not the legacy queued-echo defect tracked separately by #2078.
+No #2051 source, fixture, assertion, timeout, retry, coverage or host configuration change was made.
+Counts use recorded cases minus skipped cases as executed; missing/skipped cases cannot count as a pass.
+XML timestamps below are retained as reported (original XML omits a timezone).
+
+Command: python3 scripts/android-test-gate.py scripted stream
+  Selected method: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread
+  Gate and Gradle exit: 0. Completed instrumentation: 1/1.
+  Counts: 1 recorded, 1 executed, 1 passed, 0 failed, 0 errors, 0 skipped.
+  XML timestamp: 2026-10-11T10:27:05; testcase duration: 6.807 seconds.
+  Original gate artifacts: /Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2051/build/dispatcher-tests/scripted-o_49ymas
+  Preserved raw XML/logcat: /tmp/builder-2051/rework-9b558e00a/post-merge-stream
+  Retained XML (only CRLF and final newline normalized): rework-post-merge-stream.xml
+
+Command: python3 scripts/android-test-gate.py scripted reopen-stream
+  Selected method: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately
+  Gate and Gradle exit: 0. Completed instrumentation: 1/1.
+  Counts: 1 recorded, 1 executed, 1 passed, 0 failed, 0 errors, 0 skipped.
+  XML timestamp: 2026-10-11T10:27:47; testcase duration: 5.996 seconds.
+  Original gate artifacts: /Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2051/build/dispatcher-tests/scripted-c7uh7aeu
+  Preserved raw XML/logcat: /tmp/builder-2051/rework-9b558e00a/post-merge-reopen-stream
+  Retained XML (only CRLF and final newline normalized): rework-post-merge-reopen-stream.xml
+
+Scanner/capture/runner/managed-device input hashes still match every entry in hp-source-hashes.txt.
+The retained HP focused 1/1 and class 3/3 evidence therefore remains applicable; no duplicate HP run was needed.
+Successful harness cleanup removes its private daemon/relay logs; retained fresh gate XML/logcat remains above.
+Original branch/main timeout comparisons remain historical in rework-evidence.txt and its four counted XML files.
+The temporary #2078 dependency can be removed after these counted passes; its separate repair remains out of scope.
+Pending dispatcher: current UI gate and ordinary scripted gates on the final branch, with their existing pass requirements.
+The previous UI PASS in the posted verdict describes 9b558e00a, not a new post-merge UI run.
+Pending documentation: existing Documentation handoff requirements. No real-Claude scenario applies.

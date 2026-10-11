@@ -1,0 +1,41 @@
+{
+  "head": "969d9c3c8847b8c99af3a8573750f8429a72a1eb",
+  "pid": 463,
+  "startedAt": "2026-10-11T09:31:22.520Z",
+  "state": "focused-scanner-failed",
+  "commands": [
+    {
+      "stage": "focused",
+      "requestedRenderer": "installed-swangle",
+      "command": [
+        "python3",
+        "/work/Projects/.hp-emulator-diagnostics/ticket-2051-focused-20261011/verify.py"
+      ],
+      "startedAt": "2026-10-11T09:31:24.654Z",
+      "log": "/work/Projects/.hp-emulator-diagnostics/ticket-2051-focused-20261011/focused/command.log",
+      "finishedAt": "2026-10-11T09:32:43.865Z",
+      "exitCode": 1,
+      "signal": null,
+      "timedOut": false,
+      "captures": [],
+      "artifacts": []
+    }
+  ],
+  "grant": {
+    "project": "pyrycode/releases",
+    "ticket": "pyrycode/releases#@hp-mobile-ticket-2051-focus-20261011",
+    "role": "maintenance-emulator-diagnostic",
+    "resource": "heavy",
+    "locks": [
+      "pyrycode/releases:emulator-diagnostic",
+      "pyrycode/releases:release"
+    ],
+    "id": "32e167bf651b916f71fc4affd9c45306b67977186293c53866a34ce768f5fefa",
+    "machine": "build-hp-1",
+    "session": "641fa80e-06d7-430d-8d94-dfd8ed85b345",
+    "generation": "4f9f2075-b56e-45e0-b92d-9a2643469b82",
+    "created": 1791711082905
+  },
+  "reservationFinished": true,
+  "finishedAt": "2026-10-11T09:32:43.883Z"
+}
