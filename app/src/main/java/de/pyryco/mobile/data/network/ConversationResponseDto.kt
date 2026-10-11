@@ -60,6 +60,9 @@ data class ConversationResponseDto(
     @SerialName("read_up_to")
     @Serializable(with = ReadMarkIdSerializer::class)
     val readUpTo: ULong? = null,
+    @SerialName("last_shown_version")
+    @Serializable(with = ShownVersionSerializer::class)
+    val lastShownVersion: ULong? = null,
     // Kept raw so an absent key stays distinguishable: an older daemon omits it on `conversation_updated`,
     // and [de.pyryco.mobile.data.repository.ConversationListProjection.upsertConversation] then keeps the
     // stored agent instead of reading Claude.

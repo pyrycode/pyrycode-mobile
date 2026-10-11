@@ -359,14 +359,25 @@ The authoritative wire specification remains daemon
 `conversation_updated` type-table rows. Mobile's DTOs and validation implement that
 contract (#1881); this topic records the client boundary and merge rules.
 
-`ConversationSummaryDto` accepts optional/default-null `read_up_to` and
-`latest_entry_id`; `ConversationResponseDto` accepts optional/default-null `read_up_to`.
-Absence or explicit null means unavailable, while integer zero is a known valid fact.
-An older daemon can omit the fields without changing the other conversation mappings.
-`conversation_updated` has no latest-id field, so both correlated replies and pushes
-must preserve the latest id already held from a list. The
-[remote read ledger](remote-conversation-repository.md#daemon-conversation-read-marks)
-merges supplied facts monotonically within one host connection generation.
+`ConversationSummaryDto` accepts optional/default-null `read_up_to`,
+`latest_entry_id` and `last_shown_version`; `ConversationResponseDto` accepts
+`read_up_to` and `last_shown_version`. Updates preserve held legacy latest because
+there is no latest-id field. Confirmed read and legacy latest merge monotonically;
+thread metadata additionally replaces shown availability, so omitted/null/malformed
+shown values invalidate an older usable watermark. Explicit zero remains known.
+
+`ShownVersionSerializer` accepts unquoted canonical integers in the protocol safe
+range, 0 through 9,007,199,254,740,991. Quoted, negative, fractional/exponent,
+leading-zero, composite and out-of-range values become unavailable with static
+outcome diagnostics. This tolerant shown-field boundary differs from the strict
+read-id decoder below. Shown, confirmed read and legacy activity share the history-entry
+number space but retain separate meanings; envelope/replay ids, item ids and highest
+revisions cannot substitute for a shown watermark or certified complete coverage.
+Thread unread and notification coverage use usable shown metadata; unavailable values
+provide neither coverage nor sight. Hidden/state-only delivery cannot raise shown.
+See the [remote ledger](remote-conversation-repository.md#daemon-conversation-read-marks)
+and [foreground proof](thread-screen.md#what-it-does). The supplied-input seam is
+unactivated; #1988 owns production capability/input selection and live acceptance.
 
 `ReadMarkIdSerializer` validates canonical unquoted decimal integers from zero through
 `ULong.MAX_VALUE`, retaining the full unsigned value without conversion through `Long`.

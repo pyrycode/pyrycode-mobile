@@ -23,6 +23,7 @@ import de.pyryco.mobile.data.repository.ThreadItem
 internal class ThreadReadCandidate(
     val key: Any,
     val row: ThreadItem,
+    val revision: Long? = null,
 ) {
     var laidOut by mutableStateOf(false)
     var trailingEdge by mutableStateOf<Float?>(null)
@@ -38,6 +39,7 @@ internal fun ThreadReadViewport(
     headerHeight: Dp,
     composerHeight: Dp,
     visible: Boolean,
+    otherCandidates: List<ThreadReadCandidate> = emptyList(),
     onEvent: (ThreadEvent) -> Unit,
 ) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -48,40 +50,65 @@ internal fun ThreadReadViewport(
     val composer = with(density) { composerHeight.toPx() }
     val currentState by rememberUpdatedState(state)
     val currentCandidate by rememberUpdatedState(candidate)
+    val currentCandidates by rememberUpdatedState(otherCandidates)
     val viewportBounds by rememberUpdatedState(viewport)
     val unobscured by rememberUpdatedState(visible)
     val chrome by rememberUpdatedState(header to composer)
     val dispatch by rememberUpdatedState(onEvent)
-    LaunchedEffect(listState, lifecycle, state.conversationId) {
+    LaunchedEffect(listState, lifecycle, state.conversationId, state.authoritativeThread?.scope) {
         var sent = 0uL
+        val seen = mutableMapOf<String, Long>()
+        var seenPresentation: AuthoritativeThreadPresentation? = null
         snapshotFlow {
             val tracked = currentCandidate ?: return@snapshotFlow null
-            val content = tracked.row
             val info = listState.layoutInfo
-            val item = info.visibleItemsInfo.firstOrNull { it.key == tracked.key }
-            val checkpoint = currentState.readUpTo?.let { currentState.readEvidence?.checkpoint(content, it) }
-            val bounds = viewportBounds.value
-            val bottom = tracked.trailingEdge
-            if (resumed &&
-                unobscured &&
-                tracked.laidOut &&
-                tracked.revealed &&
-                item != null &&
-                chrome.first > 0 &&
-                chrome.second > 0 &&
-                bottom != null &&
-                bounds != null &&
-                qualifiesReadEdge(bottom, bounds.top, bounds.bottom, chrome.first, chrome.second)
-            ) {
-                content to checkpoint
-            } else {
-                null
+            val bounds = viewportBounds.value ?: return@snapshotFlow null
+            val authoritative = currentState.authoritativeThread != null || currentState.readMarks?.threadSupported == true
+            if (!resumed || !unobscured || authoritative && !currentState.hostAvailable || chrome.first <= 0 || chrome.second <= 0) {
+                return@snapshotFlow null
             }
-        }.collect { qualified ->
-            val (content, checkpoint) = qualified ?: return@collect
+
+            fun ready(row: ThreadReadCandidate): Boolean {
+                val bottom = row.trailingEdge ?: return false
+                return row.laidOut &&
+                    row.revealed &&
+                    info.visibleItemsInfo.any { it.key == row.key } &&
+                    qualifiesReadEdge(bottom, bounds.top, bounds.bottom, chrome.first, chrome.second)
+            }
+            val visibleRows =
+                (currentCandidates + tracked)
+                    .filter(::ready)
+                    .mapNotNull { row ->
+                        val key = row.key as? String ?: return@mapNotNull null
+                        row.revision?.let { key to it }
+                    }.toMap()
+            Triple(currentState, tracked.takeIf { ready(tracked) }, visibleRows)
+        }.collect { sight ->
+            val (current, newest, visibleRows) = sight ?: return@collect
+            if (seenPresentation !== current.authoritativeThread) {
+                seen.clear()
+                seenPresentation = current.authoritativeThread
+            }
+            seen.putAll(visibleRows)
+            val content = newest ?: return@collect
+            val presentation = current.authoritativeThread
+            val checkpoint =
+                if (presentation != null) {
+                    presentation.readCheckpoint(content.key as? String, current.readMarks, seen)
+                } else {
+                    current.readUpTo?.let { current.readEvidence?.checkpoint(content.row, it) }
+                }
             if (checkpoint != null && checkpoint > sent) {
                 sent = checkpoint
-                dispatch(ThreadEvent.NewestContentPresented(content, checkpoint))
+                dispatch(
+                    ThreadEvent.NewestContentPresented(
+                        content.row,
+                        checkpoint,
+                        presentation,
+                        rowKey = if (presentation != null) content.key as? String else null,
+                        seenRowRevisions = if (presentation != null) seen.toMap() else emptyMap(),
+                    ),
+                )
             }
         }
     }

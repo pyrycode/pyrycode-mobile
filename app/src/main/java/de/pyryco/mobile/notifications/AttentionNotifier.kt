@@ -236,13 +236,13 @@ class AttentionNotifier(
 /** Absence of either live fact proves nothing; checkpoint zero and unsigned equality are valid. */
 private fun ConversationReadMarks.coversLatest(): Boolean {
     val confirmed = readUpTo ?: return false
-    val latest = latestEntryId ?: return false
+    val latest = unreadWatermark ?: return false
     return confirmed >= latest
 }
 
 /** A read replay stays read even when the conversation already holds newer unread activity. */
 private fun ConversationReadMarks.coversCompletion(historyEntryId: ULong?): Boolean =
-    if (historyEntryId != null) readUpTo?.let { it >= historyEntryId } == true else coversLatest()
+    if (!threadSupported && historyEntryId != null) readUpTo?.let { it >= historyEntryId } == true else coversLatest()
 
 /**
  * The notification tap's contract with `MainActivity` (#685). `MainActivity` is exported, so any app can

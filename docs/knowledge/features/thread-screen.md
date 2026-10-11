@@ -76,24 +76,47 @@ Rows and exact read evidence travel together. See
 [worker admission, pacing and cancellation](thread-screen-how-it-works-state.md#combineobserveconversations-observemessages-pendingworkspacepickerstateinwhilesubscribed--three-upstreams-since-137)
 and [frame probes](thread-screen-testing.md#frame-paced-content-1968).
 
-**Foreground read checkpoints (#1912).** `ThreadReadViewport` sends
-`ThreadEvent.NewestContentPresented` only when the destination is resumed, the newest
-rendered row has finished its reveal for the exact version on screen, and that row's
-trailing edge sits inside the message viewport, below the measured header or top-overlay
-pills and above the composer and IME. Any surface that hides the list blocks it: the
-permission or question prompt, Channel info, the background-task panel, the status sheet,
-rename, edit-channel, save-as-channel, delete and workspace dialogs, the overflow and header
-menus and slash-command suggestions. Such surfaces leave the destination resumed and the
-list composed, so lifecycle alone cannot prove sight; a reply that arrives behind one
-qualifies only after it closes. A row update while the reader has scrolled away, merely
-opening the thread, or a recomposition with an unchanged checkpoint sends nothing. A
-shown Agent block takes the lifecycle claims of its hidden local-agent task updates, so a
-changed block must itself be presented; plain task lifecycle is deliberately invisible
-receipt. The ViewModel forwards only increasing checkpoints. Repository rules for
-claims, barriers and retries are under
+**Foreground read checkpoints (#1912, #2085).** `ThreadReadViewport` sends
+`ThreadEvent.NewestContentPresented` only while the destination is resumed and
+unobscured, after exact row reveal completes and its readable trailing edge is
+inside the measured message viewport, below the header/top-overlay pills and
+above the composer/IME. Permission/question prompts, Channel info, background-task
+and status panels, editing/workspace dialogs, overflow/header menus and slash
+suggestions block sight even though the destination remains resumed. Opening,
+receipt, scrolled-away updates and unchanged recomposition do not establish sight.
+A shown legacy Agent block must itself be presented; hidden task lifecycle is receipt.
+
+For the supplied authoritative presentation, coverage comes only from the store's
+certified `checkpoint`, never `completedVersion`, a batch maximum or item revisions.
+Usable `lastShownVersion` and confirmed `readUpTo` are separate summary facts.
+Unavailable shown metadata, partial catch-up, repair/reset, coverage below shown,
+rows beyond coverage or no shown-row evidence reaching the watermark withhold a
+checkpoint. Hidden/state-only changes grant no sight. Qualification is bounded by
+the shown watermark and requires the newest shown row currently visible plus sight
+of **every shown row revision above confirmed read**, including an older row appended
+between confirmed read and the newest watermark. Seeing only the newest row can
+otherwise mark an intermediate offscreen append read.
+
+Authoritative candidates and the composition-local seen ledger use scoped list keys
+and exact revisions. Equal banners, refusals, dividers and compactions cannot share
+sight through displayed-value equality. The ledger resets when the presentation
+instance changes; replacement/removal and host, conversation, epoch or generation
+changes retire readiness. `ThreadViewModel` validates the carried key/revision proof,
+active presentation and composition binding, exact owner and captured facade
+connection identity before forwarding an increasing checkpoint. A reconnect cannot
+reuse a mounted composition's sight. Host availability fences authoritative sight;
+legacy/local fallback retains its existing behavior.
+
+The supplied-input seam remains dormant until #1988 activates capability selection
+and authoritative input collection; #1984 owns sync/cache integration. #1988 also
+owns `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` and the
+combined partial-reconnect/unseen-content daemon acceptance. This slice changes no
+follow-to-latest presentation and claims no live proof. Qualified work uses the
+existing host-owned retry path after screen closure or disconnect; only daemon
+confirmation advances shared read. See
 [daemon conversation read marks](remote-conversation-repository.md#daemon-conversation-read-marks).
 
-Since #1953, UI-local read bookkeeping holds only one `ThreadReadCandidate`: the
+On the legacy route since #1953, UI-local read bookkeeping holds only one `ThreadReadCandidate`: the
 newest rendered delivered row's exact version and list key, with layout, readable
 edge and reveal readiness. Invisible info banners do not become candidates; a queued
 newest row blocks qualification. Version/key changes and removal followed by
