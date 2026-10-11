@@ -238,3 +238,6 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 - [Thread screen — background-agent viewport testing](features/thread-screen-testing-background-agent-viewport.md): 23 shared/Android frame probes, cold-boundary controls and counted viewport evidence; split from thread-screen-testing.md for #2039.
 
 - [Remote conversation repository — testing](features/remote-conversation-repository-testing.md): fake-pump scheduling, runtime and queued-send receipt continuity, exact-version and correlated-read invariant probes; split from the repository overview for #2070.
+
+- [Thread screen — saved-thread first-draw testing](features/thread-screen-testing-saved-first-draw.md): saved-history latency, allocation margin and retained phase evidence; split from thread-screen-testing.md for #1985.
+- [Thread screen — inline question rows and reveal](features/thread-screen-inline-question-reveal.md): question rows, prompt growth masking and shared reveal ownership; split from the list/status overview for #1985.
