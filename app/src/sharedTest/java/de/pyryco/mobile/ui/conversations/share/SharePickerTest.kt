@@ -164,7 +164,7 @@ class SharePickerTest {
         val preview = mutableStateOf(SharedContent(1, "a shared link", emptyList(), false))
         var cancelled = false
         compose.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ChannelListScreen(HostChannelListState(), {}, shareHeader = { SharePickerHeader(preview.value) { cancelled = true } })
             }
         }
@@ -219,7 +219,7 @@ class SharePickerTest {
         try {
             compose.setContent {
                 view = LocalView.current
-                PyrycodeMobileTheme { SharePickerHeader(preview.value, {}) }
+                PyrycodeMobileTheme(darkTheme = true) { SharePickerHeader(preview.value, {}) }
             }
             compose.waitUntil(5_000) {
                 compose
@@ -281,7 +281,7 @@ class SharePickerTest {
         compose.runOnIdle { intake.accept(SharePayload("shared text", listOf(Uri.parse("content://foreign/document")))) }
         compose.setContent {
             nav = rememberNavController()
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 PyryNavHost(Routes.CHANNEL_LIST, navController = nav, shareIntake = intake)
             }
         }
@@ -332,7 +332,7 @@ class SharePickerTest {
         compose.runOnIdle { intake.accept(SharePayload("direct", listOf(Uri.parse("content://foreign/file")), id)) }
         compose.setContent {
             nav = rememberNavController()
-            PyrycodeMobileTheme { PyryNavHost(Routes.CHANNEL_LIST, navController = nav, shareIntake = intake) }
+            PyrycodeMobileTheme(darkTheme = true) { PyryNavHost(Routes.CHANNEL_LIST, navController = nav, shareIntake = intake) }
         }
         compose.onAllNodes(hasText("Share to…")).assertCountEquals(0)
         compose.runOnIdle {
@@ -358,7 +358,7 @@ class SharePickerTest {
         val captured = file("keep.pdf", "application/pdf")
         val intake = ShareIntakeViewModel(drafts, { _, _ -> captured }, Dispatchers.Main.immediate)
         compose.runOnIdle { intake.accept(SharePayload("keep this", listOf(Uri.parse("content://foreign/keep")), "unknown")) }
-        compose.setContent { PyrycodeMobileTheme { PyryNavHost(Routes.CHANNEL_LIST, shareIntake = intake) } }
+        compose.setContent { PyrycodeMobileTheme(darkTheme = true) { PyryNavHost(Routes.CHANNEL_LIST, shareIntake = intake) } }
         compose.waitUntil(5_000) { intake.state.value?.shortcutId == null }
         compose.onNodeWithText("Share to…").assertIsDisplayed()
         compose.onNodeWithTag("share-ready").assertIsDisplayed()

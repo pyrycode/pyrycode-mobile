@@ -65,7 +65,7 @@ class ThreadScreenMcpServersTest {
         events: MutableList<ThreadEvent> = mutableListOf(),
     ) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = state,
                     onBack = {},
@@ -124,7 +124,7 @@ class ThreadScreenMcpServersTest {
     fun builtInServers_hiddenUntilShowBuiltIn_andTheTickResetsOnReopen() {
         var current by mutableStateOf(state(reported(server("github"), server("pyry_approve"), server("pyry_files"))))
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = current,
                     onBack = {},

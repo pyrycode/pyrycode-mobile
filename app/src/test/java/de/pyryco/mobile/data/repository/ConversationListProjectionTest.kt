@@ -97,6 +97,26 @@ class ConversationListProjectionTest {
             )
         }
 
+    @Test
+    fun retainedSessionIdentityEndsWhenTheRowOrConnectionIsRemoved() {
+        for (snapshotRemoval in listOf(true, false)) {
+            val projection = ConversationListProjection()
+            projection.applySnapshot(snapshot(STAMP))
+            projection.updateCurrentSessionId(ID, "successor")
+            if (snapshotRemoval) {
+                projection.applySnapshot(snapshot(STAMP).copy(payload = MobileJson.parseToJsonElement("""{"conversations":[]}""")))
+            } else {
+                projection.remove(ID)
+            }
+            projection.applySnapshot(snapshot(STAMP))
+            assertEquals("", projection.current().single().currentSessionId)
+            projection.updateCurrentSessionId(ID, "successor")
+            val newConnection = ConversationListProjection()
+            newConnection.upsertConversation(record("new", archived = false))
+            assertEquals("", newConnection.current().single().currentSessionId)
+        }
+    }
+
     private fun snapshot(archivedAt: String): Envelope =
         Envelope(
             id = 1,

@@ -1,0 +1,6 @@
+<testsuites>
+  <testsuite name="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" tests="2" failures="0" errors="0" skipped="0" time="16.806" timestamp="2026-10-11T02:28:44">
+    <testcase name="interactiveTurn_seededChannel_durableGapCatchUp" classname="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" time="14.336" />
+    <testcase name="interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread" classname="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" time="2.187" />
+  </testsuite>
+</testsuites>

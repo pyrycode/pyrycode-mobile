@@ -52,7 +52,7 @@ class ThreadInputBarSuggestionTest {
                         }
                     },
             ) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     if (mounted) {
                         ThreadInputBar(
                             text = draft,

@@ -62,7 +62,7 @@ class SettingsRowLayoutTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1f)) {
                     fixtureDensity = LocalDensity.current.density
-                    PyrycodeMobileTheme {
+                    PyrycodeMobileTheme(darkTheme = true) {
                         Column(Modifier.fillMaxWidth()) {
                             SettingsRow("Subtitle", "Supporting", onClick = { clicks++ })
                             SettingsRow("Single action", onClick = { clicks++ })
@@ -115,7 +115,7 @@ class SettingsRowLayoutTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(scale)) {
                     fixtureDensity = LocalDensity.current.density
-                    PyrycodeMobileTheme {
+                    PyrycodeMobileTheme(darkTheme = true) {
                         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
                             SettingsRow(headline, subtitle, trailing = { Switch(false, {}, Modifier.testTag("switch")) })
                             SettingsRow("Final row", onClick = {})

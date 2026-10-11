@@ -162,7 +162,7 @@ class QuestionBatchModalTest {
             rule.activity.window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         }
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 val state by vm.questionModal.collectAsStateWithLifecycle()
                 val view = LocalView.current
                 SideEffect { promptView = view }

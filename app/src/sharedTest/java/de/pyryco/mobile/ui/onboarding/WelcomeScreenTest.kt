@@ -112,7 +112,7 @@ class WelcomeScreenTest {
     @Test
     fun pairedCta_isDisplayed() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 WelcomeScreen(onPaired = {}, onSetup = {})
             }
         }
@@ -125,7 +125,7 @@ class WelcomeScreenTest {
     @Test
     fun setupCta_isDisplayed() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 WelcomeScreen(onPaired = {}, onSetup = {})
             }
         }
@@ -141,7 +141,7 @@ class WelcomeScreenTest {
         var setupCount = 0
 
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 WelcomeScreen(
                     onPaired = { pairedCount++ },
                     onSetup = { setupCount++ },
@@ -163,7 +163,7 @@ class WelcomeScreenTest {
         var setupCount = 0
 
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 WelcomeScreen(
                     onPaired = { pairedCount++ },
                     onSetup = { setupCount++ },

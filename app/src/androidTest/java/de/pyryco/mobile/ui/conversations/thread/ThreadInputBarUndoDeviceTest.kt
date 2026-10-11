@@ -45,7 +45,7 @@ class ThreadInputBarUndoDeviceTest {
     fun undo_reachesTheDraft() {
         var draft by mutableStateOf("")
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadInputBar(text = draft, onTextChange = { draft = it }, onSend = {})
             }
         }

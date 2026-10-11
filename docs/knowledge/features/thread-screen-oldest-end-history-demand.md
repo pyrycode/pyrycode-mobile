@@ -76,6 +76,30 @@ at a shared edge. Empty eligible history has no gap markers. Gaps missing either
 produce no internal marker or per-gap row-key scan. Hidden gaps remain authoritative and can become
 visible when their adjacent content is later displayed; absence of a marker never certifies coverage.
 
+**Recovered text cannot close a missing non-rendering receipt (#2069).** The original daemon
+pager excluded `send_accepted` and `send_delivered` facts while preserving their surrounding
+durable positions. The scripted catch-up recovered every post and the settled reply, but ids
+243 and 250 remained unreceived: coverage retained spans `1–242`, `244–249`, `251–495`, and
+`projectDisplay` correctly selected anchors 242 and 249. Exhaustive Compose search found both
+markers; the final timeout represented genuine unresolved coverage. Daemon
+[#3167](https://github.com/pyrycode/pyrycode/issues/3167) repairs the producer by projecting
+validated queued-send facts as non-rendering info-banner receipts on legacy routes. Receiving
+those identities joins coverage without changing read content. Mobile must not infer receipt
+from recovered text, terminal-page flags or overlap that still omits the hole.
+
+Keep three observations separate: received coverage, projected marker eligibility and actual
+rendered-marker search. Zero markers in the currently composed lazy viewport can mean that
+eligible markers are offscreen. `DurableGapProof` independently uses exhaustive
+`performScrollToNode` search and accepts only its specific exhausted-search assertion as
+absence; unrelated assertion failures propagate. Even exhaustive absence proves only displayed
+closure, since hidden gaps remain authoritative under the eligibility rules above.
+`ScriptedDurableGapCoverageTest` decodes the real repaired daemon fixture through the production
+decoder and merge: omitted-receipt controls retain an eligible hole through serialized restore,
+empty/terminal overlaps and reconnect; receipt-only arrival removes its marker without replacing
+read content. Duplicate/reordered pages preserve cached neighbours and the settled reply, and
+the hidden-gap control restores marker eligibility when adjacent content is displayed. See
+[the correlated original/repaired evidence](../../e2e-interactive-stream.md#scripted-durable-gap-closure-2069).
+
 **Preparation and targeting stay off main.** Each projection prepares a held row's history keys
 once, reusing delta keys for assistant fragments and marker lookup. Binary searches of normalized
 unsigned spans and first-row indexes replace gap-by-row/delta scans. `threadContent` combines item,

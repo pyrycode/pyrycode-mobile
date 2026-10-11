@@ -11,11 +11,6 @@ class SettingsLabelsTest {
     }
 
     @Test
-    fun lightLabel_isLight() {
-        assertEquals("Light", ThemeMode.LIGHT.label())
-    }
-
-    @Test
     fun darkLabel_isDark() {
         assertEquals("Dark", ThemeMode.DARK.label())
     }

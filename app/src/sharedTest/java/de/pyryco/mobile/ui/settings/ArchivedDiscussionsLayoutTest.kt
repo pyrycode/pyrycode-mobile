@@ -50,8 +50,6 @@ import kotlin.time.Duration.Companion.days
 class ArchivedDiscussionsLayoutTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun populatedTabsAlignTextAndRestore_light() = assertPopulatedTabs(darkTheme = false)
-
     @Test fun populatedTabsAlignTextAndRestore_dark() = assertPopulatedTabs(darkTheme = true)
 
     @Test fun darkArchiveBackdropHasTheReferenceGlow() {

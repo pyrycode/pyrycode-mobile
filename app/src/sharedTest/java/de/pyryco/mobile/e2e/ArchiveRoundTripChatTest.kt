@@ -33,7 +33,7 @@ class ArchiveRoundTripChatTest {
 
     @Test fun presenceFindsChatBeyondViewportBeforeAndAfterRestore() {
         val state = mutableStateOf(listState(preceding + target))
-        compose.setContent { PyrycodeMobileTheme { ChannelListScreen(state.value, onEvent = {}) } }
+        compose.setContent { PyrycodeMobileTheme(darkTheme = true) { ChannelListScreen(state.value, onEvent = {}) } }
         // The repository projection holds the renamed chat, but LazyColumn has not composed its row.
         compose.onAllNodesWithText(name).assertCountEquals(0)
         compose.awaitArchiveRoundTripChat(name, 1_000)
@@ -47,7 +47,7 @@ class ArchiveRoundTripChatTest {
     }
 
     @Test fun absentChatStillFailsThePresenceObservation() {
-        compose.setContent { PyrycodeMobileTheme { ChannelListScreen(listState(preceding), onEvent = {}) } }
+        compose.setContent { PyrycodeMobileTheme(darkTheme = true) { ChannelListScreen(listState(preceding), onEvent = {}) } }
         assertThrows(ComposeTimeoutException::class.java) { compose.awaitArchiveRoundTripChat(name, 500) }
     }
 

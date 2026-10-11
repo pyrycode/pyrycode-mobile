@@ -38,7 +38,9 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — screen snapshot, dequeue, interrupt and new session](remote-conversation-repository-control-sends.md) — `requestScreenSnapshot(conversationId) — the parser-independent screen-snapshot read (#375)`, `requestHistory(conversationId, cursor, limit) — the on-disk history page read (#623)`, `dropQueuedMessage(conversationId, queuedMessageId) — the dequeue_message outbound send (#466)`, `interrupt(conversationId) — explicitly targeted v2 interrupt`, `startNewSession() — explicitly targeted v2 new_session`, `answerQuestionBatch(questionBatchId, answers) / refuseQuestionBatch(questionBatchId) — the v2 question_answer / question_refused sends (#825)`
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — state and concurrency, error handling and the hand-off](remote-conversation-repository-state-errors-and-handoff.md) — `State & concurrency model`, `Error handling`, `Hand-off — the live binding`
 
-The sections that stay here: `## Where it sits in the Phase 4 stack`, `## Status projections: one file per status event`, `## The repository split (#912–#916): complete`, `## The `SessionPump` consumed contract`, `## Stubs — none remain; every method is now live`, `## Daemon conversation read marks`, `## Testing`, `## Related`.
+- [Remote repository — testing](remote-conversation-repository-testing.md#testing) — fake-pump scheduling and read-evidence invariant probes, split for #2070.
+
+The sections that stay here: `## Where it sits in the Phase 4 stack`, `## Status projections: one file per status event`, `## The repository split (#912–#916): complete`, `## The SessionPump consumed contract`, `## Stubs — none remain; every method is now live`, `## Daemon conversation read marks`, the testing pointer and `## Related`.
 
 ## Where it sits in the Phase 4 stack
 
@@ -342,6 +344,23 @@ an otherwise valid page still blocks the checkpoint even when stored `gaps` is e
 Controlled reproduction established daemon ownership; historical live captures
 lacked IDs, leaving their exact sequence unproven.
 
+Queued-send facts need the same continuity contract (#2070). The displayed settled
+scripted reply retained exact claims 9/10, but received IDs 7 and 9 surrounded omitted
+`send_delivered` ID 8. Two observations ten seconds apart retained that binding and
+hole with no unknowns, unidentified entries or stored gaps: neither version loss nor
+collector timing caused the null checkpoint. A total binding count and zero malformed
+counts cannot establish the selected reply's continuity. Daemon
+[#3167](https://github.com/pyrycode/pyrycode/issues/3167) repaired live publication and
+legacy paging of queued acceptance/delivery as existing empty info-banner receipts.
+Mobile's production evidence rules remain unchanged. With receipts 1–12 accounted for,
+the represented reply's claims 9/10 extend to checkpoint 12. Unknown/malformed receipts,
+unidentified content, numeric holes and stored gaps still block; receipts, overlapping
+history and reconnect never grant an unseen version sight. Only foreground presentation
+and correlated daemon confirmation qualify the phone read. A peer confirmation may
+clear list attention without reopening the phone thread. See the
+[controlled probes](remote-conversation-repository-testing.md#testing) and
+[ordered-pair evidence](../../e2e-interactive-stream.md#scripted-ping-receipt-continuity-2070).
+
 Receipt accounting, the exact presented version, client latest and correlated
 confirmation must agree. Daemon [#3029](https://github.com/pyrycode/pyrycode/issues/3029)
 repaired a second mismatch: stored visibility excluded successful `turn_end` from the
@@ -378,64 +397,7 @@ would reset latest ids and put new unread entries behind an already-read checkpo
 
 ## Testing
 
-JVM unit only (`app/src/test/.../data/repository/RemoteConversationRepositoryTest.kt`, `./gradlew test`),
-JUnit4 + `runTest` + a hand-written **fake `SessionPump`** — `inbound` backed by a
-`Channel<Envelope>(UNLIMITED).receiveAsFlow()` (so test pushes are not lost before the collector attaches);
-`send` records each envelope and returns `true`; a `push` helper feeds inbound. The repository is
-constructed with `backgroundScope` so its collector auto-cancels at test end. `conversations` payloads are
-built from the same object-wrapped-array fixture shape as `ConversationsPayloadTest` via
-`MobileJson.parseToJsonElement(raw)`.
-
-> **Test idiom (reusable across the sibling slices #313/#314/#329):** drive the push→demux→project→emit
-> cascade with **`runCurrent()`, not `advanceUntilIdle()`**. With a `Channel.receiveAsFlow()` inbound
-> feeding a single repository-internal collector on `backgroundScope`, `advanceUntilIdle()` does not
-> deliver the buffered channel item to the background collector (there are no timers to elapse), leaving
-> projection-dependent assertions empty; `runCurrent()` drains the whole current-time cascade
-> deterministically. See [[remote-repo-test-runcurrent-not-advanceuntilidle]] and
-> [`codebase/312.md`](../codebase/312.md) § Lessons learned.
-
-`RemoteConversationRepositoryReplySuggestionTest` uses the real decoder/repository and
-channel-backed fake pumps for 13 invariant probes. Coverage includes late subscription
-after set and clear, every arrival order with duplicate/decreasing revisions, retained
-clear watermarks and reconciled null, independent conversations/sessions/hosts, malformed
-high revisions followed by lower valid updates, exact ASCII/multibyte byte limits and the
-full unsigned revision range. It also probes non-interactive/default absence, connection
-termination, [facade replacement](stable-conversation-repository.md#testing), cache
-passthrough without storage access, and diagnostic redaction. The no-thread/turn probe
-feeds both an event-id-bearing suggestion and a history entry: checking text alone would
-miss accidental replay-cursor advancement, thread rows or live turn events.
-
-`ConversationReadMarksTest` probes list/push arrival permutations, stale and duplicate
-facts, empty/excluding snapshots, unsigned bounds, malformed input followed by valid
-input, host/generation isolation, exact outbound integer JSON and confirmed-write
-failures. Its two session-rotation regressions exercise repeated `startNewSession` and
-`changeWorkspace` calls: assert retained old history ids, an unchanged latest id at
-rotation, and new entries above the checkpoint that can be marked. Clamping tests
-without a session boundary cannot catch a history reset.
-
-The watermark regressions drive both live/replay and correlated history for every
-excluded type, status-only pages, duplicates, reordered/overlapping pages and a
-history reload after reconnect, while retaining original entries and IDs. They also
-require later non-excluded content, including unknown types, to raise latest.
-`ThreadReadClaimsTest.understoodUsageWindowReceiptsExtendPresentationButMalformedWindowsRemainBarriers`
-separately guards decoded clearing edges versus malformed/non-interactive evidence;
-an unread-only assertion would miss a valid receipt that still blocks phone reads.
-
-`ThreadReadRuntimeReceiptsTest` decodes the serialized real-store examples from
-[daemon PR #3034](https://github.com/pyrycode/pyrycode/pull/3034) in
-`app/src/test/resources/daemon-contract/runtime-read-{enabled,disabled}.json` through
-the real DTO, ordered reducer and projection. Its probes are
-`runtimeReceiptRepairsTheDiagnosedHoleWithoutChangingContent`,
-`invariantOnlyUnderstoodIdentifiedReceiptsAccountForTheHole`,
-`invariantReplayAndOverlappingHistoryPreserveExactClaims` and
-`invariantMissingLiveIdentityNeedsHistoryAndFreshConnectionHasNoSight`.
-They retain omitted-ID, unknown/malformed, stored-gap, exact-version, replay,
-missing-identity and fresh-connection barriers. Reordering moves the nonvisual receipt;
-arbitrarily reversing content lifecycle entries is not an equivalent history page.
-`ConversationReadMarksTest.runtimeReceiptHistoryRequiresCorrelatedDaemonReadConfirmation`
-exercises both controls through the repository: no command before presentation, no
-confirmation from sending or unrelated replies, clamped read/latest agreement, and
-host/conversation isolation. A checkpoint-only assertion would miss the clamp defect.
+See [repository testing and read-evidence invariant probes](remote-conversation-repository-testing.md#testing).
 
 ## Related
 

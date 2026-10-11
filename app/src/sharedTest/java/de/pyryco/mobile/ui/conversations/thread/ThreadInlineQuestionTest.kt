@@ -98,7 +98,7 @@ class ThreadInlineQuestionTest {
         var backs = 0
         var demands = 0
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     ThreadUiState("chat", "Client planning", isPromoted = false),
                     { backs++ },
@@ -126,7 +126,7 @@ class ThreadInlineQuestionTest {
         var pending by mutableStateOf<QuestionModalState?>(null)
         rule.setContent {
             CompositionLocalProvider(LocalOverscrollFactory provides null) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         ThreadUiState("chat", "Client planning", isPromoted = false, hasMessages = true, items = historyItems()),
                         {},
@@ -147,7 +147,7 @@ class ThreadInlineQuestionTest {
     @Test
     fun failure_feedback_is_announced_and_the_title_is_a_heading() {
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     ThreadUiState("chat", "Client planning", isPromoted = false),
                     {},
@@ -170,7 +170,7 @@ class ThreadInlineQuestionTest {
     @Test
     fun failure_line_keeps_its_full_line_box() {
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     ThreadUiState("chat", "Client planning", isPromoted = false),
                     {},
@@ -219,7 +219,7 @@ class ThreadInlineQuestionTest {
             )
         var modal by mutableStateOf<ModalUiState>(prompt)
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     ThreadUiState("chat", "Client planning", isPromoted = false),
                     {},
@@ -251,7 +251,7 @@ class ThreadInlineQuestionTest {
         val events = mutableListOf<QuestionModalEvent>()
         val picked = question.copy(selections = listOf(QuestionSelection(optionIndices = setOf(0))))
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     ThreadUiState("chat", "Client planning", isPromoted = false),
                     {},
@@ -305,7 +305,7 @@ class ThreadInlineQuestionTest {
             }
         rule.setContent {
             CompositionLocalProvider(LocalOverscrollFactory provides null) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         ThreadUiState("chat", "Client planning", isPromoted = false, hasMessages = true, items = items),
                         {},
@@ -361,7 +361,7 @@ class ThreadInlineQuestionTest {
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 500.dp))) {
                 CompositionLocalProvider(LocalOverscrollFactory provides null) {
-                    PyrycodeMobileTheme {
+                    PyrycodeMobileTheme(darkTheme = true) {
                         ThreadScreen(
                             ThreadUiState("chat", "Client planning", isPromoted = false),
                             {},
@@ -425,7 +425,7 @@ class ThreadInlineQuestionTest {
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 650.dp))) {
                 CompositionLocalProvider(LocalOverscrollFactory provides null) {
-                    PyrycodeMobileTheme {
+                    PyrycodeMobileTheme(darkTheme = true) {
                         ThreadScreen(
                             ThreadUiState(
                                 "chat",
@@ -478,7 +478,7 @@ class ThreadInlineQuestionTest {
     fun focusing_other_reveals_the_field_and_both_actions() {
         rule.setContent {
             CompositionLocalProvider(LocalOverscrollFactory provides null) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         ThreadUiState("chat", "Client planning", isPromoted = false, hasMessages = true, items = historyItems()),
                         {},
@@ -521,7 +521,7 @@ class ThreadInlineQuestionTest {
     fun focusing_an_earlier_other_keeps_the_field_in_view_on_every_frame() {
         rule.setContent {
             CompositionLocalProvider(LocalOverscrollFactory provides null) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         ThreadUiState("chat", "Client planning", isPromoted = false, hasMessages = true, items = historyItems()),
                         {},
@@ -567,7 +567,7 @@ class ThreadInlineQuestionTest {
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, viewportHeight))) {
                 CompositionLocalProvider(LocalOverscrollFactory provides null) {
-                    PyrycodeMobileTheme {
+                    PyrycodeMobileTheme(darkTheme = true) {
                         ThreadScreen(
                             ThreadUiState("chat", "Client planning", isPromoted = false, hasMessages = true, items = historyItems()),
                             {},
@@ -667,7 +667,7 @@ class ThreadInlineQuestionTest {
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 640.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.5f)) {
-                    PyrycodeMobileTheme {
+                    PyrycodeMobileTheme(darkTheme = true) {
                         ThreadScreen(
                             ThreadUiState("chat", "Client planning", isPromoted = false),
                             {},

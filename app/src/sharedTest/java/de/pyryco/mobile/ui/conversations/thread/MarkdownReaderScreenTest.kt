@@ -11,8 +11,10 @@ import androidx.activity.result.ActivityResultRegistry
 import androidx.activity.result.ActivityResultRegistryOwner
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasNoClickAction
@@ -32,6 +34,7 @@ import androidx.core.content.FileProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentTarget
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
@@ -51,6 +54,7 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 
 /** #1027: the in-app markdown reader — its name bar, its rendered body, its way back, and the tap that opens it. */
 @RunWith(AndroidJUnit4::class)
@@ -104,7 +108,7 @@ class MarkdownReaderScreenTest {
         document: MarkdownDocument,
         onBack: () -> Unit = {},
     ) = composeRule.setContent {
-        PyrycodeMobileTheme {
+        PyrycodeMobileTheme(darkTheme = true) {
             MarkdownReaderScreen(document = document, onBack = onBack)
         }
     }
@@ -172,7 +176,7 @@ class MarkdownReaderScreenTest {
     fun aLinkedNote_opensInTheSameReader_andItsBackArrowGoesBack() {
         var backs = 0
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 LinkedMarkdownReaderDestination(
                     note = LinkedMarkdown("notes/Plan.md", MarkdownDocument("Plan.md", "# Live note")),
                     reread = { null },
@@ -191,7 +195,7 @@ class MarkdownReaderScreenTest {
     fun noLinkedNote_goesBackOnce_andDrawsNoReader() {
         var backs = 0
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 LinkedMarkdownReaderDestination(note = null, reread = { null }, onBack = { backs++ })
             }
         }
@@ -212,7 +216,7 @@ class MarkdownReaderScreenTest {
         initial: MarkdownDocument,
         reread: suspend () -> MarkdownDocument?,
     ) = composeRule.setContent {
-        PyrycodeMobileTheme {
+        PyrycodeMobileTheme(darkTheme = true) {
             RefreshableMarkdownReader(initial = initial, reread = reread, onBack = {})
         }
     }
@@ -240,7 +244,7 @@ class MarkdownReaderScreenTest {
         var dispatcher: androidx.activity.OnBackPressedDispatcher? = null
         composeRule.setContent {
             dispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 MarkdownReaderScreen(MarkdownDocument("Plan.md", "# Plan"), onBack = { backs++ })
             }
         }
@@ -275,7 +279,7 @@ class MarkdownReaderScreenTest {
                 override val activityResultRegistry: ActivityResultRegistry = registry
             }
         CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 MarkdownReaderScreen(document = document, onBack = {})
             }
         }
@@ -304,7 +308,7 @@ class MarkdownReaderScreenTest {
         val visible = mutableStateOf(true)
         composeRule.setContent {
             CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
-                PyrycodeMobileTheme(dynamicColor = false) {
+                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                     if (visible.value) {
                         RefreshableMarkdownReader(
                             initial = MarkdownDocument("Plan.md", "# Plan"),
@@ -448,7 +452,7 @@ class MarkdownReaderScreenTest {
                     }
                 }
             CompositionLocalProvider(LocalContext provides isolatedContext) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     MarkdownReaderScreen(MarkdownDocument("Plan.md", "# Plan"), onBack = {})
                 }
             }
@@ -461,23 +465,51 @@ class MarkdownReaderScreenTest {
     @Test fun leavingTheReader_cancelsItsActiveAndPendingErrorNotices() {
         val present = mutableStateOf(true)
         val errors = TransientErrorNoticeState { 4_000L }
-        composeRule.setContent {
-            PyrycodeMobileTheme {
-                if (present.value) {
-                    MarkdownReaderScreen(MarkdownDocument("Plan.md", "# Plan"), onBack = {}, errorNotices = errors)
+        val completedOpens = AtomicInteger()
+        var disposed = false
+        val previousSink = RelayLog.sink
+        val previousEnabled = RelayLog.enabled
+        RelayLog.enabled = true
+        RelayLog.sink = { priority, tag, message ->
+            if (message.startsWith("event=markdown_reader_open_in_app outcome=no_app ")) completedOpens.incrementAndGet()
+            previousSink(priority, tag, message)
+        }
+        try {
+            composeRule.setContent {
+                PyrycodeMobileTheme(darkTheme = true) {
+                    if (present.value) {
+                        DisposableEffect(Unit) { onDispose { disposed = true } }
+                        MarkdownReaderScreen(MarkdownDocument("Plan.md", "# Plan"), onBack = {}, errorNotices = errors)
+                    }
                 }
             }
+            choose(openInApp)
+            awaitText(noApp)
+            assertErrorPill(noApp)
+            choose(openInApp)
+            composeRule.mainClock.autoAdvance = false
+            // File IO is outside the Compose clock. Observe both returns before checking queue cancellation.
+            composeRule.waitUntil(5_000) { completedOpens.get() == 2 }
+            composeRule.runOnIdle {
+                assertEquals(1L, errors.currentOccurrence)
+                assertEquals(noApp, errors.currentMessage)
+                present.value = false
+                Snapshot.sendApplyNotifications()
+            }
+            // Drive removal explicitly while the active notice's timeout remains held.
+            composeRule.mainClock.advanceTimeUntil(1_000) { disposed }
+            composeRule.onNodeWithTag("transient_error_notice").assertDoesNotExist()
+            composeRule.runOnIdle { assertNull(errors.currentMessage) }
+            composeRule.mainClock.advanceTimeBy(4_100)
+            composeRule.runOnIdle {
+                assertNull(errors.currentMessage)
+                assertEquals(1L, errors.currentOccurrence)
+            }
+        } finally {
+            composeRule.mainClock.autoAdvance = true
+            RelayLog.sink = previousSink
+            RelayLog.enabled = previousEnabled
         }
-        choose(openInApp)
-        awaitText(noApp)
-        assertErrorPill(noApp)
-        choose(openInApp)
-        composeRule.runOnIdle { present.value = false }
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("transient_error_notice").assertDoesNotExist()
-        composeRule.runOnIdle { assertNull(errors.currentMessage) }
-        composeRule.mainClock.advanceTimeBy(4_100)
-        composeRule.runOnIdle { assertNull(errors.currentMessage) }
     }
 
     @Test
@@ -596,7 +628,7 @@ class MarkdownReaderScreenTest {
             }
         composeRule.setContent {
             CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     RefreshableMarkdownReader(
                         initial = MarkdownDocument("Old.md", "# Old"),
                         reread = { MarkdownDocument("New.md", "# Refreshed") },

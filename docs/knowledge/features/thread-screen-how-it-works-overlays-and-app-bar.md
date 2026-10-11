@@ -182,7 +182,7 @@ doc: [Permission-modal overlay](permission-modal-overlay.md).
   dialog's own-window `FLAG_SECURE` and `filterTouchesWhenObscured` are gone along with the dialog; the
   request now relies on the same `QuestionPromptProtection` the #1305 question batch mounts on the activity
   surface, kept for either prompt kind from one call site (§
-  [list and status row](thread-screen-how-it-works-list-and-status-row.md#inline-question-rows-and-the-newest-end-reveal-1305)).
+  [list and status row](thread-screen-inline-question-reveal.md#inline-question-rows-and-the-newest-end-reveal-1305)).
   No modal text reaches `rememberSaveable` / saved-instance state. Back / outside-tap no longer have a
   dialog's `dismissOnBackPress`/`dismissOnClickOutside` to disable — they simply don't reach the request at
   all (it is list content, not a dismissable surface); Cancel is still the only path to `onModalCancel`. The
@@ -244,12 +244,44 @@ panel — the close glyph or Back, routed through `MobileReadOnlyModal`'s single
 [#1496](mobile-modal.md#the-read-only-panel-mobilereadonlymodal) removed the footer Close button and its
 `closeLabel` parameter; the panel's sheet now also runs to the screen's bottom edge, matching its Figma
 frames.
-`state.backgroundTasks` (`BackgroundTaskRoster?`) and `state.backgroundTaskCount` (`Int`) reach
+On the legacy route, `state.backgroundTasks` (`BackgroundTaskRoster?`) and `state.backgroundTaskCount` (`Int`) reach
 `ThreadUiState` from two defaulted `ThreadViewModel` constructor lambdas bound in `AppModule` to the open
 host's `RelayRepositoryCoordinator.observeBackgroundTasks` / `observeLiveBackgroundTaskCount` — the same
 per-conversation binding shape `questionBatch` uses — and default to `null` / `0` on the demo destination.
 See [Shared mobile modal § Callers](mobile-modal-callers.md#callers) for the panel's own content and trust-boundary
 handling.
+
+### Authoritative background-task panel (#1985)
+
+With `authoritativeThread` supplied, the running count and panel roster come only
+from recorded task links on held agent/tool items, deduplicated by task id using
+the newest revision. Ordinary foreground tools contribute nothing. Hidden linked
+facts remain eligible. Running/finished grouping uses `isFinished = !active`, even
+for unknown status; the terminal item's status/cause supplies the finished reading.
+A missing task id creates no panel entry or invented action. Legacy roster/count
+updates cannot populate or override this route.
+
+Panel expansion is screen-local and scope-keyed, stored by scoped item identity
+and adapted to task ids only at the panel boundary. Revision updates preserve it;
+a replacement item reusing a task id or an epoch change resets it. Go to agent
+uses the recorded item identity. Stop requires the current capability and dispatches
+the recorded task id on the owning conversation through the existing callback.
+The ViewModel checks host/conversation, scope/epoch, item/task identity and active
+facts, and suppresses duplicate sends before launching. Authoritative eligibility
+and pending cleanup are independent of legacy expansion/roster. Terminal facts,
+replacement, scope change, refusal, send failure or capability loss retire attempts.
+
+`AuthoritativeThreadActionPublisher` retains the actual published receiver and an
+opaque binding across recomposition. Publication authorizes actions; it does not
+observe the store or activate production rendering. On callback replacement,
+publish the new binding first, then retire the predecessor on its captured receiver.
+A fresh lambda to the same ViewModel is not a new owner: identity-guarded retirement
+cannot clear newer facts, so same-owner publication preserves pending Stop attempts.
+A real owner transfer retires the old owner's facts and attempts. Route removal
+(including simultaneous callback replacement) and composition disposal retire the
+retained binding on the actual owner without publishing facts to a replacement
+callback. Reentry publishes fresh facts; stale delayed retirement cannot clear them.
+See [counted lifecycle coverage](thread-screen-testing.md#supplied-authoritative-renderer-1985).
 
 ### `fun retry()` — non-suspend, VM owns the launch
 

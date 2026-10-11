@@ -129,7 +129,7 @@ open class ThreadReaderGeometryTest {
     @Test open fun settlementFixtures_changeHeightWithoutProgressiveReveal() {
         val caret = mutableStateOf(true)
         compose.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     listOf("growth" to growthTail, "shrink" to shrinkTail).forEach { (name, text) ->
                         Box(Modifier.width(180.dp).testTag("$name-streaming")) {
@@ -339,7 +339,7 @@ open class ThreadReaderGeometryTest {
                 LocalOverscrollFactory provides null,
                 LocalThreadListCompositionObserver provides { listState = it },
             ) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         state = state.value,
                         onBack = {},

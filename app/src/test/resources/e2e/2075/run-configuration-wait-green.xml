@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="de.pyryco.mobile.e2e.RunConfigurationWaitTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-11T05:33:16.979Z" hostname="Juhanas-MacBook-Air.local" time="8.301">
+  <properties />
+  <testcase name="permissiveNotePredicateCannotAcceptPendingPermission" classname="de.pyryco.mobile.e2e.RunConfigurationWaitTest" time="5.125" />
+  <testcase name="optionalNoteMustMatchInsideEffortAndDisappearBeforeAbsentNotePasses" classname="de.pyryco.mobile.e2e.RunConfigurationWaitTest" time="0.209" />
+  <testcase name="optimisticEffortWaitsForAcknowledgementAndFreshReading" classname="de.pyryco.mobile.e2e.RunConfigurationWaitTest" time="2.34" />
+  <testcase name="selectionInAnotherSectionCannotSatisfyEffort" classname="de.pyryco.mobile.e2e.RunConfigurationWaitTest" time="0.118" />
+  <testcase name="absentSectionCannotSatisfyEffortPlaceholder" classname="de.pyryco.mobile.e2e.RunConfigurationWaitTest" time="0.098" />
+  </testsuite>

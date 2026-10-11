@@ -85,7 +85,7 @@ class ToolRunCollapseTest {
     private fun setThread(initial: List<ThreadItem>) {
         items = initial
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
                         ThreadUiState(

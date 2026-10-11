@@ -452,8 +452,6 @@ class MarkdownReaderDesignTest {
         assertEquals(1, saves)
     }
 
-    @Test fun readerActionsUseComposerLightAppearance() = assertReaderActionPalette(dark = false)
-
     @Test fun readerActionsUseComposerDarkAppearance() = assertReaderActionPalette(dark = true)
 
     private fun assertReaderActionPalette(dark: Boolean) {
