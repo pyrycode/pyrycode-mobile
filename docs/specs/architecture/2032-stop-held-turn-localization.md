@@ -87,3 +87,9 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md`, stop-runni
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-11
+
+## Revisions
+
+- 2026-10-11: androidTest compilation established that coordinator `modalEvents` is private. The scenario follows its public `currentRepository` with `collectLatest` and collects the concrete remote repository's decoded modal stream; replacement cancels the prior collector and records an observer reset. No production visibility or API changes. Modal identities are retained only as fixed-size private SHA-256 values, with a 64-entry cap; these hashes never enter evidence.
+
+- 2026-10-11: a realistic Send-readiness regression and bytecode inspection established that `ComposeTimeoutException` extends `Throwable` directly, neither `Exception` nor `AssertionError`. Capture `Throwable` after the assertion arm, excluding cancellation, to preserve the exact original object. Diagnostic snapshots also handle non-cancellation `Throwable`, so the real Compose timeout cannot bypass failure capture or mask a primary failure.

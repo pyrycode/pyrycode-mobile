@@ -1,10 +1,14 @@
 package de.pyryco.mobile.e2e
 
+import androidx.compose.ui.test.ComposeTimeoutException
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -204,6 +208,74 @@ class StopHoldEvidenceTest {
         assertTrue(events.take(4).all { it.contains("conversation=unknown") })
         assertTrue(events.takeLast(2).all { it.contains("conversation=$conversation") })
         assertTrue(events.all { it.length < 800 && !it.contains("secret") })
+    }
+
+    @Test
+    fun sendReadinessExceptionRetainsEvidenceBeforeCleanup() {
+        val original = ComposeTimeoutException("private Send readiness")
+        assertExceptionEvidence(original) { throw original }
+    }
+
+    @Test
+    fun otherReadinessExceptionRetainsEvidenceBeforeCleanup() {
+        val original = IllegalStateException("private readiness failure")
+        assertExceptionEvidence(original) { throw original }
+    }
+
+    @Test
+    fun malformedPermissionDecodeRetainsTheSameException() {
+        val malformed = frame("modal_shown", "class" to "permission").payload
+        val original =
+            runCatching {
+                MobileJson.decodeFromJsonElement<ModalShownPayloadDto>(malformed)
+            }.exceptionOrNull()
+        requireNotNull(original)
+        assertExceptionEvidence(original) { throw original }
+    }
+
+    @Test
+    fun nonAssertionSnapshotFailurePreservesOriginalException() {
+        for (snapshotFailure in listOf(
+            IllegalStateException("private snapshot"),
+            AssertionError("private snapshot"),
+            ComposeTimeoutException("private snapshot"),
+        )) {
+            val original = IllegalArgumentException("private decode")
+            val events = mutableListOf<String>()
+            val caught =
+                runCatching {
+                    withStopHoldDiagnostics(conversation, { 7L }, { throw snapshotFailure }, events::add) { throw original }
+                }.exceptionOrNull()
+            assertSame(original, caught)
+            assertEquals(2, events.size)
+            assertTrue(events.last().contains("evidence=unavailable"))
+            assertFalse(events.joinToString().contains("private"))
+        }
+    }
+
+    private fun assertExceptionEvidence(
+        original: Throwable,
+        block: () -> Unit,
+    ) {
+        val events = mutableListOf<String>()
+        var snapshots = 0
+        val caught =
+            runCatching {
+                try {
+                    withStopHoldDiagnostics(conversation, { 7L }, {
+                        snapshots++
+                        "stage=no_observed_activity cause=unproven"
+                    }, events::add, block)
+                } finally {
+                    events.add("cleanup")
+                }
+            }.exceptionOrNull()
+        assertSame(original, caught)
+        assertEquals(1, snapshots)
+        assertEquals(3, events.size)
+        assertTrue(events[1].contains("event=stop_hold_permission_failed"))
+        assertFalse(events[1].contains("private"))
+        assertEquals("cleanup", events.last())
     }
 
     private fun assertStage(

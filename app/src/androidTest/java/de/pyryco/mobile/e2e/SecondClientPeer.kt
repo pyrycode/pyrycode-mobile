@@ -465,6 +465,22 @@ class SecondClientPeer(
     internal fun recorded(conversationId: String): List<Envelope> =
         received.value.filter { it.payloadField("conversation_id") == conversationId }
 
+    /** Stop-only receipt diagnostics: dismissals have no conversation id, so match their shown id. */
+    internal fun recordedPermissionLifecycle(conversationId: String): List<Envelope> {
+        val frames = received.value
+        val ids =
+            frames
+                .filter {
+                    it.type == "modal_shown" &&
+                        it.payloadField("conversation_id") == conversationId &&
+                        it.payloadField("class") == "permission"
+                }.mapNotNull { it.payloadField("modal_id") }
+                .toSet()
+        return frames.filter {
+            (it.type == "modal_shown" || it.type == "modal_dismissed") && it.payloadField("modal_id") in ids
+        }
+    }
+
     /** Stop redialing and wipe session keys; retain the host/token static identity for later peers. Idempotent. */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return

@@ -56,10 +56,8 @@ internal fun <T> withStopHoldDiagnostics(
     fun evidence(): String =
         try {
             snapshot()
-        } catch (failure: Exception) {
+        } catch (failure: Throwable) {
             if (failure is CancellationException) throw failure
-            "evidence=unavailable cause=unproven"
-        } catch (_: AssertionError) {
             "evidence=unavailable cause=unproven"
         }
     emit(stage("stop_hold_submit"))
@@ -70,6 +68,10 @@ internal fun <T> withStopHoldDiagnostics(
             val message = "${stage("stop_hold_permission_failed")} ${evidence()}"
             emit(message)
             throw AssertionError(message, failure)
+        } catch (failure: Throwable) {
+            if (failure is CancellationException) throw failure
+            emit("${stage("stop_hold_permission_failed")} ${evidence()}")
+            throw failure
         }
     emit("${stage("stop_hold_permission_ready")} ${evidence()}")
     return result

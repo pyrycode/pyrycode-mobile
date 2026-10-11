@@ -113,6 +113,7 @@ import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.HistoryEntry
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
+import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -170,6 +171,7 @@ import de.pyryco.mobile.ui.conversations.thread.slashCommandTypeAheadRows
 import de.pyryco.mobile.ui.onboarding.ScannerEvent
 import de.pyryco.mobile.ui.onboarding.ScannerUiState
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -178,6 +180,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.filterNotNull
@@ -3465,62 +3468,148 @@ class InteractiveStreamE2ETest {
                     peerStep(prior, "open prior peer") { prior.open(CONNECT_TIMEOUT_MS) }
                 }
                 peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
-                // #1925: correlate this send with bounded observations before failure cleanup; cause remains unproven.
-                val modalId =
-                    withStopHoldDiagnostics(
-                        conversationId = conversationId,
-                        nowMs = System::currentTimeMillis,
-                        snapshot = {
-                            val coordinator =
-                                GlobalContext
-                                    .get()
-                                    .get<RelayConnectionRegistry>()
-                                    .connectionFor(serverId)
-                                    ?.coordinator
-                            val phonePermission =
-                                coordinator?.hostModals?.value?.outstanding?.any {
-                                    it.conversationId == conversationId && it.modalClass == "permission"
+                // #2032: observe receipt, projection and sparse UI separately until the result, before cleanup.
+                val observations = StopHoldObservations(conversationId, System::currentTimeMillis)
+                val coordinator =
+                    GlobalContext
+                        .get()
+                        .get<RelayConnectionRegistry>()
+                        .connectionFor(serverId)
+                        ?.coordinator
+
+                fun phonePermission(): Boolean? =
+                    coordinator?.hostModals?.value?.outstanding?.any {
+                        it.conversationId == conversationId && it.modalClass == "permission"
+                    }
+
+                fun sample() {
+                    observations.projection(phonePermission())
+                    observations.peer(peer.recordedPermissionLifecycle(conversationId))
+                }
+
+                fun phoneUiPermission(): Boolean? =
+                    try {
+                        composeTestRule.onAllNodes(hasText(modalCancel)).fetchSemanticsNodes().isNotEmpty()
+                    } catch (failure: CancellationException) {
+                        throw failure
+                    } catch (_: Throwable) {
+                        null
+                    }
+
+                fun snapshot(): String =
+                    try {
+                        sample()
+                        stopHoldEvidence(conversationId, peer.recorded(conversationId), phonePermission()) + " " + observations.summary()
+                    } catch (failure: CancellationException) {
+                        throw failure
+                    } catch (_: Throwable) {
+                        "evidence=unavailable cause=unproven"
+                    }
+                val observationScope = CoroutineScope(Dispatchers.Default)
+                val phoneObserver =
+                    observationScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        try {
+                            coordinator?.currentRepository?.collectLatest { repository ->
+                                observations.phone(null)
+                                val remote = repository as? RemoteConversationRepository
+                                if (remote ==
+                                    null
+                                ) {
+                                    observations.phoneUnavailable()
+                                } else {
+                                    remote.modalEvents.collect { observations.phone(it) }
                                 }
-                            stopHoldEvidence(conversationId, peer.recorded(conversationId), phonePermission)
-                        },
-                        emit = { Log.i("StopHoldProbe", it) },
-                    ) {
-                        sendFromPhone(STOP_HOLD_PROMPT)
+                            } ?: observations.phoneUnavailable()
+                        } catch (failure: CancellationException) {
+                            throw failure
+                        } catch (_: Throwable) {
+                            observations.phoneUnavailable()
+                        }
+                    }
+                val sampler =
+                    observationScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        try {
+                            while (true) {
+                                sample()
+                                delay(100)
+                            }
+                        } catch (failure: CancellationException) {
+                            throw failure
+                        } catch (_: Throwable) {
+                            observations.samplingUnavailable()
+                        }
+                    }
+                var passed = false
+                var cancelled = false
+                try {
+                    observations.rendered(phoneUiPermission())
+                    // #1925: correlate this send with bounded observations before failure cleanup; cause remains unproven.
+                    val modalId =
+                        withStopHoldDiagnostics(
+                            conversationId = conversationId,
+                            nowMs = System::currentTimeMillis,
+                            snapshot = { snapshot() },
+                            emit = { Log.i("StopHoldProbe", it) },
+                        ) {
+                            sendFromPhone(STOP_HOLD_PROMPT)
+                            peerStep(
+                                peer,
+                                "await the held command's permission prompt",
+                            ) { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+                        }
+                    observations.rendered(phoneUiPermission())
+                    peerStep(peer, "allow the prompt once and await its dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+
+                    // 3. Tap the composer's Stop control once no dialog covers it.
+                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                        composeTestRule.onAllNodes(hasText(modalCancel)).fetchSemanticsNodes().isEmpty() &&
+                            composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isNotEmpty()
+                    }
+                    observations.rendered(phoneUiPermission())
+                    composeTestRule.onNode(stopControl).performClick()
+
+                    // 4. AC-1: the turn ends as cancelled and the Stop control goes.
+                    val turnEnd =
                         peerStep(
                             peer,
-                            "await the held command's permission prompt",
-                        ) { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+                            "await the stopped turn's turn_end",
+                        ) { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS) }
+                    assertEquals(
+                        "stopped turn's stop_reason",
+                        "cancelled",
+                        (turnEnd.payload as? JsonObject)?.get("stop_reason")?.jsonPrimitive?.contentOrNull,
+                    )
+                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                        composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
                     }
-                peerStep(peer, "allow the prompt once and await its dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
 
-                // 3. Tap the composer's Stop control once no dialog covers it.
-                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                    composeTestRule.onAllNodes(hasText(modalCancel)).fetchSemanticsNodes().isEmpty() &&
-                        composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isNotEmpty()
+                    // 5. AC-1: a following message in the same thread gets a real reply, and that turn is the
+                    //    conversation's second; the stopped turn's own reply was never drawn.
+                    sendFromPhone(PING_PROMPT)
+                    awaitPingReplyNamingLayer(peer, serverId, conversationId, priorTurnEnds = 1)
+                    peerStep(
+                        peer,
+                        "await the ping turn's turn_end",
+                    ) { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS, occurrence = 2) }
+                    composeTestRule.onAllNodes(hasText(STOP_HOLD_REPLY, ignoreCase = true), useUnmergedTree = true).assertCountEquals(0)
+                    passed = true
+                } catch (failure: CancellationException) {
+                    cancelled = true
+                    throw failure
+                } finally {
+                    observationScope.cancel()
+                    runBlocking {
+                        phoneObserver.join()
+                        sampler.join()
+                    }
+                    if (!cancelled) {
+                        observations.rendered(phoneUiPermission())
+                        Log.i(
+                            "StopHoldProbe",
+                            "event=stop_hold_result at_ms=${System.currentTimeMillis()} conversation=$conversationId passed=$passed ${snapshot()}",
+                        )
+                    }
                 }
-                composeTestRule.onNode(stopControl).performClick()
-
-                // 4. AC-1: the turn ends as cancelled and the Stop control goes.
-                val turnEnd =
-                    peerStep(peer, "await the stopped turn's turn_end") { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS) }
-                assertEquals(
-                    "stopped turn's stop_reason",
-                    "cancelled",
-                    (turnEnd.payload as? JsonObject)?.get("stop_reason")?.jsonPrimitive?.contentOrNull,
-                )
-                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                    composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
-                }
-
-                // 5. AC-1: a following message in the same thread gets a real reply, and that turn is the
-                //    conversation's second; the stopped turn's own reply was never drawn.
-                sendFromPhone(PING_PROMPT)
-                awaitPingReplyNamingLayer(peer, serverId, conversationId, priorTurnEnds = 1)
-                peerStep(
-                    peer,
-                    "await the ping turn's turn_end",
-                ) { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS, occurrence = 2) }
-                composeTestRule.onAllNodes(hasText(STOP_HOLD_REPLY, ignoreCase = true), useUnmergedTree = true).assertCountEquals(0)
             }
         } finally {
             peer.close()
