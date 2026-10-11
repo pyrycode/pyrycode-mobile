@@ -75,3 +75,27 @@ None. The historical failure attribution remains explicitly unproven; the contro
 ## Sizing
 
 One deliverable: a corrected shared acknowledgement wait with regression and stage evidence. Forecast approximately 600 implementation/plan lines plus retained XML, one production file, no new exported product types, two private helper consumers updated for stage identity, three acceptance criteria and no production state-machine branches. Below all builder boundaries.
+
+## Revisions
+
+### 2026-10-11 — verifier finding 1: persistence can outlast UI settlement
+
+An independent settings reply triggered by `ThreadEvent.RunConfigOpen` can clear
+`pendingEffort` while `sendSessionSettings` is suspended in `EffortRecall.remember`.
+UI settlement therefore establishes neither acknowledgement nor persistence by
+itself. Add an optional confirmation predicate to `awaitRunConfiguration` and
+forward it through `awaitFooter`. The priming caller reads the actual remembered
+effort and requires the chosen value alongside the existing section settlement
+conditions, within the unchanged deadline. The immediate persistence assertion,
+restart, two first-turn checks, empty model, explicit choice and cleanup remain.
+No production state or persistence path changes.
+
+`RunConfigurationWaitTest.matchingIndependentReadingCannotCompletePrimingBeforePersistence`
+holds `RememberedEffortStore.remember` suspended after acknowledgement, requests
+settings through the real sheet-open event, and delivers the matching reply.
+With UI settled and persistence absent the same priming barrier must remain
+blocked; releasing persistence must let it complete. Keep the existing ordering
+test that persists first and holds the fresh reading separately. The additional
+work is approximately 250 lines including regression evidence and this revision;
+the full ticket remains below the sizing limits. This controlled ordering does
+not attribute the archived #1869 occurrence to this race.

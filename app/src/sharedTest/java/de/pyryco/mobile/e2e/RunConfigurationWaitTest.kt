@@ -23,6 +23,7 @@ import de.pyryco.mobile.ui.conversations.components.StatusSheetContent
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.RememberedEffortStore
 import de.pyryco.mobile.ui.conversations.thread.ThreadEffortChoice
+import de.pyryco.mobile.ui.conversations.thread.ThreadEvent
 import de.pyryco.mobile.ui.conversations.thread.ThreadModelChoice
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -105,6 +106,74 @@ class RunConfigurationWaitTest {
         }
 
     @Test
+    fun matchingIndependentReadingCannotCompletePrimingBeforePersistence() =
+        runTest {
+            val repo = DelayedSettingsRepository()
+            val allowRemember = CompletableDeferred<Unit>()
+            val store = RecordingEffortStore(allowRemember)
+            lateinit var vm: ThreadViewModel
+            rule.runOnIdle {
+                vm =
+                    ThreadViewModel(
+                        SavedStateHandle(mapOf("serverId" to "host-a", "conversationId" to CONVERSATION)),
+                        repo,
+                        FakeConnectionStateSource(),
+                        ComposerDraftStore(),
+                        rememberedEffort = store,
+                    )
+            }
+            try {
+                rule.setContent {
+                    val config =
+                        vm.state
+                            .collectAsState()
+                            .value.runConfig
+                    PyrycodeMobileTheme {
+                        StatusSheetContent(
+                            choices = config.choices,
+                            menuAvailable = config.menuAvailable,
+                            notListedModels = 0,
+                            selectedModel = config.selectedModel,
+                            onModelSelected = {},
+                            effortChoices = config.effortChoices,
+                            selectedEffort = config.selectedEffort,
+                            onEffortSelected = vm::onEffortSelected,
+                            pending = config.pending,
+                            enabled = true,
+                        )
+                    }
+                }
+                rule.waitUntil(5_000) { vm.state.value.runConfig.writable && vm.state.value.runConfig.menuAvailable }
+                val initialRefreshes = repo.refreshes
+                rule.runOnIdle { vm.onEffortSelected("high") }
+                assertBlocked("Effort", "High", confirmed = { store.level == "high" })
+
+                rule.runOnIdle { repo.ack.complete(Unit) }
+                rule.waitUntil(5_000) { store.rememberStarted.isCompleted }
+                assertNull(store.level)
+                assertTrue(vm.state.value.runConfig.pending)
+                assertEquals("the post-write refresh must still await persistence", initialRefreshes, repo.refreshes)
+                val priorRefreshes = repo.refreshes
+                rule.runOnIdle { vm.onOverflowEvent(ThreadEvent.RunConfigOpen) }
+                rule.waitUntil(5_000) { repo.refreshes > priorRefreshes }
+                rule.runOnIdle { repo.readings.value = settings("high") }
+                // The independent reply settles the UI while the acknowledged write is still suspended.
+                rule.awaitRunConfiguration("Effort", "High", 5_000)
+                assertFalse(vm.state.value.runConfig.pending)
+                assertNull(store.level)
+                assertBlocked("Effort", "High", confirmed = { store.level == "high" })
+
+                rule.runOnIdle { allowRemember.complete(Unit) }
+                rule.awaitRunConfiguration("Effort", "High", 5_000, confirmed = { store.level == "high" })
+                assertEquals("the acknowledged tap was not remembered", "high", store.level)
+                assertFalse(vm.state.value.runConfig.pending)
+                assertEquals(1, repo.writes)
+            } finally {
+                rule.runOnIdle { vm.viewModelScope.cancel() }
+            }
+        }
+
+    @Test
     fun selectionInAnotherSectionCannotSatisfyEffort() {
         sheet(modelLabel = "High", selectedEffort = "low")
         assertBlocked("Effort", "High")
@@ -143,14 +212,15 @@ class RunConfigurationWaitTest {
     private fun assertBlocked(
         section: String,
         label: String,
+        confirmed: () -> Boolean = { true },
         state: ((String?) -> Boolean)? = null,
     ) {
         val failure =
             runCatching {
                 if (state == null) {
-                    rule.awaitRunConfiguration(section, label, 50)
+                    rule.awaitRunConfiguration(section, label, 50, confirmed = confirmed)
                 } else {
-                    rule.awaitRunConfiguration(section, label, 50, state)
+                    rule.awaitRunConfiguration(section, label, 50, confirmed = confirmed, state = state)
                 }
             }.exceptionOrNull()
         assertTrue("wait completed before settlement: section=$section", failure is ComposeTimeoutException)
@@ -190,12 +260,17 @@ class RunConfigurationWaitTest {
         )
     }
 
-    private class RecordingEffortStore : RememberedEffortStore {
+    private class RecordingEffortStore(
+        private val allowRemember: CompletableDeferred<Unit>? = null,
+    ) : RememberedEffortStore {
         var level: String? = null
+        val rememberStarted = CompletableDeferred<Unit>()
 
         override suspend fun read(): String? = level
 
         override suspend fun remember(level: String) {
+            rememberStarted.complete(Unit)
+            allowRemember?.await()
             this.level = level
         }
     }

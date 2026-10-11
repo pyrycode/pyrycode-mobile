@@ -4043,7 +4043,7 @@ class InteractiveStreamE2ETest {
             }
             val stamp = System.currentTimeMillis()
 
-            // 1. Only the acknowledged, freshly confirmed tap may precede the persistence assertion.
+            // 1. A sheet-open reading can settle the UI before persistence; require both before restart.
             val primingName = RECALL_PRIMING_NAME_PREFIX + stamp
             val priming = step(RememberedEffortStage.FixtureSetup) { prepareChat(primingName, originals) }
             val row =
@@ -4063,7 +4063,9 @@ class InteractiveStreamE2ETest {
                 awaitAnnouncedMark(inheritedMenu, inheritedModelRow(inheritedMenu), inheritedModelLabel(inheritedMenu))
             }
             step(RememberedEffortStage.PrimingTap) { pickFooterOption(changeEffortLabel, effortLabel(remembered)) }
-            step(RememberedEffortStage.PrimingAcknowledgement) { awaitFooter(changeEffortLabel, effortLabel(remembered)) }
+            step(RememberedEffortStage.PrimingAcknowledgement) {
+                awaitFooter(changeEffortLabel, effortLabel(remembered), confirmed = { rememberedEffort() == remembered })
+            }
             step(RememberedEffortStage.PrimingPersistence) {
                 assertEquals("the acknowledged tap was not remembered", remembered, rememberedEffort())
                 assertSaved(priming.id, "", remembered)
@@ -8321,12 +8323,13 @@ class InteractiveStreamE2ETest {
     private fun awaitFooter(
         clickLabel: String,
         label: String,
+        confirmed: () -> Boolean = { true },
         state: (String?) -> Boolean = { true },
     ) {
         val section = runConfigSection(clickLabel)
         openRunConfiguration()
         try {
-            composeTestRule.awaitRunConfiguration(section, label, THREAD_TIMEOUT_MS, state)
+            composeTestRule.awaitRunConfiguration(section, label, THREAD_TIMEOUT_MS, confirmed = confirmed, state = state)
         } catch (e: ComposeTimeoutException) {
             throw AssertionError(e.message, e)
         } finally {

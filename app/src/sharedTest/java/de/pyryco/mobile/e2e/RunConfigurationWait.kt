@@ -7,17 +7,22 @@ import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onAllNodesWithTag
 
-/** Selection, pending and note are checked together in one requested section's semantics snapshot. */
+/**
+ * Selection, pending and note are checked together in one requested section's semantics snapshot.
+ * [confirmed] also gates completion when an independent reading can settle the UI before persistence.
+ */
 internal fun ComposeTestRule.awaitRunConfiguration(
     section: String,
     label: String,
     timeoutMillis: Long,
+    confirmed: () -> Boolean = { true },
     state: (String?) -> Boolean = { true },
 ) {
     var present = false
     var selected = false
     var pending = false
     var noteMatches = false
+    var confirmationMatches = false
     try {
         waitUntil(timeoutMillis) {
             val root = onAllNodesWithTag("run-config-$section", useUnmergedTree = true).fetchSemanticsNodes().singleOrNull()
@@ -38,11 +43,13 @@ internal fun ComposeTestRule.awaitRunConfiguration(
                     ?.flatMap { it.texts() }
                     ?.singleOrNull()
             noteMatches = state(note)
-            present && selected && !pending && noteMatches
+            confirmationMatches = present && selected && !pending && noteMatches && confirmed()
+            confirmationMatches
         }
     } catch (e: ComposeTimeoutException) {
         throw ComposeTimeoutException(
-            "run configuration section=$section present=$present selected=$selected pending=$pending note_matches=$noteMatches",
+            "run configuration section=$section present=$present selected=$selected pending=$pending " +
+                "note_matches=$noteMatches confirmation_matches=$confirmationMatches",
         ).apply { initCause(e) }
     }
 }

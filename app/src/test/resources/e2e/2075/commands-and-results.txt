@@ -40,3 +40,30 @@ executed/passed/failed/skipped counts, actual mobile and daemon revisions and Re
 The fixed stages distinguish fixture setup, priming persistence, graph restart, recalled settings
 before each first send, the two real-turn applied readings, explicit-choice protection and cleanup.
 No repaired live pass is claimed by the builder. Documentation records the dispatcher evidence.
+
+Rework for verifier finding 1, baseline mobile 3492fc2221b157dce8d5be77cb0f4105dabd7f05:
+An independent RunConfigOpen settings reply clears pendingEffort while the acknowledged
+write remains suspended in RememberedEffortStore.remember. UI settlement is not persistence.
+
+Red command:
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ANDROID_HOME=/Users/juhanailmoniemi/Library/Android/sdk ./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.RunConfigurationWaitTest.matchingIndependentReadingCannotCompletePrimingBeforePersistence --console=plain --warning-mode=none
+Exit 1; 1 executed, 0 passed, 1 failed, 0 errors/skipped.
+The optional confirmation input was initially unconsumed, preserving the reviewed wait predicate.
+The failure is wait completed before settlement, after acknowledgement and an independent matching
+reply with pending=false and the remembered level absent. Retained: persistence-barrier-red.xml.
+
+Green command:
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ANDROID_HOME=/Users/juhanailmoniemi/Library/Android/sdk ./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.RunConfigurationWaitTest --tests de.pyryco.mobile.e2e.RememberedEffortStageTest --tests de.pyryco.mobile.ui.conversations.components.StatusSheetTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadViewModelEffortRecallTest --console=plain --warning-mode=none
+Exit 0; 64 executed/passed, 0 failed/errors/skipped (6 + 2 + 31 + 25).
+The same priming barrier stays blocked with the independent matching reply and persistence absent;
+releasing remember lets it finish, with one acknowledged write and remembered high.
+The existing test also proves persistence completing first cannot bypass a pending fresh reading.
+Retained: persistence-barrier-green.xml (6 shared wait cases, including the new regression).
+The archived #1869 failure attribution remains unproven. Full live proof remains dispatcher-owned.
+
+Rework device command:
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ANDROID_HOME=/Users/juhanailmoniemi/Library/Android/sdk ./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.e2e.RunConfigurationWaitTest --console=plain --warning-mode=none
+Exit 0; 6 executed/passed, 0 failed/errors/skipped on managed Android 13.
+The selected delayed-persistence regression executed and passed, alongside all existing wait controls.
+Fresh XML: app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/TEST-pixel2Api33Atd-_app-.xml
+Retained: persistence-barrier-device-green.xml, including all six native testcase names.
