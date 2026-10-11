@@ -189,7 +189,10 @@ history. Daemon text remains inert data and never enters logs; the
 contract is the daemon's [supplied delivery contract](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#daemon-thread-updates-v2-supplied-delivery-contract)
 and [ADR 042](https://github.com/pyrycode/pyrycode/blob/main/docs/knowledge/decisions/042-daemon-built-thread.md).
 `CAPABILITY_THREAD` names the supplied `thread` token; the generic hello-ack capability
-list already retains it. Production hello advertisement, dispatch and live proof belong
+list already retains it. The repository now supplies an inactive
+[authoritative route](remote-conversation-repository-reads-and-thread-store.md#supplied-route-and-connection-ownership)
+requiring a nonempty source host and both negotiated `thread` and `interactive`.
+Production hello still omits `thread`; advertisement, activation and combined live proof belong
 to [#1988](https://github.com/pyrycode/pyrycode-mobile/issues/1988).
 
 `ThreadItemDto.raw` and `ThreadUpdateDto.raw` retain the original JSON objects,
@@ -205,6 +208,14 @@ replaces its whole JSON value, including null, rather than merging nested keys.
 Text appends retain the exact suffix, including an empty string. Item applicability,
 base-revision checks, replay handling and mutation belong to the authoritative store;
 fragment index/offset never supply item order or revision.
+
+`ThreadItemDto.decodeReplacement` serves store-side patch application: explicit null
+for an optional fact remains in `raw`, while the typed optional reading becomes
+unset. Ordinary full-item wire decoding remains strict. Using a full-item factory
+for replacements would reject valid clears; dropping null keys would erase presence
+and make later application retain a value the daemon cleared. The
+[store application rules](remote-conversation-repository-reads-and-thread-store.md#item-application-and-explicit-clears)
+check exact base/target revisions and stable identity/kind after structural admission.
 
 `ThreadDecodeOutcome` exposes a value only through `Complete`. `Pending` identifies
 the conversation still assembling; `Repair` identifies its owner when recoverable
@@ -261,11 +272,20 @@ Call `abandon()` on connection teardown and handle its owning-conversation repai
 Abandonment clears buffers and permanently closes that instance; late parts cannot
 revive it. Reconnect requires a new instance. Before fresh catch-up, call
 `discard(conversationId)` to release that conversation's unfinished assembly without
-affecting other owners. These are consumer obligations, not transport wiring supplied
-by the codec. `ThreadPayloadAssembler` accepts decoding/metadata callbacks for reuse
-by [#2040's page codec](https://github.com/pyrycode/pyrycode-mobile/issues/2040);
-page requests/responses and store application remain outside this live-update boundary.
-See [remote repository](remote-conversation-repository.md) for the consumer area.
+affecting other owners. The codec owns no lifecycle job; #2043's
+`AuthoritativeThreadRoute` implements these obligations with serialized calls, a
+one-second connection-scope expiry tick and abandonment on collector termination,
+including cancellation before collection starts. It applies only `Complete` outcomes;
+pending and failure outcomes cannot change completed items or certify a checkpoint.
+Reset and successful complete certification discard the affected conversation's
+assembly, and captured generations fence late completions even when epochs are reused.
+See [authoritative repair and checkpoints](remote-conversation-repository-reads-and-thread-store.md#repair-checkpoints-and-reset-generations):
+newer live progress or a full batch cannot clear sticky repair or prove catch-up.
+
+`ThreadPayloadAssembler` accepts decoding/metadata callbacks for reuse by
+[#2040's page codec](https://github.com/pyrycode/pyrycode-mobile/issues/2040).
+Scheduling/persistence remain #1984, rendering #1985, and production
+negotiation/activation and combined live proof #1988.
 
 ### Base64 + pubkey helpers
 
