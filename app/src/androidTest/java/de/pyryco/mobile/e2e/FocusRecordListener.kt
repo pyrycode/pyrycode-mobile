@@ -46,10 +46,6 @@ class FocusRecordListener : RunListener() {
         interval(description, "start")
     }
 
-    override fun testFinished(description: Description?) {
-        interval(description, "finish")
-    }
-
     private fun interval(
         description: Description?,
         stage: String,

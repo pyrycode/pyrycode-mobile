@@ -246,6 +246,9 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
  */
 @RunWith(AndroidJUnit4::class)
 class InteractiveStreamE2ETest {
+    @get:Rule
+    val methodIntervalRule = LiveMethodIntervalRule({ Log.i("E2EEvidence", it) })
+
     init {
         grantNotificationPermission()
     }

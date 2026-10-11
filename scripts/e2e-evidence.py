@@ -20,7 +20,7 @@ SAFE = re.compile(r'^(?:true|false|unknown|[0-9]{1,19}|[0-9a-f]{64}|[0-9T:.Z+\-]
 METHOD = re.compile(r'^(?:de\.pyryco\.mobile\.e2e\.InteractiveStreamE2ETest#)?interactiveTurn_[A-Za-z0-9_]{1,160}$')
 ENUMS = frozenset(('INFO', 'WARN', 'ERROR', 'DEBUG', 'Connected', 'Connecting', 'Offline', 'Idle',
     'DaemonAbsent', 'PairingRejected', 'UpdateRequired', 'Reconnecting', 'before_cleanup', 'chats_created',
-    'before_send', 'after_send', 'turn_completed', 'start', 'finish', 'failure'))
+    'before_send', 'after_send', 'turn_completed', 'start', 'finish', 'failure', 'interval'))
 EVENTS = frozenset(('pyrycode starting', 'pyrycode stopped', 'spawning claude', 'claude exited',
     'relay: connecting', 'relay: conn established', 'transport: connected', 'transport: disconnected',
     'relay: v2 handshake accept', 'relay: v2 peer close teardown', 'relay: send_message enqueued',
@@ -30,7 +30,7 @@ EVENTS = frozenset(('pyrycode starting', 'pyrycode stopped', 'spawning claude', 
     'streamsup: turn refused; new_session rotation in flight', 'thread shadow cache stopped'))
 FIELDS = frozenset(('time', 'level', 'conversation_id', 'session_id', 'message_id', 'attachment_id',
     'server_id', 'conn_id', 'session', 'queued_msg_id', 'attachment_count', 'queued_at', 'uptime', 'ts', 'accepted_at', 'occurred_at', 'id', 'turn_id', 'accepted_entry_id', 'delivery_entry_id', 'pid', 'size', 'bytes', 'count', 'attempt', 'code', 'status', 'retryable', 'duration_ms'))
-PHONE_FIELDS = frozenset(('method', 'stage', 'utc_ms', 'chat_x', 'chat_y', 'phone_ready', 'phone_relay',
+PHONE_FIELDS = frozenset(('method', 'stage', 'start_ms', 'finish_ms', 'utc_ms', 'chat_x', 'chat_y', 'phone_ready', 'phone_relay',
     'phone_selected', 'peer_frames', 'peer_delivery', 'peer_terminal', 'peer_modals', 'peer_open', 'phase'))
 HISTORY_TYPES = frozenset(('send_accepted', 'send_delivered', 'send_failed', 'turn_end', 'message',
                           'main_turn', 'main_turn_opened', 'session_started', 'session_start', 'turn_started'))
@@ -172,6 +172,7 @@ def capture(args):
             except ET.ParseError:
                 observations['xml/' + str(index)]['state'] = 'unknown'
     observations['phone_peer'] = {'state': 'available' if records else 'unknown'}
+    observations['method_intervals'] = {'state': 'available' if any(r.get('stage') == 'interval' for r in records) else 'unknown'}
     artifacts['phone-peer.jsonl'] = b''.join(json_bytes(row) for row in records)
     artifacts['methods.json'] = json_bytes({'cases': cases, **{outcome: sum(c['outcome'] == outcome for c in cases)
                                       for outcome in ('passed', 'failed', 'skipped')},
@@ -221,7 +222,8 @@ def capture(args):
     source_files = {}
     for name in ('scripts/e2e-emulator.sh', 'scripts/e2e-evidence.py',
                  'app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt',
-                 'app/src/androidTest/java/de/pyryco/mobile/e2e/FocusRecordListener.kt'):
+                 'app/src/androidTest/java/de/pyryco/mobile/e2e/FocusRecordListener.kt',
+                 'app/src/sharedTest/java/de/pyryco/mobile/e2e/LiveMethodIntervalRule.kt'):
         source_files[name] = binary_hash(args.repo / name)
     config = {'device': args.device, 'instance': args.instance, 'started_ns': args.started,
               'captured_ns': time.time_ns(), 'phase': args.phase, 'sources': sources, 'source_files': source_files, 'binaries': binaries}

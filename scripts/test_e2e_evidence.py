@@ -122,6 +122,19 @@ class EvidenceRetentionTest(unittest.TestCase):
             self.assertNotIn(secret, contents)
         self.assertIn('relay: send_message enqueued', contents)
 
+    def test_interval_markers_retain_both_timestamps(self):
+        path = self.repo / 'app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/logcat-target.txt'
+        with path.open('a') as log:
+            log.write('E2EEvidence: method=interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes stage=interval start_ms=1 finish_ms=2\n')
+        result = self.run_cleanup(7)
+        self.assertEqual(7, result.returncode)
+        archive = self.archive()
+        rows = [json.loads(line) for line in (archive / 'phone-peer.jsonl').read_text().splitlines()]
+        interval = next(row for row in rows if row.get('stage') == 'interval')
+        self.assertEqual(('1', '2'), (interval['start_ms'], interval['finish_ms']))
+        manifest = json.loads((archive / 'manifest.json').read_text())
+        self.assertEqual('available', manifest['observations']['method_intervals']['state'])
+
     def test_unavailable_and_bounded_inputs_are_explicit(self):
         (self.work / 'daemon.log').write_bytes(b'x' * (2 * 1024 * 1024 + 10))
         result = self.run_cleanup(7)
