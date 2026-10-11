@@ -62,3 +62,13 @@ The fresh full configured UI gate is dispatcher-owned acceptance: both named met
 ## Documentation handoff
 
 Pending documentation stage: `docs/knowledge/features/thread-screen-testing-saved-first-draw.md`, saved-thread first-draw evidence — record the diagnosed cause, correction, retained misses and passing comparisons, and fresh full UI-gate evidence. Builder and dispatcher produce runs; documentation only records them.
+
+## Revisions
+
+### 2026-10-11 — Controlled ready-coverage projection investigation
+
+The baseline class at `d038af89f57ebe4b21816b32fe54aac729296797` exits 0, two executed/passed, zero failed/errors/skipped. Draw vector: 237/219/215/199/713/531/563/450 ms; delayed control 3481 ms. Evidence is retained in `/tmp/builder-2087/evidence/baseline-class/`. Fragmented reopens spend 234/217 ms from snapshot to complete content, versus 35/25 ms on first opens. Cold optional history continues after initial content; already-ready coverage instead enters blocking `threadContent` display projection. These are measured contributors, not proof of the original full-suite cause.
+
+Add `readyCoverageCannotHoldFirstSavedRowsBehindProjection_firstOpenAndReopen` beside `savedRowsDoNotWaitForNewestResponse`. It restores the full fixture coverage before rows, holds only the existing injected projection dispatcher, and requires readable rows before release with exact markers afterward. It exercises both connection modes and repeated new ViewModels. If it fails at the row-publication assertion, compare a local first-content publication before optional projection, retaining evidence withholding and complete projected state afterward. Preserve projection on every later update and reset any first-publication state per collection.
+
+The device twin `delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen` reuses the exact eight-case fixture/open/assertion helper, adding a cancellable 1100 ms delay only to the injected display-projection dispatcher. No cache/repository/ViewModel work is warmed or moved out of the timer. It records the deliberate hold separately from queue/wall/CPU time and retains all original requests, rows, anchors and frame/bound assertions. Run it red before changing production, then the complete class green. It proves the controlled projection-readiness dependency, not a contention or GC cause for the historical miss.
