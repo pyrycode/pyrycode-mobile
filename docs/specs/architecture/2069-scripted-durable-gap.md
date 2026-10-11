@@ -65,7 +65,7 @@ Run lint, assembleDebug, Android-test compilation when the proof changes, Spotle
 
 ## Open Questions
 
-- Does the original daemon leave a genuine eligible coverage hole, or does Mobile retain a stale projection / misdetect absence? Resolve from correlated diagnostics and the controlled regression before handoff.
+- Resolved: original daemon filtering leaves genuine eligible holes at queued-send identities. Mobile coverage, projection and exhaustive absence detection remain correct; daemon #3167 supplies the repair.
 
 ## Documentation handoff
 
@@ -90,3 +90,23 @@ Pending documentation stage:
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-11
+
+## Revisions
+
+### 2026-10-11 — Correlated evidence establishes the sibling owner
+
+The exact original daemon `b75aea7948b3` reproduces both original failures at Mobile `6b7f96f23`: 2 executed, 0 passed, 2 failed, 0 errors/skips. After three physical pulls the durable fixture has 245 held rows, including every post and the settled reply. Saved coverage still has spans `1–242`, `244–249`, `251–495`, with holes at durable ids 243 and 250. `projectDisplay` selects anchors 242 and 249. Exhaustive Compose search succeeds and finds two composed markers. The final absence wait correctly times out; neither projection nor absence detection is stale.
+
+Content-free metadata extracted from the isolated retained daemon history identifies 243 as `send_accepted` and 250 as `send_delivered`. `queuedSendHistory.delivered` appends the delivery fact, while original `legacyHistoryType` and `legacyRuntimeFact` both exclude these types; `newHistoryPager` therefore filters them from the received page while retaining their surrounding durable positions. Text recovery cannot bridge those missing identities. Closed [daemon #3167](https://github.com/pyrycode/pyrycode/issues/3167), merged at `a3ca005f05e9`, owns the repair: validated queued-send facts become non-rendering info-banner receipts on legacy routes. No Mobile production workaround is needed or permitted.
+
+The controlled omitted-receipt test failed with expected continuous `1–7`, actual `1–2` and `4–7`. Restoring the real repaired page's delivery receipt closes the marker without replacing any read content. The reducer intentionally retains an invisible info-banner row; compare read content rather than all held metadata rows. Five new probes plus the existing coverage, projection, worker and shared demand classes executed 64 tests, all passed with zero failures/errors/skips. Numeric diagnostics in the existing proof and passive page tap preserve every fixture, demand, timing and independent rendered assertion. The probe reset test also checks foreign conversation exclusion and repeated begin/end.
+
+Security re-review: PASS. The concrete change adds test-only numeric observations and fixed synthetic contract probes. It introduces no runtime allowlist, new receipt identity, sight, persistence, wire shape, transport, credential access or production lifecycle state. A hostile omission remains a visible eligible gap. Sanitized evidence retains statuses and static failure categories only, without raw XML output or daemon payloads. Forecast remains below 650 written lines and zero exported production declarations or migrations.
+
+The configured older daemon `a536d17b1e18` also passed both methods in the initial control, but it predates the implicated queued-send facts and is not acceptance against the original defect. Final repaired-daemon comparison and dispatcher scripted-all evidence remain separate checks.
+
+### 2026-10-11 — Repaired ordered pair closes both markers
+
+The unchanged pair against daemon `a3ca005f05e9` and relay `a7a05d1f123d` at app `6b7f96f23` executed/passed 2, with zero failures/errors/skips. The first older page now supplies 200 receipts rather than 198; the two additional non-rendering rows account for the original missing ids. Two pulls recover the fixture and join coverage into `1–495`. Projection has no marker, and exhaustive Compose search reports absence without another request. The application APK hash matches the original failing run; only test evidence assets differ in the test APK.
+
+Counted XML, numeric observations, raw-hole metadata, commands, full source revisions, APK/binary hashes and original artifact paths are retained under `app/src/androidTest/assets/durable-2069/`. The repaired raw result lives in `build/dispatcher-tests/scripted-ed0na53x/0-TEST-pixel2Api33Atd-_app-.xml`. Dispatcher scripted-all must independently execute and pass the durable method against the repaired daemon; no full gate result or fresh rung-3 live result is claimed here.
