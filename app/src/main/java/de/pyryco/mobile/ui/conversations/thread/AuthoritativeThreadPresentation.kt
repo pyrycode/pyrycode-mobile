@@ -14,6 +14,7 @@ import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
 import kotlinx.datetime.Instant
@@ -33,7 +34,27 @@ class AuthoritativeThreadPresentation internal constructor(
     val tasks: BackgroundTaskRoster,
     internal val backgroundBlocks: Map<String, AuthoritativeAgentPlacement>,
     internal val foregroundTool: ToolCall?,
+    internal val certifiedCheckpoint: Long?,
+    internal val shownRowRevisions: Map<ThreadItem, Long>,
 ) {
+    /** Revisions impose conservative sight requirements; only the certified boundary supplies coverage. */
+    internal fun readCheckpoint(
+        newest: ThreadItem,
+        marks: ConversationReadMarks?,
+        seen: Set<ThreadItem>,
+    ): ULong? {
+        if (marks?.threadSupported != true) return null
+        val shown = marks.lastShownVersion ?: return null
+        val confirmed = marks.readUpTo ?: return null
+        val coverage = certifiedCheckpoint?.toULong() ?: return null
+        if (shown == 0uL || shown <= confirmed || coverage < shown || newest !in shownRowRevisions || newest !in seen) return null
+        if (shownRowRevisions.values.any { it.toULong() > coverage }) return null
+        val required = shownRowRevisions.filterValues { it.toULong() >= shown }.keys
+        // The summary can be newer than every supplied shown row: complete sight is then unproven.
+        if (required.isEmpty() || !seen.containsAll(required)) return null
+        return minOf(coverage, shown)
+    }
+
     override fun toString(): String = "AuthoritativeThreadPresentation(content=***)"
 }
 
@@ -50,7 +71,7 @@ internal fun projectAuthoritativeThread(
     conversation: String,
     snapshot: AuthoritativeThreadSnapshot,
 ): AuthoritativeThreadPresentation {
-    val scope = listOf(host, conversation, snapshot.epoch.orEmpty()).joinToString("") { "${it.length}:$it" }
+    val scope = listOf(host, conversation, snapshot.epoch.orEmpty(), snapshot.generation.toString()).joinToString("") { "${it.length}:$it" }
 
     fun identity(id: Long) = "$scope:$id"
     val held = snapshot.items.groupBy { it.id }.mapValues { (_, versions) -> versions.maxBy { it.rev } }
@@ -204,6 +225,8 @@ internal fun projectAuthoritativeThread(
             if (!item.active || item.parent != null && item.parent > 0 || item.recordedTask() != null) return@firstNotNullOfOrNull null
             ((adapted[item.id]?.item as? ThreadItem.MessageItem)?.message?.toolCall)?.takeIf { it.status == ToolCallStatus.Running }
         },
+        snapshot.checkpoint.takeIf { snapshot.epoch != null && !snapshot.repairNeeded && !snapshot.resetNeeded && it >= 0 },
+        visible.mapNotNull { item -> adapted[item.id]?.item?.let { it to item.rev } }.toMap(),
     )
 }
 

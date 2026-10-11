@@ -78,3 +78,7 @@ None. Supplied authoritative rendering remains dormant in production until #1988
 
 **Reviewer:** builder (self-review per builder/security-review.md)
 **Date:** 2026-10-11
+
+## Revisions
+
+- 2026-10-11: Reconnect probing required a connection-identity fence in addition to the presentation generation. Capture the facade's current connection when a composition publishes and reject new sight after that owner changes. Qualified pending work remains in the existing retry path. Reset the bounded sight ledger when the presentation instance changes so removed/reintroduced rows cannot inherit evidence from an older rendered view.

@@ -19,6 +19,8 @@ sealed interface ThreadEvent {
     data class NewestContentPresented(
         val row: ThreadItem,
         val checkpoint: ULong,
+        val presentation: AuthoritativeThreadPresentation? = null,
+        val binding: Any? = null,
     ) : ThreadEvent {
         override fun toString(): String = "NewestContentPresented(<redacted>)"
     }
@@ -185,6 +187,7 @@ data class ThreadUiState(
     val authoritativeThread: AuthoritativeThreadPresentation? = null,
     val readEvidence: de.pyryco.mobile.data.repository.ThreadReadEvidence? = null,
     val readUpTo: ULong? = null,
+    val readMarks: de.pyryco.mobile.data.repository.ConversationReadMarks? = null,
     val queuedMessages: List<QueuedMessage> = emptyList(),
     val channelInfoOpen: Boolean = false,
     val deleteConfirmVisible: Boolean = false,

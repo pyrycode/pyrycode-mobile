@@ -240,6 +240,19 @@ private class AuthoritativeThreadActionPublisher {
         previous?.receiver?.invoke(ThreadEvent.AuthoritativeThreadRetired(previous.token))
     }
 
+    fun dispatchRead(
+        event: ThreadEvent,
+        receiver: (ThreadEvent) -> Unit,
+    ) {
+        if (event !is ThreadEvent.NewestContentPresented || event.presentation == null) {
+            receiver(event)
+            return
+        }
+        val binding = published ?: return
+        if (binding.presentation !== event.presentation) return
+        receiver(event.copy(binding = binding.token))
+    }
+
     fun retire() {
         val previous = published ?: return
         published = null
@@ -805,9 +818,25 @@ fun ThreadScreen(
                         val readRow = newestRenderedRow as? ThreadRow.Delivered
                         val readItem = readRow?.item
                         val readKey = newestRenderedRow?.listKey(rows.indexOf(newestRenderedRow))
+                        val authoritativeCandidates =
+                            remember(authoritative?.scope, rows) {
+                                if (authoritative == null) {
+                                    emptyList()
+                                } else {
+                                    rows.filterIsInstance<ThreadRow.Delivered>().map { row ->
+                                        ThreadReadCandidate(row.listKey(0), row.item).apply {
+                                            if (row.summaryText != null) revealed = true
+                                        }
+                                    }
+                                }
+                            }
                         val readCandidate =
-                            remember(readKey, readRow) {
-                                if (readItem != null && readKey != null) ThreadReadCandidate(readKey, readItem) else null
+                            if (authoritative != null) {
+                                authoritativeCandidates.firstOrNull { it.row == readItem }
+                            } else {
+                                remember(readKey, readRow) {
+                                    if (readItem != null && readKey != null) ThreadReadCandidate(readKey, readItem) else null
+                                }
                             }
                         ThreadReadViewport(
                             state =
@@ -823,6 +852,7 @@ fun ThreadScreen(
                                 ),
                             listState = listState,
                             candidate = readCandidate,
+                            otherCandidates = authoritativeCandidates,
                             viewport = messageViewport,
                             headerHeight = maxOf(headerHeight, topOverlayHeight),
                             composerHeight = composerHeight,
@@ -840,7 +870,7 @@ fun ThreadScreen(
                                     !overflowExpanded &&
                                     openMenu == null &&
                                     !typeAheadVisible,
-                            onEvent = onOverflowEvent,
+                            onEvent = { actionPublisher.dispatchRead(it, onOverflowEvent) },
                         )
                         val restAdjustment = ordinaryMessageRestAdjustment(newestRenderedRow, promptRowCount)
                         // #1352: prompt rows take the lowest indices of the reversed list and are never
@@ -931,7 +961,14 @@ fun ThreadScreen(
                         val rowRelocationSpec = LocalBringIntoViewSpec.current
                         val rowMeasurementObserver = LocalThreadRowMeasurementObserver.current
                         val renderRow: @Composable (ThreadRow, ThreadRow?, Boolean) -> Unit = { row, nextRow, measuring ->
-                            val candidate = readCandidate?.takeIf { !measuring && row == readRow }
+                            val candidate =
+                                if (measuring) {
+                                    null
+                                } else if (authoritative != null) {
+                                    authoritativeCandidates.firstOrNull { it.row == (row as? ThreadRow.Delivered)?.item }
+                                } else {
+                                    readCandidate?.takeIf { row == readRow }
+                                }
                             val toolId =
                                 ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)
                                     ?.message
@@ -962,7 +999,9 @@ fun ThreadScreen(
                                             if (candidate != null) {
                                                 Modifier.onGloballyPositioned {
                                                     candidate.laidOut = true
-                                                    if (candidate.row !is ThreadItem.MessageItem) {
+                                                    if (candidate.row !is ThreadItem.MessageItem ||
+                                                        (row as? ThreadRow.Delivered)?.summaryText != null
+                                                    ) {
                                                         candidate.trailingEdge = it.positionInWindow().y + it.size.height
                                                     }
                                                 }

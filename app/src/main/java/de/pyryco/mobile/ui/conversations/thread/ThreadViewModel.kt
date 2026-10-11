@@ -703,6 +703,7 @@ class ThreadViewModel(
         val pending: Set<String> = emptySet(),
         val authoritative: AuthoritativeThreadPresentation? = null,
         val authoritativeBinding: Any? = null,
+        val readConnection: Any? = null,
     )
 
     private val taskControlLock = Any()
@@ -759,7 +760,13 @@ class ThreadViewModel(
                 taskStopAttempts.clear()
                 taskStopOwners.clear()
             }
-            publishTaskControls(old.copy(authoritative = presentation, authoritativeBinding = event.binding))
+            publishTaskControls(
+                old.copy(
+                    authoritative = presentation,
+                    authoritativeBinding = event.binding,
+                    readConnection = repository.runConfigurationReadings?.currentConnection,
+                ),
+            )
         }
     }
 
@@ -1131,7 +1138,7 @@ class ThreadViewModel(
                 mutationsSupported = available && repository.mutationsSupported,
             )
         }.combine(repository.observeReadMarks(conversationId)) { uiState, marks ->
-            uiState.copy(readUpTo = marks?.readUpTo)
+            uiState.copy(readUpTo = marks?.readUpTo, readMarks = marks)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(),
@@ -3479,8 +3486,26 @@ class ThreadViewModel(
             is ThreadEvent.NewestContentPresented -> {
                 // The composition sampled sight and daemon support together before dispatch.
                 val checkpoint = event.checkpoint
+                val authoritative = taskControls.value
+                val presentation = event.presentation
+                if (presentation != null) {
+                    if (authoritative.authoritative !== presentation ||
+                        authoritative.authoritativeBinding !== event.binding ||
+                        authoritative.readConnection !== repository.runConfigurationReadings?.currentConnection ||
+                        presentation.host != serverId ||
+                        presentation.conversation != conversationId ||
+                        !state.value.hostAvailable ||
+                        presentation.readCheckpoint(event.row, state.value.readMarks, presentation.items.toSet()) != checkpoint
+                    ) {
+                        RelayLog.d { "event=thread_read_sight code=retired_or_unqualified" }
+                        return
+                    }
+                } else if (authoritative.authoritative != null || state.value.readMarks?.threadSupported == true) {
+                    return
+                }
                 if (checkpoint <= highestQualifiedRead) return
                 highestQualifiedRead = checkpoint
+                RelayLog.d { "event=thread_read_sight code=qualified" }
                 viewModelScope.launch(
                     start = CoroutineStart.UNDISPATCHED,
                 ) { repository.acknowledgeReadCheckpoint(conversationId, checkpoint) }
