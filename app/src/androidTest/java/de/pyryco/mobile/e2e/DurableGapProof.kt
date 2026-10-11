@@ -1,5 +1,6 @@
 package de.pyryco.mobile.e2e
 
+import android.util.Log
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
@@ -20,13 +21,17 @@ import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.historyKeys
+import de.pyryco.mobile.data.repository.projectDisplay
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
+import de.pyryco.mobile.ui.conversations.thread.ThreadRow
+import de.pyryco.mobile.ui.conversations.thread.foldQueuedRows
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.koin.core.context.GlobalContext
+import java.util.IdentityHashMap
 
 /** Shared rung-3/4 proof; all rows and requests come from the app's existing repository tap. */
 internal class DurableGapProof(
@@ -98,6 +103,7 @@ internal class DurableGapProof(
             assertEquals("only availability asks without a gesture", listOf(true), DurableHistoryProbe.asks())
             assertTrue("older post must be outside newest page and empty replay", olderPost !in messages())
             assertTrue("reply must be outside newest page and empty replay", messages().none { it.contains(replyText, ignoreCase = true) })
+            recordObservation("newest")
             // A history page can retain the cached reader anchor. Reveal the already delivered row
             // through semantics, which must not become history demand or certify replay coverage.
             rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(newestPost))
@@ -133,14 +139,22 @@ internal class DurableGapProof(
                 runBlocking { delay(500) }
                 assertEquals("one page per pull; page arrival is inert", count + 1, DurableHistoryProbe.asks().size)
                 assertEquals(false, DurableHistoryProbe.asks().last())
+                recordObservation("pull_$pulls")
             }
             assertTrue("gap spans multiple older pages", pulls >= 2)
+            recordObservation("fixture_recovered")
+            var recordedSearch = false
             rule.waitUntil(30_000) {
                 try {
                     rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Load earlier messages"))
+                    if (!recordedSearch) {
+                        recordObservation("search_present")
+                        recordedSearch = true
+                    }
                     false
                 } catch (missing: AssertionError) {
                     if (missing.message?.startsWith("No node found that matches") != true) throw missing
+                    recordObservation("search_absent")
                     true
                 }
             }
@@ -214,6 +228,27 @@ internal class DurableGapProof(
             } ==
                 true
         }
+
+    /** Numeric receipt/projection evidence is separate from the actual exhaustive Compose search. */
+    private fun recordObservation(phase: String) {
+        val coverage = runBlocking { cache.readHistoryPosition(serverId, conversationId)?.coverage }
+        val rows = DurableHistoryProbe.rows()
+        val delivered = IdentityHashMap<ThreadItem, Unit>()
+        foldQueuedRows(rows, emptyList()).filterIsInstance<ThreadRow.Delivered>().forEach { delivered[it.item] = Unit }
+        val projected = coverage?.projectDisplay(rows, isDisplayed = { it in delivered })?.markers.orEmpty()
+        val composed = rule.onAllNodes(hasText("Load earlier messages"), useUnmergedTree = true).fetchSemanticsNodes().size
+        val pages =
+            DurableHistoryProbe.pageReceipts().joinToString(";") { ids ->
+                "${ids.size}:${ids.firstOrNull()}-${ids.lastOrNull()}"
+            }
+        Log.i(
+            "DurableGapProof",
+            "event=durable_gap_observed phase=$phase asks=${DurableHistoryProbe.asks().size} " +
+                "pages=$pages rows=${rows.size} spans=${coverage?.unsignedSpans} " +
+                "gaps=${coverage?.unsignedGaps} unknown=${coverage?.unsignedUnknown} " +
+                "projected=${projected.map { it.anchor }} composed=$composed",
+        )
+    }
 
     private fun pull() =
         rule.onNodeWithTag("thread-message-region").performTouchInput {
