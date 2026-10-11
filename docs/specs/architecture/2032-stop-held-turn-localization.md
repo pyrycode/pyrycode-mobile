@@ -84,6 +84,7 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md`, stop-runni
 - [Errors and logs] MUST FIX addressed: same original non-assertion exception, original assertion cause and cancellation retained; snapshots never publish raw messages. Timeline labels/counters/timestamps only, with explicit caps/overflow and unproven cause.
 - [Concurrency] Scenario scope cancels/joins before cleanup. Synchronize recorder access. Label sampling/StateFlow conflation and sparse UI observations; absence is not emission proof.
 - [Threat model] Malicious relay delay/flood produces bounded observation, no plaintext disclosure or new hang. Hostile daemon fields are filtered/capped. Existing rooted-device token theft, screenshots/accessibility/IME exposure are unaffected by test-only diagnostics.
+- [Capture preflight] OUT OF SCOPE: daemon registration/emission/forwarding instrumentation belongs to pyrycode#3202. This resumed leg publishes only source identities, fixed stage availability, checked file hashes/paths and counted JVM results. It reads no login and adds no observer, network request or production code.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-11
@@ -95,3 +96,25 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md`, stop-runni
 - 2026-10-11: a realistic Send-readiness regression and bytecode inspection established that `ComposeTimeoutException` extends `Throwable` directly, neither `Exception` nor `AssertionError`. Capture `Throwable` after the assertion arm, excluding cancellation, to preserve the exact original object. Diagnostic snapshots also handle non-cancellation `Throwable`, so the real Compose timeout cannot bypass failure capture or mask a primary failure.
 
 - 2026-10-11: focused capture at clean Mobile `5f99a626cf411d8769ac408473d487865ad902e4` passed the named Stop method once (1 executed/passed, 0 failed/errors/skipped). Both clients observed shown/dismissed permission and the two required turn ends. No missing-permission fault or cause was reproduced, so the required outcome is refinement with retained evidence, without a behavioural repair or closing PR. Preserve the existing UUID validator for the final result marker as well as submission/permission markers; that output-only hardening occurred after capture and is not behavioural proof. The capture also exposed uncalibrated phone/host wall-clock domains and sparse UI samples; do not infer cross-clock chronology or transient UI absence from them.
+
+- 2026-10-11: resumed preflight at Mobile `9ac784565`, retaining `3ed92856b` and the original evidence unchanged. Daemon source `8091a4730d42f43029eb0b955442dc300106030f` lacks the required correlated registration, successful bridge creation/emission and per-client forwarding records. Filed pyrycode#3202 in its owner board's Backlog with `priority:low`, and verified Mobile #2032's native blocked-by edge. No new live capture is admitted before that prerequisite; the cause remains unproven. Clock-offset bounds and observer coverage remain Mobile work after the owner trace is available. This leg changes no Kotlin behaviour and adds only the preflight evidence described below. The retained 60 focused JVM checks passed again, with zero failures/errors/skips. Written-work forecast including this handoff remains below 1600 lines.
+
+## Capture preflight
+
+The current daemon composition root wires `stdioPermissionHandler` to `streamApprovalBridge.Surface` in `cmd/pyry/relay.go`. Read `handle`/`await` in `cmd/pyry/streamsup_runner.go`, `Surface`/`broadcast`/`retire` in `cmd/pyry/modal_resolve_v2.go`, `Register`/`Await` in `internal/permbridge/permbridge.go`, `Push`/`drainOnce`/`forwardEnvelopeSource` in `internal/relay/v2session_push.go`, and `recordPromptAnswer` in `cmd/pyry/prompt_answer_history.go` before selecting the owner prerequisite.
+
+| Boundary | Present evidence and gap |
+| --- | --- |
+| Turn enqueue/delivery | Retained daemon log and canonical history establish the successful run's failed-then-successful turn delivery only. |
+| Permission registration | `stdioPermissionHandler.handle`/`Register` have no correlated registration/rejection trace. |
+| Bridge creation/emission | `Surface` records mint failure; successful modal identity/permission generation and emission are not retained. |
+| Per-client enqueue | `broadcast` records marshal/Push failures only; no eligible-client or successful enqueue records. |
+| Per-client attempted forwarding | `forwardEnvelopeSource` can return nil after withholding or after send; `drainOnce` records failures without permission identity. Neither success nor withholding is distinguishable from these logs. |
+| Permission resolution | Approval audit and `recordPromptAnswer` occur at resolution; they do not establish earlier emission/delivery timing. |
+| Peer/phone/UI | Retained lifecycle, decoded receipt and sampled projection/UI remain distinct. Their clock domains and observation gaps prohibit absence or ordering claims. |
+
+pyrycode#3202 owns an opt-in bounded trace joining the permission lifecycle and per-client attempts, with explicit loss/overflow and a private retention procedure. Its handoff must supply the supported isolated-harness configuration and tested source/binary identities. Successful enqueue or transport forwarding must never be called client receipt. No evidence currently supports a controlled behavioural fault to inject.
+
+`app/src/androidTest/assets/stop-hold-2032/preflight.json` separately records this leg's artifact availability, source audit and fresh counted JVM results. Every retained private diagnostic red/green and daemon/history file matches its original hash. The original raw testcase XML, dispatcher XML and copied logcat under `build/dispatcher-tests/live-dnt_9vs6/` are absent in the fresh worktree; the committed counted extract and original hashes remain, but cannot replace raw files. Do not change the original manifest to imply those files survived.
+
+After pyrycode#3202 lands, first close the Mobile clock/observer gaps without delaying approval/Stop or changing any wait. Then obtain one admitted authenticated focused capture, retain raw records before cleanup, and correlate the exact interval, conversation/session and permission generation. Select a causal regression/repair only from a localized fault; another pass without localization returns for refinement. The independent dispatcher full-live gate and documentation handoff remain pending after causal repair.
