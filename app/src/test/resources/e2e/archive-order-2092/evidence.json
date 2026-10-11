@@ -1,0 +1,64 @@
+{
+  "mobile_revision": "1a88f0a4088c841369855a0571eaaf85c1ef03c0",
+  "daemon_revision": "b36441f9d03c7e7b78ce7c41fe6963e225c59ad5",
+  "live_selection": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_archiveTwoChats_listsSecondArchivedFirst",
+  "live_counts": {
+    "executed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "diagnostic_unit_counts": {
+    "executed": 7,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "live_reads_unit_counts": {
+    "executed": 4,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "live_exit_code": 0,
+  "cause": "unproven; every retained isolated target observation was connected, loaded, and used one observed repository",
+  "raw_xml": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2092/build/dispatcher-tests/live-ue500r04/0-TEST-pixel2Api33Atd-_app-.xml",
+  "raw_phone_log": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2092/build/dispatcher-tests/live-ue500r04/0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_archiveTwoChats_listsSecondArchivedFirst.txt",
+  "initial_device_admission_attempt": {
+    "exit_code": 75,
+    "executed": 0,
+    "wait_seconds": 300
+  },
+  "full_dispatcher_live_proof": "pending; isolated success is not a causal repair or acceptance proof",
+  "pairing_retry_context": {
+    "executed": 3,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "raw_xml": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2092/build/dispatcher-tests/live-yt71s4fp/0-TEST-pixel2Api33Atd-_app-.xml",
+    "raw_phone_log": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2092/build/dispatcher-tests/live-yt71s4fp/0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_archiveTwoChats_listsSecondArchivedFirst.txt",
+    "exit_code": 0
+  },
+  "late_suite_context": {
+    "executed": 6,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "daemon_revision": "347981ae81f93d7ec8d4b5ffd2a5dd8f006edddb",
+    "raw_xml": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2092/build/dispatcher-tests/live-y5w4eun4/0-TEST-pixel2Api33Atd-_app-.xml",
+    "raw_phone_log": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2092/build/dispatcher-tests/live-y5w4eun4/0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_archiveTwoChats_listsSecondArchivedFirst.txt",
+    "exit_code": 0
+  },
+  "channel_context": {
+    "executed": 3,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "daemon_revision": "347981ae81f93d7ec8d4b5ffd2a5dd8f006edddb",
+    "raw_xml": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2092/build/dispatcher-tests/live-7dhqjtyt/0-TEST-pixel2Api33Atd-_app-.xml",
+    "raw_phone_log": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2092/build/dispatcher-tests/live-7dhqjtyt/0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_archiveTwoChats_listsSecondArchivedFirst.txt",
+    "exit_code": 0,
+    "device_admission_wait_seconds": 332
+  },
+  "archived_xml_normalization": "CRLF to LF only; parsed records unchanged; raw originals referenced above"
+}

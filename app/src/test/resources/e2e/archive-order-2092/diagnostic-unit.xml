@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.e2e.ArchiveOrderProbeTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-11T22:29:17.651Z" hostname="b002a727173c" time="0.05">
+  <properties/>
+  <testcase name="observationsAreBoundedAndRetainTheFinalFailure" classname="de.pyryco.mobile.e2e.ArchiveOrderProbeTest" time="0.04"/>
+  <testcase name="dynamicConnectionFieldsNeverReachEvidence" classname="de.pyryco.mobile.e2e.ArchiveOrderProbeTest" time="0.002"/>
+  <testcase name="completedStagesDistinguishFixtureCreationArchiveAndMembership" classname="de.pyryco.mobile.e2e.ArchiveOrderProbeTest" time="0.001"/>
+  <testcase name="cancellationAndUnavailableClockPreserveFailureIdentity" classname="de.pyryco.mobile.e2e.ArchiveOrderProbeTest" time="0.001"/>
+  <testcase name="diagnosticFailureCannotReplaceOrExposeOriginalFailure" classname="de.pyryco.mobile.e2e.ArchiveOrderProbeTest" time="0.001"/>
+  <testcase name="initialListFailureRetainsTargetHostStateBeforeCleanup" classname="de.pyryco.mobile.e2e.ArchiveOrderProbeTest" time="0.001"/>
+  <testcase name="repositoryLossAndReplacementRemainSeparateFromHeldRows" classname="de.pyryco.mobile.e2e.ArchiveOrderProbeTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
