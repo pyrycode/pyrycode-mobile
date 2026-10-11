@@ -85,6 +85,7 @@ import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
@@ -94,7 +95,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
@@ -102,6 +102,7 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -987,56 +988,75 @@ class ThreadViewModel(
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private val threadContent: Flow<ThreadContent> =
-        combine(
-            threadItems,
-            repository.observeQueue(conversationId),
-            historyDemand,
-            hostAvailable,
-            flow<HistoryCoverage?> {
-                emit(null)
-                historySeed.join()
-                historyCoverage.collect { emit(it) }
-            },
-        ) { reading, queued, demand, connected, coverage ->
-            Triple(
-                reading.items,
-                coverage ?: HistoryCoverage(),
-                ThreadContent(
-                    reading.items,
-                    queued,
-                    demand.tail(connected),
-                    emptyList(),
-                    coverage?.let { reading.evidence.copy(gaps = it.unsignedGaps) },
-                ),
-            )
-        }.mapLatest { (items, coverage, content) ->
-            if (coverage.unsignedGaps.isEmpty() && !coverage.unsignedUnknown) {
-                content
-            } else {
-                withContext(projectionDispatcher) {
-                    val context = currentCoroutineContext()
-                    // Use the render fold's one-to-one queue correlation and lifecycle filtering.
-                    val delivered = IdentityHashMap<ThreadItem, Unit>()
-                    foldQueuedRows(items, content.queued).forEach { row ->
-                        context.ensureActive()
-                        if (row is ThreadRow.Delivered) delivered[row.item] = Unit
-                    }
-                    val display =
-                        coverage.projectDisplay(
-                            items,
-                            checkActive = { context.ensureActive() },
-                            isDisplayed = { it in delivered },
-                        )
-                    RelayLog.d { "event=history_display_projected rows=${display.rows.size} markers=${display.markers.size}" }
-                    content.copy(
-                        items = display.rows,
-                        historyMarkers =
-                            display.markers.map {
-                                ThreadHistoryMarker(beforeRow = it.beforeRow, unsignedAnchor = it.anchor, displayRow = it.displayRow)
-                            },
+        flow {
+            var hasPublishedRows = false
+            emitAll(
+                combine(
+                    threadItems,
+                    repository.observeQueue(conversationId),
+                    historyDemand,
+                    hostAvailable,
+                    flow<HistoryCoverage?> {
+                        emit(null)
+                        historySeed.join()
+                        historyCoverage.collect { emit(it) }
+                    },
+                ) { reading, queued, demand, connected, coverage ->
+                    Triple(
+                        reading.items,
+                        coverage ?: HistoryCoverage(),
+                        ThreadContent(
+                            reading.items,
+                            queued,
+                            demand.tail(connected),
+                            emptyList(),
+                            coverage?.let { reading.evidence.copy(gaps = it.unsignedGaps) },
+                        ),
                     )
-                }
-            }
+                }.transformLatest { (items, coverage, content) ->
+                    val needsProjection = items.isNotEmpty() && (coverage.unsignedGaps.isNotEmpty() || coverage.unsignedUnknown)
+                    if (needsProjection && !hasPublishedRows) {
+                        // Optional markers must not hold the initial readable rows; qualification awaits preparation.
+                        hasPublishedRows = true
+                        emit(content.copy(evidence = null))
+                        RelayLog.d { "event=history_initial_content_published rows=${items.size} projection=pending" }
+                    }
+                    val prepared =
+                        if (!needsProjection) {
+                            content
+                        } else {
+                            withContext(projectionDispatcher) {
+                                val context = currentCoroutineContext()
+                                // Use the render fold's one-to-one queue correlation and lifecycle filtering.
+                                val delivered = IdentityHashMap<ThreadItem, Unit>()
+                                foldQueuedRows(items, content.queued).forEach { row ->
+                                    context.ensureActive()
+                                    if (row is ThreadRow.Delivered) delivered[row.item] = Unit
+                                }
+                                val display =
+                                    coverage.projectDisplay(
+                                        items,
+                                        checkActive = { context.ensureActive() },
+                                        isDisplayed = { it in delivered },
+                                    )
+                                RelayLog.d { "event=history_display_projected rows=${display.rows.size} markers=${display.markers.size}" }
+                                content.copy(
+                                    items = display.rows,
+                                    historyMarkers =
+                                        display.markers.map {
+                                            ThreadHistoryMarker(
+                                                beforeRow = it.beforeRow,
+                                                unsignedAnchor = it.anchor,
+                                                displayRow = it.displayRow,
+                                            )
+                                        },
+                                )
+                            }
+                        }
+                    if (prepared.items.isNotEmpty()) hasPublishedRows = true
+                    emit(prepared)
+                },
+            )
         }.distinctUntilChanged()
             .paceThreadContent(contentScheduling)
 

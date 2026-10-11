@@ -44,10 +44,14 @@ import de.pyryco.mobile.e2e.parseEmulatorCpuTicks
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -113,6 +117,14 @@ class SavedThreadFirstDrawDeviceTest {
     }
 
     @Test fun savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen() {
+        measureSavedThreads()
+    }
+
+    @Test fun delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen() {
+        measureSavedThreads(projectionDelayMs = 1100)
+    }
+
+    private fun measureSavedThreads(projectionDelayMs: Long = 0) {
         installHost()
         val probes = mutableListOf<Probe>()
         for (name in listOf("ordinary", "fragmented")) {
@@ -139,7 +151,7 @@ class SavedThreadFirstDrawDeviceTest {
                             activeProbe = probe
                             probes += probe
                             if (repo == null) repo = repository(root, delegate)
-                            openAndMeasure(requireNotNull(repo), delegate, online, probe, rows, coverage)
+                            openAndMeasure(requireNotNull(repo), delegate, online, probe, rows, coverage, projectionDelayMs)
                         }
                     }
                 }
@@ -310,7 +322,38 @@ class SavedThreadFirstDrawDeviceTest {
         probe: Probe,
         rows: List<ThreadItem>,
         coverage: HistoryCoverage?,
+        projectionDelayMs: Long = 0,
     ) {
+        val projectionScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val projection =
+            if (projectionDelayMs == 0L) {
+                Dispatchers.Default
+            } else {
+                object : CoroutineDispatcher() {
+                    override fun dispatch(
+                        context: CoroutineContext,
+                        block: Runnable,
+                    ) {
+                        val queued = SystemClock.elapsedRealtimeNanos()
+                        projectionScope.launch {
+                            try {
+                                delay(projectionDelayMs)
+                            } finally {
+                                val started = SystemClock.elapsedRealtimeNanos()
+                                val cpu = Debug.threadCpuTimeNanos()
+                                try {
+                                    block.run()
+                                } finally {
+                                    Log.i(
+                                        "SavedThreadCacheWorker",
+                                        "event=projection_worker_run case=${probe.name} hold_ms=$projectionDelayMs queue_ms=${(started - queued) / 1_000_000} wall_ms=${(SystemClock.elapsedRealtimeNanos() - started) / 1_000_000} cpu_ms=${(Debug.threadCpuTimeNanos() - cpu) / 1_000_000}",
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         val store = ViewModelStore()
         val beforeAsks = delegate.asks.size
         val measuredRepo =
@@ -329,6 +372,7 @@ class SavedThreadFirstDrawDeviceTest {
                     ComposerDraftStore(),
                     repositoryAvailable = flowOf(online),
                     contentScheduling = ThreadContentScheduling(),
+                    projectionDispatcher = projection,
                 )
             store.put("thread", vm)
             selected.value = Opening(vm, probe, online)
@@ -389,6 +433,7 @@ class SavedThreadFirstDrawDeviceTest {
                     "event=opening_cleared case=${probe.name} elapsed_ms=${probe.elapsed(SystemClock.elapsedRealtimeNanos())}",
                 )
             }
+            projectionScope.cancel()
             composeRule.waitForIdle()
         }
     }
