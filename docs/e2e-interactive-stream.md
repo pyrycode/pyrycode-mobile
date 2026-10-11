@@ -1493,8 +1493,11 @@ first-turn applied readings, explicit-choice protection and cleanup. They emit
 static stage/outcome codes and preserve the original failure cause. However, the
 fresh gate's referenced `build/dispatcher-tests/live-robi4mcf` artifact directory
 is no longer present, and the retained report/diagnostic log does not include
-these stage records. Retaining that run's stage diagnostics remains a verification
-handoff; the named pass and revisions above are established independently.
+these stage records. Stage-by-stage live capture is unavailable and remains an
+explicit evidence limitation; no stage capture is claimed. The
+[verifier's return disposition](https://github.com/pyrycode/pyrycode-mobile/pull/2077#issuecomment-6106591453)
+confirms that the counted named full-suite pass satisfies live acceptance. No
+additional live run is required to recreate successful stage records.
 
 The archived #1869 occurrence remains unattributed: its failing stage and daemon
 revision are unavailable. The old wait existed on reported mobile `f98d50139d`
@@ -6172,9 +6175,10 @@ The remaining checks here are specific to a real relay or real Claude execution:
   `InteractiveStreamE2ETest#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel`
   passed in the [fresh full live suite](#remembered-effort-acknowledgement-barrier-2075).
   Shared `RunConfigurationWaitTest` controls cover both settlement orderings;
-  no `DeterministicInteractiveStreamE2ETest` twin was added. Verification still
-  needs to retain the fresh run's `RememberedEffort` stage diagnostics. Historical
-  #1869 attribution remains unproven. The pre-ship command remains
+  no `DeterministicInteractiveStreamE2ETest` twin was added. Live acceptance is
+  satisfied; the unavailable `RememberedEffort` stage capture remains an explicit
+  evidence limitation, with no additional live run required. Historical #1869
+  attribution remains unproven. The pre-ship command remains
   `python3 scripts/android-test-gate.py live`.
 
 - **Empty-host channel setup (#1897):** The existing rung-3
