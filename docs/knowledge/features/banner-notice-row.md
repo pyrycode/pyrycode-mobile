@@ -93,6 +93,15 @@ from `appendUnrecognizedMessage` in exactly the way the type-level note above re
 lambda as the write, so a concurrent merge cannot slip a duplicate in between the check and the append.
 The arm makes exactly one write and logs nothing — `text` is claude-authored prose.
 
+Info evidence remains in the projection but is transparent to assistant continuity
+([#2078](https://github.com/pyrycode/pyrycode-mobile/issues/2078)). Like invisible background
+lifecycle rows, an Info banner neither selects a new delta anchor nor settles a streaming
+reply nor interrupts the history/cache segment join. Notice and Warning remain visible
+separators. Classification uses only the closed `BannerLevel` enum, never banner text or timing.
+A correctly parked queued echo alone does not prove continuity: an Info receipt after it can
+otherwise become the last-row anchor and split the held reply. See
+[assistant segments](remote-conversation-repository-assistant-reply-segments.md).
+
 ## History lane — `withHistoryEntry`'s `TYPE_BANNER` arm
 
 Gated the same way as the live lane's structured types (`interactive` only). Decodes the entry's payload,
@@ -203,7 +212,7 @@ document that repeats it.
   not; the row has no click action even when its text contains something that looks like a link. Since
   #1113 every case passes `agent = ConversationAgent.Claude` and keeps asserting the literal "Claude: "
   copy — the "reads exactly as today" guard.
-- **No rung-4 scripted twin.** The daemon has no scripted `banner` emitter, so this ticket added none;
+- **No dedicated banner-rendering rung-4 twin.** The original banner ticket added none;
   live verification against a real claude is [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679),
   per the ticket.
 - **#1113**: the new sharedTest `ThreadAgentAttributionTest` (Robolectric, through `ThreadScreen`) covers
@@ -212,6 +221,13 @@ document that repeats it.
 - **#1359**: `ThreadBannerLevelTest` (Robolectric shared screen test, through `ThreadScreen`) holds an
   `Info`, a `Notice` and a `Warning` banner in one thread — the info text does not exist, the notice and
   warning texts are displayed — proving the skip is in the render arm, not the mapping.
+
+`infoBanners_preserveLiveHistoryAndReconnectSegments` covers live extension, page reduction,
+both history/cache merge directions and repeated invisible evidence. The read-mark control
+`nonvisualBannerTailRetainsPresentedStreamingContentClaims` keeps the reply streaming through
+Info metadata, retains checkpoint `72uL`, then settles on turn end. The enabled
+[queued-echo reproduction](../../e2e-interactive-stream.md#legacy-queued-follow-up-continuity-2078)
+provides transport-level continuity evidence without claiming visible banner acceptance.
 
 ## Related
 

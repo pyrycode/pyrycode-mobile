@@ -12,8 +12,9 @@ restarts, and resuming from the saved position).
 ## Assistant reply segments: the key, the seam join, and the turn-seq dedupe (#1350)
 
 [#1350](https://github.com/pyrycode/pyrycode-mobile/issues/1350) makes `withAssistantDelta` match desktop's
-`appendDelta`: it extends the thread's **last** row only when that row is already an assistant segment of
-the same `turn_id`; a tool row, a user message, a session boundary, or no row at all makes the delta open a
+`appendDelta`: it extends the thread's last continuity anchor when that row is an assistant segment of
+the same `turn_id`; a tool row, a delivered user message, a session boundary, a visible banner,
+or no anchor at all makes the delta open a
 new segment at the end instead. A turn that goes text, tool, text now draws as two assistant rows around the
 tool, live and on replay — see [Streaming assistant turns](streaming-assistant-turns.md#finished-rows-are-now-per-segment-not-one-bubble-per-turn-1350)
 and [Live tool-call](live-tool-call.md) for the consumer-side read of this. The segment is `Message.segment:
@@ -65,8 +66,9 @@ hostile `turn_id` achieves is missing text, never a crashed list.
 
 **Only the newest segment streams.** `List<ThreadItem>.withOnlyLastRowStreaming()` settles every streaming
 assistant row but the last, returning the same list when nothing changed; `ThreadProjection.observe` applies
-it before `distinctUntilChanged`, so every reader of the projection sees a segment stop the moment any row
-follows it — a tool call, a user message, whatever put that row there. See
+it before `distinctUntilChanged`, so every reader of the projection sees a segment stop when a visible separator
+follows it. Invisible background lifecycle and `BannerLevel.Info` evidence are skipped;
+parked echoes are separated from the streaming check by the snapshot projection. See
 [Streaming assistant turns § the known gap](streaming-assistant-turns.md#finished-rows-are-now-per-segment-not-one-bubble-per-turn-1350)
 for the one composition point downstream of `observe` this does not cover.
 `turn_end` (`withFinalizedTurn`) settles **every** streaming segment of the turn, plus ordinary
@@ -82,6 +84,29 @@ but reads below it (a [queued own echo](queued-backlog.md#own-echo-position-a-qu
 caller passes nothing, since a page is reduced after the fact and carries no notion of "still queued." Without
 this, the echo — appended to the store at tap time, ahead of the reply's first delta — would look like the
 delta's "last row" and the reply would open a second segment below it instead of extending the one above.
+
+**Invisible evidence and pending history rows (#2078).** Live anchoring, last-row streaming
+and seam joining skip [Info banners](banner-notice-row.md), just as they skip background
+lifecycle evidence. A hidden receipt after a correctly parked echo must not split or settle
+the held reply. Notice and Warning remain separators; no text or timing heuristic is used.
+The open-phase diagnosis was disproved by the isolated reproduction, so queue classification
+still uses `TurnPhaseProjection.isOpen` and keeps idle-first placement sticky.
+
+Page reduction has no queue context, but `ThreadProjection.mergeHistoryPage` supplies
+conversation-local `parked + awaitingPush` ids to `mergeUnsignedHistoryRows` and its segment
+join, excluding first modern deliveries. Pending echoes stay in the receiving list with their
+reserved positions and renderer claims; incoming ordinary copies are filtered even if their
+role differs. Removing these echoes and appending them after allocation loses both the legacy
+reservation and key ownership. The complete result, including hidden awaiting-push rows,
+participates in `withUniqueMessageKeys` before presentation suppression. Canonical and aliased
+held keys remain owned when a newcomer collides, including when its fallback is occupied.
+See [queue reconciliation](queued-backlog.md#queued-display-metadata-and-history).
+
+Probe snapshots after every event: banner-before/after-queue, duplicate deltas/snapshots,
+pending copies on either side of history, repeated prefix/middle/suffix overlaps and later live
+text. Drain-first/push-first controls also merge nonempty history before and after confirmation;
+collision controls reveal suppressed echoes. Unique final keys alone cannot detect a transient
+split, a lost reservation or an old key transferred to another row.
 
 **Delivery placement and segment continuity (#1655).** Parked rows read below the running
 turn in queue-entry FIFO order even when legacy reservations have moved their store slots.
@@ -115,7 +140,8 @@ joins. The joined row keeps `older`'s id, timestamp and session (it saw the segm
 delivered to both lanes is counted once, located from `newer`'s own record and clamped to its content so a
 mismatched record cuts short instead of throwing), and takes `newer`'s streaming flag, since the newer lane
 knows whether the turn has ended. `withJoinedSegments()` walks a merged list once and applies this to every
-adjacent pair, returning the same list when nothing joined. Joining removes the later row. The final
+pair separated only by invisible metadata or explicitly owned pending user rows, returning the
+same list when nothing joined. Joining removes the later row. The final
 allocator restores surviving owner claims and resolves reconstructed-key collisions; a joined or
 absorbed row has no separate-key continuity guarantee.
 

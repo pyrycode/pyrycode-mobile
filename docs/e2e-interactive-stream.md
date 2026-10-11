@@ -3425,6 +3425,22 @@ Caret absence alone cannot establish completion because the caret blinks. This
 scenario stays selected by `scripted stream` and `scripted-all`; it asserts display
 and settlement, not cadence or a live catch-up deadline.
 
+**`stream-queued-echo`** — enabled by #2078 in
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply`.
+This separate legacy reproduction displays the held two-delta prefix and captures its reply id,
+sends a follow-up through the owning repository, observes the own echo queued, then releases
+the third delta and result. The captured row must contain all three fragments through completion,
+with no suffix row. It uses the held stream fixture and zero real Claude turns. Run it in isolation:
+
+```sh
+DETERMINISTIC=1 SCENARIO=stream-queued-echo PYRY_FORCE_TEST_RUN=1 bash scripts/e2e-emulator.sh
+```
+
+The manual selection is absent from `scripted-all`; that gate cannot substitute for the isolated
+run. Retain fresh named XML and executed/failed/skipped counts, and run the existing
+`python3 scripts/android-test-gate.py scripted stream` scenario too. See
+[counted evidence](#legacy-queued-follow-up-continuity-2078).
+
 **`spinner`** — the thinking state is transient: a single fragment with `thinking` then `end_turn` would
 flip `isThinking` true→false before Compose lays out the spinner. The harness therefore holds the turn
 open and ends it on a **causal** release, with two raw stream fragments:
@@ -3623,12 +3639,45 @@ XML `/tmp/builder-1985/stream-green-TEST-pixel2Api33Atd-_app-.xml` and
 0 failed, 0 skipped**, timestamped `2026-10-11T08:38:15` and `08:39:10` respectively.
 Those earlier focused reports supplement the final gate record.
 
-The independent legacy queued-echo split remains open in
-[#2078](https://github.com/pyrycode/pyrycode-mobile/issues/2078), with ignored
-`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply`
-and the manual `stream-queued-echo` harness arm. It is separate from both required
-passing display methods. No live scenario is added or promoted here; the pre-ship
+The legacy queued-echo reproduction is now enabled and repaired by #2078; its separate
+isolated proof is recorded below. Production negotiated daemon-thread reconciliation remains
+with [#1986](https://github.com/pyrycode/pyrycode-mobile/issues/1986). The pre-ship
 command remains `python3 scripts/android-test-gate.py live`.
+
+### Legacy queued follow-up continuity (#2078)
+
+[PR #2082's verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2082)
+on `e8b2cb84ba7d3b7e58ab1db4663a5ee25d4fa5b9` confirms the enabled reproduction and
+fresh builder evidence. Documentation inspected both retained XML reports:
+
+| Builder run | Named `DeterministicInteractiveStreamE2ETest` method | Executed | Passed | Failed | Skipped |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Isolated `stream-queued-echo` | `interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply` | 1 | 1 | 0 | 0 |
+| `python3 scripts/android-test-gate.py scripted stream` | `interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread` | 1 | 1 | 0 | 0 |
+
+The isolated builder command used `PYRY_BIN="$PWD/build/e2e-bin/pyry"`,
+`RELAY_BIN="$PWD/build/e2e-bin/pyrycode-relay"`, `DETERMINISTIC=1`,
+`SCENARIO=stream-queued-echo` and `PYRY_FORCE_TEST_RUN=1` with `bash scripts/e2e-emulator.sh`.
+Both runs used zero real Claude turns and daemon revision
+`63aabec70dad3948c916332a139eb22533b8f4b8`. XML paths:
+`/tmp/builder-2078/rework-queued-echo-green/TEST-pixel2Api33Atd-_app-.xml`
+(timestamp `2026-10-11T11:15:48`) and
+`/tmp/builder-2078/rework-stream-green/TEST-pixel2Api33Atd-_app-.xml`
+(timestamp `2026-10-11T11:15:09`). Each report explicitly contains its named passing
+method, with zero errors. The stream gate artifacts are `build/dispatcher-tests/scripted-q6gxx5jg/`.
+These are separate builder runs, not results inferred from the full suite.
+
+The final dispatcher gates on the reviewed commit report UI **258 executed/passed,
+0 failed, 1 skipped** and scripted-all **22 executed/passed, 0 failed, 0 skipped**.
+The stream method passed in scripted-all; queued-echo is manual and is proved by the
+isolated run above. The UI skip is `RenameDialogCaptureTest.renameAtFigmaViewport`.
+No additional real-Claude acceptance is required for this legacy repository repair.
+
+The held reply's split came from an invisible Info receipt after a correctly parked echo,
+not missing open-phase evidence. History reconciliation also needs pending echo context while
+retaining reserved placement and renderer ownership. See
+[assistant continuity](knowledge/features/remote-conversation-repository-assistant-reply-segments.md)
+and [queue history](knowledge/features/queued-backlog.md#queued-display-metadata-and-history).
 
 ### Scripted durable-gap closure (#2069)
 
@@ -6394,7 +6443,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
   renderer proof and repaired deterministic display fences are recorded
   [above](#supplied-renderer-and-scripted-display-fences-1985). #1988 retains the
   activated-route background-agent methods and prior-session terminal regression;
-  #2078 retains the separate ignored queued-echo reproduction/manual harness arm.
+  #2078 enables the separate
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply`
+  reproduction. Its required isolated manual `stream-queued-echo` run and the existing stream
+  scenario each passed 1 executed, 0 failed, 0 skipped; see
+  [counted evidence](#legacy-queued-follow-up-continuity-2078). No coverage follow-up remains
+  for legacy continuity; negotiated reconciliation remains #1986.
 
 - **Stream completion identity (#1793):**
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
