@@ -111,6 +111,18 @@ class AttentionNotifierTest {
         }
 
     @Test
+    fun authoritativeCompletionUsesShownAvailabilityInsteadOfLegacyEntryCoverage() =
+        withNotifier {
+            readMarks.value = mapOf("host-a" to mapOf("conv" to ConversationReadMarks(5u, 100u, 6u, true)))
+            alerts.emit(TURN.copy(historyEntryId = 5u))
+            assertEquals(1, posted().size)
+            readMarks.value = mapOf("host-a" to mapOf("conv" to ConversationReadMarks(100u, 100u, null, true)))
+            assertEquals(1, posted().size)
+            readMarks.value = mapOf("host-a" to mapOf("conv" to ConversationReadMarks(100u, 100u, 6u, true)))
+            assertTrue(posted().isEmpty())
+        }
+
+    @Test
     fun previewsArePrivateAndPublicVersionsContainOnlyFixedCopy() =
         withNotifier {
             names["host-a" to "conv"] = " Conversation\u0000 "

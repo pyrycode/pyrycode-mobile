@@ -31,7 +31,9 @@ import kotlinx.serialization.json.decodeFromJsonElement
  * One instance per repository, and a fresh repository per connection (#351), so the state is
  * connection-scoped exactly as it was when it lived in the repository. Decode failures log static outcomes only.
  */
-internal class ConversationListProjection {
+internal class ConversationListProjection(
+    private val threadSupported: () -> Boolean = { false },
+) {
     /**
      * The demuxed rows: `null` until a snapshot or confirmed upsert, then the latest list.
      * Rows and read facts share one atomic state, while observers select their own projection. The primary read source; [observe] derives every cold
@@ -92,7 +94,11 @@ internal class ConversationListProjection {
             val marks = current.readMarks.toMutableMap()
             val sessions = current.rows.orEmpty().associate { it.id to it.currentSessionId }
             decoded.conversations.forEach { row ->
-                mergeReadMarks(marks, row.id, ConversationReadMarks(row.readUpTo, row.latestEntryId))
+                mergeReadMarks(
+                    marks,
+                    row.id,
+                    ConversationReadMarks(row.readUpTo, row.latestEntryId, row.lastShownVersion, threadSupported()),
+                )
             }
             // List DTOs omit session identity; only the transition fold can replace a known binding.
             val rows = decoded.toConversations().map { it.copy(currentSessionId = sessions[it.id].orEmpty()) }
@@ -192,7 +198,7 @@ internal class ConversationListProjection {
                     existing + incoming
                 }
             val marks = current.readMarks.toMutableMap()
-            mergeReadMarks(marks, incoming.id, ConversationReadMarks(record.readUpTo, null))
+            mergeReadMarks(marks, incoming.id, ConversationReadMarks(record.readUpTo, null, record.lastShownVersion, threadSupported()))
             current.copy(rows = rows, readMarks = marks)
         }
         return stored
@@ -305,7 +311,7 @@ internal class ConversationListProjection {
         id: String,
         incoming: ConversationReadMarks,
     ) {
-        if (incoming.readUpTo == null && incoming.latestEntryId == null) return
+        if (incoming.readUpTo == null && incoming.latestEntryId == null && !incoming.threadSupported) return
         marks[id] = marks[id]?.merge(incoming) ?: incoming
     }
 
