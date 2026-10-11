@@ -1,0 +1,16 @@
+{
+  "command": "timeout 1200 ./gradlew testDebugUnitTest --tests de.pyryco.mobile.notifications.NotificationTapNavigationTest --rerun --console=plain",
+  "exit_code": 0,
+  "revision": "3918ef87d14d6add0013c9f4d5538c0d22d87c5e",
+  "source_xml": "app/build/test-results/testDebugUnitTest/TEST-de.pyryco.mobile.notifications.NotificationTapNavigationTest.xml",
+  "source_sha256": "dc55e7f8a0d7ca9b9fc7e2be76fd3e367bb884bb48e3343ceba410f9771bc00c",
+  "dirty_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "counts": {
+    "recorded": 15,
+    "executed": 15,
+    "passed": 15,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  }
+}
