@@ -415,7 +415,7 @@ section](relay-repository-coordinator.md#testing).
 `RemoteConversationRepositoryReplySuggestionTest` exercises this facade with real remote
 repositories and shared `HostReadings`: disconnect, direct delegate replacement, detached
 old-pump updates, an empty new delegate, a lower new revision and a reconciled clear.
-See the [remote invariant probes](remote-conversation-repository.md#testing).
+See the [remote invariant probes](remote-conversation-repository-testing.md#testing).
 
 ## Related
 
