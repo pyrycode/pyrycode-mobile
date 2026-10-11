@@ -25,13 +25,24 @@ import kotlinx.serialization.json.longOrNull
 /** Supplied-input presentation seam for #1988. No legacy roster or live-session attribution enters it. */
 class AuthoritativeThreadPresentation internal constructor(
     val scope: String,
+    val host: String,
+    val conversation: String,
     val rows: List<ThreadRow>,
     val items: List<ThreadItem>,
     val depths: Map<String, Int>,
     val tasks: BackgroundTaskRoster,
+    internal val backgroundBlocks: Map<String, AuthoritativeAgentPlacement>,
+    internal val foregroundTool: ToolCall?,
 ) {
     override fun toString(): String = "AuthoritativeThreadPresentation(content=***)"
 }
+
+/** Structural movement is independent of whether the root has a visible content row. */
+internal data class AuthoritativeAgentPlacement(
+    val active: Boolean,
+    val settledOrder: Long,
+    val rowKeys: Set<String>,
+)
 
 /** Projects complete held facts without modifying their revisions, retention or reconnect checkpoint. */
 internal fun projectAuthoritativeThread(
@@ -53,7 +64,12 @@ internal fun projectAuthoritativeThread(
         var parent = item.parent
         var owner: Long? = null
         var depth = 0
-        while (parent != null && parent > 0 && path.add(parent)) {
+        var cyclic = false
+        while (parent != null && parent > 0) {
+            if (!path.add(parent)) {
+                cyclic = true
+                break
+            }
             val fact = held[parent] ?: break
             if (fact.kind == "agent") {
                 if (owner == null) owner = parent
@@ -62,7 +78,7 @@ internal fun projectAuthoritativeThread(
             parent = fact.parent
         }
         // Cyclic attribution never creates a self-owning block.
-        if (parent != null && parent in path) owner = null
+        if (cyclic) owner = null
         owners[item.id] = owner
         if (owner != null) depths[identity(item.id)] = depth
     }
@@ -90,13 +106,16 @@ internal fun projectAuthoritativeThread(
             pending.addLast(item)
             while (pending.isNotEmpty()) {
                 val next = pending.removeLast()
+                // A recorded background child owns an independent lifecycle placement.
+                if (next.id != item.id && next.id in background) continue
                 adapted[next.id]?.let(::add)
                 children[next.id].orEmpty().asReversed().forEach(pending::addLast)
             }
         }
+    val backgroundContents = background.mapValues { (_, item) -> block(item) }
     val placements = mutableListOf<Pair<Long, List<ThreadRow>>>()
     for (item in ordered) {
-        if (owners[item.id] != null) continue
+        if (owners[item.id] != null && item.id !in background) continue
         if (item.id in background) {
             if (item.shown) {
                 placements += requireNotNull(item.order) to
@@ -109,7 +128,10 @@ internal fun projectAuthoritativeThread(
                         ),
                     )
             }
-            if (!item.active) placements += (item.endedOrder?.takeIf { it > 0 } ?: requireNotNull(item.order)) to block(item)
+            if (!item.active) {
+                placements +=
+                    (item.endedOrder?.takeIf { it > 0 } ?: requireNotNull(item.order)) to backgroundContents.getValue(item.id)
+            }
         } else if (item.id in agents) {
             placements += requireNotNull(item.order) to block(item)
         } else {
@@ -129,9 +151,9 @@ internal fun projectAuthoritativeThread(
     val rows =
         placements.sortedBy { it.first }.flatMap { it.second } +
             background.values
-                .filter { it.active && owners[it.id] == null }
+                .filter { it.active }
                 .sortedBy { it.order }
-                .flatMap(::block)
+                .flatMap { backgroundContents.getValue(it.id) }
     val tasks =
         held.values
             .sortedBy { it.order ?: Long.MAX_VALUE }
@@ -154,10 +176,25 @@ internal fun projectAuthoritativeThread(
             .map { entries -> entries.maxBy { it.first.rev }.second }
     return AuthoritativeThreadPresentation(
         scope,
+        host,
+        conversation,
         rows,
         rows.filterIsInstance<ThreadRow.Delivered>().map { it.item },
         depths,
         BackgroundTaskRoster(tasks, 0),
+        background.mapKeys { (id, _) -> identity(id) }.mapValues { (_, item) ->
+            AuthoritativeAgentPlacement(
+                item.active,
+                item.endedOrder?.takeIf {
+                    it > 0
+                } ?: requireNotNull(item.order),
+                backgroundContents.getValue(item.id).mapTo(HashSet()) { it.listKey(0) },
+            )
+        },
+        ordered.asReversed().firstNotNullOfOrNull { item ->
+            if (!item.active || item.parent != null && item.parent > 0 || item.recordedTask() != null) return@firstNotNullOfOrNull null
+            ((adapted[item.id]?.item as? ThreadItem.MessageItem)?.message?.toolCall)?.takeIf { it.status == ToolCallStatus.Running }
+        },
     )
 }
 

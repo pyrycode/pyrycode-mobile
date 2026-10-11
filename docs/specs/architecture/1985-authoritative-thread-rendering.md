@@ -4,6 +4,7 @@
 
 - `data/network/ThreadUpdatePayloads.kt`: `ThreadItemDto` retains complete inert facts and optional attribution.
 - `data/repository/AuthoritativeThreadStore.kt`: `AuthoritativeThreadSnapshot` is the complete held snapshot; rendering must not mutate its items or checkpoint.
+- `ui/conversations/thread/ThreadViewModel.kt`: `TaskControls` and `sendBackgroundTaskStop` own capability checks, pending attempts and the outbound repository action.
 - `ui/conversations/thread/ThreadUiState.kt`: `ThreadUiState` gets one optional presentation carrier without migrating existing constructors.
 - `ui/conversations/thread/ThreadRow.kt`: `Delivered`, `AgentStartMarker`, keys and tool-run folds support the existing presentation route.
 - `ui/conversations/thread/ThreadScreen.kt`: `ThreadScreen` selects supplied authoritative rows before the legacy folds and reuses message, attachment, tool, notice and boundary components.
@@ -47,12 +48,13 @@ Projection is pure synchronous presentation work over an immutable supplied snap
 | --- | --- |
 | Same-id revision/status/order update | `AuthoritativeThreadProjectionTest` stable keys and authoritative lifecycle probes; screen expansion update probe |
 | Repeated or reordered complete snapshot | projection replay/permutation probes and screen reload probe |
-| Active to terminal / ended-with-session | projection settlement/prior-session probes and screen follower/history-anchor settlement probes |
+| Active to terminal / ended-with-session | projection settlement/prior-session probes and screen follower/history-anchor settlement probes and `terminalBlockAlreadyAtItsRecordedEndDoesNotRelocateItsReader` |
 | Historical or active parent outside page; hidden parent | projection complete-parent probes and screen nested tools/prose probe |
 | Two active backgrounds; foreground and shell neighbours | projection pinning probes and screen marker/navigation probe |
 | Epoch, host or conversation changes with reused item ids | projection identity probe and screen epoch expansion reset probe |
 | Reconnect/recollection in same epoch | supplied reload preserves keys and expansion; store remains unchanged |
-| Rotation / re-created composition | existing saveable keyed expansion and existing legacy restoration coverage remain in use |
+| Rotation / re-created composition | existing saveable keyed expansion and existing legacy restoration coverage remain in use; same-scope action facts retain pending attempts |
+| Stop tap/repeat, refusal, item replacement, terminal facts, capability loss and foreign owner | `ThreadViewModelTaskStopTest.authoritativeStopUsesRecordedFactsAndSurvivesLegacyRosterUpdates`, `authoritativeStopRejectsForeignOwnersStaleIdentityAndLostCapability`; `AuthoritativeThreadScreenTest.recordedStopReachesOwningRepositoryWithoutLegacyRosterOrExpansion` |
 
 ## Error handling
 
@@ -96,3 +98,15 @@ Sizing: approximately 1450 total written lines including this plan, one new expo
 - 2026-10-11: The unsupported-agent-content probe confirms that recorded `agent` kind plus task link, rather than a supported launch-content name, owns background placement. Unsupported content still displays the inert summary while authoritative activity controls placement and task grouping.
 
 - 2026-10-11: The panel identity probe found expansion following a reused task id onto a different item in the same epoch. Store local expansion by scoped item identity and adapt it to recorded task ids only at the panel boundary; revisions preserve expansion, replacement items and epoch changes reset it.
+
+- 2026-10-11 (verifier rework): Separate structural background placements from nearest-agent ownership. Every recorded background agent, including a nested one, owns its own launch marker, pinned block and ended-order settlement. The moving-key set covers its complete rendered subtree while excluding independently placed background children. Hidden roots carry lifecycle metadata without a displayed marker or root. Supplied-screen rendered-frame probes cover hidden roots and nested foreground children with a reader inside the departing subtree and a stationary history row.
+
+- 2026-10-11 (verifier rework): Resolve parent traversal termination explicitly: a missing ancestor retains the nearest held agent; only a repeated-node cycle removes ownership. Main-turn activity selects positive-order, shown, active, parentless tools without recorded task links before visual pinning; thinking and working therefore keep their existing status ladder.
+
+- 2026-10-11 (verifier rework/security amendment): The screen publishes complete presentation facts to the existing event callback solely for action authorization, without binding production rendering or observing the store. Stop carries scoped item identity; the ViewModel accepts only its own host/conversation, matching current epoch/item/task, active facts and current capability, with duplicate sends suppressed. Authoritative eligibility and pending cleanup ignore legacy roster/expansion. Terminal updates, item replacement, scope change, refusal, send failure and capability loss retire attempts. Unit guards and a real screen-to-ViewModel outbound Stop probe cover this boundary. Security review remains PASS: no new I/O implementation, credential handling, Android surface, storage or content logs; the existing ViewModel scope owns sends and existing repository capability checks remain in place.
+
+- 2026-10-11 (rework sizing): Required regression repairs take the final branch above the original 1,600-line estimate boundary (approximately 2,000 inserted/deleted lines after formatting). The handoff floor applies: separating action/viewport projection from its single supplied renderer consumer would produce a slice usable only by its sibling, rather than an independently verifiable deliverable. Keep this one renderer ticket together; no new product deliverable or production activation is added.
+
+## Documentation handoff
+
+Pending for the documentation stage: `docs/knowledge/features/thread-screen-how-it-works-list-and-status-row.md`, supplied authoritative rendering and agent settlement sections: document complete held-parent interpretation, structural moving-subtree identity, hidden roots, independent nested background placement and foreground status selection. `docs/knowledge/features/thread-screen-how-it-works-overlays-and-app-bar.md`, background-task panel: document scoped item expansion, authoritative grouping and guarded recorded-task Stop dispatch. `docs/knowledge/features/thread-screen-testing.md` and `thread-screen-testing-background-agent-viewport.md`: record counted supplied-snapshot and rendered-frame regression coverage, and retain #1988's production activation/live proof handoff.

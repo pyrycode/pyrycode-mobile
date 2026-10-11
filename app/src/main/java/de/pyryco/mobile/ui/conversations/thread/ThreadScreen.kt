@@ -351,7 +351,12 @@ fun ThreadScreen(
     val taskCount = authoritative?.tasks?.liveCount ?: state.backgroundTaskCount
     val interactionScope = authoritative?.scope ?: state.conversationId
     var authoritativeExpandedTasks by rememberSaveable(interactionScope) { mutableStateOf(emptySet<String>()) }
+    var suppliedActionsPublished by remember { mutableStateOf(false) }
     LaunchedEffect(authoritative) {
+        if (authoritative != null || suppliedActionsPublished) {
+            onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(authoritative))
+            suppliedActionsPublished = authoritative != null
+        }
         if (authoritative != null) {
             RelayLog.d {
                 "event=thread_presentation code=projected rows=${authoritative.rows.size} tasks=${authoritative.tasks.tasks.size}"
@@ -545,7 +550,10 @@ fun ThreadScreen(
                     verticalArrangement = Arrangement.spacedBy(ComposerSectionGap),
                 ) {
                     // #897: the open tool call names itself in the thinking arm's slot, only while a turn runs.
-                    val openTool = remember(threadItems) { openToolCall(threadItems) }
+                    val openTool =
+                        remember(authoritative, threadItems) {
+                            if (authoritative != null) authoritative.foregroundTool else openToolCall(threadItems)
+                        }
                     ThreadStatusArea(
                         apiRetry = apiRetry,
                         resetting = resetting,
@@ -740,8 +748,8 @@ fun ThreadScreen(
                                 (if (state.historyMarkers.any { it.beforeRow.isEmpty() }) 1 else 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0) +
                                 (if (answerRejected) 1 else 0)
-                        val agentRelocation = readerViewport.relocationFor(rows, agentRows, promptRowCount)
-                        SideEffect { readerViewport.onRowsChanged(rows, agentRows, agentRelocation) }
+                        val agentRelocation = readerViewport.relocationFor(rows, agentRows, promptRowCount, authoritative?.backgroundBlocks)
+                        SideEffect { readerViewport.onRowsChanged(rows, agentRows, agentRelocation, authoritative?.backgroundBlocks) }
                         // "Go to agent" only scrolls the block's own root row into view; it never expands
                         // the block's collapsed run (that root draws as itself regardless, #1827
                         // follow-up — only its own tap, via ToolRunRow's onToggle, opens or closes a run).
@@ -1302,7 +1310,7 @@ fun ThreadScreen(
                                             itemId
                                     }
                             } else if (state.backgroundTaskStopSupported) {
-                                onOverflowEvent(event)
+                                onOverflowEvent(ThreadEvent.BackgroundTaskStop(requireNotNull(taskId), authoritative.scope, itemId))
                             }
                         }
                     }

@@ -226,6 +226,15 @@ class AuthoritativeThreadProjectionTest {
         val p = project(authoritativeItem(1, parent = 999), authoritativeItem(2, parent = 3), authoritativeItem(3, parent = 2))
         assertEquals(3, p.rows.size)
         assertTrue(p.rows.all { (it as ThreadRow.Delivered).agentBlockId == null })
+        val cyclic =
+            project(
+                authoritativeAgent(1, parent = 2, task = null),
+                authoritativeAgent(2, parent = 1, task = null),
+                authoritativeItem(3, parent = 1),
+            )
+        assertEquals(3, cyclic.rows.size)
+        assertEquals(null, (cyclic.rows.last() as ThreadRow.Delivered).agentBlockId)
+        assertEquals(cyclic.rows.size, ids(cyclic.rows).toSet().size)
     }
 
     @Test fun recordedTaskLinkWithoutTypeStillProvesBackgroundAndRosterOriginLinkIsRecordedContent() {
@@ -317,5 +326,59 @@ class AuthoritativeThreadProjectionTest {
         assertEquals(raw, snap.items.map { it.raw })
         assertEquals(100, snap.completedVersion)
         assertEquals(90, snap.checkpoint)
+    }
+
+    @Test fun suppliedNearestAgentSurvivesAnAbsentAncestor() {
+        val p = project(authoritativeAgent(2, task = null, parent = 999), authoritativeItem(3, parent = 2))
+        val rows = p.rows.filterIsInstance<ThreadRow.Delivered>()
+        assertEquals(message(rows[0]).id, rows[1].agentBlockId)
+        assertEquals(1, p.depths[message(rows[1]).id])
+        assertEquals(listOf("Agent", null), rows.map { message(it).toolCall?.toolName })
+    }
+
+    @Test fun nestedRecordedBackgroundHasItsOwnLaunchPinAndSettlement() {
+        val outer = authoritativeAgent(1, task = null, active = false)
+        val child = authoritativeItem(4, parent = 2)
+        val neighbours = arrayOf(authoritativeItem(3), authoritativeItem(6))
+        val active = project(outer, authoritativeAgent(2, parent = 1), child, *neighbours)
+        val root = active.rows.filterIsInstance<ThreadRow.Delivered>().first { message(it).toolCall?.input == "agent-2" }
+        assertEquals(listOf(message(root).id), active.rows.filterIsInstance<ThreadRow.AgentStartMarker>().map { it.agentId })
+        assertEquals(listOf(root, active.rows.last()), active.rows.takeLast(2))
+        assertEquals(message(root).id, (active.rows.last() as ThreadRow.Delivered).agentBlockId)
+        assertEquals(1, active.depths[message(root).id])
+        val settled = project(outer, authoritativeAgent(2, parent = 1, active = false, endedOrder = 5), child, *neighbours)
+        assertEquals(
+            listOf("agent-1", "text-3", "agent-2", "text-4", "text-6"),
+            settled.rows.filterIsInstance<ThreadRow.Delivered>().map { message(it).toolCall?.input ?: message(it).content },
+        )
+        assertEquals(settled.rows.size, ids(settled.rows).toSet().size)
+        assertTrue(
+            settled.rows
+                .filterIsInstance<ThreadRow.AgentStartMarker>()
+                .single()
+                .finished,
+        )
+    }
+
+    @Test fun nestedBackgroundSettlesIndependentlyWhileItsOuterBackgroundRemainsActive() {
+        val outer = authoritativeAgent(1)
+        val child = authoritativeItem(4, parent = 2, order = 3)
+        val active = project(outer, authoritativeAgent(2, parent = 1), child, authoritativeItem(5))
+        assertEquals(2, active.rows.filterIsInstance<ThreadRow.AgentStartMarker>().size)
+        assertEquals(
+            listOf("text-5", "agent-1", "agent-2", "text-4"),
+            active.rows
+                .filterIsInstance<ThreadRow.Delivered>()
+                .map { message(it).toolCall?.input ?: message(it).content },
+        )
+        val settled = project(outer, authoritativeAgent(2, parent = 1, active = false, endedOrder = 4), child, authoritativeItem(5))
+        assertEquals(
+            listOf("agent-2", "text-4", "text-5", "agent-1"),
+            settled.rows
+                .filterIsInstance<ThreadRow.Delivered>()
+                .map { message(it).toolCall?.input ?: message(it).content },
+        )
+        assertEquals(settled.rows.size, ids(settled.rows).toSet().size)
+        assertEquals(1, settled.tasks.liveCount)
     }
 }

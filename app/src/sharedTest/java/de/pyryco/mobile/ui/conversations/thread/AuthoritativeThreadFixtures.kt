@@ -51,9 +51,13 @@ internal fun authoritativeAgent(
     task: String? = "task-$id",
     session: String = "old-session",
     shown: Boolean = true,
+    parent: Long? = null,
+    order: Long = id,
 ) = authoritativeItem(
     id,
     "agent",
+    order = order,
+    parent = parent,
     active = active,
     status = status,
     endedOrder = endedOrder,

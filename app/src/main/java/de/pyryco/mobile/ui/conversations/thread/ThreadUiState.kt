@@ -29,8 +29,16 @@ sealed interface ThreadEvent {
         override fun toString(): String = "BackgroundTaskToggle(taskId=<redacted>)"
     }
 
+    data class AuthoritativeThreadPresented(
+        val presentation: AuthoritativeThreadPresentation?,
+    ) : ThreadEvent {
+        override fun toString(): String = "AuthoritativeThreadPresented(<redacted>)"
+    }
+
     data class BackgroundTaskStop(
         val taskId: String,
+        val authoritativeScope: String? = null,
+        val authoritativeItemId: String? = null,
     ) : ThreadEvent {
         override fun toString(): String = "BackgroundTaskStop(taskId=<redacted>)"
     }
