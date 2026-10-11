@@ -1,0 +1,69 @@
+#2075 controlled acknowledgement-race evidence, 2026-10-11
+
+Source baseline: mobile 0acab7ce274ba0b033b94f834cf8ad6654ecf539.
+Plan-first commit: ad75f0ce93306013667bfa1e8c8eb3cbde991791.
+The controlled tests use a fake repository and remembered-effort store, no daemon or Claude.
+
+Red command:
+./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.RunConfigurationWaitTest --console=plain
+Against the extracted original awaitFooter predicate: exit 1; 5 executed, 0 passed, 5 failed, 0 skipped/errors.
+run-configuration-wait-red.xml retains the original testcase failures, omitting stdout/stderr only.
+The delayed-ack case reaches selected high and pending=true with the remembered value still null,
+then the legacy wait returns instead of blocking at the priming acknowledgement barrier.
+The other failures expose the same permissive wait with unrelated selection/note text,
+a permissive predicate during pending Permission, and an absent Effort section.
+
+Green focused command:
+./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.RunConfigurationWaitTest --tests de.pyryco.mobile.e2e.RememberedEffortStageTest --tests de.pyryco.mobile.ui.conversations.components.StatusSheetTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadViewModelEffortRecallTest --console=plain --warning-mode=none
+Exit 0; 63 executed, 63 passed, 0 failed/errors, 0 skipped.
+Class counts: RunConfigurationWaitTest 5; RememberedEffortStageTest 2; StatusSheetTest 31;
+ThreadViewModelEffortRecallTest 25.
+run-configuration-wait-green.xml retains the controlled testcases, omitting stdout/stderr only.
+The same wait stays blocked before acknowledgement and after persistence while the fresh read is pending;
+it completes only after the confirming settings emission, with one effort write and remembered high.
+
+Device command:
+./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.e2e.RunConfigurationWaitTest --console=plain --warning-mode=none
+Exit 0; 5 executed, 5 passed, 0 failed/errors, 0 skipped on managed Android 13.
+Fresh report: app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/TEST-pixel2Api33Atd-_app-.xml
+
+Historical boundary:
+The identical faulty wait exists at reported mobile f98d50139d (main 6629a7a538) and
+unchanged focused-pass mobile 0acab7ce274b. The archived failure stage and daemon revision remain unknown.
+The previous unchanged live pass used daemon a536d17b1e18 and had 1 executed/passed, 0 failed/skipped;
+it does not establish the archived failure cause. This repair independently reproduces the wait race.
+
+Dispatcher handoff:
+Run the full live gate on the repaired branch merged with current main. Explicitly retain the named
+interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel testcase result,
+executed/passed/failed/skipped counts, actual mobile and daemon revisions and RememberedEffort logcat.
+The fixed stages distinguish fixture setup, priming persistence, graph restart, recalled settings
+before each first send, the two real-turn applied readings, explicit-choice protection and cleanup.
+No repaired live pass is claimed by the builder. Documentation records the dispatcher evidence.
+
+Rework for verifier finding 1, baseline mobile 3492fc2221b157dce8d5be77cb0f4105dabd7f05:
+An independent RunConfigOpen settings reply clears pendingEffort while the acknowledged
+write remains suspended in RememberedEffortStore.remember. UI settlement is not persistence.
+
+Red command:
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ANDROID_HOME=/Users/juhanailmoniemi/Library/Android/sdk ./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.RunConfigurationWaitTest.matchingIndependentReadingCannotCompletePrimingBeforePersistence --console=plain --warning-mode=none
+Exit 1; 1 executed, 0 passed, 1 failed, 0 errors/skipped.
+The optional confirmation input was initially unconsumed, preserving the reviewed wait predicate.
+The failure is wait completed before settlement, after acknowledgement and an independent matching
+reply with pending=false and the remembered level absent. Retained: persistence-barrier-red.xml.
+
+Green command:
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ANDROID_HOME=/Users/juhanailmoniemi/Library/Android/sdk ./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.RunConfigurationWaitTest --tests de.pyryco.mobile.e2e.RememberedEffortStageTest --tests de.pyryco.mobile.ui.conversations.components.StatusSheetTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadViewModelEffortRecallTest --console=plain --warning-mode=none
+Exit 0; 64 executed/passed, 0 failed/errors/skipped (6 + 2 + 31 + 25).
+The same priming barrier stays blocked with the independent matching reply and persistence absent;
+releasing remember lets it finish, with one acknowledged write and remembered high.
+The existing test also proves persistence completing first cannot bypass a pending fresh reading.
+Retained: persistence-barrier-green.xml (6 shared wait cases, including the new regression).
+The archived #1869 failure attribution remains unproven. Full live proof remains dispatcher-owned.
+
+Rework device command:
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ANDROID_HOME=/Users/juhanailmoniemi/Library/Android/sdk ./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.e2e.RunConfigurationWaitTest --console=plain --warning-mode=none
+Exit 0; 6 executed/passed, 0 failed/errors/skipped on managed Android 13.
+The selected delayed-persistence regression executed and passed, alongside all existing wait controls.
+Fresh XML: app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/TEST-pixel2Api33Atd-_app-.xml
+Retained: persistence-barrier-device-green.xml, including all six native testcase names.

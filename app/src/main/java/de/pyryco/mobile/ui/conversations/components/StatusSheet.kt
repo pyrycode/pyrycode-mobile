@@ -131,7 +131,7 @@ internal fun StatusSheetContent(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(34.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(modifier = Modifier.testTag("run-config-Model"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SectionHeader(text = sectionTitle("Model", pending))
             ModelSection(
                 choices,
@@ -144,10 +144,10 @@ internal fun StatusSheetContent(
                 selectedAgent,
             )
         }
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(modifier = Modifier.testTag("run-config-Effort"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SectionHeader(text = sectionTitle("Effort", pending))
             EffortRadioRows(effortChoices, selectedEffort, onEffortSelected, enabled && !pending)
-            effortNote?.let { Caption(text = it) }
+            effortNote?.let { Caption(text = it, modifier = Modifier.testTag("run-config-Effort-note")) }
         }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             SectionHeader(text = stringResource(R.string.status_sheet_running_model))
@@ -158,7 +158,7 @@ internal fun StatusSheetContent(
             ContextWindowSection(contextPercent = contextPercent)
         }
         // The current Figma frame omits Permission; keep the production control after its designed sections.
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(modifier = Modifier.testTag("run-config-Permission"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SectionHeader(text = sectionTitle("Permission", permissionPending))
             PermissionSection(permissionMode, permissionChoices, enabled && !permissionPending, onPermissionSelected)
         }
@@ -419,15 +419,21 @@ private fun UnavailableNote(text: String) {
 }
 
 @Composable
-private fun Caption(text: String) {
-    Caption(text = AnnotatedString(text))
+private fun Caption(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    Caption(text = AnnotatedString(text), modifier = modifier)
 }
 
 @Composable
-private fun Caption(text: AnnotatedString) {
+private fun Caption(
+    text: AnnotatedString,
+    modifier: Modifier = Modifier,
+) {
     Text(
         text = text,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onPrimaryContainer,
     )
