@@ -59,7 +59,7 @@ main/reopen-stream: revision 11ed225d27026e9e59abe634adc49c338dd41c51
 Daemon revision in all runs: a94775d2664b5a6c483e5d12aeb61f6a0bc5cb8e.
 Relay source revision: a7a05d1f123d42fa17ac23b5e4d10a8f741a4911.
 Source/configuration and daemon/relay/fakeclaude binary equality: independently SHA-256 checked.
-The branch differs from main only in scanner evidence assets and its plan; scenarios do not read those assets.
+At the compared revisions, the branch differs from main only in scanner evidence assets and its plan; scenarios do not read those assets.
 Matching main failures establish inherited failures, not scanner evidence regressions.
 Both methods enqueue a follow-up during a held reply. #2078 owns the matching legacy queued-echo repair;
 #1985 / PR #2076 owns the separate direct-release fixture change. Exact timeout cause is not proved here.
@@ -75,5 +75,7 @@ Original reported artifacts: verifier-2051/build/dispatcher-tests/ui-6rq8zlir/di
 and 0-TEST-pixel2Api33Atd_0-_app-.xml beside it. That worktree is absent during this rework.
 Saved-history failure did not recur in that gate. Historical HP suites remain failed comparisons.
 
-Handoff: wait on the linked repair; after it lands, rerun both focused commands and the normal dispatcher gates.
-No fresh repair PASS or scripted-all PASS is claimed. Documentation-stage handoff remains pending.
+Initial comparison outcome: wait on the linked repair; no repair PASS existed at these compared revisions.
+Superseded after the final main merge: rework-post-merge-evidence.txt records both focused 1/1 passes.
+Matching branch/main source hashes in rework-hashes.txt refer to 9b558e00a/11ed225d2, before that merge.
+The current dispatcher gates and documentation stage remain pending; no scripted-all PASS is claimed.
