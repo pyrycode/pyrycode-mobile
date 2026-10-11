@@ -1,0 +1,5 @@
+<testsuite name="de.pyryco.mobile.data.repository.ScriptedPingReadEvidenceTest" tests="1" skipped="0" failures="1" errors="0" timestamp="2026-10-11T02:29:42.572Z" hostname="Juhanas-MacBook-Air.local" time="0.142">
+  <testcase name="repairedDaemonQueuedReceiptsQualifyOnlyTheExactRepresentedReply" classname="de.pyryco.mobile.data.repository.ScriptedPingReadEvidenceTest" time="0.141">
+    <failure message="java.lang.AssertionError: expected:&lt;7&gt; but was:&lt;null&gt;" type="java.lang.AssertionError" />
+  </testcase>
+</testsuite>

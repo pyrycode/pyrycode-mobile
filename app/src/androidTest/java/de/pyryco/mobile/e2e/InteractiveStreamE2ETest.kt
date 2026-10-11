@@ -315,8 +315,6 @@ class InteractiveStreamE2ETest {
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_change_model)
     private val changeEffortLabel: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_change_effort)
-    private val footerPending: String =
-        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_pending)
 
     // #687: the footer's permission control, found by its click label, and the permission prompt's Cancel.
     private val changePermissionLabel: String =
@@ -4032,73 +4030,101 @@ class InteractiveStreamE2ETest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val originals = mutableMapOf<String, SessionSettings>()
         var relaunched: ActivityScenario<MainActivity>? = null
+
+        fun <T> step(
+            stage: RememberedEffortStage,
+            block: () -> T,
+        ): T = rememberedEffortStep(stage, { Log.i("RememberedEffort", it) }, block)
         try {
-            awaitChannelList()
-            awaitConnected()
-            clearRememberedEffort()
+            step(RememberedEffortStage.FixtureSetup) {
+                awaitChannelList()
+                awaitConnected()
+                clearRememberedEffort()
+            }
             val stamp = System.currentTimeMillis()
 
-            // 1. A tapped level on the priming chat becomes the remembered level once the daemon acks it.
+            // 1. A sheet-open reading can settle the UI before persistence; require both before restart.
             val primingName = RECALL_PRIMING_NAME_PREFIX + stamp
-            val priming = prepareChat(primingName, originals)
+            val priming = step(RememberedEffortStage.FixtureSetup) { prepareChat(primingName, originals) }
             val row =
-                checkNotNull(
-                    usableRows(publishedMenu(priming.id)).firstOrNull {
-                        it.value == "default" &&
-                            it.effortLevels.distinct().size >= 2
-                    },
-                ) {
-                    "the published default row does not offer two effort levels"
+                step(RememberedEffortStage.PrimingMenu) {
+                    checkNotNull(
+                        usableRows(publishedMenu(priming.id)).firstOrNull {
+                            it.value == "default" && it.effortLevels.distinct().size >= 2
+                        },
+                    ) { "the published default row does not offer two effort levels" }
                 }
             val remembered = row.effortLevels.first()
             val explicit = row.effortLevels.last { it != remembered }
-            assertSaved(priming.id, "", "")
-            openChatRow(primingName)
-            awaitFooter(changeModelLabel, inheritedModelLabel(publishedMenu(priming.id)))
-            pickFooterOption(changeEffortLabel, effortLabel(remembered))
-            awaitFooter(changeEffortLabel, effortLabel(remembered))
-            assertEquals("the acknowledged tap was not remembered", remembered, rememberedEffort())
-            leaveThread()
-
-            // 2. The fixtures: a fresh chat and a fresh channel with no saved effort, and a chat with its own.
-            val chatName = RECALL_CHAT_NAME_PREFIX + stamp
-            val chat = prepareChat(chatName, originals)
-            val channelName = RECALL_CHANNEL_NAME_PREFIX + stamp
-            val channel = prepareChannel(channelName, chat.cwd, originals)
-            val explicitName = RECALL_EXPLICIT_NAME_PREFIX + stamp
-            val explicitChat = prepareChat(explicitName, originals)
-            writeSettings(explicitChat.id, effort = explicit)
-            assertSaved(chat.id, "", "")
-            assertSaved(channel.id, "", "")
-            assertSaved(explicitChat.id, "", explicit)
-
-            // 3. Restart. No activity may outlive the graph it resolved, so the rule's activity goes first.
-            composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
-            instrumentation.runOnMainSync {
-                (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
+            step(RememberedEffortStage.PrimingOpen) {
+                assertSaved(priming.id, "", "")
+                openChatRow(primingName)
+                val inheritedMenu = publishedMenu(priming.id)
+                awaitAnnouncedMark(inheritedMenu, inheritedModelRow(inheritedMenu), inheritedModelLabel(inheritedMenu))
             }
-            relaunched = ActivityScenario.launch(MainActivity::class.java)
-            awaitChannelList()
-            awaitConnected()
-            assertEquals("the remembered level after the restart", remembered, rememberedEffort())
+            step(RememberedEffortStage.PrimingTap) { pickFooterOption(changeEffortLabel, effortLabel(remembered)) }
+            step(RememberedEffortStage.PrimingAcknowledgement) {
+                awaitFooter(changeEffortLabel, effortLabel(remembered), confirmed = { rememberedEffort() == remembered })
+            }
+            step(RememberedEffortStage.PrimingPersistence) {
+                assertEquals("the acknowledged tap was not remembered", remembered, rememberedEffort())
+                assertSaved(priming.id, "", remembered)
+                leaveThread()
+            }
 
-            // 4. The fresh chat, then the fresh channel: recalled before the first message, applied after it.
-            openChatRow(chatName)
-            assertRecalledThenApplied(chat.id, remembered)
-            leaveThread()
-            openRow(channelName)
-            assertRecalledThenApplied(channel.id, remembered)
-            leaveThread()
+            // 2. Fresh chat and channel fixtures have no override; the explicit chat has its own effort.
+            val chatName = RECALL_CHAT_NAME_PREFIX + stamp
+            val channelName = RECALL_CHANNEL_NAME_PREFIX + stamp
+            val explicitName = RECALL_EXPLICIT_NAME_PREFIX + stamp
+            val (chat, channel, explicitChat) =
+                step(RememberedEffortStage.FreshFixtures) {
+                    val chat = prepareChat(chatName, originals)
+                    val channel = prepareChannel(channelName, chat.cwd, originals)
+                    val explicitChat = prepareChat(explicitName, originals)
+                    writeSettings(explicitChat.id, effort = explicit)
+                    assertSaved(chat.id, "", "")
+                    assertSaved(channel.id, "", "")
+                    assertSaved(explicitChat.id, "", explicit)
+                    Triple(chat, channel, explicitChat)
+                }
 
-            // 5. A saved effort of its own is kept: settled on it, confirmed by the reply, and still settled.
-            openChatRow(explicitName)
-            awaitFooter(changeEffortLabel, effortLabel(explicit))
-            assertEquals("the explicit saved effort was overwritten", explicit, freshSettings(explicitChat.id).effort)
-            composeTestRule.waitForIdle()
-            awaitFooter(changeEffortLabel, effortLabel(explicit))
+            // 3. No activity may outlive the graph it resolved.
+            step(RememberedEffortStage.GraphRestart) {
+                composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+                instrumentation.runOnMainSync {
+                    (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
+                }
+                relaunched = ActivityScenario.launch(MainActivity::class.java)
+                awaitChannelList()
+                awaitConnected()
+            }
+            step(RememberedEffortStage.RestartPersistence) {
+                assertEquals("the remembered level after the restart", remembered, rememberedEffort())
+            }
+
+            // 4. Each destination recalls before its first message and applies after one real turn.
+            step(RememberedEffortStage.ChatOpen) { openChatRow(chatName) }
+            assertRecalledThenApplied(chat.id, remembered, isChannel = false)
+            step(RememberedEffortStage.ChatLeave) { leaveThread() }
+            step(RememberedEffortStage.ChannelOpen) { openRow(channelName) }
+            assertRecalledThenApplied(channel.id, remembered, isChannel = true)
+            step(RememberedEffortStage.ChannelLeave) { leaveThread() }
+
+            // 5. An explicit saved effort remains settled on its original value.
+            step(RememberedEffortStage.ExplicitChoice) {
+                openChatRow(explicitName)
+                awaitFooter(changeEffortLabel, effortLabel(explicit))
+                assertEquals("the explicit saved effort was overwritten", explicit, freshSettings(explicitChat.id).effort)
+                assertSaved(explicitChat.id, "", explicit)
+                composeTestRule.waitForIdle()
+                awaitFooter(changeEffortLabel, effortLabel(explicit))
+            }
         } finally {
-            restoreSettings(originals)
-            relaunched?.close()
+            try {
+                step(RememberedEffortStage.CleanupSettings) { restoreSettings(originals) }
+            } finally {
+                step(RememberedEffortStage.CleanupActivity) { relaunched?.close() }
+            }
         }
     }
 
@@ -8000,12 +8026,30 @@ class InteractiveStreamE2ETest {
     private fun assertRecalledThenApplied(
         conversationId: String,
         level: String,
+        isChannel: Boolean,
     ) {
-        awaitFooter(changeEffortLabel, effortLabel(level))
-        assertEquals("the recalled saved effort before the first message", level, freshSettings(conversationId).effort)
-        sendFromPhone(PING_PROMPT)
-        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-        assertEquals(EffectiveEffort.Applied(level), freshSettings(conversationId).effectiveEffort)
+        fun step(
+            chat: RememberedEffortStage,
+            channel: RememberedEffortStage,
+            block: () -> Unit,
+        ) = rememberedEffortStep(if (isChannel) channel else chat, { Log.i("RememberedEffort", it) }, block)
+        step(RememberedEffortStage.ChatRecallAcknowledgement, RememberedEffortStage.ChannelRecallAcknowledgement) {
+            awaitFooter(changeEffortLabel, effortLabel(level))
+        }
+        step(RememberedEffortStage.ChatRecallReading, RememberedEffortStage.ChannelRecallReading) {
+            val recalled = freshSettings(conversationId)
+            assertEquals("saved model before the first message", "", recalled.model)
+            assertEquals("the recalled saved effort before the first message", level, recalled.effort)
+        }
+        step(RememberedEffortStage.ChatFirstSend, RememberedEffortStage.ChannelFirstSend) { sendFromPhone(PING_PROMPT) }
+        step(RememberedEffortStage.ChatFirstReply, RememberedEffortStage.ChannelFirstReply) {
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+        }
+        step(RememberedEffortStage.ChatAppliedReading, RememberedEffortStage.ChannelAppliedReading) {
+            val applied = freshSettings(conversationId)
+            assertEquals("saved model after the first turn", "", applied.model)
+            assertEquals(EffectiveEffort.Applied(level), applied.effectiveEffort)
+        }
     }
 
     /**
@@ -8042,7 +8086,7 @@ class InteractiveStreamE2ETest {
     }
 
     /** Usable Claude rows, including default for inherited-effort setup. Ordinary labels must be unique
-     * so tapping a model in Run configuration cannot pick another published row. */
+     * across the visible merged menu so a text tap cannot pick another agent's row. */
     private fun usableRows(menu: ModelMenu): List<ModelMenuRow> =
         menu.rows.filter { row ->
             row.agent == ConversationAgent.Claude &&
@@ -8050,11 +8094,12 @@ class InteractiveStreamE2ETest {
                 row.displayName.inert().isNotBlank() &&
                 (
                     row.value == INHERITED_MODEL_VALUE ||
-                        menu.rows.count {
-                            it.agent == ConversationAgent.Claude &&
-                                it.value != INHERITED_MODEL_VALUE &&
-                                it.dropdownLabel(ConversationAgent.Claude) == row.dropdownLabel(ConversationAgent.Claude)
-                        } == 1
+                        row in renderedModelRows(menu) &&
+                        renderedModelRows(menu).count {
+                            it.dropdownLabel(requireNotNull(it.agent)) ==
+                                row.dropdownLabel(ConversationAgent.Claude)
+                        } ==
+                        1
                 )
         }
 
@@ -8080,43 +8125,19 @@ class InteractiveStreamE2ETest {
             .replaceFirstChar { it.uppercaseChar() }
 
     /**
-     * The Claude row an inherited conversation marks for [announced] (#1308): exact value, else
-     * `resolved_model`, else family. The first tier with any candidate decides; more than one marks nothing.
-     */
-    private fun announcedRow(
-        menu: ModelMenu,
-        announced: String,
-    ): ModelMenuRow? {
-        if (announced.isEmpty()) return null
-        val rows = menu.rows.filter { it.agent == ConversationAgent.Claude && it.value != INHERITED_MODEL_VALUE }
-        val family = claudeFamily(announced)
-        val tiers =
-            listOf<(ModelMenuRow) -> Boolean>(
-                { it.value == announced },
-                { it.resolvedModel == announced && "resolved_model" !in it.truncatedFields.orEmpty() },
-                { family.isNotEmpty() && claudeFamily(it.value) == family },
-            )
-        for (matches in tiers) {
-            val candidates = rows.filter(matches)
-            if (candidates.isNotEmpty()) return candidates.singleOrNull()
-        }
-        return null
-    }
-
-    /**
      * Run configuration marks exactly [marked]'s radio, or, with [marked] `null`, no model radio at all and
      * shows [note] outside the radios (#1308). Model rows draw only their label (#1497), so two rows sharing
      * a family label read alike; the marked radio is told apart by its position among the model radios,
-     * which render in [menu] order. Every non-default Claude row of [menu] counts, including rows whose
-     * family label another row shares, since those are the rows a wrong mark would land on.
+     * which render in [menu] order. Both agents' visible rows count, including duplicate display labels,
+     * since those are the rows a wrong mark would land on. Selection remains agent-scoped.
      */
     private fun awaitAnnouncedMark(
         menu: ModelMenu,
         marked: ModelMenuRow?,
         note: String,
     ) {
-        val rows = menu.rows.filter { it.agent == ConversationAgent.Claude && it.value != INHERITED_MODEL_VALUE }
-        val rowLabels = rows.map { it.dropdownLabel(ConversationAgent.Claude) }
+        val rows = renderedModelRows(menu)
+        val rowLabels = rows.map { it.dropdownLabel(requireNotNull(it.agent)) }
         val labels = rowLabels.toSet()
         val modelRadio =
             SemanticsMatcher("a model radio") { node ->
@@ -8126,7 +8147,14 @@ class InteractiveStreamE2ETest {
                         ?.firstOrNull()
                         ?.text in labels
             }
-        val expectedMarks = listOfNotNull(marked?.let { row -> rows.indexOfFirst { it.value == row.value } })
+        val expectedMarks =
+            listOfNotNull(
+                marked?.let { row ->
+                    rows.indexOfFirst { it.value == row.value && it.agent == row.agent }.also {
+                        check(it >= 0) { "expected selection must be a rendered model row" }
+                    }
+                },
+            )
 
         // The model radios in sheet order, as (label, marked) pairs.
         fun radios() =
@@ -8148,7 +8176,7 @@ class InteractiveStreamE2ETest {
                 composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                     composeTestRule.onAllNodes(standaloneNote).fetchSemanticsNodes().isNotEmpty()
                 }
-                assertEquals("a model radio is marked for an ambiguous or unmatched announcement", emptyList<Int>(), markedIndices())
+                assertEquals("a model radio is marked for a hidden, ambiguous or unmatched announcement", emptyList<Int>(), markedIndices())
             }
         } finally {
             composeTestRule.onNodeWithContentDescription("Close").performClick()
@@ -8166,22 +8194,6 @@ class InteractiveStreamE2ETest {
         } finally {
             composeTestRule.onNodeWithContentDescription("Close").performClick()
         }
-    }
-
-    /** Expected inherited label from the host's fresh published list, independent of a running turn. */
-    private fun inheritedModelLabel(menu: ModelMenu): String {
-        val claudeRows = menu.rows.filter { it.agent == ConversationAgent.Claude }
-        val default = claudeRows.filter { it.value == INHERITED_MODEL_VALUE }.singleOrNull()
-        val resolved = default?.resolvedModel.orEmpty()
-        if (resolved.isBlank() || resolved.startsWith("<") || "resolved_model" in default?.truncatedFields.orEmpty()) {
-            return UNAVAILABLE_MODEL_LABEL
-        }
-        // #1308: with no unique row, the label names the default resolution's family, never "Default".
-        return claudeRows
-            .filter { it.value != INHERITED_MODEL_VALUE && it.resolvedModel == resolved }
-            .singleOrNull()
-            ?.dropdownLabel(ConversationAgent.Claude)
-            ?: claudeFamily(resolved).ifEmpty { UNAVAILABLE_MODEL_LABEL }
     }
 
     /**
@@ -8258,9 +8270,12 @@ class InteractiveStreamE2ETest {
                         ) { repository.setSessionSettings(now.sessionId, model = model, effort = effort) }
                     }
                 }
-            }.onFailure { Log.w("E2E", "settings restore failed: ${it::class.simpleName}") }
+            }.onSuccess { Log.i("RememberedEffort", "event=remembered_effort_cleanup operation=settings outcome=complete") }
+                .onFailure { Log.w("RememberedEffort", "event=remembered_effort_cleanup operation=settings outcome=failure") }
         }
-        runCatching { clearRememberedEffort() }.onFailure { Log.w("E2E", "remembered effort clear failed: ${it::class.simpleName}") }
+        runCatching { clearRememberedEffort() }
+            .onSuccess { Log.i("RememberedEffort", "event=remembered_effort_cleanup operation=clear outcome=complete") }
+            .onFailure { Log.w("RememberedEffort", "event=remembered_effort_cleanup operation=clear outcome=failure") }
     }
 
     private fun clearRememberedEffort() {
@@ -8308,37 +8323,15 @@ class InteractiveStreamE2ETest {
     private fun awaitFooter(
         clickLabel: String,
         label: String,
-        state: (String?) -> Boolean = { it != footerPending },
+        confirmed: () -> Boolean = { true },
+        state: (String?) -> Boolean = { true },
     ) {
         val section = runConfigSection(clickLabel)
         openRunConfiguration()
-        val selected =
-            SemanticsMatcher("selected run setting '$label'") { node ->
-                node.config.getOrNull(SemanticsProperties.Selected) == true &&
-                    node.config
-                        .getOrNull(SemanticsProperties.Text)
-                        .orEmpty()
-                        .any { it.text == label }
-            }
         try {
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                val hasSelection = label == "Effort" || composeTestRule.onAllNodes(selected).fetchSemanticsNodes().isNotEmpty()
-                val pending = composeTestRule.onAllNodesWithText("$section · applying…").fetchSemanticsNodes().isNotEmpty()
-                val texts =
-                    composeTestRule
-                        .onAllNodes(SemanticsMatcher("text") { it.config.getOrNull(SemanticsProperties.Text) != null })
-                        .fetchSemanticsNodes()
-                        .flatMap {
-                            it.config
-                                .getOrNull(SemanticsProperties.Text)
-                                .orEmpty()
-                                .map { text -> text.text }
-                        }
-                val descriptions = listOf<String?>(if (pending) footerPending else null) + texts
-                hasSelection && descriptions.any(state)
-            }
+            composeTestRule.awaitRunConfiguration(section, label, THREAD_TIMEOUT_MS, confirmed = confirmed, state = state)
         } catch (e: ComposeTimeoutException) {
-            throw AssertionError("run configuration '$section' never settled on '$label'", e)
+            throw AssertionError(e.message, e)
         } finally {
             composeTestRule.onNodeWithContentDescription("Close").performClick()
         }

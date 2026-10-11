@@ -24,6 +24,9 @@ import kotlinx.serialization.json.JsonElement
  * not need to re-fetch; the affected stream(s) will also re-emit.
  */
 interface ConversationRepository {
+    /** Decorators forward this optional provider; existing repositories retain their ordinary reads. */
+    val runConfigurationReadings: RunConfigurationReadings? get() = null
+
     fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>>
 
     fun observeMessages(conversationId: String): Flow<List<ThreadItem>>

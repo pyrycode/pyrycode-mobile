@@ -1,0 +1,32 @@
+[
+  {
+    "id": 242,
+    "type": "turn_end",
+    "payload_bytes": 158
+  },
+  {
+    "id": 243,
+    "type": "send_accepted",
+    "payload_bytes": 269
+  },
+  {
+    "id": 244,
+    "type": "model_list",
+    "payload_bytes": 426
+  },
+  {
+    "id": 249,
+    "type": "message",
+    "payload_bytes": 241
+  },
+  {
+    "id": 250,
+    "type": "send_delivered",
+    "payload_bytes": 171
+  },
+  {
+    "id": 251,
+    "type": "assistant_delta",
+    "payload_bytes": 153
+  }
+]

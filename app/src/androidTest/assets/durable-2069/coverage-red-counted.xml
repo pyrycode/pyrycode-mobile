@@ -1,0 +1,5 @@
+<testsuite name="de.pyryco.mobile.data.repository.ScriptedDurableGapCoverageTest" tests="1" skipped="0" failures="1" errors="0" timestamp="2026-10-11T03:02:17.241Z" hostname="Juhanas-MacBook-Air.local" time="0.178">
+  <testcase name="repairedNonrenderingReceiptJoinsOlderAnchorAndRemovesMarkerWithoutMoreContent" classname="de.pyryco.mobile.data.repository.ScriptedDurableGapCoverageTest" time="0.176">
+    <failure type="java.lang.AssertionError" message="expected continuous spans; actual retains omitted delivery receipt hole" />
+  </testcase>
+</testsuite>
