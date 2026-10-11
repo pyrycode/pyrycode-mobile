@@ -1,0 +1,14 @@
+{
+  "tests": 1,
+  "passed": 1,
+  "failed": 0,
+  "errors": 0,
+  "skipped": 0,
+  "revision": "969d9c3c8847b8c99af3a8573750f8429a72a1eb",
+  "host": "build-hp-1",
+  "gradle_exit": 0,
+  "collector_exit": 1,
+  "collector_error": "Operator probe supplied class#method where the collector expects class only. Raw XML validates with the existing collector using the class and independent exact-method check. No test re-run or source edit.",
+  "raw_xml_sha256": "d285fb939c61d6408fcf56a8aff763252d68613b48eeaedbf63317e8dc3a4af2",
+  "counted_xml_sha256": "c5096ca2c9eeda07589248ddaab10a81d75add0d3a5ec693ebe7d2d046c005c1"
+}
