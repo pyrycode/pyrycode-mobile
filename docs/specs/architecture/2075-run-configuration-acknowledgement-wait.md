@@ -21,6 +21,10 @@ The archived #1869 failure stage and daemon revision are unavailable. The earlie
 
 Remote overlap: #1682, #1689, #1690, #1691, #1693, #1695, #1766, #1869, #1879 and #1896 change other scenario blocks in `InteractiveStreamE2ETest`; none changes this wait or recall scenario. Keep edits local and additive.
 
+## Design source
+
+N/A: this is a harness repair. Production changes add static semantics tags and forward a modifier to the existing caption; layout, styling, copy and interaction are unchanged.
+
 ## Design
 
 Extract the existing wait into a sharedTest `ComposeTestRule` extension used by `awaitFooter` and controlled regressions. Give the three existing section containers static semantics test tags and the effort note its own tag. No visible layout, copy or product state changes.
@@ -70,4 +74,4 @@ None. The historical failure attribution remains explicitly unproven; the contro
 
 ## Sizing
 
-One deliverable: a corrected shared acknowledgement wait with regression and stage evidence. Forecast approximately 600 written lines, one production file, no new exported product types, no existing consumer signature changes, three acceptance criteria and no production state-machine branches. Below all builder boundaries.
+One deliverable: a corrected shared acknowledgement wait with regression and stage evidence. Forecast approximately 600 implementation/plan lines plus retained XML, one production file, no new exported product types, two private helper consumers updated for stage identity, three acceptance criteria and no production state-machine branches. Below all builder boundaries.

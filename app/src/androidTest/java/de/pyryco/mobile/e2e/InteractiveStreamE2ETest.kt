@@ -315,8 +315,6 @@ class InteractiveStreamE2ETest {
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_change_model)
     private val changeEffortLabel: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_change_effort)
-    private val footerPending: String =
-        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_pending)
 
     // #687: the footer's permission control, found by its click label, and the permission prompt's Cancel.
     private val changePermissionLabel: String =
@@ -4032,74 +4030,99 @@ class InteractiveStreamE2ETest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val originals = mutableMapOf<String, SessionSettings>()
         var relaunched: ActivityScenario<MainActivity>? = null
+
+        fun <T> step(
+            stage: RememberedEffortStage,
+            block: () -> T,
+        ): T = rememberedEffortStep(stage, { Log.i("RememberedEffort", it) }, block)
         try {
-            awaitChannelList()
-            awaitConnected()
-            clearRememberedEffort()
+            step(RememberedEffortStage.FixtureSetup) {
+                awaitChannelList()
+                awaitConnected()
+                clearRememberedEffort()
+            }
             val stamp = System.currentTimeMillis()
 
-            // 1. A tapped level on the priming chat becomes the remembered level once the daemon acks it.
+            // 1. Only the acknowledged, freshly confirmed tap may precede the persistence assertion.
             val primingName = RECALL_PRIMING_NAME_PREFIX + stamp
-            val priming = prepareChat(primingName, originals)
+            val priming = step(RememberedEffortStage.FixtureSetup) { prepareChat(primingName, originals) }
             val row =
-                checkNotNull(
-                    usableRows(publishedMenu(priming.id)).firstOrNull {
-                        it.value == "default" &&
-                            it.effortLevels.distinct().size >= 2
-                    },
-                ) {
-                    "the published default row does not offer two effort levels"
+                step(RememberedEffortStage.PrimingMenu) {
+                    checkNotNull(
+                        usableRows(publishedMenu(priming.id)).firstOrNull {
+                            it.value == "default" && it.effortLevels.distinct().size >= 2
+                        },
+                    ) { "the published default row does not offer two effort levels" }
                 }
             val remembered = row.effortLevels.first()
             val explicit = row.effortLevels.last { it != remembered }
-            assertSaved(priming.id, "", "")
-            openChatRow(primingName)
-            val inheritedMenu = publishedMenu(priming.id)
-            awaitAnnouncedMark(inheritedMenu, inheritedModelRow(inheritedMenu), inheritedModelLabel(inheritedMenu))
-            pickFooterOption(changeEffortLabel, effortLabel(remembered))
-            awaitFooter(changeEffortLabel, effortLabel(remembered))
-            assertEquals("the acknowledged tap was not remembered", remembered, rememberedEffort())
-            leaveThread()
-
-            // 2. The fixtures: a fresh chat and a fresh channel with no saved effort, and a chat with its own.
-            val chatName = RECALL_CHAT_NAME_PREFIX + stamp
-            val chat = prepareChat(chatName, originals)
-            val channelName = RECALL_CHANNEL_NAME_PREFIX + stamp
-            val channel = prepareChannel(channelName, chat.cwd, originals)
-            val explicitName = RECALL_EXPLICIT_NAME_PREFIX + stamp
-            val explicitChat = prepareChat(explicitName, originals)
-            writeSettings(explicitChat.id, effort = explicit)
-            assertSaved(chat.id, "", "")
-            assertSaved(channel.id, "", "")
-            assertSaved(explicitChat.id, "", explicit)
-
-            // 3. Restart. No activity may outlive the graph it resolved, so the rule's activity goes first.
-            composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
-            instrumentation.runOnMainSync {
-                (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
+            step(RememberedEffortStage.PrimingOpen) {
+                assertSaved(priming.id, "", "")
+                openChatRow(primingName)
+                val inheritedMenu = publishedMenu(priming.id)
+                awaitAnnouncedMark(inheritedMenu, inheritedModelRow(inheritedMenu), inheritedModelLabel(inheritedMenu))
             }
-            relaunched = ActivityScenario.launch(MainActivity::class.java)
-            awaitChannelList()
-            awaitConnected()
-            assertEquals("the remembered level after the restart", remembered, rememberedEffort())
+            step(RememberedEffortStage.PrimingTap) { pickFooterOption(changeEffortLabel, effortLabel(remembered)) }
+            step(RememberedEffortStage.PrimingAcknowledgement) { awaitFooter(changeEffortLabel, effortLabel(remembered)) }
+            step(RememberedEffortStage.PrimingPersistence) {
+                assertEquals("the acknowledged tap was not remembered", remembered, rememberedEffort())
+                assertSaved(priming.id, "", remembered)
+                leaveThread()
+            }
 
-            // 4. The fresh chat, then the fresh channel: recalled before the first message, applied after it.
-            openChatRow(chatName)
-            assertRecalledThenApplied(chat.id, remembered)
-            leaveThread()
-            openRow(channelName)
-            assertRecalledThenApplied(channel.id, remembered)
-            leaveThread()
+            // 2. Fresh chat and channel fixtures have no override; the explicit chat has its own effort.
+            val chatName = RECALL_CHAT_NAME_PREFIX + stamp
+            val channelName = RECALL_CHANNEL_NAME_PREFIX + stamp
+            val explicitName = RECALL_EXPLICIT_NAME_PREFIX + stamp
+            val (chat, channel, explicitChat) =
+                step(RememberedEffortStage.FreshFixtures) {
+                    val chat = prepareChat(chatName, originals)
+                    val channel = prepareChannel(channelName, chat.cwd, originals)
+                    val explicitChat = prepareChat(explicitName, originals)
+                    writeSettings(explicitChat.id, effort = explicit)
+                    assertSaved(chat.id, "", "")
+                    assertSaved(channel.id, "", "")
+                    assertSaved(explicitChat.id, "", explicit)
+                    Triple(chat, channel, explicitChat)
+                }
 
-            // 5. A saved effort of its own is kept: settled on it, confirmed by the reply, and still settled.
-            openChatRow(explicitName)
-            awaitFooter(changeEffortLabel, effortLabel(explicit))
-            assertEquals("the explicit saved effort was overwritten", explicit, freshSettings(explicitChat.id).effort)
-            composeTestRule.waitForIdle()
-            awaitFooter(changeEffortLabel, effortLabel(explicit))
+            // 3. No activity may outlive the graph it resolved.
+            step(RememberedEffortStage.GraphRestart) {
+                composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+                instrumentation.runOnMainSync {
+                    (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
+                }
+                relaunched = ActivityScenario.launch(MainActivity::class.java)
+                awaitChannelList()
+                awaitConnected()
+            }
+            step(RememberedEffortStage.RestartPersistence) {
+                assertEquals("the remembered level after the restart", remembered, rememberedEffort())
+            }
+
+            // 4. Each destination recalls before its first message and applies after one real turn.
+            step(RememberedEffortStage.ChatOpen) { openChatRow(chatName) }
+            assertRecalledThenApplied(chat.id, remembered, isChannel = false)
+            step(RememberedEffortStage.ChatLeave) { leaveThread() }
+            step(RememberedEffortStage.ChannelOpen) { openRow(channelName) }
+            assertRecalledThenApplied(channel.id, remembered, isChannel = true)
+            step(RememberedEffortStage.ChannelLeave) { leaveThread() }
+
+            // 5. An explicit saved effort remains settled on its original value.
+            step(RememberedEffortStage.ExplicitChoice) {
+                openChatRow(explicitName)
+                awaitFooter(changeEffortLabel, effortLabel(explicit))
+                assertEquals("the explicit saved effort was overwritten", explicit, freshSettings(explicitChat.id).effort)
+                assertSaved(explicitChat.id, "", explicit)
+                composeTestRule.waitForIdle()
+                awaitFooter(changeEffortLabel, effortLabel(explicit))
+            }
         } finally {
-            restoreSettings(originals)
-            relaunched?.close()
+            try {
+                step(RememberedEffortStage.CleanupSettings) { restoreSettings(originals) }
+            } finally {
+                step(RememberedEffortStage.CleanupActivity) { relaunched?.close() }
+            }
         }
     }
 
@@ -8001,12 +8024,30 @@ class InteractiveStreamE2ETest {
     private fun assertRecalledThenApplied(
         conversationId: String,
         level: String,
+        isChannel: Boolean,
     ) {
-        awaitFooter(changeEffortLabel, effortLabel(level))
-        assertEquals("the recalled saved effort before the first message", level, freshSettings(conversationId).effort)
-        sendFromPhone(PING_PROMPT)
-        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-        assertEquals(EffectiveEffort.Applied(level), freshSettings(conversationId).effectiveEffort)
+        fun step(
+            chat: RememberedEffortStage,
+            channel: RememberedEffortStage,
+            block: () -> Unit,
+        ) = rememberedEffortStep(if (isChannel) channel else chat, { Log.i("RememberedEffort", it) }, block)
+        step(RememberedEffortStage.ChatRecallAcknowledgement, RememberedEffortStage.ChannelRecallAcknowledgement) {
+            awaitFooter(changeEffortLabel, effortLabel(level))
+        }
+        step(RememberedEffortStage.ChatRecallReading, RememberedEffortStage.ChannelRecallReading) {
+            val recalled = freshSettings(conversationId)
+            assertEquals("saved model before the first message", "", recalled.model)
+            assertEquals("the recalled saved effort before the first message", level, recalled.effort)
+        }
+        step(RememberedEffortStage.ChatFirstSend, RememberedEffortStage.ChannelFirstSend) { sendFromPhone(PING_PROMPT) }
+        step(RememberedEffortStage.ChatFirstReply, RememberedEffortStage.ChannelFirstReply) {
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+        }
+        step(RememberedEffortStage.ChatAppliedReading, RememberedEffortStage.ChannelAppliedReading) {
+            val applied = freshSettings(conversationId)
+            assertEquals("saved model after the first turn", "", applied.model)
+            assertEquals(EffectiveEffort.Applied(level), applied.effectiveEffort)
+        }
     }
 
     /**
@@ -8227,9 +8268,12 @@ class InteractiveStreamE2ETest {
                         ) { repository.setSessionSettings(now.sessionId, model = model, effort = effort) }
                     }
                 }
-            }.onFailure { Log.w("E2E", "settings restore failed: ${it::class.simpleName}") }
+            }.onSuccess { Log.i("RememberedEffort", "event=remembered_effort_cleanup operation=settings outcome=complete") }
+                .onFailure { Log.w("RememberedEffort", "event=remembered_effort_cleanup operation=settings outcome=failure") }
         }
-        runCatching { clearRememberedEffort() }.onFailure { Log.w("E2E", "remembered effort clear failed: ${it::class.simpleName}") }
+        runCatching { clearRememberedEffort() }
+            .onSuccess { Log.i("RememberedEffort", "event=remembered_effort_cleanup operation=clear outcome=complete") }
+            .onFailure { Log.w("RememberedEffort", "event=remembered_effort_cleanup operation=clear outcome=failure") }
     }
 
     private fun clearRememberedEffort() {
@@ -8277,37 +8321,14 @@ class InteractiveStreamE2ETest {
     private fun awaitFooter(
         clickLabel: String,
         label: String,
-        state: (String?) -> Boolean = { it != footerPending },
+        state: (String?) -> Boolean = { true },
     ) {
         val section = runConfigSection(clickLabel)
         openRunConfiguration()
-        val selected =
-            SemanticsMatcher("selected run setting '$label'") { node ->
-                node.config.getOrNull(SemanticsProperties.Selected) == true &&
-                    node.config
-                        .getOrNull(SemanticsProperties.Text)
-                        .orEmpty()
-                        .any { it.text == label }
-            }
         try {
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                val hasSelection = label == "Effort" || composeTestRule.onAllNodes(selected).fetchSemanticsNodes().isNotEmpty()
-                val pending = composeTestRule.onAllNodesWithText("$section · applying…").fetchSemanticsNodes().isNotEmpty()
-                val texts =
-                    composeTestRule
-                        .onAllNodes(SemanticsMatcher("text") { it.config.getOrNull(SemanticsProperties.Text) != null })
-                        .fetchSemanticsNodes()
-                        .flatMap {
-                            it.config
-                                .getOrNull(SemanticsProperties.Text)
-                                .orEmpty()
-                                .map { text -> text.text }
-                        }
-                val descriptions = listOf<String?>(if (pending) footerPending else null) + texts
-                hasSelection && descriptions.any(state)
-            }
+            composeTestRule.awaitRunConfiguration(section, label, THREAD_TIMEOUT_MS, state)
         } catch (e: ComposeTimeoutException) {
-            throw AssertionError("run configuration '$section' never settled on '$label'", e)
+            throw AssertionError(e.message, e)
         } finally {
             composeTestRule.onNodeWithContentDescription("Close").performClick()
         }
