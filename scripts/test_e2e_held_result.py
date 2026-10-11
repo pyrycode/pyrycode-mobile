@@ -75,7 +75,7 @@ class HeldResultTest(unittest.TestCase):
             with self.assertRaises(ProcessLookupError):
                 os.kill(child_pid, 0)
 
-    def test_host_releases_suffix_on_second_send_and_result_on_third(self):
+    def test_host_waits_for_phone_display_checkpoint_for_suffix_and_terminal_release(self):
         harness = Path(__file__).with_name("e2e-emulator.sh").read_text()
         block = harness[harness.index('# ---- 4b. release'):harness.index('# ---- 4. run the managed-device')]
         with tempfile.TemporaryDirectory() as temporary:
@@ -87,7 +87,7 @@ class HeldResultTest(unittest.TestCase):
             process = subprocess.Popen(
                 ["bash", "-c", 'set -euo pipefail\nlog() { :; }\n' + block + '\nwait "$WATCHER_PID"'],
                 env={**os.environ, "DETERMINISTIC": "1", "FIXTURE_FILE_2": "fixture",
-                     "DROP_B_FENCE": "enqueue", "SCENARIO": "reopen-stream", "DAEMON_LOG": str(log),
+                     "DROP_B_FENCE": "phone-checkpoint", "SCENARIO": "reopen-stream", "DAEMON_LOG": str(log),
                      "REPLAY_RELEASE": str(suffix), "E2E_HELD_RESULT_RELEASE": str(result)},
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
@@ -96,12 +96,15 @@ class HeldResultTest(unittest.TestCase):
                 self.assertFalse(suffix.exists())
                 self.assertFalse(result.exists())
                 log.write_text("send_message.enqueued\n" * 2)
-                deadline = time.monotonic() + 5
-                while not suffix.exists() and time.monotonic() < deadline:
-                    time.sleep(0.05)
-                self.assertTrue(suffix.exists())
+                time.sleep(0.3)
+                self.assertFalse(suffix.exists())
+                suffix.touch()
                 self.assertFalse(result.exists())
                 log.write_text("send_message.enqueued\n" * 3)
+                time.sleep(0.3)
+                self.assertIsNone(process.poll())
+                self.assertFalse(result.exists())
+                result.touch()
                 _, error = process.communicate(timeout=5)
                 self.assertEqual(0, process.returncode, error)
                 self.assertTrue(result.exists())

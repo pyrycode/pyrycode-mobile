@@ -20,6 +20,9 @@ sealed interface ThreadRow {
     data class Delivered(
         val item: ThreadItem,
         val agentBlockId: String? = null,
+        val identityKey: String? = null,
+        val summaryText: String? = null,
+        val displayAgent: de.pyryco.mobile.data.model.ConversationAgent? = null,
     ) : ThreadRow
 
     /** Launch-location affordance for a loaded, joined background Agent. */
@@ -241,7 +244,7 @@ internal fun ThreadRow?.isToolRow(): Boolean {
 @Suppress("UNUSED_PARAMETER") // Preserve the indexed call shape while identity no longer depends on position.
 internal fun ThreadRow.listKey(chronologicalIndex: Int): String =
     when (this) {
-        is ThreadRow.Delivered -> item.listKey()
+        is ThreadRow.Delivered -> identityKey ?: item.listKey()
         is ThreadRow.Queued -> echoId?.let { "msg:$it" } ?: "queued-row:$queuedMessageId:$occurrence"
         is ThreadRow.ToolRun -> if (expanded) "tool-run:$runId" else "msg:$runId"
         is ThreadRow.AgentStartMarker -> "agent-start:$agentId"

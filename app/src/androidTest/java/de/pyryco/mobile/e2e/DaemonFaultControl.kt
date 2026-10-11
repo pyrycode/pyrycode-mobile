@@ -23,6 +23,10 @@ internal class DaemonFaultControl {
 
     fun start() = request("start")
 
+    fun releaseStream() = request("stream-release")
+
+    fun finishStream() = request("stream-finish")
+
     fun posts(
         name: String,
         prefix: String,

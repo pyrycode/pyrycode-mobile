@@ -700,17 +700,21 @@ class ThreadViewModel(
         val supported: Boolean = false,
         val expanded: Set<String> = emptySet(),
         val pending: Set<String> = emptySet(),
+        val authoritative: AuthoritativeThreadPresentation? = null,
+        val authoritativeBinding: Any? = null,
     )
 
     private val taskControlLock = Any()
     private val taskControls = MutableStateFlow(TaskControls())
     private val taskStopAttempts = mutableMapOf<String, Any>()
+    private val taskStopOwners = mutableMapOf<String, String?>()
 
     init {
         viewModelScope.launch {
             backgroundTaskStopRefusals(conversationId).collect { taskId ->
                 synchronized(taskControlLock) {
                     if (taskStopAttempts.remove(taskId) != null) {
+                        taskStopOwners.remove(taskId)
                         taskControls.value = taskControls.value.copy(pending = taskControls.value.pending - taskId)
                         RelayLog.d { "event=background_task_action code=refused" }
                     }
@@ -724,27 +728,49 @@ class ThreadViewModel(
                 backgroundTaskStopSupported.onStart { emit(false) },
             ) { roster, count, supported -> Triple(roster, count, supported) }.collect { (roster, count, supported) ->
                 synchronized(taskControlLock) {
-                    val eligible =
-                        if (supported) {
-                            roster
-                                ?.tasks
-                                ?.filterNot { it.isFinished }
-                                ?.mapTo(
-                                    HashSet(),
-                                ) { it.taskId }
-                                .orEmpty()
-                        } else {
-                            emptySet()
-                        }
-                    taskStopAttempts.keys.retainAll(eligible)
                     val old = taskControls.value
-                    taskControls.value =
-                        TaskControls(roster, count, supported, old.expanded.intersect(eligible), old.pending.intersect(eligible))
+                    publishTaskControls(old.copy(roster = roster, count = count, supported = supported))
                     if (old.pending != taskControls.value.pending || old.expanded != taskControls.value.expanded) {
                         RelayLog.d { "event=background_task_action code=roster_cleanup" }
                     }
                 }
             }
+        }
+    }
+
+    /** Called only under taskControlLock; legacy roster updates cannot override supplied item facts. */
+    private fun publishTaskControls(current: TaskControls) {
+        val tasks = (current.authoritative?.tasks ?: current.roster)?.tasks.orEmpty()
+        val eligible = if (current.supported) tasks.filterNot { it.isFinished }.associateBy { it.taskId } else emptyMap()
+        taskStopAttempts.keys.removeAll { id ->
+            id !in eligible || taskStopOwners[id] != current.authoritative?.let { eligible[id]?.toolCallId }
+        }
+        taskStopOwners.keys.retainAll(taskStopAttempts.keys)
+        taskControls.value = current.copy(expanded = current.expanded.intersect(eligible.keys), pending = taskStopAttempts.keys.toSet())
+    }
+
+    private fun presentAuthoritativeThread(event: ThreadEvent.AuthoritativeThreadPresented) {
+        val presentation = event.presentation
+        if (presentation.host != serverId || presentation.conversation != conversationId) return
+        synchronized(taskControlLock) {
+            val old = taskControls.value
+            if (old.authoritative?.scope != presentation.scope) {
+                taskStopAttempts.clear()
+                taskStopOwners.clear()
+            }
+            publishTaskControls(old.copy(authoritative = presentation, authoritativeBinding = event.binding))
+        }
+    }
+
+    private fun retireAuthoritativeThread(binding: Any) {
+        synchronized(taskControlLock) {
+            val old = taskControls.value
+            // A fresh lambda can publish to this same owner before its predecessor retires.
+            if (old.authoritativeBinding !== binding) return
+            taskStopAttempts.clear()
+            taskStopOwners.clear()
+            publishTaskControls(old.copy(authoritative = null, authoritativeBinding = null))
+            RelayLog.d { "event=thread_task_actions code=retired" }
         }
     }
 
@@ -758,18 +784,27 @@ class ThreadViewModel(
         }
     }
 
-    private fun sendBackgroundTaskStop(taskId: String) {
+    private fun sendBackgroundTaskStop(event: ThreadEvent.BackgroundTaskStop) {
+        val taskId = event.taskId
         val attempt = Any()
         synchronized(taskControlLock) {
             val current = taskControls.value
-            if (!current.supported ||
-                taskId !in current.expanded ||
-                taskId in current.pending ||
-                current.roster?.tasks?.any { it.taskId == taskId && !it.isFinished } != true
-            ) {
-                return
-            }
+            val authoritative = current.authoritative
+            val eligible =
+                if (event.authoritativeScope != null) {
+                    authoritative != null &&
+                        authoritative.scope == event.authoritativeScope &&
+                        authoritative.tasks.tasks.any { task ->
+                            task.taskId == taskId && task.toolCallId == event.authoritativeItemId && !task.isFinished
+                        }
+                } else {
+                    authoritative == null &&
+                        taskId in current.expanded &&
+                        current.roster?.tasks?.any { it.taskId == taskId && !it.isFinished } == true
+                }
+            if (!current.supported || taskId in current.pending || !eligible) return
             taskStopAttempts[taskId] = attempt
+            taskStopOwners[taskId] = event.authoritativeItemId
             // Before launch: a second tap cannot enqueue a second send, even before state recomposes.
             taskControls.value = current.copy(pending = current.pending + taskId)
             RelayLog.d { "event=background_task_action code=pending" }
@@ -781,6 +816,7 @@ class ThreadViewModel(
                 synchronized(taskControlLock) {
                     if (taskStopAttempts[taskId] === attempt) {
                         taskStopAttempts.remove(taskId)
+                        taskStopOwners.remove(taskId)
                         taskControls.value = taskControls.value.copy(pending = taskControls.value.pending - taskId)
                         RelayLog.d { "event=background_task_action code=send_failed" }
                     }
@@ -1018,7 +1054,8 @@ class ThreadViewModel(
             val liveSession =
                 conv?.currentSessionId?.takeIf { it.isNotEmpty() }
                     ?: runConfig.sessionId.takeIf {
-                        runConfig.settingsAvailable && !runConfig.settingsHeld &&
+                        runConfig.settingsAvailable &&
+                            !runConfig.settingsHeld &&
                             (runReadings != null || agentSwitchUi.value.settledFrom != null)
                     }
                     ?: lastKnownSessionId
@@ -3429,7 +3466,9 @@ class ThreadViewModel(
                 ) { repository.acknowledgeReadCheckpoint(conversationId, checkpoint) }
             }
             is ThreadEvent.BackgroundTaskToggle -> toggleBackgroundTask(event.taskId)
-            is ThreadEvent.BackgroundTaskStop -> sendBackgroundTaskStop(event.taskId)
+            is ThreadEvent.BackgroundTaskStop -> sendBackgroundTaskStop(event)
+            is ThreadEvent.AuthoritativeThreadPresented -> presentAuthoritativeThread(event)
+            is ThreadEvent.AuthoritativeThreadRetired -> retireAuthoritativeThread(event.binding)
             ThreadEvent.Archive -> {
                 // Close the Channel Info Sheet if Archive was tapped from it (a harmless no-op from the
                 // overflow menu, where it is already false); the send + success-only PopBack live in

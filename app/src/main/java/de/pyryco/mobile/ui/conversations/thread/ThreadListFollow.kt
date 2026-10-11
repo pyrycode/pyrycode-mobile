@@ -173,6 +173,7 @@ internal class ThreadListViewport(
         private set
     private var previousRows = emptyList<ThreadRow>()
     private var previousBlocks = emptyList<ThreadRow>()
+    private var previousAuthoritativeBlocks: Map<String, AuthoritativeAgentPlacement>? = null
 
     // Reuse actual geometry, including a tool's local expansion, only for unchanged old rows.
     private val rowMeasurements = mutableMapOf<Any, Triple<ThreadRow, ThreadRow?, Int>>()
@@ -191,51 +192,65 @@ internal class ThreadListViewport(
         rows: List<ThreadRow>,
         blocks: List<ThreadRow>,
         promptRows: Int,
+        authoritativeBlocks: Map<String, AuthoritativeAgentPlacement>? = null,
     ): ThreadAnchorTransfer? {
-        if (rows === previousRows && blocks === previousBlocks) return null
+        if (rows === previousRows && blocks === previousBlocks && authoritativeBlocks === previousAuthoritativeBlocks) return null
         val oldRows = previousRows
         val oldBlocks = previousBlocks
-        if (oldBlocks.none { it is ThreadRow.AgentStartMarker }) return null
-        // Controls can finish a roster before the terminal receipt supplies the final position.
-        // Common roots also encode movement across an adjacent still-running block. New rows and
-        // children are excluded, so inserts and unchanged terminal replays cannot transfer an anchor.
-        val placementKeys =
-            oldBlocks
-                .filter { it !is ThreadRow.Delivered || it.agentBlockId == null || it.listKey(0) == "msg:${it.agentBlockId}" }
-                .mapTo(HashSet()) { it.listKey(0) }
-                .intersect(blocks.mapTo(HashSet()) { it.listKey(0) })
-
-        fun placements(source: List<ThreadRow>): Map<String, Any?> {
-            var olderKey: Any? = null
-            val positions = mutableMapOf<String, Any?>()
-            source.forEach { row ->
-                val key = row.listKey(0)
-                val agent = (row as? ThreadRow.Delivered)?.agentBlockId
-                if (agent != null && key == "msg:$agent") positions[agent] = olderKey
-                if (key in placementKeys) olderKey = key
-            }
-            return positions
-        }
-        val oldPlacements = placements(oldBlocks)
-        val newPlacements = placements(blocks)
-        val oldMarkers = oldBlocks.filterIsInstance<ThreadRow.AgentStartMarker>().associateBy { it.agentId }
-        val finished =
-            blocks
-                .filterIsInstance<ThreadRow.AgentStartMarker>()
-                .filter { marker ->
-                    val old = oldMarkers[marker.agentId]
-                    marker.finished &&
-                        old != null &&
-                        (!old.finished || old.finishAnchor != marker.finishAnchor) &&
-                        marker.agentId in oldPlacements &&
-                        oldPlacements[marker.agentId] != newPlacements[marker.agentId]
-                }.mapTo(HashSet()) { it.agentId }
-        if (finished.isEmpty()) return null
         val movedMessages =
-            oldBlocks
-                .filterIsInstance<ThreadRow.Delivered>()
-                .filter { it.agentBlockId in finished }
-                .mapTo(HashSet()) { it.listKey(0) }
+            if (authoritativeBlocks != null) {
+                val old = previousAuthoritativeBlocks.orEmpty()
+                authoritativeBlocks
+                    .flatMap { (id, placement) ->
+                        val previous = old[id]
+                        if (previous != null && !placement.active && (previous.active || previous.settledOrder != placement.settledOrder)) {
+                            previous.rowKeys
+                        } else {
+                            emptySet()
+                        }
+                    }.toSet()
+            } else {
+                if (oldBlocks.none { it is ThreadRow.AgentStartMarker }) return null
+                // Controls can finish a roster before the terminal receipt supplies the final position.
+                // Common roots also encode movement across an adjacent still-running block. New rows and
+                // children are excluded, so inserts and unchanged terminal replays cannot transfer an anchor.
+                val placementKeys =
+                    oldBlocks
+                        .filter { it !is ThreadRow.Delivered || it.agentBlockId == null || it.listKey(0) == "msg:${it.agentBlockId}" }
+                        .mapTo(HashSet()) { it.listKey(0) }
+                        .intersect(blocks.mapTo(HashSet()) { it.listKey(0) })
+
+                fun placements(source: List<ThreadRow>): Map<String, Any?> {
+                    var olderKey: Any? = null
+                    val positions = mutableMapOf<String, Any?>()
+                    source.forEach { row ->
+                        val key = row.listKey(0)
+                        val agent = (row as? ThreadRow.Delivered)?.agentBlockId
+                        if (agent != null && key == "msg:$agent") positions[agent] = olderKey
+                        if (key in placementKeys) olderKey = key
+                    }
+                    return positions
+                }
+                val oldPlacements = placements(oldBlocks)
+                val newPlacements = placements(blocks)
+                val oldMarkers = oldBlocks.filterIsInstance<ThreadRow.AgentStartMarker>().associateBy { it.agentId }
+                val finished =
+                    blocks
+                        .filterIsInstance<ThreadRow.AgentStartMarker>()
+                        .filter { marker ->
+                            val old = oldMarkers[marker.agentId]
+                            marker.finished &&
+                                old != null &&
+                                (!old.finished || old.finishAnchor != marker.finishAnchor) &&
+                                marker.agentId in oldPlacements &&
+                                oldPlacements[marker.agentId] != newPlacements[marker.agentId]
+                        }.mapTo(HashSet()) { it.agentId }
+                if (finished.isEmpty()) return null
+                oldBlocks
+                    .filterIsInstance<ThreadRow.Delivered>()
+                    .filter { it.agentBlockId in finished }
+                    .mapTo(HashSet()) { it.listKey(0) }
+            }
         val movingKeys =
             oldRows
                 .filter { row ->
@@ -297,7 +312,9 @@ internal class ThreadListViewport(
         rows: List<ThreadRow>,
         blocks: List<ThreadRow>,
         transfer: ThreadAnchorTransfer?,
+        authoritativeBlocks: Map<String, AuthoritativeAgentPlacement>? = null,
     ) {
+        previousAuthoritativeBlocks = authoritativeBlocks
         previousRows = rows
         previousBlocks = blocks
         if (rowMeasurements.isNotEmpty()) rowMeasurements.keys.retainAll(rows.mapTo(HashSet()) { it.listKey(0) })
