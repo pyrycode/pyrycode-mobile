@@ -23,10 +23,6 @@ class SharedDarkColourRolesTest {
         assertEquals(Color(0xFFFFB59F), colors.tertiaryFixedDim)
     }
 
-    @Test fun lightSuccessKeepsItsPreviousValue() {
-        assertEquals(Color(0xFF316B2B), capture(dark = false, dynamic = false).success)
-    }
-
     @Test fun dynamicDarkSuccessKeepsItsPreviousValue() {
         assertEquals(Color(0xFFA6D388), capture(dark = true, dynamic = true).success)
     }

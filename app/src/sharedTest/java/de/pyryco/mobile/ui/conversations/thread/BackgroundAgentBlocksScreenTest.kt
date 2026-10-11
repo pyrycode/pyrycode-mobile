@@ -105,7 +105,7 @@ class BackgroundAgentBlocksScreenTest {
         collapse = collapsed
         val restoration = StateRestorationTester(compose)
         val content: @Composable () -> Unit = {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = state,
                     onBack = {},

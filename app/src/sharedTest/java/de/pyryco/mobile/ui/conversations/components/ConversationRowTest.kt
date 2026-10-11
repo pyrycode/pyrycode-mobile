@@ -49,7 +49,7 @@ class ConversationRowTest {
     fun activeChannel_exposesSingleMergedLabelOfNameAndTime() {
         val name = "leaky-faucet"
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ConversationRow(conversation = channel(name), onClick = {})
             }
         }
@@ -62,7 +62,7 @@ class ConversationRowTest {
     fun idleChannel_announcesIdleStateInMergedLabel() {
         val name = "leaky-faucet"
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ConversationRow(conversation = channel(name, isSleeping = true), onClick = {})
             }
         }
@@ -78,7 +78,7 @@ class ConversationRowTest {
     fun channelRow_meetsMinimumTouchTargetHeight() {
         val name = "leaky-faucet"
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ConversationRow(conversation = channel(name), onClick = {})
             }
         }

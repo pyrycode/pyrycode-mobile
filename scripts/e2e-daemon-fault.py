@@ -41,6 +41,8 @@ def main():
     parser.add_argument("--log", required=True)
     parser.add_argument("--ready-token", default="")
     parser.add_argument("--control-socket", required=True)
+    parser.add_argument("--stream-release-file", default="")
+    parser.add_argument("--stream-result-release-file", default="")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -94,6 +96,13 @@ def main():
                     offset = Path(args.log).stat().st_size
                     if start():
                         await_relay_ready(offset)
+                elif self.path in ("/stream-release", "/stream-finish"):
+                    release = args.stream_release_file if self.path == "/stream-release" else args.stream_result_release_file
+                    if not release:
+                        self.send_error(404)
+                        return
+                    # Paths are fixed by the isolated harness; this request accepts no path or content.
+                    Path(release).touch()
                 elif self.path != "/status":
                     self.send_error(404)
                     return

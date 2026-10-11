@@ -111,7 +111,7 @@ class MarkdownTextTest {
         reader: Boolean = false,
     ) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme(darkTheme = false) {
+            PyrycodeMobileTheme(darkTheme = true) {
                 onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
                 CompositionLocalProvider(LocalClipboardManager provides clipboard) {
                     Box(

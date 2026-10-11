@@ -35,7 +35,7 @@ class MarkdownTypographyTest {
     @Test
     fun reader_uses_large_body_and_recursively_spaced_blocks() {
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 MarkdownReaderScreen(MarkdownDocument("Typography.md", fixture), onBack = {})
             }
         }
@@ -46,7 +46,7 @@ class MarkdownTypographyTest {
     @Test
     fun linked_note_uses_the_same_reader_style() {
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 LinkedMarkdownReaderDestination(
                     note = LinkedMarkdown("Typography.md", MarkdownDocument("Typography.md", fixture)),
                     reread = { null },
@@ -59,7 +59,7 @@ class MarkdownTypographyTest {
 
     @Test
     fun default_renderer_keeps_message_typography_and_spacing() {
-        rule.setContent { PyrycodeMobileTheme { MarkdownText(fixture) } }
+        rule.setContent { PyrycodeMobileTheme(darkTheme = true) { MarkdownText(fixture) } }
         assertBody(14, 20, 12f, 4f, taskGap = 6f)
         assertSpecialStyles(codeSize = 12)
     }
@@ -79,7 +79,7 @@ class MarkdownTypographyTest {
 
     private fun showMessage(streaming: Boolean) {
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 MessageBubble(
                     Message("typography", "session", Role.Assistant, fixture, Instant.fromEpochSeconds(0), streaming),
                 )

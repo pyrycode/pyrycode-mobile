@@ -38,7 +38,7 @@ class SessionErrorReplyMatcherTest {
         val showReply = mutableStateOf(false)
         val prompts = listOf("held", "fresh").map { sessionErrorRecoveryPrompt("marker=$it-1731") }
         compose.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Column {
                     prompts.forEachIndexed { index, prompt ->
                         MessageBubble(message("user-$index", Role.User, prompt), onToggleMetaRow = {})

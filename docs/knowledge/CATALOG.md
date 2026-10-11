@@ -206,7 +206,7 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 
 ## Architecture
 
-_(none yet — system overview will land when there's more than one screen to map)_
+- [#2043 — authoritative daemon item store](../specs/architecture/2043-authoritative-thread-store.md) — supplied-input store/route design, revision and checkpoint invariants, generation-fenced reset and security review; evergreen behavior lives in the [thread-store topic](features/remote-conversation-repository-reads-and-thread-store.md#authoritative-daemon-items-alongside-the-raw-event-projection).
 
 ## Shared topics added by the knowledge migration
 
@@ -236,3 +236,8 @@ _(none yet — system overview will land when there's more than one screen to ma
 - [Remote conversation repository — history walk and retry](features/remote-conversation-repository-history-walk.md): backwards history requests, retry and retired reconnect restarts; split from history paging for #1979.
 
 - [Thread screen — background-agent viewport testing](features/thread-screen-testing-background-agent-viewport.md): 23 shared/Android frame probes, cold-boundary controls and counted viewport evidence; split from thread-screen-testing.md for #2039.
+
+- [Remote conversation repository — testing](features/remote-conversation-repository-testing.md): fake-pump scheduling, runtime and queued-send receipt continuity, exact-version and correlated-read invariant probes; split from the repository overview for #2070.
+
+- [Thread screen — saved-thread first-draw testing](features/thread-screen-testing-saved-first-draw.md): saved-history latency, allocation margin and retained phase evidence; split from thread-screen-testing.md for #1985.
+- [Thread screen — inline question rows and reveal](features/thread-screen-inline-question-reveal.md): question rows, prompt growth masking and shared reveal ownership; split from the list/status overview for #1985.

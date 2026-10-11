@@ -104,7 +104,7 @@ The original storage-family checks did not include Compose or emulator scenarios
 restored conversation rows
 and #797's restored thread rows both draw through the same composables a live row does.
 That establishes shared rendering, not restore latency. The production-wired
-[saved-thread first-draw device check](thread-screen-testing.md#saved-thread-first-draw-1949)
+[saved-thread first-draw device check](thread-screen-testing-saved-first-draw.md#saved-thread-first-draw-1949)
 now covers real cache/repository/ViewModel restoration and committed drawing. See [dependency injection §
 Testing](dependency-injection.md#testing) for `HostConversationSourceTest`'s restore/live-race
 cases and for why every other instrumented container built from `appModule` overrides this binding

@@ -45,7 +45,7 @@ class ModelRefusalRowTest {
 
     private fun setContent(item: ThreadItem.ModelRefusal) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ModelRefusalRow(item = item, agent = ConversationAgent.Claude)
             }
         }

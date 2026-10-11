@@ -46,7 +46,7 @@ class EditWorkspaceModalTest {
     /** Walks the confirmation the way the view model does, so one composition covers request → decline. */
     private fun show() {
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 EditWorkspaceModal(
                     serverId = "host-1",
                     cwd = "/w/Second Brain",

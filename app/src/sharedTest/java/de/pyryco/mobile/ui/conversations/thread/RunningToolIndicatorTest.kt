@@ -88,7 +88,7 @@ class RunningToolIndicatorTest {
 
     private fun setThreadScreen() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = state,
                     onBack = {},

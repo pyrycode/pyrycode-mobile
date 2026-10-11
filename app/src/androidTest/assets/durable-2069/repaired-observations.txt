@@ -1,0 +1,5 @@
+event=durable_gap_observed phase=newest asks=1 pages=200:296-495 rows=101 spans=[UnsignedHistorySpan(first=1, last=2), UnsignedHistorySpan(first=296, last=495)] gaps=[UnsignedHistoryGap(anchor=2, edge=296)] unknown=false projected=[2] composed=1
+event=durable_gap_observed phase=pull_1 asks=2 pages=200:296-495;200:96-295 rows=200 spans=[UnsignedHistorySpan(first=1, last=2), UnsignedHistorySpan(first=96, last=495)] gaps=[UnsignedHistoryGap(anchor=2, edge=96)] unknown=false projected=[2] composed=0
+event=durable_gap_observed phase=pull_2 asks=3 pages=200:296-495;200:96-295;95:1-95 rows=247 spans=[UnsignedHistorySpan(first=1, last=495)] gaps=[] unknown=false projected=[] composed=0
+event=durable_gap_observed phase=fixture_recovered asks=3 pages=200:296-495;200:96-295;95:1-95 rows=247 spans=[UnsignedHistorySpan(first=1, last=495)] gaps=[] unknown=false projected=[] composed=0
+event=durable_gap_observed phase=search_absent asks=3 pages=200:296-495;200:96-295;95:1-95 rows=247 spans=[UnsignedHistorySpan(first=1, last=495)] gaps=[] unknown=false projected=[] composed=0

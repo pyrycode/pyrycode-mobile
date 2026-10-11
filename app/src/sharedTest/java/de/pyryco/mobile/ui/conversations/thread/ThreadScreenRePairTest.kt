@@ -54,7 +54,7 @@ class ThreadScreenRePairTest {
         onRetry: () -> Unit = {},
     ) {
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = ThreadUiState(conversationId = "conversation", displayName = "Re-pair"),
                     onBack = {},

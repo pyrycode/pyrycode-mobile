@@ -15,6 +15,7 @@ import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
+import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
 import de.pyryco.mobile.data.network.Envelope
@@ -30,6 +31,9 @@ import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.RequestContextUsagePayloadDto
 import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
 import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
+import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_ADDED
+import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_CHANGED
+import de.pyryco.mobile.data.network.TYPE_THREAD_TEXT_APPEND
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
@@ -163,8 +167,13 @@ class RemoteConversationRepository(
      * before `Open`. Never the full `conn_id`.
      */
     connToken: () -> String? = { null },
+    /** Supplied authoritative route only; production activation supplies the source in #1988. */
+    private val authoritativeHostId: String = "",
 ) : ConversationRepository,
     ThreadSnapshotSource {
+    internal val authoritativeThreads = AuthoritativeThreadStore()
+    internal val authoritativeRoute = AuthoritativeThreadRoute(authoritativeHostId, authoritativeThreads)
+
     /**
      * The conversation list and the last-message previews (#913): the list projection, the most-recent
      * message per conversation, and every write that folds into either. [onInbound] hands it the
@@ -438,11 +447,17 @@ class RemoteConversationRepository(
         // On any collector-termination mode (scope cancel — the primary teardown trigger — inbound
         // completing, or inbound throwing) the `finally` sweeps still-registered pending requests so
         // an awaiting caller fails fast instead of hanging forever (#488).
+        val expiry =
+            scope.launch {
+                if (authoritativeHostId.isNotEmpty()) authoritativeRoute.runExpiry()
+            }
         scope
             .launch {
                 try {
                     pump.inbound.collect { envelope -> onInbound(envelope) }
                 } finally {
+                    expiry.cancel()
+                    authoritativeRoute.abandon()
                     endSwitchAgentRequests()
                     endBackgroundTaskStops()
                     sessionErrorProjection.reset()
@@ -453,12 +468,21 @@ class RemoteConversationRepository(
                     relayRequests.failAllPending()
                 }
             }.invokeOnCompletion {
+                expiry.cancel()
+                authoritativeRoute.abandon()
                 // Completion also runs if cancellation prevents the collector body from starting.
                 endSwitchAgentRequests()
             }
     }
 
     private fun onInbound(envelope: Envelope) {
+        if (envelope.type in setOf(TYPE_THREAD_ITEM_ADDED, TYPE_THREAD_ITEM_CHANGED, TYPE_THREAD_TEXT_APPEND)) {
+            val capabilities = negotiatedCapabilities()
+            if (authoritativeHostId.isNotEmpty() && CAPABILITY_THREAD in capabilities && CAPABILITY_INTERACTIVE in capabilities) {
+                authoritativeRoute.accept(envelope)
+            }
+            return
+        }
         val payload = envelope.payload as? JsonObject
         val conversation = (payload?.get("conversation_id") as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
         val before = threadProjection.readRows(conversation)

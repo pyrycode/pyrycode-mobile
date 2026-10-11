@@ -27,7 +27,7 @@ class WorkspacePickerSheetTest {
     @Test
     fun recent_rows_render_full_paths() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 WorkspacePickerSheetContent(
                     recent = sampleRecents,
                     onPick = {},
@@ -47,7 +47,7 @@ class WorkspacePickerSheetTest {
     fun recent_row_tap_invokes_onPick_with_full_path() {
         val picked = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 WorkspacePickerSheetContent(
                     recent = sampleRecents,
                     onPick = picked::add,
@@ -65,7 +65,7 @@ class WorkspacePickerSheetTest {
     @Test
     fun recent_header_is_omitted_when_recent_is_empty() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 WorkspacePickerSheetContent(
                     recent = emptyList(),
                     onPick = {},
@@ -87,7 +87,7 @@ class WorkspacePickerSheetTest {
     fun create_new_row_invokes_onCreateNew_on_tap() {
         var invoked = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 WorkspacePickerSheetContent(
                     recent = sampleRecents,
                     onPick = {},
@@ -108,7 +108,7 @@ class WorkspacePickerSheetTest {
     fun close_icon_invokes_onDismiss_on_tap() {
         var invoked = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 WorkspacePickerSheetContent(
                     recent = sampleRecents,
                     onPick = {},
