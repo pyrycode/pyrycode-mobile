@@ -38,6 +38,8 @@ The host shell owns capture lifetime and bounded subprocesses; no application St
 | INT/TERM cancellation | `test_cancellation_preserves_status_and_archive` |
 | Export fails during a successful or failed run | `test_export_failure_keeps_staging_and_original_status` |
 | Two runs reuse a daemon label | `test_runs_have_distinct_private_archives` |
+| Reused JUnit method identity | `LiveMethodIntervalRuleTest.reusedMethodIdentityReceivesAFreshInterval` |
+| Runner closes per-method logcat at completion | `LiveMethodIntervalRuleTest.recordsIntervalBeforeTheOuterRunnerReceivesCompletion`, plus retained focused device interval |
 | Missing or truncated observations | `test_unavailable_and_bounded_inputs_are_explicit` |
 | Secret-bearing files, symlinks or hostile log fields | `test_only_allowlisted_metadata_is_exported` |
 
