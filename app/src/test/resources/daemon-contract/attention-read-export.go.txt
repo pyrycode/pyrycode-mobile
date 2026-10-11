@@ -1,0 +1,60 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"github.com/pyrycode/pyrycode/internal/conversations"
+	"github.com/pyrycode/pyrycode/internal/history"
+	"github.com/pyrycode/pyrycode/internal/msgqueue"
+	"github.com/pyrycode/pyrycode/internal/protocol"
+	"github.com/pyrycode/pyrycode/internal/relay"
+	"github.com/pyrycode/pyrycode/internal/turnevent"
+	"os"
+	"testing"
+)
+
+func TestMobile2009Export(t *testing.T) {
+	store := history.New(t.TempDir())
+	h := testSendHistory(store)
+	bcast := &fakeInteractiveBcast{snapshots: [][]relay.ActiveConn{{{ConnID: "phone", Interactive: true}, {ConnID: "peer", Interactive: true}}}}
+	ome := newOperatorMessageEmitterV2(nil, discardLogger())
+	q, err := msgqueue.New(msgqueue.Config{Deliver: func(context.Context, string, []byte) error { return nil }, OnAccepted: h.accepted, OnDelivered: operatorMessageHistory(store, func(m operatorMessage) { ome.broadcast(context.Background(), bcast, nil, m) }, nil, discardLogger(), h), OnTerminal: h.terminal, SendNow: func(context.Context, string, uint64, []byte) error { return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := q.Enqueue(testConvID, "asked")
+	if !q.SendNow(testConvID, id) {
+		t.Fatal("send now refused")
+	}
+	e := newInteractiveTurnEmitterV2(nil, bcast, discardLogger())
+	e.hist = store
+	e.runtimeFacts = true
+	e.HandleFor(context.Background(), testConvID, turnevent.TextChunk{Text: "seen"}, history.SessionProvenance{})
+	e.HandleFor(context.Background(), testConvID, turnevent.TurnEnd{Reason: turnevent.TurnEndReasonEndTurn}, history.SessionProvenance{})
+	page := newHistoryPager(store, discardLogger())(testConvID, "", 128)
+	bytes, err := json.Marshal(protocol.HistoryPagePayload{Entries: page.Entries, Cursor: page.Cursor, AtStart: page.AtStart})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile("/tmp/builder-2009/exported-page.json", bytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var rawTypes []string
+	for _, entry := range historyEntries(t, store, testConvID) {
+		rawTypes = append(rawTypes, entry.Type)
+	}
+	t.Logf("raw_types=%v", rawTypes)
+	var ids []uint64
+	var presented uint64
+	for _, entry := range page.Entries {
+		ids = append(ids, entry.ID)
+		if entry.Type == protocol.TypeAssistantDelta {
+			presented = entry.ID
+		}
+	}
+	latest, err := (legacyHistoryReader{store}).LatestDisplayableEntryID(conversations.ConversationID(testConvID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("rows=%d ids=%v checkpoint=%d latest=%d", len(page.Entries), ids, testLegacyCheckpoint(page.Entries, presented, 0, false), latest)
+}

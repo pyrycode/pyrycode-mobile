@@ -4644,6 +4644,9 @@ class InteractiveStreamE2ETest {
                             "event=phone_read_probe rows=${snapshot.rows.size} " +
                                 "unidentified=${evidence.unidentified.size} malformed=${evidence.facts.values.count { it == null }} " +
                                 "gaps=${evidence.gaps.size} versions=${evidence.versions.size} " +
+                                "numeric_holes=${evidence.facts.keys.sorted().zipWithNext().count { (a, b) -> b - a > 1u }} " +
+                                "received_target=${replyCheckpoint in evidence.facts} " +
+                                "peer_entries_missing_on_phone=${phoneHistory.count { it.id !in evidence.facts }} " +
                                 "checkpoint_reaches_target=${snapshot.rows.any {
                                     (
                                         evidence.checkpoint(
@@ -4661,6 +4664,7 @@ class InteractiveStreamE2ETest {
             }
             val afterPhoneRead = peerStep(peer, "confirm A's stored read fact") { peer.readMarks(chatA, THREAD_TIMEOUT_MS) }
             assertTrue("phone read advances the shared durable mark", (afterPhoneRead.readUpTo ?: 0uL) >= replyCheckpoint)
+            Log.i("AttentionRead", "event=phone_read_confirmed target_covered=true")
             leaveThread()
             awaitRowAttention(nameA, idle, "A after it was opened")
 
@@ -4693,8 +4697,37 @@ class InteractiveStreamE2ETest {
             val confirmed = peerStep(peer, "acknowledge the peer's read of B") { peer.markRead(chatB, peerCheckpoint, THREAD_TIMEOUT_MS) }
             assertTrue("peer read was durably confirmed", confirmed >= peerCheckpoint)
             composeTestRule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).assertIsDisplayed()
-            awaitRowAttention(nameB, idle, "B after a peer read, without reopening its thread")
+            try {
+                awaitRowAttention(nameB, idle, "B after a peer read, without reopening its thread")
+            } catch (failure: AssertionError) {
+                val source = GlobalContext.get().get<HostConversationSource>()
+                val repository = checkNotNull(source.repositoryFor(serverId))
+                val phone = runBlocking { repository.observeReadMarks(chatB).first() }
+                val daemon =
+                    runCatching {
+                        peerStep(peer, "read B's facts after attention failure") { peer.readMarks(chatB, THREAD_TIMEOUT_MS) }
+                    }.getOrNull()
+                throw AssertionError(
+                    "event=peer_read_probe daemon_confirmed_target=${confirmed >= peerCheckpoint} " +
+                        "daemon_read_covers_latest=${daemon?.readUpTo?.let { read -> daemon.latestEntryId?.let { it <= read } } == true} " +
+                        "phone_received_confirmation=${(phone?.readUpTo ?: 0u) >= confirmed} " +
+                        "phone_read_covers_latest=${phone?.readUpTo?.let { read -> phone.latestEntryId?.let { it <= read } } == true} " +
+                        "phone_latest_exceeds_daemon=${phone?.latestEntryId?.let { latest ->
+                            daemon?.latestEntryId?.let { latest > it }
+                        } == true} " +
+                        "projected_unread=${source.attention.value[serverId]?.get(chatB) == ConversationAttention.Unread}",
+                    failure,
+                )
+            }
             awaitRowAttention(nameA, idle, "A after B's peer read")
+            val phone = GlobalContext.get().get<HostConversationSource>().currentReadMarks(serverId, chatB)
+            Log.i(
+                "AttentionRead",
+                "event=peer_read_confirmed daemon_target_covered=true " +
+                    "phone_received_confirmation=${(phone?.readUpTo ?: 0u) >= confirmed} " +
+                    "phone_read_covers_latest=${phone?.readUpTo?.let { read -> phone.latestEntryId?.let { it <= read } } == true} " +
+                    "b_idle=true a_idle=true phone_on_list=true",
+            )
         } finally {
             peer.close()
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }

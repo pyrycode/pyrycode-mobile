@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.HistoryPagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationReadMarks
@@ -19,6 +20,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.threadSnapshots
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -36,6 +38,10 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -548,6 +554,59 @@ class HostConversationSourceAttentionTest {
                 runCurrent()
                 assertEquals(ConversationAttention.Unread, source.attention.value["a"]?.get(id))
             }
+        }
+
+    @Test
+    fun accountedPhoneReadThenPeerReadClearsOnlyItsRowWithoutASecondView() =
+        withRemoteSource { a, b, source, host ->
+            val page =
+                MobileJson.decodeFromString<HistoryPagePayloadDto>(
+                    requireNotNull(javaClass.getResource("/daemon-contract/attention-read-repaired.json")).readText(),
+                )
+
+            fun receive(id: String) {
+                page.entries.sortedBy { it.id }.forEach { entry ->
+                    val payload = JsonObject(entry.payload.jsonObject + ("conversation_id" to JsonPrimitive(id)))
+                    a.push(entry.type to payload.toString(), entry.id)
+                }
+            }
+            a.push(readList("A", 0u, 0u))
+            a.push(readUpdate("B", 0u))
+            b.push(readList("B", 0u, 7u))
+            receive("A")
+            runCurrent()
+            val repository = requireNotNull(host.repositories.value)
+            val snapshot = repository.threadSnapshots("A").first()
+            val reply = snapshot.rows.filterIsInstance<ThreadItem.MessageItem>().last()
+            val checkpoint = requireNotNull(snapshot.readEvidence.checkpoint(reply, 0u))
+            assertEquals(8uL, checkpoint)
+            val view = viewing.view("a", "A")
+            val request = async { repository.markConversationRead("A", checkpoint) }
+            runCurrent()
+            assertEquals(ConversationAttention.Unread, source.attention.value["a"]?.get("A"))
+            a.push(readUpdate("A", 7u), inReplyTo = a.sent.last { it.type == "mark_conversation_read" }.id)
+            runCurrent()
+            assertEquals(7uL, request.await().getOrThrow())
+            view.close()
+            assertNull(source.attention.value["a"]?.get("A"))
+
+            host.prompts("B" to "held")
+            runCurrent()
+            assertEquals(ConversationAttention.WaitingForAnswer, source.attention.value["a"]?.get("B"))
+            receive("B")
+            runCurrent()
+            assertEquals(ConversationAttention.WaitingForAnswer, source.attention.value["a"]?.get("B"))
+            host.prompts()
+            runCurrent()
+            assertEquals(ConversationAttention.Unread, source.attention.value["a"]?.get("B"))
+            // A daemon confirmation on the peer is not yet a phone receipt.
+            assertEquals(ConversationReadMarks(0u, 7u), repository.observeReadMarks("B").first())
+            a.push(readUpdate("B", 7u))
+            runCurrent()
+            assertNull(source.attention.value["a"]?.get("B"))
+            assertNull(source.attention.value["a"]?.get("A"))
+            assertEquals(ConversationAttention.Unread, source.attention.value["b"]?.get("B"))
+            assertTrue(viewing.viewed.first().isEmpty())
         }
 
     @Test

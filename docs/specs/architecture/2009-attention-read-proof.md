@@ -73,3 +73,27 @@ Pending for documentation stage: update `docs/e2e-interactive-stream.md`, Peer r
 
 **Reviewer:** builder (self-review per builder/security-review.md)
 **Date:** 2026-10-11
+
+## Revisions
+
+### 2026-10-11 — Controlled queued-receipt comparison
+
+The original daemon real-store export at `d49b8392e00b8de4273998393413594d57f30047` appends raw types send_accepted/message/send_delivered/main_turn_opened/turn_state/assistant_delta/turn_end/turn_state at IDs 1–8. Its pager serves only 2,4,5,6,7,8: delivery ID 3 is unaccounted between received facts. The same producer setup on `f570f2f871ca50ab1f1739cc0f142f375682d05e`, containing merged daemon #3167 (`a3ca005f05e95650d10b7e07cb5d190252acbd1a`), serves all IDs with queued facts projected as existing empty info banners. Raw facts and their identities stay unchanged.
+
+`AttentionReadReceiptTest.completedReplyCanQualifyForTheDaemonWatermarkWithAccountedDelivery` ran against the original exported page: 1 executed, 1 failed, 0 skipped, expected checkpoint 8 versus null. Substituting only the repaired real-store page makes it pass. The original-page negative control retains the bound settled reply, known facts and empty stored gaps while rejecting the numeric hole. Preserve the exporter, synthetic normalized fixtures and counted XML. No Mobile production workaround is warranted.
+
+`HostConversationSourceAttentionTest.accountedPhoneReadThenPeerReadClearsOnlyItsRowWithoutASecondView` drives the real remote repository and host source: A's exact reply checkpoint requires correlated daemon confirmation; B's held prompt stays Waiting through its turn, becomes Unread after dismissal and clears only when the phone receives the peer's daemon-confirmed read. A remains Idle and a second host's identically named B stays Unread. No viewing handle is opened for B.
+
+The original B assertion does not retain the daemon revision, phone read/latest or attention projection, and its stderr is not on this host. This comparison diagnoses A's receipt condition, not the historical B cause. Keep B's existing live assertions and distinguish confirmation, phone receipt and projection on failure. A-only runs cannot declare B cleared. The dispatcher must run the full live gate through both stages against a daemon containing #3167, record actual counts and retain the named result.
+
+Security re-review: PASS. Fixture contents are synthetic and identifiers/timestamps normalized; raw payloads and credentials are never retained. The strict receipt and presentation barriers, cancellation and existing timeouts remain unchanged. Total written work remains below 700 lines, with no public types, migrations or new production branches.
+
+### 2026-10-11 — Focused live causal reproduction and repair check
+
+The named scenario ran on this worktree (production base `11ed225d27026e9e59abe634adc49c338dd41c51`, plan head `1b71d5ef92d421b98040edcd99d02442b3168e45`, scenario-local diagnostic changes) against both isolated daemon exports. Original `d49b8392e00b8de4273998393413594d57f30047`: 1 executed, 0 passed, 1 failed, 0 skipped, at A with rows=3, versions=3, no malformed/unidentified/stored gaps, numeric_holes=1, received_target=true, peer_entries_missing_on_phone=0, checkpoint/read_reaches_target=false. This independently matches the retained October 11 signature and confirms omission rather than a peer-only versus phone-only delivery difference.
+
+Repaired `f570f2f871ca50ab1f1739cc0f142f375682d05e`: 1 executed, 1 passed, 0 failed, 0 skipped. Retained stage evidence confirms A's phone-derived read was daemon-confirmed; B's peer confirmation reached the phone and covered its latest fact; B and A were Idle while the phone stayed on the list. All original held-permission and isolation assertions executed. The configured scripted ping twin also passed: 2 executed, 2 passed, 0 failed, 0 skipped, daemon `63aabec70dad3948c916332a139eb22533b8f4b8`. Final affected unit run: 80 executed, 80 passed, 0 failed/errors/skipped.
+
+The closed owning daemon issue #3167 is now linked as a cross-repository blocker and was read back. No new daemon issue or Mobile production repair is needed for the evidenced A cause. B's historical cause remains unestablished because its retained daemon/phone projection facts are absent; the focused pass demonstrates the current B contract, not a retrospective cause. Its independent confirmation/receipt/projection assertions remain required in the fresh dispatcher full live gate. Retained counted artifacts and invocation provenance live under `app/src/androidTest/assets/read-2009/`. Full live counts/result and the requested documentation section remain explicitly pending for their owning stages.
+
+Exact-repair attribution: the first parent of daemon merge `a3ca005f05e95650d10b7e07cb5d190252acbd1a` is the failing `d49b8392e00b8de4273998393413594d57f30047`. Running the same real-store exporter at that exact merge passed (1 executed/1 passed), restored all eight receipt IDs and checkpoint 8, and matched the retained repaired fixture after the documented synthetic normalization. Thus later daemon commits are unnecessary for the evidenced A repair.
