@@ -289,7 +289,7 @@ internal fun List<ThreadItem>.withAssistantDelta(
     val delta = SegmentDelta(event.seq, event.text.length)
     val anchor =
         rows.indexOfLast { row ->
-            row !is ThreadItem.BackgroundTaskLifecycle &&
+            !row.isAssistantContinuityMetadata() &&
                 !(row is ThreadItem.MessageItem && row.message.role == Role.User && row.message.ordinaryId in passOver)
         }
     val last = (rows.getOrNull(anchor) as? ThreadItem.MessageItem)?.message
@@ -319,6 +319,10 @@ internal fun List<ThreadItem>.withAssistantDelta(
             ),
         )
 }
+
+/** Retained evidence that composes to no row must not interrupt assistant text or its streaming state. */
+private fun ThreadItem.isAssistantContinuityMetadata(): Boolean =
+    this is ThreadItem.BackgroundTaskLifecycle || this is ThreadItem.Banner && level == BannerLevel.Info
 
 /**
  * The id of the segment of [turnId] that the delta numbered [openingSeq] opens (#1350): the bare turn id
@@ -375,11 +379,11 @@ internal fun List<ThreadItem>.withSettledTurns(turnIds: Set<String>): List<Threa
 
 /**
  * This thread with every streaming message row but the last one settled (#1350): a segment stops
- * streaming the moment any row follows it, whichever lane or merge put that row there, so only the
+ * streaming the moment a visible row follows it, whichever lane or merge put that row there, so only the
  * thread's newest segment can draw as in progress. Returns this very list when nothing changes.
  */
 internal fun List<ThreadItem>.withOnlyLastRowStreaming(): List<ThreadItem> {
-    val lastVisible = indexOfLast { it !is ThreadItem.BackgroundTaskLifecycle }
+    val lastVisible = indexOfLast { !it.isAssistantContinuityMetadata() }
     val stale = withIndex().any { (index, row) -> index != lastVisible && row is ThreadItem.MessageItem && row.message.isStreaming }
     if (!stale) return this
     return mapIndexed { index, row ->
@@ -832,8 +836,16 @@ internal fun List<ThreadItem>.mergeUnsignedHistoryRows(
     firstEvidence: Set<Any> = emptySet(),
     rendererOwners: List<ThreadItem> = emptyList(),
     placementTimestamps: Map<Any, Instant> = emptyMap(),
+    passOver: Set<String> = emptySet(),
 ): List<ThreadItem> =
-    mergeRows(rows, order, firstEvidence = firstEvidence, rendererOwners = rendererOwners, placementTimestamps = placementTimestamps)
+    mergeRows(
+        rows,
+        order,
+        firstEvidence = firstEvidence,
+        rendererOwners = rendererOwners,
+        placementTimestamps = placementTimestamps,
+        passOver = passOver,
+    )
 
 /** Insert fresh history or reconnect evidence beside its neighbours; held markers never move on replay. */
 private fun List<ThreadItem>.withHistoryLifecyclePositions(
@@ -919,6 +931,7 @@ private fun List<ThreadItem>.mergeRows(
     firstEvidence: Set<Any> = emptySet(),
     rendererOwners: List<ThreadItem> = emptyList(),
     placementTimestamps: Map<Any, Instant> = emptyMap(),
+    passOver: Set<String> = emptySet(),
 ): List<ThreadItem> {
     if (incoming.isEmpty()) return if (rendererOwners.isEmpty()) this else withUniqueMessageKeys(this, incoming, rendererOwners)
 
@@ -1066,7 +1079,7 @@ private fun List<ThreadItem>.mergeRows(
                 add(row)
             }
             slots[base.size]?.let(::addAll)
-        }.withJoinedSegments().withUniqueMessageKeys(hinted, attributedIncoming, rendererOwners)
+        }.withJoinedSegments(passOver).withUniqueMessageKeys(hinted, attributedIncoming, rendererOwners)
     // Keep each segment's combined neighbour range; recovered legacy rows carry only proven sequences.
     val lifecyclePage = attributedIncoming.withLegacyRecords(legacy.records)
     val merged = ordinary.withHistoryLifecyclePositions(lifecyclePage, lifecycle).withBackgroundTaskLaunches()
@@ -1364,7 +1377,7 @@ private class ThreadRowAnchors(
 }
 
 /** Join adjacent same-turn deltas in one text build; invisible evidence never splits a segment. */
-private fun List<ThreadItem>.withJoinedSegments(): List<ThreadItem> {
+private fun List<ThreadItem>.withJoinedSegments(passOver: Set<String> = emptySet()): List<ThreadItem> {
     val out = ArrayList<ThreadItem>(size)
     var opener: Message? = null
     var openingIndex = -1
@@ -1389,11 +1402,11 @@ private fun List<ThreadItem>.withJoinedSegments(): List<ThreadItem> {
         deltas = mutableListOf()
     }
     for (row in this) {
-        if (row is ThreadItem.BackgroundTaskLifecycle) {
+        val message = (row as? ThreadItem.MessageItem)?.message
+        if (row.isAssistantContinuityMetadata() || message?.role == Role.User && message.ordinaryId in passOver) {
             out += row
             continue
         }
-        val message = (row as? ThreadItem.MessageItem)?.message
         val segment = message?.segment
         val first = opener
         if (first != null &&

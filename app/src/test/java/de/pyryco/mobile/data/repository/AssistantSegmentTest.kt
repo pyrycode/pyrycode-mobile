@@ -21,6 +21,35 @@ import org.junit.Test
  * entries, so the two lanes are compared on the same input.
  */
 class AssistantSegmentTest {
+    @Test
+    fun infoBanners_preserveLiveHistoryAndReconnectSegments() =
+        runTest {
+            val banner = ThreadItem.Banner(BannerLevel.Info, "receipt", false, TS_INSTANT)
+            val held = emptyList<ThreadItem>().withAssistantDelta(delta(0, "a"), TS_INSTANT)
+            val waiting = (held + banner).withOnlyLastRowStreaming()
+            assertEquals(listOf(true), waiting.streaming())
+            val live = (held + banner).withAssistantDelta(delta(1, "b"), TS_INSTANT)
+            assertEquals(listOf(TURN to "ab"), live.summary())
+            assertEquals(listOf(true), live.streaming())
+            val suffix = (listOf<ThreadItem>(banner)).withAssistantDelta(delta(1, "b"), TS_INSTANT)
+            for (merged in listOf(held.mergeHistoryRows(suffix), held.mergeCachedRows(suffix), suffix.mergeCachedRows(held))) {
+                assertEquals(listOf(TURN to "ab"), merged.summary())
+                assertEquals(1, merged.filterIsInstance<ThreadItem.Banner>().size)
+                assertEquals(listOf(true), merged.withOnlyLastRowStreaming().streaming())
+            }
+            val page =
+                entries(listOf(Delta(0, "a"))) +
+                    HistoryEntry(
+                        2L,
+                        "banner",
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"$CONVERSATION","level":"info","text":"receipt","truncated":false,"stops_turn":false}""",
+                        ),
+                        TS_INSTANT,
+                    ) + entries(listOf(Delta(1, "b"))).map { it.copy(unsignedId = 3uL) }
+            assertEquals(listOf(TURN to "ab"), reduceHistoryPage(page(page), true).summary())
+        }
+
     // ---- AC 1: live ---------------------------------------------------------------------------------
 
     @Test
