@@ -1,0 +1,135 @@
+{
+  "main_revision": "ea3ab23e7e14aac63e59a3d05d28473e3905323f",
+  "branch_revision": "fd5d7dc61f4965f05202c3c69f5f92b14fa111e8",
+  "source_hashes": {
+    "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": {
+      "main": "aef85e5235994b0dbf6a0bae18b8fea46a48571182cedd61815787e4e5e264c7",
+      "branch": "aef85e5235994b0dbf6a0bae18b8fea46a48571182cedd61815787e4e5e264c7"
+    },
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": {
+      "main": "b18d35734b7e4fb5c0cb40d12e4e574a66fdbcc3dfb72784b1d9a618f92c9173",
+      "branch": "b18d35734b7e4fb5c0cb40d12e4e574a66fdbcc3dfb72784b1d9a618f92c9173"
+    }
+  },
+  "class_lists_identical": true,
+  "command": "UI_GATE_FULL=1 ANDROID_GATE_WAIT_SECONDS=2700 timeout 2400 python3 scripts/android-test-gate.py ui",
+  "UI_GATE_FULL_reason": "Force the same regular UI selection in source archives without branch metadata; does not alter instrumentation selection or assertions.",
+  "device_only_class_count": 63,
+  "production_tree_identity": "19c9911283aa464938a60b307e50efc89217bf6a",
+  "finding_disposition": "not fixed: timeout did not recur; neither a source cause nor a matching merge-base failure is established",
+  "comparisons": [
+    {
+      "revision": "ea3ab23e7e14aac63e59a3d05d28473e3905323f",
+      "exit": 0,
+      "source_archive": true,
+      "archive_build_vcs_metadata": "unavailable; revision identified by Git archive source and source hashes",
+      "command": "UI_GATE_FULL=1 ANDROID_GATE_WAIT_SECONDS=2700 timeout 2400 python3 scripts/android-test-gate.py ui",
+      "selection": "regular device-only UI; one managed Pixel 2 API 33 ATD shard; animations disabled",
+      "counts": {
+        "recorded": 259,
+        "executed": 258,
+        "passed": 258,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "raw_xml": "/tmp/builder-2009/triage-main/build/dispatcher-tests/ui-a7m93uqi/dispatcher.xml",
+      "raw_xml_sha256": "a6207b98951c998654b5280104b81db196aea9010ebe01a2c5073364c0daa0c0",
+      "source_hashes": {
+        "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "aef85e5235994b0dbf6a0bae18b8fea46a48571182cedd61815787e4e5e264c7",
+        "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b18d35734b7e4fb5c0cb40d12e4e574a66fdbcc3dfb72784b1d9a618f92c9173"
+      },
+      "logs": [
+        {
+          "raw_name": "197-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen.txt",
+          "raw_sha256": "ee936c6352b333c6d9c1e41212d41469114255fe83d20105346068e9cef005a9",
+          "sample_windows": 32,
+          "ready_events": 8,
+          "installed": 8,
+          "cleared": 8,
+          "filtered_component_source_name": "197-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen.txt",
+          "component_sha256": "049a311dfefd4c7d8118196593bb1fe36fafb3a2cbab007e736e5e5f7e5ce924",
+          "component_offset_bytes": 0,
+          "component_length_bytes": 18147
+        },
+        {
+          "raw_name": "198-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-slowRestore_negativeControlRejectsTheSameFirstDrawBound.txt",
+          "raw_sha256": "0cf021981608965c8376a885474c1ba502d72d6c0b6b7554f78c6542473cc4e9",
+          "sample_windows": 4,
+          "ready_events": 1,
+          "installed": 1,
+          "cleared": 1,
+          "filtered_component_source_name": "198-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-slowRestore_negativeControlRejectsTheSameFirstDrawBound.txt",
+          "component_sha256": "6996752f20298a60c05b91be98e7d7040c64398c59703861a049a6a9ea23fce2",
+          "component_offset_bytes": 18147,
+          "component_length_bytes": 1975
+        }
+      ],
+      "stages_file": "main-comparison-stages.txt",
+      "stages_sha256": "c78d69e3498c3bb93bb3557d122b6e1a8a61f6cad49ba7c9438f119ba95c5c16",
+      "counted_file": "main-comparison-counted.xml"
+    },
+    {
+      "revision": "fd5d7dc61f4965f05202c3c69f5f92b14fa111e8",
+      "exit": 0,
+      "source_archive": true,
+      "archive_build_vcs_metadata": "unavailable; revision identified by Git archive source and source hashes",
+      "command": "UI_GATE_FULL=1 ANDROID_GATE_WAIT_SECONDS=2700 timeout 2400 python3 scripts/android-test-gate.py ui",
+      "selection": "regular device-only UI; one managed Pixel 2 API 33 ATD shard; animations disabled",
+      "counts": {
+        "recorded": 259,
+        "executed": 258,
+        "passed": 258,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "raw_xml": "/tmp/builder-2009/triage-branch/build/dispatcher-tests/ui-cop7q45q/dispatcher.xml",
+      "raw_xml_sha256": "ec8dfa23065f77410dcfd178ef8038a11fe5c0818ef8963ff23f5e5fb2675056",
+      "source_hashes": {
+        "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "aef85e5235994b0dbf6a0bae18b8fea46a48571182cedd61815787e4e5e264c7",
+        "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b18d35734b7e4fb5c0cb40d12e4e574a66fdbcc3dfb72784b1d9a618f92c9173"
+      },
+      "logs": [
+        {
+          "raw_name": "197-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen.txt",
+          "raw_sha256": "9228727c0c734d338ce877e9283fb459b64584e0340735bf9dbc2e9eac059ce9",
+          "sample_windows": 32,
+          "ready_events": 8,
+          "installed": 8,
+          "cleared": 8,
+          "filtered_component_source_name": "197-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen.txt",
+          "component_sha256": "9fd44af00c0131d53d26a70de3d5bb9ad4294be0e5f8c467164f52681e7e6df3",
+          "component_offset_bytes": 0,
+          "component_length_bytes": 17986
+        },
+        {
+          "raw_name": "198-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-slowRestore_negativeControlRejectsTheSameFirstDrawBound.txt",
+          "raw_sha256": "2dd7605d135378c21fed50280cae29ed82601a13eb0813e439abee7fb5910ad8",
+          "sample_windows": 4,
+          "ready_events": 1,
+          "installed": 1,
+          "cleared": 1,
+          "filtered_component_source_name": "198-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-slowRestore_negativeControlRejectsTheSameFirstDrawBound.txt",
+          "component_sha256": "70d85dddacec4bd5ef16a6f260cccf41ae00dd9a015a063bdce5a13f5f19a8e8",
+          "component_offset_bytes": 17986,
+          "component_length_bytes": 1975
+        }
+      ],
+      "stages_file": "branch-comparison-stages.txt",
+      "stages_sha256": "b45f16c7ebda6ffbd49bba4fd6f72abf87708cecdb79aaab78e6966a16716af4",
+      "counted_file": "branch-comparison-counted.xml"
+    }
+  ],
+  "original_report_sha256": "32c97cce58576249651ad2179d8e67c01d35aadcd42b4bf518fb979e205fb629",
+  "original_counts": {
+    "executed": 258,
+    "passed": 257,
+    "failed": 1,
+    "errors": 0,
+    "skipped": 1
+  },
+  "original_failure": "SavedThreadFirstDrawDeviceTest.savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen: TimeoutCancellationException: Timed out waiting for 30000 ms",
+  "original_detailed_method_logcat": "unavailable",
+  "shell_sampling_duration": "not independently measured; retained window timestamps include delay and sampling"
+}

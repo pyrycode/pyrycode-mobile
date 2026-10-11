@@ -1,0 +1,150 @@
+10-11 18:13:44.463  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:44.719  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:44.975  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=100
+10-11 18:13:45.231  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=100
+10-11 18:13:45.231  2845  2887 I SavedThreadEnvironment: event=cpu_idle
+10-11 18:13:45.234  2845  2845 I SavedThreadFirstDraw: event=opening_installed case=ordinary online=false opening=0 elapsed_ms=3
+10-11 18:13:45.235  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=ordinary online=false opening=0 queue_ms=0 wall_ms=2 cpu_ms=2
+10-11 18:13:45.251  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=ordinary online=false opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:45.255  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=ordinary online=false opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:45.256  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=false opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:45.257  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=false opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:45.258  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=false opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:45.258  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=false opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:45.258  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=false opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:45.363  2845  2887 I SavedThreadFirstDraw: case=ordinary online=false opening=0 rows=20 durable=20 spans=0 restored_ms=24 snapshot_ms=25 complete_ms=42 drawn_ms=99
+10-11 18:13:45.369  2845  2845 I SavedThreadFirstDraw: event=opening_cleared case=ordinary online=false opening=0 elapsed_ms=137
+10-11 18:13:45.659  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:45.915  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=100
+10-11 18:13:46.171  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=100
+10-11 18:13:46.427  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=100
+10-11 18:13:46.428  2845  2887 I SavedThreadEnvironment: event=cpu_idle
+10-11 18:13:46.429  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=ordinary online=false opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:46.431  2845  2845 I SavedThreadFirstDraw: event=opening_installed case=ordinary online=false opening=1 elapsed_ms=3
+10-11 18:13:46.432  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=ordinary online=false opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:46.447  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=ordinary online=false opening=1 queue_ms=0 wall_ms=1 cpu_ms=0
+10-11 18:13:46.451  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=false opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:46.452  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=false opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:46.453  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=false opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:46.453  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=false opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:46.453  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=false opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:46.564  2845  2887 I SavedThreadFirstDraw: case=ordinary online=false opening=1 rows=20 durable=20 spans=0 restored_ms=17 snapshot_ms=23 complete_ms=40 drawn_ms=86
+10-11 18:13:46.569  2845  2845 I SavedThreadFirstDraw: event=opening_cleared case=ordinary online=false opening=1 elapsed_ms=141
+10-11 18:13:46.860  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=96
+10-11 18:13:47.116  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:47.372  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=100
+10-11 18:13:47.629  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:47.629  2845  2887 I SavedThreadEnvironment: event=cpu_idle
+10-11 18:13:47.632  2845  2845 I SavedThreadFirstDraw: event=opening_installed case=ordinary online=true opening=0 elapsed_ms=3
+10-11 18:13:47.633  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=ordinary online=true opening=0 queue_ms=0 wall_ms=3 cpu_ms=2
+10-11 18:13:47.646  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=ordinary online=true opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:47.647  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=ordinary online=true opening=0 queue_ms=0 wall_ms=1 cpu_ms=0
+10-11 18:13:47.648  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=ordinary online=true opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:47.651  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=true opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:47.652  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=true opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:47.652  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=true opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:47.652  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=true opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:47.652  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=true opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:47.763  2845  2887 I SavedThreadFirstDraw: case=ordinary online=true opening=0 rows=20 durable=20 spans=0 restored_ms=21 snapshot_ms=22 complete_ms=39 drawn_ms=84
+10-11 18:13:47.769  2845  2845 I SavedThreadFirstDraw: event=opening_cleared case=ordinary online=true opening=0 elapsed_ms=139
+10-11 18:13:48.059  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:48.315  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:48.571  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:48.827  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:48.827  2845  2887 I SavedThreadEnvironment: event=cpu_idle
+10-11 18:13:48.829  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=ordinary online=true opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:48.830  2845  2845 I SavedThreadFirstDraw: event=opening_installed case=ordinary online=true opening=1 elapsed_ms=3
+10-11 18:13:48.831  2845  2908 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=ordinary online=true opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:48.845  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=ordinary online=true opening=1 queue_ms=0 wall_ms=1 cpu_ms=0
+10-11 18:13:48.846  2845  2908 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=true opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:48.846  2845  2908 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=true opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:48.847  2845  2908 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=true opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:48.847  2845  2908 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=true opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:48.847  2845  2908 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=ordinary online=true opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:48.963  2845  2887 I SavedThreadFirstDraw: case=ordinary online=true opening=1 rows=20 durable=20 spans=0 restored_ms=16 snapshot_ms=19 complete_ms=39 drawn_ms=86
+10-11 18:13:48.968  2845  2845 I SavedThreadFirstDraw: event=opening_cleared case=ordinary online=true opening=1 elapsed_ms=140
+10-11 18:13:51.616  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:51.872  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:52.128  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=100
+10-11 18:13:52.384  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=96
+10-11 18:13:52.384  2845  2887 I SavedThreadEnvironment: event=cpu_idle
+10-11 18:13:52.388  2845  2845 I SavedThreadFirstDraw: event=opening_installed case=fragmented online=false opening=0 elapsed_ms=3
+10-11 18:13:52.446  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=false opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:52.755  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=false opening=0 queue_ms=0 wall_ms=48 cpu_ms=45
+10-11 18:13:52.907  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=false opening=0 queue_ms=0 wall_ms=150 cpu_ms=97
+10-11 18:13:52.911  2845  2908 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=false opening=0 queue_ms=0 wall_ms=2 cpu_ms=2
+10-11 18:13:52.911  2845  2908 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=false opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:52.911  2845  2908 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=false opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:52.912  2845  2908 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=false opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:53.571  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=false opening=0 queue_ms=0 wall_ms=1185 cpu_ms=1084
+10-11 18:13:53.594  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=false opening=0 queue_ms=0 wall_ms=22 cpu_ms=22
+10-11 18:13:54.022  2845  2887 I SavedThreadFirstDraw: case=fragmented online=false opening=0 rows=18000 durable=36000 spans=18000 restored_ms=370 snapshot_ms=523 complete_ms=546 drawn_ms=637
+10-11 18:13:54.027  2845  2845 I SavedThreadFirstDraw: event=opening_cleared case=fragmented online=false opening=0 elapsed_ms=1642
+10-11 18:13:54.325  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=96
+10-11 18:13:54.581  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:54.837  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:55.094  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=100
+10-11 18:13:55.094  2845  2887 I SavedThreadEnvironment: event=cpu_idle
+10-11 18:13:55.098  2845  2845 I SavedThreadFirstDraw: event=opening_installed case=fragmented online=false opening=1 elapsed_ms=3
+10-11 18:13:55.109  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=false opening=1 queue_ms=0 wall_ms=14 cpu_ms=13
+10-11 18:13:55.120  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=false opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:55.132  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=false opening=1 queue_ms=0 wall_ms=15 cpu_ms=14
+10-11 18:13:55.148  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=false opening=1 queue_ms=0 wall_ms=15 cpu_ms=13
+10-11 18:13:55.223  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=false opening=1 queue_ms=0 wall_ms=75 cpu_ms=69
+10-11 18:13:55.227  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=false opening=1 queue_ms=0 wall_ms=2 cpu_ms=1
+10-11 18:13:55.227  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=false opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:55.227  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=false opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:55.227  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=false opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:55.671  2845  2887 I SavedThreadFirstDraw: case=fragmented online=false opening=1 rows=18000 durable=36000 spans=18000 restored_ms=38 snapshot_ms=129 complete_ms=389 drawn_ms=527
+10-11 18:13:55.677  2845  2845 I SavedThreadFirstDraw: event=opening_cleared case=fragmented online=false opening=1 elapsed_ms=582
+10-11 18:13:55.995  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=100
+10-11 18:13:56.253  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:56.509  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:56.765  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:56.766  2845  2887 I SavedThreadEnvironment: event=cpu_idle
+10-11 18:13:56.769  2845  2845 I SavedThreadFirstDraw: event=opening_installed case=fragmented online=true opening=0 elapsed_ms=3
+10-11 18:13:56.788  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=true opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:57.065  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=true opening=0 queue_ms=0 wall_ms=14 cpu_ms=14
+10-11 18:13:57.141  2845  3050 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=true opening=0 queue_ms=0 wall_ms=75 cpu_ms=73
+10-11 18:13:57.145  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=true opening=0 queue_ms=0 wall_ms=1 cpu_ms=1
+10-11 18:13:57.145  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=true opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:57.146  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=true opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:57.146  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=true opening=0 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:57.820  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=true opening=0 queue_ms=0 wall_ms=1053 cpu_ms=986
+10-11 18:13:57.834  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=true opening=0 queue_ms=0 wall_ms=13 cpu_ms=13
+10-11 18:13:58.154  2845  2887 I SavedThreadFirstDraw: case=fragmented online=true opening=0 rows=18000 durable=36000 spans=18000 restored_ms=299 snapshot_ms=375 complete_ms=385 drawn_ms=464
+10-11 18:13:58.159  2845  2845 I SavedThreadFirstDraw: event=opening_cleared case=fragmented online=true opening=0 elapsed_ms=1393
+10-11 18:13:58.461  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:58.719  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=96
+10-11 18:13:58.975  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=100
+10-11 18:13:59.233  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=100
+10-11 18:13:59.234  2845  2887 I SavedThreadEnvironment: event=cpu_idle
+10-11 18:13:59.237  2845  2845 I SavedThreadFirstDraw: event=opening_installed case=fragmented online=true opening=1 elapsed_ms=3
+10-11 18:13:59.255  2845  3050 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=true opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:59.259  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=true opening=1 queue_ms=0 wall_ms=24 cpu_ms=20
+10-11 18:13:59.259  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=true opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:59.276  2845  3049 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=true opening=1 queue_ms=0 wall_ms=16 cpu_ms=13
+10-11 18:13:59.289  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=fragmented online=true opening=1 queue_ms=0 wall_ms=13 cpu_ms=13
+10-11 18:13:59.342  2845  3050 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=true opening=1 queue_ms=0 wall_ms=65 cpu_ms=57
+10-11 18:13:59.344  2845  3050 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=true opening=1 queue_ms=0 wall_ms=2 cpu_ms=1
+10-11 18:13:59.344  2845  3050 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=true opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:59.344  2845  3050 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=true opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:59.344  2845  3050 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=fragmented online=true opening=1 queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:59.707  2845  2887 I SavedThreadFirstDraw: case=fragmented online=true opening=1 rows=18000 durable=36000 spans=18000 restored_ms=42 snapshot_ms=106 complete_ms=348 drawn_ms=420
+10-11 18:13:59.712  2845  2845 I SavedThreadFirstDraw: event=opening_cleared case=fragmented online=true opening=1 elapsed_ms=478
+10-11 18:13:40.147  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=98
+10-11 18:13:40.403  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=96
+10-11 18:13:40.659  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=100
+10-11 18:13:40.915  2845  2887 I SavedThreadEnvironment: event=cpu_window idle_pct=100
+10-11 18:13:40.915  2845  2887 I SavedThreadEnvironment: event=cpu_idle
+10-11 18:13:40.920  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=negative-control queue_ms=0 wall_ms=1 cpu_ms=1
+10-11 18:13:40.921  2845  2845 I SavedThreadFirstDraw: event=opening_installed case=negative-control elapsed_ms=6
+10-11 18:13:43.924  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=negative-control queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:43.944  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=io case=negative-control queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:43.946  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=negative-control queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:43.946  2845  3345 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=negative-control queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:43.947  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=negative-control queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:43.948  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=negative-control queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:43.948  2845  2910 I SavedThreadCacheWorker: event=cache_worker_run worker=default case=negative-control queue_ms=0 wall_ms=0 cpu_ms=0
+10-11 18:13:44.013  2845  2887 I SavedThreadFirstDraw: case=negative-control rows=1 durable=1 spans=0 restored_ms=3008 snapshot_ms=3030 complete_ms=3043 drawn_ms=3065
+10-11 18:13:44.019  2845  2845 I SavedThreadFirstDraw: event=opening_cleared case=negative-control elapsed_ms=3103
