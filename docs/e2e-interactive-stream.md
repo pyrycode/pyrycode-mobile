@@ -428,8 +428,9 @@ The method is `@Ignore` and excluded from the curated live suite. Claude can fin
 navigation; even a long prompt cannot fence that transient window, and pausing Compose leaves
 backend execution running. No passing live reopen assertion is claimed. Its rung-4 twin,
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`,
-uses `reopen-stream` to hold the prefix, release a suffix on the second send, then withhold
-completion until the third send after a still-open suffix display checkpoint. See
+uses `reopen-stream` to hold the prefix, release its suffix through the isolated
+controller after the phone's reopen display checkpoint, then withhold completion
+until a separate still-open suffix display checkpoint. See
 [deterministic sequence](#scenarios-454) and [counted evidence](#verification-status).
 
 For manual promotion, remove the method's ignore and run:
@@ -3164,8 +3165,8 @@ The configured `scripted-all` gate includes `ping` and retains both methods:
 | `selection-copy` (#1674) | finished assistant prose copies only the long-pressed word through Android’s system menu | `selection-copy.jsonl` | one |
 | `direct-share` (#1729) | published shortcut stages text in its thread without a picker or send; explicit Send receives ping | `ping.jsonl` | one |
 | `ping` (default, #1842) | original single-line reply plus durable reconnect newest-page delivery and reader-driven gap catch-up | `ping.jsonl` | one, reused by both methods |
-| `reopen-stream` (#1762) | arrived prefix is immediate on reopen and retained when a suffix composes while the turn stays open; one final combined reply | `reopen-stream-open.jsonl` + `reopen-stream-done.jsonl` | **two** (suffix on second send, terminal result on third) |
-| `stream` (#1765, #1817, #1818) | arrived words display while the same reply stays streaming; all three deltas settle into one complete reply without a caret; side copy reads user, held-stream and finished assistant source while timestamps stay hidden; reply stages exact quotes of the held stream and the user message, unchanged by later chunks, with focus and keyboard and no send | `stream.jsonl` + `stream-end.jsonl` | **two** (completion on second send) |
+| `reopen-stream` (#1762) | arrived prefix is immediate on reopen and retained when a suffix composes while the turn stays open; one final combined reply | `reopen-stream-open.jsonl` + `reopen-stream-done.jsonl` | **two** (phone-checkpoint suffix and terminal-result releases) |
+| `stream` (#1765, #1817, #1818) | arrived words display while the same reply stays streaming; all three deltas settle into one complete reply without a caret; side copy reads user, held-stream and finished assistant source while timestamps stay hidden; reply stages exact quotes of the held stream and the user message, unchanged by later chunks, with focus and keyboard and no send | `stream.jsonl` + `stream-end.jsonl` | **two** (phone display-checkpoint release) |
 | `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
 | `tool` (#455) | a tool step shows **running** in flight, then **done** after the result | `tool-open.jsonl` + `tool-done.jsonl` | **two** |
 | `tool-failed` (#455) | a failing tool step renders **failed** | `tool-failed.jsonl` | one |
@@ -3408,16 +3409,18 @@ the context notice is gone. No live rung-3 twin is possible: real Claude cannot 
 is the held twin of the manual word-reveal observation. `stream.jsonl` emits two
 arrivals forming a multi-word prefix without a terminal record. The test observes `Hello, streamed`
 in a displayed bubble and verifies the assistant row is still streaming and the
-turn non-idle. Only after that checkpoint does its explicit second send release
-`stream-end.jsonl`, carrying the third delta and terminal result. Elapsed time alone
-cannot release completion. Together the fragments retain the three distinct
+turn non-idle. Only after the held display/copy/reply checkpoints does
+`DaemonFaultControl.releaseStream()` release `stream-end.jsonl`, carrying the
+third delta and terminal result. The isolated controller touches a fixed harness-owned
+release path; elapsed time alone cannot release completion. Together the fragments retain the three distinct
 assistant `message.id`s and assemble one reply, `Hello, streamed world`.
 
 The test awaits that same reply ID with exact complete text, `isStreaming == false`
 and an idle turn before checking the displayed final body without its caret.
-The release send remains real user input and can produce another assistant turn.
 Completion selects exactly one assistant with the captured `held.id`, preserving
 duplicate-ID rejection without assuming the conversation has only one reply (#1793).
+The fixture starts with a fixed synthetic replay user echo to establish initial
+delivery. The display release introduces no additional prompt or user echo (#1985).
 Caret absence alone cannot establish completion because the caret blinks. This
 scenario stays selected by `scripted stream` and `scripted-all`; it asserts display
 and settlement, not cadence or a live catch-up deadline.
@@ -3586,6 +3589,46 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+### Supplied renderer and scripted display fences (#1985)
+
+The additive supplied authoritative renderer has [counted projection/screen evidence](knowledge/features/thread-screen-testing.md#supplied-authoritative-renderer-1985).
+Production negotiation, store collection and activated-route rung-3 acceptance remain
+with [#1988](https://github.com/pyrycode/pyrycode-mobile/issues/1988), including
+`InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`,
+`interactiveTurn_backgroundAgent_replyStaysUnderAgent`, prior-session terminal agents
+and combined daemon #3077 proof. The existing legacy background-agent ladder coverage
+does not establish activated-route execution.
+
+The repaired `stream` and `reopen-stream` fixtures prepend a fixed synthetic replay
+user echo. Their isolated controller releases held content only after the phone
+proves the preceding display checkpoint; incidental second/third sends previously
+introduced a user echo between the measured prefix and suffix. Stream completion
+retains same-reply identity, copy/reply, prefix/streaming, completion/idle and caret
+assertions. Reopen retains paused-clock immediate prefix/reveal checks;
+`DaemonFaultControl.releaseStream()` follows the reopened-prefix checkpoint,
+then `finishStream()` follows the displayed suffix while the same reply
+is still streaming and the turn non-idle. Both release paths are optional fixed
+files owned by the isolated harness, with idempotent controller actions.
+
+The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2076#issuecomment-6107772890)
+on `63c64b73b909` and dispatcher gate report record full `scripted-all`:
+**22 executed, 22 passed, 0 failed, 0 skipped** across 21 scenarios.
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
+and `interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`
+each executed once and passed (**1/0/0**). These are named results from the full
+suite, not separate focused runs. Documentation also inspected retained builder
+XML `/tmp/builder-1985/stream-green-TEST-pixel2Api33Atd-_app-.xml` and
+`reopen-green-TEST-pixel2Api33Atd-_app-.xml`: each **1 executed, 1 passed,
+0 failed, 0 skipped**, timestamped `2026-10-11T08:38:15` and `08:39:10` respectively.
+Those earlier focused reports supplement the final gate record.
+
+The independent legacy queued-echo split remains open in
+[#2078](https://github.com/pyrycode/pyrycode-mobile/issues/2078), with ignored
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply`
+and the manual `stream-queued-echo` harness arm. It is separate from both required
+passing display methods. No live scenario is added or promoted here; the pre-ship
+command remains `python3 scripts/android-test-gate.py live`.
 
 ### Scripted durable-gap closure (#2069)
 
@@ -6347,10 +6390,17 @@ The remaining checks here are specific to a real relay or real Claude execution:
   #1818 added reply and the midpoint split of the action targets.
   The pre-ship command stays `python3 scripts/android-test-gate.py live`.
 
+- **Authoritative activation (#1988) and queued echo (#2078):** supplied-snapshot
+  renderer proof and repaired deterministic display fences are recorded
+  [above](#supplied-renderer-and-scripted-display-fences-1985). #1988 retains the
+  activated-route background-agent methods and prior-session terminal regression;
+  #2078 retains the separate ignored queued-echo reproduction/manual harness arm.
+
 - **Stream completion identity (#1793):**
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
-  retains the captured reply ID after its release send, which may create another
-  assistant turn. Keep this selector scoped to that reply while rejecting duplicate
+  retains the captured reply ID after a phone display-checkpoint controller release
+  without an incidental send. The fixture includes a fixed replay user echo for initial
+  delivery. Keep this selector scoped to that reply while rejecting duplicate
   IDs; preserve every prefix, streaming, completion, idle, display and caret assertion.
 
 - **Word reveal (#1765):** the held `stream` twin,
@@ -6373,7 +6423,8 @@ The remaining checks here are specific to a real relay or real Claude execution:
 - **Ongoing-reply reopen (#1762):**
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`
   passed both the repaired focused `reopen-stream` run and `scripted-all`; the separate
-  second-send suffix and third-send result fences keep both display checkpoints on an open reply.
+  phone-checkpoint suffix and completion fences keep both display checkpoints on an open reply.
+  The fixture's fixed replay user echo establishes initial delivery; neither release sends a prompt.
   `InteractiveStreamE2ETest.interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately`
   remains ignored, excluded from the curated selector and manual/unproven because Claude may
   finish during navigation. Follow the [un-ignore and named-run procedure](#what-rung-3-is-made-of)

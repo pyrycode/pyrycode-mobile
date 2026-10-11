@@ -31,7 +31,7 @@ else below is unit- and Compose-tested against fakes.
   protection; § Rendering).
 - `ui/conversations/thread/ThreadScreen.kt` — mounts the prompt rows, the newest-end reveal effect and the
   composer-status "Waiting for answers" reading; see [Thread screen § list and status
-  row](thread-screen-how-it-works-list-and-status-row.md#inline-question-rows-and-the-newest-end-reveal-1305).
+  row](thread-screen-inline-question-reveal.md#inline-question-rows-and-the-newest-end-reveal-1305).
 - `MainActivity.kt` — passes `questionState = questionModal` and `onQuestionEvent = vm::onQuestionEvent`
   straight into the `ThreadScreen(...)` call (see § Placement below); no longer draws a sibling `Dialog`.
 - `di/AppModule.kt` — `single { QuestionDraftStore() } onClose { it?.dispose() }` binds the app-scoped store;
@@ -345,7 +345,7 @@ question rows).
   across batch arrival and edits, with prompt rows never advancing the oldest-end history demand
   (`arrival_and_edits_preserve_a_history_reader_and_prompt_rows_do_not_advance_history_demand`). See
   [Thread screen § list and status
-  row](thread-screen-how-it-works-list-and-status-row.md#inline-question-rows-and-the-newest-end-reveal-1305)
+  row](thread-screen-inline-question-reveal.md#inline-question-rows-and-the-newest-end-reveal-1305)
   for the production side of each. #1484 added three more: `focusing_other_reveals_the_field_and_both_actions`
   (the last question's Other field, the field and both actions land inside `thread-message-region`),
   `focusing_an_earlier_other_keeps_the_field_in_view_on_every_frame` (main clock paused, `question_other_0` in a
@@ -451,7 +451,7 @@ question rows).
 - [Thread screen](thread-screen.md) — the screen this batch now renders inside; see § Placement above and
   [Thread screen § Destination block](thread-screen.md#destination-block) for the current wiring.
 - [Thread screen — list and status
-  row](thread-screen-how-it-works-list-and-status-row.md#inline-question-rows-and-the-newest-end-reveal-1305)
+  row](thread-screen-inline-question-reveal.md#inline-question-rows-and-the-newest-end-reveal-1305)
   — the prompt-row prefix in the oldest-end history predicate, the newest-end reveal effect, and the
   composer-status "Waiting for answers" reading.
 - [Real-claude e2e coverage](../../e2e-interactive-stream.md) — the adapted rung-3 scenario and the
