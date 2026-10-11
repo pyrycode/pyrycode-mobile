@@ -103,6 +103,12 @@ Both normal focused commands reproduced the verdict's 90-second coroutine timeou
 
 The posted verifier verdict reports the current UI gate completed at the reviewed revision on `Juhanas-MacBook-Air.local`: 259 recorded, 258 executed/passed, zero failures/errors and one existing rename skip, with all three scanner methods passing. This resolves the earlier pending UI completion at that revision; the report explicitly attributes these counts to the verdict because its worktree is no longer present for independent re-parsing. Documentation still belongs to the later stage. Measured retained work is 815 written lines including evidence and plan, with one deliverable, three criteria, no exported types, consumer migrations or reject branches, below the 1,600-line ceiling.
 
+### 2026-10-11 — Upstream direct-release fixture landed during final merge
+
+The required final fetch/merge brought in #1985 / PR #2076 at main `a6840a356e8d5f02e62f888e5d1961b273d93475`, producing tested merge `f8a08c1f8a5a56f22ce9788762c1e2ed463f553a`. Upstream changed the two display fixtures to release fragments directly through the isolated daemon controller, separating display checks from the queued-follow-up defect tracked by #2078. The retained failures and matching input hashes describe the earlier `9b558e00a`/`11ed225d2` trees; they do not describe the new merged harness. No scanner fixture, capture, instrumentation runner or managed-device configuration changed in this merge.
+
+Rerun both normal focused scripted commands on this merged tree and retain exact method identities, executed/passed/failed/error/skipped counts, command/exit, revisions and original artifact hashes. If both pass, remove the temporary #2078 blocker and complete this evidence ticket with ordinary dispatcher gates pending. This supersedes the earlier waiting outcome only after counted passes; the separate legacy projection repair remains #2078's scope. Append the measured results before handoff. No #2051 production or fixture change is proposed.
+
 ## Documentation handoff
 
 - Pending documentation stage: record the installed HP workaround and subsequent dispatcher UI/scripted results in `docs/knowledge/features/development-verification.md`, under its managed-device verification guidance, including host, revision, counts and evidence paths. Preserve the distinction between historical suite completion, a passing current gate and exact native defect repair.
