@@ -122,27 +122,35 @@ The fold itself is the internal, pure `HostAttentionState` data class — no clo
 I/O or logging. Turn ids and local row tokens are equality keys; durable entry ids
 are compared as unsigned values.
 
-**Shared unread (#1883).** For each conversation with a present confirmed `readUpTo` (wire `read_up_to`),
-unread is exactly `latestEntryId > readUpTo` (wire latest is `latest_entry_id`). An unknown latest id asserts no durable
-unread; zero is a valid mark. `observeHostReadMarks()` projects the repository's existing
-`ConversationReadMarks` map, with no new request, inbound consumer or checkpoint fold.
-List refreshes, confirmed replies/peer pushes and received history/live/replay durable
-identity recompute attention immediately. `conversation_updated` supplies a mark,
-not a new latest id. The mark is shared across paired clients on that daemon host,
-never across hosts with equal conversation ids. See the
-[repository read facts](remote-conversation-repository.md) and
-[phone read proof](../../e2e-interactive-stream.md#phone-read-mark-proof-1912).
+**Shared unread (#1883, #2085).** With confirmed `readUpTo`, compare
+`ConversationReadMarks.unreadWatermark > readUpTo`: usable `lastShownVersion` on
+thread-supported connections, `latestEntryId` on legacy ones. Thread metadata
+unavailability grants no authoritative unread verdict or notification coverage and
+cannot fall back to legacy activity, numeric zero or local positions. Explicit zero
+is known. Prompt/running precedence is unchanged. `observeHostReadMarks()` projects
+the existing host/conversation ledger without a request or extra fold; summary and
+peer updates recompute attention without establishing sight. Updates carry confirmed
+read and shown availability while preserving held legacy latest.
 
-Opening or viewing a supported conversation, adding local rows and completing a turn
-do not change its local positions or override the shared comparison. Completion still
-updates bounded counted-turn bookkeeping for once-per-turn alert candidates. A modern
-thread remains unread until the daemon confirms a mark covering its newest known entry.
-Local UUIDs/turn ids never become durable ids; notification cancellation is a separate
-consumer concern.
+Viewing, local rows and completion cannot override shared read. Completion still
+updates bounded once-per-turn alert bookkeeping; only daemon confirmation advances
+the mark. Equal conversation ids on different hosts remain independent. Notification
+coverage on thread connections also uses usable shown metadata, even when a completion
+carries a legacy history id. The synchronous exact-host lookup below prevents stale
+support/read facts from cancelling alerts against a replacement connection. See the
+[repository facts and retries](remote-conversation-repository.md#daemon-conversation-read-marks).
 
-**Older-daemon fallback.** When `readUpTo` is absent, only that conversation uses
-the existing host-keyed, persisted `ReadPosition` rules below. Cached read-field
-presence cannot negotiate support for a connected daemon.
+**Older-daemon fallback.** Without thread support and without a confirmed `readUpTo`, the
+conversation keeps host-keyed persisted `ReadPosition`. Thread support with missing
+confirmed/shown metadata withholds the shared verdict rather than enabling fallback.
+Cached fields do not negotiate current connection support.
+
+The authoritative supplied screen validates exact row revision sight, composition
+binding and the facade connection identity captured at publication. A reconnect can
+retry previously qualified host-owned work after screen closure but cannot qualify
+new sight from the retired view or catch-up receipt. This seam remains dormant;
+\#1988 owns activation and combined daemon/live acceptance. See
+[foreground qualification](thread-screen.md#what-it-does).
 
 **`busy` (#1452).** A conversation blinks `Running` not only while a turn runs, but also while it
 is stalled, retrying the API, compacting or resetting — desktop's `isWorking`
