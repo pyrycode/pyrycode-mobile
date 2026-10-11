@@ -8,6 +8,55 @@ and its links.
 
 ## Test scheduling and harnesses
 
+The instrumentation Compose 1.10.4 rule's default unconfined composition dispatcher
+can resume a suspended startup producer inline on its completion worker. In #2094,
+the launcher replacement failure reached `NavHost.setGraph` from DataStore through
+the test frame/apply interceptors, before external-target routing. Adding another
+Main routing turn cannot repair that composition boundary.
+`SharingShortcutsDeviceTest` supplies `StandardTestDispatcher` as its rule's
+`effectContext`, queuing composition work for the Main test-clock pump. Keep this
+configuration local to the affected rule; no global Main replacement or lifecycle
+enforcement change is needed. See [shortcut navigation testing](navigation.md#testing).
+
+`workerCompletionKeepsStartupAndNavigationOnMainThread` uses that same rule, holds
+a Main-started producer, proves the held UI, then completes it on an owned worker
+before checking startup resumption and every real Navigation Compose graph
+composition. Assert the completion is off Main and both later boundaries are on
+Main. A graph-only assertion can pass while startup resumed on a worker: in the
+retained red run, startup resumed off Main at virtual clock 16 and the later clock
+pump composed the graph on Main at 32. Bounded Main-hold and worker snapshot-apply
+variants did not force off-main graph delivery; they remain diagnostics, while the
+fresh launcher failure separately proves the graph/lifecycle violation. Keep
+observations bounded and content-free, join worker completion and release held
+work in guaranteed cleanup.
+
+The [retained diagnosis and red/green evidence](../../../app/src/test/resources/verification/shortcut-composition-2094/README.md)
+compares the same baseline `3918ef87d14d6add0013c9f4d5538c0d22d87c5e`: the full
+configured UI gate passed 259 executed tests with one skip, but the fresh isolated
+launcher method failed once. Prior-method shared state is therefore unnecessary
+to reproduce this violation; suite ordering, isolated success and cleanup-time
+focus cannot establish its cause. The exact historical interleaving and a
+production-device occurrence remain unestablished. The minimal controlled
+regression failed its startup Main assertion before the dispatcher change and
+passed afterward (one executed each, zero errors/skips).
+
+The [fresh repaired full-gate verdict](https://github.com/pyrycode/pyrycode-mobile/pull/2110#issuecomment-6115101072)
+resolves the pending full-gate handoff on
+`ada13ce7e0091da85495876e5a6fbdb4f331b65b`:
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui` exited 0
+with **260 executed, 260 passed, 0 failed, 0 errors, 1 skipped**. Both
+`SharingShortcutsDeviceTest.dynamicTargetHasShareContractAndLauncherIntentOpensWithoutChangingDraft`
+and `workerCompletionKeepsStartupAndNavigationOnMainThread` explicitly passed,
+neither skipped. The fresh managed-device report timestamp was
+`2026-10-11T23:20:51`, at
+`app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/TEST-pixel2Api33Atd_0-_app-.xml`
+in the verifier worktree; sanitized XML is retained in
+`/work/Projects/pyrycode-mobile-agents/logs/verifier-gate_#2094_7.log` and
+`/tmp/verifier-2110/dispatcher-ui.xml`, SHA-256
+`b65932aa79675b5d751bf53ca6b33975df9406a4938eb6c87abcf92256feb28a`.
+This full-suite evidence supplements the builder's focused checks; #2057 still
+requires its own fresh gates and real-Claude acceptance after this repair lands.
+
 Shared screen tests cannot assume an empty application singleton on the device:
 Robolectric recreates the application/Koin graph per method, while instrumentation
 keeps it across methods. `SharePickerTest` retains the production

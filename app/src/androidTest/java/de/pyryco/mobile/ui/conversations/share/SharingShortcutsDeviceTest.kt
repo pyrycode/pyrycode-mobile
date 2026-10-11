@@ -1,10 +1,22 @@
 package de.pyryco.mobile.ui.conversations.share
 
 import android.content.pm.ShortcutManager
+import android.os.Looper
+import android.util.Log
+import androidx.activity.compose.setContent
+import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
@@ -13,7 +25,13 @@ import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -21,15 +39,72 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.koin.core.context.GlobalContext
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** Real OS ShortcutManager publication and launching its persisted Intent require a device. */
+@OptIn(ExperimentalTestApi::class, ExperimentalCoroutinesApi::class)
 @RunWith(AndroidJUnit4::class)
 class SharingShortcutsDeviceTest {
     init {
         grantNotificationPermission()
     }
 
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    // Queue worker resumptions for the main test clock instead of composing inline on that worker.
+    @get:Rule val compose = createAndroidComposeRule<MainActivity>(effectContext = StandardTestDispatcher())
+
+    @Test fun workerCompletionKeepsStartupAndNavigationOnMainThread() {
+        val started = CompletableDeferred<Unit>()
+        val completion = CompletableDeferred<Unit>()
+        val observations = CopyOnWriteArrayList<Pair<String, Boolean>>()
+
+        fun observe(event: String) {
+            val main = Looper.myLooper() == Looper.getMainLooper()
+            check(observations.size < 16) { "unexpected composition observation count" }
+            observations += event to main
+            Log.i("ShortcutComposition2094", "event=$event main=$main clock_ms=${compose.mainClock.currentTime}")
+        }
+        try {
+            // Replace content on the same Activity/rule that exercises the persisted launcher Intent.
+            compose.runOnUiThread {
+                compose.activity.setContent {
+                    val ready by produceState(false) {
+                        observe("startup_started")
+                        started.complete(Unit)
+                        completion.await()
+                        observe("startup_resumed")
+                        value = true
+                    }
+                    if (ready) {
+                        observe("graph_composed")
+                        NavHost(rememberNavController(), startDestination = "ready") {
+                            composable("ready") { Text("navigation ready") }
+                        }
+                    } else {
+                        Text("startup held")
+                    }
+                }
+            }
+            compose.waitUntil(5_000) { started.isCompleted }
+            compose.onNodeWithText("startup held").assertIsDisplayed()
+            assertEquals(listOf("startup_started" to true), observations.toList())
+            runBlocking {
+                withTimeout(5_000) {
+                    withContext(Dispatchers.Default) {
+                        observe("worker_completion")
+                        completion.complete(Unit)
+                    }
+                }
+            }
+            compose.waitForIdle()
+            compose.onNodeWithText("navigation ready").assertIsDisplayed()
+            assertTrue("completion ran off Main", observations.contains("worker_completion" to false))
+            assertEquals(listOf(true), observations.filter { it.first == "startup_resumed" }.map { it.second })
+            assertTrue("graph composed on Main", observations.any { it.first == "graph_composed" })
+            assertTrue("every graph composition ran on Main", observations.filter { it.first == "graph_composed" }.all { it.second })
+        } finally {
+            completion.complete(Unit)
+        }
+    }
 
     @Test fun dynamicTargetHasShareContractAndLauncherIntentOpensWithoutChangingDraft() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

@@ -1,0 +1,26 @@
+{
+  "source_log": "app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/shard_0/logcat-de.pyryco.mobile.ui.conversations.share.SharingShortcutsDeviceTest-dynamicTargetHasShareContractAndLauncherIntentOpensWithoutChangingDraft.txt",
+  "source_sha256": "546ba34ece8e98f32852b2e2af54ef5493a95b90a4012567429fefc57727521a",
+  "events": [
+    {
+      "timestamp": "10-11 22:54:58.986",
+      "event": "event=workspace_startup_started",
+      "main": true
+    },
+    {
+      "timestamp": "10-11 22:54:58.990",
+      "event": "event=workspace_startup_ready",
+      "main": false
+    },
+    {
+      "timestamp": "10-11 22:54:59.796",
+      "event": "event=workspace_startup_started",
+      "main": true
+    },
+    {
+      "timestamp": "10-11 22:54:59.810",
+      "event": "event=workspace_startup_ready",
+      "main": false
+    }
+  ]
+}

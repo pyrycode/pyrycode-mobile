@@ -384,6 +384,13 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 - **No deep links, no animations.** `composable(Routes.X) { ... }` only — no `deepLinks = listOf(...)`, no custom `enterTransition` / `exitTransition`.
 ## Testing
 
+`SharingShortcutsDeviceTest` uses a local `StandardTestDispatcher` effect context
+to queue worker startup completion for the Main clock. Its regression checks both
+startup resumption and graph composition Loopers; a later Main graph can conceal
+an earlier worker continuation. The launcher method retains real OS publication,
+exact target, category/MIME, labels/artwork, persisted task-replacing Intent,
+picker absence and unchanged draft checks. See [diagnosis and full-gate proof](development-verification-test-scheduling.md#test-scheduling-and-harnesses).
+
 `SharePickerTest` accepts the pending share on Main before mounting `PyryNavHost`,
 matching fresh share-launch ordering. Mounting ordinary channel navigation first
 can start notification onboarding and leave `GrantPermissionsActivity` holding

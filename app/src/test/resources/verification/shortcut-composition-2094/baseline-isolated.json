@@ -1,0 +1,16 @@
+{
+  "command": "PYRY_FORCE_TEST_RUN=1 timeout 1200 ./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.share.SharingShortcutsDeviceTest#dynamicTargetHasShareContractAndLauncherIntentOpensWithoutChangingDraft -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e -Pandroid.experimental.androidTest.numManagedDeviceShards=1 -Pandroid.testInstrumentationRunnerArguments.disableAnimations=true --console=plain",
+  "exit_code": 1,
+  "revision": "3918ef87d14d6add0013c9f4d5538c0d22d87c5e",
+  "source_xml": "app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/TEST-pixel2Api33Atd_0-_app-.xml",
+  "source_sha256": "9d00e35aa354f172c618f8b4b443479fd41567309472f8c5af828def463f1507",
+  "dirty_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "counts": {
+    "recorded": 1,
+    "executed": 1,
+    "passed": 0,
+    "failed": 1,
+    "errors": 0,
+    "skipped": 0
+  }
+}
