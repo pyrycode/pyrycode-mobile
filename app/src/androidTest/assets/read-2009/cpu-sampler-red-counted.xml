@@ -1,0 +1,5 @@
+<testsuite name="de.pyryco.mobile.e2e.EmulatorCpuReadinessTest" tests="1" skipped="0" failures="1" errors="0" timestamp="2026-10-11T19:39:33.391Z">
+  <testcase name="heldAcquisitionCannotHoldTheReadinessDeadline" classname="de.pyryco.mobile.e2e.EmulatorCpuReadinessTest">
+    <failure type="java.lang.AssertionError" message="held acquisition released before the readiness clock could advance" />
+  </testcase>
+</testsuite>
