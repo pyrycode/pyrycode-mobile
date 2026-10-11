@@ -45,13 +45,13 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -325,24 +325,35 @@ class SavedThreadFirstDrawDeviceTest {
         projectionDelayMs: Long = 0,
     ) {
         val projectionScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        val projection = if (projectionDelayMs == 0L) Dispatchers.Default else object : CoroutineDispatcher() {
-            override fun dispatch(context: CoroutineContext, block: Runnable) {
-                val queued = SystemClock.elapsedRealtimeNanos()
-                projectionScope.launch {
-                    try {
-                        delay(projectionDelayMs)
-                    } finally {
-                        val started = SystemClock.elapsedRealtimeNanos()
-                        val cpu = Debug.threadCpuTimeNanos()
-                        try {
-                            block.run()
-                        } finally {
-                            Log.i("SavedThreadCacheWorker", "event=projection_worker_run case=${probe.name} hold_ms=$projectionDelayMs queue_ms=${(started - queued) / 1_000_000} wall_ms=${(SystemClock.elapsedRealtimeNanos() - started) / 1_000_000} cpu_ms=${(Debug.threadCpuTimeNanos() - cpu) / 1_000_000}")
+        val projection =
+            if (projectionDelayMs == 0L) {
+                Dispatchers.Default
+            } else {
+                object : CoroutineDispatcher() {
+                    override fun dispatch(
+                        context: CoroutineContext,
+                        block: Runnable,
+                    ) {
+                        val queued = SystemClock.elapsedRealtimeNanos()
+                        projectionScope.launch {
+                            try {
+                                delay(projectionDelayMs)
+                            } finally {
+                                val started = SystemClock.elapsedRealtimeNanos()
+                                val cpu = Debug.threadCpuTimeNanos()
+                                try {
+                                    block.run()
+                                } finally {
+                                    Log.i(
+                                        "SavedThreadCacheWorker",
+                                        "event=projection_worker_run case=${probe.name} hold_ms=$projectionDelayMs queue_ms=${(started - queued) / 1_000_000} wall_ms=${(SystemClock.elapsedRealtimeNanos() - started) / 1_000_000} cpu_ms=${(Debug.threadCpuTimeNanos() - cpu) / 1_000_000}",
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
-        }
         val store = ViewModelStore()
         val beforeAsks = delegate.asks.size
         val measuredRepo =
