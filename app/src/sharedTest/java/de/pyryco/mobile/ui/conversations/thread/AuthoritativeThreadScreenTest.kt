@@ -240,6 +240,43 @@ class AuthoritativeThreadScreenTest {
         compose.onAllNodes(hasText("file-5") and hasText("Running")).assertCountEquals(0)
     }
 
+    @Test fun nestedLaunchStaysBeforeLaterForegroundSiblingAcrossSettlement() = nestedLaunchSibling(shown = true)
+
+    @Test fun nestedLaunchStaysBeforeLaterSiblingOfHiddenForegroundParentAcrossSettlement() = nestedLaunchSibling(shown = false)
+
+    private fun nestedLaunchSibling(shown: Boolean) {
+        val parent = authoritativeAgent(1, task = null, active = false, shown = shown)
+        val sibling = tool(3, parent = 1)
+        val main = authoritativeItem(4)
+        mount(parent, authoritativeAgent(2, parent = 1), sibling, main)
+        val launch = hasText("agent-2") and hasText("Go to agent ↓")
+
+        fun assertLaunchPosition() {
+            list().performScrollToNode(launch)
+            compose.onNode(launch).assertIsDisplayed()
+            compose.onNodeWithText("file-3", substring = true).assertIsDisplayed()
+            assertTrue(
+                compose
+                    .onNode(launch)
+                    .fetchSemanticsNode()
+                    .boundsInRoot.bottom <=
+                    compose
+                        .onNodeWithText("file-3", substring = true)
+                        .fetchSemanticsNode()
+                        .boundsInRoot.top,
+            )
+            compose.onAllNodes(launch).assertCountEquals(1)
+        }
+        assertLaunchPosition()
+        compose.runOnIdle {
+            snapshot = authoritativeSnapshot(parent, authoritativeAgent(2, parent = 1, active = false, endedOrder = 5), sibling, main)
+        }
+        assertLaunchPosition()
+        val root = hasText("agent-2") and hasText("Agent")
+        list().performScrollToNode(root)
+        compose.onNode(root).assertIsDisplayed()
+    }
+
     @Test fun taskExpansionUsesItemIdentityAcrossRevisionReplacementAndEpoch() {
         mount(authoritativeAgent(1, task = "recorded"))
         compose.onNodeWithText("1 task running").performClick()

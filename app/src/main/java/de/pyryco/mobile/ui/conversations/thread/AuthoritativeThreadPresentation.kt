@@ -98,7 +98,18 @@ internal fun projectAuthoritativeThread(
             .filter { owners[it.id] != null && (it.kind == "agent" || it.id in adapted) }
             .sortedBy { it.order ?: Long.MAX_VALUE }
             .groupBy { owners[it.id] }
-    val ordersByKey = visible.associate { "msg:${identity(it.id)}" to requireNotNull(it.order) }
+    val launches =
+        background.filterValues { it.shown }.mapValues { (_, item) ->
+            ThreadRow.AgentStartMarker(
+                identity(item.id),
+                item.description(),
+                !item.active,
+                item.endedOrder?.takeIf { it > 0 }?.toString(),
+            )
+        }
+    val ordersByKey =
+        visible.associate { "msg:${identity(it.id)}" to requireNotNull(it.order) } +
+            launches.map { (id, marker) -> marker.listKey(0) to requireNotNull(held.getValue(id).order) }
 
     fun block(item: ThreadItemDto): List<ThreadRow> =
         buildList {
@@ -107,7 +118,12 @@ internal fun projectAuthoritativeThread(
             while (pending.isNotEmpty()) {
                 val next = pending.removeLast()
                 // A recorded background child owns an independent lifecycle placement.
-                if (next.id != item.id && next.id in background) continue
+                if (next.id != item.id && next.id in background) {
+                    // Chronological foreground siblings retain the child's launch position. A moving
+                    // background family excludes nested markers: those stay in chronological history.
+                    if (item.id !in background) launches[next.id]?.let(::add)
+                    continue
+                }
                 adapted[next.id]?.let(::add)
                 children[next.id].orEmpty().asReversed().forEach(pending::addLast)
             }
@@ -117,17 +133,6 @@ internal fun projectAuthoritativeThread(
     for (item in ordered) {
         if (owners[item.id] != null && item.id !in background) continue
         if (item.id in background) {
-            if (item.shown) {
-                placements += requireNotNull(item.order) to
-                    listOf(
-                        ThreadRow.AgentStartMarker(
-                            identity(item.id),
-                            item.description(),
-                            !item.active,
-                            item.endedOrder?.takeIf { it > 0 }?.toString(),
-                        ),
-                    )
-            }
             if (!item.active) {
                 placements +=
                     (item.endedOrder?.takeIf { it > 0 } ?: requireNotNull(item.order)) to backgroundContents.getValue(item.id)
@@ -147,6 +152,10 @@ internal fun projectAuthoritativeThread(
             val anchor = contents.minOfOrNull { ordersByKey.getValue(it.listKey(0)) }
             if (anchor != null) placements += anchor to contents
         }
+    }
+    val embeddedLaunches = placements.flatMap { it.second }.filterIsInstance<ThreadRow.AgentStartMarker>().mapTo(HashSet()) { it.agentId }
+    for ((id, marker) in launches) {
+        if (marker.agentId !in embeddedLaunches) placements += requireNotNull(held.getValue(id).order) to listOf(marker)
     }
     val rows =
         placements.sortedBy { it.first }.flatMap { it.second } +

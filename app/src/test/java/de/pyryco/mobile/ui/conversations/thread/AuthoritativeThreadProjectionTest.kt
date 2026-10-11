@@ -360,6 +360,60 @@ class AuthoritativeThreadProjectionTest {
         )
     }
 
+    @Test fun activeNestedLaunchPrecedesLaterForegroundSibling() = assertNestedLaunchSiblingOrder(active = true, shown = true)
+
+    @Test fun terminalNestedLaunchPrecedesLaterForegroundSibling() = assertNestedLaunchSiblingOrder(active = false, shown = true)
+
+    @Test fun activeNestedLaunchPrecedesLaterSiblingOfHiddenForegroundParent() =
+        assertNestedLaunchSiblingOrder(
+            active = true,
+            shown = false,
+        )
+
+    @Test fun terminalNestedLaunchPrecedesLaterSiblingOfHiddenForegroundParent() =
+        assertNestedLaunchSiblingOrder(
+            active = false,
+            shown = false,
+        )
+
+    private fun assertNestedLaunchSiblingOrder(
+        active: Boolean,
+        shown: Boolean,
+    ) {
+        val parent = authoritativeAgent(1, task = null, active = false, shown = shown)
+        val agent = authoritativeAgent(2, parent = 1, active = active, endedOrder = if (active) null else 5)
+        val sibling = authoritativeItem(3, "tool_call", parent = 1, content = """{"name":"Read","input_summary":"sibling"}""")
+        val child = authoritativeItem(6, parent = 2)
+        val inputs = listOf(parent, agent, sibling, authoritativeItem(4), child)
+        for (facts in listOf(inputs, inputs.reversed(), inputs + agent)) {
+            val p = project(*facts.toTypedArray())
+            val labels =
+                p.rows.map { row ->
+                    if (row is ThreadRow.AgentStartMarker) "launch" else message(row).toolCall?.input ?: message(row).content
+                }
+            assertEquals(
+                (if (shown) listOf("agent-1") else emptyList()) + listOf("launch", "sibling", "text-4", "agent-2", "text-6"),
+                labels,
+            )
+            val marker = p.rows.filterIsInstance<ThreadRow.AgentStartMarker>().single()
+            assertEquals(!active, marker.finished)
+            assertEquals(p.rows.size, ids(p.rows).toSet().size)
+            assertEquals(
+                marker.agentId,
+                p.rows
+                    .filterIsInstance<ThreadRow.Delivered>()
+                    .last()
+                    .agentBlockId,
+            )
+            assertFalse(
+                p.backgroundBlocks
+                    .getValue(marker.agentId)
+                    .rowKeys
+                    .contains(marker.listKey(0)),
+            )
+        }
+    }
+
     @Test fun nestedBackgroundSettlesIndependentlyWhileItsOuterBackgroundRemainsActive() {
         val outer = authoritativeAgent(1)
         val child = authoritativeItem(4, parent = 2, order = 3)
