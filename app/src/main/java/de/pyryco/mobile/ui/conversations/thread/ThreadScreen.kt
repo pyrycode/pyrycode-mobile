@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
@@ -94,6 +95,7 @@ import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.ResetStatus
@@ -343,6 +345,21 @@ fun ThreadScreen(
         if (anchor <= Long.MAX_VALUE.toULong()) onDemandHistoryGap(anchor.toLong())
     },
 ) {
+    val authoritative = state.authoritativeThread
+    val threadItems = authoritative?.items ?: state.items
+    val taskRoster = authoritative?.tasks ?: state.backgroundTasks
+    val taskCount = authoritative?.tasks?.liveCount ?: state.backgroundTaskCount
+    val interactionScope = authoritative?.scope ?: state.conversationId
+    var authoritativeExpandedTasks by rememberSaveable(interactionScope) { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(authoritative) {
+        if (authoritative != null) {
+            RelayLog.d {
+                "event=thread_presentation code=projected rows=${authoritative.rows.size} tasks=${authoritative.tasks.tasks.size}"
+            }
+            val fallbacks = authoritative.rows.filterIsInstance<ThreadRow.Delivered>().count { it.summaryText != null }
+            if (fallbacks > 0) RelayLog.d { "event=thread_presentation code=summary_fallback rows=$fallbacks" }
+        }
+    }
     // #1357: the context notice's Compact pill takes the Actions menu's path, and no tap while
     // the published menu proves the command absent.
     val onCompact =
@@ -528,7 +545,7 @@ fun ThreadScreen(
                     verticalArrangement = Arrangement.spacedBy(ComposerSectionGap),
                 ) {
                     // #897: the open tool call names itself in the thinking arm's slot, only while a turn runs.
-                    val openTool = remember(state.items) { openToolCall(state.items) }
+                    val openTool = remember(threadItems) { openToolCall(threadItems) }
                     ThreadStatusArea(
                         apiRetry = apiRetry,
                         resetting = resetting,
@@ -543,7 +560,7 @@ fun ThreadScreen(
                         waitingForAnswers = shownQuestion != null && connectionState == ConnectionState.Connected,
                         waitingForPermission = openRequest != null && connectionState == ConnectionState.Connected,
                         connectionState = connectionState,
-                        taskCount = state.backgroundTaskCount,
+                        taskCount = taskCount,
                         onTasksClick = { backgroundTasksOpen = true },
                         agent = state.agent,
                     )
@@ -624,10 +641,10 @@ fun ThreadScreen(
                         foldQueuedRows(state.items, state.queuedMessages)
                     }
                 val agentRows =
-                    remember(queuedRows, state.items, state.backgroundTasks) {
-                        foldBackgroundAgentBlocks(queuedRows, state.items, state.backgroundTasks)
+                    remember(authoritative, queuedRows, state.items, state.backgroundTasks) {
+                        authoritative?.rows ?: foldBackgroundAgentBlocks(queuedRows, state.items, state.backgroundTasks)
                     }
-                val agentNavigation = remember(state.conversationId) { ThreadAgentNavigation() }
+                val agentNavigation = remember(interactionScope) { ThreadAgentNavigation() }
                 val destinationLifecycle = LocalLifecycleOwner.current.lifecycle
                 DisposableEffect(agentNavigation, destinationLifecycle) {
                     val observer =
@@ -646,10 +663,10 @@ fun ThreadScreen(
                 // #1635: with the setting on, each run of adjacent tool rows draws as one header the reader
                 // can open. Which runs are open is UI-local, keyed by each run's first row, and saveable so a
                 // rotation or back-stack return keeps them open, as the tool rows inside keep theirs.
-                var expandedTools by rememberSaveable(state.conversationId) { mutableStateOf(emptySet<String>()) }
-                var expandedRuns by rememberSaveable(state.conversationId) { mutableStateOf(emptySet<String>()) }
-                var previousAgentRows by remember(state.conversationId) { mutableStateOf(agentRows) }
-                var pendingOpenTools by rememberSaveable(state.conversationId) { mutableStateOf(emptySet<String>()) }
+                var expandedTools by rememberSaveable(interactionScope) { mutableStateOf(emptySet<String>()) }
+                var expandedRuns by rememberSaveable(interactionScope) { mutableStateOf(emptySet<String>()) }
+                var previousAgentRows by remember(interactionScope) { mutableStateOf(agentRows) }
+                var pendingOpenTools by rememberSaveable(interactionScope) { mutableStateOf(emptySet<String>()) }
                 // A late join or parent backfill moves tools between runs. Carry an open run's expansion with them.
                 val carried =
                     remember(agentRows, previousAgentRows, expandedRuns, pendingOpenTools) {
@@ -690,7 +707,7 @@ fun ThreadScreen(
                     val gapHeights = remember(state.conversationId) { mutableStateMapOf<ULong, Int>() }
                     val historyLoading by rememberUpdatedState(state.historyTail == ThreadHistoryTail.Loading)
                     val pullForOlderHistory = { if (!historyLoading) demandOlderHistory() }
-                    if (!state.hasMessages &&
+                    if ((authoritative?.rows?.isEmpty() ?: !state.hasMessages) &&
                         state.historyMarkers.isEmpty() &&
                         state.queuedMessages.isEmpty() &&
                         shownQuestion == null &&
@@ -712,8 +729,8 @@ fun ThreadScreen(
                     } else {
                         val reversedRows = rows.asReversed()
                         // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
-                        val toolDepths = remember(state.items) { toolNestingDepths(state.items) }
-                        val listState = rememberLazyListState()
+                        val toolDepths = remember(authoritative, state.items) { authoritative?.depths ?: toolNestingDepths(state.items) }
+                        val listState = key(interactionScope) { rememberLazyListState() }
                         val readerViewport = remember(listState) { ThreadListViewport(listState) }
                         val compositionObserver = LocalThreadListCompositionObserver.current
                         SideEffect { compositionObserver?.invoke(listState) }
@@ -751,7 +768,17 @@ fun ThreadScreen(
                                 if (readItem != null && readKey != null) ThreadReadCandidate(readKey, readItem) else null
                             }
                         ThreadReadViewport(
-                            state = state.copy(readEvidence = state.readEvidence?.forBackgroundAgentRows(state.items, agentRows)),
+                            state =
+                                state.copy(
+                                    readEvidence =
+                                        if (authoritative ==
+                                            null
+                                        ) {
+                                            state.readEvidence?.forBackgroundAgentRows(state.items, agentRows)
+                                        } else {
+                                            null
+                                        },
+                                ),
                             listState = listState,
                             candidate = readCandidate,
                             viewport = messageViewport,
@@ -915,53 +942,57 @@ fun ThreadScreen(
                                     is ThreadRow.Delivered ->
                                         when (val item = row.item) {
                                             is ThreadItem.MessageItem ->
-                                                MessageBubble(
-                                                    message = item.message,
-                                                    onContentPresented = { candidate?.revealed = true },
-                                                    onContentTrailingEdge =
-                                                        candidate?.let { tracked ->
-                                                            { _, bottom -> tracked.trailingEdge = bottom }
-                                                        },
-                                                    onReply = { pendingReplyDraft = onReplyToMessage(it) },
-                                                    modifier =
-                                                        if (row.agentBlockId ==
-                                                            item.message.id
-                                                        ) {
-                                                            Modifier.testTag("background-agent:${item.message.id}")
-                                                        } else if (row.agentBlockId != null && item.message.role == Role.Assistant) {
-                                                            Modifier
-                                                                .padding(
-                                                                    start =
-                                                                        MessageAreaRowSpacing *
-                                                                            ((toolDepths[item.message.parentToolUseId] ?: 0) + 1),
-                                                                ).testTag("background-agent-child:${row.agentBlockId}")
-                                                        } else {
-                                                            Modifier
-                                                        },
-                                                    threadOpenedAt = threadOpenedAt,
-                                                    toolNestingDepth = toolDepths[item.message.id] ?: 0,
-                                                    joinsNextToolRow = row.joinsToolRow(nextRow),
-                                                    attachmentStates = attachmentStates,
-                                                    onAttachmentShown = if (measuring) ({ _ -> }) else onAttachmentShown,
-                                                    onRetryAttachment = onRetryAttachment,
-                                                    onOpenAttachment = attachmentActions.open,
-                                                    onSaveAttachment = attachmentActions.save,
-                                                    onRequestAttachment = onRequestAttachment,
-                                                    onOpenMarkdownLink = onOpenMarkdownLink,
-                                                    // A streaming reply keeps its row hidden and takes no tap, so
-                                                    // the first tap after it finishes is the one that shows it.
-                                                    metaRowVisible =
-                                                        !item.message.isStreaming && metaRowMessageId == item.message.id,
-                                                    onToggleMetaRow =
-                                                        if (item.message.isStreaming) {
-                                                            null
-                                                        } else {
-                                                            {
-                                                                val id = item.message.id
-                                                                metaRowMessageId = if (metaRowMessageId == id) null else id
-                                                            }
-                                                        },
-                                                )
+                                                if (row.summaryText != null) {
+                                                    AuthoritativeSummaryRow(row.summaryText)
+                                                } else {
+                                                    MessageBubble(
+                                                        message = item.message,
+                                                        onContentPresented = { candidate?.revealed = true },
+                                                        onContentTrailingEdge =
+                                                            candidate?.let { tracked ->
+                                                                { _, bottom -> tracked.trailingEdge = bottom }
+                                                            },
+                                                        onReply = { pendingReplyDraft = onReplyToMessage(it) },
+                                                        modifier =
+                                                            if (row.agentBlockId ==
+                                                                item.message.id
+                                                            ) {
+                                                                Modifier.testTag("background-agent:${item.message.id}")
+                                                            } else if (row.agentBlockId != null && item.message.role == Role.Assistant) {
+                                                                Modifier
+                                                                    .padding(
+                                                                        start =
+                                                                            MessageAreaRowSpacing *
+                                                                                ((toolDepths[item.message.parentToolUseId] ?: 0) + 1),
+                                                                    ).testTag("background-agent-child:${row.agentBlockId}")
+                                                            } else {
+                                                                Modifier
+                                                            },
+                                                        threadOpenedAt = threadOpenedAt,
+                                                        toolNestingDepth = toolDepths[item.message.id] ?: 0,
+                                                        joinsNextToolRow = row.joinsToolRow(nextRow),
+                                                        attachmentStates = attachmentStates,
+                                                        onAttachmentShown = if (measuring) ({ _ -> }) else onAttachmentShown,
+                                                        onRetryAttachment = onRetryAttachment,
+                                                        onOpenAttachment = attachmentActions.open,
+                                                        onSaveAttachment = attachmentActions.save,
+                                                        onRequestAttachment = onRequestAttachment,
+                                                        onOpenMarkdownLink = onOpenMarkdownLink,
+                                                        // A streaming reply keeps its row hidden and takes no tap, so
+                                                        // the first tap after it finishes is the one that shows it.
+                                                        metaRowVisible =
+                                                            !item.message.isStreaming && metaRowMessageId == item.message.id,
+                                                        onToggleMetaRow =
+                                                            if (item.message.isStreaming) {
+                                                                null
+                                                            } else {
+                                                                {
+                                                                    val id = item.message.id
+                                                                    metaRowMessageId = if (metaRowMessageId == id) null else id
+                                                                }
+                                                            },
+                                                    )
+                                                }
                                             is ThreadItem.SessionBoundary ->
                                                 SessionBoundaryDelimiter(boundary = item)
                                             is ThreadItem.UnrecognizedMessage ->
@@ -970,20 +1001,25 @@ fun ThreadScreen(
                                             // nothing, as desktop's TimelineRow does.
                                             is ThreadItem.Banner ->
                                                 if (item.level != BannerLevel.Info) {
-                                                    BannerNoticeRow(item = item, agent = state.agent)
+                                                    BannerNoticeRow(item = item, agent = row.displayAgent ?: state.agent)
                                                 }
                                             is ThreadItem.CompactionBoundary -> CompactionBoundaryDivider(item = item)
                                             is ThreadItem.ModelRefusal ->
                                                 ModelRefusalRow(
                                                     item = item,
-                                                    agent = state.agent,
+                                                    agent = row.displayAgent ?: state.agent,
                                                     switchBack = switchBackOffer?.takeIf { it.armedBy(item) },
                                                     onSwitchBack = onSwitchBack,
                                                     // #1494: a model the menu knows reads as its menu label.
                                                     knownModelLabel = state.runConfig::knownModelLabel,
                                                 )
                                             is ThreadItem.BackgroundTaskLifecycle -> Unit
-                                            is ThreadItem.StoppedTurn -> StoppedTurnRow(item = item, agent = state.agent)
+                                            is ThreadItem.StoppedTurn ->
+                                                StoppedTurnRow(
+                                                    item = item,
+                                                    agent =
+                                                        row.displayAgent ?: state.agent,
+                                                )
                                         }
                                     // One render path for both kinds of queued row — the one the echo
                                     // correlated to and the one this device minted no echo for — so the
@@ -1225,14 +1261,54 @@ fun ThreadScreen(
         )
     }
     if (backgroundTasksOpen) {
-        BackgroundTaskPanel(
-            roster = state.backgroundTasks,
-            onDismiss = { backgroundTasksOpen = false },
-            stopSupported = state.backgroundTaskStopSupported,
-            expandedTaskIds = state.expandedBackgroundTaskIds,
-            pendingTaskIds = state.pendingBackgroundTaskIds,
-            onEvent = onOverflowEvent,
-        )
+        key(interactionScope) {
+            BackgroundTaskPanel(
+                roster = taskRoster,
+                onDismiss = { backgroundTasksOpen = false },
+                stopSupported = state.backgroundTaskStopSupported,
+                expandedTaskIds =
+                    if (authoritative == null) {
+                        state.expandedBackgroundTaskIds
+                    } else {
+                        taskRoster
+                            ?.tasks
+                            .orEmpty()
+                            .filter { it.toolCallId in authoritativeExpandedTasks }
+                            .map { it.taskId }
+                            .toSet()
+                    },
+                pendingTaskIds = state.pendingBackgroundTaskIds,
+                onEvent = { event ->
+                    if (authoritative == null) {
+                        onOverflowEvent(event)
+                    } else {
+                        val taskId =
+                            when (event) {
+                                is ThreadEvent.BackgroundTaskToggle -> event.taskId
+                                is ThreadEvent.BackgroundTaskStop -> event.taskId
+                                else -> null
+                            }
+                        val task = taskRoster?.tasks?.firstOrNull { it.taskId == taskId && !it.isFinished }
+                        val itemId = task?.toolCallId
+                        if (itemId != null) {
+                            if (event is ThreadEvent.BackgroundTaskToggle) {
+                                authoritativeExpandedTasks =
+                                    if (itemId in
+                                        authoritativeExpandedTasks
+                                    ) {
+                                        authoritativeExpandedTasks - itemId
+                                    } else {
+                                        authoritativeExpandedTasks +
+                                            itemId
+                                    }
+                            } else if (state.backgroundTaskStopSupported) {
+                                onOverflowEvent(event)
+                            }
+                        }
+                    }
+                },
+            )
+        }
     }
     WorkspacePicker(
         visible = state.workspacePickerVisible,
@@ -1407,6 +1483,18 @@ fun ThreadScreen(
             }
         }
         ModalUiState.Hidden -> Unit
+    }
+}
+
+@Composable
+private fun AuthoritativeSummaryRow(summary: String) {
+    SelectionContainer {
+        Text(
+            summary,
+            modifier = Modifier.padding(horizontal = MessageContentGutter, vertical = MessageAreaRowSpacing),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 

@@ -86,3 +86,13 @@ None. Kind-specific content is read from the daemon fold rather than guessed fro
 **Date:** 2026-10-11
 
 Sizing: approximately 1450 total written lines including this plan, one new exported presentation type, no required constructor/call-site migration, five acceptance criteria, no new state machine. The one renderer is one independently verifiable deliverable.
+
+## Revisions
+
+- 2026-10-11: Daemon `applyAgent` retains a durable task link without a type and can retain an entire roster-origin link. Link presence proves background association; resolve a recorded roster row inside that item only, and use Agent kind solely for its display label when type is absent. Tests probe both concrete shapes. Nearest-agent ownership is flattened iteratively to keep nested children under their own parent. Projection diagnostics run at the screen boundary so the pure unit projection remains Android-independent. Recorded agent attribution is carried to attributed notice/stop components; missing attribution falls back to summary.
+
+- 2026-10-11: The hidden nested-parent invariant probe exposed a dropped shown descendant. Keep hidden and unordered agents in the structural child graph, while emitting only shown positive-order content. An unordered structural root uses its first shown descendant's real order solely to place that descendant block; it never acquires a delivered row.
+
+- 2026-10-11: The unsupported-agent-content probe confirms that recorded `agent` kind plus task link, rather than a supported launch-content name, owns background placement. Unsupported content still displays the inert summary while authoritative activity controls placement and task grouping.
+
+- 2026-10-11: The panel identity probe found expansion following a reused task id onto a different item in the same epoch. Store local expansion by scoped item identity and adapt it to recorded task ids only at the panel boundary; revisions preserve expansion, replacement items and epoch changes reset it.

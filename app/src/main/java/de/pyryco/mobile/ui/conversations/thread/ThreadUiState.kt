@@ -167,6 +167,7 @@ data class ThreadUiState(
     val showRenameDialog: Boolean = false,
     val saveAsChannelDialog: SaveAsChannelDialogState? = null,
     val items: List<ThreadItem> = emptyList(),
+    val authoritativeThread: AuthoritativeThreadPresentation? = null,
     val readEvidence: de.pyryco.mobile.data.repository.ThreadReadEvidence? = null,
     val readUpTo: ULong? = null,
     val queuedMessages: List<QueuedMessage> = emptyList(),
