@@ -29,6 +29,10 @@ class DaemonFaultTest(unittest.TestCase):
                     str(path / "control.sock"),
                     "--ready-token",
                     "relay: conn established",
+                    "--stream-release-file",
+                    str(path / "suffix-release"),
+                    "--stream-result-release-file",
+                    str(path / "result-release"),
                     "--",
                     sys.executable,
                     "-c",
@@ -54,6 +58,13 @@ class DaemonFaultTest(unittest.TestCase):
 
                 first = request("status")
                 self.assertTrue(first["running"])
+                self.assertFalse((path / "suffix-release").exists())
+                self.assertFalse((path / "result-release").exists())
+                self.assertEqual(first["pid"], request("stream-release")["pid"])
+                self.assertEqual(b"", (path / "suffix-release").read_bytes())
+                self.assertFalse((path / "result-release").exists())
+                self.assertEqual(first["pid"], request("stream-finish")["pid"])
+                self.assertEqual(b"", (path / "result-release").read_bytes())
                 request("stop")
                 self.assertFalse(request("status")["running"])
                 restarted_at = time.monotonic()

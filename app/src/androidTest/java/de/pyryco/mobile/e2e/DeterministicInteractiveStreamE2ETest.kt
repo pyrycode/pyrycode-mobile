@@ -73,6 +73,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -88,7 +89,7 @@ import org.koin.core.context.GlobalContext
  * selected by `SCENARIO` in `scripts/e2e-emulator.sh`):
  *  - `ping` (default, #431) — a single-line reply renders.
  *  - `stream` (#454, #1765) — arrived words display while held open, then complete in the same reply.
- *  - `reopen-stream` (#1762) — arrived prefix renders immediately on reopening, before the second-send release.
+ *  - `reopen-stream` (#1762) — arrived prefix renders immediately on reopening, before its display-checkpoint release.
  *  - `spinner` (#454) — the thinking spinner shows mid-turn, then clears at turn end (a two-fixture
  *    drop holds the turn open so the transient state is observable; see the method KDoc).
  *  - `tool` (#455) — a tool step renders running mid-turn, then done after the result (two-fixture
@@ -709,7 +710,7 @@ class DeterministicInteractiveStreamE2ETest {
         }
     }
 
-    /** #1762: fragment B cannot arrive until the immediate reopen assertion sends message #2. */
+    /** #1762: fragment B cannot arrive until the phone proves the immediate reopen checkpoint. */
     @Test
     fun interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately() {
         arriveInSeededThread()
@@ -776,11 +777,7 @@ class DeterministicInteractiveStreamE2ETest {
             composeTestRule.onAllNodes(prefix, useUnmergedTree = true).assertCountEquals(1)
             composeTestRule.onAllNodesWithText(REOPEN_SUFFIX, substring = true).assertCountEquals(0)
             assertOpenReply(REOPEN_PREFIX)
-            // Prepare the enqueue while paused: one frame makes the composer's send action ready.
-            composeTestRule.onNode(hasSetTextAction()).performTextInput(SECOND_PROMPT)
-            composeTestRule.mainClock.advanceTimeByFrame()
-            composeTestRule.waitForIdle()
-            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+            DaemonFaultControl().releaseStream()
             val combined = REOPEN_PREFIX + REOPEN_SUFFIX
             runBlocking {
                 withTimeout(REPLY_TIMEOUT_MS) {
@@ -808,7 +805,7 @@ class DeterministicInteractiveStreamE2ETest {
             composeTestRule.mainClock.autoAdvance = true
         }
         // Completion is fenced separately, after the still-open suffix-arrival display checkpoint.
-        typeAndSend("finish")
+        DaemonFaultControl().finishStream()
         val combined = REOPEN_PREFIX + REOPEN_SUFFIX
         val fullReply = hasText(combined, substring = true) and inBubble
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
@@ -845,7 +842,7 @@ class DeterministicInteractiveStreamE2ETest {
     }
 
     /**
-     * `stream` (#1765): two arrivals stay open until their words display. The explicit second send
+     * `stream` (#1765): two arrivals stay open until their words display. The phone's checkpoint
      * releases `stream-end.jsonl`; the same reply then contains all three deltas without its caret.
      * Repository settlement and idle phase establish completion, independently of caret blinking.
      */
@@ -912,8 +909,8 @@ class DeterministicInteractiveStreamE2ETest {
                 .filterIsInstance<ThreadItem.MessageItem>()
                 .count { it.message.role == Role.User },
         )
-        // Explicit test-driver send releases later chunks while the phone's staged quote stays open.
-        runBlocking { repository.sendMessage(conversationId, SECOND_PROMPT) }
+        // Release later chunks without another turn while the phone's staged quote stays open.
+        DaemonFaultControl().releaseStream()
         val finished =
             runBlocking {
                 withTimeout(REPLY_TIMEOUT_MS) {
@@ -924,7 +921,7 @@ class DeterministicInteractiveStreamE2ETest {
                             }
                         }
                     repository.observeTurnPhase(conversationId).first { it == LiveSessionEvent.TurnState.Phase.Idle }
-                    // The release prompt can produce its own reply; select the captured fixture.
+                    // Keep the same captured reply identity through all three deltas.
                     rows
                         .filterIsInstance<ThreadItem.MessageItem>()
                         .single { it.message.role == Role.Assistant && it.message.id == held.id }
@@ -950,6 +947,49 @@ class DeterministicInteractiveStreamE2ETest {
                 .text,
         )
         composeTestRule.assertSideMessageReply(finished, staged + "Assistant:\n\"${finished.content}\"\n")
+    }
+
+    /** Retain the old release-send interaction separately from the display-only stream proof. */
+    @Ignore("blocked on #2078: a queued own prompt splits the active legacy reply")
+    @Test
+    fun interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply() {
+        arriveInSeededThread()
+        val repository =
+            requireNotNull(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository.value,
+            )
+        runBlocking {
+            withTimeout(REPLY_TIMEOUT_MS) {
+                val conversationId =
+                    repository
+                        .observeConversations(ConversationFilter.All)
+                        .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                        .single { it.name == SEED_CHANNEL_NAME }
+                        .id
+                repository.sendMessage(conversationId, SEND_PROMPT)
+                val held =
+                    repository
+                        .observeMessages(conversationId)
+                        .first { rows ->
+                            rows.filterIsInstance<ThreadItem.MessageItem>().any {
+                                it.message.content.trimEnd() == STREAMED_PREFIX && it.message.isStreaming
+                            }
+                        }.filterIsInstance<ThreadItem.MessageItem>()
+                        .single { it.message.role == Role.Assistant }
+                        .message
+                repository.sendMessage(conversationId, SECOND_PROMPT)
+                repository.observeQueue(conversationId).first { rows -> rows.any { it.text == SECOND_PROMPT } }
+                DaemonFaultControl().releaseStream()
+                repository.observeMessages(conversationId).first { rows ->
+                    rows.filterIsInstance<ThreadItem.MessageItem>().any {
+                        it.message.id == held.id && !it.message.isStreaming && it.message.content == STREAMED_REPLY
+                    }
+                }
+            }
+        }
     }
 
     /**
