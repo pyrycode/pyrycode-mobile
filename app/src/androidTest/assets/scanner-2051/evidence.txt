@@ -1,0 +1,230 @@
+#2051 fresh investigation — cause unestablished
+
+Tested revision: cc47cef876cc4429986e933fec5912e7de12fcf3 (plan-only change)
+Current main / scanner implementation: 969d9c3c8847b8c99af3a8573750f8429a72a1eb
+Runner host: Juhanas-MacBook-Air.local, macOS 26.6.2, Darwin arm64
+Execution: Gradle-managed pixel2Api33Atd, API 33 google-atd, AndroidJUnitRunner
+Host/device local timestamps use Europe/Helsinki (UTC+03:00); UTP uses UTC.
+XML timestamp is reproduced as emitted, not independently treated as a host clock.
+
+All test source and production UI are unchanged. No repair was attempted.
+No assertion failure, instrumentation crash or emulator loss reproduced here.
+The HP runner identified by refinement is not this host. These passes cannot
+establish repair or locate ownership of its historical emulator disappearance.
+
+Full raw evidence retained outside AGP output before subsequent runs:
+/tmp/builder-2051/current-dark-20261010
+Includes per-run XML, UTP textproto/protobuf, instrumentation, logcat, device
+cpu/memory snapshots, counts, host process samples, Gradle daemon output and
+SHA-256 manifest. Committed XML files below are byte-identical to those results.
+Only static scanner TestRunner and instrumentation records are copied below.
+
+Sandbox-only first attempt stopped at the Gradle wrapper lock file, exit 1,
+zero tests executed. Escalated execution succeeded. This was not emulator loss.
+
+focused:
+XML: focused.xml
+UTP suite timestamp: 2026-10-10T19:08:35.811821Z
+UTP status: PASSED; device: emulator-5554
+UTP method window (whole seconds): compactEnlargedTextFrames 2026-10-10T19:08:27Z to 2026-10-10T19:08:35Z
+XML SHA-256: 767a544551260c6db38154cc26ed4cdb7c9066c399b4b7811b6eeeb62a438d47
+XML timestamp: 2026-10-10T19:08:35
+Exit: 0; counts: {"errors": 0, "executed": 1, "failed": 0, "passed": 1, "skipped": 0}
+Command: ./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest#compactEnlargedTextFrames' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+Last completed instrumentation stage: OK (1 test); INSTRUMENTATION_CODE: -1.
+Device logcat TestRunner stages:
+10-10 22:08:25.539  2488  2535 I TestRunner: started: compactEnlargedTextFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+10-10 22:08:33.254  2488  2535 I TestRunner: finished: compactEnlargedTextFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+Instrumentation transcript:
+INSTRUMENTATION_STATUS: class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+de.pyryco.mobile.ui.onboarding.ScannerFrameTest:
+INSTRUMENTATION_STATUS: test=compactEnlargedTextFrames
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=compactEnlargedTextFrames
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 7.722
+
+OK (1 test)
+
+
+INSTRUMENTATION_CODE: -1
+
+class:
+XML: class.xml
+UTP suite timestamp: 2026-10-10T19:09:24.834874Z
+UTP status: PASSED; device: emulator-5554
+UTP method window (whole seconds): fullSizeDarkFrames 2026-10-10T19:09:11Z to 2026-10-10T19:09:17Z
+UTP method window (whole seconds): compactEnlargedTextFrames 2026-10-10T19:09:17Z to 2026-10-10T19:09:20Z
+UTP method window (whole seconds): compactDarkFrames 2026-10-10T19:09:20Z to 2026-10-10T19:09:24Z
+XML SHA-256: 623cb278a2e932ba2dbdf09f768b4857f17e2cc991c9b1df52c21dbe24ccae9e
+XML timestamp: 2026-10-10T19:09:24
+Exit: 0; counts: {"errors": 0, "executed": 3, "failed": 0, "passed": 3, "skipped": 0}
+Command: ./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+Last completed instrumentation stage: OK (3 tests); INSTRUMENTATION_CODE: -1.
+Device logcat TestRunner stages:
+10-10 22:09:19.988  2925  2955 I TestRunner: started: compactDarkFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+10-10 22:09:23.601  2925  2955 I TestRunner: finished: compactDarkFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+10-10 22:09:16.172  2925  2955 I TestRunner: started: compactEnlargedTextFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+10-10 22:09:19.987  2925  2955 I TestRunner: finished: compactEnlargedTextFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+10-10 22:09:10.798  2925  2955 I TestRunner: started: fullSizeDarkFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+10-10 22:09:16.170  2925  2955 I TestRunner: finished: fullSizeDarkFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+Instrumentation transcript:
+INSTRUMENTATION_STATUS: class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=
+de.pyryco.mobile.ui.onboarding.ScannerFrameTest:
+INSTRUMENTATION_STATUS: test=fullSizeDarkFrames
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=fullSizeDarkFrames
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=compactEnlargedTextFrames
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=compactEnlargedTextFrames
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=compactDarkFrames
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=compactDarkFrames
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 12.804
+
+OK (3 tests)
+
+
+INSTRUMENTATION_CODE: -1
+
+gate-profile:
+XML: gate-profile.xml
+UTP suite timestamp: 2026-10-10T19:10:44.945666Z
+UTP status: PASSED; device: emulator-5554
+UTP method window (whole seconds): fullSizeDarkFrames 2026-10-10T19:10:39Z to 2026-10-10T19:10:42Z
+UTP method window (whole seconds): compactEnlargedTextFrames 2026-10-10T19:10:42Z to 2026-10-10T19:10:43Z
+UTP method window (whole seconds): compactDarkFrames 2026-10-10T19:10:43Z to 2026-10-10T19:10:44Z
+XML SHA-256: a52bb25fa30f8b765548bb1b48b89341f05533cd3c90b88c965833f02a47abff
+XML timestamp: 2026-10-10T19:10:44
+Exit: 0; counts: {"errors": 0, "executed": 3, "failed": 0, "passed": 3, "skipped": 0}
+Command: ./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e -Pandroid.experimental.androidTest.numManagedDeviceShards=1 -Pandroid.testInstrumentationRunnerArguments.disableAnimations=true --console=plain
+Last completed instrumentation stage: OK (3 tests); INSTRUMENTATION_CODE: -1.
+Device logcat TestRunner stages:
+10-10 22:10:42.173  2926  2947 I TestRunner: started: compactDarkFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+10-10 22:10:43.084  2926  2947 I TestRunner: finished: compactDarkFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+10-10 22:10:41.118  2926  2947 I TestRunner: started: compactEnlargedTextFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+10-10 22:10:42.172  2926  2947 I TestRunner: finished: compactEnlargedTextFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+10-10 22:10:38.546  2926  2947 I TestRunner: started: fullSizeDarkFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+10-10 22:10:41.116  2926  2947 I TestRunner: finished: fullSizeDarkFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+Instrumentation transcript:
+INSTRUMENTATION_STATUS: class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=
+de.pyryco.mobile.ui.onboarding.ScannerFrameTest:
+INSTRUMENTATION_STATUS: test=fullSizeDarkFrames
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=fullSizeDarkFrames
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=compactEnlargedTextFrames
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=compactEnlargedTextFrames
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=compactDarkFrames
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=compactDarkFrames
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 4.538
+
+OK (3 tests)
+
+
+INSTRUMENTATION_CODE: -1
+
+Host evidence:
+At 19:08:09.590557Z, headless qemu PID 723 (parent Gradle PID 99410)
+was present, launched at 22:08:06 local time for the focused run.
+At 19:09:44.006339Z, after completed class instrumentation and Gradle success,
+no emulator processes remained. The task owns its normal teardown.
+No new DiagnosticReports filenames were observed at either sample.
+At 19:10:45.768639Z, qemu PID 3001, parent 99410, launched 22:10:27 local,
+was sampled for the animation-disabled single-shard comparison.
+Process samples are observational snapshots, not continuous lifecycle traces.
+
+Class/suite context:
+The three-method class also passes with the UI runner command profile: one
+shard and disableAnimations=true. This only compares those flags locally;
+it does not execute the dispatcher-selected full suite or preceding fixtures.
+Historical #1977 reports passed enlarged text followed by interruption of the
+old full-size method. Those reports do not identify a scanner assertion or
+emulator termination cause. Their HP artifacts were not re-observed here.
+
+Routing: return for refinement with cause unestablished, as AC2 requires.
+Next evidence must be collected on the affected HP runner: current focused
+method, class and failing dispatcher-selected suite context, retaining
+timestamped instrumentation/UTP, emulator process exit/crash and host/kernel
+evidence before output overwrite. Do not assume Mobile or runner ownership.
+Dispatcher full UI suite completion remains unverified; no PR repair is claimed.

@@ -1,0 +1,27 @@
+4e3f960c1e02e44f1e32071716787e86242867169a2b5311630ac57d3f1004e1  original /tmp/builder-2051/rework-9b558e00a/post-merge-stream/0-TEST-pixel2Api33Atd-_app-.xml
+10695a1c27bd560881dbe07921a96c0b0e72d6a15bd82f838f03ba78ee422a60  original /tmp/builder-2051/rework-9b558e00a/post-merge-stream/0-logcat-de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest-interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread.txt
+9b9771977684229cb5c9491ef213c1f20aee00498d3f9d05c2bb403b6bd1d3db  original /tmp/builder-2051/rework-9b558e00a/post-merge-stream/dispatcher.xml
+3a90d1094705443d3acf5495bb77e7d3be73e4d1a004152da61ed0c0831f7d07  retained rework-post-merge-stream.xml
+4914964d34b05eed77777e6909932b95bc161416e06965d83ed654839bbb4ea4  original /tmp/builder-2051/rework-9b558e00a/post-merge-reopen-stream/0-TEST-pixel2Api33Atd-_app-.xml
+a971c93b16bd76d93639b831ca500fe152a865371eb8e348785794f6cb54ec8c  original /tmp/builder-2051/rework-9b558e00a/post-merge-reopen-stream/0-logcat-de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest-interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately.txt
+4e9fd026a9037015fbdf3b26d820b087da2c381f95ea410da5642be2dfd7c6de  original /tmp/builder-2051/rework-9b558e00a/post-merge-reopen-stream/dispatcher.xml
+dce6d6f3b088928498f3801d19e2ee7637733a296dc845050e71ce2cdac7ff79  retained rework-post-merge-reopen-stream.xml
+9804f3e97d69b052a8f28c2d48c7e788af897d36ca1e6a5b099acf566c645a3a  tested source app/src/androidTest/java/de/pyryco/mobile/e2e/DeterministicInteractiveStreamE2ETest.kt
+b9777bbe90448ee8e83189e65e49178a328f3b44332a59de4f62cba4c983d747  tested source app/src/androidTest/java/de/pyryco/mobile/e2e/DaemonFaultControl.kt
+a87b3f9f42a8cf55fe793df3ff740417e243ebbe02ffd6b11a183410e9400399  tested source scripts/e2e-emulator.sh
+61b3cea7333bb530fd616ec0b784a529645668418bed9d214c14ca05b9fa357c  tested source scripts/e2e-daemon-fault.py
+40813e660b3e4caa97ffa799ab59e9dbcc254e5b7153a21cf886fcc9ddafae8c  tested source scripts/e2e-held-result.py
+d6e7fcf28fdeb44c420cfba127b6475f65636addfe6e8dd6fdec1d57ba1c79f4  tested source scripts/e2e-fixtures/stream.jsonl
+a5f35a15576228d8ca09139df6615323e677911ce2f00077a3c8751168ec2289  tested source scripts/e2e-fixtures/stream-end.jsonl
+1609ebd7ce28ff96a8d9908621c940badb6b08eacc32b8a26f1d5912edc00de3  tested source scripts/e2e-fixtures/reopen-stream-open.jsonl
+518e1af6e51cd263790d81aac8f8cbccabd597c89ef798054bc596c9324f7bec  tested source scripts/e2e-fixtures/reopen-stream-done.jsonl
+0599bddb5342ed8a9270aa699f4ae632d674a5614607fab70d3cd894b160cb03  still matching HP scanner/capture/runner/build input app/src/androidTest/java/de/pyryco/mobile/ui/onboarding/ScannerFrameTest.kt
+0fe960b7ea3d3cbb46e2159a7313d7da3ff4f8eab4e97c2ca6b93569e4461be3  still matching HP scanner/capture/runner/build input app/src/androidTest/java/de/pyryco/mobile/ui/onboarding/ScreenshotCapture.kt
+3fb9297fb96e34c60e794575258adbe708cd9ac9d8c3de9e4f538991284a0eca  still matching HP scanner/capture/runner/build input app/src/androidTest/java/de/pyryco/mobile/e2e/E2eInstrumentationRunner.kt
+4cd8ba6c2530debef9396ba9c8edc51175548a07afa5893ebe9efb1d16d3961a  still matching HP scanner/capture/runner/build input app/src/androidTest/java/de/pyryco/mobile/e2e/FocusRecordListener.kt
+e735b284302eb674f5a26dadee86318b33fa65c029df2bce3c1055e5c64fbf79  still matching HP scanner/capture/runner/build input app/build.gradle.kts
+d8833349af225778b0e648e44bda82062ebc93bb13756e6c49e6f1c0a24772e7  still matching HP scanner/capture/runner/build input build.gradle.kts
+aa30ca795a12f6dfc40a9fb99be1153fd89ac183bb262ee7b9401defcd017883  still matching HP scanner/capture/runner/build input settings.gradle.kts
+97a5cbb2d68104af42d57faae59fd9e3f8a33460ab072f163e589e38bc7193ec  still matching HP scanner/capture/runner/build input gradle/libs.versions.toml
+b4daa4f78d22d4dd695a365a7f6088eacce6a55eb0f90f44e34413f9a701f829  still matching HP scanner/capture/runner/build input gradle.properties
+9f9875e001a360dc1c7c7c823b2d06bf292801100467df8c0d65543c3ea36766  still matching HP scanner/capture/runner/build input scripts/android-test-gate.py
