@@ -45,7 +45,7 @@ def regular(path):
     return not any(p.is_symlink() for p in (path, *path.parents)) and path.is_file()
 
 
-def read(path, observations, label):
+def read(path, observations, label, tail=False):
     try:
         if not regular(path):
             raise OSError()
@@ -53,9 +53,17 @@ def read(path, observations, label):
         with os.fdopen(fd, 'rb') as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 raise OSError()
+            size = os.fstat(stream.fileno()).st_size
             data = stream.read(LIMIT + 1)
-        observations[label] = {'state': 'available', 'truncated': len(data) > LIMIT,
-                               'read_sha256': digest(data[:LIMIT])}
+            layout = 'prefix'
+            if tail and size > LIMIT:
+                head = data[:LIMIT // 2]
+                stream.seek(-LIMIT // 2, os.SEEK_END)
+                ending = stream.read(LIMIT // 2)
+                data = head[:head.rfind(b'\n') + 1] + ending[ending.find(b'\n') + 1:]
+                layout = 'head_tail'
+        observations[label] = {'state': 'available', 'truncated': size > LIMIT, 'layout': layout,
+                               'source_bytes': size, 'read_sha256': digest(data[:LIMIT])}
         return data[:LIMIT]
     except OSError:
         observations[label] = {'state': 'unknown', 'truncated': False}
@@ -91,7 +99,7 @@ def safe_fields(record, fields):
 
 def log_records(data, phone=False):
     records = []
-    for line in data.decode(errors='replace').splitlines()[:10000]:
+    for line in data.decode(errors='replace').splitlines():
         if len(line) > 8192:
             records.append({'oversized_record_sha256': digest(line.encode())})
             continue
@@ -149,7 +157,7 @@ def binary_hash(path):
 def capture(args):
     observations, artifacts = {}, {}
     for name in ('daemon.log', 'daemon-b.log', 'daemon-bypass.log', 'daemon-answer.log', 'relay.log'):
-        records = log_records(read(args.work / name, observations, name))
+        records = log_records(read(args.work / name, observations, name, tail=True))
         artifacts[name + '.jsonl'] = b''.join(json_bytes(row) for row in records)
     results = args.repo / 'app/build/outputs/androidTest-results'
     results = results / ('connected/debug' if args.device == 'connected' else 'managedDevice/debug/' + args.device)
@@ -159,7 +167,7 @@ def capture(args):
         if not regular(path) or path.stat().st_mtime_ns < args.started:
             continue
         if path.name.startswith('logcat-') and path.suffix == '.txt':
-            records.extend(log_records(read(path, observations, 'logcat/' + str(index)), phone=True))
+            records.extend(log_records(read(path, observations, 'logcat/' + str(index), tail=True), phone=True))
         elif path.name.startswith('TEST-') and path.suffix == '.xml':
             try:
                 tree = ET.fromstring(read(path, observations, 'xml/' + str(index)))
@@ -185,7 +193,7 @@ def capture(args):
             files = sorted(folder.glob('*.jsonl'))[:32]
             observations['history/' + target] = {'state': 'available' if files else 'unknown'}
             for index, path in enumerate(files):
-                for line in read(path, observations, 'history/' + target + '/' + str(index)).splitlines()[:10000]:
+                for line in read(path, observations, 'history/' + target + '/' + str(index), tail=True).splitlines()[:10000]:
                     try:
                         entry = json.loads(line)
                         kind = entry.get('type')
