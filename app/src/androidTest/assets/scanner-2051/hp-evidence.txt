@@ -1,0 +1,149 @@
+#2051 — installed HP renderer workaround validation, 2026-10-11
+
+Outcome: the controlled HP baseline establishes emulator-process SIGSEGV during
+scanner execution. Installed SwANGLE validation completed the exact enlarged
+method (1/1) and scanner class (3/3). Both historical suites completed with all
+scanner cases passing, but each has a separate saved-history failure and rename
+skip. This is a host rendering workaround, not a Mobile source repair or proof
+of an exact native defect fix. No scanner or notification regression is claimed.
+
+Provenance and boundaries
+Host: build-hp-1 (affected Linux x86_64 runner); ordinary Mobile container for the
+post-install class and focused run. Ticket ownership remains claim:macbook.
+Test revision for every HP result below: 969d9c3c8847b8c99af3a8573750f8429a72a1eb.
+Current branch source comparison: 42c6ebc62; origin/main: 11ed225d27026e9e59abe634adc49c338dd41c51.
+Originals were read through operator-authorized build-hp-1-automation and copied
+to /tmp/builder-2051/hp-originals/ before retaining bounded content-free extracts.
+Original HP prefix H = /home/juhana/pyrycode-runtime/work/Projects/.hp-emulator-diagnostics/
+Container prefix C = /work/Projects/.hp-emulator-diagnostics/
+Relative artifact names in hp-hashes.txt use the local hp-originals/ layout.
+The manifest distinguishes original hashes from retained hashes. Counted XML
+derivatives keep all case names, counts and outcomes, removing stack/log bodies.
+Original focused/class XML and focused grant/validation JSON are byte-identical.
+No raw device payloads, pairing data, unrelated app logs or credentials retained.
+
+Count convention: recorded = XML testcase count, executed = recorded - skipped;
+passed = executed - failed - errors. A recorded interruption is not a completed
+assertion. The runner's historical stdout calls all recorded cases "executed".
+Run                           Recorded Executed Passed Failed Errors Skipped Exit
+Default-renderer baseline           42       42     41      1      0       0    1
+SwANGLE suite comparison           259      258    257      1      0       1    1
+SwANGLE suite confirmation         259      258    257      1      0       1    1
+Installed-workaround class           3        3      3      0      0       0    0
+Installed-workaround focused         1        1      1      0      0       0    0*
+* Gradle exit 0; original collector exit 1, explained below, not hidden/retried.
+
+Baseline: emulator loss, not scanner assertion
+UTC command window: 2026-10-10T18:17:42.889Z to 2026-10-10T18:20:24.522Z.
+Command: python3 scripts/android-test-gate.py ui (historical diagnostic only).
+Retained: hp-baseline-counted.xml; original: H/dark-only-20261010/baseline/ui-p45vzxwl.xml.
+Native capture: H/dark-only-20261010/baseline/native-crash-88ae304f-bbeb-4384-a5a0-f8c73513c9c9.txt.
+Launch record launch-13142821-367c-400e-a357-67b71d24c349.json:
+  startedUtc=2026-10-10T18:19:00.164221+00:00; effectiveGpuArgument=auto-no-window.
+Scanner device logcat (source/build/dispatcher-tests/ui-p45vzxwl/35-logcat-de.pyryco.mobile.ui.onboarding.ScannerFrameTest-fullSizeDarkFrames.txt):
+  10-10 18:20:10.753 2938 2976 I TestRunner: started: fullSizeDarkFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+Native capture:
+  Captured UTC: 2026-10-10T18:20:13.213098+00:00; Signal: SIGSEGV; Process: 777.
+  rip=0x62621ef06d19; instruction=movdqu 0x184f0(%rax,%rcx,1),%xmm5.
+  rax=0x50401000; rcx=0x6261ebcb4010; calculated read/fault address=0x62623c0cd500.
+  Supplied fault-evidence.json and recovery baseline-fault.json classify it as unmapped.
+Baseline command.log instrumentation/UTP termination excerpts:
+  Failed to retrieve logcat for some test cases. We retrieved logcat for 41 test cases out of 42 tests.
+  AndroidTestApkInstallerPlugin.afterAll: device 'emulator-5554' not found.
+  Test run failed to complete. Expected 259 tests, received 41
+  BUILD FAILED in 1m 35s
+The XML's empty failure is fullSizeDarkFrames after start, with no assertion body.
+Native SIGSEGV plus device offline/not-found establishes emulator loss; 41 completed
+passes and one incomplete scanner record do not establish suite completion.
+The later operator-stopped temporary container (exit 137) is separate from SIGSEGV.
+
+Historical suite comparisons: completed, not passing gates
+Comparison UTC: 2026-10-10T18:28:27.800Z to 2026-10-10T18:38:14.744Z.
+Original: H/dark-only-20261010/swangle/ui-a3ew3jmr.xml and command.log.
+Retained: hp-suite-comparison-counted.xml. Heavy grant:
+  dcfb6bb53e140bdacc4335cd38e33c8b70161632a1ecdb22dc6a896e342c3758.
+Confirmation UTC: 2026-10-10T18:42:43.603Z to 2026-10-10T18:54:55.415Z.
+Original: H/dark-only-20261010/swangle-confirm/ui-e7gbmhcs.xml and command.log.
+Retained: hp-suite-confirmation-counted.xml. Heavy grant:
+  e977bf6bfbb1aad61565d990b6545f18b7944bf2d23b06efa88dfa1222adbc4c.
+Each ran python3 scripts/android-test-gate.py ui at the pinned revision with
+requestedRenderer=swangle, and recorded 259 cases / 257 passed / 1 failed / 0 errors / 1 skipped.
+Each scanner set passed: fullSizeDarkFrames, compactEnlargedTextFrames, compactDarkFrames.
+Each failure: de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen.
+Each skip: de.pyryco.mobile.ui.conversations.components.RenameDialogCaptureTest#renameAtFigmaViewport.
+Historical completion-proof.json checked 2026-10-10T18:56:15.823055+00:00:
+  testWorkers=[]; grantsAbsent=true; diagnosticContainerStopped=true.
+Saved-history prior repair: #2050 / merged PR #2066. Neither suite is a clean PASS.
+
+Installed workaround and renderer identity
+Operator installation date: 2026-10-10. Ownership: HP emulator launcher/container.
+Unit: /home/juhana/.config/containers/systemd/pyrycode-mobile-dispatcher.container.
+Read-only mounts map /home/juhana/pyrycode-runtime/mobile-emulator.py to
+/opt/android-sdk/emulator/emulator, and mobile-emulator-native to emulator.hp-native.
+Launcher removes incoming GPU options and appends -gpu swangle for actual launches;
+version/help/AVD/acceleration queries pass through. No configuration changed here.
+Launcher SHA-256: 2b8a7ed59605827ec9338f91379effad04466891a83e82a0be65ac6dc18ebfb0.
+Native SHA-256: 27e9a8cbd545529ba2c1aca973e5bc060f50b36a68d2c03296b0162291a16b83.
+Installation record: /home/juhana/pyrycode-runtime/fleet/mobile-renderer-install.json.
+Rollout scripted-boot.json GLES identity (separate post-class boot, not a scripted-suite run):
+  ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0)
+  OpenGL ES 3.1; ANGLE 2.1.17841 git hash 5fa2e61da947.
+The focused run requested installed-swangle; its fresh TestRunner/device log uses
+the emulation EGL libraries. Renderer identity is correlated with the installed
+launcher and rollout boot, not a fabricated fresh SurfaceFlinger sample.
+
+Post-install class reuse
+Originals: H/renderer-rollout-20261010/scanner/ (raw XML, dispatcher.xml, three logcats),
+renderer-rollout/command.log, report.json and scripted-boot.json.
+UTC admitted verification: 2026-10-10T20:21:34.205Z to 2026-10-10T20:24:42.949Z.
+Raw XML timestamp: 2026-10-10T20:24:36, device=pixel2Api33Atd_0.
+Retained: hp-class.xml and hp-class-counted.xml; all three exact scanner names pass.
+Log: Starting 3 tests; Finished 3 tests; BUILD SUCCESSFUL in 1m 6s.
+Grant cb6d1019c320d24f6aa1e3dfe0129b544631633239b3c9d2b9362ae5e3acdbdb;
+reservationFinished=true at 2026-10-10T20:24:42.969Z; verification exit 0.
+Class and focused commands share the same source checkout, Android SDK, Gradle home,
+single shard, disableAnimations=true, PYRY_FORCE_TEST_RUN=1 and device_hold(...,1800).
+Class Gradle selection is de.pyryco.mobile.ui.onboarding.ScannerFrameTest.
+Both use gate.build_apks then gate.run_on_device; no changed retry/time bound.
+Current HP checkout read back in the ordinary container: pinned HEAD, clean status.
+Scanner/capture/runner/build source SHA-256 equality with the current branch was
+verified remotely and locally; the source hashes are in hp-source-hashes.txt.
+Git diff from the pinned revision is also empty for these paths. No rerun needed.
+
+Exact standalone focused HP result
+Originals: H/ticket-2051-focused-20261011/ (report.json, verify.py, run.mts, focused/).
+UTC command window: 2026-10-11T09:31:24.654Z to 2026-10-11T09:32:43.865Z.
+The manager used pyrycode/releases#@hp-mobile-ticket-2051-focus-20261011, role
+maintenance-emulator-diagnostic, resource heavy, release/emulator-diagnostic locks.
+Grant: 32e167bf651b916f71fc4affd9c45306b67977186293c53866a34ce768f5fefa.
+Retained hp-focused-run.json preserves the original grant, collector failure and
+reservationFinished=true at 2026-10-11T09:32:43.883Z. No Mobile claim was moved.
+Python command: python3 C/ticket-2051-focused-20261011/verify.py.
+Gradle command (cwd C/renderer-rollout-20261010/source):
+  ./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.onboarding.ScannerFrameTest#compactEnlargedTextFrames -Pandroid.experimental.androidTest.numManagedDeviceShards=1 -Pandroid.testInstrumentationRunnerArguments.disableAnimations=true --console=plain
+Retained hp-focused.xml is fresh raw XML; hp-focused-counted.xml is the operator's
+corrected collector output; hp-focused-validation.json preserves both exit codes.
+Raw XML timestamp: 2026-10-11T09:32:43; device=pixel2Api33Atd_0; exactly one requested case.
+Static instrumentation/device stages from focused/0-logcat-...-compactEnlargedTextFrames.txt:
+  10-11 09:32:39.290 2381 2411 I TestRunner: started: compactEnlargedTextFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+  10-11 09:32:42.317 2381 2411 I TestRunner: finished: compactEnlargedTextFrames(de.pyryco.mobile.ui.onboarding.ScannerFrameTest)
+Command log: Starting 1 tests; Finished 1 tests; Test execution completed;
+  BUILD SUCCESSFUL in 1m 7s
+  Android gate failed: Android report contains a different suite than requested
+The collector expects class-only but received class#method. Its exit 1 and report
+state focused-scanner-failed are preserved. Gradle exit 0, exact-method raw XML,
+completed device stages and independently checked counted XML establish 1 passed,
+zero failures/errors/skips. Correct class-only collection did not rerun the test,
+edit source, weaken checks or turn a failed instrumentation run into a pass.
+
+Historical Mac evidence and pending current gates
+evidence.txt, focused.xml, class.xml and gate-profile.xml are unchanged historical
+Mac comparisons at cc47cef876cc4429986e933fec5912e7de12fcf3: 1/1, 3/3 and 3/3.
+Their earlier return-for-refinement conclusion is superseded by this HP evidence.
+Preserve dark-only stub-camera geometry, one Back/Paste callback, all assertions,
+retries, bounds and coverage; production UI and host/sibling configuration untouched.
+Dispatcher still owns the currently configured UI and ordinary scripted gates.
+Require its selected UI suite to complete with all three scanner methods passed;
+retain recorded/executed/passed/failed/error/skipped counts, revision, host and paths.
+Normal pass requirements and failure routing remain. A current saved-history
+recurrence is separate with #2050 prior repair context. No pending gate is a pass.

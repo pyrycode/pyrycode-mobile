@@ -85,7 +85,7 @@ Testing: independently parse the original and retained XML, require one exact fo
 
 Dispatcher handoff: run the currently configured UI gate and ordinary scripted gates under their existing requirements. The selected UI suite must complete and execute/pass all three scanner methods; retain recorded/executed/passed/failed/error/skipped counts, revision, host and fresh artifact paths. This builder neither replays the historical full-suite diagnostics nor reports pending routine gates as passed. Mac ticket ownership is preserved.
 
-All earlier Open Questions are resolved: emulator loss, host rendering ownership and content-free static evidence are established; exact native defect identification remains outside scope. Sizing remains one deliverable, three criteria and under 1,600 total written lines, with zero consumer migrations or exported types.
+All earlier Open Questions are resolved: emulator loss, host rendering ownership and content-free static evidence are established; exact native defect identification remains outside scope. Measured retained work is 655 lines including the plan and prior Mac evidence: one deliverable, three criteria, zero consumer migrations or exported types, and below the 1,600-line boundary.
 
 ## Documentation handoff
 

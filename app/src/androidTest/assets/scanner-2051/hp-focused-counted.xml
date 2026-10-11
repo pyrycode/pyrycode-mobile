@@ -1,0 +1,1 @@
+<testsuites><testsuite name="de.pyryco.mobile.ui.onboarding.ScannerFrameTest" tests="1" failures="0" errors="0" skipped="0" time="3.007"><testcase classname="de.pyryco.mobile.ui.onboarding.ScannerFrameTest" name="compactEnlargedTextFrames" /></testsuite></testsuites>
