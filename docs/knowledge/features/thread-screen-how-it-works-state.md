@@ -134,65 +134,102 @@ for where it is called.
 
 ### The model-menu agent filter (#1110)
 
-`runConfigFlow`'s menu arm — `repository.observeModelMenu(conversationId)` — is a separate `combine` from
-`state`'s, at Kotlin's five-typed-argument ceiling already (`sessionSettings`, the menu, `pendingModel`,
-`pendingEffort`, `pendingPermission`). Filtering a merged `multi_agent` menu down to this conversation's own
-rows therefore needs the agent as a **sixth** input, which does not fit — so it joins by a chained
-`.combine(conversationAgent) { menu, agent -> menu?.forAgent(agent) }` on the menu flow itself, ahead of the
-five-arm `combine`, rather than growing that combine's arity. `forAgent` (a private top-level extension on
-`ModelMenu`) keeps only the rows whose `agent == agent` (daemon order preserved) and zeroes `droppedModels`
-for every agent but Claude — the count is the daemon's own tail-cut of Claude's rows and does not apply to
-Codex's. Because this filter runs on the menu arm before `runConfig` applies `MAX_RENDERED_MODEL_CHOICES`,
-`hiddenChoices` counts the filtered list, and `effortRecall.offer` (see [Thread composer footer § Remembered
-effort recall](thread-composer-footer-effort-recall.md)) receives only the conversation's own agent's rows
-through the ordinary `state` combine — no separate wiring was needed for AC 5 to fall out of the filter.
+Run configuration, opened from the footer Tune icon, is the sole model picker.
+Since #1118 it shows both Claude and Codex rows in daemon order, without agent
+headings. `runConfig` excludes unknown-agent rows and hidden `default` metadata,
+then renders at most 32 known-agent rows. The not-listed count includes overflow
+from that whole merged list plus `droppedModels`, even for a Codex conversation.
+Each row carries its own agent and uses the daemon's bounded inert display name;
+its raw value is retained verbatim for writes. A published pick must resolve to
+one known visible row; ambiguous values cannot start either operation.
 
-**`conversationAgent`, not the `state` combine's own `agent` field, feeds this filter — the two are resolved
-twice on purpose.** [#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114) already reads
-`conv?.agent ?: ConversationAgent.Claude` inline inside the `state` combine's lambda to set
-`ThreadUiState.agent` (see [Data model § the agent name](data-model.md)); that value lives only inside the
-lambda and cannot be reused by `runConfigFlow`, a sibling `combine` chain built from a different flow. #1110
-instead hoists a private `conversations: Flow<List<Conversation>>` — `repository.observeConversations(All)`
-shared with `shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)` — and derives
-`conversationAgent: Flow<ConversationAgent> = conversations.map { it.firstOrNull { c -> c.id ==
-conversationId }?.agent ?: ConversationAgent.Claude }.distinctUntilChanged()` from it, so both `runConfigFlow`
-and `state` can each read the same upstream. **`state`'s first combine arm changed from
-`repository.observeConversations(ConversationFilter.All)` to this shared `conversations`** for exactly that
-reason — `RemoteConversationRepository.observeConversations` sends a `list_conversations` request on every
-new subscription, so a second, independent subscription for the filter would have doubled that request per
-thread opening. `shareIn` with no stop timeout is deliberate: the shared flow only needs to outlive `state`'s
-own zero-timeout `WhileSubscribed()` upstream, never longer, so it stops with `state`'s last subscriber rather than
-lingering on its own separate timeout.
+Visibility does not determine settings scope. `ThreadRunConfig` derives confirmed
+selection, inherited resolution, effort and permission metadata from the
+conversation's own-agent subset. Ambiguity checks include overflow rows, but a
+radio mark requires a rendered row and matches both agent and value. Claude's
+hidden default metadata remains usable for inherited selection; a Codex
+conversation with no saved model cannot inherit Claude's default or effort
+vocabulary. See [remembered effort recall](thread-composer-footer-effort-recall.md).
 
-**Edge case flagged by review, not yet reachable.** `conversationAgent` reads `Claude` while the shared list
-does not yet hold this conversation's row — the same default `Conversation.agent` and `conversationAgentOf`
-already use. Today that only happens before the first `list_conversations` reply lands, and nothing in
-`state` or `runConfigFlow` can observe the model menu or offer a recall before then. If a future change ever
-let `state` collect for a conversation the list hasn't upserted yet — e.g. a thread opened immediately after
-local creation, before the daemon's confirmation round-trips — `EffortRecall.offer` would decide once against
-Claude's rows (including the `default` row when nothing is saved) for a Codex conversation, and never
-reconsider once `decided` flips. The daemon would refuse the resulting write, so no visible corruption
-follows, but the recall opportunity for that opening would be spent on the wrong agent's vocabulary. Revisit
-this note before changing when `state` starts collecting relative to the conversation list's first emission.
+An own-agent pick retains the settings-write path. An other-agent pick captures
+its row and opens the [shared MobileModal](mobile-modal.md) confirmation, naming
+the source agent, target agent and model. Client-owned copy explains hand-over,
+the slower and more expensive uncached first reply, and full-bypass turning off.
+Cancel, close and Back dismiss without sending. Confirmation claims sending on
+Main before launching exactly one `switchAgent` operation; selected effort is
+included only when the target row publishes that nonempty level. While sending,
+the pending label/radio belongs to the captured target and settings writes are
+blocked. The initiating phone's switching status, including outgoing hand-over
+wording during wrap-up, takes precedence over ordinary reset wording. Reset
+progress, settings clear and stale readings cannot settle it.
 
-**#1116 duplicated this subscription, non-blocking.** The question-modal title also needs this
-conversation's agent, but its collector lives outside `state`'s combine chain and was planned before this
-section's shared `conversations` flow landed. It calls `repository.observeConversations(ConversationFilter.All)`
-on its own rather than reading `conversationAgent`, so holding a question batch opens a second
-`list_conversations` subscription alongside this one. `StateFlow` conflation absorbs it, so the verifier
-passed it as a SHOULD FIX rather than blocking the merge — see [Question batch modal § Title names the
-conversation's agent (#1116)](question-batch-modal.md#title-names-the-conversations-agent-1116). Fold that
-collector onto this file's `conversationAgent` before adding another such lookup.
+**Command settlement, display identity and settings authority are separate.**
+The repository's authenticated result clears the phone-local request; success
+refreshes settings once immediately, without awaiting a conversation projection.
+A conflated StateFlow can skip both the confirmed target session and a disconnect
+gap, so waiting for either can leave an already successful switch blocking every
+control. Failure clears pending and shows static client-owned copy with no daemon
+text, retry or promise that hand-over/backlog effects were undone. Recollection
+never resends; the ViewModel scope owns cancellation and no command is persisted.
+
+Display restoration retains only a bounded label, connection/agent/session binding
+and optional represented row identity. Failure can restore an unlisted or
+inherited confirmed label even after settings disappear; no missing row gets a
+radio mark. A successful target display candidate binds only to a newer known
+target successor on the initiating connection. A superseding switch-back, removed
+conversation or replacement with no successor binding installs no obsolete target
+label. Observation versions travel with their actual values: older cached inputs
+cannot retire a newly settled candidate. Fresh superseding readings or incompatible
+newer identity evidence permanently retire display snapshots, including replacement
+during sending; returning to an old identity cannot revive them. These snapshots
+supply no effort, permission, capabilities or writability.
+
+After an agent change, settings require fresh current-session authority, including
+changes initiated by another client. `RunConfigurationReadings` optionally tags
+conversation and settings inputs with their producing connection;
+`StableConversationRepository` tags inside the captured delegate subscription.
+Tagging after switching delegates would let a detached reading borrow replacement
+authority, especially when agent/session values are unchanged and no gap emits.
+Held, detached and retired initiating-session readings cannot enable settings.
+A known transition binding requires an exact session match. When the current
+replacement summary omits its session ID, a fresh non-held conversation-correlated
+reply on that connection can establish authority; an absent conversation cannot.
+The outer thread projection uses that admitted session for applied-effort and
+permission masking instead of a detached connection's last known session.
+Metadata-only upserts and snapshots preserve the authenticated transition's session
+binding on existing rows. Ordinary pending model writes also bind to their
+initiating agent/session and are invalidated by replacement independently of an
+agent-switch request. Ordinary reset projection retains its existing behavior.
+
+The conversation list is shared between run configuration and the outer thread
+state. Keep agent lookups on that shared subscription: a second independent
+`observeConversations(All)` sends another `list_conversations` request per opening.
+The question-modal lookup's historical duplicate is tracked in
+[Question batch modal](question-batch-modal.md#title-names-the-conversations-agent-1116).
+
+Deterministic regression coverage spans merged projection, both switch directions,
+queued settlement, permanent display retirement and replacement authority in
+`ThreadViewModelAgentModelMenuTest`, `ThreadViewModelAgentSwitchTest`,
+`ThreadViewModelAgentSwitchReplacementTest` and the Tune-driven shared
+`ThreadAgentSwitchUiTest`. Real daemon/relay proof remains with
+[#2052](https://github.com/pyrycode/pyrycode-mobile/issues/2052):
+`InteractiveStreamE2ETest.interactiveTurn_switchAgentFromModelPick_confirmsAndReplies`
+will exercise Claude → Codex → Claude through Run configuration, preserved
+channel/history, replies and target effort options. That follow-up owns multi-agent
+harness prerequisites and counted live evidence; deterministic proof here supplies
+no live-switch coverage. See the [#1118 plan](../../specs/architecture/1118-agent-switch-from-model.md).
 
 ### Memory search in the current run configuration
 
 `ThreadRunConfig.memorySearch` carries the decoded `SessionSettings.memorySearch` for this conversation's
 current session. The existing `sessionSettings` flow supplies it through `runConfig`; a `null` settings
 reading gives `MemorySearchReport.Unknown`. Opening another conversation creates its own ViewModel and
-settings subscription. On reconnect or host replacement, the repository emits `null` before the new
-read, so the previous report cannot appear as the new host's reading. A session transition refreshes the
-same subscription; `forLiveSession` immediately masks a reading whose nonempty current session ID differs
-from the settings session ID, then accepts the replacement reading when it arrives. This mask matters
+settings subscription. Reconnect or host replacement invalidates the previous report;
+connection-tagged admission cannot depend on observing a `null` gap, which may be
+conflated away. The fresh authority rules above reject detached or stale readings.
+A session transition refreshes the same subscription; `forLiveSession` immediately
+masks a reading whose nonempty current session ID differs from the settings session
+ID, then accepts the admitted replacement reading when it arrives. This mask matters
 because the conversation row can name the new session before its settings reply arrives.
 
 `Unknown` means unconfirmed, even with no providers; only an explicit aggregate `Absent` confirms no

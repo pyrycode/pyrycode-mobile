@@ -9,7 +9,7 @@ that document for the component's shape, sourcing and wiring.
 
 The phone keeps **one remembered effort level app-wide**, across chats, channels and connected hosts, stored under `AppPreferences.rememberedEffort` (see [App preferences § Remembered effort key](app-preferences.md)) — not per-conversation, and unrelated to `defaultEffort`. It never appears on its own in the footer; it only ever reaches the screen by being sent through the normal effort write path and read back on the next settings reading, so `effortLabel` and `selectedEffort` above are unchanged by this feature.
 
-`internal class EffortRecall` (`ThreadViewModel.kt`, same file) is a `ThreadViewModel`-scoped collaborator, one per thread opening, constructed with the injected `RememberedEffortStore` (`RememberedEffortStore.None` on the demo path — inert by construction) and a `start: (sessionId, level) -> Job` that `ThreadViewModel.startEffortRecall` wires to `sendSessionSettings`, the same function `onEffortSelected` calls. `ThreadViewModel.state`'s combine calls `effortRecall.offer(runConfig, conv?.currentSessionId.orEmpty())` on every emission — the one place that already sees both the settings reading and the live session id, so no second `observeSessionSettings` subscription is opened.
+`internal class EffortRecall` (`EffortRecall.kt`) is a `ThreadViewModel`-scoped collaborator, one per thread opening, constructed with the injected `RememberedEffortStore` (`RememberedEffortStore.None` on the demo path — inert by construction) and a `start: (sessionId, level) -> Job` that `ThreadViewModel.startEffortRecall` wires to `sendSessionSettings`, the same function `onEffortSelected` calls. `ThreadViewModel.state`'s combine calls `effortRecall.offer(runConfig, conv?.currentSessionId.orEmpty())` on every emission — the one place that already sees both the settings reading and the live session id, so no second `observeSessionSettings` subscription is opened.
 
 **The decision, made lazily, at most one write per opening (#1310):**
 
@@ -27,6 +27,25 @@ The phone keeps **one remembered effort level app-wide**, across chats, channels
 **First message waits for the recall write.** `sendMessage` calls `effortRecall.awaitWrite()` inside its `launchGuardedRepoCall` block, before `repository.sendMessage`. `awaitWrite` joins the recall's `Job` if one was started and returns at once otherwise — it never waits on a reading or the model menu to arrive, and effort is never attached to `send_message` itself.
 
 **Isolation.** Nothing beyond construction is needed: the repository is bound to the destination's own host, `observeSessionSettings(conversationId)` is scoped to this conversation, and the recall write addresses only the reading's own `sessionId`. Two `ThreadViewModel`s sharing one `RememberedEffortStore` each run their own independent `EffortRecall` and can only ever write to their own session.
+
+**Merged menu and agent changes (#1118).** Both agents' rows are visible in Run
+configuration, but recall still consumes `ThreadRunConfig.effortChoices` from the
+conversation's own-agent selected/default metadata. Another agent's visible row
+cannot make a remembered level eligible, including Codex with no saved model.
+Opening a cross-agent confirmation cancels this opening's undecided recall, even
+if the operator then dismisses it; a switch does not start another recall instance.
+Confirmation forwards the current selected effort only if the target row publishes
+it, and does not remember a new level through the switch operation.
+
+Fresh successor settings determine target effort and permission options. A pending
+or restored display label grants no settings authority. Held, old-session and
+detached-connection readings cannot offer recall or enable writes after a switch;
+a fresh correlated replacement reply can supply the session when the replacement
+conversation summary is sessionless. Keep this admission upstream of recall and
+of the outer thread's applied-effort/permission masking. See
+[the model-menu agent filter](thread-screen-how-it-works-state.md#the-model-menu-agent-filter-1110)
+for connection provenance and permanent display retirement. The app-wide store,
+one decision per opening and success-only effort-write remembering remain unchanged.
 
 **Logging.** Every decided outcome logs `event=effort_recall outcome=<code>` (`started`, `saved_choice`, `no_session`, `unpublished`, `cancelled_by_tap`, `read_failed`) by static code only — never the level or the session id. The one exception: deciding to send nothing because nothing is remembered logs nothing at all, and neither does a cancelling tap while nothing is remembered. `RelayLog` is enabled in debug unit tests and its default sink calls `android.util.Log`, which throws on a plain JVM outside Robolectric; a log call reachable from every thread opening — this decision runs inside the `state` combine — would otherwise crash the state flow of every pre-#686 `ThreadViewModel` test using the inert `RememberedEffortStore.None` default. `setRememberedEffort`'s own `event=remembered_effort_set outcome=success|io_failure` log (in `AppPreferences`) is unconditional and never level-bearing, so it needed no such carve-out.
 
