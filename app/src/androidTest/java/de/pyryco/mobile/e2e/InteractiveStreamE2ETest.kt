@@ -1710,9 +1710,51 @@ class InteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_archiveTwoChats_listsSecondArchivedFirst() {
-        awaitChannelList()
-        awaitConnected()
         val serverId = twoHostArg(ARG_SERVER_ID)
+        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+        val source = GlobalContext.get().get<HostConversationSource>()
+        val started = android.os.SystemClock.elapsedRealtime()
+        val observationLock = Any()
+        var previousRepository: ConversationRepository? = null
+        var repositoryGeneration = 0
+        val probe =
+            ArchiveOrderProbe(
+                observe = {
+                    synchronized(observationLock) {
+                        val owner = registry.connectionFor(serverId)
+                        val repository = owner?.coordinator?.currentRepository?.value
+                        if (repository != null && repository !== previousRepository) {
+                            repositoryGeneration = (repositoryGeneration + 1).coerceAtMost(1_000)
+                        }
+                        previousRepository = repository
+                        ArchiveOrderObservation(
+                            targetRegistered = owner != null,
+                            targetSelected = owner != null && registry.selected.value === owner,
+                            status = owner?.coordinator?.connectionStatus?.value,
+                            repositoryPresent = repository != null,
+                            rowsLoaded =
+                                source.snapshots.value
+                                    .firstOrNull { it.serverId == serverId }
+                                    ?.rowsLoaded == true,
+                            repositoryGeneration = repositoryGeneration,
+                        )
+                    }
+                },
+                record = { Log.i("ArchiveOrder", it) },
+                elapsedMs = { android.os.SystemClock.elapsedRealtime() - started },
+            )
+        val observationScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default)
+        registry.connectionFor(serverId)?.let { owner ->
+            observationScope.launch {
+                combine(owner.coordinator.connectionStatus, owner.coordinator.currentRepository) { _, _ -> Unit }
+                    .collect { probe.sample() }
+            }
+        }
+
+        fun <T> step(
+            stage: ArchiveOrderStage,
+            block: () -> T,
+        ): T = probe.step(stage, block)
         val stamp = System.currentTimeMillis()
         val nameA = "${ARCHIVE_ORDER_PREFIX}a-$stamp"
         val nameB = "${ARCHIVE_ORDER_PREFIX}b-$stamp"
@@ -1721,28 +1763,32 @@ class InteractiveStreamE2ETest {
         var idA: String? = null
         var idB: String? = null
         try {
+            step(ArchiveOrderStage.ListArrival) { awaitChannelList() }
+            step(ArchiveOrderStage.CompatibilityReadiness) { awaitConnected() }
             // 1. A, then B: B is the newer by last use.
-            beforeA = hostConversationIds(serverId)
-            idA = createChatOn(serverId)
-            renameOpenThread(nameA)
-            leaveThread()
-            beforeB = hostConversationIds(serverId)
-            idB = createChatOn(serverId)
-            renameOpenThread(nameB)
+            beforeA = step(ArchiveOrderStage.InitialList) { hostConversationIds(serverId) }
+            idA = step(ArchiveOrderStage.CreateA) { createChatOn(serverId) }
+            step(ArchiveOrderStage.RenameA) { renameOpenThread(nameA) }
+            step(ArchiveOrderStage.LeaveA) { leaveThread() }
+            beforeB = step(ArchiveOrderStage.BeforeB) { hostConversationIds(serverId) }
+            idB = step(ArchiveOrderStage.CreateB) { createChatOn(serverId) }
+            step(ArchiveOrderStage.RenameB) { renameOpenThread(nameB) }
 
             // 2. Archive B from its open thread, then A from its reopened thread.
-            archiveOpenThread()
-            archivedIds(serverId) { idB in it }
-            openChatRow(nameA)
-            archiveOpenThread()
-            archivedIds(serverId) { idA in it }
+            step(ArchiveOrderStage.ArchiveB) { archiveOpenThread() }
+            step(ArchiveOrderStage.MembershipB) { archivedIds(serverId) { idB in it } }
+            step(ArchiveOrderStage.ReopenA) { openChatRow(nameA) }
+            step(ArchiveOrderStage.ArchiveA) { archiveOpenThread() }
+            step(ArchiveOrderStage.MembershipA) { archivedIds(serverId) { idA in it } }
 
             // 3. Open Archive on its Discussions tab: A, archived last, is the first row.
-            openListMenuEntry(R.string.thread_overflow_archive)
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
+            step(ArchiveOrderStage.OpenArchive) {
+                openListMenuEntry(R.string.thread_overflow_archive)
+                composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                    composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
+                }
             }
-            openArchiveTab(R.string.archived_tab_discussions)
+            step(ArchiveOrderStage.DiscussionTab) { openArchiveTab(R.string.archived_tab_discussions) }
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val restoreA = hasContentDescription(context.getString(R.string.cd_restore_archive, nameA))
             val restoreB = hasContentDescription(context.getString(R.string.cd_restore_archive, nameB))
@@ -1756,14 +1802,19 @@ class InteractiveStreamE2ETest {
                     ?.boundsInRoot
                     ?.top
 
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                val a = topOf(restoreA)
-                val b = topOf(restoreB)
-                a != null && b != null && a < b
+            step(ArchiveOrderStage.RelativeOrder) {
+                composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                    val a = topOf(restoreA)
+                    val b = topOf(restoreB)
+                    a != null && b != null && a < b
+                }
             }
-            val topmost = composeTestRule.onAllNodes(anyRestore).fetchSemanticsNodes().minOf { it.boundsInRoot.top }
-            assertEquals("the second-archived chat is not the Archive's first row", topmost, topOf(restoreA))
+            step(ArchiveOrderStage.FirstRow) {
+                val topmost = composeTestRule.onAllNodes(anyRestore).fetchSemanticsNodes().minOf { it.boundsInRoot.top }
+                assertEquals("the second-archived chat is not the Archive's first row", topmost, topOf(restoreA))
+            }
         } finally {
+            observationScope.cancel()
             beforeA?.let { cleanupCreatedConversation(serverId, it, idA, "archive order cleanup failed") }
             beforeB?.let { cleanupCreatedConversation(serverId, it, idB, "archive order cleanup failed") }
         }

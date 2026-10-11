@@ -14,7 +14,7 @@
 
 ## Context
 
-#1977 and #2009 branch failures stop at the initial `hostConversationIds`, before fixture A creation. #2009 base exposes only a 30-second coroutine timeout. The original phone/daemon artifact directories are unavailable; cleanup-time launcher records do not establish lifecycle state during the wait. The target method ran last, immediately after offline-retry, in the original full selections. Connection loss timing is not recoverable from retained summaries.
+#1977 and #2009 branch failures stop at the initial `hostConversationIds`, before fixture A creation. #2009 base exposes only a 30-second coroutine timeout. The original phone/daemon artifact directories are unavailable; cleanup-time launcher records do not establish lifecycle state during the wait. The target method ran last, immediately after offline-retry, in the original full selections. Connection loss timing is not recoverable from retained summaries. The #2009 base offline-retry predecessor failed in its initial list read, before `DaemonFaultControl.stopUntilRetryWindow`; its intentional restart cannot explain that already-missing list. Branch/#1977 predecessor timeouts are unlocalized.
 
 `awaitConnected` reads compatibility selection, whereas the list read owns the harness's specified host. This is an observation gap, not yet a demonstrated cause. Diagnose from fresh bounded target-host observations before choosing a localized repair. No archive-order algorithm or visual change is scoped; no decision record is needed.
 
@@ -34,11 +34,11 @@ No product lifecycle/state change is planned without causal evidence. Any diagno
 
 | Event | Coverage |
 | --- | --- |
-| Selected host is connected but the specified host is absent/unready | Target-host stage/observation regression; live list delivery remains required. |
-| Repository is removed or replaced during setup | Bounded observation/replacement regression; existing `LiveConnectionReadsTest` covers stale-source rejection. |
-| A stage fails before cleanup | Original-exception and pre-cleanup diagnostic regression. |
-| Observation or logging itself fails | Original-exception preservation regression; emit only a static unavailable code. |
-| Repeated status events exhaust observation capacity | Bound regression; no unbounded diagnostic retention. |
+| Selected host is connected but the specified host is absent/unready | `ArchiveOrderProbeTest.initialListFailureRetainsTargetHostStateBeforeCleanup`; live list delivery remains required. |
+| Repository is removed or replaced during setup | `ArchiveOrderProbeTest.repositoryLossAndReplacementRemainSeparateFromHeldRows`; existing `LiveConnectionReadsTest` covers stale-source rejection. |
+| A stage fails before cleanup | `ArchiveOrderProbeTest.initialListFailureRetainsTargetHostStateBeforeCleanup`. |
+| Observation or logging itself fails | `ArchiveOrderProbeTest.diagnosticFailureCannotReplaceOrExposeOriginalFailure` and `cancellationAndUnavailableClockPreserveFailureIdentity`; static unavailable code only. |
+| Repeated status events exhaust observation capacity | `ArchiveOrderProbeTest.observationsAreBoundedAndRetainTheFinalFailure`; no unbounded diagnostic retention. |
 
 The scenario has no graph restart, process restoration, or reused fixture identifier: A and B are fresh, uniquely named fixtures on one host.
 
@@ -71,3 +71,11 @@ Run the unmodified selected live method to retain a fresh baseline, then a faili
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-11
+
+## Revisions
+
+### 2026-10-11 — Retain evidence before selecting a repair
+
+The first unmodified focused live attempt compiled both APKs but executed zero tests: exit 75, device held by the historical #2088 live run, and a 300-second admission wait expired. This is an environment wait, not a scenario result. Original #1977/#2009 phone/daemon directories are absent. Implement the planned diagnostic seam while waiting for fresh evidence; no behavioural cause or repair is claimed yet.
+
+`ArchiveOrderProbe` retains at most 32 events and admits at most 32 background samples, with fixed stage/status codes, bounded monotonic time and repository appearance counts. A local scenario-owned collector samples only the specified host's status and repository; cancel it before fixture cleanup. Every stage samples again synchronously, so capped background evidence cannot suppress the final failing-stage snapshot. Observations are explicitly non-atomic: held rows are not proof of a live connection. JVM regressions cover stage attribution, bounds, dynamic-field exclusion, original-error/cancellation identity, unavailable diagnostics and repository loss/replacement. New internal types: three; consumer edits: one scenario; no production repair yet.
