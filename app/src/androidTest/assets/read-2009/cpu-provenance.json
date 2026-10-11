@@ -1,0 +1,91 @@
+{
+  "mobile_implementation_commit": "4c60deb2791c1d1c40d640bab143e84091711429",
+  "merged_main": "b44067bbd991b7d68e0418f88cc2a9e721671c61",
+  "original_finding_reviewed_head": "fd5d7dc61f4965f05202c3c69f5f92b14fa111e8",
+  "historical_readiness_timeout_attribution": "unestablished; controlled sampling defects and fresh reproduction are separate evidence",
+  "source_sha256": {
+    "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "07b697f780bf83202a39e31b5730f4429d86c64764012575738bde2629a36295",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b76344d827dd69b4356d27e1620e21c120668af0cc8fa8d36e05a5c1c2a9b33b",
+    "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "df15f0d6c7f3114adab4e239a8a94c952c7c1d226333d01c24d06db7079d303f",
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt": "365a70597fafb434cee19db70a38a25033f77383e01ee88793c743f8038d75d7"
+  },
+  "pipe_red_source_sha256": "4702dc4b63db20472e80ea53cc11776e94ee50d978f484eb2d9477bb486c2ec7",
+  "red_controls": {
+    "synchronous_acquisition": {
+      "executed": 1,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "baseline": "withEmulatorCpuSample = acquire().use { read(it) }; emergency release precedes readiness clock advancement"
+    },
+    "blocking_android_pipe": {
+      "executed": 1,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "baseline": "readCpuCounters uses AutoCloseInputStream.bufferedReader().readLine(); 100 ms timeout with 1500 ms emergency release"
+    }
+  },
+  "unit_green": {
+    "executed": 97,
+    "passed": 97,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "cpu_class_executed": 12
+  },
+  "device_class_green": {
+    "executed": 4,
+    "passed": 4,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "device": "pixel2Api33Atd",
+    "animations_disabled": true,
+    "forced": true
+  },
+  "full_ui_command": "env 'ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs=-Xmx3072m' UI_GATE_FULL=1 UI_SHARDS=1 ANDROID_GATE_WAIT_SECONDS=2700 timeout 2400 python3 scripts/android-test-gate.py ui",
+  "full_ui_device_only_classes": 63,
+  "full_ui_artifacts": "build/dispatcher-tests/ui-otiassxh",
+  "pending_dispatcher": [
+    "fresh UI",
+    "scripted-all",
+    "full live with counted A/B attention stages and daemon source/binary provenance"
+  ],
+  "pending_documentation": "docs/e2e-interactive-stream.md: Peer read clears phone attention (#1883)",
+  "full_ui_counts": {
+    "recorded": 261,
+    "executed": 260,
+    "passed": 260,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 1
+  },
+  "full_ui_exit": 0,
+  "full_ui_report_sha256": "758f21faff153ea4e5dc39abf23899c976e6a32924bac44c5027b5a2bfa148f7",
+  "full_ui_saved_thread_log_sha256": {
+    "197-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen.txt": "2a23a27b62f329987010d191716e69f5c846204480c223ade18d0d723b5cac32",
+    "198-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-heldCpuPipeCancelsAndClosesItsDescriptor.txt": "178fcf613db71efd51a89e3dc384d7c8caf4ca20988ec4c9537e47f6906309eb",
+    "200-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-slowRestore_negativeControlRejectsTheSameFirstDrawBound.txt": "62fb98f4dea4aeb36117b3a7c8437a84c8287ffbf72e611d77b78a43bd6d833a",
+    "199-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen.txt": "c88b1e04e2efcd73ab77e4a91738090d7564e4739345584434a1169ecd73afe7"
+  },
+  "scripted_ping_counts": {
+    "executed": 2,
+    "passed": 2,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "scripted_ping_exit": 0,
+  "scripted_ping_artifacts": "build/dispatcher-tests/scripted-n41bgsar/dispatcher.xml",
+  "scripted_daemon_revision": "b36441f9d03c7e7b78ce7c41fe6963e225c59ad5",
+  "scripted_daemon_contains_3167": true,
+  "scripted_binary_vcs_modified": false,
+  "tested_binary_sha256": {
+    "build/e2e-bin/pyry": "aeec1f4ffd2bd1137fbb1549089bd0a5b60fc8201c75dc5ff04b8e45a47986aa",
+    "build/e2e-bin/pyrycode-relay": "183a02e1c1bebbd556e9dbaf3983f257c97475ba3569e32dd6b2baec6e94d59f",
+    "app/build/outputs/apk/debug/app-debug.apk": "47a9b1edfb11a748668daab7318bb5627939fd19b22109ec6f23a4e800a37eac",
+    "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk": "ff7003ef13d2c9067319d964db12b2fcd25bee7418597965cab3d043c5f9cc36"
+  },
+  "scripted_daemon_source_clean": true
+}
