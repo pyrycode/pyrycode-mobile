@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 
 /**
  * The stable [ConversationRepository] reference ViewModels hold across relay connection churn (#352).
@@ -60,6 +61,29 @@ class StableConversationRepository(
     private val readRetries: ReadCheckpointRetries? = null,
 ) : ConversationRepository,
     ThreadSnapshotSource {
+    override val runConfigurationReadings: RunConfigurationReadings =
+        object : RunConfigurationReadings {
+            override val currentConnection: Any? get() = currentRepository.value
+
+            @OptIn(ExperimentalCoroutinesApi::class)
+            override fun observeConversations(filter: ConversationFilter): Flow<ConnectionReading<List<Conversation>>> =
+                currentRepository.flatMapLatest { repo ->
+                    repo?.observeConversations(filter)?.map { ConnectionReading(repo, it) }
+                        ?: flowOf(ConnectionReading(null, emptyList()))
+                }
+
+            @OptIn(ExperimentalCoroutinesApi::class)
+            override fun observeSessionSettings(conversationId: String): Flow<ConnectionReading<SessionSettings?>> =
+                currentRepository.flatMapLatest { repo ->
+                    if (repo != null) {
+                        repo.observeSessionSettings(conversationId).map { ConnectionReading(repo, it) }
+                    } else {
+                        (heldReadings?.observeHeldSessionSettings(conversationId) ?: flowOf(null))
+                            .map { ConnectionReading(null, it) }
+                    }
+                }
+        }
+
     /**
      * Switch a cold read over [currentRepository]: delegate to the live repository's [select] flow, or
      * emit [whenAbsent] once while no connection is live. [flatMapLatest] cancels the prior inner flow

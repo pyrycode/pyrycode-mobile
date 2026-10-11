@@ -23,6 +23,7 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
+import de.pyryco.mobile.data.repository.ConnectionReading
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
@@ -42,6 +43,7 @@ import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.SlashCommandMenu
+import de.pyryco.mobile.data.repository.SwitchAgentFailure
 import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -364,10 +366,78 @@ class ThreadViewModel(
 
     /** A model tap whose write has not settled, or `null`. A matching fresh settings reading confirms it;
      *  a rejected write or lost settings context clears it. */
-    private val pendingModel = MutableStateFlow<String?>(null)
+    private data class PendingModel(
+        val value: String,
+        val agent: ConversationAgent,
+        val sessionId: String,
+    )
+
+    private val pendingModel = MutableStateFlow<PendingModel?>(null)
 
     /** The [pendingModel] twin for effort (#807). */
     private val pendingEffort = MutableStateFlow<String?>(null)
+
+    /** Display only: never carries settings authority or effort/permission metadata. */
+    private data class ConfirmedModelDisplay(
+        val agent: ConversationAgent,
+        val sessionId: String,
+        val label: String,
+        val rowValue: String?,
+        val settingsSeq: Long,
+        val conversationSeq: Long,
+        val connection: Any?,
+    ) {
+        fun belongsTo(conversation: Conversation?): Boolean =
+            conversation != null &&
+                agent == conversation.agent &&
+                (conversation.currentSessionId.isEmpty() || sessionId == conversation.currentSessionId)
+
+        fun supersededBy(
+            conversation: Conversation?,
+            conversationSeq: Long,
+            connection: Any?,
+            reading: SettingsReading,
+        ): Boolean =
+            connection !== this.connection ||
+                conversationSeq > this.conversationSeq &&
+                !belongsTo(conversation) ||
+                conversationSeq >= this.conversationSeq &&
+                belongsTo(conversation) &&
+                reading.seq > settingsSeq &&
+                reading.settings?.held == false
+
+        override fun toString(): String = "ConfirmedModelDisplay"
+    }
+
+    private data class SettingsIdentity(
+        val connection: Any?,
+        val sessionId: String,
+    )
+
+    /** A terminal command's display candidate; resolving it never delays request cleanup or grants authority. */
+    private data class SuccessDisplay(
+        val choice: ThreadModelChoice,
+        val origin: SettingsIdentity,
+        val settingsSeq: Long,
+        val conversationSeq: Long,
+    )
+
+    /** Phone-local confirmation, send and display-only settlement; never a persisted command. */
+    private data class AgentSwitchUi(
+        val request: ThreadAgentSwitch? = null,
+        val confirmed: ConfirmedModelDisplay? = null,
+        val previous: ConfirmedModelDisplay? = null,
+        val failed: Boolean = false,
+        val success: SuccessDisplay? = null,
+        val settledFrom: SettingsIdentity? = null,
+    )
+
+    private val agentSwitchUi = MutableStateFlow(AgentSwitchUi())
+    private val runReadings = repository.runConfigurationReadings
+    private val currentRunConnection: Any?
+        get() = if (runReadings == null) repository else runReadings.currentConnection
+    private var previousConversationAgent: ConversationAgent? = null
+    private var agentChanged = false
 
     /**
      * This thread's switch-back offer (#1360), or `null`: at most one, armed only by a live session-scoped
@@ -383,31 +453,39 @@ class ThreadViewModel(
      * This conversation's saved run configuration (#590), the authority for the displayed model and
      * effort and for the session id a write addresses (#807).
      *
-     * The `onEach` confirms a pending model only when a fresh reading names that raw value. A stale reply
+     * Admission confirms a pending model only when a fresh reading names that raw value. A stale reply
      * cannot briefly put the old model back. A lost reading clears the pending context. The acknowledgement
      * echoes only the input session id and confirms nothing.
      * It rides this flow rather than a second collector because `observeSessionSettings` is cold and
      * per-collector — a separate subscription would send a second `request_session_settings` frame on
      * every thread entry.
      */
-    private val sessionSettings: Flow<SessionSettings?> =
-        repository
-            .observeSessionSettings(conversationId)
-            .onEach { reading ->
-                // #1320: a held reading heads the subscription on a same-host reconnect where `null` used to,
-                // so it ends the pending context the same way.
-                val lost = reading == null || reading.held
-                if (lost || pendingModel.value == reading?.model) pendingModel.value = null
-                pendingEffort.value = null
-                // #650: a `null` or held reading heads every new subscription (host switch, owning-host
-                // reconnect) and `null` follows a failed read; a reading for another session means the session
-                // was replaced. Either way the permission write belongs to a context that is gone. The check
-                // runs before the tick below so the settle loop never sees a reading from the new context.
-                permissionWrite?.let { write ->
-                    if (lost || reading?.sessionId != write.sessionId) cancelPermissionWrite()
+    private val sessionSettings: Flow<SettingsReading> =
+        (
+            runReadings?.observeSessionSettings(conversationId)
+                ?: repository.observeSessionSettings(conversationId).map { ConnectionReading(repository, it) }
+        ).map { input ->
+            val reading = input.value
+            // #1320: a held reading heads the subscription on a same-host reconnect where `null` used to,
+            // so it ends the pending context the same way.
+            val lost = reading == null || reading.held
+            pendingModel.value?.let { pending ->
+                if (lost || reading?.sessionId != pending.sessionId || pending.value == reading?.model) {
+                    pendingModel.compareAndSet(pending, null)
                 }
-                settingsReadings.update { SettingsReading(it.seq + 1, reading) }
             }
+            pendingEffort.value = null
+            // #650: a `null` or held reading heads every new subscription (host switch, owning-host
+            // reconnect) and `null` follows a failed read; a reading for another session means the session
+            // was replaced. Either way the permission write belongs to a context that is gone. The check
+            // runs before the tick below so the settle loop never sees a reading from the new context.
+            permissionWrite?.let { write ->
+                if (lost || reading?.sessionId != write.sessionId) cancelPermissionWrite()
+            }
+            val delivered = SettingsReading(settingsReadings.value.seq + 1, reading, input.connection)
+            settingsReadings.value = delivered
+            delivered
+        }
 
     /** The permission mode a write asked for (#650), while its request or settle runs; else `null`. */
     private val pendingPermission = MutableStateFlow<String?>(null)
@@ -446,6 +524,15 @@ class ThreadViewModel(
     /** Last selection on this connection; empty summaries cannot undo a known session replacement. */
     private var lastKnownSessionId = ""
 
+    private data class ConversationReading(
+        val seq: Long,
+        val list: List<Conversation>,
+        val agentChanged: Boolean,
+        val connection: Any?,
+    )
+
+    private var conversationSeq = 0L
+
     /**
      * The conversation list, shared (#1110) so [state] and [conversationAgent] ride one upstream
      * subscription: the remote repository sends a `list_conversations` request on every subscription.
@@ -453,19 +540,45 @@ class ThreadViewModel(
      * #1399: a list showing this row archived, from any client, leaves for the list. Upstream of `shareIn`
      * so it runs once per emission. A row that disappears, or is only renamed or moved, stays (desktop #653).
      */
-    private val conversations: Flow<List<Conversation>> =
-        repository
-            .observeConversations(ConversationFilter.All)
-            .onEach { list ->
-                if (hostAvailable.value) {
-                    list.firstOrNull { it.id == conversationId }?.currentSessionId?.takeIf { it.isNotEmpty() }?.let {
-                        lastKnownSessionId = it
+    private val conversationReadings =
+        (
+            runReadings?.observeConversations(ConversationFilter.All)
+                ?: repository.observeConversations(ConversationFilter.All).map { ConnectionReading(repository, it) }
+        ).onEach { input ->
+            val list = input.value
+            list.firstOrNull { it.id == conversationId }?.let { conversation ->
+                // A local switch's target can be conflated with a switch-back. Its replacement
+                // session still invalidates old-agent readings even if the observed agent is unchanged.
+                if (previousConversationAgent?.let { it != conversation.agent } == true ||
+                    agentSwitchUi.value.request?.sending == true &&
+                    conversation.currentSessionId.isNotEmpty() &&
+                    conversation.currentSessionId != lastKnownSessionId
+                ) {
+                    agentChanged = true
+                }
+                previousConversationAgent = conversation.agent
+                pendingModel.value?.let { pending ->
+                    if (pending.agent != conversation.agent ||
+                        conversation.currentSessionId.isNotEmpty() &&
+                        pending.sessionId != conversation.currentSessionId
+                    ) {
+                        pendingModel.compareAndSet(pending, null)
+                        RelayLog.d { "event=model_write_pending outcome=session_replaced" }
                     }
                 }
-                if (list.any { it.id == conversationId && it.archived } && leaveForList()) {
-                    RelayLog.d { "event=thread_left_archived" }
+            }
+            if (hostAvailable.value) {
+                list.firstOrNull { it.id == conversationId }?.currentSessionId?.takeIf { it.isNotEmpty() }?.let {
+                    lastKnownSessionId = it
                 }
-            }.shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
+            }
+            if (list.any { it.id == conversationId && it.archived } && leaveForList()) {
+                RelayLog.d { "event=thread_left_archived" }
+            }
+        }.map { input -> ConversationReading(++conversationSeq, input.value, agentChanged, input.connection) }
+            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
+
+    private val conversations: Flow<List<Conversation>> = conversationReadings.map { it.list }
 
     /** The agent that runs this conversation (#1110); Claude while the list does not hold it yet. */
     private val conversationAgent: Flow<ConversationAgent> =
@@ -483,17 +596,82 @@ class ThreadViewModel(
     private val runConfigFlow: Flow<ThreadRunConfig> =
         combine(
             sessionSettings,
-            // #1110: the agent joins by a chained combine, since this one is at the typed ceiling. Filtering
-            // here, before [runConfig] caps the rows, is what makes the hidden count the filtered list's.
-            repository.observeModelMenu(conversationId).combine(conversationAgent) { menu, agent ->
-                menu?.forAgent(agent) to agent
+            // The shared conversation reading binds stale settings after an agent transition.
+            repository.observeModelMenu(conversationId).combine(conversationReadings) { menu, reading ->
+                menu to reading
             },
             pendingModel,
             pendingEffort,
             pendingPermission,
-        ) { settings, menuAndAgent, model, effort, permission ->
-            // #1411: the settings ride along to the context-usage combine, which falls back to their token pair.
-            runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission) to settings
+        ) { reading, menuAndAgent, model, effort, permission ->
+            RunConfigInput(reading, menuAndAgent.first, menuAndAgent.second, model, effort, permission)
+        }.combine(agentSwitchUi) { input, switching ->
+            val conversations = input.conversations
+            val conversation = conversations.list.firstOrNull { it.id == conversationId }
+            val connection = currentRunConnection
+            val freshSettings =
+                input.reading.settings?.takeUnless {
+                    input.reading.connection !== connection ||
+                        conversations.connection !== connection ||
+                        (conversations.agentChanged || switching.settledFrom != null) &&
+                        (
+                            it.held ||
+                                conversation == null ||
+                                conversation.currentSessionId.isNotEmpty() &&
+                                it.sessionId != conversation.currentSessionId
+                        ) ||
+                        switching.settledFrom?.let { origin ->
+                            origin.connection === input.reading.connection && origin.sessionId == it.sessionId
+                        } == true
+                }
+            val reading = input.reading.copy(settings = freshSettings)
+            var success = switching.success
+            var confirmed = switching.confirmed
+            success?.let { candidate ->
+                // An old combined input cannot decide display identity. Connection replacement can,
+                // even when the disconnected gap and all intermediate conversations were skipped.
+                if (connection !== candidate.origin.connection) {
+                    success = null
+                } else if (conversations.seq > candidate.conversationSeq && conversations.connection === connection) {
+                    when {
+                        conversation == null || conversation.currentSessionId.isEmpty() -> success = null
+                        conversation.currentSessionId == candidate.origin.sessionId -> Unit
+                        else -> {
+                            success = null
+                            if (conversation.agent == candidate.choice.agent) {
+                                confirmed =
+                                    ConfirmedModelDisplay(
+                                        candidate.choice.agent,
+                                        conversation.currentSessionId,
+                                        candidate.choice.label.inert(),
+                                        candidate.choice.value,
+                                        candidate.settingsSeq,
+                                        conversations.seq,
+                                        connection,
+                                    )
+                            }
+                        }
+                    }
+                }
+            }
+            confirmed = confirmed?.takeUnless { it.supersededBy(conversation, conversations.seq, connection, reading) }
+            val previous = switching.previous?.takeUnless { it.supersededBy(conversation, conversations.seq, connection, reading) }
+            if (confirmed != switching.confirmed || previous != switching.previous || success != switching.success) {
+                agentSwitchUi.compareAndSet(switching, switching.copy(confirmed = confirmed, previous = previous, success = success))
+            }
+            val agent = conversation?.agent ?: ConversationAgent.Claude
+            val pending = input.model?.takeIf { it.agent == agent && it.sessionId == freshSettings?.sessionId }?.value
+            val config = runConfig(freshSettings, input.menu, agent, pending, input.effort, input.permission)
+            val display = confirmed?.takeIf { it.belongsTo(conversation) && freshSettings == null }
+            config.copy(
+                agentSwitch = switching.request,
+                agentSwitchFailed = switching.failed,
+                confirmedModelLabel = display?.label,
+                confirmedSwitchChoice =
+                    display?.rowValue?.let { value ->
+                        config.choices.singleOrNull { it.agent == config.agent && it.value == value }
+                    },
+            ) to freshSettings
         }.combine(runningModel) { (config, settings), (running, announced) ->
             config.copy(running = running, announcedModel = announced) to settings
         }.combine(repository.observeContextUsage(conversationId)) { (config, settings), usage ->
@@ -835,6 +1013,15 @@ class ThreadViewModel(
             runConfigFlow,
         ) { conversations, content, pickerVisible, dialogs, runConfig ->
             val conv = conversations.firstOrNull { it.id == conversationId }
+            // A sessionless replacement summary cannot override its admitted, connection-correlated
+            // settings with a detached connection's last known session. Held readings never bind it.
+            val liveSession =
+                conv?.currentSessionId?.takeIf { it.isNotEmpty() }
+                    ?: runConfig.sessionId.takeIf {
+                        runConfig.settingsAvailable && !runConfig.settingsHeld &&
+                            (runReadings != null || agentSwitchUi.value.settledFrom != null)
+                    }
+                    ?: lastKnownSessionId
             // #686: the one place that sees the settings reading and the live session together without a
             // second `observeSessionSettings` subscription, which would send another settings request.
             // The recall decides at most once, so a re-emission or a WhileSubscribed restart is harmless.
@@ -857,7 +1044,7 @@ class ThreadViewModel(
                 workspacePath = conv?.cwd ?: "",
                 lastUsedAt = conv?.lastUsedAt,
                 sessionCount = conv?.sessionHistory?.size ?: 0,
-                runConfig = runConfig.forLiveSession(lastKnownSessionId),
+                runConfig = runConfig.forLiveSession(liveSession),
                 mutationsSupported = repository.mutationsSupported,
                 historyTail = content.historyTail,
                 historyMarkers = content.historyMarkers,
@@ -2847,12 +3034,93 @@ class ThreadViewModel(
     fun onModelSelected(value: String) {
         if (!connectedFor("model")) return
         val config = state.value.runConfig
-        if (config.pending || value == config.selectedModel) return
+        if (agentSwitchUi.value.request != null || config.pending) return
+        val choice = config.choices.singleOrNull { it.value == value }
+        // Preserve an own-agent write already requested when no menu is available. A published menu,
+        // however, must resolve one known row before a pick can write or ask for confirmation.
+        if (config.menuAvailable && choice == null) return
+        if (choice != null && choice.agent != config.agent) {
+            if (!config.writable || config.settingsHeld) return
+            effortRecall.cancel()
+            agentSwitchUi.value =
+                AgentSwitchUi(
+                    request = ThreadAgentSwitch(config.agent, choice),
+                    previous =
+                        ConfirmedModelDisplay(
+                            config.agent,
+                            config.sessionId,
+                            config.modelLabel.inert(),
+                            config.selectedChoice?.value,
+                            settingsReadings.value.seq,
+                            conversationReadings.replayCache.lastOrNull()?.seq ?: 0L,
+                            currentRunConnection,
+                        ),
+                    settledFrom = agentSwitchUi.value.settledFrom,
+                )
+            RelayLog.d { "event=agent_switch_confirmation outcome=opened" }
+            return
+        }
+        if (value == config.selectedModel) return
         if (!skipUnlessWritable(config)) return
+        agentSwitchUi.value = AgentSwitchUi(settledFrom = agentSwitchUi.value.settledFrom)
         // #1360: a model the user picks replaces the way back to the refused one.
         clearRefusalOffer("menu")
-        pendingModel.value = value
-        sendSessionSettings(config.sessionId, model = value) { pendingModel.value = null }
+        val pending = PendingModel(value, config.agent, config.sessionId)
+        pendingModel.value = pending
+        sendSessionSettings(config.sessionId, model = value) { pendingModel.compareAndSet(pending, null) }
+    }
+
+    private fun dismissAgentSwitch() {
+        if (agentSwitchUi.value.request?.sending == true) return
+        agentSwitchUi.value = AgentSwitchUi(settledFrom = agentSwitchUi.value.settledFrom)
+        RelayLog.d { "event=agent_switch_confirmation outcome=dismissed" }
+    }
+
+    private fun confirmAgentSwitch() {
+        val switching = agentSwitchUi.value
+        val request = switching.request ?: return
+        if (request.sending) return
+        val config = state.value.runConfig
+        if (!connectedFor("agent_switch") || config.agent != request.source || config.settingsHeld) {
+            agentSwitchUi.value =
+                AgentSwitchUi(failed = true, confirmed = agentSwitchUi.value.previous, settledFrom = agentSwitchUi.value.settledFrom)
+            RelayLog.w { "event=agent_switch_ui outcome=unavailable" }
+            return
+        }
+        val effort =
+            config.selectedEffort.takeIf { level ->
+                level.isNotEmpty() && request.choice.effortChoices.any { it.value == level }
+            }
+        val origin = SettingsIdentity(currentRunConnection, config.sessionId)
+        val display = SuccessDisplay(request.choice, origin, settingsReadings.value.seq, conversationSeq)
+        val sending = request.copy(sending = true)
+        // Claim on Main before launch: even two taps before StateFlow publishes send only once.
+        agentSwitchUi.value = switching.copy(request = sending)
+        clearRefusalOffer("agent_switch")
+        RelayLog.d { "event=agent_switch_ui outcome=started" }
+        viewModelScope.launch {
+            val result =
+                try {
+                    repository.switchAgent(conversationId, request.choice.agent, request.choice.value, effort)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.Failed))
+                }
+            if (agentSwitchUi.value.request !== sending) return@launch
+            if (result.isSuccess) {
+                // The authenticated repository result settles this attempt, independently of projection
+                // delivery. A separate candidate may resolve a successor-bound label, never settings.
+                agentSwitchUi.value = AgentSwitchUi(success = display, settledFrom = origin)
+                repository.refreshSessionSettings(conversationId)
+                RelayLog.d { "event=agent_switch_ui outcome=confirmed" }
+            } else {
+                agentSwitchUi.value =
+                    AgentSwitchUi(failed = true, confirmed = agentSwitchUi.value.previous, settledFrom = agentSwitchUi.value.settledFrom)
+                val category = (result.exceptionOrNull() as? SwitchAgentFailure)?.category ?: SwitchAgentFailure.Category.Failed
+                RelayLog.w { "event=agent_switch_ui outcome=failed category=$category" }
+            }
+        }
     }
 
     /**
@@ -2867,6 +3135,7 @@ class ThreadViewModel(
      * the model is claude's text.
      */
     fun onSwitchBack() {
+        if (agentSwitchUi.value.request != null) return
         if (!connectedFor("switch_back")) return
         val offer = refusalOffer.value ?: return
         if (pendingModel.value != null) {
@@ -2876,7 +3145,8 @@ class ThreadViewModel(
         val config = state.value.runConfig
         if (!skipUnlessWritable(config)) return
         refusalOffer.value = offer.copy(failed = false)
-        pendingModel.value = offer.originalModel
+        val pending = PendingModel(offer.originalModel, config.agent, config.sessionId)
+        pendingModel.value = pending
         RelayLog.d { "event=refusal_switch_back outcome=sent" }
         sendSessionSettings(
             config.sessionId,
@@ -2888,7 +3158,7 @@ class ThreadViewModel(
             },
         ) {
             RelayLog.d { "event=refusal_switch_back outcome=failed" }
-            pendingModel.value = null
+            pendingModel.compareAndSet(pending, null)
             refusalOffer.update { if (it?.occurredAt == offer.occurredAt) it.copy(failed = true) else it }
         }
     }
@@ -2927,7 +3197,7 @@ class ThreadViewModel(
      *  the selected row, forwarded verbatim — never `Effort.name.lowercase()`, whose five entries are this
      *  device's guess at a vocabulary the row itself publishes. */
     fun onEffortSelected(level: String) {
-        if (!connectedFor("effort")) return
+        if (!connectedFor("effort") || agentSwitchUi.value.request != null) return
         effortRecall.cancel()
         val config = state.value.runConfig
         if (config.pending || level == config.selectedEffort) return
@@ -2955,6 +3225,7 @@ class ThreadViewModel(
      * on the confirmed reading and [ThreadRunConfig.pendingPermission] only marks it pending.
      */
     fun onPermissionModeSelected(value: String) {
+        if (agentSwitchUi.value.request != null) return
         if (!connectedFor("permission")) return
         val mode = PermissionModeOption.fromWire(value) ?: return
         val config = state.value.runConfig
@@ -3146,6 +3417,8 @@ class ThreadViewModel(
 
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
+            ThreadEvent.AgentSwitchConfirm -> confirmAgentSwitch()
+            ThreadEvent.AgentSwitchDismiss -> dismissAgentSwitch()
             is ThreadEvent.NewestContentPresented -> {
                 // The composition sampled sight and daemon support together before dispatch.
                 val checkpoint = event.checkpoint
@@ -3319,10 +3592,20 @@ class ThreadViewModel(
         val job: Job,
     )
 
+    private data class RunConfigInput(
+        val reading: SettingsReading,
+        val menu: ModelMenu?,
+        val conversations: ConversationReading,
+        val model: PendingModel?,
+        val effort: String?,
+        val permission: String?,
+    )
+
     /** One delivered settings reading and its arrival number (#650). */
     private data class SettingsReading(
         val seq: Long,
         val settings: SessionSettings?,
+        val connection: Any? = null,
     )
 
     /**
@@ -3476,20 +3759,20 @@ private fun runConfig(
     pendingEffort: String?,
     pendingPermission: String?,
 ): ThreadRunConfig {
-    val rows = menu?.rows.orEmpty()
+    val rows = menu?.rows.orEmpty().filter { it.agent != null }
     val visibleRows = rows.filterNot { it.value == INHERITED_DEFAULT_MODEL_VALUE }
     val defaultRow =
         if (agent == ConversationAgent.Claude) {
-            rows.filter { it.value == INHERITED_DEFAULT_MODEL_VALUE }.singleOrNull()
+            rows.filter { it.agent == agent && it.value == INHERITED_DEFAULT_MODEL_VALUE }.singleOrNull()
         } else {
             null
         }
     return ThreadRunConfig(
-        choices = visibleRows.take(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice(agent) },
-        overflowChoices = visibleRows.drop(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice(agent) },
-        inheritedChoice = defaultRow?.toChoice(agent),
+        choices = visibleRows.take(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice() },
+        overflowChoices = visibleRows.drop(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice() },
+        inheritedChoice = defaultRow?.toChoice(),
         inheritedResolutionUnique =
-            defaultRow != null && visibleRows.count { it.resolvedModel == defaultRow.resolvedModel } == 1,
+            defaultRow != null && visibleRows.count { it.agent == agent && it.resolvedModel == defaultRow.resolvedModel } == 1,
         menuAvailable = menu != null,
         droppedModels = menu?.droppedModels ?: 0,
         hiddenChoices = (visibleRows.size - MAX_RENDERED_MODEL_CHOICES).coerceAtLeast(0),
@@ -3508,18 +3791,6 @@ private fun runConfig(
         agent = agent,
     )
 }
-
-/**
- * The rows [agent]'s conversation lists (#1110), in the daemon's order. A merged `multi_agent` menu is the
- * same for every conversation and the daemon refuses a model or effort outside the session's own agent, so
- * the other agent's rows, and rows naming an agent this client does not know, are left out. `droppedModels`
- * counts only Claude's cut entries, so a Codex conversation reports none.
- */
-private fun ModelMenu.forAgent(agent: ConversationAgent): ModelMenu =
-    ModelMenu(
-        rows = rows.filter { it.agent == agent },
-        droppedModels = if (agent == ConversationAgent.Claude) droppedModels else 0,
-    )
 
 /**
  * Hides a permission mode (#650), applied effort (#889), and memory search report left over from a replaced session. A
@@ -3549,8 +3820,8 @@ internal const val PERMISSION_SETTLE_INTERVAL_MS = 500L
 /** One published row, split into the verbatim write argument and inert display text. `resolvedModel`
  *  becomes [ThreadModelChoice.detail], which no screen draws since #1497, only when it says something the
  *  label does not. */
-private fun ModelMenuRow.toChoice(agent: ConversationAgent): ThreadModelChoice {
-    val label = dropdownLabel(agent)
+private fun ModelMenuRow.toChoice(): ThreadModelChoice {
+    val label = dropdownLabel(requireNotNull(agent))
     return ThreadModelChoice(
         value = value,
         label = label,
@@ -3558,12 +3829,12 @@ private fun ModelMenuRow.toChoice(agent: ConversationAgent): ThreadModelChoice {
         effortChoices = effortLevels.map { ThreadEffortChoice(value = it, label = it.inert()) },
         supportsAutoMode = supportsAutoMode,
         resolvedModel = resolvedModel.takeUnless { "resolved_model" in truncatedFields.orEmpty() }.orEmpty(),
+        agent = requireNotNull(agent),
     )
 }
 
-/** The desktop dropdown label, shared with the host-backed scenario's dynamic assertion. */
-internal fun ModelMenuRow.dropdownLabel(agent: ConversationAgent): String =
-    if (agent == ConversationAgent.Claude) value.modelFamily().ifEmpty { displayName.inert() } else displayName.inert()
+/** The bounded daemon display name for either agent; retain the agent argument for existing callers. */
+internal fun ModelMenuRow.dropdownLabel(agent: ConversationAgent): String = displayName.inert()
 
 /** Desktop's dropdown family rule over a raw identifier; used for display and the inherited mark (#1308). */
 internal fun String.modelFamily(): String {

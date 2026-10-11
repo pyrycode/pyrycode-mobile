@@ -4054,7 +4054,8 @@ class InteractiveStreamE2ETest {
             val explicit = row.effortLevels.last { it != remembered }
             assertSaved(priming.id, "", "")
             openChatRow(primingName)
-            awaitFooter(changeModelLabel, inheritedModelLabel(publishedMenu(priming.id)))
+            val inheritedMenu = publishedMenu(priming.id)
+            awaitAnnouncedMark(inheritedMenu, inheritedModelRow(inheritedMenu), inheritedModelLabel(inheritedMenu))
             pickFooterOption(changeEffortLabel, effortLabel(remembered))
             awaitFooter(changeEffortLabel, effortLabel(remembered))
             assertEquals("the acknowledged tap was not remembered", remembered, rememberedEffort())
@@ -8042,7 +8043,7 @@ class InteractiveStreamE2ETest {
     }
 
     /** Usable Claude rows, including default for inherited-effort setup. Ordinary labels must be unique
-     * so tapping a model in Run configuration cannot pick another published row. */
+     * across the visible merged menu so a text tap cannot pick another agent's row. */
     private fun usableRows(menu: ModelMenu): List<ModelMenuRow> =
         menu.rows.filter { row ->
             row.agent == ConversationAgent.Claude &&
@@ -8050,11 +8051,12 @@ class InteractiveStreamE2ETest {
                 row.displayName.inert().isNotBlank() &&
                 (
                     row.value == INHERITED_MODEL_VALUE ||
-                        menu.rows.count {
-                            it.agent == ConversationAgent.Claude &&
-                                it.value != INHERITED_MODEL_VALUE &&
-                                it.dropdownLabel(ConversationAgent.Claude) == row.dropdownLabel(ConversationAgent.Claude)
-                        } == 1
+                        row in renderedModelRows(menu) &&
+                        renderedModelRows(menu).count {
+                            it.dropdownLabel(requireNotNull(it.agent)) ==
+                                row.dropdownLabel(ConversationAgent.Claude)
+                        } ==
+                        1
                 )
         }
 
@@ -8080,43 +8082,19 @@ class InteractiveStreamE2ETest {
             .replaceFirstChar { it.uppercaseChar() }
 
     /**
-     * The Claude row an inherited conversation marks for [announced] (#1308): exact value, else
-     * `resolved_model`, else family. The first tier with any candidate decides; more than one marks nothing.
-     */
-    private fun announcedRow(
-        menu: ModelMenu,
-        announced: String,
-    ): ModelMenuRow? {
-        if (announced.isEmpty()) return null
-        val rows = menu.rows.filter { it.agent == ConversationAgent.Claude && it.value != INHERITED_MODEL_VALUE }
-        val family = claudeFamily(announced)
-        val tiers =
-            listOf<(ModelMenuRow) -> Boolean>(
-                { it.value == announced },
-                { it.resolvedModel == announced && "resolved_model" !in it.truncatedFields.orEmpty() },
-                { family.isNotEmpty() && claudeFamily(it.value) == family },
-            )
-        for (matches in tiers) {
-            val candidates = rows.filter(matches)
-            if (candidates.isNotEmpty()) return candidates.singleOrNull()
-        }
-        return null
-    }
-
-    /**
      * Run configuration marks exactly [marked]'s radio, or, with [marked] `null`, no model radio at all and
      * shows [note] outside the radios (#1308). Model rows draw only their label (#1497), so two rows sharing
      * a family label read alike; the marked radio is told apart by its position among the model radios,
-     * which render in [menu] order. Every non-default Claude row of [menu] counts, including rows whose
-     * family label another row shares, since those are the rows a wrong mark would land on.
+     * which render in [menu] order. Both agents' visible rows count, including duplicate display labels,
+     * since those are the rows a wrong mark would land on. Selection remains agent-scoped.
      */
     private fun awaitAnnouncedMark(
         menu: ModelMenu,
         marked: ModelMenuRow?,
         note: String,
     ) {
-        val rows = menu.rows.filter { it.agent == ConversationAgent.Claude && it.value != INHERITED_MODEL_VALUE }
-        val rowLabels = rows.map { it.dropdownLabel(ConversationAgent.Claude) }
+        val rows = renderedModelRows(menu)
+        val rowLabels = rows.map { it.dropdownLabel(requireNotNull(it.agent)) }
         val labels = rowLabels.toSet()
         val modelRadio =
             SemanticsMatcher("a model radio") { node ->
@@ -8126,7 +8104,14 @@ class InteractiveStreamE2ETest {
                         ?.firstOrNull()
                         ?.text in labels
             }
-        val expectedMarks = listOfNotNull(marked?.let { row -> rows.indexOfFirst { it.value == row.value } })
+        val expectedMarks =
+            listOfNotNull(
+                marked?.let { row ->
+                    rows.indexOfFirst { it.value == row.value && it.agent == row.agent }.also {
+                        check(it >= 0) { "expected selection must be a rendered model row" }
+                    }
+                },
+            )
 
         // The model radios in sheet order, as (label, marked) pairs.
         fun radios() =
@@ -8148,7 +8133,7 @@ class InteractiveStreamE2ETest {
                 composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                     composeTestRule.onAllNodes(standaloneNote).fetchSemanticsNodes().isNotEmpty()
                 }
-                assertEquals("a model radio is marked for an ambiguous or unmatched announcement", emptyList<Int>(), markedIndices())
+                assertEquals("a model radio is marked for a hidden, ambiguous or unmatched announcement", emptyList<Int>(), markedIndices())
             }
         } finally {
             composeTestRule.onNodeWithContentDescription("Close").performClick()
@@ -8166,22 +8151,6 @@ class InteractiveStreamE2ETest {
         } finally {
             composeTestRule.onNodeWithContentDescription("Close").performClick()
         }
-    }
-
-    /** Expected inherited label from the host's fresh published list, independent of a running turn. */
-    private fun inheritedModelLabel(menu: ModelMenu): String {
-        val claudeRows = menu.rows.filter { it.agent == ConversationAgent.Claude }
-        val default = claudeRows.filter { it.value == INHERITED_MODEL_VALUE }.singleOrNull()
-        val resolved = default?.resolvedModel.orEmpty()
-        if (resolved.isBlank() || resolved.startsWith("<") || "resolved_model" in default?.truncatedFields.orEmpty()) {
-            return UNAVAILABLE_MODEL_LABEL
-        }
-        // #1308: with no unique row, the label names the default resolution's family, never "Default".
-        return claudeRows
-            .filter { it.value != INHERITED_MODEL_VALUE && it.resolvedModel == resolved }
-            .singleOrNull()
-            ?.dropdownLabel(ConversationAgent.Claude)
-            ?: claudeFamily(resolved).ifEmpty { UNAVAILABLE_MODEL_LABEL }
     }
 
     /**
