@@ -106,5 +106,39 @@
     "failed": 0,
     "errors": 0,
     "skipped": 0
+  },
+  "disconnect_diagnostic_rework": {
+    "reviewed_mobile_head": "e922846c7954c01399a0afad6b55962b6bf5cbab",
+    "regression_red_command": "./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.PeerReadProbeTest.unavailableRepositoryKeepsOriginalRowFailureAndIndependentEvidence --console=plain",
+    "regression_red": {
+      "executed": 1,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "exit": 1
+    },
+    "red_setup": "Extract the original B failure handler with checkNotNull(repository()) into the shared test helper; no repair applied.",
+    "regression_green_command": "./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.PeerReadProbeTest --console=plain (included in the eight-class focused run)",
+    "regression_green": {
+      "executed": 5,
+      "passed": 5,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit": 0
+    },
+    "affected_unit_run": {
+      "executed": 85,
+      "passed": 85,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit": 0
+    },
+    "retained_artifacts": [
+      "diagnostic-red-counted.xml",
+      "diagnostic-green-counted.xml"
+    ],
+    "full_live_acceptance": "Pending fresh dispatcher full live gate; previous focused live comparisons remain historical."
   }
 }

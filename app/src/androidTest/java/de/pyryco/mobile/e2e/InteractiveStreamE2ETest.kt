@@ -4700,23 +4700,23 @@ class InteractiveStreamE2ETest {
             try {
                 awaitRowAttention(nameB, idle, "B after a peer read, without reopening its thread")
             } catch (failure: AssertionError) {
-                val source = GlobalContext.get().get<HostConversationSource>()
-                val repository = checkNotNull(source.repositoryFor(serverId))
-                val phone = runBlocking { repository.observeReadMarks(chatB).first() }
-                val daemon =
-                    runCatching {
-                        peerStep(peer, "read B's facts after attention failure") { peer.readMarks(chatB, THREAD_TIMEOUT_MS) }
-                    }.getOrNull()
-                throw AssertionError(
-                    "event=peer_read_probe daemon_confirmed_target=${confirmed >= peerCheckpoint} " +
-                        "daemon_read_covers_latest=${daemon?.readUpTo?.let { read -> daemon.latestEntryId?.let { it <= read } } == true} " +
-                        "phone_received_confirmation=${(phone?.readUpTo ?: 0u) >= confirmed} " +
-                        "phone_read_covers_latest=${phone?.readUpTo?.let { read -> phone.latestEntryId?.let { it <= read } } == true} " +
-                        "phone_latest_exceeds_daemon=${phone?.latestEntryId?.let { latest ->
-                            daemon?.latestEntryId?.let { latest > it }
-                        } == true} " +
-                        "projected_unread=${source.attention.value[serverId]?.get(chatB) == ConversationAttention.Unread}",
+                throw peerReadProbeFailure(
                     failure,
+                    confirmed,
+                    peerCheckpoint,
+                    chatB,
+                    repository = { GlobalContext.get().get<HostConversationSource>().repositoryFor(serverId) },
+                    daemonMarks = {
+                        peerStep(peer, "read B's facts after attention failure") { peer.readMarks(chatB, THREAD_TIMEOUT_MS) }
+                    },
+                    projectedUnread = {
+                        GlobalContext
+                            .get()
+                            .get<HostConversationSource>()
+                            .attention.value[serverId]
+                            ?.get(chatB) ==
+                            ConversationAttention.Unread
+                    },
                 )
             }
             awaitRowAttention(nameA, idle, "A after B's peer read")

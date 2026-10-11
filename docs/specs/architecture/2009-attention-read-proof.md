@@ -39,6 +39,7 @@ Existing repository generations and app-owned HostConversationSource collectors 
 | Peer confirms B while phone remains on list | Named live scenario; controlled remote confirmation and host attention regression |
 | Duplicate/overlapping receipt, fresh generation, same conversation ID on another host | Existing ThreadReadRuntimeReceiptsTest and HostConversationSourceAttentionTest |
 | Missing/unknown receipt or unseen content version | Controlled regression and existing ThreadReadClaimsTest |
+| B row assertion fails after the phone repository disconnects | PeerReadProbeTest.unavailableRepositoryKeepsOriginalRowFailureAndIndependentEvidence |
 
 ## Error handling
 
@@ -103,3 +104,13 @@ Exact-repair attribution: the first parent of daemon merge `a3ca005f05e95650d10b
 Merged main `a6840a356e8d5f02e62f888e5d1961b273d93475` as Mobile `f56b32d3398d13e48a34c6d693cf4b8e11930724`. Its authoritative thread presenter changes the foreground read path, so the named live method was rerun against the same repaired daemon archive `f570f2f871ca50ab1f1739cc0f142f375682d05e`: 1 executed, 1 passed, 0 failed/errors/skipped. Fresh retained stage booleans confirm both A's phone acknowledgment and B's confirmed read received by the phone, with both rows Idle and phone on list. The archive-built binary lacks embedded VCS metadata; its archive revision and actual binary/source hashes are recorded in invocations.json. This is focused post-merge evidence; full dispatcher live acceptance and documentation remain pending.
 
 The same seven focused unit classes were rerun after this merge: 80 executed, 80 passed, 0 failures/errors/skips. No implementation or assertion changed after the paired live comparison, apart from formatting; subsequent edits retain counted evidence and record provenance.
+
+### 2026-10-11 — Preserve B's assertion when failure evidence is unavailable
+
+Verifier finding 1 on `e922846c7954` identifies an evidence-loss bug: the B failure handler requires a live repository even though `HostConversationSource.repositoryFor` legitimately returns null during disconnect. Extract only that handler into the shared test-only `peerReadProbeFailure` helper. Sample repository availability, phone marks, daemon marks and host projection independently; unavailable samples are explicit and cannot replace the caught row assertion, which remains the cause carrying the original stage and observed semantics. Preserve coroutine cancellation and every existing action, assertion and deadline. No production or visual behavior changes.
+
+Add `PeerReadProbeTest` under unit tests, with the helper under sharedTest like `SendNowStage`: first reproduce the null-repository failure using the extracted original handler, then repair it. Cover an unavailable repository, a failed phone read, failed diagnostic suppliers, cancellation, and available facts that distinguish daemon confirmation from phone receipt and projection. Run this class and the existing read/attention classes; full live acceptance remains dispatcher-owned. The shared live file also overlaps #2057, whose edits concern another scenario and need no dependency.
+
+Security re-review: PASS. Diagnostic failures expose only static availability labels, booleans and existing bounded comparisons; exception messages, payloads, credentials and routing identifiers never enter the probe. The original assertion remains its cause. No new storage, Android surface, network request, wire contract or crypto change is introduced; existing scope cancellation remains intact. Total written work remains below 1100 lines, with no exported types or consumer migration.
+
+The null-repository regression ran against the extracted original handler: 1 executed, 1 failed, 0 errors/skips because the row assertion was lost. After repair, all five `PeerReadProbeTest` methods passed; the eight affected unit classes totaled 85 executed/passed, 0 failed/errors/skipped. Counted red/green XML and invocation provenance are retained under `app/src/androidTest/assets/read-2009/`. The scripted ping twin passed: 2 executed/passed, 0 failed/errors/skipped, evidence `build/dispatcher-tests/scripted-ce7zyw12/dispatcher.xml`. Lint, assembly and Android test compilation passed. Fresh full live acceptance and the documentation update remain pending for their owning stages.

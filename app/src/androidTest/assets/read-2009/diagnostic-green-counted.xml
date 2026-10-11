@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="de.pyryco.mobile.e2e.PeerReadProbeTest" tests="5" skipped="0" failures="0" errors="0">
+  <testcase name="availableFactsDistinguishPhoneReceiptFromLatestCoverageAndProjection" classname="de.pyryco.mobile.e2e.PeerReadProbeTest" />
+  <testcase name="failedPhoneReadKeepsTheRowCauseAndIndependentDaemonAndProjectionFacts" classname="de.pyryco.mobile.e2e.PeerReadProbeTest" />
+  <testcase name="cancellationStillPropagatesFromDiagnosticCollection" classname="de.pyryco.mobile.e2e.PeerReadProbeTest" />
+  <testcase name="unavailableRepositoryKeepsOriginalRowFailureAndIndependentEvidence" classname="de.pyryco.mobile.e2e.PeerReadProbeTest" />
+  <testcase name="failedSuppliersKeepTheRowCauseAndMarkOnlyUnavailableEvidenceUnknown" classname="de.pyryco.mobile.e2e.PeerReadProbeTest" />
+</testsuite>
