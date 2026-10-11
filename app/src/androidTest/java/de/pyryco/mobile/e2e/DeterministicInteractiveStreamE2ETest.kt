@@ -73,7 +73,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -949,8 +948,7 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.assertSideMessageReply(finished, staged + "Assistant:\n\"${finished.content}\"\n")
     }
 
-    /** Retain the old release-send interaction separately from the display-only stream proof. */
-    @Ignore("blocked on #2078: a queued own prompt splits the active legacy reply")
+    /** A queued own follow-up and its hidden receipt keep the held legacy reply in one row. */
     @Test
     fun interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply() {
         arriveInSeededThread()
@@ -962,32 +960,64 @@ class DeterministicInteractiveStreamE2ETest {
                     .currentRepository.value,
             )
         runBlocking {
-            withTimeout(REPLY_TIMEOUT_MS) {
-                val conversationId =
-                    repository
-                        .observeConversations(ConversationFilter.All)
-                        .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
-                        .single { it.name == SEED_CHANNEL_NAME }
-                        .id
-                repository.sendMessage(conversationId, SEND_PROMPT)
-                val held =
-                    repository
-                        .observeMessages(conversationId)
-                        .first { rows ->
-                            rows.filterIsInstance<ThreadItem.MessageItem>().any {
-                                it.message.content.trimEnd() == STREAMED_PREFIX && it.message.isStreaming
-                            }
-                        }.filterIsInstance<ThreadItem.MessageItem>()
-                        .single { it.message.role == Role.Assistant }
-                        .message
-                repository.sendMessage(conversationId, SECOND_PROMPT)
-                repository.observeQueue(conversationId).first { rows -> rows.any { it.text == SECOND_PROMPT } }
-                DaemonFaultControl().releaseStream()
-                repository.observeMessages(conversationId).first { rows ->
-                    rows.filterIsInstance<ThreadItem.MessageItem>().any {
-                        it.message.id == held.id && !it.message.isStreaming && it.message.content == STREAMED_REPLY
+            var checkpoint = "conversation"
+            var snapshotShape = "unobserved"
+            try {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    val conversationId =
+                        repository
+                            .observeConversations(ConversationFilter.All)
+                            .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                            .single { it.name == SEED_CHANNEL_NAME }
+                            .id
+                    checkpoint = "held prefix"
+                    repository.sendMessage(conversationId, SEND_PROMPT)
+                    val held =
+                        repository
+                            .observeMessages(conversationId)
+                            .first { rows ->
+                                rows.filterIsInstance<ThreadItem.MessageItem>().any {
+                                    it.message.content.trimEnd() == STREAMED_PREFIX && it.message.isStreaming
+                                }
+                            }.filterIsInstance<ThreadItem.MessageItem>()
+                            .single { it.message.role == Role.Assistant }
+                            .message
+                    val prefix = hasText(STREAMED_PREFIX, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+                    composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                        composeTestRule.onAllNodes(prefix, useUnmergedTree = true).fetchSemanticsNodes().size == 1
                     }
+                    composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
+                    checkpoint = "queued follow-up"
+                    val sent = repository.sendMessage(conversationId, SECOND_PROMPT)
+                    val queued = repository.observeQueue(conversationId).first { rows -> rows.any { it.text == SECOND_PROMPT } }
+                    assertTrue("the queued entry did not retain the phone-owned echo id", queued.any { it.messageId == sent.id })
+                    repository.observeMessages(conversationId).first { rows ->
+                        rows.filterIsInstance<ThreadItem.MessageItem>().any { it.message.id == held.id && it.message.isStreaming }
+                    }
+                    checkpoint = "same reply completion"
+                    DaemonFaultControl().releaseStream()
+                    val finished =
+                        repository.observeMessages(conversationId).first { rows ->
+                            snapshotShape =
+                                rows.filterIsInstance<ThreadItem.MessageItem>().joinToString { row ->
+                                    val message = row.message
+                                    "${message.role}:${message.content.length}:${message.segment?.firstSeq}:${message.segment?.lastSeq}:" +
+                                        "${message.isStreaming}:${message.id == held.id}"
+                                }
+                            rows.filterIsInstance<ThreadItem.MessageItem>().any {
+                                it.message.id == held.id && !it.message.isStreaming && it.message.content == STREAMED_REPLY
+                            }
+                        }
+                    assertEquals(
+                        listOf(held.id),
+                        finished
+                            .filterIsInstance<ThreadItem.MessageItem>()
+                            .filter { it.message.segment?.turnId == held.segment?.turnId }
+                            .map { it.message.id },
+                    )
                 }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                throw AssertionError("queued echo checkpoint timed out: $checkpoint; shape=$snapshotShape", e)
             }
         }
     }

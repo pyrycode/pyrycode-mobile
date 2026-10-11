@@ -1005,16 +1005,24 @@ internal class ThreadProjection(
                             it.message.ordinaryId in firstDeliveries &&
                             it.message.ordinaryId in mintedMessageIds.value[conversationId].orEmpty()
                     }.associateBy { it.message.ordinaryId }
-            val receiving = existing.filterNot { it is ThreadItem.MessageItem && it.message.ordinaryId in provisional }
+            // Retain pending slots and renderer ownership; only their incoming copies are discarded.
+            val passOver = (echoes.parked + echoes.awaitingPush) - firstDeliveries
+            val receiving =
+                existing.filterNot {
+                    it is ThreadItem.MessageItem && it.message.ordinaryId in provisional
+                }
             val placementTimestamps =
                 reduced.rows
                     .filterIsInstance<ThreadItem.MessageItem>()
                     .filter { it.message.ordinaryId in provisional }
                     .associate { it.mergeIdentity() to it.message.timestamp }
             val incoming =
-                reduced.rows.map { row ->
-                    if (row is ThreadItem.MessageItem) provisional[row.message.ordinaryId] ?: row else row
-                }
+                reduced.rows
+                    .filterNot {
+                        it is ThreadItem.MessageItem && it.message.ordinaryId in passOver
+                    }.map { row ->
+                        if (row is ThreadItem.MessageItem) provisional[row.message.ordinaryId] ?: row else row
+                    }
             val merged =
                 receiving.mergeUnsignedHistoryRows(
                     incoming,
@@ -1022,6 +1030,7 @@ internal class ThreadProjection(
                     firstEvidence,
                     rendererOwners = existing,
                     placementTimestamps = placementTimestamps,
+                    passOver = passOver,
                 )
             val settledEchoes =
                 deliveries.fold(echoes) { echoes, delivery ->

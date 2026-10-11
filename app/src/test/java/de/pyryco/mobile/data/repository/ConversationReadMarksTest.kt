@@ -614,8 +614,26 @@ class ConversationReadMarksTest {
             runCurrent()
             val held = repository.observeThreadSnapshot("a").first()
             val presented = held.rows.filterIsInstance<ThreadItem.MessageItem>().single()
-            assertFalse(presented.message.isStreaming)
+            assertTrue(presented.message.isStreaming)
             assertEquals(72uL, held.readEvidence.checkpoint(presented, 0u))
+            pump.push(
+                Envelope(
+                    503,
+                    "turn_end",
+                    TS,
+                    MobileJson.parseToJsonElement("""{"conversation_id":"a","turn_id":"t","stop_reason":"end_turn"}"""),
+                    historyEntryId = 73u,
+                ),
+            )
+            runCurrent()
+            val settled =
+                repository
+                    .observeThreadSnapshot("a")
+                    .first()
+                    .rows
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .single()
+            assertEquals(presented.message.copy(isStreaming = false), settled.message)
         }
 
     @Test
