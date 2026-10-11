@@ -72,13 +72,14 @@ Run lint, assembleDebug, Android-test compilation, Spotless and the final merged
 **Verdict:** PASS
 
 - [Trust boundaries] Queue frames remain decoded by `QueueProjection`; `settleQueuedEchoes` intersects with conversation-local minted ownership. Untrusted text is never consulted to classify or identify an echo.
+- [Network-authored identity] MUST FIX in the previous design: an assistant turn id can equal a parked or suppressed echo's renderer id, including an allocated alias, and cause duplicate Compose message keys when the echo is restored after allocation. Retain pending echoes in the reconciliation list and allocate all message keys together through `withUniqueMessageKeys`, preserving held ordinary identity and renderer ownership before newcomer allocation. Parked, suppressed/revealed and alias/fallback collisions have explicit probes; pending ids remain conversation-local and equality-only.
 - [Tokens] No credential generation, storage, revocation or exposure changes; this repair uses only existing in-memory row state.
 - [Files/storage] No storage format, path, backup or write changes. Test evidence goes to a fixed builder scratch directory.
 - [Android surface] No component, intent, URI, permission or WebView changes; existing Compose renders text.
 - [Cryptography] No changes to Noise, keys, counters or cryptographic comparisons.
 - [Network/I/O] Existing decoding, frame limits, timeouts and reconnect backoff are unchanged. Duplicate frames must not add text or consume another conversation's entry; probes assert this.
 - [Errors/logs] No new logging of ids or content; existing content-free lifecycle diagnostics remain. No telemetry change.
-- [Concurrency] Read open reply evidence inside the same `ProjectionState` CAS generation as queued intent. No suspension or nested write in that update, and no new coroutine lifetime.
+- [Concurrency] Read pending queue intent, reserved placement and held renderer ownership inside the same `ProjectionState` merge CAS generation. No suspension or nested write in that update, and no new coroutine lifetime.
 - [Threat model] Delayed/replayed daemon frames are handled by existing sequence and entry ledgers with probes for their ordering. Malicious relay confidentiality, rooted-device token theft and UI screenshot/accessibility leakage stay with unchanged transport, Keystore and UI boundaries. Hostile plaintext remains inert display data and gains no authority from queue placement.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
@@ -99,3 +100,23 @@ This replaces the original concurrency proposal: queue intent and held pending r
 Coverage updates resolve both Open Questions. `queueState_heldReplyWithInfoBanner_keepsItsAnchor` covers banner-before/after-queue arrival, duplicate snapshots/deltas and turn end. `infoBanners_preserveLiveHistoryAndReconnectSegments` covers live streaming, page reduction, both history/cache merge directions and deduplicated invisible evidence. `pendingEchoOnEitherSideOfHistoryMerge_isNotASeparator` covers queued and suppressed copies on both sides and repeated merge, then a live suffix. `queuedEchoHistoryOverlap_preservesHeldReply` covers empty, one-row, prefix, middle and suffix pages. Existing modern delivery, drop, conversation isolation, cache overlap and no-phase idle tests remain controls; no additional cache wrapper state is needed. The no-open-phase row in the original transition table is superseded by the responding/banner row above.
 
 Revised size: approximately 450 written lines including plan, tests and device checkpoints; two production files, no new exported types or consumer migration, three acceptance criteria and no new reject branches. The design remains one legacy continuity deliverable.
+
+### 2026-10-11 — verifier rework: retain placement and key ownership
+
+Findings 1 and 2 exposed that removing all pending echoes before reconciliation and appending them afterwards surrenders both a reserved legacy slot and its renderer key. Supersede that removal/restoration design: retain pending user objects in the receiving list, filter their incoming ordinary copies, and pass conversation-local pending ids into `mergeUnsignedHistoryRows` and its private segment join. The join passes over only those owned user rows, as live folding already does, while preserving the exact rows in the result. Reserved echoes keep their store slot before their answering turn; unreserved parked rows retain queued FIFO presentation through the existing snapshot fold. First modern delivery still uses the existing provisional placement exception and remains a genuine boundary.
+
+The complete result, including hidden awaiting-push echoes, goes through the existing `withUniqueMessageKeys` allocator. No allocation bypass or second restoration pass remains. An optional internal reducer parameter defaults to empty, leaving cache and other history consumers unchanged; CodeGraph found seven callers of `mergeUnsignedHistoryRows`, four of private `mergeRows` and one segment-join caller, with only the projection requiring new context. No exported type or wire/UI API changes.
+
+Extend both drain-first and push-first instances of `assertParkedEchoConfirmedMidReply` with repeated nonempty history merges before confirmation and another merge after confirmation, asserting original echo, reply identity/text/streaming and final settlement at every event. `parkedEcho_historyRendererCollisions_preserveHeldOwnership` and `suppressedEcho_historyRendererCollisions_preserveHeldOwnershipOnReveal` probe canonical and aliased held keys, an occupied assistant fallback key, replay and reveal. Finding 3 updates `nonvisualBannerTailRetainsPresentedStreamingContentClaims` to expect streaming through Info metadata, retain checkpoint `72uL`, and verify settlement on turn end. These supersede the corresponding transition-table controls; all prior separator, idle, modern-delivery, drop and overlap controls remain.
+
+Security review rerun: the network-authored identity/crash finding is addressed by complete-result key allocation with held ownership priority. Reservation and join context are read inside one CAS. No additional data boundary, coroutine, persistence, log, credential, Android surface or cryptographic change arises; the other reviewed categories remain unchanged. Verdict PASS with this mitigation implemented and tested; elevated risk remains appropriate.
+
+Forecast after rework: approximately 650 written lines total, two production files, no new exported types, one consumer call updated, three acceptance criteria and no new reject branches. No in-flight numeric feature branch overlaps the production files.
+
+## Documentation handoff
+
+Pending for the documentation stage:
+
+- `docs/knowledge/features/banner-notice-row.md` and `docs/knowledge/features/remote-conversation-repository-assistant-reply-segments.md`: record invisible Info evidence and assistant continuity.
+- `docs/knowledge/features/queued-backlog.md`, "Queued display, metadata and history" and "Legacy and no-echo limits": record queue-aware reconciliation with preserved reservation and renderer ownership, retaining FIFO, idle-first and modern delivery contracts.
+- `docs/e2e-interactive-stream.md`, deterministic verification guidance: record the enabled isolated queued-echo reproduction and fresh counted evidence.
