@@ -31,8 +31,9 @@ failure. #2101 has no demonstrated shared mechanism or repair.
 ## Fresh focused captures
 
 `evidence.json` records exact revisions and raw capture paths. `*-stages.log`
-retain only this probe's content-free stage/status observations. Exact counted
-XML was checked for safe device/flavor/project properties before copying.
+retain only this probe's content-free stage/status observations. Counted XML was checked for safe device/flavor/project properties before copying.
+The archived live XML normalizes only CRLF to LF; every parsed record is unchanged,
+and raw original paths remain in `evidence.json`.
 
 | Context | Executed | Failed | Errors | Skipped |
 | --- | ---: | ---: | ---: | ---: |

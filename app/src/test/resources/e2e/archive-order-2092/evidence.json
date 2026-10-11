@@ -59,5 +59,6 @@
     "raw_phone_log": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2092/build/dispatcher-tests/live-7dhqjtyt/0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_archiveTwoChats_listsSecondArchivedFirst.txt",
     "exit_code": 0,
     "device_admission_wait_seconds": 332
-  }
+  },
+  "archived_xml_normalization": "CRLF to LF only; parsed records unchanged; raw originals referenced above"
 }
