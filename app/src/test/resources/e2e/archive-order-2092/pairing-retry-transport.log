@@ -1,0 +1,12 @@
+10-11 22:38:34.650  2937  3256 I RelayLog: event=transport_end end=peer_close code=1000
+10-11 22:38:34.650  2937  3006 I RelayLog: event=pump_teardown trigger=transport_down
+10-11 22:38:36.052  2937  3256 I RelayLog: event=transport_end end=peer_close code=4404
+10-11 22:38:36.054  2937  3008 I RelayLog: event=pump_teardown trigger=close
+10-11 22:38:38.274  2937  3256 I RelayLog: event=transport_end end=peer_close code=4404
+10-11 22:38:38.274  2937  3003 W RelayLog: event=pump_teardown trigger=handshake_transport_down cause=NoiseSessionException
+10-11 22:38:43.332  2937  3256 I RelayLog: event=transport_end end=peer_close code=4404
+10-11 22:38:43.336  2937  3216 I RelayLog: event=pump_teardown trigger=close
+10-11 22:38:51.742  2937  3256 I RelayLog: event=transport_end end=peer_close code=4404
+10-11 22:38:51.749  2937  3002 I RelayLog: event=pump_teardown trigger=close
+10-11 22:39:10.768  2937  3103 I RelayLog: event=transport_end end=peer_close code=4404
+10-11 22:39:10.775  2937  3005 I RelayLog: event=pump_teardown trigger=close

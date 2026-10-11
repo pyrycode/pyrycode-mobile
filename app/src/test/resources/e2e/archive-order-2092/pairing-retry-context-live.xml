@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="3" failures="0" errors="0" skipped="0" time="85.029" timestamp="2026-10-11T22:39:20" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" tests="3" failures="0" errors="0" skipped="0" time="84.72" timestamp="2026-10-11T22:39:20" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="interactiveTurn_twoHostsArchive_staysPerHost" classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" time="8.449" />
+    <testcase name="interactiveTurn_offlineRetry_reconnectsSameHostAndReplies" classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" time="71.983" />
+    <testcase name="interactiveTurn_archiveTwoChats_listsSecondArchivedFirst" classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" time="4.288" />
+  </testsuite>
+</testsuites>
