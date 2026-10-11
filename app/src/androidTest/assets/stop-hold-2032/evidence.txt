@@ -1,0 +1,52 @@
+Ticket #2032 focused investigation, 2026-10-11
+
+The admitted authenticated focused Stop method passed once: 1 executed/passed,
+0 failed/errors/skipped. This captures success, not a missing-permission fault.
+No behavioural cause or causal repair is established. Return for refinement.
+
+Tested Mobile commit: 5f99a626cf411d8769ac408473d487865ad902e4; clean tracked tree.
+Daemon: 8091a4730d42f43029eb0b955442dc300106030f; exact binary hash/build identity
+and reported untracked inputs are in capture.json. Claude: 2.1.280.
+The earlier device-busy admission attempt exited 75 with zero executed tests.
+
+Canonical conversation/session mapping is retained from conversations.json and
+confirmed by this conversation's durable session-tagged history. Daemon approval
+resolution matches its durable tool_use_id (opaque id not published), behavior
+allow; remote permission-modal audit is also present. Both phone decoded receipt
+and retained peer frames contain one shown/dismissed permission lifecycle.
+The first turn ends cancelled; the second ends end_turn. The named testcase also
+passes Stop disappearance, same-thread real ping and absent held reply assertions.
+
+The daemon logged one failed initial delivery attempt then delivered the turn.
+Its successful bounded delay does not demonstrate the historical missing ask.
+No terminal refusal is recorded in the owned history; request_context_usage
+refusal is a separate control response, not a terminal turn refusal.
+The raw history has no modal_shown/modal_dismissed rows; their durable absence
+cannot establish missing emission, as the successful temporal observations show.
+
+Phone wall-clock stages and daemon UTC events are separate uncalibrated clock
+sources. Their absolute order is not evidence. Phone modal receipt is post-decode,
+projection sampling may miss transients, and four sparse UI reads were absent;
+no claim of absent UI rendering follows. Detailed bridge emission trace is
+unavailable. The exact missing-permission cause remains unproven.
+
+Raw artifacts remain private. capture.json records paths and SHA-256 hashes;
+focused-counted.xml derives only counts and named case identity, and
+observations.txt contains only capped, test-authored content-free observations.
+Private daemon log retention ran during the test, before successful cleanup.
+
+Regressions: initial diagnostic red 16 executed / 3 failed / 0 skipped (readiness,
+malformed modal decoding and failed snapshots). Actual Compose Throwable red
+17 executed / 2 failed / 0 skipped. Temporal stub red 5 executed / 5 failed.
+Final focused green: 17 diagnostic, 5 temporal, 15 peer-wait, 14 ping-diagnosis,
+9 exact host-instruction restoration = 60 executed/passed, zero failures/skips.
+The readiness regression uses ComposeTimeoutException, which extends Throwable
+directly rather than Exception; preserve its original object. Assertions retain
+the existing original-cause chain. Cancellation is unchanged.
+
+Pending after eventual causal repair: independent dispatcher full live gate,
+retaining tested commit, named passing Stop testcase, raw XML and executed/failed/
+skipped counts. This focused investigation does not replace it. Documentation
+stage must update docs/e2e-interactive-stream.md under Stop coverage in What rung 3
+is made of and Verification status with proven cause/repair, limitations,
+artifact references and fresh counted full-live result. No flake-elimination claim.

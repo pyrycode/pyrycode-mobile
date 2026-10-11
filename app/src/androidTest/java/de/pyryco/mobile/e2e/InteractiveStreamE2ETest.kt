@@ -3606,7 +3606,9 @@ class InteractiveStreamE2ETest {
                         observations.rendered(phoneUiPermission())
                         Log.i(
                             "StopHoldProbe",
-                            "event=stop_hold_result at_ms=${System.currentTimeMillis()} conversation=$conversationId passed=$passed ${snapshot()}",
+                            "event=stop_hold_result at_ms=${System.currentTimeMillis()} conversation=${canonicalConversationId(
+                                conversationId,
+                            )} passed=$passed ${snapshot()}",
                         )
                     }
                 }

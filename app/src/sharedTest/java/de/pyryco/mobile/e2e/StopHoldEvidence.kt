@@ -77,7 +77,7 @@ internal fun <T> withStopHoldDiagnostics(
     return result
 }
 
-private fun canonicalConversationId(value: String): String {
+internal fun canonicalConversationId(value: String): String {
     if (value.length != 36) return "unknown"
     val parsed =
         try {

@@ -1,0 +1,283 @@
+{
+  "mobile_commit": "5f99a626cf411d8769ac408473d487865ad902e4",
+  "mobile_status": "",
+  "mobile_tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "daemon_binary": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2032/build/e2e-bin/pyry",
+  "daemon_binary_sha256": "80e7998e6badf2c83289f85b7b4735a328d200ba8a6d090a949ceb8fafae5744",
+  "daemon_binary_build": [
+    "build\t-buildmode=exe",
+    "build\tGOARCH=arm64",
+    "build\tGOOS=darwin",
+    "build\tvcs.revision=8091a4730d42f43029eb0b955442dc300106030f",
+    "build\tvcs.time=2026-10-11T12:07:08Z",
+    "build\tvcs.modified=true"
+  ],
+  "daemon_source_commit": "8091a4730d42f43029eb0b955442dc300106030f",
+  "daemon_source_status": "?? .codex/\n?? AGENTS.md\n",
+  "daemon_tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "claude_version": "2.1.280 (Claude Code)",
+  "apks": [
+    {
+      "path": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2032/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk",
+      "sha256": "b57552cba3012b3a3c32a77a17be927facb5660d3890f28adc74508227b0f7c1"
+    },
+    {
+      "path": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2032/app/build/outputs/apk/debug/app-debug.apk",
+      "sha256": "1d16072baad49663c60b38276b553edb5eb5e7d65dfbc4314dc2e1e1170adf41"
+    }
+  ],
+  "admission_attempts": [
+    {
+      "artifacts": "build/dispatcher-tests/live-lz8yplum",
+      "exit": 75,
+      "executed": 0,
+      "reason": "device_busy_after_300s",
+      "stop_scenario_executed": false
+    }
+  ],
+  "host_prompt_prerequisite": {
+    "commit": "b3daa0432528188f2829b235877c60627afb8e43",
+    "ancestor_of_tested_daemon": true
+  },
+  "outcome": "focused_capture_passed_cause_unproven",
+  "named_test": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain",
+  "counts": {
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "authenticated": true,
+  "admitted": true,
+  "admission_wait_seconds": 37,
+  "isolated_namespace": "e2e-auto-c4c04e2a",
+  "conversation_id": "e766c1e4-908b-4ad8-904d-8fa7bc9e9108",
+  "session_id": "7cec7b5e-174e-47fe-96f2-b9754b455fa9",
+  "phone_interval": {
+    "submit_at_ms": 1791739746351,
+    "permission_ready_at_ms": 1791739750736,
+    "result_at_ms": 1791739752817,
+    "clock": "phone_wall_clock_uncalibrated_to_host"
+  },
+  "host_events": {
+    "create": "2026-10-11T17:29:07.742Z",
+    "held_send_enqueued": "2026-10-11T17:29:08.569Z",
+    "first_delivery_attempt_failed": "2026-10-11T17:29:08.582Z",
+    "held_user_echo": "2026-10-11T17:29:11.081727Z",
+    "tool_use": "2026-10-11T17:29:12.604933Z",
+    "owned_tool_approval_resolved_allow": "2026-10-11T17:29:12.881Z",
+    "interrupt_dispatched": "2026-10-11T17:29:13.015Z",
+    "first_end_cancelled": "2026-10-11T17:29:13.183358Z",
+    "second_end_end_turn": "2026-10-11T17:29:14.578004Z"
+  },
+  "permission_bridge": {
+    "approval_tool_use_id_matches_owned_durable_tool_use": true,
+    "approval_behavior": "allow",
+    "remote_permission_modal_audit_record": true,
+    "bridge_emit_trace_available": false
+  },
+  "limits": [
+    "No fresh failing or controlled behavioural reproduction; cause remains unproven.",
+    "Phone/host wall clocks were not calibrated; correlate by canonical identities and lifecycle, never cross-clock timestamp order.",
+    "Phone receipt is post-decode, projection is sampled at 100ms, UI is sparse. All four UI samples were absent; this does not exclude transient rendering.",
+    "Daemon bridge emission/delivery trace is unavailable; receipt and matched approval establish this successful lifecycle only.",
+    "One early delivery attempt failed then delivery succeeded before permission. This does not establish the historical absent-permission cause.",
+    "The final UUID marker validation change occurred after this capture; the tested Mobile identity is the recorded clean commit.",
+    "A fresh dispatcher full live gate with named Stop pass/counts/XML remains required after an eventual causal repair."
+  ],
+  "artifacts": [
+    {
+      "kind": "raw_gate_artifact",
+      "private_path": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2032/build/dispatcher-tests/live-dnt_9vs6/0-TEST-pixel2Api33Atd-_app-.xml",
+      "sha256": "6e91113dda263e591d910ae2483cec906847fcd46cfe7357ba1a16b1375ec3bf",
+      "bytes": 722
+    },
+    {
+      "kind": "raw_gate_artifact",
+      "private_path": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2032/build/dispatcher-tests/live-dnt_9vs6/0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain.txt",
+      "sha256": "8ca878d40dba76b281fc6d123f58043546157a60e6dba136aecc4e3159d185f4",
+      "bytes": 220765
+    },
+    {
+      "kind": "raw_gate_artifact",
+      "private_path": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2032/build/dispatcher-tests/live-dnt_9vs6/dispatcher.xml",
+      "sha256": "de82ce4f28db6f57124f2b66acec3bdc9861470b48e0d6c3d195067f36eeb8d7",
+      "bytes": 303
+    },
+    {
+      "kind": "retained_private_daemon_or_history",
+      "private_path": "/private/tmp/builder-2032/private-capture/namespace/conversations.json",
+      "sha256": "a81746d899bda718c5982c866d1dedde73b054194ba31c5f09b4c266b954b63f",
+      "bytes": 1155
+    },
+    {
+      "kind": "retained_private_daemon_or_history",
+      "private_path": "/private/tmp/builder-2032/private-capture/namespace/history/segment-00000000000000000001.jsonl",
+      "sha256": "3795c896ed51fd927e29e165c439f0b86b1b4d2f0be0d71c85ad06a781a3efc5",
+      "bytes": 36133
+    },
+    {
+      "kind": "retained_private_daemon_or_history",
+      "private_path": "/private/tmp/builder-2032/private-capture/namespace/history/thread-cache.json",
+      "sha256": "530cf182e293528664fbad7d3423e46c2b72e5cca07092f3c6c2d1987cd9f4a5",
+      "bytes": 6926
+    },
+    {
+      "kind": "retained_private_daemon_or_history",
+      "private_path": "/private/tmp/builder-2032/private-capture/namespace/history/thread-recovery.json",
+      "sha256": "03b24112bdd4b2d5bcd26780befd2e1ebe41141e56f4c67199d652baca2ee1f5",
+      "bytes": 96
+    },
+    {
+      "kind": "retained_private_daemon_or_history",
+      "private_path": "/private/tmp/builder-2032/private-capture/namespace/sessions.json",
+      "sha256": "82c1c4d4b816b2108a000075cfbdee2779333a8f60047b53eee23a85cf570fba",
+      "bytes": 478
+    },
+    {
+      "kind": "retained_private_daemon_or_history",
+      "private_path": "/private/tmp/builder-2032/private-capture/pyry-e2e.4BuuhY/daemon.log",
+      "sha256": "c446ef8edb07ed763e18126aa072b5f151cf31b3c322efaed34decd8e69f8010",
+      "bytes": 9508
+    },
+    {
+      "kind": "retained_private_daemon_or_history",
+      "private_path": "/private/tmp/builder-2032/private-capture/pyry-e2e.4BuuhY/original-path.txt",
+      "sha256": "cf50abadceff1f8415dd2d2fc5e4779374cc1c4a1379f2a76c582d49836da32a",
+      "bytes": 76
+    },
+    {
+      "kind": "retained_private_daemon_or_history",
+      "private_path": "/private/tmp/builder-2032/private-capture/pyry-e2e.FB7X7I/daemon.log",
+      "sha256": "c569142cc3dc87218632dec725c8a029cebc30907fa7d277d8fabb6a0c7dd75a",
+      "bytes": 2547
+    },
+    {
+      "kind": "retained_private_daemon_or_history",
+      "private_path": "/private/tmp/builder-2032/private-capture/pyry-e2e.FB7X7I/original-path.txt",
+      "sha256": "0d3d5a6fb034bda5527255831af14e6a3a1b049b33205e19453459a34b4d18d3",
+      "bytes": 76
+    },
+    {
+      "kind": "red_regression_xml",
+      "private_path": "/private/tmp/builder-2032/compose-readiness-red.xml",
+      "sha256": "da4a5eeb274073dbb9007eca422bfd01f32a92344c8f76c271265c84eecf3d19",
+      "bytes": 11321
+    },
+    {
+      "kind": "red_regression_xml",
+      "private_path": "/private/tmp/builder-2032/diagnostics-red.xml",
+      "sha256": "d7aa37a26e03f57c53210d0166da781172e2e16933034d532b73f71955d5e062",
+      "bytes": 15267
+    },
+    {
+      "kind": "red_regression_xml",
+      "private_path": "/private/tmp/builder-2032/observations-red.xml",
+      "sha256": "f0cee8e7580c1ca0277e44a5f1a8bbd2b45c443dd28233522d3c4769d5b31dc2",
+      "bytes": 21497
+    },
+    {
+      "kind": "green_regression_xml",
+      "private_path": "/private/tmp/builder-2032/PeerWaitTest-green.xml",
+      "sha256": "a814635ac08b736eb776d62f4eaf146d7b2ff2548246650741366c5be590d783",
+      "bytes": 2388
+    },
+    {
+      "kind": "green_regression_xml",
+      "private_path": "/private/tmp/builder-2032/PingReplyDiagnosisTest-green.xml",
+      "sha256": "b47d07647976e0edefc84f5db9f029f9b0a0a54272d09d096467ba7ba63cb731",
+      "bytes": 2328
+    },
+    {
+      "kind": "green_regression_xml",
+      "private_path": "/private/tmp/builder-2032/StopHoldEvidenceTest-green.xml",
+      "sha256": "2cd0602f100b964046bac9a65b235cb3430087a5646bb55c645beb114f2c272b",
+      "bytes": 2543
+    },
+    {
+      "kind": "green_regression_xml",
+      "private_path": "/private/tmp/builder-2032/StopHoldObservationsTest-green.xml",
+      "sha256": "b0207e087ec958510117405af68f4a9f5f7f689ca340152a3f7f5f07b2965d4f",
+      "bytes": 1058
+    },
+    {
+      "kind": "green_regression_xml",
+      "private_path": "/private/tmp/builder-2032/WithClearedHostInstructionsTest-green.xml",
+      "sha256": "282d7f7b1f0e9f435052d8a19d1bceae31231aeb2e3a2153371f31aae10fbad3",
+      "bytes": 1845
+    },
+    {
+      "kind": "final_green_regression_xml",
+      "private_path": "/tmp/builder-2032/StopHoldEvidenceTest-final-green.xml",
+      "sha256": "e31030d6d3aa9fb501e149e7d4e0999f9b745457d0e56584369c0890105fe75e",
+      "bytes": 2532
+    },
+    {
+      "kind": "final_green_regression_xml",
+      "private_path": "/tmp/builder-2032/StopHoldObservationsTest-final-green.xml",
+      "sha256": "c4b11f8fb7a5124d4ebca2a16812d9bf80b2b1a3fa635766850eec062d2fcc91",
+      "bytes": 1057
+    },
+    {
+      "kind": "final_green_regression_xml",
+      "private_path": "/tmp/builder-2032/PeerWaitTest-final-green.xml",
+      "sha256": "6f8281ee7deb9e3d197838f3aa429ea697c6ec11df29b4f6fa73d35a29637c01",
+      "bytes": 2386
+    },
+    {
+      "kind": "final_green_regression_xml",
+      "private_path": "/tmp/builder-2032/PingReplyDiagnosisTest-final-green.xml",
+      "sha256": "6509087a9af8a0ab084e2356ff9eca959a3015ae36ad498e349c803503cee203",
+      "bytes": 2326
+    },
+    {
+      "kind": "final_green_regression_xml",
+      "private_path": "/tmp/builder-2032/WithClearedHostInstructionsTest-final-green.xml",
+      "sha256": "71431dbd9b82b32e0b6ea02a24e0d65af301cf4cdbb7d9305e1c7f10ade983da",
+      "bytes": 1837
+    }
+  ],
+  "final_focused_jvm_results": [
+    {
+      "tests": "17",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-10-11T17:35:20.119Z",
+      "class": "StopHoldEvidenceTest"
+    },
+    {
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-10-11T17:35:20.158Z",
+      "class": "StopHoldObservationsTest"
+    },
+    {
+      "tests": "15",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-10-11T17:35:20.016Z",
+      "class": "PeerWaitTest"
+    },
+    {
+      "tests": "14",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-10-11T17:35:20.105Z",
+      "class": "PingReplyDiagnosisTest"
+    },
+    {
+      "tests": "9",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-10-11T17:35:20.263Z",
+      "class": "WithClearedHostInstructionsTest"
+    }
+  ]
+}
