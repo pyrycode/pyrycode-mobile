@@ -19,7 +19,7 @@
 
 The retained #2088 prefix used Mobile `b44067bbd991b7d68e0418f88cc2a9e721671c61`, daemon `8091a4730d42f43029eb0b955442dc300106030f`, Claude 2.1.280 and `pixel2Api33Atd`: 59 executed, 57 passed, 2 failed, 0 skipped. The exact remembered-effort method failed. The relevant Mobile scenario/decoder and daemon resolver are unchanged at this branch's baseline `cfc5911723bad305dcf2486283521915dce91b84`.
 
-The diagnosis adds the surviving conversation history and Claude transcript to the originally retained logs. The first chat's `model_list` default row resolves to `claude-sonnet-5` and offers low/medium/high/xhigh/max, while its Haiku row offers no effort levels. Its `model_announced` and assistant transcript both identify `claude-haiku-4-5-20251001` as the actual first-turn model. The launch had `--effort low` and no model flag. Thus the harness selected Low from the recommended default row while letting the operator's default select a model with no effort support. `NotReported` is the decoded confirmed-null child fact, not a missing key or an optimistic saved choice.
+The diagnosis adds the surviving conversation history and Claude transcript to the originally retained logs. The first chat's `model_list` default row resolves to `claude-sonnet-5` and offers low/medium/high/xhigh/max, while its Haiku row offers no effort levels. Its `model_announced` and assistant transcript both identify `claude-haiku-4-5-20251001` as the actual first-turn model. The launch had `--effort low` and no model flag. Thus the harness selected Low from the recommended default row while letting the ambient launch default select a model with no effort support. `NotReported` is the decoded confirmed-null child fact, not a missing key or an optimistic saved choice.
 
 Phone stages finish recall/persistence, then `ChatFirstReply` at 00:02:34.815 and fail `ChatAppliedReading` at 00:02:34.848. Phone turn-end reread occurred earlier at 00:02:34.609. Daemon history records a successful first `turn_end` at 21:02:36.227881Z, before cleanup restarts the child. Phone and host clocks differ; use ordering within each trace, not absolute cross-clock subtraction. The correlated settings query and non-held filter exclude the suggested stale-cache explanation. Waiting longer or for another turn cannot make Haiku's null an applied Low.
 
@@ -55,3 +55,8 @@ Pending documentation stage: `docs/e2e-interactive-stream.md`, Model and effort 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-12
+
+## Revisions
+
+- 2026-10-12: Added the exact daemon `decodeAppliedSettings` source to the diagnosis: only an explicit raw null returns a successful nil effort; missing/invalid fields are unavailable. The private response itself was not retained, so its null is established through the exact validated projection/decoder and the phone assertion, while the actual unsupported model is independently retained in history and the Claude transcript. The historical origin of the ambient Haiku selection is not retained and is not needed to explain the menu-versus-launch mismatch.
+- 2026-10-12: Live evidence return is explicit. Before documentation/merge, the dispatcher must run a fresh full live gate (`Live tests: all`). On the artifact return, the builder will commit `app/src/test/resources/e2e/2095/live-result.json` containing sanitized revision/version metadata, full counts, target-method result and durable XML/logcat references. Keep `needs-live-artifacts` until that record is committed; no fresh live pass is claimed now.

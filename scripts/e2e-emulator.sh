@@ -1049,11 +1049,14 @@ elif [ -n "${LIVE}" ]; then
   # this path — TLS-only transport is enforced by omitting the flag here, not by a runtime toggle. Runs
   # under the real HOME (real claude needs ~/.claude auth); isolation is by -pyry-name (~/.pyry/e2e-live/).
   DAEMON_COMMAND+=(PYRY_MOBILE_V2=1 "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}"
-    "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}")
+    "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}" -- --model sonnet)
 else
   DAEMON_COMMAND+=(PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1
-    "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}")
+    "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}" -- --model sonnet)
 fi
+# #2095: the remembered-effort scenario keeps saved model empty and uses the default menu's levels.
+# An operator Haiku default reports no applied effort. Pin the real test launch to Sonnet; per-session
+# model choices still override this base, and the phone must supply its own recalled effort.
 FAULT_PORT_FILE="${WORK_DIR}/daemon-fault-port"
 # Seed required arguments so Bash 3.2 nounset never expands an empty array.
 DAEMON_CONTROL_ARGS=(--port-file "${FAULT_PORT_FILE}" --log "${DAEMON_LOG}"

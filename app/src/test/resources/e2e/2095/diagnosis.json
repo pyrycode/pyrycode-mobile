@@ -1,0 +1,146 @@
+{
+  "mobile": "b44067bbd991b7d68e0418f88cc2a9e721671c61",
+  "daemon": "8091a4730d42f43029eb0b955442dc300106030f",
+  "claude": "2.1.280",
+  "device": "pixel2Api33Atd",
+  "executed": 59,
+  "failed": 2,
+  "errors": 0,
+  "skipped": 0,
+  "passed": 57,
+  "method": {
+    "name": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel",
+    "outcome": "failed",
+    "stage": "ChatAppliedReading",
+    "expected": "Applied(value=low)",
+    "observed": "NotReported"
+  },
+  "phone_stages": [
+    "10-12 00:02:28.272 event=remembered_effort_step stage=FixtureSetup outcome=start",
+    "10-12 00:02:28.367 event=remembered_effort_step stage=FixtureSetup outcome=complete",
+    "10-12 00:02:28.367 event=remembered_effort_step stage=FixtureSetup outcome=start",
+    "10-12 00:02:28.493 event=remembered_effort_step stage=FixtureSetup outcome=complete",
+    "10-12 00:02:28.493 event=remembered_effort_step stage=PrimingMenu outcome=start",
+    "10-12 00:02:28.524 event=remembered_effort_step stage=PrimingMenu outcome=complete",
+    "10-12 00:02:28.524 event=remembered_effort_step stage=PrimingOpen outcome=start",
+    "10-12 00:02:29.086 event=remembered_effort_step stage=PrimingOpen outcome=complete",
+    "10-12 00:02:29.086 event=remembered_effort_step stage=PrimingTap outcome=start",
+    "10-12 00:02:29.288 event=remembered_effort_step stage=PrimingTap outcome=complete",
+    "10-12 00:02:29.288 event=remembered_effort_step stage=PrimingAcknowledgement outcome=start",
+    "10-12 00:02:29.520 event=remembered_effort_step stage=PrimingAcknowledgement outcome=complete",
+    "10-12 00:02:29.520 event=remembered_effort_step stage=PrimingPersistence outcome=start",
+    "10-12 00:02:29.733 event=remembered_effort_step stage=PrimingPersistence outcome=complete",
+    "10-12 00:02:29.733 event=remembered_effort_step stage=FreshFixtures outcome=start",
+    "10-12 00:02:30.196 event=remembered_effort_step stage=FreshFixtures outcome=complete",
+    "10-12 00:02:30.196 event=remembered_effort_step stage=GraphRestart outcome=start",
+    "10-12 00:02:31.532 event=remembered_effort_step stage=GraphRestart outcome=complete",
+    "10-12 00:02:31.532 event=remembered_effort_step stage=RestartPersistence outcome=start",
+    "10-12 00:02:31.533 event=remembered_effort_step stage=RestartPersistence outcome=complete",
+    "10-12 00:02:31.533 event=remembered_effort_step stage=ChatOpen outcome=start",
+    "10-12 00:02:31.799 event=remembered_effort_step stage=ChatOpen outcome=complete",
+    "10-12 00:02:31.799 event=remembered_effort_step stage=ChatRecallAcknowledgement outcome=start",
+    "10-12 00:02:31.976 event=remembered_effort_step stage=ChatRecallAcknowledgement outcome=complete",
+    "10-12 00:02:31.976 event=remembered_effort_step stage=ChatRecallReading outcome=start",
+    "10-12 00:02:32.006 event=remembered_effort_step stage=ChatRecallReading outcome=complete",
+    "10-12 00:02:32.006 event=remembered_effort_step stage=ChatFirstSend outcome=start",
+    "10-12 00:02:32.296 event=remembered_effort_step stage=ChatFirstSend outcome=complete",
+    "10-12 00:02:32.296 event=remembered_effort_step stage=ChatFirstReply outcome=start",
+    "10-12 00:02:34.815 event=remembered_effort_step stage=ChatFirstReply outcome=complete",
+    "10-12 00:02:34.815 event=remembered_effort_step stage=ChatAppliedReading outcome=start",
+    "10-12 00:02:34.848 event=remembered_effort_step stage=ChatAppliedReading outcome=failure",
+    "10-12 00:02:34.848 event=remembered_effort_step stage=CleanupSettings outcome=start",
+    "10-12 00:02:35.064 event=remembered_effort_step stage=CleanupSettings outcome=complete",
+    "10-12 00:02:35.064 event=remembered_effort_step stage=CleanupActivity outcome=start",
+    "10-12 00:02:35.723 event=remembered_effort_step stage=CleanupActivity outcome=complete"
+  ],
+  "phone_turn_end_reread": [
+    "10-12 00:02:34.609 event=run_settings_reread reason=turn_end"
+  ],
+  "history": [
+    {
+      "type": "model_list",
+      "ts": "2026-10-11T21:02:34.751444Z",
+      "models": [
+        {
+          "value": "default",
+          "resolved_model": "claude-sonnet-5",
+          "effort_levels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        {
+          "value": "sonnet",
+          "resolved_model": "claude-sonnet-5",
+          "effort_levels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        {
+          "value": "haiku",
+          "resolved_model": "claude-haiku-4-5-20251001",
+          "effort_levels": []
+        }
+      ]
+    },
+    {
+      "type": "model_announced",
+      "ts": "2026-10-11T21:02:35.009894Z",
+      "model": "claude-haiku-4-5-20251001"
+    },
+    {
+      "type": "turn_end",
+      "ts": "2026-10-11T21:02:36.227881Z",
+      "outcome": "success",
+      "terminal_reason": "completed"
+    },
+    {
+      "type": "model_list",
+      "ts": "2026-10-11T21:02:37.821146Z",
+      "models": [
+        {
+          "value": "default",
+          "resolved_model": "claude-sonnet-5",
+          "effort_levels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        {
+          "value": "sonnet",
+          "resolved_model": "claude-sonnet-5",
+          "effort_levels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        {
+          "value": "haiku",
+          "resolved_model": "claude-haiku-4-5-20251001",
+          "effort_levels": []
+        }
+      ]
+    }
+  ],
+  "assistant_models": [
+    "claude-haiku-4-5-20251001"
+  ],
+  "launch": {
+    "time": "2026-10-12T00:02:33.962+03:00",
+    "effort_flag": "low",
+    "model_flag": null
+  }
+}
