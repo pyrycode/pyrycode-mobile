@@ -206,7 +206,7 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 
 ## Architecture
 
-_(none yet — system overview will land when there's more than one screen to map)_
+- [#2043 — authoritative daemon item store](../specs/architecture/2043-authoritative-thread-store.md) — supplied-input store/route design, revision and checkpoint invariants, generation-fenced reset and security review; evergreen behavior lives in the [thread-store topic](features/remote-conversation-repository-reads-and-thread-store.md#authoritative-daemon-items-alongside-the-raw-event-projection).
 
 ## Shared topics added by the knowledge migration
 
