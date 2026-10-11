@@ -585,3 +585,128 @@ capture. Fresh UI XML timestamp **2026-10-10T21:38:34**, XML, named logcats and
 count summary are retained under `/tmp/verifier-2066/re-review-78d7a7b4/`.
 The original eight-case fixture and timed committed-frame contract remain intact.
 Documentation obtained no test runs.
+
+**Ready-coverage display projection (#2087), 2026-10-11.** The
+[controlled comparisons](../../specs/architecture/2087-saved-thread-recurring-first-draw.md#revisions)
+and [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2093#issuecomment-6111571698)
+establish a readiness inversion: a cold open can draw while optional coverage
+validates, but already-ready coverage can put display projection on the initial
+readable-content path. Baseline fragmented reopens spent **234/217 ms** between
+snapshot and content, versus **35/25 ms** on first opens. Holding the projection
+worker separately exposes this dependency; holding only metadata or the newest
+response misses it. Queued canceled empty projections compounded the controlled
+wait. This diagnoses the controlled dependency, without establishing GC, host
+contention, lifecycle or a causal commit for the historical full-suite miss.
+
+`ThreadViewModel.threadContent` now skips projection for empty rows and publishes
+its first nonempty readable content before optional projection, withholding
+markers and read evidence until the unchanged complete projected result arrives.
+The first-publication flag belongs to each collection, so reopening and
+WhileSubscribed re-collection regain this behavior. Later inputs keep prepared
+markers and rows until their complete replacement is ready, preserving latest-input
+cancellation and projected row/evidence coupling. Production frame pacing remains
+in place. See [independent cache readers](conversation-cache-layout.md#thread-document-readers-1949)
+and [saved/live ordering](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+
+`SavedThreadOpenTest.readyCoverageCannotHoldFirstSavedRowsBehindProjection_firstOpenAndReopen`
+restores complete coverage before rows and holds the injected projection dispatcher.
+It failed at the readable-row assertion before the correction (one executed/failed,
+also one executed/failed in the bounded assertion rerun). Afterward it checks empty
+rows queue no projection, exact markers after release, prepared markers during later
+inputs, re-collection without an extra newest request, both connection modes and
+repeated new ViewModels. The affected worker/frame/demand/open selection passed
+**43 executed/passed, 0 failures/errors/skips**. Existing
+`mainProgressInvariant_pendingWorkerAllowsDraftEdit_latestInputWins_andExitCancels`
+covers later-input cancellation and exit.
+
+The device twin
+`SavedThreadFirstDrawDeviceTest.delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen`
+adds a cancellable **1100 ms** hold only to display projection, using the original
+eight-case fixture/open/assertion helper. Both methods retain **20 ordinary messages**,
+**18000 displayed fragmented rows / 36000 durable entries / 18000 spans**, exact
+rows and every marker anchor, zero offline requests and exactly one newest-page
+request per connected opening with its response held. Timing still starts before
+cold cache/repository and ViewModel construction and ends at the exact newest text
+wholly within the viewport through frame commit. Each draw retains **1000 ms**;
+marker checks after projection cannot turn a late draw into a pass. No measured
+work is warmed and no retry accepts a miss.
+
+**Retained historical miss and focused counterevidence.** The
+[refinement evidence](https://github.com/pyrycode/pyrycode-mobile/issues/2087#issuecomment-6110814251)
+retains the configured UI failure at `85a054e743711dd621b206f7369e84d6ba1a1948`:
+exit 1, **258 executed, 257 passed, 1 failed, 0 errors, 1 skipped**; first draw
+failed and delayed control passed. Draw vector **158/135/130/138/1051/1258/945/684 ms**
+uses ordinary offline first/reopen, ordinary held-newest first/reopen, fragmented
+offline first/reopen, fragmented held-newest first/reopen order throughout below.
+Its phase logcats are unavailable. The isolated merge-base
+`5ff194ef5b890d1e5045b754abc35935db25ad75` passed **1/1/0/0/0**
+(executed/passed/failed/errors/skipped), fragmented offline **738/561 ms**.
+Focused branch `998a55daefd458e8e4ecba36c488af4bf448ccee` and main source archive
+`ea3ab23e7e14aac63e59a3d05d28473e3905323f` each exited 0, **1/1/0/0/0**,
+with vectors **546/253/202/187/730/571/569/492** and
+**570/226/199/186/701/589/584/490 ms**. Their XML, source identities and bounded
+logs are recorded under
+`/Users/juhanailmoniemi/.codex/publish/pyrycode-mobile/builder-2057-rework-85a054e74371/evidence/`.
+These focused passes do not reproduce full-suite state or diagnose that miss.
+
+**Builder-recorded controlled comparison.** The same forced, single-shard,
+animations-disabled Pixel 2 API 33 ATD affected-class command is retained in the
+[PR testing record](https://github.com/pyrycode/pyrycode-mobile/pull/2093) and plan.
+Baseline `d038af89f57ebe4b21816b32fe54aac729296797` exited 0,
+**2/2/0/0/0**: original vector **237/219/215/199/713/531/563/450 ms**,
+control **3481 ms**. An isolated twin first failed readiness before any Probe or
+projection: **1/0/1/0/0**, XML **2026-10-11T16:09:16**. It has no draw measurements
+and establishes no latency cause.
+
+Before correction, `e5e9b942dc4e27a1a430d2923cf3770bf219c170` exited 1,
+**3/2/1/0/0**: the twin failed with **2468/2440/2413/2412/712/2680/541/3712 ms**;
+the original method and restore control passed in that class. Ordinary rows restored
+in **43–79 ms**, but content waited until **2286–2315 ms** behind queued projection.
+Cold fragmented first opens could draw while coverage remained pending; ready-coverage
+reopens could not. After correction,
+`ce9da0f3907c3e7452f3ada2bae7f0ca28aaf196` exited 0, **3/3/0/0/0**,
+XML **2026-10-11T16:18:43**: original vector
+**159/128/141/143/501/235/467/259 ms**, twin with the unchanged hold
+**257/224/176/176/726/313/564/269 ms**, restore control **3476 ms** rejecting
+the same bound. The reviewed production/tests match this green source.
+
+The builder records retained XML/counts, revisions/source hashes, all eight phase
+timings and bounded readiness/worker logs in
+`/Users/juhanailmoniemi/.codex/publish/pyrycode-mobile/builder-2087/evidence/`
+(temporary equivalent `/tmp/builder-2087/evidence/`): `original-gate/`,
+`baseline-class/`, `red-unit-bounded/`, `red-device-readiness/`, `red-device-class/`,
+`green-units/`, `green-device-class/`. Both builder locations are absent from the
+verifier and documentation environments. Earlier raw reports could not be independently
+inspected or checksummed here; these comparisons are attributed to the plan/PR,
+with that limitation preserved alongside the fresh full-gate inspection below.
+
+**Fresh configured dispatcher UI acceptance.** On
+`3ccd263b2c9b2d32a082765af9f2be32349b6be9`,
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`
+exited **0**. Inspected raw XML timestamp **2026-10-11T17:02:18**, matching the
+counted report: **260 recorded, 259 executed, 259 passed, 0 failed, 0 errors,
+1 skipped**. All three methods named above each executed once and passed,
+**1/1/0/0/0**; the sole skip was `RenameDialogCaptureTest.renameAtFigmaViewport`.
+This full configured run supplies acceptance independently of focused comparisons.
+
+Cumulative **restore/snapshot/content/committed-draw** monotonic milliseconds:
+
+| Case | Original phases | Delayed-projection twin phases |
+| --- | --- | --- |
+| Ordinary offline first | 19/24/42/84 | 20/27/43/99 |
+| Ordinary offline reopen | 17/23/40/83 | 18/24/41/86 |
+| Ordinary held-newest first | 19/26/42/85 | 22/23/40/84 |
+| Ordinary held-newest reopen | 21/23/40/87 | 17/19/27/70 |
+| Fragmented offline first | 271/369/393/458 | 329/446/472/597 |
+| Fragmented offline reopen | 35/105/126/193 | 35/115/127/253 |
+| Fragmented held-newest first | 273/353/368/430 | 295/371/388/452 |
+| Fragmented held-newest reopen | 42/108/121/193 | 32/102/125/187 |
+
+The delayed restore control passed by rejecting the unchanged bound at
+**3008/3032/3038/3070 ms**. Fresh raw/count-derived XML, `counts-and-timings.json`,
+named logcats with bounded phase/worker/readiness evidence, source hashes and
+`command-result.txt`/`gate-pass.json` are retained under
+`/Users/juhanailmoniemi/.codex/publish/pyrycode-mobile/verifier-2093/full-ui/`.
+Scripted-all separately exited 0, **22/22/0/0/0**, and selects none of these methods.
+No live/Claude scenario is required. Documentation inspected existing evidence
+and obtained no test runs.
