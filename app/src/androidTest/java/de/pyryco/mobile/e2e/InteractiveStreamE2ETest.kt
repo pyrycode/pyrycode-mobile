@@ -771,9 +771,12 @@ class InteractiveStreamE2ETest {
         ): T = mcpScenarioStep(stage, ::connectionSnapshot, { Log.i("McpScenario", it) }, block)
 
         step(McpScenarioStage.ListArrival) { awaitChannelList() }
-        step(McpScenarioStage.Connection) { awaitConnected() }
+        step(McpScenarioStage.Connection) {
+            runBlocking { awaitHostConnection(GlobalContext.get().get<RelayConnectionRegistry>(), serverId, CONNECT_TIMEOUT_MS) }
+            Log.i("McpScenario", "event=mcp_readiness ${connectionSnapshot()}")
+        }
         step(McpScenarioStage.ChatSetup) {
-            createChat()
+            createChat(serverId)
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
