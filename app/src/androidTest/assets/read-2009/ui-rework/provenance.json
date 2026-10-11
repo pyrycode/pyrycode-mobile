@@ -131,5 +131,22 @@
   },
   "original_failure": "SavedThreadFirstDrawDeviceTest.savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen: TimeoutCancellationException: Timed out waiting for 30000 ms",
   "original_detailed_method_logcat": "unavailable",
-  "shell_sampling_duration": "not independently measured; retained window timestamps include delay and sampling"
+  "shell_sampling_duration": "not independently measured; retained window timestamps include delay and sampling",
+  "current_unit_mobile_revision": "e5adaf6737cc4249855fb72b5d0e2618f8e643cb",
+  "current_unit_executed_passed": 85,
+  "current_unit_failures_errors_skips": 0,
+  "current_unit_file": "focused-unit-counted.xml",
+  "current_unit_file_sha256": "bb2b5646b130d98089d7d9bdec9f42b75b5357387ddd56cf64d4d1a32c68e18e",
+  "current_scripted_mobile_revision": "c134c392851d923c493bc999730702620e7bdeaf",
+  "current_scripted_daemon_revision": "63aabec70dad3948c916332a139eb22533b8f4b8",
+  "current_scripted_command": "ANDROID_GATE_WAIT_SECONDS=2700 timeout 1800 python3 scripts/android-test-gate.py scripted ping",
+  "current_scripted_executed_passed": 2,
+  "current_scripted_failures_errors_skips": 0,
+  "current_scripted_file": "scripted-ping-counted.xml",
+  "current_scripted_file_sha256": "f5c376dcbc5c3298eed3d6333960decc1fa52d0ce2fd97afc9ba89d7a060cc3d",
+  "current_scripted_app_apk_sha256": "e65e364712eee342d409972a9993fe5637521df114c3747a38208cdafec0651e",
+  "current_scripted_test_apk_sha256": "84a34cd7647f2aae973a2fdb9d59b812080fc88fadb025d70d11f389450b4796",
+  "current_scripted_daemon_binary_sha256": "b8d4917bb7f127c8c7add6f0cf4148f753445390e0d50ef375fd17287a17653c",
+  "current_production_tree_identity": "381691a3da2f3399bc983fedd057be9a45891823",
+  "current_builder_checks": "lint, assembly, Android-test compile, forced formatting and pre-verify --gradle passed on c134c3928; temporary compiler heap only"
 }
