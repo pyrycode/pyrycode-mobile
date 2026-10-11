@@ -524,7 +524,8 @@ class ThreadViewModel(
                     // session still invalidates old-agent readings even if the observed agent is unchanged.
                     if (previousConversationAgent?.let { it != conversation.agent } == true ||
                         agentSwitchUi.value.request?.sending == true &&
-                        conversation.currentSessionId.isNotEmpty() && conversation.currentSessionId != lastKnownSessionId
+                        conversation.currentSessionId.isNotEmpty() &&
+                        conversation.currentSessionId != lastKnownSessionId
                     ) {
                         agentChanged = true
                     }
@@ -3045,7 +3046,8 @@ class ThreadViewModel(
                         val current = reading.list.firstOrNull { it.id == conversationId }
                         current == null ||
                             current.agent == request.choice.agent ||
-                            current.currentSessionId.isNotEmpty() && current.currentSessionId != config.sessionId
+                            current.currentSessionId.isNotEmpty() &&
+                            current.currentSessionId != config.sessionId
                     }
                 val current = successor.list.firstOrNull { it.id == conversationId }
                 agentSwitchUi.value =
