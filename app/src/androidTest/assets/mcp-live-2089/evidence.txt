@@ -25,7 +25,13 @@ Stop/attachment/MCP predecessor replay: 3 executed/passed, 0 failed/errors/skipp
 Historical 62-method prefix: interrupted with SIGTERM, exit 143, after the unchanged ping method 38 made no completion for more than seven minutes. 37 completed: 36 passed, 1 unrelated background-agent failure, 0 skipped. MCP did not execute. Partial counts/instrumentation and phone logs: build/dispatcher-tests/live-htk9e3x4/. MCP drive unchanged in the installed APK; new diagnostic helper was present but unused. This is not a full gate result.
 Prefix daemon evidence: /var/folders/k0/gc07w9ws319b07n0plnw6y8r0000gn/T/pyry-e2e.ZH3XIK/daemon.log and daemon-b.log; copied with stalled ping evidence at /tmp/builder-2089/prefix-stalled/.
 Existing #2010 reused for the stalled ping observation: https://github.com/pyrycode/pyrycode-mobile/issues/2010#issuecomment-6113616215. No shared cause or dependency on its repair is established.
-Instrumented remaining 24-method suffix: pending; excludes the stalled predecessor for investigation only, not full-live acceptance.
+Instrumented remaining 24-method suffix on Mobile bda8cc31e3decbe19975bd37df09cd1f1e7ffd93: 24 executed, 21 passed, 3 unrelated failures, 0 errors/skipped; exit 1. Named MCP method executed and passed all eight stages (16 content-free records). Raw report/phone logs: build/dispatcher-tests/live-is21b3u_/. Named-case XML extract and static stage records: instrumented-suffix-mcp.xml and instrumented-suffix-stages.txt. This excludes the stalled predecessor for investigation only, not full-live acceptance.
+Suffix daemon logs retained at /tmp/builder-2089/suffix-evidence/ and /var/folders/k0/gc07w9ws319b07n0plnw6y8r0000gn/T/pyry-e2e.C0Fdx3/. Daemon 8091a4730d42f43029eb0b955442dc300106030f; Claude 2.1.280.
+Suffix test APK SHA-256: c3f7f307fada6a8042cf185c5c2940521d36e797970cd87d4299129b182c97bc
+Suffix application APK SHA-256: 966e7493a9c9de6c13f8478f314006ff6f922d1fa8b763015a3f3c39c49876bb
+Suffix unrelated failures: backgroundAgent_replyStaysUnderAgent (#2013), backgroundTurnEnd_pushPostsOneAlertThatOpensThread (investigate alongside #2055), rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel (#2095). No MCP causal relationship established.
+Two preceding suffix attempts exited 75 after 300 seconds of device occupancy each, with zero executed. The third acquired the device after 65 seconds. These are acquisition outcomes, not test failures.
+Final instrumented 61-method historical-prefix investigation: pending. Only the earlier stalled ping drive is excluded; this is not configured full-live acceptance.
 Prefix test APK SHA-256: 3c8b3f8f0a866e66bda2a2ce45fe837214e64016e74343dfb63967263e53ef93
 Prefix application APK SHA-256: 966e7493a9c9de6c13f8478f314006ff6f922d1fa8b763015a3f3c39c49876bb
 
