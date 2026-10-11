@@ -270,16 +270,19 @@ until that milestone lands. See [`../codebase/507.md`](../codebase/507.md).
 
 ## Daemon conversation read marks
 
-`observeReadMarks(conversationId)` exposes `ConversationReadMarks(readUpTo: ULong?,
-latestEntryId: ULong?)` in the durable history id space (#1881). It emits null until
-either live fact is heard. A null field means unavailable; zero is a valid known
-value. Only a present `readUpTo` establishes daemon read-mark support on this
-connection, so a latest-id-only reading or cached conversation cannot establish it.
-Local `ReadPosition` remains the fallback. These repository facts support agreement
-between phone and desktop; viewport eligibility, attention dots and notification
-cancellation belong to the dependent UI slices.
+`observeReadMarks(conversationId)` exposes default-tolerant
+`ConversationReadMarks(readUpTo, latestEntryId, lastShownVersion, threadSupported)`
+in the common history-entry number space (#1881, #2085). Confirmed `readUpTo`, legacy
+activity `latestEntryId` and current shown availability remain separate. Null is
+unavailable; zero is explicit. Thread support chooses `lastShownVersion` as the
+unread watermark; legacy connections choose `latestEntryId`. Unavailable thread
+metadata withholds an authoritative unread verdict and sight qualification, without
+substituting legacy activity, zero or local `ReadPosition`. On legacy connections,
+a present `readUpTo` establishes shared read support; otherwise local fallback remains.
+Summary receipt never marks content read. Attention prompt/running precedence stays
+unchanged; notification coverage also requires usable shown metadata on thread connections.
 
-`latestEntryId` is the filtered unread watermark, not the highest received durable
+On legacy connections, `latestEntryId` is the filtered unread watermark, not the highest received durable
 id (#1948). Live and replay receipt and fetched history exclude exactly `turn_state`,
 `stall`, `api_retry`, `compacting` and `session_transition` when raising it, matching
 the daemon's watermark and mark-read clamp. Every other durable type counts,
@@ -290,15 +293,16 @@ authoritative merge inputs. Filtering before the monotonic merge matters: once a
 status tail has raised latest, a lower daemon watermark cannot undo it. Reconnecting
 and fetching history must apply the same filter or the tail returns as unread.
 
-`ConversationListProjection` keeps rows and a conversation-keyed fact ledger in one
-atomic state. List snapshots replace rows while merging each supplied fact by unsigned
-maximum. Both ordinary correlated updates and unsolicited `conversation_updated`
-pushes merge the read mark and preserve the latest durable id held from a list:
-updates supply no latest id. Omitted fields never erase held facts. Empty or excluding
-snapshots retain the ledger, so a stale reappearance cannot regress either fact.
-This monotonic rule applies within one host connection generation. Separate remote
-instances isolate hosts even when conversation ids match; a fresh connection starts
-with no facts. Read marks stay outside persistent cache and `HostReadings`.
+`ConversationListProjection` keeps rows and the conversation-keyed fact ledger in
+one atomic state. List snapshots replace rows while confirmed read and legacy latest
+merge by unsigned maximum; updates preserve held latest because they supply no
+latest id. Thread snapshots/updates replace shown availability: omitted, null or
+malformed shown metadata invalidates an older usable watermark. Valid shown values
+merge monotonically while available; legacy receipt cannot raise shown metadata.
+Empty/excluding snapshots retain the ledger. Session replacement does not reset
+confirmed read. Separate remote instances isolate hosts with colliding conversation
+ids; a fresh connection starts with fresh facts and support. Read facts remain outside
+persistent cache and `HostReadings`.
 
 `markConversationRead(conversationId, upTo: ULong): Result<ULong>` delegates to
 `ConversationCommands`. It registers the request identity before sending and waits for
@@ -309,10 +313,20 @@ Unsolicited pushes can update observation but cannot complete the request. The r
 value is the stored monotonic mark after confirmation, which may be clamped below the
 requested id or unchanged for a no-op; sending alone never advances the projection.
 Server errors, send refusal and transport teardown return sanitized failures; caller
-cancellation propagates. The repository performs no retry: the viewport slice owns it.
+cancellation propagates. The command layer performs no retry; qualified work uses the host-owned retry path below.
 See [wire validation and confirmation](mobile-protocol-v2-wire-layer.md#daemon-read-fields-and-confirmation).
 
-**What may become a read mark (#1912).** `ThreadSnapshot.readEvidence` binds durable
+**Authoritative foreground evidence (#2085).** The supplied presentation uses the
+store-certified complete checkpoint, usable shown summary and carried foreground
+sight of scoped row keys/exact revisions above confirmed read. Receipt, highest item
+revision and `completedVersion` cannot certify catch-up. The newest row must currently
+be visible with reveal complete, and intermediate unread appends need their own sight.
+Retired composition, host, epoch, generation and captured connection bindings reject
+new qualification. See [foreground checkpoints](thread-screen.md#what-it-does).
+The seam remains dormant; #1988 owns activation and combined daemon/live acceptance,
+with #1984 owning sync/cache and #1986 queue settlement.
+
+**Legacy receipt evidence (#1912).** `ThreadSnapshot.readEvidence` binds durable
 `history_entry_id` claims to the exact row version they produced, across history pages,
 direct live delivery and reconnect replay, including every delta folded into a streaming
 row. Envelope ids, replay `event_id`, a list's latest id and fetched rows never prove
@@ -381,8 +395,10 @@ summary is matched on its displayed fields, not its phone-clock time.
 `ReadCheckpointRetries` keeps the highest qualified checkpoint per host connection
 source and conversation for the app process. It retries on that host's next connection,
 even after the thread closed, and clears only on a confirmed mark at or beyond it. A
-failed or malformed reply keeps it, and it is never sent to another host. Daemons that
-never report `read_up_to` receive no command and keep local `ReadPosition`. The thread
+failed/malformed reply or clamped/no-op confirmation below the pending target keeps it,
+while peer confirmation at or beyond the target clears it. Work never crosses hosts.
+Legacy daemons that never report `read_up_to` receive no command and keep local
+`ReadPosition`. Thread support with unavailable read/shown facts withholds qualification. The thread
 ViewModel shares one snapshot subscription for rows and evidence, because each cold
 subscription sends its own `backfill_since`.
 
