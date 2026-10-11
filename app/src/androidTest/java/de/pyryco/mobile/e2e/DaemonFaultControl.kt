@@ -43,16 +43,17 @@ internal class DaemonFaultControl {
     /** Returns a deadline safely before the earliest passive dial after the actual capped backoff begins. */
     fun stopUntilRetryWindow(
         supervisor: RelayConnectionSupervisor,
+        diagnostics: OfflineRetryDiagnostics,
         assertOfflinePill: () -> Unit,
     ): TimeMark =
         runBlocking {
             val failures =
                 async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
-                    OfflineRetryWindow.awaitDeadline(supervisor)
+                    offlineRetryStep(OfflineRetryStage.CappedBackoff, diagnostics) { OfflineRetryWindow.awaitDeadline(supervisor) }
                 }
             try {
-                stop()
-                assertOfflinePill()
+                offlineRetryStep(OfflineRetryStage.StopDaemon, diagnostics) { stop() }
+                offlineRetryStep(OfflineRetryStage.OfflinePill, diagnostics) { assertOfflinePill() }
                 failures.await()
             } finally {
                 failures.cancel()
