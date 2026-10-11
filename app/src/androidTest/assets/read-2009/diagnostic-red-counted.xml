@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="de.pyryco.mobile.e2e.PeerReadProbeTest" tests="1" skipped="0" failures="1" errors="0">
+  <testcase name="unavailableRepositoryKeepsOriginalRowFailureAndIndependentEvidence" classname="de.pyryco.mobile.e2e.PeerReadProbeTest">
+    <failure message="java.lang.AssertionError: diagnostic must preserve the original row assertion expected same:&lt;java.lang.AssertionError: B after a peer read, without reopening its thread; observed Unread&gt; was not:&lt;null&gt;" type="java.lang.AssertionError">Original row assertion was lost by the unavailable repository check.</failure>
+  </testcase>
+</testsuite>

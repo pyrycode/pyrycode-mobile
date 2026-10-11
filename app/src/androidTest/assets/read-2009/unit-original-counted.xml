@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="de.pyryco.mobile.data.repository.AttentionReadReceiptTest" tests="1" skipped="0" failures="1" errors="0" timestamp="2026-10-11T10:26:11.878Z" hostname="1dda590d3bc9" time="0.339">
+  <testcase name="completedReplyCanQualifyForTheDaemonWatermarkWithAccountedDelivery" classname="de.pyryco.mobile.data.repository.AttentionReadReceiptTest" time="0.335">
+    <failure message="java.lang.AssertionError: expected:&lt;8&gt; but was:&lt;null&gt;" type="java.lang.AssertionError">expected checkpoint 8, actual null against the original daemon page</failure>
+  </testcase>
+</testsuite>

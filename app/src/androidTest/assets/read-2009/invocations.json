@@ -1,0 +1,144 @@
+{
+  "mobile_production_base": "11ed225d27026e9e59abe634adc49c338dd41c51",
+  "mobile_test_worktree_head": "1b71d5ef92d421b98040edcd99d02442b3168e45",
+  "mobile_production_changed": false,
+  "selection": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn",
+  "original_daemon": "d49b8392e00b8de4273998393413594d57f30047",
+  "repaired_daemon": "f570f2f871ca50ab1f1739cc0f142f375682d05e",
+  "repair_merge": "a3ca005f05e95650d10b7e07cb5d190252acbd1a",
+  "owning_repair": "https://github.com/pyrycode/pyrycode/issues/3167",
+  "original_command": "PYRYCODE_SRC=/tmp/builder-2009/daemon-original python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn",
+  "repaired_command": "PYRYCODE_SRC=/tmp/builder-2009/daemon-repaired python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn",
+  "original_live": {
+    "executed": 1,
+    "passed": 0,
+    "failed": 1,
+    "errors": 0,
+    "skipped": 0,
+    "exit": 1,
+    "artifacts": "build/dispatcher-tests/live-hp7mzvfc"
+  },
+  "repaired_live": {
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "exit": 0,
+    "artifacts": "build/dispatcher-tests/live-1xlzch24"
+  },
+  "causal_export": "Retained Go test copied into each isolated git archive under cmd/pyry; GOCACHE=/tmp/builder-2009/go-cache go test ./cmd/pyry -run ^TestMobile2009Export$ -count=1 -v; one test passed on each revision; raw receipt types/IDs identical, only serialized receipt coverage differs.",
+  "fixture_normalization": "Synthetic asked/seen inputs; timestamps and turn/message IDs normalized. Original excludes IDs 1 and 3; repaired retains all IDs 1-8. No author text or credentials retained.",
+  "controlled_unit_red": {
+    "executed": 1,
+    "passed": 0,
+    "failed": 1,
+    "errors": 0,
+    "skipped": 0,
+    "change": "Run completedReplyCanQualifyForTheDaemonWatermarkWithAccountedDelivery with original exported page as repaired resource; expected 8 versus null."
+  },
+  "focused_unit": {
+    "executed": 80,
+    "passed": 80,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "command": "./gradlew testDebugUnitTest --tests de.pyryco.mobile.data.repository.AttentionReadReceiptTest --tests de.pyryco.mobile.di.HostConversationSourceAttentionTest --tests de.pyryco.mobile.data.repository.ThreadReadClaimsTest --tests de.pyryco.mobile.data.repository.ScriptedPingReadEvidenceTest --tests de.pyryco.mobile.data.repository.ThreadReadRuntimeReceiptsTest --tests de.pyryco.mobile.data.repository.ConversationReadMarksTest --tests de.pyryco.mobile.data.repository.ReadCheckpointRetriesTest --console=plain"
+  },
+  "scripted_ping": {
+    "command": "python3 scripts/android-test-gate.py scripted ping",
+    "daemon": "63aabec70dad3948c916332a139eb22533b8f4b8",
+    "executed": 2,
+    "passed": 2,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "exit": 0,
+    "artifacts": "build/dispatcher-tests/scripted-kvpefqo8"
+  },
+  "historical_b": "Not diagnosed: original daemon revision and phone read/latest/projection evidence unavailable; current focused B pass is not a retrospective diagnosis.",
+  "pending": "Fresh dispatcher full live suite with explicit executed/failed/skipped counts and named A/B scenario passed. Documentation records actual gate evidence and preserves phone/peer distinction.",
+  "hashes": {
+    "app/src/androidTest/assets/read-2009/live-original-counted.xml": "e4f4cfeaaf63d8740f3d1cf059f2c92d5fb0aecbc8257622d78c8374153b1d94",
+    "app/src/androidTest/assets/read-2009/unit-repaired-counted.xml": "a3fcacf32cd5ec6035ddfecdf52246883ff81649f1474408635045121e42b0aa",
+    "app/src/androidTest/assets/read-2009/live-repaired-counted.xml": "86b5481d4550c73d1ea1524c3db55e5341064aef2365da8912ded8009b58a104",
+    "app/src/androidTest/assets/read-2009/live-repaired-stages.txt": "a0c732a61d727fc63ff1a2ec09e716daa939565e9edf4568874528850f3a94b9",
+    "app/src/androidTest/assets/read-2009/scripted-ping-counted.xml": "6965587ec66bdf8245d7aa0b881d23572d2bfd44b81b774aa35ac3af64e83433",
+    "app/src/androidTest/assets/read-2009/unit-original-counted.xml": "6e977c608ba08f7f221ad7df8229f674cfa240c79d58ace34186ca261c20d234",
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt": "19fbf4f2a3af88a4404bd40014551e7c3b6a546fb3189543caf0b85a15baaf7a",
+    "app/src/test/resources/daemon-contract/attention-read-original.json": "288319545682db40d370005b003c6b4df667f1b3bf998e137cad0a601a6fefd7",
+    "app/src/test/resources/daemon-contract/attention-read-export.go.txt": "c10064c1fb92da2779f1d5354c9a3b0d208ab0d2b2d7f5542bdaf19423ff2d7a",
+    "app/src/test/resources/daemon-contract/attention-read-repaired.json": "6d7860ea29c9d7d2f70f8e6527aba02e800ba38a4fe7b3fd27a9340b182fcb63",
+    "app/src/androidTest/assets/read-2009/live-post-merge-stages.txt": "a0c732a61d727fc63ff1a2ec09e716daa939565e9edf4568874528850f3a94b9",
+    "app/src/androidTest/assets/read-2009/live-post-merge-counted.xml": "ebf8b3045207fbe280e97aaa74362c7e85b601cd6e2a9a818d616b50208bd8f7"
+  },
+  "tested_attention_source_sha256": "1a227de2c188524d4212fb701a16ca4936ab95ab05f3037c56542119713b1cd0",
+  "hash_scope": "Retained artifact hashes after formatting; tested_attention_source_sha256 identifies the scenario bytes used in the paired live runs before formatting.",
+  "exact_repair_export": {
+    "daemon": "a3ca005f05e95650d10b7e07cb5d190252acbd1a",
+    "parent": "d49b8392e00b8de4273998393413594d57f30047",
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "fixture_matches": true,
+    "checkpoint": 8,
+    "latest": 7
+  },
+  "post_merge_live": {
+    "mobile": "f56b32d3398d13e48a34c6d693cf4b8e11930724",
+    "merged_main": "a6840a356e8d5f02e62f888e5d1961b273d93475",
+    "daemon_archive": "f570f2f871ca50ab1f1739cc0f142f375682d05e",
+    "binary_vcs_revision": "unavailable (git archive has no .git); source revision established by archive",
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "exit": 0,
+    "artifacts": "build/dispatcher-tests/live-k9bv9mm4",
+    "binary_sha256": "77518d6fa26fc49e4088f35312668e2266016b8a4f24d52aea8dd30ccf87ac60",
+    "test_source_sha256": "19fbf4f2a3af88a4404bd40014551e7c3b6a546fb3189543caf0b85a15baaf7a"
+  },
+  "post_merge_unit": {
+    "mobile": "f56b32d3398d13e48a34c6d693cf4b8e11930724",
+    "executed": 80,
+    "passed": 80,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "disconnect_diagnostic_rework": {
+    "reviewed_mobile_head": "e922846c7954c01399a0afad6b55962b6bf5cbab",
+    "regression_red_command": "./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.PeerReadProbeTest.unavailableRepositoryKeepsOriginalRowFailureAndIndependentEvidence --console=plain",
+    "regression_red": {
+      "executed": 1,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "exit": 1
+    },
+    "red_setup": "Extract the original B failure handler with checkNotNull(repository()) into the shared test helper; no repair applied.",
+    "regression_green_command": "./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.PeerReadProbeTest --console=plain (included in the eight-class focused run)",
+    "regression_green": {
+      "executed": 5,
+      "passed": 5,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit": 0
+    },
+    "affected_unit_run": {
+      "executed": 85,
+      "passed": 85,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit": 0
+    },
+    "retained_artifacts": [
+      "diagnostic-red-counted.xml",
+      "diagnostic-green-counted.xml"
+    ],
+    "full_live_acceptance": "Pending fresh dispatcher full live gate; previous focused live comparisons remain historical."
+  }
+}

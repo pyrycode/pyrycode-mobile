@@ -1,0 +1,2 @@
+event=phone_read_confirmed target_covered=true
+event=peer_read_confirmed daemon_target_covered=true phone_received_confirmation=true phone_read_covers_latest=true b_idle=true a_idle=true phone_on_list=true
