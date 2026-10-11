@@ -836,8 +836,16 @@ internal fun List<ThreadItem>.mergeUnsignedHistoryRows(
     firstEvidence: Set<Any> = emptySet(),
     rendererOwners: List<ThreadItem> = emptyList(),
     placementTimestamps: Map<Any, Instant> = emptyMap(),
+    passOver: Set<String> = emptySet(),
 ): List<ThreadItem> =
-    mergeRows(rows, order, firstEvidence = firstEvidence, rendererOwners = rendererOwners, placementTimestamps = placementTimestamps)
+    mergeRows(
+        rows,
+        order,
+        firstEvidence = firstEvidence,
+        rendererOwners = rendererOwners,
+        placementTimestamps = placementTimestamps,
+        passOver = passOver,
+    )
 
 /** Insert fresh history or reconnect evidence beside its neighbours; held markers never move on replay. */
 private fun List<ThreadItem>.withHistoryLifecyclePositions(
@@ -923,6 +931,7 @@ private fun List<ThreadItem>.mergeRows(
     firstEvidence: Set<Any> = emptySet(),
     rendererOwners: List<ThreadItem> = emptyList(),
     placementTimestamps: Map<Any, Instant> = emptyMap(),
+    passOver: Set<String> = emptySet(),
 ): List<ThreadItem> {
     if (incoming.isEmpty()) return if (rendererOwners.isEmpty()) this else withUniqueMessageKeys(this, incoming, rendererOwners)
 
@@ -1070,7 +1079,7 @@ private fun List<ThreadItem>.mergeRows(
                 add(row)
             }
             slots[base.size]?.let(::addAll)
-        }.withJoinedSegments().withUniqueMessageKeys(hinted, attributedIncoming, rendererOwners)
+        }.withJoinedSegments(passOver).withUniqueMessageKeys(hinted, attributedIncoming, rendererOwners)
     // Keep each segment's combined neighbour range; recovered legacy rows carry only proven sequences.
     val lifecyclePage = attributedIncoming.withLegacyRecords(legacy.records)
     val merged = ordinary.withHistoryLifecyclePositions(lifecyclePage, lifecycle).withBackgroundTaskLaunches()
@@ -1368,7 +1377,7 @@ private class ThreadRowAnchors(
 }
 
 /** Join adjacent same-turn deltas in one text build; invisible evidence never splits a segment. */
-private fun List<ThreadItem>.withJoinedSegments(): List<ThreadItem> {
+private fun List<ThreadItem>.withJoinedSegments(passOver: Set<String> = emptySet()): List<ThreadItem> {
     val out = ArrayList<ThreadItem>(size)
     var opener: Message? = null
     var openingIndex = -1
@@ -1393,11 +1402,11 @@ private fun List<ThreadItem>.withJoinedSegments(): List<ThreadItem> {
         deltas = mutableListOf()
     }
     for (row in this) {
-        if (row.isAssistantContinuityMetadata()) {
+        val message = (row as? ThreadItem.MessageItem)?.message
+        if (row.isAssistantContinuityMetadata() || message?.role == Role.User && message.ordinaryId in passOver) {
             out += row
             continue
         }
-        val message = (row as? ThreadItem.MessageItem)?.message
         val segment = message?.segment
         val first = opener
         if (first != null &&

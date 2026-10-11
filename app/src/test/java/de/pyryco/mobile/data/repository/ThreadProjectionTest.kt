@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -948,16 +949,48 @@ class ThreadProjectionTest {
         assertEquals(listOf("turn-1", "tool-1", "turn-1#1", "mine"), ids(thread.last()))
 
         projection.applyAssistantDelta(delta("turn-2", 0, "Hello, "))
+        runCurrent()
+        assertEquals("Hello, ", (thread.last()[3] as ThreadItem.MessageItem).message.content)
+        assertTrue((thread.last()[3] as ThreadItem.MessageItem).message.isStreaming)
         projection.applyAssistantDelta(delta("turn-2", 1, "streamed "))
         runCurrent()
         // Until delivery the queued treatment remains below the running reply.
         assertEquals(listOf("turn-1", "tool-1", "turn-1#1", "turn-2", "mine"), ids(thread.last()))
+        val answering = (thread.last()[3] as ThreadItem.MessageItem).message
+        val page =
+            HistoryPage(
+                listOf(
+                    HistoryEntry(
+                        10L,
+                        "turn_end",
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","turn_id":"turn-1","stop_reason":"end_turn"}""",
+                        ),
+                        PUSHED_AT,
+                    ),
+                ),
+                "",
+                true,
+            )
+        repeat(2) {
+            projection.mergeHistoryPage("c1", page, interactive = true)
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "turn-1#1", "turn-2", "mine"), ids(thread.last()))
+            assertEquals(ThreadItem.MessageItem(answering), thread.last()[3])
+            assertEquals(ThreadItem.MessageItem(sent), thread.last()[4])
+        }
         val pushed = userMessage("mine", "daemon copy", PUSHED_AT).copy(attachments = listOf(MessageAttachment(ATTACHMENT_ID)))
         if (drainFirst) projection.onQueueState(queue) else projection.appendLiveMessage("c1", pushed)
         runCurrent()
         val expectedIds = listOf("turn-1", "tool-1", "turn-1#1", "mine", "turn-2")
         assertEquals(expectedIds, ids(thread.last()))
         assertEquals(ThreadItem.MessageItem(sent), thread.last()[3])
+        assertEquals(ThreadItem.MessageItem(answering), thread.last()[4])
+        projection.mergeHistoryPage("c1", page, interactive = true)
+        runCurrent()
+        assertEquals(expectedIds, ids(thread.last()))
+        assertEquals(ThreadItem.MessageItem(sent), thread.last()[3])
+        assertEquals(ThreadItem.MessageItem(answering), thread.last()[4])
 
         projection.applyAssistantDelta(delta("turn-2", 2, "world"))
         runCurrent()
@@ -977,6 +1010,103 @@ class ThreadProjectionTest {
         runCurrent()
         assertEquals(delivered, thread.last())
         assertNeverAboveTheTool(thread)
+        projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-2", "end_turn"))
+        runCurrent()
+        assertEquals(expectedIds, ids(thread.last()))
+        assertEquals(reply.copy(isStreaming = false), (thread.last().last() as ThreadItem.MessageItem).message)
+    }
+
+    @Test
+    fun parkedEcho_historyRendererCollisions_preserveHeldOwnership() = runTest { assertPendingEchoRendererCollisions(suppressed = false) }
+
+    @Test
+    fun suppressedEcho_historyRendererCollisions_preserveHeldOwnershipOnReveal() =
+        runTest { assertPendingEchoRendererCollisions(suppressed = true) }
+
+    private fun TestScope.assertPendingEchoRendererCollisions(suppressed: Boolean) {
+        for (aliased in listOf(false, true)) {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            val rendererId = if (aliased) "mine-alias" else "mine"
+            if (aliased) projection.appendMessages(listOf("c1" to userMessage("$rendererId#0", "held key", SENT_AT)))
+            projection.applyAssistantDelta(delta("held", 0, "A"))
+            runCurrent()
+            val sent = userMessage(rendererId, "waiting", SENT_AT).copy(reconciliationId = "mine".takeIf { aliased })
+            projection.appendMessages(listOf("c1" to sent))
+            projection.recordMinted("c1", "mine")
+            runCurrent()
+            projection.onQueueState(queue, 42L to "mine")
+            runCurrent()
+            if (suppressed) {
+                projection.onQueueState(queue)
+                runCurrent()
+            }
+            val page =
+                HistoryPage(
+                    listOf(
+                        HistoryEntry(
+                            2L,
+                            "assistant_delta",
+                            MobileJson.parseToJsonElement(
+                                """{"conversation_id":"c1","turn_id":"$rendererId","seq":0,"text":"new"}""",
+                            ),
+                            PUSHED_AT,
+                        ),
+                    ),
+                    "",
+                    true,
+                )
+
+            fun assertKeys(ownVisible: Boolean) {
+                val rows = thread.last().filterIsInstance<ThreadItem.MessageItem>().map { it.message }
+                assertEquals(rows.size, rows.map { it.id }.toSet().size)
+                val reply = rows.single { it.segment?.turnId == rendererId }
+                assertEquals(if (aliased) "$rendererId#0~1" else "$rendererId#0", reply.id)
+                assertEquals("new", reply.content)
+                assertEquals(if (ownVisible) sent else null, rows.singleOrNull { it.role == Role.User && it.ordinaryId == "mine" })
+            }
+            repeat(2) {
+                projection.mergeHistoryPage("c1", page, interactive = true)
+                runCurrent()
+                assertKeys(ownVisible = !suppressed)
+            }
+            if (aliased) {
+                projection.mergeHistoryPage(
+                    "c1",
+                    HistoryPage(
+                        listOf(
+                            HistoryEntry(
+                                3L,
+                                "message",
+                                MobileJson.parseToJsonElement(
+                                    """{"conversation_id":"c1","message_id":"$rendererId","role":"user","text":"foreign"}""",
+                                ),
+                                PUSHED_AT,
+                            ),
+                        ),
+                        "",
+                        true,
+                    ),
+                    interactive = true,
+                )
+                runCurrent()
+                assertKeys(ownVisible = !suppressed)
+                val foreign = thread.last().filterIsInstance<ThreadItem.MessageItem>().single { it.message.ordinaryId == rendererId }
+                assertEquals("$rendererId~1", foreign.message.id)
+                assertEquals("foreign", foreign.message.content)
+            }
+            projection.appendLiveMessage("c1", userMessage("mine", "daemon copy", PUSHED_AT), queuedMessageId = 42L)
+            runCurrent()
+            assertKeys(ownVisible = true)
+            projection.mergeHistoryPage("c1", page, interactive = true)
+            runCurrent()
+            assertKeys(ownVisible = true)
+            for (rows in thread) {
+                val keys = ids(rows)
+                assertEquals(keys.size, keys.toSet().size)
+            }
+        }
     }
 
     @Test
