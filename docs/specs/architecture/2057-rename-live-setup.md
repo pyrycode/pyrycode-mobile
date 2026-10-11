@@ -38,9 +38,12 @@ No new jobs, flows or persistent state. The instrumentation/test thread owns the
 | Event | Regression |
 | --- | --- |
 | Connected, loaded target has offscreen Chats after many Channels | `connectedTargetBelowChannelsIsLocatedAndClickedOnce` |
-| Target appears later while another host is already connected | `anotherConnectedHostCannotSatisfyTargetReadiness` |
+| Target becomes ready later while another host is already connected | `anotherConnectedHostCannotSatisfyTargetReadiness` |
 | Target is disconnected or absent | `unavailableTargetFailsBeforeCreationWithBoundedEvidence` |
 | Later projection connects the target | `anotherConnectedHostCannotSatisfyTargetReadiness` |
+| Connected target's list has not loaded, despite a composed control | `composedControlDoesNotEstablishLoadedTargetReadiness` |
+| Source is ready before the screen projection draws the control | `pendingScreenProjectionKeepsMissingControlWithinBoundedWait` |
+| Cancellation or a diagnostic read fails | `cancellationPassesThrough`, `failureEvidenceCannotReplaceOriginalFailure` |
 | Fresh invocation of the locator | Every screen regression constructs a fresh rule/fixture; helper retains no state |
 
 ## Error handling
@@ -56,3 +59,15 @@ Run focused shared tests, lint, assembleDebug, androidTest compilation, Spotless
 ## Open Questions
 
 The historical run lacks per-test setup state; the controlled regression can prove the helper defect but cannot retroactively prove that specific run’s host state. Fresh live stage observations must distinguish any continuing readiness failure from lazy composition. Record controlled evidence and its limits on the ticket.
+
+## Revisions
+
+2026-10-11: resumed the saved plan and failing-test scaffold after the previous builder exited. The controlled connected/loaded 30-channel fixture failed with the former locator: 1 executed, 1 failed, 0 skipped, with `plus_composed=false` retained before teardown. The readiness regression also failed against the former locator because it clicked a composed control before `rowsLoaded`. Scrolling and target-specific readiness then passed all 8 setup regressions and 6 existing archive/empty-host regressions. Sanitized evidence is retained in `app/src/test/resources/rename-setup-2057/red.txt` and `green.txt`; green shows `plus_composed=false` at readiness and `true` after location, followed by one creation event.
+
+Failure observations also report whether the list scroll container is composed, using a boolean. This distinguishes unavailable destination composition from absent host readiness without dumping semantics. The top-bar assertion now explicitly requires dialog closure before accepting its title, preserving the real round-trip proof. Count caps and omission of host content are covered by `observationsCapCountsAndOmitHostContent`. No production, wire or shared live setup changes were needed. Current overlap diffs still affect other methods only.
+
+The historical trigger remains unproven because its per-test setup state was not retained. The controlled evidence establishes a concrete helper defect and its correction; fresh live observations will distinguish any continuing target-readiness failure. Full dispatcher live acceptance remains pending, including this method executed/passed, tested commit and suite executed/failed/skipped counts.
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/e2e-interactive-stream.md`, rename scenario and Verification status: document the target-specific readiness/scrolling setup, link controlled evidence and the eventual dispatcher full-live result, and preserve the distinction between reproduced helper defect and unknown historical trigger.
