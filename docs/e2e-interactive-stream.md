@@ -3174,6 +3174,15 @@ exactly-once reply, settled reply, reply placement between batches and held cach
 These checks prove delivery and reader demand rather than automatic viewport following. See
 [the history-demand contract](knowledge/features/thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
 
+Since #2069, passive diagnostics correlate page receipt counts and durable spans/gaps with
+projected anchors and composed-marker counts at newest receipt, each completed pull, fixture
+recovery and final exhaustive search. They log static phases, numbers and booleans only and
+initiate no demand. A zero composed count in one lazy viewport is insufficient: the independent
+final `performScrollToNode` search accepts only Compose's specific exhausted-search assertion.
+Recovered fixture content also cannot fill an omitted non-rendering durable identity. The
+[original/repaired comparison](#scripted-durable-gap-closure-2069) establishes the daemon-owned
+cause while preserving every shared proof assertion, deadline and physical-pull bound.
+
 **Fragmented projection regression evidence (#1917, 2026-10-07).** The
 [verifier's inspected fresh XML](https://github.com/pyrycode/pyrycode-mobile/pull/1929#issuecomment-6047583572)
 and dispatcher's counted gate report cover `51f4d67f737e`. The configured UI gate executed 200,
@@ -3536,6 +3545,78 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+### Scripted durable-gap closure (#2069)
+
+The [verifier's PASS on PR #2072](https://github.com/pyrycode/pyrycode-mobile/pull/2072#issuecomment-6105030442)
+confirms that the final wait detected genuine missing receipts, rather than stale projection or
+incorrect absence detection. After three physical pulls on the original daemon, all 245 held
+rows needed for fixture recovery were present, but durable ids 243 (`send_accepted`) and 250
+(`send_delivered`) were absent. Coverage retained `1–242`, `244–249`, `251–495`; projection
+selected anchors 242/249 and exhaustive Compose search found two markers. The daemon's legacy
+pager filtered these queued-send facts. Closed [daemon #3167](https://github.com/pyrycode/pyrycode/issues/3167),
+merged through [PR #3168](https://github.com/pyrycode/pyrycode/pull/3168), supplies their
+non-rendering receipts; Mobile production behavior remains unchanged.
+
+On 2026-10-11, the original ordered pair ran on managed Pixel 2 API 33 ATD at app
+`6b7f96f232bf18d3f76fa3e63fda4e016dea8524`, with relay
+`a7a05d1f123d42fa17ac23b5e4d10a8f741a4911` and zero real Claude turns:
+
+| Daemon revision | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original `b75aea7948b3c1b0c70983b11ea4047b09862099` | 2 | 0 | 2 | 0 | 0 |
+| Repaired `a3ca005f05e95650d10b7e07cb5d190252acbd1a` | 2 | 2 | 0 | 0 | 0 |
+
+Both counted reports name `DeterministicInteractiveStreamE2ETest` methods
+`interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` and
+`interactiveTurn_seededChannel_durableGapCatchUp`; each repaired method executed/passed 1,
+with 0 failed/errors/skipped. The repaired first older page contains 200 receipts rather
+than 198. Two physical pulls recover the fixture and join coverage `1–495`; projection has
+no markers and the independent search records `search_absent` without another request.
+
+The repaired invocation was:
+
+```sh
+ANDROID_GATE_WAIT_SECONDS=2700 PYRYCODE_SRC=/tmp/builder-2069/daemon-repaired PYRYCODE_RELAY_SRC=/Users/juhanailmoniemi/Workspace/Projects/pyrycode-relay python3 scripts/android-test-gate.py scripted ping
+```
+
+The original invocation differs only in `PYRYCODE_SRC=/tmp/builder-2069/daemon-original`.
+Both use unmodified archives of the recorded daemon revisions. Retained
+[original counted XML](../app/src/androidTest/assets/durable-2069/original-counted.xml),
+[repaired counted XML](../app/src/androidTest/assets/durable-2069/repaired-counted.xml),
+[original observations](../app/src/androidTest/assets/durable-2069/original-observations.txt),
+[repaired observations](../app/src/androidTest/assets/durable-2069/repaired-observations.txt)
+and [hole metadata](../app/src/androidTest/assets/durable-2069/original-hole-metadata.json)
+provide content-free evidence. The [manifest](../app/src/androidTest/assets/durable-2069/invocations.json)
+records full commands, revisions, hashes and absolute builder artifact paths. Original raw XML
+was `build/dispatcher-tests/scripted-nptg2jkb/0-TEST-pixel2Api33Atd-_app-.xml`; repaired raw XML
+was `build/dispatcher-tests/scripted-ed0na53x/0-TEST-pixel2Api33Atd-_app-.xml`. These raw reports,
+APKs and binaries are no longer present at their recorded worktree paths. The verifier inspected
+retained sanitized reports and observations but could not revalidate the recorded matching app
+APK hashes.
+
+The dispatcher configured gate at `6787b79cec36aa69cd37a2b1021e22e9a8e6149d` passed at
+`2026-10-11T03:26:43.073Z`:
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`.
+The supplied gate report and verifier's inspected fresh XML record **22 executed/passed,
+0 failed/errors/skipped**. Both named methods above executed/passed 1 each, with
+0 failed/errors/skipped, in `build/dispatcher-tests/scripted-all-s4c4eh0k/ping-0-TEST-installed.xml`;
+`dispatcher.xml` in that directory records totals. These are full configured-suite passes.
+Binary metadata identifies older configured daemon `a536d17b1e182fb5398a5458e3afe6079b37a510`,
+`vcs.modified=true`, with the same relay revision above. This meets the counted method-execution
+requirement despite the plan's repaired-source request; repair acceptance rests on the isolated
+repaired pair. No repaired-daemon full-suite pass is claimed.
+
+The verifier also inspected fresh unit reports for all six selected classes: 64 executed/passed,
+0 failed/errors/skipped, including five new `ScriptedDurableGapCoverageTest` probes. The retained
+`coverage-focused-counted.xml` duplicates ten unsigned-coverage cases and omits `HistoryCoverageTest`,
+so its 64 records are only 54 unique class/method pairs and cannot independently prove that total.
+The [controlled red report](../app/src/androidTest/assets/durable-2069/coverage-red-counted.xml)
+records 1 executed/failed, 0 passed/errors/skipped after omitting delivery receipt 3 from the
+repaired fixture (expected continuous `1–7`, actual `1–2` and `4–7`). Receipt restoration removes
+the marker without replacing read content. No fresh rung-3 execution is claimed:
+[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) retains ownership of
+`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`.
+
 ### Scripted ping receipt continuity (#2070)
 
 The [verifier's PASS on PR #2071](https://github.com/pyrycode/pyrycode-mobile/pull/2071)
@@ -3568,8 +3649,8 @@ with 0 failed/errors/skipped:
   stays unread on the list until the peer confirms reading that exact post, then attention
   clears without phone reopen. All existing assertions and coverage checks passed.
 - `interactiveTurn_seededChannel_durableGapCatchUp`: passed completely in this fresh
-  pair. [#2069](https://github.com/pyrycode/pyrycode-mobile/issues/2069) owns its final
-  disposition independently; both original methods failed, and no reverse dependency was added.
+  pair. [#2069's independent comparison](#scripted-durable-gap-closure-2069) confirms that
+  omitted queued-send receipts also caused its final marker-closure failure.
 
 Retained [original XML](../app/src/androidTest/assets/read-2070/original-daemon-counted.xml)
 and [repaired XML](../app/src/androidTest/assets/read-2070/repaired-daemon-counted.xml)
@@ -6173,7 +6254,8 @@ The remaining checks here are specific to a real relay or real Claude execution:
 - **Durable reconnect catch-up (#1842):** rung-4
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`
   is selected by ordinary `ping` and configured `scripted-all`, alongside the original ping.
-  [Counted evidence](#verification-status) closes this deterministic delivery repair.
+  [Counted evidence](#scripted-durable-gap-closure-2069) establishes #2069's missing
+  non-rendering receipt cause and closes its deterministic handoff without changing the proof.
   [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) closed the rung-3
   `InteractiveStreamE2ETest` operator-flow extension and the
   [external app force-stop proof](#external-app-force-stop-proof-1833).
@@ -6425,7 +6507,8 @@ The remaining checks here are specific to a real relay or real Claude execution:
   operator proofs. Daemon #3167 closes the queued-send receipt hole; Mobile barriers and
   all device assertions remain intact. [Counted evidence](#scripted-ping-receipt-continuity-2070)
   distinguishes repaired ordered-pair acceptance from the older-daemon configured gate.
-  #2069 owns the separate durable-gap disposition; no new scenario or selector is added.
+  [#2069's durable-gap evidence](#scripted-durable-gap-closure-2069) independently confirms
+  the same producer defect; no new scenario or selector is added.
 
 - **Shared unread (#1883):**
   `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` now proves

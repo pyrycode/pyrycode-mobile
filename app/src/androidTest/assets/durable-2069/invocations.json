@@ -1,0 +1,126 @@
+{
+  "original": {
+    "app_commit": "6b7f96f232bf18d3f76fa3e63fda4e016dea8524",
+    "daemon_revision": "b75aea7948b3c1b0c70983b11ea4047b09862099",
+    "daemon_source": "/tmp/builder-2069/daemon-original",
+    "daemon_provenance": "Unmodified git archive of the exact recorded revision; no Git metadata in the isolated archive.",
+    "relay_revision": "a7a05d1f123d42fa17ac23b5e4d10a8f741a4911",
+    "command": "ANDROID_GATE_WAIT_SECONDS=2700 PYRYCODE_SRC=/tmp/builder-2069/daemon-original PYRYCODE_RELAY_SRC=/Users/juhanailmoniemi/Workspace/Projects/pyrycode-relay python3 scripts/android-test-gate.py scripted ping",
+    "exit": 1,
+    "counts": {
+      "executed": 2,
+      "passed": 0,
+      "failed": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    "per_method": {
+      "interactiveTurn_seededChannel_durableGapCatchUp": {
+        "executed": 1,
+        "passed": 0,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread": {
+        "executed": 1,
+        "passed": 0,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "artifacts": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2069/build/dispatcher-tests/scripted-nptg2jkb",
+    "raw_xml": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2069/build/dispatcher-tests/scripted-nptg2jkb/0-TEST-pixel2Api33Atd-_app-.xml",
+    "counted_xml": "app/src/androidTest/assets/durable-2069/original-counted.xml",
+    "observations": "app/src/androidTest/assets/durable-2069/original-observations.txt",
+    "hashes": {
+      "build/dispatcher-tests/scripted-nptg2jkb/0-TEST-pixel2Api33Atd-_app-.xml": "cff81a5f30d3cacd7a133f789f2c61a82a0187f32c37e47ad50eef07596461a5",
+      "build/e2e-bin/pyry": "a35e6082e99f1034e14fe537855160ebd67917bb86553da4588da7d1164f22e8",
+      "build/e2e-bin/pyrycode-relay": "8277b9675c8360d230892d9c96773f1c91af86da935e3b7db07a2e9e4f32d3ce",
+      "app/build/outputs/apk/debug/app-debug.apk": "622dcacacbf4abeb25c767bf151f6d0cc7eac7d4407bcaf59796f53dd311721a",
+      "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk": "70ca8565bbab92f0364afbfd1e8a621d816fc87d008c3d4e9505b36c5650e8dd",
+      "app/src/androidTest/java/de/pyryco/mobile/e2e/DurableGapProof.kt": "82cc30d0478986b02982d2828fefb155021c118573a5012d93ac3f8384d38145"
+    },
+    "claude_turns": 0
+  },
+  "repaired": {
+    "app_commit": "6b7f96f232bf18d3f76fa3e63fda4e016dea8524",
+    "daemon_revision": "a3ca005f05e95650d10b7e07cb5d190252acbd1a",
+    "daemon_source": "/tmp/builder-2069/daemon-repaired",
+    "daemon_provenance": "Unmodified git archive of the exact recorded revision; no Git metadata in the isolated archive.",
+    "relay_revision": "a7a05d1f123d42fa17ac23b5e4d10a8f741a4911",
+    "command": "ANDROID_GATE_WAIT_SECONDS=2700 PYRYCODE_SRC=/tmp/builder-2069/daemon-repaired PYRYCODE_RELAY_SRC=/Users/juhanailmoniemi/Workspace/Projects/pyrycode-relay python3 scripts/android-test-gate.py scripted ping",
+    "exit": 0,
+    "counts": {
+      "executed": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "per_method": {
+      "interactiveTurn_seededChannel_durableGapCatchUp": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "artifacts": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2069/build/dispatcher-tests/scripted-ed0na53x",
+    "raw_xml": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2069/build/dispatcher-tests/scripted-ed0na53x/0-TEST-pixel2Api33Atd-_app-.xml",
+    "counted_xml": "app/src/androidTest/assets/durable-2069/repaired-counted.xml",
+    "observations": "app/src/androidTest/assets/durable-2069/repaired-observations.txt",
+    "hashes": {
+      "build/dispatcher-tests/scripted-ed0na53x/0-TEST-pixel2Api33Atd-_app-.xml": "973409602eb6da1bf1647e266c52cb7b80ec8d74592fd90a1e687342a1727370",
+      "build/e2e-bin/pyry": "ab88d0f3739e038d9436fe13a43d3581a6cc6d0050db8638c738ad12ced2cd42",
+      "build/e2e-bin/pyrycode-relay": "8277b9675c8360d230892d9c96773f1c91af86da935e3b7db07a2e9e4f32d3ce",
+      "app/build/outputs/apk/debug/app-debug.apk": "622dcacacbf4abeb25c767bf151f6d0cc7eac7d4407bcaf59796f53dd311721a",
+      "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk": "b693a1de86fb23a1214036bee2b6255526f4b0f5d8f17884c017b88a55b74c63",
+      "app/src/androidTest/java/de/pyryco/mobile/e2e/DurableGapProof.kt": "82cc30d0478986b02982d2828fefb155021c118573a5012d93ac3f8384d38145"
+    },
+    "claude_turns": 0
+  },
+  "controlled_red": {
+    "command": "./gradlew testDebugUnitTest --tests de.pyryco.mobile.data.repository.ScriptedDurableGapCoverageTest.repairedNonrenderingReceiptJoinsOlderAnchorAndRemovesMarkerWithoutMoreContent --console=plain",
+    "exit": 1,
+    "counts": {
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "mutation": "Omit only delivery receipt id 3 from the exported repaired daemon page; expected continuous 1\u20137, actual 1\u20132 and 4\u20137",
+    "counted_xml": "app/src/androidTest/assets/durable-2069/coverage-red-counted.xml"
+  },
+  "focused": {
+    "command": "./gradlew testDebugUnitTest --tests de.pyryco.mobile.data.repository.ScriptedDurableGapCoverageTest --tests de.pyryco.mobile.data.repository.HistoryCoverageTest --tests de.pyryco.mobile.data.repository.UnsignedHistoryCoverageTest --tests de.pyryco.mobile.data.repository.HistoryDisplayProjectionTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadHistoryProjectionWorkerTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest --console=plain",
+    "exit": 0,
+    "counts": {
+      "executed": 64,
+      "passed": 64,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "counted_xml": "app/src/androidTest/assets/durable-2069/coverage-focused-counted.xml"
+  },
+  "causal_metadata": {
+    "path": "app/src/androidTest/assets/durable-2069/original-hole-metadata.json",
+    "source": "/tmp/pyry-e2e-det.hUqHaA/.pyry/e2e-auto-3ac4dbaa/conversations/1cdf0270-b373-4c4c-9884-a04ed1e00d2c/history/segment-00000000000000000001.jsonl",
+    "fields": "Durable id, static type and payload byte length only; no payload retained."
+  },
+  "external_repair": "https://github.com/pyrycode/pyrycode/issues/3167",
+  "fixture_provenance": "Existing /daemon-contract/queued-read-repaired.json exported by #2070 from daemon #3167\u2019s real-store test; unchanged.",
+  "production_changed": false,
+  "pending": "Dispatcher scripted-all must report the durable-gap method executed/passed/failed/skipped counts against repaired daemon a3ca005f05e9 or newer; documentation stage records this evidence. Rung-3 offline-read proof remains owned by #1833."
+}
