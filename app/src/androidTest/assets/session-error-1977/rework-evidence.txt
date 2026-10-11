@@ -1,0 +1,43 @@
+#1977 diagnostics-only rework evidence, 2026-10-11
+Tested branch: feature/1977; source revision c91e0df37e6f0715e829b5179891f438f10efc9a.
+Findings 1 and 3 fixed in 553deaf9c6242b7760f1035b7ba700d858530ef4.
+No production behavior, timeout, retry, recovery assertion or scenario-method enablement changed.
+Historical cause and repair remain open in #2048; no intermittent pairing repair is claimed.
+Initial focused/UI build attempts exhausted the compiler heap before executing tests: 0 executed, exit 1.
+Session-only Kotlin compiler heap increased to 4096m; no repository build setting changed.
+Fresh focused command: timeout 1800 ./gradlew testDebugUnitTest --rerun --tests de.pyryco.mobile.e2e.SessionErrorDiagnosticsTest --tests de.pyryco.mobile.e2e.SessionErrorReplyMatcherTest --tests de.pyryco.mobile.ui.onboarding.PairingVerificationTest --tests de.pyryco.mobile.ui.onboarding.PairCodeViewModelTest lint assembleDebug compileDebugAndroidTestKotlin spotlessApply --console=plain -Pkotlin.daemon.jvmargs=-Xmx4096m
+Focused Kotlin exit 0: 27 executed/passed, 0 failures/errors/skips; lint, APK assembly, instrumentation compilation and formatting passed.
+Controller command: timeout 120 python3 -m unittest scripts/test_e2e_session_error.py
+Controller exit 0: 11 executed/passed, 0 failures/errors/skips.
+Retained raw focused XML: /tmp/builder-1977/rework-20261011/TEST-*.xml
+XML names and SHA-256 checksums:
+TEST-de.pyryco.mobile.e2e.SessionErrorDiagnosticsTest.xml: 9 executed/passed; sha256=36d95160fee9db041d0f7a60d653c51bcc64886bbccf6d271c071a62a1d09a9d
+TEST-de.pyryco.mobile.e2e.SessionErrorReplyMatcherTest.xml: 1 executed/passed; sha256=538cd6c1b7e7fe1db0c1acbef473f1135209f2176388d481fce5eb11094daff1
+TEST-de.pyryco.mobile.ui.onboarding.PairCodeViewModelTest.xml: 11 executed/passed; sha256=eec817323ddd2829166241de90bfacf931c3bfccda08d995ff775848c63bdd95
+TEST-de.pyryco.mobile.ui.onboarding.PairingVerificationTest.xml: 6 executed/passed; sha256=5a3d8f8d056f9c54fcc7f81d86c2740fb3ce90ec93e92af19623fc94853624c2
+Nine named diagnostic passes:
+readableSnapshotIdentifiesExactPresenceAndAbsence
+unavailableSnapshotCannotReplaceOriginalTimeoutOrPublishItsOwnDetails
+cleanupFailureWithoutPrimaryFailureRemainsAFailure
+authoritativeSnapshotReadHasOneSecondDeadline
+cleanupRetainsPrimaryFailureAndStillRuns
+primaryCleanupFailureIdentifiesRemovalOrCloseAndRetainsCause
+secondaryCleanupFailuresPreserveOperationPhaseAndAllCauses
+bothArmsRetainPhaseReadinessAndOriginalTimeoutWithoutFormattingIt
+failedSnapshotResultIsUnknownAndRetainsOriginalTimeout
+
+Required UI rework command: GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.project.kotlin.daemon.jvmargs=-Xmx4096m" ANDROID_GATE_WAIT_SECONDS=2700 UI_GATE_FULL=1 timeout 3000 python3 scripts/android-test-gate.py ui
+Gate exit 0. Fresh dispatcher and original device XML agree: 259 recorded, 258 executed/passed, 0 failures/errors, 1 skipped.
+All three current ScannerFrameTest methods completed/passed: compactEnlargedTextFrames, compactDarkFrames, fullSizeDarkFrames.
+Only RenameDialogCaptureTest.renameAtFigmaViewport skipped; it is not counted as a pass.
+AGP console finished counter said 260; authoritative fresh XML contains 259 cases. Counts above use XML, not the progress counter.
+Device wait: 412 seconds; selected managed device: pixel2Api33Atd (API 33, ATD x86_64).
+Original UI XML/logcat: build/dispatcher-tests/ui-fipvarkd/
+Copied full UI XML/logcat: /tmp/builder-1977/rework-20261011/ui-fipvarkd/
+UI dispatcher.xml sha256=96e71b1aeadcec99117ee78c787a1ca4f6211c9bf6cc2ecab55cc3fc404c1d4e
+Original 0-TEST-pixel2Api33Atd_0-_app-.xml sha256=555f3822bea749ce30da1136900ff34c88cd0e46bab8e28491e40aa084782a9d
+The committed XML extracts contain only fixed class/method names, durations, timestamps and counted outcomes.
+No XML properties, system output, credentials, pairing payloads, clipboard content or private frame content are copied.
+Full scripted-all/live acceptance remains pending with the dispatcher, separately from these builder rework results.
+Both full gates must execute/pass their named session-error recovery method and retain counts, XML/logcat and safe per-arm evidence.
+Preserve needs-real-claude and PR Live tests all. Documentation handoff remains pending; #2048 remains open.
