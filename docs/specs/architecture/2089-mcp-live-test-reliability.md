@@ -60,5 +60,12 @@ Additional files read: `RelayConnectionFactoryTest` (`Fixture`, `PeerTransport`,
 
 Retain red/green XML and a fresh focused MCP live run outside disposable worktrees, with source/APK/daemon revisions, phone logcat and daemon logs. Check both consumers with MCP and Send now focused live selection. Fresh configured full post-verifier acceptance remains dispatcher-owned; keep `needs-real-claude` and request return of its full/named XML and provenance before evidence completion. Prior investigation selections do not satisfy that gate.
 
+### 2026-10-12: controlled repair and focused live evidence
+
+All five MCP-path controls failed against the original compatibility predicate, including the 30000 ms virtual timeout for ready A/unavailable selected B. All five passed with exact-host authenticated readiness. Complete focused classes passed 61 executed, zero failures/errors/skips: encrypted registry 27 (including both existing Send now controls), MCP diagnostics 5, Send now diagnostics 6, MCP screen 15, MCP ViewModel 8. The original and current main `awaitConnected` bodies are identical, confirming the baseline predicate rather than attributing the lost historical outage.
+
+The fresh MCP selection passed 1 executed, zero failures/errors/skips, on repair revision `2fe7f996657005a6700873687dcec98b90954b01`. Its phone log records all eight stages plus target/selection and Connected relay/daemon status before chat setup. Send now's separate focused live selection also passed 1 executed, zero failures/errors/skips with identical Kotlin source. Retain counted XML/static stages/provenance under `app/src/androidTest/assets/mcp-live-2089/`; raw XML/phone logs/daemon snapshots survive worktree removal at `/tmp/builder-2089/readiness-repair/`. The daemon binary reports `vcs.modified=true`; retain that fact and binary hash instead of assuming a clean revision. Snapshot polling may omit final daemon teardown; the retained limitation is explicit. Full configured dispatcher acceptance remains pending, with `needs-live-artifacts` requesting `dispatcher-full.xml`, `dispatcher-method.xml` and `dispatcher-provenance.json` at the same asset path. Builder must commit the returned artifacts; documentation stays pending with its stage.
+
 ## Documentation handoff
+
 - Pending: `docs/e2e-interactive-stream.md`, MCP live scenario coverage: record exact-host authenticated readiness, unchanged deadline/assertions, controlled red/green evidence, and eventual dispatcher full-live execution/counts/provenance. Preserve the unresolved historical-outage attribution.
