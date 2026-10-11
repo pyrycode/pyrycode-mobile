@@ -90,10 +90,13 @@ internal class ConversationListProjection {
             }
         projection.update { current ->
             val marks = current.readMarks.toMutableMap()
+            val sessions = current.rows.orEmpty().associate { it.id to it.currentSessionId }
             decoded.conversations.forEach { row ->
                 mergeReadMarks(marks, row.id, ConversationReadMarks(row.readUpTo, row.latestEntryId))
             }
-            current.copy(rows = decoded.toConversations(), readMarks = marks)
+            // List DTOs omit session identity; only the transition fold can replace a known binding.
+            val rows = decoded.toConversations().map { it.copy(currentSessionId = sessions[it.id].orEmpty()) }
+            current.copy(rows = rows, readMarks = marks)
         }
         snapshotLoaded.value = true
     }
@@ -139,7 +142,8 @@ internal class ConversationListProjection {
      * **verbatim for every reason** (`clear` carries the freshly-rotated-to id; `idle_evict` carries the
      * evicted id unchanged ⇒ element-equal no-op in the common case), mirroring [ThreadProjection.appendSessionBoundary]'s
      * copy-through posture. The atomic [MutableStateFlow.update] CAS retry-merges against a concurrent
-     * authoritative `conversations` snapshot rather than clobbering it, as [upsertConversation] does.
+     * authoritative `conversations` snapshot. Later snapshots and upserts retain this session identity
+     * because their DTOs omit it; only a later transition replaces it while the row remains present.
      * [newSessionId] is sensitive and is never logged (Security review).
      */
     fun updateCurrentSessionId(
@@ -178,6 +182,7 @@ internal class ConversationListProjection {
                     val held = existing[index]
                     stored =
                         incoming.copy(
+                            currentSessionId = held.currentSessionId,
                             agent = if (record.agent == null) held.agent else incoming.agent,
                             archivedAt = if (incoming.archived) held.archivedAt else null,
                         )

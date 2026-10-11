@@ -150,7 +150,7 @@ class ThreadRunConfigModelSelectionTest {
 
     @Test
     fun codexConversationIgnoresTheAnnouncementAndNeverReadsDefault() {
-        val gpt = ThreadModelChoice("gpt-6", "GPT-6", "", emptyList(), resolvedModel = "gpt-6")
+        val gpt = ThreadModelChoice("gpt-6", "GPT-6", "", emptyList(), resolvedModel = "gpt-6", agent = ConversationAgent.Codex)
         val inheritedCodex = config(ordinary = listOf(gpt), default = null, announced = "gpt-6", agent = ConversationAgent.Codex)
         assertNull(inheritedCodex.selectedChoice)
         assertEquals(UNAVAILABLE_MODEL_LABEL, inheritedCodex.modelLabel)
