@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
@@ -29,6 +30,7 @@ import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.SessionSettings
+import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.SwitchAgentCall
 import de.pyryco.mobile.data.repository.SwitchAgentFailure
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -52,6 +54,7 @@ class ThreadAgentSwitchUiTest {
     private val store = ViewModelStore()
     private lateinit var vm: ThreadViewModel
     private lateinit var repo: Repo
+    private val currentRepository = MutableStateFlow<ConversationRepository?>(null)
 
     @After fun clear() {
         rule.runOnIdle { store.clear() }
@@ -125,6 +128,50 @@ class ThreadAgentSwitchUiTest {
         rule.onNode(hasText("Low") and isSelectable()).assertIsSelected()
         rule.onNode(hasText("Max") and isSelectable()).assertDoesNotExist()
         rule.onNodeWithText("Manual approval").performScrollTo().assertIsSelected()
+    }
+
+    @Test fun claudeToCodexReplacementSettlesTuneAndStatus() = replacementSettlesTuneAndStatus(ConversationAgent.Claude)
+
+    @Test fun codexToClaudeReplacementSettlesTuneAndStatus() = replacementSettlesTuneAndStatus(ConversationAgent.Codex)
+
+    private fun replacementSettlesTuneAndStatus(source: ConversationAgent) {
+        show(source, stable = true)
+        pickTarget()
+        rule.onNodeWithText("Switch").performClick()
+        rule.onNodeWithText("Switching to ${if (source == ConversationAgent.Claude) "Codex" else "Claude"}…").assertIsDisplayed()
+        val replacement = Repo(source)
+        rule.runOnIdle {
+            assertEquals(1, repo.switches.size)
+            repo.binding.value = (if (source == ConversationAgent.Claude) ConversationAgent.Codex else ConversationAgent.Claude) to "s2"
+            repo.result.complete(Result.success(Unit))
+            replacement.binding.value = source to ""
+            replacement.settings.value = null
+            currentRepository.value = replacement
+        }
+        rule.waitForIdle()
+        rule.runOnIdle { assertNull(vm.state.value.runConfig.agentSwitch) }
+        rule.onNodeWithText("Switching to ", substring = true).assertDoesNotExist()
+        openConfig()
+        rule.onNodeWithText("Model · applying…").assertDoesNotExist()
+        model(repo.targetLabel).assertIsNotSelected().assertIsNotEnabled()
+        rule.runOnIdle {
+            assertFalse(vm.state.value.runConfig.pending)
+            assertFalse(vm.state.value.runConfig.writable)
+            assertTrue(replacement.writes.isEmpty())
+        }
+        rule.onNodeWithText("Done").performClick()
+        rule.runOnIdle {
+            replacement.settings.value = reading("s3", if (source == ConversationAgent.Claude) "opus" else "gpt-6-luna", "low")
+        }
+        openConfig()
+        model(if (source == ConversationAgent.Claude) "Claude Opus" else "GPT-6 Luna").assertIsSelected().assertIsEnabled()
+        rule.onNode(hasText("Low") and isSelectable()).assertIsSelected()
+        rule.onNode(hasText("High") and isSelectable()).performClick()
+        rule.runOnIdle {
+            assertEquals(listOf("s3"), replacement.writeSessions)
+            assertEquals(1, repo.switches.size)
+            assertTrue(replacement.switches.isEmpty())
+        }
     }
 
     @Test fun cancelCloseAndBackPreserveModelAndSendNothing() {
@@ -295,13 +342,17 @@ class ThreadAgentSwitchUiTest {
 
     private fun model(label: String) = rule.onNode(hasText(label) and isSelectable())
 
-    private fun show(agent: ConversationAgent) {
+    private fun show(
+        agent: ConversationAgent,
+        stable: Boolean = false,
+    ) {
         repo = Repo(agent)
+        currentRepository.value = repo
         rule.runOnIdle {
             vm =
                 ThreadViewModel(
                     SavedStateHandle(mapOf("serverId" to "host", "conversationId" to CONV)),
-                    repo,
+                    if (stable) StableConversationRepository(currentRepository) else repo,
                     FakeConnectionStateSource(),
                     ComposerDraftStore(),
                 )
@@ -352,6 +403,7 @@ class ThreadAgentSwitchUiTest {
         val result = CompletableDeferred<Result<Unit>>()
         val switches = mutableListOf<SwitchAgentCall>()
         val writes = mutableListOf<String?>()
+        val writeSessions = mutableListOf<String>()
         var throwOnResult = false
 
         init {
@@ -394,8 +446,8 @@ class ThreadAgentSwitchUiTest {
             yolo: Boolean?,
             permissionMode: String?,
         ) {
-            writes +=
-                model
+            writes += model
+            writeSessions += sessionId
         }
     }
 
