@@ -47,6 +47,7 @@ import de.pyryco.mobile.data.repository.HostReadingFrames
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.awaitOfflineRetryHost
 import de.pyryco.mobile.e2e.awaitSendNowConnection
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.thread.AttachmentRead
@@ -1647,6 +1648,96 @@ class RelayConnectionFactoryTest {
                 registry.dispose()
                 runCurrent()
                 Dispatchers.resetMain()
+            }
+        }
+
+    @Test
+    fun offlineRetrySetupWaitsForDelayedRegistration() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.a.record)
+            val gate = CompletableDeferred<Unit>()
+            f.rawStore.readGate = gate
+            val registry = f.registry()
+            registry.connect()
+            val setup = async { runCatching { awaitOfflineRetryHost(registry, "A", 5_000) } }
+            try {
+                runCurrent()
+                assertNull(registry.connectionFor("A"))
+                assertFalse("setup must await asynchronous registration", setup.isCompleted)
+                gate.complete(Unit)
+                runCurrent()
+                assertSame(registry.connectionFor("A"), setup.await().getOrThrow())
+            } finally {
+                setup.cancel()
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun offlineRetrySetupDoesNotAcceptReadySelectedPeer() =
+        runTest {
+            val f = Fixture(this)
+            f.handshaking = "A"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            registry.connect()
+            runCurrent()
+            val setup = async { runCatching { awaitOfflineRetryHost(registry, "A", 5_000) } }
+            try {
+                runCurrent()
+                assertSame(registry.connectionFor("B"), registry.selected.value)
+                assertNotNull(
+                    registry
+                        .connectionFor("B")
+                        ?.coordinator
+                        ?.currentRepository
+                        ?.value,
+                )
+                assertNull(
+                    registry
+                        .connectionFor("A")
+                        ?.coordinator
+                        ?.currentRepository
+                        ?.value,
+                )
+                assertFalse("a ready peer cannot satisfy target setup", setup.isCompleted)
+                f.handshaking = null
+                registry.connectionFor("A")?.supervisor?.close()
+                registry.connectionFor("A")?.supervisor?.connect()
+                runCurrent()
+                assertSame(registry.connectionFor("A"), setup.await().getOrThrow())
+            } finally {
+                setup.cancel()
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun offlineRetrySetupTimeoutDoesNotReturnALateHost() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.a.record)
+            val gate = CompletableDeferred<Unit>()
+            f.rawStore.readGate = gate
+            val registry = f.registry()
+            registry.connect()
+            val setup = async { runCatching { awaitOfflineRetryHost(registry, "A", 100) } }
+            try {
+                runCurrent()
+                advanceTimeBy(100)
+                runCurrent()
+                assertTrue(setup.await().exceptionOrNull() is kotlinx.coroutines.TimeoutCancellationException)
+                gate.complete(Unit)
+                runCurrent()
+                assertTrue(setup.await().isFailure)
+            } finally {
+                setup.cancel()
+                registry.dispose()
+                runCurrent()
             }
         }
 

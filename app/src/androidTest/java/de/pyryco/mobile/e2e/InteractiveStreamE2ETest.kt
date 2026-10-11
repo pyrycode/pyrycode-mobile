@@ -3745,46 +3745,80 @@ class InteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_offlineRetry_reconnectsSameHostAndReplies() {
         val serverId = twoHostArg(ARG_SERVER_ID)
-        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId))
-        val fault = DaemonFaultControl()
-        awaitChannelList()
-        awaitConnected()
-        val before = hostConversationIds(serverId)
-        createChat()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+        var deadline: kotlin.time.TimeMark? = null
+        val diagnostics =
+            OfflineRetryDiagnostics({
+                val target = registry.connectionFor(serverId)
+                offlineRetrySnapshot(
+                    target?.supervisor,
+                    target?.coordinator,
+                    target != null && registry.selected.value === target,
+                    deadline,
+                )
+            }, { Log.i("OfflineRetry", it) })
+
+        fun <T> step(
+            stage: OfflineRetryStage,
+            block: () -> T,
+        ): T = offlineRetryStep(stage, diagnostics, block)
+
+        step(OfflineRetryStage.ListArrival) { awaitChannelList() }
+        val bundle = step(OfflineRetryStage.HostSetup) { runBlocking { awaitOfflineRetryHost(registry, serverId, CONNECT_TIMEOUT_MS) } }
+        val fault = step(OfflineRetryStage.HostSetup) { DaemonFaultControl() }
+        val before = step(OfflineRetryStage.ReadConversations) { hostConversationIds(serverId) }
+        step(OfflineRetryStage.CreateThread) {
+            createChat(serverId)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
         }
-        val conversationId = newHostConversationId(serverId, before)
+        val conversationId = step(OfflineRetryStage.ReadConversationId) { newHostConversationId(serverId, before) }
+        var scenarioFailure: Throwable? = null
         try {
             val retryDeadline =
-                fault.stopUntilRetryWindow(bundle.supervisor) {
+                fault.stopUntilRetryWindow(bundle.supervisor, diagnostics) {
                     composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
                         composeTestRule.onAllNodes(hasTestTag("offline_retry_target")).fetchSemanticsNodes().isNotEmpty()
                     }
                     composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
                 }
-            assertNull("the old host repository survived the daemon failure", bundle.coordinator.currentRepository.value)
+            deadline = retryDeadline
+            step(OfflineRetryStage.BeforeRetry) {
+                assertNull("the old host repository survived the daemon failure", bundle.coordinator.currentRepository.value)
+            }
 
             // The deadline began at the actual capped backoff, before daemon startup and the tap.
             // Recovery must beat the earliest passive dial, even if startup consumes most of the wait.
-            fault.start()
-            composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
-            assertNull(bundle.coordinator.currentRepository.value)
-            composeTestRule.onNodeWithTag("offline_retry_target").performClick()
-            runBlocking {
-                withTimeout(fault.recoveryTimeRemaining(retryDeadline)) {
-                    bundle.coordinator.currentRepository.first { it != null }
+            step(OfflineRetryStage.RestartDaemon) { fault.start() }
+            step(OfflineRetryStage.BeforeRetry) {
+                composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
+                assertNull(bundle.coordinator.currentRepository.value)
+            }
+            step(OfflineRetryStage.TapRetry) { composeTestRule.onNodeWithTag("offline_retry_target").performClick() }
+            step(OfflineRetryStage.RepositoryRecovery) {
+                runBlocking {
+                    withTimeout(fault.recoveryTimeRemaining(retryDeadline)) {
+                        bundle.coordinator.currentRepository.first { it != null }
+                    }
                 }
             }
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasTestTag("offline_retry_target")).fetchSemanticsNodes().isEmpty()
+            step(OfflineRetryStage.PillClearing) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasTestTag("offline_retry_target")).fetchSemanticsNodes().isEmpty()
+                }
             }
-            assertTrue("the thread's conversation moved off its original host", conversationId in hostConversationIds(serverId))
-            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).assertIsDisplayed()
-            sendFromPhone(PING_PROMPT)
-            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            step(OfflineRetryStage.SameConversation) {
+                assertTrue("the thread's conversation moved off its original host", conversationId in hostConversationIds(serverId))
+                composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).assertIsDisplayed()
+            }
+            step(OfflineRetryStage.SendPrompt) { sendFromPhone(PING_PROMPT) }
+            step(OfflineRetryStage.RenderReply) { composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS) }
+        } catch (failure: Throwable) {
+            scenarioFailure = failure
+            throw failure
         } finally {
-            runCatching { fault.start() }
+            restoreOfflineRetryDaemon(diagnostics, scenarioFailure) { fault.start() }
         }
     }
 

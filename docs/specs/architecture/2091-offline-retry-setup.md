@@ -25,7 +25,7 @@ Overlap: #1682, #1689, #1690, #1691, #1693, #1695, #1766, #1869, #1879, #1896, #
 
 ## Design
 
-Add a test-only `awaitOfflineRetryHost(registry, serverId, timeoutMs)` helper. Under one existing setup timeout it waits for exact-host registration, then that bundle's authoritative non-null repository. Return the owning bundle only after this readiness. The live scenario uses it after list arrival, replacing the early immediate lookup and selected-host wait. No production API changes.
+Add a test-only `awaitOfflineRetryHost(registry, serverId, timeoutMs)` helper. Under one existing setup timeout it waits for exact-host registration through `hostConnections`, then that bundle's authoritative non-null repository. Return the owning bundle only after this readiness. The live scenario uses it after list arrival, replacing the early immediate lookup and selected-host wait. No production API changes.
 
 Add test-only stage diagnostics used by this scenario and its controller. Fixed enum stages separate setup/list/create, daemon stop, visible Offline pill, capped backoff, daemon restart, pre-tap assertions, Retry tap, repository recovery, pill clearing, same-conversation check, prompt send and reply rendering. Capture only static relay/daemon class names, registration/selection/repository booleans, actual attempt, elapsed backoff and remaining deadline milliseconds. Never serialize a model, host record, exception message, message payload or credentials. Add diagnostic evidence as a suppressed assertion to the original exception and rethrow the original. Diagnostic failures must not replace the scenario failure. Report stage entry and failure through an injected sink (Android Log on device).
 
@@ -44,7 +44,7 @@ Only test-local stage and optional deadline state are added. Registry/connection
 | Setup timeout/cancellation | `offlineRetrySetupTimeoutDoesNotReturnALateHost` |
 | Any awaited operation throws; diagnostic callback also throws | `OfflineRetryDiagnosticsTest` original-exception and diagnostic-failure cases |
 | Owned daemon outage/restart, same host and conversation, tap, new reply | Existing scripted twin; full dispatcher live scenario |
-| Lag consumes recovery budget; passive recovery cannot pass before Retry deadline | Existing `OfflineRetryWindowTest` plus focused passive-redial boundary regression |
+| Lag consumes recovery budget; passive recovery cannot pass before Retry deadline | Existing `OfflineRetryWindowTest` and `RelayConnectionSupervisorTest.cappedBackoff_passiveRecoveryCannotBeatRetryProof` |
 
 ## Error handling
 
@@ -60,8 +60,8 @@ Dispatcher after verification owns a fresh full live gate (`all`), explicitly pa
 
 ## Open Questions
 
-- The historical failing phase is unknown. Resolve only with retained failure evidence; keep that limit explicit alongside the deterministic setup reproduction and new diagnostics.
-- If fresh evidence demonstrates a different failure, revise this plan before expanding the repair, and route a sibling-owned cause to its owner.
+- Resolved evidence limit: the historical failing phase cannot be recovered from the available report. Do not attribute it to setup as a historical fact. The local repair addresses the deterministic setup reproduction; staged failure evidence covers a recurrence in any other phase.
+- No additional demonstrated daemon-control, recovery or rendering failure on this tree. Route a sibling-owned cause to its owner if fresh evidence identifies one.
 
 ## Documentation handoff
 
@@ -87,3 +87,9 @@ Forecast 500–650 total written lines including plan and regressions, three tes
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-12
+
+## Revisions
+
+- 2026-10-12: extracted the original early bundle lookup and selected-host wait before changing setup. `offlineRetrySetupWaitsForDelayedRegistration`, `offlineRetrySetupDoesNotAcceptReadySelectedPeer` and `offlineRetrySetupTimeoutDoesNotReturnALateHost` executed and failed (3 executed, 3 failed, 0 skipped); retained XML is `/tmp/builder-2091/red-setup/TEST-de.pyryco.mobile.di.RelayConnectionFactoryTest.xml`. The repaired exact-host setup passed those three probes. This demonstrates a setup failure mechanism, not the unavailable historical failing phase. Source audit found no unconditional daemon stop left by an earlier method: `offlineRead` toggles/restores only its phone link, while other full-suite methods can change selection and rebuild the graph. The ready-peer and delayed-registration probes reproduce those preceding-method states without Claude nondeterminism.
+- 2026-10-12: use existing `cappedBackoff_passiveRecoveryCannotBeatRetryProof` coverage rather than duplicating it. It drives both 4404 and ordinary failures, holds passive redial beyond 20 seconds, then proves Retry dials immediately. Shared recovery timing is unchanged.
+- 2026-10-12: the two failure-evidence regressions failed before exception enrichment (retained in `/tmp/builder-2091/red-diagnostics/`); the two cleanup regressions failed against the original ignored-restoration behavior (retained in `/tmp/builder-2091/red-cleanup/`). Restoration now fails an otherwise successful scenario, or is suppressed onto its original failure, so an outage cannot silently contaminate later suite methods. Stage diagnostics wrap the producer-side capped observer itself, preserving phase evidence even if its child coroutine fails before the caller awaits it. Focused GREEN coverage passed all 70 tests (0 failed/errors/skipped), including these cases and the existing supervisor proof.

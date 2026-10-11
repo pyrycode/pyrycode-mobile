@@ -678,14 +678,21 @@ class DeterministicInteractiveStreamE2ETest {
         val supervisor = GlobalContext.get().get<RelayConnectionSupervisor>()
         val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
         val fault = DaemonFaultControl()
+        var deadline: kotlin.time.TimeMark? = null
+        val diagnostics =
+            OfflineRetryDiagnostics({
+                offlineRetrySnapshot(supervisor, coordinator, selectedTarget = true, deadline)
+            }, { android.util.Log.i("OfflineRetry", it) })
+        var scenarioFailure: Throwable? = null
         try {
             val retryDeadline =
-                fault.stopUntilRetryWindow(supervisor) {
+                fault.stopUntilRetryWindow(supervisor, diagnostics) {
                     composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
                         composeTestRule.onAllNodes(hasTestTag("offline_retry_target")).fetchSemanticsNodes().isNotEmpty()
                     }
                     composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
                 }
+            deadline = retryDeadline
             assertNull(coordinator.currentRepository.value)
             fault.start()
             composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
@@ -704,8 +711,11 @@ class DeterministicInteractiveStreamE2ETest {
                 composeTestRule.onAllNodesWithText(PING, substring = true, ignoreCase = true).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.onAllNodesWithText(PING, substring = true, ignoreCase = true).onFirst().assertIsDisplayed()
+        } catch (failure: Throwable) {
+            scenarioFailure = failure
+            throw failure
         } finally {
-            runCatching { fault.start() }
+            restoreOfflineRetryDaemon(diagnostics, scenarioFailure) { fault.start() }
         }
     }
 
