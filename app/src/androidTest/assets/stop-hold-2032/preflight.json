@@ -1,0 +1,138 @@
+{
+  "outcome": "waiting_on_owner_trace",
+  "retained_mobile_commit": "3ed92856b3ea1929229b912186e9208d6e393c6b",
+  "mobile_tested_commit": "9ac784565168a641ee78fd4eaaf5d12a24df5a30",
+  "mobile_tested_tracked_tree": "clean",
+  "original_manifest_sha256": "d2f72b5c01514bcf3bbbda67fb1860de805b478390692a9278f8aea3c8338a7a",
+  "original_artifacts_unchanged": true,
+  "private_artifacts_checked": 25,
+  "private_artifacts_available_and_hash_matched": 22,
+  "private_artifacts_missing": [
+    {
+      "kind": "raw_gate_artifact",
+      "private_path": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2032/build/dispatcher-tests/live-dnt_9vs6/0-TEST-pixel2Api33Atd-_app-.xml",
+      "original_sha256": "6e91113dda263e591d910ae2483cec906847fcd46cfe7357ba1a16b1375ec3bf",
+      "status": "absent"
+    },
+    {
+      "kind": "raw_gate_artifact",
+      "private_path": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2032/build/dispatcher-tests/live-dnt_9vs6/0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain.txt",
+      "original_sha256": "8ca878d40dba76b281fc6d123f58043546157a60e6dba136aecc4e3159d185f4",
+      "status": "absent"
+    },
+    {
+      "kind": "raw_gate_artifact",
+      "private_path": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2032/build/dispatcher-tests/live-dnt_9vs6/dispatcher.xml",
+      "original_sha256": "de82ce4f28db6f57124f2b66acec3bdc9861470b48e0d6c3d195067f36eeb8d7",
+      "status": "absent"
+    }
+  ],
+  "daemon_source_commit": "8091a4730d42f43029eb0b955442dc300106030f",
+  "source_audit": [
+    {
+      "path": "cmd/pyry/streamsup_runner.go",
+      "sha256": "1a30b55f4114dd8984f3bf9338e03061748bced45f9e7736ca0ef77498de7db4"
+    },
+    {
+      "path": "cmd/pyry/modal_resolve_v2.go",
+      "sha256": "98cfb939006dbc36b283386b9da1bacbf430133bf4ca720b3b5f9b7dc637b856"
+    },
+    {
+      "path": "cmd/pyry/relay.go",
+      "sha256": "6c28b72822e58de6c4fc906a47f16970cbfc5aec39bd934b86803d3ca6dce4be"
+    },
+    {
+      "path": "cmd/pyry/prompt_answer_history.go",
+      "sha256": "c4ccd12c8c1e7ba01f6e58a17d7c41138c682819dced1a2d0fb95bc79a0c17eb"
+    },
+    {
+      "path": "internal/permbridge/permbridge.go",
+      "sha256": "64087928a975e4f02825431612937be657ddf8381cde3f9e8f54e2796dd8674d"
+    },
+    {
+      "path": "internal/relay/v2session_push.go",
+      "sha256": "e7fa390984ab8b90daa4ec4d1ca34c8887d0a9f72ac3f369f6feb677384e73e5"
+    }
+  ],
+  "stage_availability": {
+    "owned_request_registration": "no_correlated_trace",
+    "bridge_modal_creation_emission": "failure_records_only",
+    "per_client_enqueue": "failure_records_only",
+    "per_client_forwarding_or_withholding": "no_correlated_success_or_withholding_trace",
+    "resolution": "audit_and_prompt_answer_history_do_not_prove_emission"
+  },
+  "native_blocker": "https://github.com/pyrycode/pyrycode/issues/3202",
+  "owner_board_status": "Backlog",
+  "owner_priority": "priority:low",
+  "new_live_capture_attempted": false,
+  "new_live_testcases_executed": 0,
+  "cause": "unproven",
+  "behavioural_repair": false,
+  "focused_jvm_results": [
+    {
+      "class": "de.pyryco.mobile.e2e.StopHoldEvidenceTest",
+      "timestamp": "2026-10-11T18:00:38.201Z",
+      "executed": 17,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "private_xml": "/tmp/builder-2032/preflight-StopHoldEvidenceTest-green.xml",
+      "sha256": "ed683b28675bc5e086b38748f0c4b78073e9f181ec2e57c007c9e85dd4dd99c7"
+    },
+    {
+      "class": "de.pyryco.mobile.e2e.StopHoldObservationsTest",
+      "timestamp": "2026-10-11T18:00:38.240Z",
+      "executed": 5,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "private_xml": "/tmp/builder-2032/preflight-StopHoldObservationsTest-green.xml",
+      "sha256": "8b6051a0a92bdda576f08e26dbb477bad9ca454665044067939856efe113f5b4"
+    },
+    {
+      "class": "de.pyryco.mobile.e2e.PeerWaitTest",
+      "timestamp": "2026-10-11T18:00:38.106Z",
+      "executed": 15,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "private_xml": "/tmp/builder-2032/preflight-PeerWaitTest-green.xml",
+      "sha256": "d6ab42932f569eff31b68d868fce4ecaf1ee79727ebeb4a190a77379424b3032"
+    },
+    {
+      "class": "de.pyryco.mobile.e2e.PingReplyDiagnosisTest",
+      "timestamp": "2026-10-11T18:00:38.187Z",
+      "executed": 14,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "private_xml": "/tmp/builder-2032/preflight-PingReplyDiagnosisTest-green.xml",
+      "sha256": "1634cfc7783f8bd4a447fab5092e3e91da95f99261cc49b35b7d5dc904d34d5e"
+    },
+    {
+      "class": "de.pyryco.mobile.e2e.WithClearedHostInstructionsTest",
+      "timestamp": "2026-10-11T18:00:38.353Z",
+      "executed": 9,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "private_xml": "/tmp/builder-2032/preflight-WithClearedHostInstructionsTest-green.xml",
+      "sha256": "e13d478294325b478c48351656459cfc0473d7d901d783c9b21b7e872d01e96b"
+    }
+  ],
+  "total_jvm_executed_passed": 60,
+  "remaining_mobile_capture_requirements": [
+    "host_device_clock_offset_bounds_before_submission_and_after_result",
+    "observer_start_end_reset_loss_overflow_and_sampling_limits",
+    "fresh_raw_testcase_dispatcher_xml_and_copied_logcat_private_retention",
+    "correlated_interval_conversation_session_permission_lifecycle_and_owner_trace",
+    "failing_or_supported_controlled_behavioural_reproduction_before_causal_repair"
+  ],
+  "pending_after_causal_repair": [
+    "independent_dispatcher_full_live_named_Stop_testcase_commit_raw_xml_and_counts",
+    "documentation_stage_stop_coverage_and_verification_status"
+  ],
+  "daemon_source_tracked_tree": "clean",
+  "focused_jvm_command": "./gradlew testDebugUnitTest --tests 'de.pyryco.mobile.e2e.StopHoldEvidenceTest' --tests 'de.pyryco.mobile.e2e.StopHoldObservationsTest' --tests 'de.pyryco.mobile.e2e.PeerWaitTest' --tests 'de.pyryco.mobile.e2e.PingReplyDiagnosisTest' --tests 'de.pyryco.mobile.e2e.WithClearedHostInstructionsTest' --console=plain",
+  "focused_jvm_exit_status": 0
+}
