@@ -87,6 +87,14 @@ Dispatcher handoff: run the currently configured UI gate and ordinary scripted g
 
 All earlier Open Questions are resolved: emulator loss, host rendering ownership and content-free static evidence are established; exact native defect identification remains outside scope. Measured retained work is 655 lines including the plan and prior Mac evidence: one deliverable, three criteria, zero consumer migrations or exported types, and below the 1,600-line boundary.
 
+### 2026-10-11 — Scripted-gate rework comparison
+
+The verdict on `9b558e00a` accepted the scanner evidence and reported a completed current UI gate, but returned two 90-second coroutine timeouts in `DeterministicInteractiveStreamE2ETest`: `interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread` and `interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`. Its main-pass determination came from the dispatcher rather than an independently repeated comparison. Reproduce each through its normal focused scripted gate, then compare the same commands against a detached `origin/main` worktree with identical daemon, relay, harness and device inputs. Preserve fresh XML before any following run replaces AGP outputs.
+
+Read the two named methods and `scripts/e2e-emulator.sh`'s second-fragment release fence. Both enqueue a follow-up while the held reply is open. Open issue #2078 already owns the legacy queued-echo/assistant-anchor repair; #1985 / PR #2076 owns the independent direct-release fixture change. If the unchanged main comparison reproduces both failures, link the established repair as a blocker and return `waiting_on_blocker`; do not change production projection, fixtures, assertions, deadlines or retries in this evidence-only ticket. A timeout alone does not prove the precise anchor defect.
+
+Retain only case identity, outcome, timestamps, revisions, commands, paths, hashes and allowlisted static lifecycle events in bounded rework evidence under `app/src/androidTest/assets/scanner-2051/`. Raw logs remain outside the worktree. The current UI counts must be attributed to the verifier's posted verdict unless its original artifacts are independently available. Add a dated outcome here after the comparisons. This adds no production behavior, lifecycle state, exported type, consumer migration or reject branch; forecast remains under 800 written lines. The refreshed numeric branch check found no overlap in the evidence directory or this plan.
+
 ## Documentation handoff
 
 - Pending documentation stage: record the installed HP workaround and subsequent dispatcher UI/scripted results in `docs/knowledge/features/development-verification.md`, under its managed-device verification guidance, including host, revision, counts and evidence paths. Preserve the distinction between historical suite completion, a passing current gate and exact native defect repair.
