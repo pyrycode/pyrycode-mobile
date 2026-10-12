@@ -52,3 +52,8 @@ Recheck retained checksums, raw XML and UTP completion counts. Verify observer b
 
 - Which operation and causal mechanism made the device unavailable? Unknown pending correlated process, guest, adb and custody evidence.
 - Does its repair belong to Mobile? Unknown; do not substitute a Mobile runner implementation for an owning-repository repair.
+
+## Revisions
+
+- 2026-10-12: independently preserved and verified 122 original raw gate/UTP/logcat and capture-input artifacts at HP's private `logs/e2e-evidence/ticket-2108-20261012/baseline/`. UTP establishes 55 starts and 54 finishes; an empty XML failure is unfinished. The available kernel core-limit event names Claude, not the emulator. Original emulator exit/signal, guest cause and admission/custody completion remain unknown.
+- 2026-10-12: the first 600-second heavy-admission wait expired with zero tests executed; its receipt is retained as `admission-no-grant-1.json`. One further 900-second admission wait received an ordinary heavy grant at 03:23:53 UTC. The declared 1800-second execution bound remains unchanged. All 2878 compared source/assets files match the original capture tree; gate, launcher, overlay and toolchain identities also match. This single execution is a diagnostic baseline with external bounded observers, not a post-repair control or a causal-repair claim. No test is retried and no scenario assertion/deadline, renderer or custody policy is changed.
