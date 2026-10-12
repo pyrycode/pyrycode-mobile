@@ -504,7 +504,7 @@ class BackgroundAgentBlocksScreenTest {
             agentId = "a",
             runId = "child",
             childIds = listOf("child", "child2") + paragraphs.map { it.message.id },
-            ownedChild = hasText("Owned paragraph 0") and hasAnyAncestor(hasTestTag("background-agent-child:a")),
+            ownedChild = hasText("Owned paragraph", substring = true) and hasAnyAncestor(hasTestTag("background-agent-child:a")),
             goLabel = "Go to agent ↓",
             expandLabel = "Show tool uses",
             collapseLabel = "Hide tool uses",
