@@ -1,0 +1,8 @@
+<testsuites>
+  <testsuite name="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" tests="2" failures="1" errors="0" skipped="0" time="74.786">
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_sendQueuedNow_reachesRunningTurn">
+      <failure />
+    </testcase>
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn" />
+  </testsuite>
+</testsuites>

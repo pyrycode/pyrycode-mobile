@@ -1,0 +1,19 @@
+10-12 14:50:31.635  2855  2944 I McpScenario: event=mcp_scenario stage=ListArrival status=started
+10-12 14:50:31.700  2855  2944 I McpScenario: event=mcp_scenario stage=ListArrival status=completed
+10-12 14:50:31.700  2855  2944 I McpScenario: event=mcp_scenario stage=Connection status=started
+10-12 14:50:31.700  2855  2944 I McpScenario: event=mcp_readiness targetPresent=true selectedTarget=true targetRowsLoaded=true targetChannels=2 targetRelay=Connected targetDaemon=Connected targetRepository=true selectedRelay=Connected selectedDaemon=Connected
+10-12 14:50:31.700  2855  2944 I McpScenario: event=mcp_scenario stage=Connection status=completed
+10-12 14:50:31.700  2855  2944 I McpScenario: event=mcp_scenario stage=ChatSetup status=started
+10-12 14:50:31.716  2855  2944 I McpScenario: event=mcp_chat_setup plusComposed=true
+10-12 14:50:31.766  2855  2944 I McpScenario: event=mcp_chat_setup status=located plusComposed=true
+10-12 14:50:31.966  2855  2944 I McpScenario: event=mcp_scenario stage=ChatSetup status=completed
+10-12 14:50:31.966  2855  2944 I McpScenario: event=mcp_scenario stage=PingDelivery status=started
+10-12 14:50:35.250  2855  2944 I McpScenario: event=mcp_scenario stage=PingDelivery status=completed
+10-12 14:50:35.250  2855  2944 I McpScenario: event=mcp_scenario stage=SheetOpening status=started
+10-12 14:50:35.533  2855  2944 I McpScenario: event=mcp_scenario stage=SheetOpening status=completed
+10-12 14:50:35.533  2855  2944 I McpScenario: event=mcp_scenario stage=McpReport status=started
+10-12 14:50:35.550  2855  2944 I McpScenario: event=mcp_scenario stage=McpReport status=completed
+10-12 14:50:35.550  2855  2944 I McpScenario: event=mcp_scenario stage=ShowBuiltIn status=started
+10-12 14:50:35.701  2855  2944 I McpScenario: event=mcp_scenario stage=ShowBuiltIn status=completed
+10-12 14:50:35.701  2855  2944 I McpScenario: event=mcp_scenario stage=BuiltInRow status=started
+10-12 14:50:35.784  2855  2944 I McpScenario: event=mcp_scenario stage=BuiltInRow status=completed

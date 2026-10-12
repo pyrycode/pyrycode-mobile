@@ -39,3 +39,30 @@ mobile/daemon revisions, APK/daemon binary hashes and retained phone/daemon path
 Return those artifacts for builder retention as `dispatcher-full.xml`,
 `dispatcher-method.xml` (the named MCP case) and `dispatcher-provenance.json` here.
 Keep `needs-real-claude`; `needs-live-artifacts` requests this builder return.
+
+## Integrated chat-setup assessment (2026-10-12)
+
+`chat-setup-red.xml` records 3 controls with one offscreen-target timeout and
+2 passes against the original composed-node polling. `chat-setup-green.xml`
+records all 3 passing after MCP-only scrolling. The connected, loaded target
+has 30 Channels rows above its Chats control; the repair performs one addressed
+creation click and keeps the original deadline.
+
+`assessment-live.xml` records 2 executed, 1 passed (MCP), 1 failed (Send now),
+0 errors/skips. `assessment-mcp-method.xml` and `assessment-mcp-stages.txt`
+confirm MCP's 1/1 pass and all eight stages, including authenticated readiness,
+real ping, report, filter and displayed built-in row. Send now reaches both
+Connected legs then times out observing peer queue removal, owned by open #2056.
+It stays enabled; its assertion/deadline and queue logic are unchanged.
+`assessment-scripted.xml` records the MCP report/sheet twin's 1/1 pass.
+`assessment-provenance.json` retains revisions, binary hashes and raw paths.
+These focused results do not satisfy configured full-live acceptance.
+
+Raw captures and verified manifests survive worktree removal and container
+restart at `$AGENTS_REPO_PATH/logs/evidence/2089/recurrence-assessment-20261012/`.
+Earlier raw readiness evidence is also retained at `retained-readiness-20261012/`
+and new JVM controls at `chat-setup-controls-20261012/` in that issue directory.
+The failed live run includes complete daemon logs; successful scripted snapshots
+may omit final teardown. Daemon binary `c4119af59` reports `vcs.modified=true`.
+Historical #1977/#2098 attribution remains unresolved. Resume consumer/full gates
+after #2056 lands; the three required `dispatcher-*` assets remain pending.
