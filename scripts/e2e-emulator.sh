@@ -1512,6 +1512,7 @@ if [ -n "${DETERMINISTIC}" ]; then
     TEST_TARGET="${TEST_CLASS}#interactiveTurn_externalForceStop_preparesSettledChannel"
   elif [ "${SCENARIO}" = "ping" ]; then
     TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_seededChannel_durableGapCatchUp"
+    TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#workerCompletionKeepsRippleCancellationOnMainThread"
   fi
 elif [ -n "${LIVE}" ]; then
   # LIVE curates its real-claude turns: ping + create-workspace-folder + new-session + delete +
