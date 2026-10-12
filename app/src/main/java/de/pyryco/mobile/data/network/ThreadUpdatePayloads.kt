@@ -154,7 +154,7 @@ private fun invalidThreadField(): Nothing = throw IllegalArgumentException("inva
 // Tree parsing admits some non-JSON numeric tokens. Preserve valid unknown numbers without coercion.
 private val threadJsonNumber = Regex("-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?")
 
-private fun validThreadJson(root: JsonElement): Boolean {
+internal fun validThreadJson(root: JsonElement): Boolean {
     val remaining = ArrayDeque<JsonElement>()
     remaining.add(root)
     while (remaining.isNotEmpty()) {

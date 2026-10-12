@@ -232,8 +232,9 @@ and carries a static rejection code. Neither exposes an item revision or complet
 conversation version. `decode()` returns a list because expiry of other conversations
 can accompany the current frame's outcome. Consumers must handle every outcome.
 
-Presence of `continuation`, even null or malformed, selects assembly before ordinary
-DTO decoding. Parts require nonempty valid UTF-8 data, consecutive indexes and byte
+For live updates, presence of `continuation`, even null or malformed, selects assembly
+before ordinary DTO decoding. Query markers use a separate admission path below.
+Parts require nonempty valid UTF-8 data, consecutive indexes and byte
 offsets, and identical envelope type, epoch, routing/version/revision metadata,
 base-revision presence, digest and total length. One conversation cannot replace its
 unfinished assembly with another identity; an ordinary update arriving during assembly
@@ -291,10 +292,98 @@ assembly, and captured generations fence late completions even when epochs are r
 See [authoritative repair and checkpoints](remote-conversation-repository-reads-and-thread-store.md#repair-checkpoints-and-reset-generations):
 newer live progress or a full batch cannot clear sticky repair or prove catch-up.
 
-`ThreadPayloadAssembler` accepts decoding/metadata callbacks for reuse by
-[#2040's page codec](https://github.com/pyrycode/pyrycode-mobile/issues/2040).
+`ThreadPayloadAssembler` accepts decoding/metadata callbacks reused by
+the catch-up/page codec below (#2040).
 Scheduling/persistence remain #1984, rendering #1985, and production
 negotiation/activation and combined live proof #1988.
+
+### Correlated catch-up and page replies (#2040)
+
+`ThreadQueryRequest`, `ThreadQueryReply` (`ThreadQueryPayloads.kt`) and
+`ThreadQueryDecoder` add a request-confined codec. The wire authority remains daemon
+[Thread query messages](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#thread-query-messages)
+and [Bounded thread encoding and assembly](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#bounded-thread-encoding-and-assembly),
+landed in daemon #3233. Store application remains outside this codec.
+
+`ThreadQueryRequest.type` selects the envelope type; `payload()` returns its JSON
+object. `CatchUp` encodes `thread_catch_up` with conversation, epoch and exclusive
+version; version zero selects the newest window. `Page` encodes `thread_page` with
+conversation and exclusive `before_order`. Query versions/ranges use canonical
+unquoted integers from zero through `ULong.MAX_VALUE`, without signed or floating-
+point conversion, distinct from full items' safe-integer fields. Quoted, negative,
+fractional/exponent, leading-zero and overflowing tokens fail admission.
+
+Optional signed `limit` preserves omission versus explicit zero. Both mean 50
+ordered rows; positive values encode clamped to 256, and negatives are rejected
+even for nonzero catch-up. `windowLimit` exposes the normalized window size.
+Nonzero catch-up has no window truncation; ties, active items and parents may exceed
+the ordered-row limit, so it must never become an item-count cutoff.
+
+`decode(Envelope)` returns `ThreadDecodeOutcome<ThreadQueryReply>` facts. `Batch`
+retains the complete ordered `ThreadItemDto` list and raw logical payload, including
+duplicates, field presence and unknown JSON. Its required checkpoint captures
+conversation, epoch and unsigned version independently of the returned items.
+Every ordinary batch has explicit `final: false` and no coverage fields. Neither
+`Complete(Batch)` nor fragment completion means that the request succeeded.
+
+Only `Success`, from a separate empty `items: []`, `final: true` marker, carries
+coverage. It requires exactly one shape:
+
+- Nonzero catch-up: `from_version` equals the requested checkpoint, with
+  `0 < from_version <= version`, certifying `(from_version, version]`; page fields
+  are absent.
+- Newest window or page: `lower_order <= upper_order`, numeric
+  `continuation == lower_order`, and required `older_exists`, certifying
+  `[lower_order, upper_order)`. All four fields remain required at zero/false;
+  `from_version` is absent. When older rows exist, continuation supplies the next
+  exclusive `before_order`.
+
+Parents and active extras outside that interval cannot enlarge it, and a short or
+empty batch cannot establish whether older rows exist. `Reset` exposes the current
+conversation/epoch/version without items or coverage. `Failure` exposes the existing
+`ErrorPayload` plus raw optional fields (`retry_after_s`, `conversation_id`,
+`min_client_version`). Both are terminal without successful coverage; an error
+omitting conversation remains attributable to the decoder's immutable request owner.
+
+Only a `thread_items` frame with **object** continuation selects query assembly.
+Numeric continuation is admitted only through the validated empty success marker;
+live continuation rejection stays strict. Reset/error frames always receive bounded
+ordinary admission, even if an unknown field contains object continuation. Classifying
+all objects as fragments would let a hostile terminal error bypass the byte limit;
+`terminalFramesCannotUseObjectContinuationToBypassAdmission` pins this distinction.
+
+Multipart completion reconstructs the entire single-item batch, not just content.
+The assembler checks sequence, offsets, length/digest and item identity/revision;
+the query decoder compares epoch/version, `in_reply_to` correlation and envelope
+conversation/session/clear metadata across every batch, part and marker.
+Omitted and explicit-null session metadata remain distinct;
+envelope id/timestamp need not stay equal. Retained routing metadata and fragment
+bytes share the combined storage budget. Strict iterative JSON admission and the
+absolute assembly deadline remain in force. Diagnostics use static codes and all
+new request/reply/checkpoint/coverage/decoder string representations redact data.
+
+### Query decoder lifecycle and fixture coverage
+
+Create one `ThreadQueryDecoder` per host, connection generation, request id and typed
+request. Dispatch its frames with serialized calls. Instances share no buffers or
+accumulated batches. Tick `expire()` while idle and call `abandon()` on teardown,
+including requests without pending parts. Every
+rejection, interruption, expiry or abandonment permanently retires the request;
+later valid batches or markers cannot rescue it. Reset/error also retire it, and
+successful coverage is emitted once. A retry or new connection requires a fresh
+instance, even when reusing a request id. Concurrent request bounds belong to the
+scheduler; per-instance assembler budgets do not bound all requests together.
+
+`ThreadQueryDecoderTest` traces fixtures to daemon #3233 / `thread_query_test.go`.
+Keep marker-after-failure probes alongside successful assembly: reconstruction
+alone misses false completion. Retain out-of-range parent, isolated request,
+6000-level nesting and combined-budget probes with the live/wire regressions.
+
+[#1984](https://github.com/pyrycode/pyrycode-mobile/issues/1984) owns scheduling,
+retries, overlap handling, checkpoint advancement and cache writes.
+[#1988](https://github.com/pyrycode/pyrycode-mobile/issues/1988) owns advertisement,
+production activation and end-to-end daemon/live proof. Fixture acceptance of this
+additive codec does not establish that production query wiring is active.
 
 ### Base64 + pubkey helpers
 
