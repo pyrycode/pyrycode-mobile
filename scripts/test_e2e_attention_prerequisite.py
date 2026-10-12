@@ -40,7 +40,9 @@ class AttentionPeerDaemonPrerequisiteTest(unittest.TestCase):
         function = "require_attention_peer_daemon() { :; }\n"
         if marker in self.script:
             start = self.script.index(marker)
-            function = self.script[start:self.script.index("\n}\n", start) + 3]
+            common = self.script.index("require_daemon_revision() {")
+            function = self.script[common:self.script.index("\n}\n", common) + 3] + "\n"
+            function += self.script[start:self.script.index("\n}\n", start) + 3]
         body = 'set -euo pipefail\ndie() { printf "%s\\n" "$*" >&2; exit 1; }\n'
         body += function + '\nrequire_attention_peer_daemon "$REQUIRED_REVISION"\n'
         return subprocess.run(["bash", "-c", body], capture_output=True, text=True,

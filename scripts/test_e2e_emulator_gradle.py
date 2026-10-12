@@ -35,7 +35,7 @@ class HostPromptDaemonPrerequisiteTest(unittest.TestCase):
         return self.git("rev-parse", "HEAD")
 
     def run_guard(self, revision, live="1", tests="", source=None):
-        start = self.script.index("require_host_prompt_daemon() {")
+        start = self.script.index("require_daemon_revision() {")
         function = self.script[start:self.script.index("\n# resolve_runner_from_config", start)]
         body = 'set -euo pipefail\ndie() { printf "%s\\n" "$*" >&2; exit 1; }\n' + function
         body += '\nrequire_host_prompt_daemon "$REQUIRED_REVISION"\n'

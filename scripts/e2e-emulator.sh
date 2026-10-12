@@ -234,6 +234,19 @@ ANSWER_PEER_SERVER_STATIC_PUBKEY=""
 log() { printf '\033[1;34m[e2e]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[e2e] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Shared admission boundary; callers retain their scenario selection and diagnostics.
+require_daemon_revision() {
+  local required="$1" prerequisite="$2" missing="$3"
+  [[ "${DAEMON_REVISION}" =~ ^[0-9a-f]{7,64}$ ]] \
+    || die "${prerequisite}: daemon revision unavailable; rebuild a versioned daemon containing ${required}"
+  [ -n "${PYRYCODE_SRC}" ] \
+    && git -C "${PYRYCODE_SRC}" cat-file -e "${required}^{commit}" 2>/dev/null \
+    && git -C "${PYRYCODE_SRC}" cat-file -e "${DAEMON_REVISION}^{commit}" 2>/dev/null \
+    || die "${prerequisite}: set PYRYCODE_SRC to a checkout holding the required and binary revisions"
+  git -C "${PYRYCODE_SRC}" merge-base --is-ancestor "${required}" "${DAEMON_REVISION}" \
+    || die "${prerequisite}: daemon lacks ${missing}; rebuild from ${required} or a descendant"
+}
+
 # #1775 needs the shipped daemon handlers, not just #2766's durable instructions store.
 # Check the binary's revision before starting the daemon; never silently skip the live scenario.
 require_host_prompt_daemon() {
@@ -245,14 +258,7 @@ require_host_prompt_daemon() {
       *) return 0 ;;
     esac
   fi
-  [[ "${DAEMON_REVISION}" =~ ^[0-9a-f]{7,64}$ ]] \
-    || die "host prompt prerequisite pyrycode#2768: daemon revision unavailable; rebuild a versioned daemon containing ${required}"
-  [ -n "${PYRYCODE_SRC}" ] \
-    && git -C "${PYRYCODE_SRC}" cat-file -e "${required}^{commit}" 2>/dev/null \
-    && git -C "${PYRYCODE_SRC}" cat-file -e "${DAEMON_REVISION}^{commit}" 2>/dev/null \
-    || die "host prompt prerequisite pyrycode#2768: set PYRYCODE_SRC to a checkout holding the required and binary revisions"
-  git -C "${PYRYCODE_SRC}" merge-base --is-ancestor "${required}" "${DAEMON_REVISION}" \
-    || die "host prompt prerequisite pyrycode#2768: daemon lacks the host prompt handlers; rebuild from ${required} or a descendant"
+  require_daemon_revision "${required}" "host prompt prerequisite pyrycode#2768" "the host prompt handlers"
 }
 
 # #2121: interactive-only peer handshakes can overflow retained snapshots without #3214.
@@ -266,14 +272,7 @@ require_attention_peer_daemon() {
       *) return 0 ;;
     esac
   fi
-  [[ "${DAEMON_REVISION}" =~ ^[0-9a-f]{7,64}$ ]] \
-    || die "attention peer prerequisite pyrycode#3214: daemon revision unavailable; rebuild a versioned daemon containing ${required}"
-  [ -n "${PYRYCODE_SRC}" ] \
-    && git -C "${PYRYCODE_SRC}" cat-file -e "${required}^{commit}" 2>/dev/null \
-    && git -C "${PYRYCODE_SRC}" cat-file -e "${DAEMON_REVISION}^{commit}" 2>/dev/null \
-    || die "attention peer prerequisite pyrycode#3214: set PYRYCODE_SRC to a checkout holding the required and binary revisions"
-  git -C "${PYRYCODE_SRC}" merge-base --is-ancestor "${required}" "${DAEMON_REVISION}" \
-    || die "attention peer prerequisite pyrycode#3214: daemon lacks the retained snapshot capacity repair; rebuild from ${required} or a descendant"
+  require_daemon_revision "${required}" "attention peer prerequisite pyrycode#3214" "the retained snapshot capacity repair"
 }
 
 # resolve_runner_from_config <config-path> (#614)
