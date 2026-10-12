@@ -1,0 +1,57 @@
+# Permission-held running-tool harness reliability (#2100)
+
+## Files read
+
+- `app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt`: the named scenario, `holdToolOnPermission`, `peerStep`, `awaitConnected`, chat identity and creation helpers; preserve prior/current privileged peer custody and the three display assertions.
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/SendNowConnection.kt`: existing addressed-host authenticated wait, contrasted with the compatibility banner.
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/PeerWait.kt`: preserve timeout causes and content-free peer diagnostics.
+- `app/src/test/java/de/pyryco/mobile/di/RelayConnectionFactoryTest.kt`: real registry with controlled absent/handshaking hosts and selection assertions.
+- `docs/e2e-interactive-stream.md`: permission-held running-tool contract and #1898's separation of reproduced readiness defects from historical attribution.
+- `docs/knowledge/features/development-verification.md` and `development-verification-emulator-evidence.md`: counted execution and correlated phone/daemon evidence retention.
+- PR #2096: pending `HostConnection.kt` extraction and MCP repair. Reuse its identical addressed-host helper without changing Send now or MCP.
+
+## Context
+
+The historical 30000 ms timeout does not identify its operation. The earlier retained prefix reports this method passing; later phone results are missing. Retained daemon logs alone cannot establish that a status assertion failed. Investigate with fixed operation labels and fresh correlated evidence; historical causation stays unresolved unless recovered evidence establishes it.
+
+One candidate harness defect is already visible: `holdToolOnPermission` waits on selected-host banner state before creating a chat on the explicitly addressed host. The banner hides Idle and follows selection; it does not prove that host's daemon authenticated. Controlled real-registry tests must demonstrate this defect before repair. No production or wire changes are planned.
+
+## Design
+
+Add test-only `PermissionHeldStage` and `permissionHeldStep` for prior-peer admission, list arrival, connection readiness, conversation snapshot/creation/identity, composer readiness, current-peer admission, send, permission arrival, waiting display, privileged approval/dismissal, running display, turn completion and label removal. Emit static stage/status and bounded connection/peer state names, never identifiers, prompts or payloads. Timeout assertions preserve their cause; ordinary failures and cancellation propagate.
+
+Initially extract the existing selected-banner wait into `awaitPermissionHeldConnection`, used only by `holdToolOnPermission`, to test the actual scenario predicate. After failing controls, delegate it to `awaitHostConnection` (identical to #2096's pending helper). Both relay and daemon legs must be Connected for the addressed host, at the original 30000 ms deadline, without changing selection or retrying. Keep chat creation explicitly addressed to that same host.
+
+Shared-file overlaps: #1682, #1689, #1690, #1691, #1693, #1695, #1766, #1869, #1879, #1896, #2009, #2032, #2057, #2088, #2089, #2090, #2091, #2092 and #2099 edit other scenario blocks. Local additive changes do not depend on them; identical HostConnection content can merge with #2089.
+
+## State and concurrency model
+
+No production state or jobs change. Existing instrumented `runBlocking` waits use their existing deadlines and the registry's hot status flows; unit controls use `runTest`. Existing peer redial scope, prior-peer `use`, and observing-peer `finally` cleanup remain intact. Diagnostics hold no mutable scenario state.
+
+## State transitions and identity reuse
+
+| Event | Coverage |
+| --- | --- |
+| Prior privileged peer closes, current peer reuses pairing | Existing named live scenario; keep both authenticated opens and peer cleanup. |
+| Unrelated selected host absent while target authenticated | `permissionHeldReadinessIgnoresStoppedSelectedHost`. |
+| Selected peer connected while target absent, then target reconnects | `permissionHeldReadinessWaitsForItsOwnHost`. |
+| Target relay connected but daemon handshake held, then authenticates | `permissionHeldReadinessWaitsForDaemonHandshake`. |
+| Idle or missing target | `permissionHeldReadinessIdleKeepsDeadline` and `permissionHeldReadinessRejectsMissingHost`. |
+| Permission hold, approval, tool running, turn_end | Existing named live method with fixed stages; no wait or assertion weakened. |
+
+## Error handling
+
+Missing target fails explicitly. Timeout diagnostics identify the operation and snapshot registration, selection match, relay/daemon class names, repository availability and peer link state; preserve original causes. No blanket retries, skips or deadline increases.
+
+## Testing strategy
+
+Write readiness controls first against the original predicate and retain counted red XML, then green XML. Test diagnostics for ordered stages, value forwarding, coroutine/Compose timeout attribution, unchanged ordinary failures/cancellation and lazy snapshots. Run the full real-registry class, diagnostics class and existing running-tool status screen tests. The live scenario remains device-only because it needs real sockets, a privileged peer and real Claude execution. Obtain a fresh correlated phone/daemon capture for localization; the dispatcher owns the fresh configured full live gate and its method counts/provenance, which focused success cannot replace. Run the deterministic `tool` twin if available. Run lint, APK build, Android-test compilation, formatting and final pre-verify after merging main.
+
+## Open Questions
+
+- Does recovered evidence localize the historical timeout? Otherwise explicitly leave causation unresolved.
+- Do controlled regressions demonstrate the candidate readiness defect? Repair only after their red result.
+
+## Documentation handoff
+
+Pending documentation stage: `docs/e2e-interactive-stream.md`, permission-held running-tool section — record the demonstrated repair, fixed stages, tested revisions/counts and eventual full live gate evidence; distinguish controlled reproduction from unresolved historical attribution.
