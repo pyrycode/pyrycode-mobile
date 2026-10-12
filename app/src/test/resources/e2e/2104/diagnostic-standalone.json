@@ -1,0 +1,29 @@
+{
+  "purpose": "Diagnostic baseline; passing alone does not diagnose the intermittent failure.",
+  "mobile": "7f04ed6d689db388b0bd64fe01a94c45935557c6",
+  "daemon": "46c980feab9109d37ec72bf74577b00924a78632",
+  "claude": "2.1.280",
+  "executed": 1,
+  "passed": 1,
+  "failed": 0,
+  "skipped": 0,
+  "full_live_proof": "pending dispatcher; this is focused only",
+  "sources": [
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/live-i46tkqr7/dispatcher.xml",
+      "sha256": "0c1f6befdbe76f0d5950c6c6a72bd9d62c35b99852a8edf6356719fca260d3a9"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/live-i46tkqr7/0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive.txt",
+      "sha256": "ca30ecabb6c8c2fe3e14deea2a2a14123360c96fc1aafe22762b941d663a0a5c"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/reconnect-footer-evidence/pyry-e2e.anc4PQ/daemon.log",
+      "sha256": "3f1cb724142b806a54ee33dfe1e34ab989a68a88d5ff4a8d54cedd814ad825ae"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/reconnect-footer-evidence/pyry-e2e.anc4PQ/run.txt",
+      "sha256": "91b50b9a41d629778e2c2d8a253d951ff000fa462ae159dc3d253fefdc2ce48b"
+    }
+  ]
+}

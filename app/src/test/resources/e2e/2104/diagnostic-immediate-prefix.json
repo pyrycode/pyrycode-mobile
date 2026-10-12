@@ -1,0 +1,11 @@
+{
+  "mobile": "7f04ed6d689db388b0bd64fe01a94c45935557c6",
+  "daemon": "46c980feab9109d37ec72bf74577b00924a78632",
+  "executed": 2,
+  "passed": 2,
+  "failed": 0,
+  "skipped": 0,
+  "xml": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/live-jft9ekaa/dispatcher.xml",
+  "xml_sha256": "412690925481c22f6d66ea4d78082dc9d7b3011d10a82a7eaf6a63bcca875839",
+  "daemon_log": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/reconnect-footer-evidence/pyry-e2e.xzlFkd/daemon.log"
+}
