@@ -1,0 +1,56 @@
+{
+  "diagnostics-red.xml": {
+    "source": "/tmp/builder-2102/diagnostics-red.xml",
+    "source_sha256": "7db4ea4832f086c29f8cb8fc95a3212d5e4f6a2848089cfa958acce85876e58b",
+    "executed": 5,
+    "failed": 5,
+    "skipped": 0
+  },
+  "snapshot-red.xml": {
+    "source": "/tmp/builder-2102/snapshot-red.xml",
+    "source_sha256": "93353b01677ee45fad353b9e05910ae49e7b5381c4f6bb16a5edf05765b93afd",
+    "executed": 1,
+    "failed": 1,
+    "skipped": 0
+  },
+  "diagnostics-green.xml": {
+    "source": "app/build/test-results/testDebugUnitTest/TEST-de.pyryco.mobile.e2e.ChannelScenarioStageTest.xml",
+    "source_sha256": "c6ae95868c27eb852b8ad7d8a26c8c75ec36726646b5ea40aa29d03de280f906",
+    "executed": 6,
+    "failed": 0,
+    "skipped": 0
+  },
+  "empty-host-green.xml": {
+    "source": "app/build/test-results/testDebugUnitTest/TEST-de.pyryco.mobile.e2e.EmptyHostChannelSetupTest.xml",
+    "source_sha256": "f2818ba76cee360c8ed27f0960162ba13eb7719b259a78123a498c77b05a71f8",
+    "executed": 4,
+    "failed": 0,
+    "skipped": 0
+  },
+  "baseline-live.xml": {
+    "source": "build/dispatcher-tests/live-zfz0tg48/dispatcher.xml",
+    "source_sha256": "7e4f7025eb1fb2bc4dab7f7594aafbffc9b8cc30c0861783171244808542a5aa",
+    "executed": 1,
+    "failed": 0,
+    "skipped": 0
+  },
+  "labelled-live.xml": {
+    "source": "build/dispatcher-tests/live-m5b8m2aw/dispatcher.xml",
+    "source_sha256": "3cd830bd3223b58247abc30c127f27192def6f5bc68df8db072febc4351d94fa",
+    "executed": 1,
+    "failed": 0,
+    "skipped": 0
+  },
+  "labelled-stages.log": {
+    "source": "build/dispatcher-tests/live-m5b8m2aw/0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_createEditArchiveChannel_readsPromptBack.txt",
+    "source_sha256": "5984ecd725f74d472da0f446e1aeb3f887f2edda9d36cd1cf3394ea656c89905",
+    "records": 72
+  },
+  "live_revisions": {
+    "baseline_mobile": "cfc5911723bad305dcf2486283521915dce91b84",
+    "labelled_mobile": "d2203aba47c46d19255a64143fded994160bffb2",
+    "daemon": "8091a4730d42f43029eb0b955442dc300106030f",
+    "claude": "2.1.280",
+    "revision_source": "matching live-gate command output; XML has no daemon annotation"
+  }
+}

@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="de.pyryco.mobile.e2e.ChannelScenarioStageTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-12T00:59:32.780Z" hostname="Juhanas-MacBook-Air.local" time="0.016">
+  <testcase name="failureMessagesNeverEnterEvidence" classname="de.pyryco.mobile.e2e.ChannelScenarioStageTest" time="0.007" />
+  <testcase name="cancellationIsRecordedAndRethrownWithoutRetry" classname="de.pyryco.mobile.e2e.ChannelScenarioStageTest" time="0.003" />
+  <testcase name="failureIsRecordedBeforeCleanupAndTheOriginalFailureSurvives" classname="de.pyryco.mobile.e2e.ChannelScenarioStageTest" time="0.004" />
+  <testcase name="repeatedStagesRunOnceEachWithoutRetry" classname="de.pyryco.mobile.e2e.ChannelScenarioStageTest" time="0.0" />
+  <testcase name="successfulOperationReturnsOnceAndReportsCompletion" classname="de.pyryco.mobile.e2e.ChannelScenarioStageTest" time="0.0" />
+  <testcase name="snapshotFailureDoesNotChangeScenarioOutcome" classname="de.pyryco.mobile.e2e.ChannelScenarioStageTest" time="0.001" />
+</testsuite>
