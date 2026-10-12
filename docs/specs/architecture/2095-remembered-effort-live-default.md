@@ -60,3 +60,16 @@ Pending documentation stage: `docs/e2e-interactive-stream.md`, Model and effort 
 
 - 2026-10-12: Added the exact daemon `decodeAppliedSettings` source to the diagnosis: only an explicit raw null returns a successful nil effort; missing/invalid fields are unavailable. The private response itself was not retained, so its null is established through the exact validated projection/decoder and the phone assertion, while the actual unsupported model is independently retained in history and the Claude transcript. The historical origin of the ambient Haiku selection is not retained and is not needed to explain the menu-versus-launch mismatch.
 - 2026-10-12: Live evidence return is explicit. Before documentation/merge, the dispatcher must run a fresh full live gate (`Live tests: all`). On the artifact return, the builder will commit `app/src/test/resources/e2e/2095/live-result.json` containing sanitized revision/version metadata, full counts, target-method result and durable XML/logcat references. Keep `needs-live-artifacts` until that record is committed; no fresh live pass is claimed now.
+
+## Fresh combined live evidence, 2026-10-12
+
+The operator ran the unchanged managed full live gate while both Mobile dispatchers
+remained paused. All 65 curated tests executed and passed, with zero failures, errors,
+skips or retries. The remembered-effort method and the other two effort methods passed.
+`app/src/test/resources/e2e/2095/live-result.json` records the exact revisions, Claude
+version, counted result and private XML/logcat references with hashes.
+
+The combined candidate includes this launch repair, reply identity and reconnect
+repairs, the Send now viewport repair and an experimental native Copy action. This
+is complete integration evidence, not an isolated branch run or proof that the
+historical Copy flake is repaired. HP and wider reliability acceptance remain open.

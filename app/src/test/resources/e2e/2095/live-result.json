@@ -1,0 +1,47 @@
+{
+  "capture": "mobile-combined-live-20261012",
+  "date": "2026-10-12",
+  "host": "Mac",
+  "launcher": "pyrycode-mobile-agents/scripts/android-test-gate.py live",
+  "invocation": "Operator-started managed full gate while Mobile dispatchers remain paused",
+  "mobileRevision": "d92a2f4e8d7950db249d34a59dfed3d394c9db98",
+  "effortRepairRevision": "9cdb199348978ff42c65425be3c5bc3cd384dcd1",
+  "daemonRevision": "9c9cd5a25c337666bdbed47c29202e695a172733",
+  "claudeVersion": "2.1.280 (Claude Code)",
+  "device": "pixel2Api33Atd",
+  "counts": {
+    "executed": 65,
+    "passed": 65,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "retries": 0,
+  "processExit": 0,
+  "target": {
+    "class": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest",
+    "method": "interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel",
+    "result": "passed"
+  },
+  "artifacts": [
+    {
+      "privateReference": "pyrycode-mobile-agents/logs/evidence/mobile-combined-live-20261012/preserved/app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/TEST-pixel2Api33Atd-_app-.xml",
+      "sha256": "1c4f74b7922111dcf574c07ba9294267af86ab845bea36fa7dc2bc9bb4f2d770"
+    },
+    {
+      "privateReference": "pyrycode-mobile-agents/logs/evidence/mobile-combined-live-20261012/preserved/app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel.txt",
+      "sha256": "f9499d51cf350b47fe59b0a6d62180ae3ab1c282b91dafe93024b14ba5228270"
+    }
+  ],
+  "integrationChanges": [
+    "PR 2111 effort-capable primary launch",
+    "PR 2133 reply identity and reconnect-aware Copy wait",
+    "PR 2134 Send now viewport repair",
+    "Private experimental native Copy tap"
+  ],
+  "limitations": [
+    "This is a complete combined-branch gate, not a run of the isolated effort branch.",
+    "The experimental Copy action does not establish the historical Copy failure cause.",
+    "HP validation and overall reliability acceptance remain open."
+  ]
+}
