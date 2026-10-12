@@ -47,3 +47,11 @@ Fresh managed checks at c904f2e4e, daemon 9c9cd5a25:
                     mobile-send-now-scripted-20261012
   Each folder contains raw XML, phone/daemon logs and phone checksums.
   The full combined live gate remains pending.
+
+Combined acceptance, 2026-10-12:
+Mobile d92a2f4e8d7950db249d34a59dfed3d394c9db98 includes this repair, PRs 2111 and 2133, and an experimental Copy action.
+Backend 9c9cd5a25c337666bdbed47c29202e695a172733.
+Full live: 65 executed, 65 passed, 0 failures/errors/skips, no retries. Named Send now case passed.
+Full scripted: 22 executed, 22 passed, 0 failures/errors/skips, no retries.
+Private evidence: mobile-combined-live-20261012 and mobile-combined-scripted-20261012 in the Mobile agents evidence directory.
+This validates the combined candidate. It does not diagnose the separate historical Copy flake.
