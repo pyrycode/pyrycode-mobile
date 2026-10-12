@@ -1632,6 +1632,16 @@ else
 fi
 log "running ${DEVICE}DebugAndroidTest (headless emulator: boot → install → ${TEST_TARGET} → teardown)…"
 log "  phone relayUrl = ${PHONE_RELAY_URL}"
+# Fixed launcher-owned socket paths. The phone cannot supply paths or session IDs.
+python3 - "${WORK_DIR}/test-session-sockets.json" \
+  "${ISO_HOME:-${HOME}}/.pyry/${PYRY_NAME}.sock" "${HOME}/.pyry/${PYRY_NAME_B}.sock" \
+  "${BYPASS_HOME:+${BYPASS_HOME}/.pyry/${PYRY_NAME_BYPASS}.sock}" \
+  "${ANSWER_HOME:+${ANSWER_HOME}/.pyry/${PYRY_NAME_ANSWER}.sock}" <<'PY_SESSION_SOCKETS'
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps([path for path in sys.argv[2:] if path]))
+PY_SESSION_SOCKETS
+
 GRADLE_TEST_ARGS=(-PuseRelayRepository=true)
 if [ -n "${STOP_TASK_URL:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.stopTaskFixtureUrl="${STOP_TASK_URL}")
@@ -1687,15 +1697,6 @@ elif [ -n "${ANSWER_PEER_TOKEN:-}" ]; then
     -Pandroid.testInstrumentationRunnerArguments.answerServerStaticPublicKey="${ANSWER_PEER_SERVER_STATIC_PUBKEY}"
   )
 fi
-# Fixed launcher-owned socket paths. The phone cannot supply paths or session IDs.
-python3 - "${WORK_DIR}/test-session-sockets.json" \
-  "${ISO_HOME:-${HOME}}/.pyry/${PYRY_NAME}.sock" "${HOME}/.pyry/${PYRY_NAME_B}.sock" \
-  "${BYPASS_HOME:+${BYPASS_HOME}/.pyry/${PYRY_NAME_BYPASS}.sock}" \
-  "${ANSWER_HOME:+${ANSWER_HOME}/.pyry/${PYRY_NAME_ANSWER}.sock}" <<'PY_SESSION_SOCKETS'
-import json, sys
-from pathlib import Path
-Path(sys.argv[1]).write_text(json.dumps([path for path in sys.argv[2:] if path]))
-PY_SESSION_SOCKETS
 # Capture the status rather than let set -e exit, so a failure caused by an expired code is named (#993).
 if [ -n "${FAULT_PORT:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.daemonFaultPort="${FAULT_PORT}")
