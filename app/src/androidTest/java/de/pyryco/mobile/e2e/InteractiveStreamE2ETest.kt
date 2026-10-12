@@ -6382,6 +6382,59 @@ class InteractiveStreamE2ETest {
         val peer = runningToolPeer()
         val inserted = mutableListOf<Uri>()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var chatX: String? = null
+        var chatY: String? = null
+        var repositoryGeneration = 0
+        var activeRepository: ConversationRepository? = null
+
+        fun snapshot(): String {
+            val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+            val bundle = registry.connectionFor(serverId)
+            val status = bundle?.coordinator?.connectionStatus?.value
+            val current = bundle?.coordinator?.currentRepository?.value
+            val currentGeneration = current?.let(System::identityHashCode) ?: 0
+            val xFrames = chatX?.let { peer.recorded(it).size } ?: 0
+            val yFrames = chatY?.let { peer.recorded(it).size } ?: 0
+            return "host=${bundle != null} selected=${bundle != null && registry.selected.value === bundle} " +
+                "relay=${status?.relay?.javaClass?.simpleName ?: "absent"} daemon=${status?.pyrycode?.javaClass?.simpleName ?: "absent"} " +
+                "repository=${current != null} generation=$repositoryGeneration currentGeneration=$currentGeneration " +
+                "currentAttempt=${current != null && current === activeRepository} sources=${inserted.size} " +
+                "xFrames=$xFrames yFrames=$yFrames; peer=${peer.linkState()}"
+        }
+
+        fun record(event: String) {
+            Log.i("DirectShare", event)
+        }
+
+        fun <T> step(
+            stage: DirectShareStage,
+            block: () -> T,
+        ): T = directShareStep(stage, ::snapshot, ::record, block)
+
+        fun chat(
+            prefix: String,
+            admission: DirectShareStage,
+            creation: DirectShareStage,
+            rename: DirectShareStage,
+        ): Pair<String, String> {
+            val name = prefix + System.currentTimeMillis()
+            val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+            val created =
+                step(admission) {
+                    runBlocking {
+                        withTimeout(THREAD_TIMEOUT_MS) {
+                            bundle.coordinator.currentRepository.callOnLive(REDIAL_WAIT_MS) { repository ->
+                                activeRepository = repository
+                                repositoryGeneration++
+                                val id = directShareStep(creation, ::snapshot, ::record) { repository.createDiscussion().id }
+                                directShareStep(rename, ::snapshot, ::record) { repository.rename(id, name) }
+                            }
+                        }
+                    }
+                }
+            return created.id to name
+        }
+
         try {
             val stamp = System.currentTimeMillis()
             val png = pngFixture()
@@ -6389,73 +6442,94 @@ class InteractiveStreamE2ETest {
             val pngName = ATTACH_FILE_PREFIX + "shared-$stamp.png"
             val documentName = ATTACH_FILE_PREFIX + "shared-$stamp.txt"
             val sources =
-                arrayListOf(
-                    insertDownload(pngName, "image/png", png, inserted),
-                    insertDownload(documentName, TEXT_MIME, document, inserted),
-                )
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
-            awaitChannelList()
-            awaitConnected()
-            val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
-            val (chatY, _) = answerChat(serverId, ATTACH_OTHER_NAME_PREFIX)
-            assertPeerAnswers(peer, chatX)
+                step(DirectShareStage.Fixtures) {
+                    arrayListOf(
+                        insertDownload(pngName, "image/png", png, inserted),
+                        insertDownload(documentName, TEXT_MIME, document, inserted),
+                    )
+                }
+            step(DirectShareStage.PeerAdmission) { runBlocking { peer.open(CONNECT_TIMEOUT_MS) } }
+            step(DirectShareStage.ListArrival) { awaitChannelList() }
+            step(DirectShareStage.Readiness) {
+                runBlocking { awaitHostConnection(GlobalContext.get().get<RelayConnectionRegistry>(), serverId, CONNECT_TIMEOUT_MS) }
+            }
+            val (x, nameX) = chat(ATTACH_CHAT_NAME_PREFIX, DirectShareStage.RepositoryX, DirectShareStage.CreateX, DirectShareStage.RenameX)
+            chatX = x
+            val (y, _) = chat(ATTACH_OTHER_NAME_PREFIX, DirectShareStage.RepositoryY, DirectShareStage.CreateY, DirectShareStage.RenameY)
+            chatY = y
+            step(DirectShareStage.PeerHistory) { assertPeerAnswers(peer, x) }
             val context = instrumentation.targetContext
-            openChatRow(nameX)
+            step(DirectShareStage.OpenX) { openChatRow(nameX) }
             val manager = context.getSystemService(ShortcutManager::class.java)
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                manager.dynamicShortcuts.any {
-                    NotificationTap
-                        .target(it.intent) ==
-                        HostConversationTarget(serverId, chatX)
-                }
-            }
             val shortcut =
-                manager.dynamicShortcuts.single {
-                    NotificationTap
-                        .target(it.intent) ==
-                        HostConversationTarget(serverId, chatX)
+                step(DirectShareStage.ShortcutPublication) {
+                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                        manager.dynamicShortcuts.any { NotificationTap.target(it.intent) == HostConversationTarget(serverId, x) }
+                    }
+                    manager.dynamicShortcuts.single { NotificationTap.target(it.intent) == HostConversationTarget(serverId, x) }
                 }
-            composeTestRule.runOnUiThread {
-                context.startActivity(
-                    Intent(context, MainActivity::class.java).apply {
-                        action = Intent.ACTION_SEND_MULTIPLE
-                        type = "*/*"
-                        putExtra(Intent.EXTRA_SHORTCUT_ID, shortcut.id)
-                        putExtra(Intent.EXTRA_TEXT, PING_PROMPT)
-                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, sources)
-                        clipData = ClipData.newRawUri("share", sources.first()).apply { addItem(ClipData.Item(sources.last())) }
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    },
-                )
+            step(DirectShareStage.Capture) {
+                composeTestRule.runOnUiThread {
+                    context.startActivity(
+                        Intent(context, MainActivity::class.java).apply {
+                            action = Intent.ACTION_SEND_MULTIPLE
+                            type = "*/*"
+                            putExtra(Intent.EXTRA_SHORTCUT_ID, shortcut.id)
+                            putExtra(Intent.EXTRA_TEXT, PING_PROMPT)
+                            putParcelableArrayListExtra(Intent.EXTRA_STREAM, sources)
+                            clipData = ClipData.newRawUri("share", sources.first()).apply { addItem(ClipData.Item(sources.last())) }
+                            addFlags(
+                                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                            )
+                        },
+                    )
+                }
             }
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                listOf(
-                    pngName,
-                    documentName,
-                ).all { composeTestRule.onAllNodes(hasContentDescription(it)).fetchSemanticsNodes().isNotEmpty() }
+            step(DirectShareStage.Staging) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    listOf(
+                        pngName,
+                        documentName,
+                    ).all { composeTestRule.onAllNodes(hasContentDescription(it)).fetchSemanticsNodes().isNotEmpty() }
+                }
+                composeTestRule.onAllNodes(hasText("Share to…")).assertCountEquals(0)
+                composeTestRule.onNode(hasSetTextAction()).assertTextContains(PING_PROMPT)
             }
-            deleteFixtures(inserted)
-            sources.forEach { uri ->
-                assertTrue(
-                    "the original share source must be unreadable",
-                    runCatching { context.contentResolver.openInputStream(uri)?.use { it.read() } }.getOrNull() == null,
-                )
+            step(DirectShareStage.SourceDeletion) {
+                deleteFixtures(inserted)
+                sources.forEach { uri ->
+                    assertTrue(
+                        "the original share source must be unreadable",
+                        runCatching { context.contentResolver.openInputStream(uri)?.use { it.read() } }.getOrNull() == null,
+                    )
+                }
             }
-            composeTestRule.onAllNodes(hasText("Share to…")).assertCountEquals(0)
-            composeTestRule.onNode(hasSetTextAction()).assertTextContains(PING_PROMPT)
-            assertEquals("no automatic send in X", 0, userMessages(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }))
-            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
-            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the shared-content turn in X did not end") { it.type == "turn_end" }
-            val history = runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }
-            val named = userMessageAttachmentIds(history)
-            assertEquals("user messages in X", 1, named.size)
-            val ids = named.single()
-            assertEquals("attachment ids in X", 2, ids.distinct().size)
-            val digests = ids.map { sha256(runBlocking { peer.retrieveAttachment(chatX, it, REPLY_TIMEOUT_MS) }.bytes) }
-            assertEquals(setOf(sha256(png), sha256(document)), digests.toSet())
-            val payload = history.single { it.isUserMessage() }.payload as JsonObject
-            assertEquals("peer received the shared text", PING_PROMPT, payload["text"]?.jsonPrimitive?.content)
-            assertEquals("messages in Y", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
+            step(DirectShareStage.UnsentHistory) {
+                assertEquals("no automatic send in X", 0, userMessages(runBlocking { peer.history(x, THREAD_TIMEOUT_MS) }))
+            }
+            step(DirectShareStage.Send) { composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick() }
+            step(DirectShareStage.PermissionHandling) {
+                allowPromptsUntil(peer, x, WAIT_TURN_TIMEOUT_MS, "the shared-content turn in X did not end") { it.type == "turn_end" }
+            }
+            val history = step(DirectShareStage.HistoryX) { runBlocking { peer.history(x, THREAD_TIMEOUT_MS) } }
+            val ids =
+                step(DirectShareStage.HistoryX) {
+                    val named = userMessageAttachmentIds(history)
+                    assertEquals("user messages in X", 1, named.size)
+                    named.single().also { assertEquals("attachment ids in X", 2, it.distinct().size) }
+                }
+            val digests =
+                ids.map { id ->
+                    step(DirectShareStage.Retrieval) { sha256(runBlocking { peer.retrieveAttachment(x, id, REPLY_TIMEOUT_MS) }.bytes) }
+                }
+            step(DirectShareStage.Retrieval) { assertEquals(setOf(sha256(png), sha256(document)), digests.toSet()) }
+            step(DirectShareStage.HistoryX) {
+                val payload = history.single { it.isUserMessage() }.payload as JsonObject
+                assertEquals("peer received the shared text", PING_PROMPT, payload["text"]?.jsonPrimitive?.content)
+            }
+            step(DirectShareStage.HistoryY) {
+                assertEquals("messages in Y", 0, userMessages(runBlocking { peer.history(y, THREAD_TIMEOUT_MS) }))
+            }
         } finally {
             deleteFixtures(inserted)
             peer.close()

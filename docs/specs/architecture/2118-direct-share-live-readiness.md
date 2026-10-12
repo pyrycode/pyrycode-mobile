@@ -34,7 +34,7 @@ Overlaps: #2057, #2100, #2117 and #2119 change other methods in the same live cl
 
 ## State and concurrency model
 
-Test-only synchronous Compose operations and `runBlocking` wrappers retain their existing owning test. Real-registry regressions use `runTest` and the fixture's injected dispatcher. No new job, flow, production state or coroutine scope is created. Inline stage wrappers can surround suspension inside the real asynchronous paths and cannot swallow cancellation; the original timeout remains in the cause chain.
+Test-only synchronous Compose operations and `runBlocking` wrappers retain their existing owning test. Real-registry regressions use `runTest` and the fixture's injected dispatcher. No new job, flow, production state or coroutine scope is created. A timeout diagnostic is an AssertionError with the original timeout as cause; it cannot be retried as a failed request. Inline stage wrappers can surround suspension inside the real asynchronous paths and cannot swallow cancellation; the original timeout remains in the cause chain.
 
 ## State transitions and identity reuse
 
@@ -51,7 +51,7 @@ Test-only synchronous Compose operations and `runBlocking` wrappers retain their
 
 ## Error handling
 
-Missing addressed host remains an explicit setup failure. Both legs must connect within the original timeout. Stage failures use an AssertionError with fixed stage and safe state, preserving the original cause. Cleanup remains guaranteed and runs after failure capture. Diagnostics are best effort and never initiate I/O, retry, upload or send.
+Missing addressed host remains an explicit setup failure. Both legs must connect within the original timeout. Stage failures attach a suppressed AssertionError with fixed stage and safe state to the original throwable. Cleanup remains guaranteed and runs after failure capture. Diagnostics are best effort and never initiate I/O, retry, upload or send.
 
 ## Testing strategy
 
@@ -84,3 +84,7 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md`, Recent-con
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-12
+
+## Revisions
+
+- 2026-10-12: asynchronous deadline regressions showed that coroutine recovery can discard suppressed diagnostics and a wrapping CancellationException at the owning withTimeout boundary. `directShareStep` wraps cancellation in an AssertionError with the original timeout as cause, ensuring the failed stage survives and cannot enter callOnLive's request-redial retry. Other failures retain their exception classification with a suppressed diagnostic. Tests require the original failure in the complete recovered cause chain, fixed failed markers and before-cleanup state.
