@@ -167,7 +167,7 @@ Noise channel, and a malformed frame drops only itself.
 ## `model_announced` / `session_facts` — the announced-model and session-facts readings (#890)
 
 Two per-turn status readings, each its own held `StateFlow<Map<String, T>>` in its own file —
-`AnnouncedModelProjection` and `SessionFactsProjection` — the [status-projection](remote-conversation-repository.md#status-projections-one-file-per-status-event)
+`AnnouncedModelProjection` and `SessionFactsProjection` — the [status-projection](remote-conversation-repository-status-projections.md#status-projections-one-file-per-status-event)
 shape, same as `ResettingProjection`. Both frames come off claude's `system/init` line, are conversation-scoped,
 arrive once per turn and are **not** deduplicated by the daemon: `TYPE_MODEL_ANNOUNCED = "model_announced"`
 and `TYPE_SESSION_FACTS = "session_facts"` each get their own `onInbound` arm, gated on the negotiated
@@ -201,7 +201,7 @@ and `TYPE_SESSION_FACTS = "session_facts"` each get their own `onInbound` arm, g
 ## `context_usage` — the context-usage reading (#945)
 
 A per-conversation reading of how full claude's context window is, held in its own file
-`data/repository/ContextUsageProjection.kt` — the [status-projection](remote-conversation-repository.md#status-projections-one-file-per-status-event)
+`data/repository/ContextUsageProjection.kt` — the [status-projection](remote-conversation-repository-status-projections.md#status-projections-one-file-per-status-event)
 shape. `TYPE_CONTEXT_USAGE = "context_usage"` decodes the daemon's push, sent after every completed turn.
 Wire SSOT: pyrycode `docs/protocol-mobile.md` § `context_usage`.
 

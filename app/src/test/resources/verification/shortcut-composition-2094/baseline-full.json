@@ -1,0 +1,16 @@
+{
+  "command": "UI_GATE_FULL=1 timeout 2400 python3 scripts/android-test-gate.py ui",
+  "exit_code": 0,
+  "revision": "3918ef87d14d6add0013c9f4d5538c0d22d87c5e",
+  "source_xml": "build/dispatcher-tests/ui-b6aqwqaq/0-TEST-pixel2Api33Atd_0-_app-.xml",
+  "source_sha256": "17d87a5650fce8e1519b9ed7f066a201ba77291acbd7fca351b897c94b93b128",
+  "dirty_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "counts": {
+    "recorded": 260,
+    "executed": 259,
+    "passed": 259,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 1
+  }
+}

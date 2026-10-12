@@ -1,0 +1,32 @@
+{
+  "source_log": "app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/shard_0/logcat-de.pyryco.mobile.ui.conversations.share.SharingShortcutsDeviceTest-workerCompletionKeepsStartupAndNavigationOnMainThread.txt",
+  "source_sha256": "b9f879c4dd2c0103fddf4e5ea112367b5840e393140dbc20a150b3d48ff36cd4",
+  "events": [
+    {
+      "timestamp": "10-11 22:56:03.699",
+      "event": "event=workspace_startup_started",
+      "main": true
+    },
+    {
+      "timestamp": "10-11 22:56:03.702",
+      "event": "event=workspace_startup_ready",
+      "main": false
+    },
+    {
+      "timestamp": "10-11 22:56:03.875",
+      "observation": "event=startup_started main=true clock_ms=16"
+    },
+    {
+      "timestamp": "10-11 22:56:03.916",
+      "observation": "event=worker_completion main=false clock_ms=16"
+    },
+    {
+      "timestamp": "10-11 22:56:03.916",
+      "observation": "event=startup_resumed main=false clock_ms=16"
+    },
+    {
+      "timestamp": "10-11 22:56:03.921",
+      "observation": "event=graph_composed main=true clock_ms=32"
+    }
+  ]
+}

@@ -157,6 +157,15 @@ internal fun HostModalState.reduce(action: ModalAction): HostModalState =
  */
 internal fun HostModalState.reduce(event: ModalEvent): HostModalState =
     when (event) {
+        is ModalEvent.Cleared ->
+            copy(
+                outstanding = outstanding.filterNot { it.conversationId == event.conversationId },
+                resolved =
+                    resolved.filterNot { it.conversationId == event.conversationId } +
+                        outstanding.filter { it.conversationId == event.conversationId }.map {
+                            ModalUiState.Dismissed(it.modalId, "", "", it.conversationId, answeredHere = true)
+                        },
+            )
         is ModalEvent.Shown -> {
             if (resolved.any { it.modalId == event.modalId }) {
                 this

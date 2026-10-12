@@ -38,6 +38,15 @@ data class Envelope(
     val payload: JsonElement = JsonNull,                // absent payload, still a non-null generic carrier
     @SerialName("in_reply_to") val inReplyTo: Long? = null,  // OMITTED when absent
     @SerialName("event_id") val eventId: Long? = null,       // #412: durable replay cursor; OMITTED when absent
+    @SerialName("history_entry_id")
+    @Serializable(with = ReadMarkIdSerializer::class)
+    val historyEntryId: ULong? = null,
+    @SerialName("conversation_id") @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val conversationId: JsonElement? = null,
+    @SerialName("session_id") @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val sessionProvenance: SessionProvenance = SessionProvenance(),
+    @SerialName("session_state_cleared") @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val sessionStateCleared: JsonElement = JsonPrimitive(false),
 )
 ```
 
@@ -177,7 +186,7 @@ no unpaired surrogate, no CR/LF, NEL, Unicode line or paragraph separator, and a
 limit. Invalid payloads return null without retaining parser error text.
 
 The authoritative wire contract remains pyrycode `docs/protocol-mobile.md`, heading
-`reply_suggestion`. Mobile's [remote projection](remote-conversation-repository.md#status-projections-one-file-per-status-event)
+`reply_suggestion`. Mobile's [remote projection](remote-conversation-repository-status-projections.md#status-projections-one-file-per-status-event)
 applies interactive gating and revision ordering and excludes this state from replay and
 history. Daemon text remains inert data and never enters logs; the
 [reading type](conversation-repository-shape.md#shape) redacts all fields in `toString()`.
@@ -223,8 +232,9 @@ and carries a static rejection code. Neither exposes an item revision or complet
 conversation version. `decode()` returns a list because expiry of other conversations
 can accompany the current frame's outcome. Consumers must handle every outcome.
 
-Presence of `continuation`, even null or malformed, selects assembly before ordinary
-DTO decoding. Parts require nonempty valid UTF-8 data, consecutive indexes and byte
+For live updates, presence of `continuation`, even null or malformed, selects assembly
+before ordinary DTO decoding. Query markers use a separate admission path below.
+Parts require nonempty valid UTF-8 data, consecutive indexes and byte
 offsets, and identical envelope type, epoch, routing/version/revision metadata,
 base-revision presence, digest and total length. One conversation cannot replace its
 unfinished assembly with another identity; an ordinary update arriving during assembly
@@ -282,10 +292,98 @@ assembly, and captured generations fence late completions even when epochs are r
 See [authoritative repair and checkpoints](remote-conversation-repository-reads-and-thread-store.md#repair-checkpoints-and-reset-generations):
 newer live progress or a full batch cannot clear sticky repair or prove catch-up.
 
-`ThreadPayloadAssembler` accepts decoding/metadata callbacks for reuse by
-[#2040's page codec](https://github.com/pyrycode/pyrycode-mobile/issues/2040).
+`ThreadPayloadAssembler` accepts decoding/metadata callbacks reused by
+the catch-up/page codec below (#2040).
 Scheduling/persistence remain #1984, rendering #1985, and production
 negotiation/activation and combined live proof #1988.
+
+### Correlated catch-up and page replies (#2040)
+
+`ThreadQueryRequest`, `ThreadQueryReply` (`ThreadQueryPayloads.kt`) and
+`ThreadQueryDecoder` add a request-confined codec. The wire authority remains daemon
+[Thread query messages](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#thread-query-messages)
+and [Bounded thread encoding and assembly](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#bounded-thread-encoding-and-assembly),
+landed in daemon #3233. Store application remains outside this codec.
+
+`ThreadQueryRequest.type` selects the envelope type; `payload()` returns its JSON
+object. `CatchUp` encodes `thread_catch_up` with conversation, epoch and exclusive
+version; version zero selects the newest window. `Page` encodes `thread_page` with
+conversation and exclusive `before_order`. Query versions/ranges use canonical
+unquoted integers from zero through `ULong.MAX_VALUE`, without signed or floating-
+point conversion, distinct from full items' safe-integer fields. Quoted, negative,
+fractional/exponent, leading-zero and overflowing tokens fail admission.
+
+Optional signed `limit` preserves omission versus explicit zero. Both mean 50
+ordered rows; positive values encode clamped to 256, and negatives are rejected
+even for nonzero catch-up. `windowLimit` exposes the normalized window size.
+Nonzero catch-up has no window truncation; ties, active items and parents may exceed
+the ordered-row limit, so it must never become an item-count cutoff.
+
+`decode(Envelope)` returns `ThreadDecodeOutcome<ThreadQueryReply>` facts. `Batch`
+retains the complete ordered `ThreadItemDto` list and raw logical payload, including
+duplicates, field presence and unknown JSON. Its required checkpoint captures
+conversation, epoch and unsigned version independently of the returned items.
+Every ordinary batch has explicit `final: false` and no coverage fields. Neither
+`Complete(Batch)` nor fragment completion means that the request succeeded.
+
+Only `Success`, from a separate empty `items: []`, `final: true` marker, carries
+coverage. It requires exactly one shape:
+
+- Nonzero catch-up: `from_version` equals the requested checkpoint, with
+  `0 < from_version <= version`, certifying `(from_version, version]`; page fields
+  are absent.
+- Newest window or page: `lower_order <= upper_order`, numeric
+  `continuation == lower_order`, and required `older_exists`, certifying
+  `[lower_order, upper_order)`. All four fields remain required at zero/false;
+  `from_version` is absent. When older rows exist, continuation supplies the next
+  exclusive `before_order`.
+
+Parents and active extras outside that interval cannot enlarge it, and a short or
+empty batch cannot establish whether older rows exist. `Reset` exposes the current
+conversation/epoch/version without items or coverage. `Failure` exposes the existing
+`ErrorPayload` plus raw optional fields (`retry_after_s`, `conversation_id`,
+`min_client_version`). Both are terminal without successful coverage; an error
+omitting conversation remains attributable to the decoder's immutable request owner.
+
+Only a `thread_items` frame with **object** continuation selects query assembly.
+Numeric continuation is admitted only through the validated empty success marker;
+live continuation rejection stays strict. Reset/error frames always receive bounded
+ordinary admission, even if an unknown field contains object continuation. Classifying
+all objects as fragments would let a hostile terminal error bypass the byte limit;
+`terminalFramesCannotUseObjectContinuationToBypassAdmission` pins this distinction.
+
+Multipart completion reconstructs the entire single-item batch, not just content.
+The assembler checks sequence, offsets, length/digest and item identity/revision;
+the query decoder compares epoch/version, `in_reply_to` correlation and envelope
+conversation/session/clear metadata across every batch, part and marker.
+Omitted and explicit-null session metadata remain distinct;
+envelope id/timestamp need not stay equal. Retained routing metadata and fragment
+bytes share the combined storage budget. Strict iterative JSON admission and the
+absolute assembly deadline remain in force. Diagnostics use static codes and all
+new request/reply/checkpoint/coverage/decoder string representations redact data.
+
+### Query decoder lifecycle and fixture coverage
+
+Create one `ThreadQueryDecoder` per host, connection generation, request id and typed
+request. Dispatch its frames with serialized calls. Instances share no buffers or
+accumulated batches. Tick `expire()` while idle and call `abandon()` on teardown,
+including requests without pending parts. Every
+rejection, interruption, expiry or abandonment permanently retires the request;
+later valid batches or markers cannot rescue it. Reset/error also retire it, and
+successful coverage is emitted once. A retry or new connection requires a fresh
+instance, even when reusing a request id. Concurrent request bounds belong to the
+scheduler; per-instance assembler budgets do not bound all requests together.
+
+`ThreadQueryDecoderTest` traces fixtures to daemon #3233 / `thread_query_test.go`.
+Keep marker-after-failure probes alongside successful assembly: reconstruction
+alone misses false completion. Retain out-of-range parent, isolated request,
+6000-level nesting and combined-budget probes with the live/wire regressions.
+
+[#1984](https://github.com/pyrycode/pyrycode-mobile/issues/1984) owns scheduling,
+retries, overlap handling, checkpoint advancement and cache writes.
+[#1988](https://github.com/pyrycode/pyrycode-mobile/issues/1988) owns advertisement,
+production activation and end-to-end daemon/live proof. Fixture acceptance of this
+additive codec does not establish that production query wiring is active.
 
 ### Base64 + pubkey helpers
 
@@ -350,6 +448,43 @@ Two invariants the override preserves:
 ## Application payloads (decoded on top of `Envelope`)
 
 Split into [Mobile Protocol v2 — wire models + codec — application payloads](mobile-protocol-v2-wire-layer-application-payloads.md) on 2026-09-22 to keep this document under the 50000-byte cap the docs guard enforces. That section, Application payloads (decoded on top of `Envelope`), moved there verbatim, headings and anchors intact.
+
+### Session-scoped live admission (#2084)
+
+`Envelope` now default-tolerantly carries raw `conversationId` (`conversation_id`),
+`sessionProvenance` (`session_id`) and raw `sessionStateCleared`
+(`session_state_cleared`, default false). Their default values are omitted on encode,
+preserving unrelated legacy constructors and outbound bytes. Raw JSON kinds prevent
+primitive-to-string or boolean coercion from granting ownership. `SessionProvenance`
+retains three distinct cases: omitted, explicit null, and a nonempty producing-session
+string; empty or wrong-typed tags are unusable.
+
+On the supplied authoritative route every live frame requires a nonempty JSON-string
+**envelope** conversation id, including a clear with payload `{}`. A payload
+`conversation_id`, if present, must be the identical string. Missing/null/empty/wrong-
+typed envelope ids and malformed/conflicting payload ids are dropped before mutation
+or correlation, without legacy fallback. Neither the current screen, a stored session
+binding nor `in_reply_to` can supply the conversation. Source host comes from the
+authenticated connection. The clear flag must be an unquoted JSON boolean; true requires
+an empty object payload, no correlation and no durable event/history identity.
+
+Summary `current_session_id` is inspected as a JSON string before establishing the
+binding: a nonempty id records identity without inventing activity; an empty string
+reconciles no-session state. Fresh readings must match the reconciled provenance;
+missing never borrows a tagged binding, and explicit null cannot replace it without
+authoritative summary/clear reconciliation. See [family retirement](remote-conversation-repository-status-projections.md#supplied-session-ownership-and-family-retirement-2084).
+
+Before decoding `session_settings` or `session_settings_updated`, require a JSON-string
+payload `session_id`. A nonempty write target must equal the producing envelope session.
+An empty `session_settings` read is unavailable/read-only; an empty update acknowledgement
+is rejected. This check precedes publication and waiter completion, so correlation
+cannot authorize a different session. Diagnostics use only static event/outcome codes,
+never identifiers, prompt text, reading content or parser exceptions.
+
+The wire authority is daemon [Session-scoped live state](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#session-scoped-live-state-v2-supplied-delivery-contract),
+including the conversation-bearing delivery added by daemon #3195. #1988 owns actual
+production negotiation/delivery and combined proof; #1986 owns queue reconciliation,
+and #1947 remains the independent legacy context-reset work.
 
 ### Daemon read fields and confirmation
 

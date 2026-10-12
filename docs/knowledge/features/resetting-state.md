@@ -80,7 +80,7 @@ a reset with no phase, which is worse than showing the previous reading a beat l
 The behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository-thread-observables.md#observeresettingconversationid--the-thread-observable-reset-phase-reading-871)
 on the **single existing** inbound collector — see that doc for the field, the demux arm, and the
 `session_transition` clear. In short: a connection-scoped `MutableStateFlow<Map<String, ResetStatus>>`
-in its own `ResettingProjection.kt` file (the [status-projection](remote-conversation-repository.md#status-projections-one-file-per-status-event)
+in its own `ResettingProjection.kt` file (the [status-projection](remote-conversation-repository-status-projections.md#status-projections-one-file-per-status-event)
 pattern), written from **two** places on the repository's single inbound collector so neither races:
 `ResettingProjection.apply` (rising edge replace / falling edge remove) and `ResettingProjection.clear`
 (called from the `TYPE_SESSION_TRANSITION` arm, alongside the same-arm
