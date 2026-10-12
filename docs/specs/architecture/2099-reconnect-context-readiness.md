@@ -80,3 +80,15 @@ Run focused unit checks, lint, assembleDebug, compileDebugAndroidTestKotlin, Spo
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-12
+
+## Revisions
+
+### 2026-10-12 — Diagnostic checkpoint; repair remains pending
+
+`awaitHostLinkChange` now owns the unchanged bounded drive and repository predicate; `setHostLink` supplies the captured/current registration, selection, socket and static status snapshot. `HostLinkWaitTest.timeoutNamesRepositoryWaitAndCurrentRegistrationWithoutRetry` and `restoreWaitsForPublicationAndCloseWaitsForAbsence` failed before stage recording and passed after it; `ordinaryFailureAndCancellationPropagateUnchanged` checks propagation without another drive. Together with `PeerWaitTest`, 18 focused tests pass. This is diagnostic red/green, not behavioral repair evidence.
+
+The unchanged isolated target passed (1/1), the instrumented 13-method historical prefix passed the target but failed two independent methods (13 executed, 11 passed, 2 failed, 0 skipped), and a registration/unpair plus graph-rebuild prefix passed all three methods. A bounded eight-cycle restore/cut probe after the offline peer turn also passed; its additional cycles were removed after capture. Neither bundle retirement nor authentication/publication failure was demonstrated. Source and evidence are retained under `app/src/test/resources/verification/reconnect-context-2099/` with private raw artifact paths, hashes and exact tested patches.
+
+No behavioral repair is justified by these passing captures. The cause question remains open, historical attribution remains unproved, and the next continuation needs a correlated failing phone capture. #2112 and #2113 own the independent prefix failures; shared source files do not make them causal blockers for this diagnosis. Full dispatcher acceptance and a cause-backed regression/repair remain required.
+
+The sanitized daemon extracts hash connection identifiers and retain only fixed event categories and canonical UUID metadata. Phone snapshots are explicitly non-atomic; the asynchronous daemon status can lag the synchronously Open-gated repository. This resolves the security review's bounded/content-free observation guidance without changing authorization or any connection predicate.

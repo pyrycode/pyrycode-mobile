@@ -837,7 +837,10 @@ class InteractiveStreamE2ETest {
             }
             val conversationId = newHostConversationId(serverId, before)
             val chatName = CONTEXT_ASK_CHAT_NAME_PREFIX + System.currentTimeMillis()
-            Log.i("ContextReconnect", "event=context_reconnect stage=chat_created conversation=${UUID.fromString(conversationId)}")
+            Log.i(
+                "ContextReconnect",
+                "event=context_reconnect stage=chat_created conversation=${java.util.UUID.fromString(conversationId)}",
+            )
             renameOpenThread(chatName)
             leaveThread()
 

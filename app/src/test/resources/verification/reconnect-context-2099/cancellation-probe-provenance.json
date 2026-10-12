@@ -1,0 +1,21 @@
+{
+  "mobile": "c69586d17086dd0e0cfa7e86df2e1444887cf059",
+  "daemon": "8091a4730d42f43029eb0b955442dc300106030f",
+  "started_ns": 1791764682721417000,
+  "methods": [
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn"
+  ],
+  "patch": "diff --git a/app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt b/app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt\nindex 09f248e8a..62aa46bd2 100644\n--- a/app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt\n+++ b/app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt\n@@ -837,7 +837,7 @@ class InteractiveStreamE2ETest {\n             }\n             val conversationId = newHostConversationId(serverId, before)\n             val chatName = CONTEXT_ASK_CHAT_NAME_PREFIX + System.currentTimeMillis()\n-            Log.i(\"ContextReconnect\", \"event=context_reconnect stage=chat_created conversation=${UUID.fromString(conversationId)}\")\n+            Log.i(\"ContextReconnect\", \"event=context_reconnect stage=chat_created conversation=${java.util.UUID.fromString(conversationId)}\")\n             renameOpenThread(chatName)\n             leaveThread()\n \n@@ -852,6 +852,11 @@ class InteractiveStreamE2ETest {\n \n             // 3. A fresh connection: the phone holds no reading for the chat, so only the open's ask can fill it.\n             Log.i(\"ContextReconnect\", \"event=context_reconnect stage=peer_reading_complete\")\n+            // Diagnostic probe: deliberate lifecycle events, aborting on the first failure.\n+            repeat(8) {\n+                setHostLink(serverId, up = true)\n+                setHostLink(serverId, up = false)\n+            }\n             setHostLink(serverId, up = true)\n             awaitChannelList()\n             assertNull(\n",
+  "exit": 0,
+  "gate_artifacts": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2099/build/dispatcher-tests/live-h_2qzf2o",
+  "sha256": {
+    "daemon-b.log": "bc85448d210c808c97cb6dd5d3fdd98aeedc6e58fed225172682079d3f0f8317",
+    "daemon-fault.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "daemon.log": "103123d1bceb1ff72541c73a954ac9750ac17382134ad5bfeaaa5a4f38f64497",
+    "phone/dispatcher.xml": "5ab4fd33ee366378f06ec2c1816c86269c623d3034e56430a7330f780aae94f9",
+    "phone/0-TEST-pixel2Api33Atd-_app-.xml": "d34e041558e2716c5f2a58d40cb46bd5f59c8fec939bce1e8e66fe325256ffb5",
+    "phone/0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn.txt": "ee68d8d98fa596a139e6c41658f4e4429cb786eee9ba5174dc2cd361a51566f5"
+  },
+  "raw_evidence": "/tmp/builder-2099/cancellation-probe",
+  "scope": "builder diagnostic capture; not dispatcher full-live acceptance"
+}

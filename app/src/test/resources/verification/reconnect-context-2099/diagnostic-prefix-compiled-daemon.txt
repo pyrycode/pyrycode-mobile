@@ -1,0 +1,13 @@
+time=2026-10-12T03:16:09.703000+03:00 event=v2.handshake.accept connHash=cb23bc82
+time=2026-10-12T03:16:09.891000+03:00 event=create_conversation.created connHash=6dd14104 conversation=1bdd681a-5bce-4fed-92f2-40eb7c3d1020
+time=2026-10-12T03:16:09.943000+03:00 event=v2.context_usage.request.refused connHash=6dd14104 conversation=1bdd681a-5bce-4fed-92f2-40eb7c3d1020 code=context_usage.unavailable
+time=2026-10-12T03:16:09.964000+03:00 event=v2.history.served connHash=6dd14104 conversation=1bdd681a-5bce-4fed-92f2-40eb7c3d1020
+time=2026-10-12T03:16:10.517000+03:00 event=rename_conversation.renamed connHash=6dd14104 conversation=1bdd681a-5bce-4fed-92f2-40eb7c3d1020
+time=2026-10-12T03:16:10.709000+03:00 event=v2.peer_close.teardown connHash=6dd14104
+time=2026-10-12T03:16:10.711000+03:00 event=send_message.enqueued connHash=cb23bc82 conversation=1bdd681a-5bce-4fed-92f2-40eb7c3d1020
+time=2026-10-12T03:16:13.025000+03:00 event=push_wake.sent conversation=1bdd681a-5bce-4fed-92f2-40eb7c3d1020
+time=2026-10-12T03:16:13.112000+03:00 event=v2.handshake.accept connHash=bde65511
+time=2026-10-12T03:16:13.957000+03:00 event=v2.history.served connHash=bde65511 conversation=1bdd681a-5bce-4fed-92f2-40eb7c3d1020
+time=2026-10-12T03:16:14.032000+03:00 event=mark_conversation_read.applied connHash=bde65511 conversation=1bdd681a-5bce-4fed-92f2-40eb7c3d1020
+time=2026-10-12T03:16:14.057000+03:00 event=v2.peer_close.teardown connHash=cb23bc82
+time=2026-10-12T03:16:14.669000+03:00 event=v2.peer_close.teardown connHash=bde65511
