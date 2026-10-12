@@ -543,13 +543,15 @@ fixed the historical symptom. The missing current close proof is resolved; see
 
 **Finished-reply partial Copy (#1674).**
 `InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord`
-requests `amber cobalt jade` in a fresh discussion, waits for the exact assistant row to be
-finalized, long-presses the independently known middle word `cobalt`, and invokes Android's
-actual system Copy action. The platform clipboard must replace unrelated baseline text with
+requests a short sentence in a fresh discussion and follows the current repository across
+reconnects until a main assistant reply is finalized. Its existing message identity locates
+the completed body. The test derives a word from the rendered paragraph's text layout,
+long-presses it, and invokes Android's actual system Copy action. The platform clipboard must replace unrelated baseline text with
 exactly that word, shorter than the reply. Its rung-4 twin is
 `DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_systemCopyCopiesSelectedWord`,
 using the seeded channel and `selection-copy.jsonl` through the real scripted harness.
-Both run on a device without substituted menu/clipboard providers or production test tags.
+Both run on a device without substituted menu or clipboard providers. The body identity tag
+selects the actual assistant renderer; it does not replace the pointer or platform action.
 The live method is in the curated full suite; run the focused deterministic scenario with
 `python3 scripts/android-test-gate.py scripted selection-copy`. `scripted-all` includes it too.
 

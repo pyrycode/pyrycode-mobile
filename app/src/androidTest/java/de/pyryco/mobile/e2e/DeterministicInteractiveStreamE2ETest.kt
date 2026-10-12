@@ -233,7 +233,11 @@ class DeterministicInteractiveStreamE2ETest {
                 }
             }
         typeAndSend(SELECTION_PROMPT)
-        composeTestRule.assertFinishedReplySystemCopy(repository, conversationId, REPLY_TIMEOUT_MS)
+        composeTestRule.assertFinishedReplySystemCopy(
+            GlobalContext.get().get<RelayRepositoryCoordinator>().currentRepository,
+            conversationId,
+            REPLY_TIMEOUT_MS,
+        )
     }
 
     /** Preparation only. A host process executes actual app death after this instrumentation exits. */

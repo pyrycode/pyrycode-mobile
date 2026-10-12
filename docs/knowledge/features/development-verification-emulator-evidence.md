@@ -144,6 +144,29 @@ without retained stage/phone evidence cannot establish which operation failed. F
 labels and lazy content-free link snapshots preserve the original timeout cause rather than
 turning a passing diagnostic run into proof of historical causation.
 
+### Live assistant reply contract
+
+Allow ordinary Claude replies to vary in wording, case, punctuation and Markdown.
+Do not prescribe a fixed answer merely to find a reply on the screen. Bind the
+assertion to the expected conversation, turn and parent agent. Then compare the
+completed recorded message with its displayed body. An older reply, user message,
+child reply or unfinished fragment must not satisfy a different turn's check.
+Follow the current repository when a connection is replaced.
+
+Keep requests precise about the actions needed to exercise the feature, such as
+running the held command or using a particular tool. Leave the accompanying prose
+open. Require exact content only when the feature depends on that content, such as
+copying the selected word, preserving file bytes or delivering a supplied marker.
+Even those checks should allow surrounding prose unless its absence is the contract.
+Use scripted fixtures for fixed rendering examples. Do not make live Claude reproduce
+an entire Markdown specimen to test the renderer.
+
+Some older live tests still locate replies by prescribed tokens. These are migration
+work, not the recommended pattern. Replacing their token checks with any nonempty
+reply would weaken them. Retain turn ownership, completion, ordering and duplicate
+checks when removing the wording requirement. See the bounded repairs in
+[the reliability investigation](../../specs/architecture/2101-live-reply-contract.md).
+
 An instrumented test proves behavior in its fixture. It does not prove camera
 binding, lifecycle timing, relay compatibility or a real daemon round trip. The
 dispatcher runs the UI gate and each zero-real-Claude scripted scenario before

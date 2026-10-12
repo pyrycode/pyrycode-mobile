@@ -265,7 +265,11 @@ private fun AssistantMessage(
             // specifies — the frame's short assistant instance (`I533:1956;132:4539`) is 205dp. Without
             // it `MarkdownText`'s `Column` wraps its widest child, while `CodeBlock` carries its own
             // `fillMaxWidth()`, so a fenced block still spans the bubble and only prose hugs.
-            MarkdownText(markdown = message.content, onOpenMarkdownPath = onOpenMarkdownLink)
+            MarkdownText(
+                markdown = message.content,
+                onOpenMarkdownPath = onOpenMarkdownLink,
+                modifier = Modifier.testTag("assistant-reply:${message.id}"),
+            )
         }
     }
 }
