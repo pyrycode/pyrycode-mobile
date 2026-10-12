@@ -4854,20 +4854,22 @@ class InteractiveStreamE2ETest {
             block: () -> T,
         ): T = reconnectFooterStep(stage, { Log.i("ReconnectFooter", it) }, ::snapshot, block)
 
-        try {
+        reconnectFooterScenario(cleanup = { step(ReconnectFooterStage.CleanupSettings) { restoreSettings(originals) } }) {
             // 1. One real turn in a fresh chat; the footer shows the post-turn context reading.
             step(ReconnectFooterStage.AwaitList) { awaitChannelList() }
             step(ReconnectFooterStage.AwaitConnection) { awaitConnected() }
             step(ReconnectFooterStage.ClearRememberedEffort) { clearRememberedEffort() }
             val name = RECONNECT_FOOTER_NAME_PREFIX + System.currentTimeMillis()
             val fixtureRepository = step(ReconnectFooterStage.FixtureRepository) { hostRepository() }
-            val created =
-                step(ReconnectFooterStage.CreateChat) {
-                    runBlocking { withTimeout(THREAD_TIMEOUT_MS) { fixtureRepository.createDiscussion() } }
-                }
             val chat =
-                step(ReconnectFooterStage.RenameChat) {
-                    runBlocking { withTimeout(THREAD_TIMEOUT_MS) { fixtureRepository.rename(created.id, name) } }
+                runBlocking {
+                    reconnectFooterFixture(
+                        THREAD_TIMEOUT_MS,
+                        { Log.i("ReconnectFooter", it) },
+                        ::snapshot,
+                        create = { fixtureRepository.createDiscussion() },
+                        rename = { fixtureRepository.rename(it.id, name) },
+                    )
                 }
             originals[chat.id] = step(ReconnectFooterStage.InitialSettings) { freshSettings(chat.id) }
             step(ReconnectFooterStage.OpenChat) { openChatRow(name) }
@@ -4993,8 +4995,6 @@ class InteractiveStreamE2ETest {
             step(ReconnectFooterStage.ChangedModelSettings) {
                 assertEquals("the saved model after the change", target.value, freshSettings(chat.id).model)
             }
-        } finally {
-            step(ReconnectFooterStage.CleanupSettings) { restoreSettings(originals) }
         }
     }
 

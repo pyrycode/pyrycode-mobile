@@ -1,5 +1,7 @@
 package de.pyryco.mobile.e2e
 
+import kotlinx.coroutines.withTimeout
+
 /** Static operation names: diagnostics never contain settings, prompts or pairing material. */
 internal enum class ReconnectFooterStage {
     AwaitList,
@@ -36,6 +38,40 @@ internal enum class ReconnectFooterStage {
     ChangedModelFooter,
     ChangedModelSettings,
     CleanupSettings,
+    CleanupRememberedEffort,
+}
+
+internal suspend fun <T> reconnectFooterFixture(
+    timeoutMs: Long,
+    record: (String) -> Unit,
+    snapshot: () -> String,
+    create: suspend () -> T,
+    rename: suspend (T) -> T,
+): T =
+    withTimeout(timeoutMs) {
+        val created = reconnectFooterStep(ReconnectFooterStage.CreateChat, record, snapshot) { create() }
+        reconnectFooterStep(ReconnectFooterStage.RenameChat, record, snapshot) { rename(created) }
+    }
+
+internal inline fun <T> reconnectFooterScenario(
+    cleanup: () -> Unit,
+    block: () -> T,
+): T {
+    var primaryFailure: Throwable? = null
+    return try {
+        block()
+    } catch (failure: Throwable) {
+        primaryFailure = failure
+        throw failure
+    } finally {
+        try {
+            cleanup()
+        } catch (cleanupFailure: Throwable) {
+            val original = primaryFailure
+            if (original == null) throw cleanupFailure
+            original.addSuppressed(cleanupFailure)
+        }
+    }
 }
 
 internal inline fun <T> reconnectFooterStep(
