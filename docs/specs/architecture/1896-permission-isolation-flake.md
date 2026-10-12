@@ -55,10 +55,11 @@ Safe retained evidence lives under `app/src/test/resources/e2e/permission-isolat
 - `focused-diagnostic-pass.{txt,xml}`: builder selection, 1 executed/1 passed/0 failed/0 skipped.
 - `shared-process-diagnostic-pass.{txt,xml}`: builder selection, 3 executed/3 passed/0 failed/0 skipped.
 - `direct-predecessor-diagnostic-pass.{txt,xml}`: builder selection, 2 executed/2 passed/0 failed/0 skipped.
+- `dispatcher-full-live-pass.{txt,xml}`: 2026-10-12 dispatcher full suite, 65 executed/65 passed/0 failed/0 skipped; includes the named permission-isolation method.
 
 The counted XML contains method names and outcomes only; excerpts contain fixed stages, revisions, counts and artifact locations only. Raw frame/prompt/clipboard content, keys, tokens and pairing codes are excluded. Original gate artifacts are gone; historical builder artifact paths in the excerpts are provenance, not a promise those temporary directories survive.
 
-The 2026-10-12 dispatcher full live run passed: 65 executed/passed, 0 failed/errors/skipped, including `interactiveTurn_permissionPrompts_heldPerConversation`. Its durable stdout XML, stderr and metadata are under `$AGENTS_REPO_PATH/logs/2026-10-12T20-20-20-895Z_real-claude-gate_#1896.{log,stderr.log,meta.log}`. The exact usable records will be retained as sanitized `dispatcher-full-live-pass.xml` (all counted method outcomes) and `dispatcher-full-live-pass.txt` (counts, revisions, source hashes and artifact availability), separate from builder selections.
+The 2026-10-12 dispatcher full live run passed: 65 executed/passed, 0 failed/errors/skipped, including `interactiveTurn_permissionPrompts_heldPerConversation`. Its durable stdout XML, stderr and metadata are under `$AGENTS_REPO_PATH/logs/2026-10-12T20-20-20-895Z_real-claude-gate_#1896.{log,stderr.log,meta.log}`. The exact usable records are retained as sanitized `dispatcher-full-live-pass.xml` (all counted method outcomes) and `dispatcher-full-live-pass.txt` (counts, revisions, source hashes and artifact availability), separate from builder selections.
 
 The temporary `real-claude-gate-1896/build/dispatcher-tests/live-ki7gd6v9` directory and `/tmp/pyry-e2e-ans.Z7u8UW` answer-daemon directory no longer exist. Surviving stderr contains no `PermissionIsolation` stage lines; per-test XML/logcat and matching answer-daemon evidence cannot be recovered from these records. Do not reconstruct or claim those captures. No reader or schema consumes these resource files; retain the existing counted-JUnit format without changing a test or harness contract. Remove `needs-live-artifacts` only after the usable records are committed and pushed; preserve `needs-real-claude`, `## Live tests` = `all`, and the separate requirement for renewed dispatcher review/live validation. The next gate must preserve private XML, phone logs, matching daemon diagnostics and a hash manifest under `$AGENTS_REPO_PATH/logs/evidence/1896/<run>/` before worktree cleanup, with checked content-free summaries published separately.
 
@@ -78,7 +79,7 @@ None within this diagnostic checkpoint. The historical failing operation and cau
 
 - [Trust boundaries] Fixed enum labels and `SecondClientPeer.linkState` are the only added diagnostic inputs. Decrypted modal text stays solely in the existing typed decoder and UI matcher.
 - [Tokens] No credential generation/storage changes. The gate alone retrieves its test login; diagnostics never read pairing arguments or token fields.
-- [Files and storage] Sanitized evidence uses fixed repository paths under test resources; no wire data constructs filenames. Existing private key stores are unchanged.
+- [Files and storage] Sanitized evidence uses fixed repository paths under test resources; no wire data constructs filenames. Surviving dispatcher records are copied privately to the persistent agents volume with owner-only directory/file modes and a verified SHA-256 manifest. Raw stderr is never committed. Existing private key stores are unchanged.
 - [Android attack surface] No component, intent, provider, capture policy or permission changes; instrumentation remains test-only.
 - [Cryptography] Noise handshake, identity binding and nonce lifetime remain unchanged.
 - [Network and I/O] All original deadlines and isolated harness identity remain. A delayed/malicious relay still fails a bounded wait rather than a retry masking failure.
@@ -87,7 +88,7 @@ None within this diagnostic checkpoint. The historical failing operation and cau
 - [Threat model] Relay delay/drop is diagnosed without plaintext disclosure; hostile daemon text is not logged. Rooted-disk theft and UI-side screenshot/accessibility leakage retain existing Keystore/capture protections outside this test-only change. No new mitigation is claimed.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
-**Date:** 2026-10-10
+**Date:** 2026-10-12 (evidence-retention review; original diagnostic design reviewed 2026-10-10)
 
 ## Revisions
 
