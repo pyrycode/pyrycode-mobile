@@ -155,6 +155,13 @@ background options because the existing probe uses them to identify the held tas
 Acknowledgment wording stays open. Task arrival, retained membership, real phone
 Stop, completion and the later reply keep their existing assertions.
 
-The earlier Mac full pass precedes this request-only change. A focused HP live
-capture must exercise the corrected setup and complete Stop before this new change
-can claim live verification. The raw failed session stays in private evidence.
+The earlier Mac full pass precedes this request-only change. The focused HP live
+capture at combined revision `e1fe1bbb2aacf00715d0680092880712fab383b3` then passed:
+one executed, zero failures, errors or skips, with no retries. It exercised the
+corrected setup, real Stop action and later reply against backend `9c9cd5a25`.
+This validates the diagnosed request repair, not the older missing-permission
+failure or the complete HP suite. The raw failed session and both captures stay
+in private evidence under `.mobile-reliability-20261012.iEsmXs`, with the focused
+run in its `stop-context` folder. The full HP run before this request change
+executed all 65 cases with 62 passes and three failures. Its other two failures
+were Firebase registration in the background-push scenarios.
