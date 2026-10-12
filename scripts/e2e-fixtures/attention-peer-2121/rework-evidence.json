@@ -1,0 +1,95 @@
+{
+  "date": "2026-10-12",
+  "verdict_commit": "85a55121c41b9f89e9cd9d4ed02fec742a85ce0e",
+  "finding_1_status": "unresolved; focused passing executions are not a diagnosed repair",
+  "historical_scripted_gate": {
+    "source": "/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/verifier-gate_#2121_8.log",
+    "source_sha256": "667ca381340a81c411dd1b9df616b00ff77b65f9207658df155b671c67f0edbb",
+    "retained": "rework-original-scripted-gate-counted.xml",
+    "executed": 22,
+    "passed": 21,
+    "failed": 1,
+    "errors": 0,
+    "skipped": 0,
+    "exit": 1,
+    "stage": "initial control HTTP request; before recovery assertions",
+    "control_port": 56406,
+    "private_fixture_log_bytes": 0,
+    "original_device_xml_available": false
+  },
+  "fresh_controls": [
+    {
+      "mode": "managed",
+      "source": "build/dispatcher-tests/scripted-1o5n58hx/dispatcher.xml",
+      "source_sha256": "328abe0013c158374339728683f3e2d920583e82ee307926d4cae6b8749a190b",
+      "retained": "rework-managed-counted.xml",
+      "exit": 0,
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "named_method": "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog",
+      "mobile_head": "85a55121c41b9f89e9cd9d4ed02fec742a85ce0e",
+      "working_tree_changes": "none"
+    },
+    {
+      "mode": "installed",
+      "source": "build/dispatcher-tests/scripted-all-k0cdvsy1/dispatcher.xml",
+      "source_sha256": "8da4284db2ef21b2719b83e977805b3e6e1dee952f30108de6fc5c709deefddc",
+      "retained": "rework-installed-counted.xml",
+      "exit": 0,
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "named_method": "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog",
+      "mobile_head": "85a55121c41b9f89e9cd9d4ed02fec742a85ce0e",
+      "working_tree_changes": "none"
+    },
+    {
+      "mode": "installed-original-port",
+      "source": "build/dispatcher-tests/scripted-all-edyn_438/dispatcher.xml",
+      "source_sha256": "8da4284db2ef21b2719b83e977805b3e6e1dee952f30108de6fc5c709deefddc",
+      "retained": "rework-original-port-counted.xml",
+      "exit": 0,
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "named_method": "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog",
+      "mobile_head": "85a55121c41b9f89e9cd9d4ed02fec742a85ce0e",
+      "fixture_port": 56406,
+      "experimental_change": "controller bound original failure port instead of kernel-selected port; reverted after the run",
+      "working_tree_changes": "shared validator extraction plus temporary original-port experiment; no Android changes"
+    }
+  ],
+  "daemon": {
+    "daemon_revision": "5d931a3b9eb5b03101373928e88d418742ac1ddd",
+    "daemon_sha256": "8fa988389cf2c7fd54e764a2ea34288c1621555b46985fe848813dc56cb53dbb",
+    "build_tag": "e2e_realclaude",
+    "scripted": true,
+    "retained_give_up": "default",
+    "dropped_give_up": "3s"
+  },
+  "device": "pixel2Api33Atd",
+  "real_claude_turns": 0,
+  "reproduction_driver": "rework-focused-installed.py.txt",
+  "limitations": [
+    "The passing merge-base comparison used a managed device. The new installed-app control and original-port control also pass; no transport/controller cause is established.",
+    "No assertion, timeout, retry or scenario was changed.",
+    "The original controller port record survives privately, but the removed verifier worktree no longer contains its device XML or logcat.",
+    "The shared revision checks return before validation in non-live mode."
+  ],
+  "harness_regressions": {
+    "command": "python3 -m unittest scripts.test_e2e_attention_prerequisite scripts.test_e2e_emulator_gradle",
+    "executed": 39,
+    "passed": 39,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "exit": 0
+  }
+}
