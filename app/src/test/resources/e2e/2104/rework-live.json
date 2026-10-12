@@ -14,7 +14,34 @@
   "completed_stages": 34,
   "clock_correlation": "Raw phone/host clock offsets not calibrated.",
   "full_live_proof": "Pending dispatcher full live gate and builder artifact return; both live labels retained.",
-  "daemon_events": [],
+  "daemon_events": [
+    {
+      "time": "2026-10-12T09:24:05.739Z",
+      "event": "v2.handshake.accept"
+    },
+    {
+      "time": "2026-10-12T09:24:10.336Z",
+      "event": "v2.peer_close.teardown",
+      "close_code": "1000"
+    },
+    {
+      "time": "2026-10-12T09:24:11.020Z",
+      "event": "v2.handshake.accept"
+    },
+    {
+      "time": "2026-10-12T09:24:44.876Z",
+      "event": "v2.settings.updated"
+    },
+    {
+      "time": "2026-10-12T09:24:45.318Z",
+      "event": "v2.settings.updated"
+    },
+    {
+      "time": "2026-10-12T09:24:46.242Z",
+      "event": "v2.peer_close.teardown",
+      "close_code": "1000"
+    }
+  ],
   "sources": [
     {
       "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/live-rgoj9dyc/dispatcher.xml",
