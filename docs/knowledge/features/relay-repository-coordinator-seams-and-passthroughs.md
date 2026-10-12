@@ -147,67 +147,42 @@ val liveSessionEvents: Flow<LiveSessionEvent> =
 
 ## Modal event seam (#445) and the hoisted hostModals fold (#492)
 
-The decoded [`ModalEvent`](modal-events.md) stream ([#437](../codebase/437.md)) lives on the **concrete**
-`RemoteConversationRepository.modalEvents` (`replay = 0`, connection-scoped, **not** on the interface) —
-the same posture as `liveSessionEvents`, so a UI ViewModel cannot reach it directly. The coordinator
-threads it up as a **byte-for-byte mirror** of the live-session seam — switching off the same single
-`activeConnection` source (`conn?.repo`) — and, as of [#492](../codebase/492.md), **folds it here** into
-a host-level projection. **[#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md) widened
-that projection from one modal to [`HostModalState`](current-modal-state.md), holding every outstanding
-prompt on the host, keyed on `modalId`** — see [Current-modal state](current-modal-state.md) for the full
-design; this section only covers the seam shape:
+The coordinator publishes one eagerly collected `hostModals: StateFlow<HostModalState>`
+per host, containing every outstanding permission request and resolved identities.
+Collection follows the single `activeConnection` and reselects its source when the
+owning pump reaches Open, after capability negotiation (#2084).
 
-```kotlin
-// #492: PRIVATE — its sole consumer is hostModals below. #1337 widens the element type to ModalEvent? and
-// prefixes each connection's inner flow with a null "this connection just started" marker.
-@OptIn(ExperimentalCoroutinesApi::class)
-private val modalEvents: Flow<ModalEvent?> =
-    activeConnection.flatMapLatest { conn -> conn?.repo?.modalEvents?.onStart<ModalEvent?> { emit(null) } ?: emptyFlow() }
+- **Supplied route:** the repository folds admitted events immediately into
+  `authoritativeHostModals`. The coordinator collects this held state rather than the
+  replay-zero `modalEvents` stream, preserving local `rejectedConversations`. A prompt
+  received before subscription is therefore still visible. Folding only the event
+  stream loses that request even with an eager coordinator if admission wins the race.
+- **Legacy route:** the coordinator calls `reconnected()` before collecting the fresh
+  repository's `modalEvents`, then reduces each event into its host state. This retains
+  #1337's reconnect reset and existing event semantics without a second inbound consumer.
+- **Local actions:** `recordModalAction` forwards to the active repository's supplied
+  fold and updates coordinator state synchronously. Otherwise a later held-state emission
+  could overwrite a local dismissal or draft/action state. The model fold emits no logs.
+- **Teardown/reconnect:** plain teardown retains held permission presentation, while
+  sends fail without an active connection. A fresh repository supplies its own outstanding
+  set; historical answered items never rebuild actionable state. Question batches remain
+  connection-owned and switch to empty on teardown/reconnect. Family/session retirement
+  removes only the owning conversation's requests, retaining resolved/retired identities;
+  it never sends an answer.
 
-// #1337: every outstanding prompt + this connection's resolved ids, folded once per coordinator. A null
-// input (the reconnect marker) resets to an empty HostModalState.
-val hostModals: StateFlow<HostModalState> =
-    modalEvents
-        .scan(HostModalState()) { state, event -> if (event == null) HostModalState() else state.reduce(event) }
-        .stateIn(scope, SharingStarted.Eagerly, HostModalState())
-```
+Outbound supplied permission/question actions require an outstanding admitted identity
+in the concrete repository. The ViewModel's captured request ids/generations and
+synchronous scoped checks prevent a callback for a retired request from acting on its
+replacement. History/catch-up remains inert even for actual `notice` / `prompt_answered`
+records; reconnect needs newly supplied outstanding requests, with no action replay.
+See [session retirement](remote-conversation-repository-status-projections.md#supplied-session-ownership-and-family-retirement-2084)
+and [supplied screen inputs](thread-screen.md#supplied-session-readings-and-presentation-2084).
 
-- **`modalEvents` is cold and now `private`** — events, no current value. The fold that holds "which
-  prompts are currently open" moved here in #492 from [`ThreadViewModel`](current-modal-state.md): folding
-  it at a screen-scoped VM dropped any `modal_shown` fired before a thread screen subscribed (the source is
-  `replay = 0`), so an outstanding prompt stayed stuck daemon-side while the phone rendered nothing. After
-  the hoist nothing outside the coordinator reads the raw event stream, so it was demoted to `private`; its
-  element type widened to `ModalEvent?` in #1337 for the reconnect marker is invisible past `hostModals`.
-- **`hostModals` mirrors `currentRepository` / `connectionStatus`** — accumulate a `replay = 0`-derived
-  stream `Eagerly` on the coordinator `scope` so `.value` is always the true current projection. Started
-  `Eagerly` (not `WhileSubscribed`) is load-bearing: `scan` re-emits its seed on every fresh collection, so
-  a resubscribe past a stop window would overwrite retained prompts with an empty `HostModalState`, and the
-  `replay = 0` source won't replay to rebuild it (full rationale in [Current-modal
-  state](current-modal-state.md#why-eagerly-not-whilesubscribed)). As of [#1338](current-modal-state.md#related)
-  nothing derives a single-value `currentModal` on top any more — every reader, including the
-  conversation-list attention readers (§ below), takes `hostModals.outstanding` directly. The pure
-  `HostModalState.reduce` lives in `data/model` (moved there in #492, before the #1337 widening, so this
-  `data`-layer coordinator can see it) and emits **no log** (modal fields may name a sensitive
-  command/path).
-- **Reconnection-surviving; retains across a plain teardown; clears on a *new* connection (revised by
-  #1337).** `flatMapLatest` switches to the fresh repo's `modalEvents` (prefixed with the `onStart { emit(null) }`
-  marker) on each new connection and cancels the prior; `emptyFlow()` between connections. The `.scan` sits
-  **downstream** of `flatMapLatest`, so a connection drop alone does **not** restart it — every held prompt
-  is **retained**, not reset (the #492 teardown decision, unchanged: the answer path is guarded by the
-  deterministic `answerModal`/`cancelModal` null-guard, never by this UI projection, so retaining a stale
-  prompt can't send an answer on a dead connection). What #1337 adds: when `activeConnection` switches to a
-  *fresh* `Connection`, the reconnect marker is the first emission of that connection's inner flow, so it
-  folds to an empty `HostModalState` strictly before that connection's first `modal_shown` is collected.
-  This is safe because the daemon guarantees a connect-time re-send of every still-outstanding prompt
-  (`protocol-mobile.md` § Reconcile on (re)connect) — see [Current-modal state §
-  Lifecycle](current-modal-state.md#lifecycle-errors-edge-cases) for the full ordering proof.
-- `AppModule` passes the registry's selected-host `hostModals` projection into `ThreadViewModel` and
-  `PermissionDraftStore.bind`. As of [#1338](current-modal-state.md#related) `RelayConnectionRegistry` wires
-  each host's own `coordinator.hostModals` into that host's `HostConversationConnection` instead of a
-  selection-scoped single value — `HostAttentionState.resolve` and `HostConversationSource.promptKeys` take
-  the outstanding list directly, and `RelayConnectionRegistry.currentModal` is gone (it had no production
-  reader). Every retained coordinator keeps folding its own host's prompts even while another host is
-  selected; overlapping modal ids on different hosts never share an accumulator.
+`AppModule` passes the registry's host-scoped projection into `ThreadViewModel` and
+`PermissionDraftStore.bind`. Each retained coordinator holds its own host's prompts
+while another host is selected; identical request ids on different hosts share no fold.
+The conversation-list attention readers use the outstanding list, and no selection-
+scoped `currentModal` supplies authority. See [Current-modal state](current-modal-state.md).
 
 ## Question-batch projection (#822)
 

@@ -40,6 +40,11 @@ internal class ReplySuggestionProjection {
         sessionId: String,
     ): Flow<ReplySuggestion?> = readings.map { it[conversationId to sessionId] }.distinctUntilChanged()
 
+    /** Retire only this conversation's session-scoped reading. */
+    fun clear(conversationId: String) {
+        readings.update { it.filterKeys { key -> key.first != conversationId } }
+    }
+
     /** Releases all text and watermarks when the connection's inbound consumer terminates. */
     fun reset() {
         if (readings.getAndUpdate { emptyMap() }.isNotEmpty()) {

@@ -18,6 +18,11 @@ import kotlinx.coroutines.flow.update
  * conversation idle until the daemon reports a phase again, the effect of desktop's `reconnected` reset.
  */
 internal class TurnPhaseProjection {
+    /** Retire only this conversation's session-scoped reading. */
+    fun clear(conversationId: String) {
+        phases.update { it - conversationId }
+    }
+
     /**
      * The conversations whose latest phase is not idle. Absent means idle, so a conversation never heard
      * from and one whose turn ended read the same. Written only from the repository's single inbound

@@ -100,8 +100,17 @@ internal class ConversationListProjection(
                     ConversationReadMarks(row.readUpTo, row.latestEntryId, row.lastShownVersion, threadSupported()),
                 )
             }
-            // List DTOs omit session identity; only the transition fold can replace a known binding.
-            val rows = decoded.toConversations().map { it.copy(currentSessionId = sessions[it.id].orEmpty()) }
+            // Only negotiated thread summaries carry authoritative session bindings.
+            val bindings =
+                if (threadSupported()) {
+                    decoded.conversations.associate {
+                        it.id to
+                            it.currentSessionId?.takeIf { value -> value.isString }?.content
+                    }
+                } else {
+                    emptyMap()
+                }
+            val rows = decoded.toConversations().map { it.copy(currentSessionId = bindings[it.id] ?: sessions[it.id].orEmpty()) }
             current.copy(rows = rows, readMarks = marks)
         }
         snapshotLoaded.value = true
