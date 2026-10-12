@@ -40,5 +40,7 @@ expected queued ID was never sent. It passes with the reveal helper. All 19 focu
 queued routing, geometry and new pointer tests pass. Android-test compilation
 passes. See the content-free [evidence record](../../../app/src/androidTest/assets/send-now-2056/evidence.txt).
 The complete debug unit suite passed all 5503 tests with no failures or skips.
-Lint, debug build, formatting, docs guard and pre-verification passed. Fresh device
-checks and the required full live gate remain pending.
+Lint, debug build, formatting, docs guard and pre-verification passed. The exact
+code commit c904f2e4e passed one managed live Send now case and one scripted send-now
+case, with no failures or skips. No retries ran. The complete combined live gate
+remains required.

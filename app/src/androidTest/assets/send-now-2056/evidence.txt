@@ -38,3 +38,12 @@ assertions remain unchanged.
 Controlled XML hashes:
 e623146edfd0b6515a2054cc0943c0242313379bf2c7b031621b8f02b1e35d4e  /private/tmp/send-now-2056-red.xml
 06a84b8cec906a56a13e801fa3a9a492923890c3fde46558d86ef1e31c093a27  /private/tmp/send-now-2056-green.xml
+
+Fresh managed checks at c904f2e4e, daemon 9c9cd5a25:
+  live Send now: 1 executed, 1 passed, 0 failed/errors/skipped
+  scripted send-now: 1 executed, 1 passed, 0 failed/errors/skipped
+  no retries
+  private evidence: mobile-send-now-repaired-20261012 and
+                    mobile-send-now-scripted-20261012
+  Each folder contains raw XML, phone/daemon logs and phone checksums.
+  The full combined live gate remains pending.
