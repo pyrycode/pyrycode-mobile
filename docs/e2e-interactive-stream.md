@@ -1436,6 +1436,20 @@ methods stay excluded. With #1208's tool-use method and #1286's Offline Retry pr
 `scripts/e2e-emulator.sh` now lists 44 runnable methods and `android-test-gate.py` requires
 44 executed tests. Script tests check the floor and the
 restored methods' explicit presence, as well as excluding ignored methods.
+The real primary test daemon explicitly launches with `--model sonnet`. The recommended
+`default` menu row can differ from an ambient launch default. The archived failure used
+Haiku despite selecting an effort level from the recommended Sonnet row. Scripted launches
+remain unchanged. This base argument does not save a Mobile model; explicit per-session
+model choices still override it. Applied effort must remain a fresh child-reported fact.
+
+The 2026-10-12 combined full managed live gate passed all 65 curated methods, including
+all three effort scenarios, with no failures, errors, skips or retries. The operator ran
+that gate while both Mobile dispatchers remained paused. The exact Mobile/backend
+revisions, Claude version and private XML/logcat references with hashes are retained in
+[`live-result.json`](../app/src/test/resources/e2e/2095/live-result.json). The combined
+candidate also includes reply and Send now repairs and an experimental Copy action.
+That evidence does not establish the separate historical Copy failure's cause.
+
 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` (**one** turn) starts a chat with no
 saved or remembered effort, sends the ping prompt, and asserts the next fresh reply carries
 `effective_effort` (an omitted key fails the method) and a non-empty `permissionMode`. Since
