@@ -33,8 +33,10 @@ internal fun <T> permissionHeldStep(
         return block().also { record("$event status=completed") }
     } catch (failure: Throwable) {
         record("$event status=failed")
-        if (failure is TimeoutCancellationException || failure is ComposeTimeoutException ||
-            failure is AssertionError && failure.cause is TimeoutCancellationException
+        if (failure is TimeoutCancellationException ||
+            failure is ComposeTimeoutException ||
+            failure is AssertionError &&
+            failure.cause is TimeoutCancellationException
         ) {
             throw AssertionError("Permission-held tool stage=$stage timed out; ${snapshot()}", failure)
         }
