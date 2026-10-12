@@ -77,3 +77,7 @@ Write failing JVM tests first for the pure parser and wrapper; run `LaterReplyDi
 
 **Reviewer:** builder self-review per `builder/security-review.md`
 **Date:** 2026-10-12
+
+## Revisions
+
+- 2026-10-12: preserve the original send-to-wait deadline by subtracting after-send capture elapsed time from the existing wait budget. Record send-return separately; sender acknowledgement is unknown because the repository does not expose it. Baseline turn hashes and baseline exact-row hashes make exclusion reviewable. Malformed/conflicting/missing delta sequences cannot establish either an exact or completed-different answer.

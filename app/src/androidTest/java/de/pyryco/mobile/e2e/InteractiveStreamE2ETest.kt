@@ -5510,6 +5510,7 @@ class InteractiveStreamE2ETest {
         val preferences = GlobalContext.get().get<AppPreferences>()
         val previousCollapse = runBlocking { preferences.collapseToolUses.first() }
         val allowed = mutableSetOf<String>()
+        var scenarioFailure: Throwable? = null
         try {
             runBlocking { preferences.setCollapseToolUses(true) }
             awaitChannelList()
@@ -5677,10 +5678,100 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodesWithText(string(R.string.agent_finished)).fetchSemanticsNodes().isNotEmpty()
             }
             val later = "Reply exactly later1783."
-            sendFromPhone(later)
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(inThreadList("later1783"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
-            }
+            // #2114: read the owning host directly, independently of peer delivery and list composition.
+            val repository =
+                GlobalContext
+                    .get()
+                    .get<RelayConnectionRegistry>()
+                    .connectionFor(serverId)
+                    ?.coordinator
+                    ?.currentRepository
+                    ?.value
+
+            fun <T> diagnosticRead(read: suspend () -> T): T? =
+                runCatching { runBlocking { withTimeoutOrNull(1_000) { read() } } }.getOrNull()
+            var sampledRows: List<ThreadItem>? = diagnosticRead { repository?.observeMessages(chat)?.first() }
+            val probe = LaterReplyProbe(later, "later1783", runCatching { peer.recorded(chat) }.getOrNull(), sampledRows)
+            var sentAtNs = 0L
+            observeLaterReply(
+                send = {
+                    sendFromPhone(later)
+                    sentAtNs = System.nanoTime()
+                    Log.i(
+                        "LaterReplyProof",
+                        "event=later_phone_send_returned phone_epoch_ms=${System.currentTimeMillis()} phone_ns=$sentAtNs",
+                    )
+                },
+                wait = {
+                    val elapsedMs = (System.nanoTime() - sentAtNs) / 1_000_000
+                    composeTestRule.waitUntil((REPLY_TIMEOUT_MS - elapsedMs).coerceAtLeast(1)) {
+                        composeTestRule.onAllNodes(inThreadList("later1783"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                    }
+                },
+                capture = { stage ->
+                    recordLaterReply(
+                        stage,
+                        peer = {
+                            probe.peer(peer.recorded(chat)).copy(
+                                link =
+                                    when {
+                                        peer.linkState().startsWith("session open") -> "open"
+                                        peer.linkState().startsWith("session closed") -> "closed"
+                                        else -> "redialing"
+                                    },
+                            )
+                        },
+                        repository = {
+                            if (stage != "baseline") sampledRows = diagnosticRead { repository?.observeMessages(chat)?.first() }
+                            val queue = diagnosticRead { repository?.observeQueue(chat)?.first() }
+                            val phase = diagnosticRead { repository?.observeTurnPhase(chat)?.first() }
+                            sampledRows?.let {
+                                probe.repository(it).copy(
+                                    queuedMessages = queue?.filter { it.text == later }?.map { laterReplyHash(it.messageId) },
+                                    phase = phase?.name ?: "unknown",
+                                )
+                            }
+                        },
+                        composition = {
+                            val exact = hasText("later1783")
+                            val exactNodes =
+                                runCatching {
+                                    composeTestRule
+                                        .onAllNodes(
+                                            exact,
+                                            useUnmergedTree = true,
+                                        ).fetchSemanticsNodes()
+                                        .size
+                                }.getOrNull()
+                            val listNodes =
+                                runCatching {
+                                    composeTestRule.onAllNodes(inThreadList("later1783"), useUnmergedTree = true).fetchSemanticsNodes().size
+                                }.getOrNull()
+                            val displayed =
+                                runCatching {
+                                    val nodes = composeTestRule.onAllNodes(exact, useUnmergedTree = true)
+                                    (0 until (exactNodes ?: error("unknown"))).count { nodes[it].isDisplayed() }
+                                }.getOrNull()
+                            val indices =
+                                runCatching {
+                                    val indexForKey =
+                                        composeTestRule
+                                            .onAllNodes(hasScrollToNodeAction())
+                                            .onFirst()
+                                            .fetchSemanticsNode()
+                                            .config[SemanticsProperties.IndexForKey]
+                                    sampledRows
+                                        ?.filterIsInstance<ThreadItem.MessageItem>()
+                                        ?.map { it.message }
+                                        ?.filter { it.role == Role.Assistant && it.parentToolUseId.isEmpty() && it.content == "later1783" }
+                                        ?.associate { laterReplyHash(it.id) to indexForKey("msg:${it.id}") }
+                                }.getOrNull()
+                            LaterReplyComposition(exactNodes, listNodes, displayed, indices)
+                        },
+                        retain = { Log.i("LaterReplyProof", "event=later_reply sender_ack=unknown $it") },
+                    )
+                },
+            )
             composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
             composeTestRule.onNodeWithText(string(R.string.agent_finished)).assertIsDisplayed()
             val ownedMessages =
@@ -5751,14 +5842,20 @@ class InteractiveStreamE2ETest {
             val laterIndex = indexForKey("msg:$laterId")
             assertTrue("settled Agent ($agentIndex) and later message ($laterIndex) must be listed", agentIndex >= 0 && laterIndex >= 0)
             assertTrue("later phone message must render below the settled Agent", laterIndex < agentIndex)
+        } catch (failure: Throwable) {
+            scenarioFailure = failure
+            throw failure
         } finally {
-            try {
-                stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release-tools")
-                stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release")
-            } finally {
-                runBlocking { preferences.setCollapseToolUses(previousCollapse) }
-                peer.close()
-            }
+            cleanupLaterReply(
+                scenarioFailure,
+                listOf(
+                    { stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release-tools") },
+                    { stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release") },
+                    { runBlocking { withTimeout(1_000) { preferences.setCollapseToolUses(previousCollapse) } } },
+                    { peer.close() },
+                ),
+                failed = { Log.w("LaterReplyProof", "event=later_reply_cleanup outcome=failed") },
+            )
         }
     }
 
