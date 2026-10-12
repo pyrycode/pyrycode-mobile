@@ -69,8 +69,8 @@ its fixed reply, while both callers follow the current connection.
 ## Remaining wording audit
 
 The agent and Copy repairs do not complete migration of the live suite. Shared ping
-checks still prescribe a token across many scenarios. Offline catch-up, queue ordering,
-the channel-instructions test also uses fixed prose as reply identity.
+checks still prescribe a token across many scenarios. Offline catch-up, queue ordering and
+the channel-instructions test also use fixed prose as reply identity.
 Migrate each through its actual turn and message before relaxing the prompt. In particular,
 a prior completed message must not satisfy a follow-up or reconnect check.
 
@@ -87,7 +87,21 @@ It then requires a new completed turn, that turn's settled main reply through th
 current connection, and exactly one visible body with the recorded message ID.
 The held task, real Stop action, completion observation and cleanup are unchanged.
 The existing three reply-completeness and ownership tests pass, as does Android-test
-compilation. Fresh live validation of this extension remains pending.
+compilation. The fresh combined live gate executed and passed this method.
+
+## Combined acceptance evidence
+
+Mobile d92a2f4e8d7950db249d34a59dfed3d394c9db98 with backend
+9c9cd5a25c337666bdbed47c29202e695a172733 passed all 65 curated live tests and
+all 22 scripted tests on 2026-10-12. Both runs had zero failures, errors, skips or
+retries. The combined branch includes this PR, effort PR 2111, Send now PR 2134
+and a private experimental native Copy tap. All four live methods named by this
+PR ran and passed. The Copy tap remains under causal investigation; this is
+integration evidence, not a claim that the original Copy flake is repaired.
+
+Raw XML, phone logs and hashes are retained privately in the Mobile agents
+evidence folders `mobile-combined-live-20261012` and
+`mobile-combined-scripted-20261012`. Both Mobile dispatchers remain paused.
 
 ## Security review
 
