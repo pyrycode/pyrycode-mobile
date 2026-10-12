@@ -66,6 +66,19 @@ not treated as displayed text. Retain the real long press, Android Copy menu, un
 clipboard baseline and exact selected-word clipboard assertion. The controlled fixture keeps
 its fixed reply, while both callers follow the current connection.
 
+## Remaining wording audit
+
+The agent and Copy repairs do not complete migration of the live suite. Shared ping
+checks still prescribe a token across many scenarios. Offline catch-up, queue ordering,
+post-Stop replies and the channel-instructions test also use fixed prose as reply identity.
+Migrate each through its actual turn and message before relaxing the prompt. In particular,
+a prior completed message must not satisfy a follow-up or reconnect check.
+
+Keep exact copied words, sent payloads, file bytes, protocol fields and the mid-turn
+marker where those values are the feature being exercised. Fixed Markdown layout
+specimens belong in the scripted rendering suite. The shared verification guide now
+states this rule explicitly rather than recommending prescribed live reply tokens.
+
 ## Security review
 
 **Verdict:** PASS

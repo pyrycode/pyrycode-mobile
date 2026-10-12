@@ -233,10 +233,10 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
  * bash scripts/e2e-emulator.sh
  * ```
  *
- * Semi-deterministic by nature (real claude): assertions use generous timeouts and case-insensitive
- * text matching. Ping matches the exact constrained reply in the message list. The "reply with
- * exactly: ping" framing is what keeps real claude's output predictable enough to assert against while
- * still exercising the whole real path.
+ * Real Claude replies may vary. New and repaired live assertions use conversation, turn and parent
+ * identity to locate completed replies, keeping ordinary wording open. The legacy ping helper still
+ * prescribes a token; do not extend that pattern. Exact text belongs only to the feature's contract,
+ * such as copied selections or preserved file contents. Keep ownership and completion checks strict.
  *
  * Most Compose selectors are text / content-description based; if those UI strings change, update the
  * constants below. The exceptions are the handles the list screen authors for the device suites: the
