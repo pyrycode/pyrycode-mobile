@@ -1153,24 +1153,35 @@ class InteractiveStreamE2ETest {
             hasText(string(R.string.thread_status_waiting_for_permission)) and hasAnyAncestor(hasTestTag(STATUS_READING_TEST_TAG))
         try {
             runningToolPeer().use { prior ->
-                peerStep(prior, "open prior running-tool peer") { prior.open(CONNECT_TIMEOUT_MS) }
+                heldToolStep(prior, PermissionHeldStage.PriorPeer) {
+                    peerStep(prior, "open prior running-tool peer") { prior.open(CONNECT_TIMEOUT_MS) }
+                }
             }
             val (conversationId, modalId) = holdToolOnPermission(peer, HELD_TOOL_PROMPT)
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(waitingReading).fetchSemanticsNodes().isNotEmpty()
+            heldToolStep(peer, PermissionHeldStage.WaitingDisplay) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(waitingReading).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.onNode(waitingReading).assertIsDisplayed()
+                composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertDoesNotExist()
             }
-            composeTestRule.onNode(waitingReading).assertIsDisplayed()
-            composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertDoesNotExist()
 
-            peerStep(peer, "allow held tool once and await permission dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasContentDescription(runningToolLabel)).fetchSemanticsNodes().isNotEmpty()
+            heldToolStep(peer, PermissionHeldStage.Approval) {
+                peerStep(peer, "allow held tool once and await permission dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
             }
-            composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertIsDisplayed()
-
-            peerStep(peer, "await permission-held tool's turn_end") { peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasContentDescription(runningToolLabel)).fetchSemanticsNodes().isEmpty()
+            heldToolStep(peer, PermissionHeldStage.RunningDisplay) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasContentDescription(runningToolLabel)).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertIsDisplayed()
+            }
+            heldToolStep(peer, PermissionHeldStage.TurnEnd) {
+                peerStep(peer, "await permission-held tool's turn_end") { peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
+            }
+            heldToolStep(peer, PermissionHeldStage.LabelRemoval) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasContentDescription(runningToolLabel)).fetchSemanticsNodes().isEmpty()
+                }
             }
         } finally {
             peer.close()
@@ -8628,19 +8639,48 @@ class InteractiveStreamE2ETest {
         prompt: String,
     ): Pair<String, String> {
         val serverId = twoHostArg(ARG_SERVER_ID)
-        awaitChannelList()
-        awaitConnected()
-        val before = hostConversationIds(serverId)
-        createChat()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        heldToolStep(peer, PermissionHeldStage.ListArrival) { awaitChannelList() }
+        heldToolStep(peer, PermissionHeldStage.Connection) {
+            runBlocking { awaitPermissionHeldConnection(GlobalContext.get().get<RelayConnectionRegistry>(), serverId, CONNECT_TIMEOUT_MS) }
+            Log.i("PermissionHeldTool", "event=permission_held_readiness ${heldToolConnectionSnapshot(peer)}")
         }
-        val conversationId = newHostConversationId(serverId, before)
-        peerStep(peer, "open running-tool peer") { peer.open(CONNECT_TIMEOUT_MS) }
-        sendFromPhone(prompt)
-        val modalId = peerStep(peer, "await held tool's permission modal") { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+        val before = heldToolStep(peer, PermissionHeldStage.Conversations) { hostConversationIds(serverId) }
+        heldToolStep(peer, PermissionHeldStage.ChatCreation) { createChat(serverId) }
+        heldToolStep(peer, PermissionHeldStage.Composer) {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        val conversationId = heldToolStep(peer, PermissionHeldStage.ChatIdentity) { newHostConversationId(serverId, before) }
+        heldToolStep(peer, PermissionHeldStage.CurrentPeer) {
+            peerStep(peer, "open running-tool peer") { peer.open(CONNECT_TIMEOUT_MS) }
+        }
+        heldToolStep(peer, PermissionHeldStage.Send) { sendFromPhone(prompt) }
+        val modalId = heldToolStep(peer, PermissionHeldStage.PermissionArrival) {
+            peerStep(peer, "await held tool's permission modal") { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+        }
         return conversationId to modalId
     }
+
+    private fun heldToolConnectionSnapshot(peer: SecondClientPeer): String {
+        val registry = GlobalContext.getOrNull()?.getOrNull<RelayConnectionRegistry>()
+        val target = registry?.connectionFor(twoHostArg(ARG_SERVER_ID))
+        val selected = registry?.selected?.value
+        val targetStatus = target?.coordinator?.connectionStatus?.value
+        val selectedStatus = selected?.coordinator?.connectionStatus?.value
+        return "targetPresent=${target != null} selectedTarget=${target != null && target === selected} " +
+            "targetRelay=${targetStatus?.relay?.javaClass?.simpleName ?: "absent"} " +
+            "targetDaemon=${targetStatus?.pyrycode?.javaClass?.simpleName ?: "absent"} " +
+            "targetRepository=${target?.coordinator?.currentRepository?.value != null} " +
+            "selectedRelay=${selectedStatus?.relay?.javaClass?.simpleName ?: "absent"} " +
+            "selectedDaemon=${selectedStatus?.pyrycode?.javaClass?.simpleName ?: "absent"}; ${peer.linkState()}"
+    }
+
+    private fun <T> heldToolStep(
+        peer: SecondClientPeer,
+        stage: PermissionHeldStage,
+        block: () -> T,
+    ): T = permissionHeldStep(stage, { heldToolConnectionSnapshot(peer) }, { Log.i("PermissionHeldTool", it) }, block)
 
     /** A two-host instrumentation argument (#847), failing with the script that passes it. */
     private fun twoHostArg(key: String): String =
