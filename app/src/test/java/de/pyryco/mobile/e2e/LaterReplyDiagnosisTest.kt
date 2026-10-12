@@ -9,7 +9,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -55,8 +54,39 @@ class LaterReplyDiagnosisTest {
         rows: List<ThreadItem>? = emptyList(),
     ) = LaterReplyProbe(prompt, answer, frames, rows)
 
+    private fun timeoutSnapshot(
+        probe: LaterReplyProbe,
+        frames: List<Envelope>,
+        rows: List<ThreadItem>?,
+    ): LaterReplyObservation {
+        val timeout = AssertionError("original timeout")
+        val readings = mutableListOf<LaterReplyObservation>()
+        val failure =
+            runCatching {
+                observeLaterReply({}, { throw timeout }) { stage ->
+                    recordLaterReply(
+                        stage,
+                        { probe.peer(frames) },
+                        { probe.repository(rows) },
+                        { LaterReplyComposition(0, 0, 0, null) },
+                        readings::add,
+                    )
+                }
+            }.exceptionOrNull()
+        assertSame(timeout, failure)
+        assertEquals("timeout", readings.last().stage)
+        return readings.last()
+    }
+
     @Test fun completedDifferentAnswerIsNotExact() {
-        val reading = probe().peer(listOf(frame("assistant_delta", text = "different"), frame("turn_end")))
+        val reading =
+            requireNotNull(
+                timeoutSnapshot(
+                    probe(),
+                    listOf(frame("assistant_delta", text = "different"), frame("turn_end")),
+                    emptyList(),
+                ).peer,
+            )
         assertEquals(0, reading.exactTurns.size)
         assertEquals(1, reading.completedDifferentTurns.size)
         assertFalse(reading.toString().contains("different"))
@@ -64,25 +94,26 @@ class LaterReplyDiagnosisTest {
 
     @Test fun baselineAndChildRepliesDoNotCount() {
         val old = listOf(frame("assistant_delta", "old", answer), frame("turn_end", "old"))
-        val reading =
-            probe(old).peer(
+        val snapshot =
+            timeoutSnapshot(
+                probe(old, listOf(row())),
                 old + frame("assistant_delta", "old", answer, seq = 1) +
                     frame("assistant_delta", "child", answer, "agent") + frame("turn_end", "child"),
+                listOf(row(), row(parent = "agent", id = "child")),
             )
-        assertTrue(reading.exactTurns.isEmpty())
-        assertTrue(
-            probe(rows = listOf(row()))
-                .repository(listOf(row(), row(parent = "agent", id = "child")))
-                .exactRows
-                .orEmpty()
-                .isEmpty(),
-        )
+        assertTrue(requireNotNull(snapshot.peer).exactTurns.isEmpty())
+        assertTrue(requireNotNull(snapshot.repository).exactRows.orEmpty().isEmpty())
     }
 
     @Test fun peerAndRepositoryRemainIndependent() {
-        val p = probe()
-        val peer = p.peer(listOf(frame("message", text = prompt), frame("assistant_delta", text = answer), frame("turn_end")))
-        val repo = p.repository(emptyList())
+        val snapshot =
+            timeoutSnapshot(
+                probe(),
+                listOf(frame("message", text = prompt), frame("assistant_delta", text = answer), frame("turn_end")),
+                emptyList(),
+            )
+        val peer = requireNotNull(snapshot.peer)
+        val repo = requireNotNull(snapshot.repository)
         assertEquals(1, peer.exactTurns.size)
         assertEquals(1, peer.deliveredMessages.size)
         assertTrue(repo.exactRows.orEmpty().isEmpty())
@@ -91,12 +122,48 @@ class LaterReplyDiagnosisTest {
     }
 
     @Test fun compositionAbsenceAndOffscreenStayDistinct() {
-        val repo = probe().repository(listOf(row()))
-        assertEquals(1, repo.exactRows.orEmpty().size)
-        val absent = LaterReplyComposition(0, 0, 0, mapOf(repo.exactRows.orEmpty().single() to 3))
-        val offscreen = absent.copy(exactNodes = 1, listNodes = 1)
-        assertNotEquals(absent, offscreen)
-        assertEquals(0, offscreen.displayedNodes)
+        val p = probe()
+        val repo = p.repository(listOf(row()))
+        listOf(
+            LaterReplyComposition(0, 0, 0, mapOf(repo.exactRows.orEmpty().single() to 3)),
+            LaterReplyComposition(1, 1, 0, mapOf(repo.exactRows.orEmpty().single() to 3)),
+        ).forEach { composition ->
+            val timeout = AssertionError("original timeout")
+            val readings = mutableListOf<LaterReplyObservation>()
+            val failure =
+                runCatching {
+                    observeLaterReply({}, { throw timeout }) { stage ->
+                        recordLaterReply(
+                            stage,
+                            { p.peer(listOf(frame("assistant_delta", text = answer))) },
+                            { repo },
+                            { composition },
+                            readings::add,
+                        )
+                    }
+                }.exceptionOrNull()
+            assertSame(timeout, failure)
+            assertEquals("timeout", readings.last().stage)
+            assertEquals(
+                1,
+                readings
+                    .last()
+                    .repository
+                    ?.exactRows
+                    ?.size,
+            )
+            assertEquals(composition.exactNodes, readings.last().composition?.exactNodes)
+            assertEquals(0, readings.last().composition?.displayedNodes)
+            assertEquals(
+                3,
+                readings
+                    .last()
+                    .composition
+                    ?.rowIndices
+                    ?.values
+                    ?.single(),
+            )
+        }
     }
 
     @Test fun unavailableReadingsStayUnknown() {
@@ -165,7 +232,14 @@ class LaterReplyDiagnosisTest {
     }
 
     @Test fun repositoryCompletionAndMissingBaselineAreExplicit() {
-        assertEquals(0, probe().repository(listOf(row(streaming = true))).completedRows.size)
+        assertEquals(
+            0,
+            probe()
+                .repository(listOf(row(streaming = true)))
+                .completedRows
+                .orEmpty()
+                .size,
+        )
         assertNull(probe(rows = null).repository(listOf(row())).exactRows)
     }
 
@@ -220,5 +294,38 @@ class LaterReplyDiagnosisTest {
         assertTrue(
             p.peer(listOf(frame("assistant_delta", text = answer), frame("assistant_delta", text = "conflict"))).exactTurns.isEmpty(),
         )
+    }
+
+    @Test fun malformedParentCannotBeAssumedToBeMainLane() {
+        val delta =
+            frame("assistant_delta", text = answer).copy(
+                payload =
+                    buildJsonObject {
+                        put("turn_id", "turn")
+                        put("seq", 0)
+                        put("text", answer)
+                        put("parent_tool_use_id", buildJsonObject { put("private", "untrusted") })
+                    },
+            )
+        val retained = mutableListOf<LaterReplyObservation>()
+        recordLaterReply("timeout", { probe().peer(listOf(delta)) }, { null }, { null }, retained::add)
+        assertNull(retained.single().peer)
+    }
+
+    @Test fun unreadableRowsDoNotEraseObservableQueueAndPhase() {
+        val retained = mutableListOf<LaterReplyObservation>()
+        val reading = probe().repository(null).copy(queuedMessages = listOf(laterReplyHash("queued-id")), phase = "Thinking")
+        recordLaterReply("timeout", { null }, { reading }, { null }, retained::add)
+        assertNull(retained.single().repository?.rows)
+        assertNull(retained.single().repository?.exactRows)
+        assertEquals(
+            1,
+            retained
+                .single()
+                .repository
+                ?.queuedMessages
+                ?.size,
+        )
+        assertEquals("Thinking", retained.single().repository?.phase)
     }
 }

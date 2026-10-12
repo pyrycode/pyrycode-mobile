@@ -5678,19 +5678,22 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodesWithText(string(R.string.agent_finished)).fetchSemanticsNodes().isNotEmpty()
             }
             val later = "Reply exactly later1783."
+
             // #2114: read the owning host directly, independently of peer delivery and list composition.
-            val repository =
-                GlobalContext
-                    .get()
-                    .get<RelayConnectionRegistry>()
-                    .connectionFor(serverId)
-                    ?.coordinator
-                    ?.currentRepository
-                    ?.value
+            fun currentLaterRepository(): ConversationRepository? =
+                runCatching {
+                    GlobalContext
+                        .get()
+                        .get<RelayConnectionRegistry>()
+                        .connectionFor(serverId)
+                        ?.coordinator
+                        ?.currentRepository
+                        ?.value
+                }.getOrNull()
 
             fun <T> diagnosticRead(read: suspend () -> T): T? =
                 runCatching { runBlocking { withTimeoutOrNull(1_000) { read() } } }.getOrNull()
-            var sampledRows: List<ThreadItem>? = diagnosticRead { repository?.observeMessages(chat)?.first() }
+            var sampledRows: List<ThreadItem>? = diagnosticRead { currentLaterRepository()?.observeMessages(chat)?.first() }
             val probe = LaterReplyProbe(later, "later1783", runCatching { peer.recorded(chat) }.getOrNull(), sampledRows)
             var sentAtNs = 0L
             observeLaterReply(
@@ -5722,15 +5725,14 @@ class InteractiveStreamE2ETest {
                             )
                         },
                         repository = {
+                            val repository = currentLaterRepository()
                             if (stage != "baseline") sampledRows = diagnosticRead { repository?.observeMessages(chat)?.first() }
                             val queue = diagnosticRead { repository?.observeQueue(chat)?.first() }
                             val phase = diagnosticRead { repository?.observeTurnPhase(chat)?.first() }
-                            sampledRows?.let {
-                                probe.repository(it).copy(
-                                    queuedMessages = queue?.filter { it.text == later }?.map { laterReplyHash(it.messageId) },
-                                    phase = phase?.name ?: "unknown",
-                                )
-                            }
+                            probe.repository(sampledRows).copy(
+                                queuedMessages = queue?.filter { it.text == later }?.map { laterReplyHash(it.messageId) },
+                                phase = phase?.name ?: "unknown",
+                            )
                         },
                         composition = {
                             val exact = hasText("later1783")
@@ -5768,7 +5770,12 @@ class InteractiveStreamE2ETest {
                                 }.getOrNull()
                             LaterReplyComposition(exactNodes, listNodes, displayed, indices)
                         },
-                        retain = { Log.i("LaterReplyProof", "event=later_reply sender_ack=unknown $it") },
+                        retain = { observation ->
+                            val chunks = observation.toString().chunked(3_000)
+                            chunks.forEachIndexed { index, chunk ->
+                                Log.i("LaterReplyProof", "event=later_reply sender_ack=unknown chunk=$index/${chunks.size} $chunk")
+                            }
+                        },
                     )
                 },
             )

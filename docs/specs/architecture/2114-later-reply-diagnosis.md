@@ -81,3 +81,26 @@ Write failing JVM tests first for the pure parser and wrapper; run `LaterReplyDi
 ## Revisions
 
 - 2026-10-12: preserve the original send-to-wait deadline by subtracting after-send capture elapsed time from the existing wait budget. Record send-return separately; sender acknowledgement is unknown because the repository does not expose it. Baseline turn hashes and baseline exact-row hashes make exclusion reviewable. Malformed/conflicting/missing delta sequences cannot establish either an exact or completed-different answer.
+
+- 2026-10-12: final negative-control review found malformed parent metadata was read as empty/main; `malformedParentCannotBeAssumedToBeMainLane` failed before the repair. Require the protocol's explicit parent/text/turn fields and mark the peer reading unknown on malformed deltas. Make row-derived repository fields nullable so an unavailable message flow retains independently available queue and phase readings (`unreadableRowsDoNotEraseObservableQueueAndPhase`). Split long content-free observations into numbered 3000-character Logcat chunks. These diagnostic-contract repairs do not establish the historical timeout's cause.
+
+
+- 2026-10-12: read `currentRepository` afresh in every capture rather than retaining the pre-send repository object, so a connection replacement is sampled from the owning host's current repository. Registry lookup errors remain unknown and cannot prevent the send/wait.
+
+## Focused capture and continuation
+
+Instrumented `live-0dcir183` executed and passed the enabled, curated `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`: 1 executed, 1 passed, 0 failed/errors/skipped, exit 0. Mobile `fff043c1cf3d1adc6e6b43d0fa9b5951815bc8b3`, daemon `8091a4730d42f43029eb0b955442dc300106030f`, Claude 2.1.280, `pixel2Api33Atd`, real production relay. The gate waited 540 seconds for the shared device. The final malformed-field, partial-reading and Logcat-chunk refinements followed this capture; their JVM tests and Kotlin compilation were rerun, with no further live attempt.
+
+| Clock domain | Reading |
+| --- | --- |
+| Phone wall, 2026-10-12 UTC | Baseline 04:48:44.786: 89 peer frames, 35 repository rows, zero exact rows/nodes, Idle. |
+| Phone wall | Send returned 04:48:45.003; after-send snapshot held the new user row but no peer delivery/exact nodes. |
+| Host envelope UTC | User delivery 04:48:48.077215; different 42-character main answer 04:48:48.077571, completed 04:48:48.078533. |
+| Host envelope UTC | Exact nine-character main answer 04:48:49.129132, completed 04:48:49.129358. |
+| Phone wall | Success sampling 04:48:48.101–04:48:48.168: peer and repository agree on the exact completed turn, repository Idle, one exact composed/list/displayed match at row index 0. |
+
+Do not sort across these clocks. The delivered message SHA-256 is `9a04e49fd6115813f9eb18a69edb8819ae49eadd7ee1124de6d246426ee40ac2`; the exact peer/repository turn SHA-256 is `bbff21028f1c15d47ab1aaa8a6f13f25c37b62be38d9482bcb5637ff20185230`. Sender acknowledgement and the wire's user-message-to-turn causal join remain unknown. This run establishes delivery, repository folding and on-screen composition for itself only; there is no observed later timeout and no demonstrated historical harness cause.
+
+Original phone/XML artifacts: `build/dispatcher-tests/live-0dcir183/dispatcher.xml`, `0-TEST-pixel2Api33Atd-_app-.xml` and the named-method Logcat file. Retained content-free observations, counted XML, source hashes and `diagnosis.json`: `/tmp/builder-2114/instrumented-evidence/`. Private startup-only host logs: `/tmp/builder-2114/instrumented-host/pyry-e2e.jYhWYp/daemon-answer.log`. The collector missed this run's independent durable history/Claude transcript because the launcher copied an older HOME directory mtime and deleted that HOME on success. Those admission/execution readings are unknown; authenticated peer envelopes provide the host emission readings above. Prior independent host history/transcript remain private under `/tmp/builder-2114/evidence/`, attributed only to `live-zihy6euu`.
+
+The original Linux failing artifacts remain unavailable. Continuation needs that failed-run evidence or a failing instrumented scenario with retained host admission/execution/history/transcript (select the launcher-owned HOME by identity, not directory mtime). No unchanged rerun or reliability fix is claimed. Dispatcher-owned post-verifier full-live acceptance remains pending after a demonstrated causal repair. Final focused JVM tests: 14 diagnostic plus 14 existing ping tests executed/passed, zero failed/errors/skipped. No PR closes the ticket at this diagnostic checkpoint; retain the feature branch and return the unresolved cause for refinement.

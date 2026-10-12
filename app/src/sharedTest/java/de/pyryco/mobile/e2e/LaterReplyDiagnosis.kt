@@ -27,11 +27,11 @@ internal data class LaterReplyPeer(
 
 internal data class LaterReplyRepository(
     val baselineRows: Int?,
-    val rows: Int,
+    val rows: Int?,
     val exactRows: List<String>?,
-    val completedRows: List<String>,
-    val turns: List<String>,
-    val submittedMessages: List<String>,
+    val completedRows: List<String>?,
+    val turns: List<String>?,
+    val submittedMessages: List<String>?,
     val queuedMessages: List<String>? = null,
     val phase: String = "unknown",
     val baselineExactRows: List<String>? = null,
@@ -75,9 +75,14 @@ internal class LaterReplyProbe(
         check(baselineCount != null && oldTurns != null) // Unknown baseline must not admit stale evidence.
         check(frames.size <= 8192)
         val later = frames.drop(baselineCount)
+        check(
+            later.filter { it.type == "assistant_delta" }.all {
+                it.field("parent_tool_use_id") != null && !it.field("turn_id").isNullOrEmpty() && it.field("text") != null
+            },
+        )
         val deltas =
             later
-                .filter { it.type == "assistant_delta" && it.field("parent_tool_use_id").isNullOrEmpty() }
+                .filter { it.type == "assistant_delta" && it.field("parent_tool_use_id") == "" }
                 .filter { !it.field("turn_id").isNullOrEmpty() && it.field("turn_id") !in oldTurns }
                 .groupBy { requireNotNull(it.field("turn_id")) }
         val exact = mutableListOf<String>()
@@ -132,7 +137,8 @@ internal class LaterReplyProbe(
         )
     }
 
-    fun repository(rows: List<ThreadItem>): LaterReplyRepository {
+    fun repository(rows: List<ThreadItem>?): LaterReplyRepository {
+        if (rows == null) return LaterReplyRepository(rowCount, null, null, null, null, null, baselineExactRows = baselineExactRows)
         val main =
             rows
                 .filterIsInstance<ThreadItem.MessageItem>()
@@ -143,9 +149,9 @@ internal class LaterReplyProbe(
             rowCount,
             rows.size,
             if (oldRows == null) null else exact.map { laterReplyHash(it.id) },
-            if (oldRows == null) emptyList() else exact.filter { !it.isStreaming }.map { laterReplyHash(it.id) },
-            exact.mapNotNull { it.segment?.turnId?.let(::laterReplyHash) },
-            main.filter { it.role == Role.User && it.content == prompt }.map { laterReplyHash(it.id) },
+            if (oldRows == null) null else exact.filter { !it.isStreaming }.map { laterReplyHash(it.id) },
+            if (oldRows == null) null else exact.mapNotNull { it.segment?.turnId?.let(::laterReplyHash) },
+            if (oldRows == null) null else main.filter { it.role == Role.User && it.content == prompt }.map { laterReplyHash(it.id) },
             baselineExactRows = baselineExactRows,
         )
     }
