@@ -24,7 +24,7 @@
 
 ## Context
 
-The #1948 historical stderr records a 40-second timeout in `pair` after Confirm pairing, before recovery assertions; its XML records 65 executed, 3 failed, 0 skipped. The rerun passed this method. Historical per-arm artifacts are unavailable, and the retained controller log is empty, so neither the arm nor a cause can be inferred from them. The maintainer narrowed #1977 on 2026-10-10 to reviewing and verifying the diagnostics only. The original cause-and-repair contract remains open in #2048; closing this ticket makes no repair claim. No decision record or visual change is proposed.
+The #1948 historical stderr records a 40-second timeout in `pair` after Confirm pairing, before recovery assertions; its XML records 65 executed, 3 failed, 0 skipped. The rerun passed this method. Historical per-arm artifacts are unavailable, and the retained controller log is empty, so neither the arm nor a cause can be inferred from them. The maintainer narrowed #1977 on 2026-10-10 to reviewing and verifying the diagnostics only. The original cause-and-repair contract was preserved separately in #2048. The maintainer closed #2048 on 2026-10-12 as no longer reproducing, explicitly superseding the requirement to prove every historical cause; this does not establish that cause or make #1977 a repair. No decision record or visual change is proposed.
 
 ## Design
 
@@ -56,7 +56,7 @@ Dispatcher owns fresh full scripted-all and live gates, each with the named `int
 
 ## Documentation handoff
 
-Pending documentation stage: update `docs/e2e-interactive-stream.md`, Session-error recovery (#1731), with safe arm/phase/readiness evidence and actual fresh full dispatcher scripted-all/live counts, named passes and retained artifact locations. Describe #1977 as diagnostics only; cause and repair remain open in #2048. Historical missing artifacts remain an evidence limitation. No diagnosed cause is required from this ticket.
+Pending documentation stage: update `docs/e2e-interactive-stream.md`, Session-error recovery (#1731), with safe arm/phase/readiness evidence and actual fresh full dispatcher scripted-all/live counts, named passes and retained artifact locations. Describe #1977 as diagnostics only; the historical cause-and-repair contract was kept in #2048, then retired by the maintainer on 2026-10-12 as no longer reproducing without a proven historical cause. Historical missing artifacts remain an evidence limitation. No diagnosed cause is required from this ticket.
 
 ## Open Questions
 
@@ -81,6 +81,8 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md`, Session-er
 **Date:** 2026-10-10
 
 ## Revisions
+
+- 2026-10-12: verified the newer [maintainer closure of #2048](https://github.com/pyrycode/pyrycode-mobile/issues/2048#issuecomment-6131409877), which explicitly supersedes keeping that issue open until its historical cause is proved. Update Context and Documentation handoff to its actual closed state while preserving earlier dated evidence and diagnostics-only scope. The maintainer's three accepted 65/65 combined-candidate live runs are external evidence, not fresh acceptance of `feature/1977`; no historical cause or branch full-gate pass is inferred.
 
 - 2026-10-12: live-gate rework resumes after shared blocker #2055 closed and main's live reply-identity, physical-tap and per-test session-cleanup repairs merged at `1b3447e30`. The reported `interactiveTurn_backgroundAgent_followsBottomUntilFinished` method and background-agent fixture have no changes in this PR; the diagnostic helpers are called by session recovery, not the background-agent method. Preserve the earlier failed full-live comparison and do not infer branch causation or a historical pairing repair. No further implementation change is planned: run the named focused live method to answer the newest red gate, the focused diagnostic/controller checks and scripted recovery, then the required final build/pre-verify checks. Retain fresh private XML/logcat and fixture evidence with hashes on the persistent agents volume and publish only content-free counts. Full dispatcher scripted-all/live acceptance remains pending for the pushed candidate; keep `needs-real-claude`, Live tests `all`, both recovery methods and every assertion. The existing security review remains PASS: no new diagnostic fields, trust boundary, credential access or production change; raw captures stay private. Forecast remains below 800 written lines, no production types or signature migrations, four acceptance criteria and the existing diagnostic failure branches.
 
