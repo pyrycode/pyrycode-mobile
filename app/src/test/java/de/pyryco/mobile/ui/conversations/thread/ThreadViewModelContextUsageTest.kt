@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.repository.ContextUsage
+import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
@@ -12,6 +13,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -29,7 +31,7 @@ import org.junit.Test
 
 /**
  * #946 / #1411: the footer and the Status sheet read the context percentage from one run-config field. A
- * reported reading's `totalTokens` / `maxTokens` give it; with no reading, the session settings' token pair does;
+ * reported reading's `totalTokens` / `maxTokens` give it; with no reading, the current session settings' token pair does;
  * with neither it is `null`.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -80,7 +82,7 @@ class ThreadViewModelContextUsageTest {
     fun withNoReading_theSettingsTokenPairFillsIn() =
         runTest {
             val repo = ScriptedRepo()
-            repo.settings.value = settings(usedTokens = 150_000, windowTokens = 200_000)
+            repo.settings.value = repo.currentSessionSettings(usedTokens = 150_000, windowTokens = 200_000)
             val vm = collectedVm(repo)
 
             assertEquals(75, vm.state.value.runConfig.contextPercent)
@@ -90,13 +92,13 @@ class ThreadViewModelContextUsageTest {
     fun aReading_outranksTheSettings_andClearingItFallsBackToThem() =
         runTest {
             val repo = ScriptedRepo()
-            repo.settings.value = settings(usedTokens = 150_000, windowTokens = 200_000)
+            repo.settings.value = repo.currentSessionSettings(usedTokens = 150_000, windowTokens = 200_000)
             val vm = collectedVm(repo)
 
             repo.report(CONV, usage(total = 24_000))
             assertEquals(12, vm.state.value.runConfig.contextPercent)
 
-            // What the repository does on a session transition or a reconnect.
+            // Clear only the context reading; the settings still belong to the unchanged session.
             repo.readings.update { it - CONV }
 
             assertEquals(75, vm.state.value.runConfig.contextPercent)
@@ -118,7 +120,7 @@ class ThreadViewModelContextUsageTest {
     fun aSettingsZeroWindow_isUnavailable() =
         runTest {
             val repo = ScriptedRepo()
-            repo.settings.value = settings(usedTokens = 0, windowTokens = 0)
+            repo.settings.value = repo.currentSessionSettings(usedTokens = 0, windowTokens = 0)
             val vm = collectedVm(repo)
 
             assertEquals(true, vm.state.value.runConfig.settingsAvailable)
@@ -157,11 +159,11 @@ class ThreadViewModelContextUsageTest {
         percentage: Int = 0,
     ) = ContextUsage(totalTokens = total, maxTokens = max, percentage = percentage, asOf = null)
 
-    private fun settings(
+    private suspend fun ScriptedRepo.currentSessionSettings(
         usedTokens: Long,
         windowTokens: Long,
     ) = SessionSettings(
-        sessionId = SESSION,
+        sessionId = observeConversations(ConversationFilter.All).first().single { it.id == CONV }.currentSessionId,
         model = "",
         effort = "",
         effectiveEffort = EffectiveEffort.Unavailable,
@@ -192,6 +194,5 @@ class ThreadViewModelContextUsageTest {
     private companion object {
         const val CONV = "seed-channel-personal"
         const val OTHER_CONV = "seed-channel-pyrycode-mobile"
-        const val SESSION = "sess-a"
     }
 }

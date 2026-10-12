@@ -64,6 +64,7 @@ None.
 ## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/thread-composer-footer-context-usage.md`, **Context usage segment (#946, computed since #1411)**: replace the known-gap paragraph with the resolved session-freshness rule.
+  Also update the later #1761 sentence that still says the stale settings-fallback gap remains possible.
 - Pending documentation stage: `docs/knowledge/features/status-sheet-readings.md`, **ContextWindowSection**: describe current-session-only settings fallback.
 
 ## Security review
@@ -86,3 +87,4 @@ None.
 ## Revisions
 
 - 2026-10-12: production-path fixtures advertise `thread` as well as `interactive`, because `ConversationListProjection.applySnapshot` accepts summary session bindings only with the negotiated thread capability. The initial fallback test must seed a real accepted binding. Final implementation remains the planned source filter; written work is approximately 470 lines, within every sizing limit.
+- 2026-10-13: verifier finding 1 identified two existing positive fallback assertions whose settings used an unrelated session ID. `ThreadViewModelContextUsageTest.currentSessionSettings` now takes the actual current session from `ScriptedRepo`'s delegated conversation flow. The unchanged 75% fallback and 12% precedence assertions cover same-session reading invalidation; session replacement remains covered by the production-path freshness tests and stays unavailable until a current source arrives. No production or security contract changes.
