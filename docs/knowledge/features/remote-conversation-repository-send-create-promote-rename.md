@@ -188,7 +188,7 @@ send leaves the row in place rather than leaving the thread unchanged.
 builds the row's `attachments` from the parameter, not from the wire reply (`send_message`'s reply stays
 an empty `ack`): `attachments.distinctBy { it.attachmentId }.map { ... }` in caller order, with each
 non-null `displayName` and `mimeType` passed through `attachmentDisplayName` — **the same
-code-point-level name cleaner** [`AttachmentOfferProjection` uses for a daemon-offered name](remote-conversation-repository.md#status-projections-one-file-per-status-event)
+code-point-level name cleaner** [`AttachmentOfferProjection` uses for a daemon-offered name](remote-conversation-repository-status-projections.md#status-projections-one-file-per-status-event)
 also cleans the MIME hint here, since a local file's name and its declared MIME type are both authored by
 whichever app supplied the document through the system picker and neither is more trustworthy than the
 other. `ThreadViewModel.sendWithAttachments` builds one `MessageAttachment(id, entry.displayName,

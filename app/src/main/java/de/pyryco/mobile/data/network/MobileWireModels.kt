@@ -6,6 +6,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Mobile Protocol v2 wire models (#273): typed, serializable representations of
@@ -60,6 +61,10 @@ data class Envelope(
     @SerialName("history_entry_id")
     @Serializable(with = ReadMarkIdSerializer::class)
     val historyEntryId: ULong? = null,
+    @SerialName("conversation_id") @EncodeDefault(EncodeDefault.Mode.NEVER) val conversationId: JsonElement? = null,
+    @SerialName("session_id") @EncodeDefault(EncodeDefault.Mode.NEVER) val sessionProvenance: SessionProvenance = SessionProvenance(),
+    @SerialName("session_state_cleared") @EncodeDefault(EncodeDefault.Mode.NEVER) val sessionStateCleared: JsonElement =
+        JsonPrimitive(false),
 )
 
 /**
