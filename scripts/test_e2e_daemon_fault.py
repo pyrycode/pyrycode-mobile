@@ -53,6 +53,7 @@ die() { printf '%s\\n' "$1" >&2; exit 1; }
                 str(ROOT / "e2e-daemon-fault.py"), "--port-file", str(directory / "daemon-fault-port"),
                 "--log", str(directory / "daemon.log"), "--ready-token", "relay: conn established",
                 "--control-socket", str(Path(controller_home) / ".pyry/e2e-launch-probe.sock"),
+                "--cleanup-sockets-file", str(directory / "test-session-sockets.json"),
             ]
             if controls:
                 expected += ["--stream-release-file", str(directory / "release-second-fragment")]

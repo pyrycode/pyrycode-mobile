@@ -1057,7 +1057,8 @@ fi
 FAULT_PORT_FILE="${WORK_DIR}/daemon-fault-port"
 # Seed required arguments so Bash 3.2 nounset never expands an empty array.
 DAEMON_CONTROL_ARGS=(--port-file "${FAULT_PORT_FILE}" --log "${DAEMON_LOG}"
-  --ready-token 'relay: conn established' --control-socket "${ISO_HOME:-${HOME}}/.pyry/${PYRY_NAME}.sock")
+  --ready-token 'relay: conn established' --control-socket "${ISO_HOME:-${HOME}}/.pyry/${PYRY_NAME}.sock"
+  --cleanup-sockets-file "${WORK_DIR}/test-session-sockets.json")
 if [ -n "${DETERMINISTIC}" ] && [ "${DROP_B_FENCE}" = "phone-checkpoint" ]; then
   DAEMON_CONTROL_ARGS+=(--stream-release-file "${REPLAY_RELEASE}")
   if [ "${SCENARIO}" = "reopen-stream" ]; then
@@ -1683,6 +1684,15 @@ elif [ -n "${ANSWER_PEER_TOKEN:-}" ]; then
     -Pandroid.testInstrumentationRunnerArguments.answerServerStaticPublicKey="${ANSWER_PEER_SERVER_STATIC_PUBKEY}"
   )
 fi
+# Fixed launcher-owned socket paths. The phone cannot supply paths or session IDs.
+python3 - "${WORK_DIR}/test-session-sockets.json" \
+  "${ISO_HOME:-${HOME}}/.pyry/${PYRY_NAME}.sock" "${HOME}/.pyry/${PYRY_NAME_B}.sock" \
+  "${BYPASS_HOME:+${BYPASS_HOME}/.pyry/${PYRY_NAME_BYPASS}.sock}" \
+  "${ANSWER_HOME:+${ANSWER_HOME}/.pyry/${PYRY_NAME_ANSWER}.sock}" <<'PY_SESSION_SOCKETS'
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps([path for path in sys.argv[2:] if path]))
+PY_SESSION_SOCKETS
 # Capture the status rather than let set -e exit, so a failure caused by an expired code is named (#993).
 if [ -n "${FAULT_PORT:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.daemonFaultPort="${FAULT_PORT}")

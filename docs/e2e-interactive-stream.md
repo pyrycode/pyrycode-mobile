@@ -2641,6 +2641,18 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
+Every live method owns the daemon sessions it creates. An outer JUnit rule snapshots
+sessions on the launcher's private daemon sockets before the Activity starts. After
+Activity teardown, it removes new non-bootstrap sessions through `sessions.rm`.
+Shared fixture sessions remain. The existing removal operation waits for its child
+and preserves transcripts by default. The controller accepts no caller-supplied
+socket path or session ID. It includes hosts that started during the scenario.
+
+Cleanup runs after success and failure. Its failure fails a green body or is attached
+to the original failure. The controller retains the ownership snapshot after a failed
+cleanup, so the next method cannot silently adopt leaked sessions. This is separate
+from scenario-specific cleanup of chats, pairings and other test data.
+
 The existing deletion scenario
 `InteractiveStreamE2ETest.interactiveTurn_deleteConversation_removesFromListAndClosesThread`
 (#1888) waits for its discussion's owning host immediately before Save and Delete confirmation.
