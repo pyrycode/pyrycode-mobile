@@ -67,3 +67,17 @@ Run focused wrapper and affected existing tests, lint, debug assembly, Android-t
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-12
+
+## Revisions
+
+### 2026-10-12 — fresh failure establishes a daemon dependency
+
+The operation enum/wrapper lives in sharedTest so pure JVM controls can test it, following `RememberedEffortStage`; it has no product API or other scenario consumers. The chosen scenario locally expands `prepareChat` solely to label repository acquisition, creation, rename and initial settings. Creation and rename retain their original single deadline. Shared helpers and every behavior assertion remain unchanged. Four JVM diagnostic controls pass; the initial passthrough failed all three initial controls. The additional real coroutine-deadline control checks the timeout through Kotlin's copied exception wrappers.
+
+Fresh focused captures, including the six-method settings/reconnect sequence, passed against daemon `7a1daa57bae0c88a0c96b2b4e62c990fa76f47ca`. The exact historical prefix through chosen effort then ran 27 methods: 21 passed, 6 failed, zero errors/skips. Chosen effort failed at Readiness with a 30000 ms coroutine timeout, before clearing preferences or creating its fixture. `awaitChannelList` uses a Compose timeout; this coroutine timeout is from `awaitConnected`. Cleanup completed. Its own logcat records peer close 4413, and the preceding reconnect logcat records repeated 4413 closes after successful first-turn rendering. The separate background-agent failure is already owned by #2112.
+
+Daemon source routes ordinary reconnect output through `forwardEnvelopeSource` / `hostedEnvelope` into the shared 16-slot hosted queue. Open `pyrycode/pyrycode#3214`, PR #3232, owns the independently reproduced missing capacity admission: ordinary pushes leave their bounded upstream queue before destination capacity is available. Its repair reserves capacity before the pop and resumes on completion. This is a required daemon repair, not a Mobile effort or footer change. A native cross-repository blocker was added and verified. No limit, wait, retry, assertion or production code was changed here.
+
+The original primary's short stack still does not establish its exact operation or associate its 4410 daemon records with chosen effort. The fresh prefix has zero missing-session rejection records and demonstrates a readiness failure with 4413; do not conflate those captures. `app/src/test/resources/e2e/2117/investigation.json` retains sanitized provenance, counts, source/artifact hashes and raw references. Raw XML/logcat/daemon copies remain private under `/tmp/builder-2117/evidence/`.
+
+Wait for #3214 to merge before continuing. Re-run the named method and the evidenced cumulative prefix against a daemon containing that repair, reassess any remaining Mobile mechanism, then complete the Mobile PR and required final checks. The fresh dispatcher full-live named pass remains required before documentation/merge; diagnostic controls and focused passes do not satisfy it. The current branch is an investigation checkpoint, not a completed repair.

@@ -1,0 +1,108 @@
+{
+  "ticket": 2117,
+  "status": "waiting_on_daemon_repair",
+  "blocker": "https://github.com/pyrycode/pyrycode/issues/3214",
+  "repair_pr": "https://github.com/pyrycode/pyrycode/pull/3232",
+  "historical": {
+    "mobile": "187cd0e2139da0c510be4a08efe0c9561c550de9",
+    "main": "cfc5911723bad305dcf2486283521915dce91b84",
+    "daemon": "7a1daa57bae0c88a0c96b2b4e62c990fa76f47ca",
+    "claude": "2.1.280",
+    "primary_counts": "65 executed; 38 failed; 0 skipped; target timed out after 30000 ms",
+    "retry_counts": "38 executed; 27 failed; 0 skipped; target passed",
+    "limit": "Original full phone captures unavailable. Earliest original operation and historical causal attribution remain unproven."
+  },
+  "fresh_prefix": {
+    "mobile_reported_revision": "d39ad295ddb70ec7ebaa026606f14c43e9579241",
+    "mobile_production_revision": "e7a553c3d6d374ed47fabe5c2079fa9e7df80ae1",
+    "mobile_source_note": "Uncommitted diagnostics at capture, matching the source hashes below. No production changes.",
+    "daemon": "7a1daa57bae0c88a0c96b2b4e62c990fa76f47ca",
+    "claude": "2.1.280",
+    "device": "pixel2Api33Atd",
+    "selection": "Exact historical prefix through the target (27 methods)",
+    "executed": 27,
+    "passed": 21,
+    "failed": 6,
+    "errors": 0,
+    "skipped": 0,
+    "target": {
+      "name": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_chosenEffort_appliesFromTheFirstTurn",
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "stage": "Readiness",
+      "operation": "awaitConnected",
+      "cause": "TimeoutCancellationException after 30000 ms",
+      "peer_close_code": 4413,
+      "cleanup": "completed",
+      "not_reached": "Preference clear, fixture creation, selection/acknowledgement, first turn, applied reading, reopen"
+    },
+    "preceding_reconnect": "First turn rendered; repeated peer_close 4413 on reconnect, then timeout.",
+    "daemon_missing_session_rejections": 0,
+    "unrelated_failure_owner": "https://github.com/pyrycode/pyrycode-mobile/issues/2112",
+    "artifact_directory": "build/dispatcher-tests/live-yk4hhx0y",
+    "private_raw_copies": [
+      {
+        "path": "/tmp/builder-2117/evidence/prefix27-dispatcher.xml",
+        "sha256": "a07dd704f275e01ea60234c76ba14c236f286640f37773c8c9a094ffcaa3b279"
+      },
+      {
+        "path": "/tmp/builder-2117/evidence/prefix27-0-TEST-pixel2Api33Atd-_app-.xml",
+        "sha256": "f104e6ba870da20e0c3e6230cf88c4a201ba96f3bb3839ccc95950f68f086738"
+      },
+      {
+        "path": "/tmp/builder-2117/evidence/prefix27-1-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_chosenEffort_appliesFromTheFirstTurn.txt",
+        "sha256": "45bcd15fbd5a4bfcd4531b11eecd964e963d3c2b980a54a7af19e786c1ec3e9a"
+      },
+      {
+        "path": "/tmp/builder-2117/evidence/prefix27-18-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive.txt",
+        "sha256": "4436530e4039b7516e33b6362538948d3f4f840bfc2d7d377b546c04c9e46803"
+      },
+      {
+        "path": "/tmp/builder-2117/evidence/prefix27-daemon.log",
+        "sha256": "b099b06d9c775b8c7e879a89fb9435ca53d45eb88567500323bd057b1f2dbb6a"
+      }
+    ]
+  },
+  "focused_controls": {
+    "counts": "Six captures: 15 total executed/passed, 0 failures/skips; target passed in each. These passes do not diagnose the flake.",
+    "local_daemon": "8091a4730d42f43029eb0b955442dc300106030f",
+    "historical_daemon": "7a1daa57bae0c88a0c96b2b4e62c990fa76f47ca",
+    "artifact_directories": [
+      "build/dispatcher-tests/live-r5_jkv91",
+      "build/dispatcher-tests/live-iepwmo81",
+      "build/dispatcher-tests/live-soje7k4h",
+      "build/dispatcher-tests/live-sm_gcoqd",
+      "build/dispatcher-tests/live-dwbemvb5",
+      "build/dispatcher-tests/live-g7xzmh1c"
+    ],
+    "historical_daemon_captures": "Last two: target alone 1/1 and six-method prefix 6/6"
+  },
+  "diagnostic_sources": [
+    {
+      "file": "app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt",
+      "sha256": "a20ceabc26344952a916011c0086af93bec21fa0d441421e7462554c3b855d32"
+    },
+    {
+      "file": "app/src/sharedTest/java/de/pyryco/mobile/e2e/ChosenEffortStage.kt",
+      "sha256": "de04f73fd86b9fcbe0ebe0ffca8a9cab9e7df1289c23557f12d1716c99b25d87"
+    }
+  ],
+  "diagnostic_unit_tests": {
+    "class": "de.pyryco.mobile.e2e.ChosenEffortStageTest",
+    "initial_passthrough": "3 executed; 3 failed; 0 skipped",
+    "final": "4 executed; 4 passed; 0 failed/skipped",
+    "private_raw_xml": "/tmp/builder-2117/evidence/stage-green.xml"
+  },
+  "remaining": [
+    "Merge daemon #3214 and use its repair in the configured test daemon source.",
+    "Re-run named target and evidenced prefix; diagnose any remaining Mobile failure before a repair PR.",
+    "Fresh dispatcher full-live target pass with both revisions, Claude version, raw XML/logcat references and counted suite results."
+  ],
+  "limits": [
+    "Diagnostics do not repair daemon capacity.",
+    "Fresh 4413 readiness failure does not establish the original operation or associate its 4410 records with chosen effort.",
+    "No full-live acceptance is claimed."
+  ]
+}

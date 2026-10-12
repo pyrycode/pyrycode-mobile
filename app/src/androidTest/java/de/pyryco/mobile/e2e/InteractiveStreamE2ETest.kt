@@ -3969,43 +3969,67 @@ class InteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_chosenEffort_appliesFromTheFirstTurn() {
         val originals = mutableMapOf<String, SessionSettings>()
+
+        fun <T> step(
+            stage: ChosenEffortStage,
+            block: () -> T,
+        ): T = chosenEffortStep(stage, { Log.i("ChosenEffort", it) }, block)
+
         try {
-            awaitChannelList()
-            awaitConnected()
-            clearRememberedEffort()
+            step(ChosenEffortStage.Readiness) {
+                awaitChannelList()
+                awaitConnected()
+            }
+            step(ChosenEffortStage.ClearRemembered) { clearRememberedEffort() }
             val name = CHOSEN_EFFORT_NAME_PREFIX + System.currentTimeMillis()
-            val chat = prepareChat(name, originals)
+            val repository = step(ChosenEffortStage.AcquireRepository) { hostRepository() }
+            // Preserve prepareChat's single create/rename deadline while identifying either operation.
+            val chat =
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        val id =
+                            chosenEffortStep(ChosenEffortStage.CreateChat, { Log.i("ChosenEffort", it) }) {
+                                repository.createDiscussion().id
+                            }
+                        chosenEffortStep(ChosenEffortStage.RenameChat, { Log.i("ChosenEffort", it) }) { repository.rename(id, name) }
+                    }
+                }
+            originals[chat.id] = step(ChosenEffortStage.InitialSettings) { freshSettings(chat.id) }
             val current = originals.getValue(chat.id).model
             val row =
-                checkNotNull(
-                    usableRows(publishedMenu(chat.id)).firstOrNull {
-                        it.effortLevels.isNotEmpty() && it.value != current && it.value != INHERITED_MODEL_VALUE
-                    },
-                ) {
-                    "no other published model offers effort levels"
+                step(ChosenEffortStage.PublishedMenu) {
+                    checkNotNull(
+                        usableRows(publishedMenu(chat.id)).firstOrNull {
+                            it.effortLevels.isNotEmpty() && it.value != current && it.value != INHERITED_MODEL_VALUE
+                        },
+                    ) {
+                        "no other published model offers effort levels"
+                    }
                 }
             val level = row.effortLevels.first()
 
-            openChatRow(name)
-            pickFooterOption(changeModelLabel, row.dropdownLabel(ConversationAgent.Claude))
-            awaitFooter(changeModelLabel, row.dropdownLabel(ConversationAgent.Claude))
-            pickFooterOption(changeEffortLabel, effortLabel(level))
-            awaitFooter(changeEffortLabel, effortLabel(level))
+            step(ChosenEffortStage.OpenChat) { openChatRow(name) }
+            step(ChosenEffortStage.ModelTap) { pickFooterOption(changeModelLabel, row.dropdownLabel(ConversationAgent.Claude)) }
+            step(ChosenEffortStage.ModelAcknowledgement) { awaitFooter(changeModelLabel, row.dropdownLabel(ConversationAgent.Claude)) }
+            step(ChosenEffortStage.EffortTap) { pickFooterOption(changeEffortLabel, effortLabel(level)) }
+            step(ChosenEffortStage.EffortAcknowledgement) { awaitFooter(changeEffortLabel, effortLabel(level)) }
 
-            val chosen = freshSettings(chat.id)
-            assertEquals("saved effort after the tap", level, chosen.effort)
-            assertTrue("claude reports an applied effort before any turn", chosen.effectiveEffort !is EffectiveEffort.Applied)
-            awaitFooter(changeEffortLabel, effortLabel(level))
+            step(ChosenEffortStage.ChosenReading) {
+                val chosen = freshSettings(chat.id)
+                assertEquals("saved effort after the tap", level, chosen.effort)
+                assertTrue("claude reports an applied effort before any turn", chosen.effectiveEffort !is EffectiveEffort.Applied)
+            }
+            step(ChosenEffortStage.BeforeTurnFooter) { awaitFooter(changeEffortLabel, effortLabel(level)) }
 
-            sendFromPhone(PING_PROMPT)
-            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-            assertEquals(EffectiveEffort.Applied(level), freshSettings(chat.id).effectiveEffort)
+            step(ChosenEffortStage.FirstSend) { sendFromPhone(PING_PROMPT) }
+            step(ChosenEffortStage.DisplayedReply) { composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS) }
+            step(ChosenEffortStage.AppliedReading) { assertEquals(EffectiveEffort.Applied(level), freshSettings(chat.id).effectiveEffort) }
 
-            leaveThread()
-            openChatRow(name)
-            awaitFooter(changeEffortLabel, effortLabel(level)) { it == null }
+            step(ChosenEffortStage.LeaveChat) { leaveThread() }
+            step(ChosenEffortStage.ReopenChat) { openChatRow(name) }
+            step(ChosenEffortStage.ReopenedFooter) { awaitFooter(changeEffortLabel, effortLabel(level)) { it == null } }
         } finally {
-            restoreSettings(originals)
+            step(ChosenEffortStage.Cleanup) { restoreSettings(originals) }
         }
     }
 
