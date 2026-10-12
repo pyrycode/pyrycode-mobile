@@ -96,6 +96,8 @@ None. The delivered conversation-bearing contract was resolved by daemon #3195.
 
 - 2026-10-12 (verifier rework): Replace the text-only history stand-in with daemon `notice` / `prompt_answered` permission and question records. Replay decoded item envelopes and construct a fresh connection, repository and ViewModel in `answeredItemReplayAndNewConnectionNeverCreateActionableRequests` and `suppliedSessionReplacementUpdatesActivityAndRetiresRenderedPromptCallbacks`. Historical answers remain inert, and only supplied outstanding identities authorize new actions without replay.
 
+- 2026-10-12 (scripted gate rework): Investigated the fixture-start timeout in `SessionErrorRecoveryScenario.request`. The scenario/controller sources are unchanged from the reviewed main merge base; the retained failed controller log is empty and does not establish a cause. `python3 scripts/android-test-gate.py scripted session-error` freshly passed (1 executed/passed, 0 failed/errors/skipped), with XML in `build/dispatcher-tests/scripted-julv_xw3/dispatcher.xml`. A second focused run selected only `session-error` through the dispatcher's existing install-once/connected-device setup and also passed (1 executed/passed, 0 failed/errors/skipped), with XML in `build/dispatcher-tests/scripted-all-hup53jwg/dispatcher.xml`. Both runs completed the retained and dropped recovery arms while preserving daemon/Runner/session identity. The timeout did not reproduce, so no speculative source change or test weakening is made. The dispatcher must rerun its full gates; these focused passes do not establish a full-suite pass or the historical timeout's cause.
+
 ## Documentation handoff
 
 Pending for the documentation stage:
