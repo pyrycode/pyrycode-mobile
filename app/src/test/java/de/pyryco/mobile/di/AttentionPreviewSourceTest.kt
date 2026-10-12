@@ -97,6 +97,74 @@ class AttentionPreviewSourceTest {
         }
 
     @Test
+    fun omittedPromptAnswerReceiptKeepsFallbackAndIdentifiesTheContinuityBarrier() =
+        withSource {
+            a.page = page(tool(14), tool(16), tool(17), tool(18), delta(19, "turn", 0, "sensitive reply"), end(20, "turn"))
+            events.emit(LiveSessionEvent.TurnEnd("conv", "turn", "end_turn", historyEntryId = 20u))
+            runCurrent()
+            assertNull(alerts.single().preview?.invoke())
+            assertEquals(listOf("conv" to ""), a.requests)
+            assertTrue(logs.contains("event=attention_preview outcome=rejected code=continuity"))
+            assertTrue(a.rows.value.isEmpty())
+        }
+
+    @Test
+    fun promptAnswerReceiptAccountsForItsOriginalIdWithoutSupplyingPreviewText() =
+        withSource {
+            // Daemon #3222 projects a validated remote answer to this nonvisual five-field receipt.
+            a.page =
+                page(
+                    tool(14),
+                    answerReceipt(15),
+                    tool(16),
+                    tool(17),
+                    tool(18),
+                    delta(19, "turn", 0, "sensitive reply"),
+                    end(20, "turn"),
+                )
+            events.emit(LiveSessionEvent.TurnEnd("conv", "turn", "end_turn", historyEntryId = 20u))
+            runCurrent()
+            val alert = alerts.single()
+            assertEquals("host", alert.serverId)
+            assertEquals("conv", alert.conversationId)
+            assertEquals("turn", alert.key)
+            assertEquals(20uL, alert.historyEntryId)
+            assertEquals("sensitive reply", alert.preview?.invoke())
+            assertEquals(listOf("conv" to ""), a.requests)
+            assertEquals(0, b.asks)
+            assertTrue(a.rows.value.isEmpty())
+            assertTrue(logs.none { "event=attention_preview outcome=" in it })
+        }
+
+    @Test
+    fun answerReceiptCannotCertifyAForeignMalformedOrDiscontinuousPageOrWrongCompletion() {
+        val receipt = answerReceipt(15)
+        val cases =
+            listOf(
+                receipt.copy(payload = Json.parseToJsonElement(receipt.payload.toString().replace("\"conv\"", "\"other\""))) to
+                    "attribution",
+                receipt.copy(payload = Json.parseToJsonElement("""{"conversation_id":"conv","level":42}""")) to "retained",
+                receipt.copy(unsignedId = 13u) to "continuity",
+            )
+        cases.forEach { (entry, code) ->
+            withSource {
+                a.page = page(tool(14), entry, delta(16, "turn", 0, "sensitive reply"), end(17, "turn"))
+                events.emit(LiveSessionEvent.TurnEnd("conv", "turn", "end_turn", historyEntryId = 17u))
+                runCurrent()
+                assertNull(alerts.single().preview?.invoke())
+                assertTrue(logs.contains("event=attention_preview outcome=rejected code=$code"))
+            }
+        }
+        withSource {
+            a.page = page(tool(14), receipt, delta(16, "turn", 0, "sensitive reply"), end(17, "turn"))
+            events.emit(LiveSessionEvent.TurnEnd("conv", "turn", "end_turn", historyEntryId = 18u))
+            runCurrent()
+            assertNull(alerts.single().preview?.invoke())
+            assertTrue(logs.contains("event=attention_preview outcome=rejected code=completion"))
+        }
+    }
+
+    @Test
     fun settledLocalPrefixRequiresHistoryThroughCompletion() =
         withSource {
             a.rows.value = listOf(row("turn", "Before", 0))
@@ -596,6 +664,16 @@ class AttentionPreviewSourceTest {
             "tool_use",
             Json.parseToJsonElement(
                 """{"conversation_id":"conv","turn_id":"turn","tool_use_id":"tool$id","name":"Bash","input_summary":"target"}""",
+            ),
+            at,
+        )
+
+    private fun answerReceipt(id: Long) =
+        HistoryEntry(
+            id,
+            "banner",
+            Json.parseToJsonElement(
+                """{"conversation_id":"conv","level":"info","text":"","truncated":false,"stops_turn":false}""",
             ),
             at,
         )
