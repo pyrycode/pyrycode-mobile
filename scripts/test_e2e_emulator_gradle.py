@@ -186,7 +186,7 @@ END
     def test_harness_cleanup_stops_the_fixture(self):
         config = self.start_fixture()
         cleanup = self.function("cleanup")
-        body = "set -euo pipefail\nlog() { :; }\n" + cleanup + "\ncleanup\n"
+        body = "set -euo pipefail\nlog() { :; }\ncapture_run_evidence() { :; }\n" + cleanup + "\ncleanup\n"
         env = dict(os.environ, BYPASS_FIXTURE_PID=config['BYPASS_FIXTURE_PID'], WORK_DIR=config['work'],
                    WATCHER_PID="", DAEMON_PID="", RELAY_PID="", ISO_HOME="", BYPASS_HOME="", ANSWER_HOME="")
         result = subprocess.run(["bash", "-c", body], env=env, capture_output=True, text=True, timeout=5)

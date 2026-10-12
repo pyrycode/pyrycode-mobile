@@ -133,6 +133,7 @@ if [ -n "${LIVE}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${E2E_LOGI
 fi
 GRADLEW="${REPO_ROOT}/gradlew"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pyry-e2e.XXXXXX")"
+E2E_CAPTURE_STARTED_NS="$(python3 -c 'import time; print(time.time_ns())')"
 RELAY_LOG="${WORK_DIR}/relay.log"
 DAEMON_LOG="${WORK_DIR}/daemon.log"
 PAIR_OUT="${WORK_DIR}/pair.out"
@@ -629,8 +630,21 @@ keep_bypass_transcripts() {
   [ ! -d "${dst}" ] || log "claude transcripts from the operator-bypass HOME kept at ${dst}"
 }
 
+# The exporter accepts only static metadata; no pairing outputs or environment dump.
+capture_run_evidence() {
+  local status="$1" phase="$2"
+  E2E_CAPTURE_TARGET="${TEST_TARGET:-}" E2E_CAPTURE_PIDS="${DAEMON_PID:-},${DAEMON_B_PID:-},${BYPASS_PID:-},${ANSWER_PID:-}" \
+    python3 "${REPO_ROOT}/scripts/e2e-evidence.py" \
+    --work "${WORK_DIR}" --root "${E2E_EVIDENCE_ROOT:-${AGENTS_REPO_PATH:-${REPO_ROOT}/../pyrycode-mobile-agents}/logs/e2e-evidence}" \
+    --repo "${E2E_CAPTURE_REPO:-${REPO_ROOT}}" --home "${DAEMON_HOME:-${HOME}}" \
+    --instance "${PYRY_NAME:-unknown}" --device "${DEVICE:-unknown}" \
+    --status "${status}" --started "${E2E_CAPTURE_STARTED_NS:-0}" --phase "${phase}"
+}
+
 cleanup() {
   local code=$?
+  local capture_failed=0
+  capture_run_evidence "${code}" before-teardown || capture_failed=1
   log "tearing down…"
   [ -n "${SESSION_ERROR_PID:-}" ] && kill "${SESSION_ERROR_PID}" 2>/dev/null || true
   [ -n "${BACKGROUND_AGENT_FIXTURE_PID:-}" ] && kill "${BACKGROUND_AGENT_FIXTURE_PID}" 2>/dev/null || true
@@ -643,6 +657,7 @@ cleanup() {
   [ -n "${ANSWER_PID:-}" ] && kill "${ANSWER_PID}" 2>/dev/null || true
   [ -n "${RELAY_PID}" ] && kill "${RELAY_PID}" 2>/dev/null || true
   wait 2>/dev/null || true
+  capture_run_evidence "${code}" after-teardown || capture_failed=1
   # The operator-bypass HOME (#687) goes whatever the exit code: it holds a copy of ~/.claude.json and the
   # witness file. Only a path this script minted is removed. Its daemon log stays in WORK_DIR as the rest do.
   # A failed run first keeps claude's session transcripts (#977): regular *.jsonl files under
@@ -658,7 +673,7 @@ cleanup() {
   if [[ "${ANSWER_HOME:-}" == /tmp/pyry-e2e-ans.* ]]; then
     rm -rf "${ANSWER_HOME}"
   fi
-  if [ "${code}" -ne 0 ]; then
+  if [ "${code}" -ne 0 ] || [ "${capture_failed}" -ne 0 ]; then
     log "logs kept at ${WORK_DIR} (relay.log, daemon.log, pair.out)"
     if [ -n "${ISO_HOME}" ]; then
       log "isolated HOME kept at ${ISO_HOME}"
