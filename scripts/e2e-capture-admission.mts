@@ -9,9 +9,52 @@ type Receipt = { run_id: string; subtree_complete: boolean; export_complete: boo
 type Transport = { code: number | null; signal: string | null };
 type Manager = { run: (pending: any, work: () => Promise<boolean>) => Promise<any> };
 
+export function startHostObservers(commands: string[][], root: string, track: (pid: number) => void) {
+  return commands.map((command, index) => {
+    const record: any = { started: new Date().toISOString() };
+    try {
+      const fd = openSync(root + `/host-observer-${index}-private.log`, 'wx', 0o600);
+      let observer;
+      try { observer = spawn(command[0], command.slice(1), { detached: true, stdio: ['ignore', fd, fd] }); }
+      finally { closeSync(fd); }
+      record.pid = observer.pid;
+      if (observer.pid) track(observer.pid);
+      const closed = new Promise<void>(resolve => {
+        observer.once('error', () => { record.state = 'startup-unknown'; resolve(); });
+        observer.once('close', (code, signal) => { record.code = code; record.signal = signal; resolve(); });
+      });
+      return { observer, closed, record };
+    } catch {
+      record.state = 'startup-unknown';
+      return { observer: undefined, closed: Promise.resolve(), record };
+    }
+  });
+}
+
+export async function reapHostObserver(observer: any, closed: Promise<void>, graceMs = 5000) {
+  const groupAlive = () => {
+    if (!observer.pid) return false;
+    try { process.kill(-observer.pid, 0); return true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false; throw error; }
+  };
+  const signalGroup = (signal: NodeJS.Signals) => {
+    if (groupAlive()) {
+      try { process.kill(-observer.pid, signal); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+    }
+  };
+  signalGroup('SIGTERM');
+  const deadline = Date.now() + graceMs;
+  while (groupAlive() && Date.now() < deadline) await sleep(20);
+  signalGroup('SIGKILL');
+  await closed;
+  while (groupAlive()) await sleep(20);
+}
+
 export async function admittedCapture(manager: Manager, pending: any, runId: string,
   launch: () => Promise<Transport>, readReceipt: () => Receipt | undefined,
-  requestCancel: () => void, pollMs = 1000): Promise<number> {
+  requestCancel: () => void, pollMs = 1000,
+  onTerminal: () => Promise<void> = async () => {}): Promise<number> {
   let exit = 125;
   await manager.run(pending, async () => {
     let closed = false;
@@ -25,6 +68,7 @@ export async function admittedCapture(manager: Manager, pending: any, runId: str
       try { receipt = readReceipt(); } catch { /* Unknown: retain reservation. */ }
       if (receipt?.run_id === runId && receipt.subtree_complete === true && Number.isInteger(receipt.exit)) {
         await transport;
+        await onTerminal();
         exit = receipt.exit || (receipt.export_complete ? 0 : 125);
         return exit === 0;
       }
@@ -57,6 +101,7 @@ async function main(config: any) {
     maximumAdmissionWaitSeconds: config.admissionWaitSeconds, state: 'waiting' };
   const save = () => durable(root + '/admission.json', state);
   const cancel = () => writeFileSync(config.hostCaptureRoot + '/cancel', 'cancel\n', { mode: 0o600 });
+  const observers: any[] = [];
   let cancelled = false;
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {
     cancelled = true;
@@ -82,6 +127,7 @@ async function main(config: any) {
     state.admittedAt = new Date().toISOString();
     save();
     process.exitCode = await admittedCapture(manager, pending, config.runId, () => new Promise(resolve => {
+      observers.push(...startHostObservers(config.hostObservers ?? [], root, trackManagedChild));
       const child = spawn('podman', ['exec', config.container, 'python3', config.supervisor, config.containerConfig],
         { detached: true, stdio: 'inherit' });
       if (child.pid) trackManagedChild(child.pid);
@@ -91,7 +137,12 @@ async function main(config: any) {
       if (cancelled) { try { cancel(); } catch {} }
       try { return JSON.parse(readFileSync(config.hostCaptureRoot + '/complete.json', 'utf8')); }
       catch { return undefined; }
-    }, cancel);
+    }, cancel, 1000, async () => {
+      for (const { observer, closed } of observers) {
+        if (observer) await reapHostObserver(observer, closed);
+      }
+      durable(root + '/host-observers.json', observers.map(item => item.record));
+    });
     state.state = 'completed';
     state.exit = process.exitCode;
     state.finished = new Date().toISOString();

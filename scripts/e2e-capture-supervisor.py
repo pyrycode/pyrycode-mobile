@@ -159,17 +159,46 @@ def capture(config, observe=sample):
     for sig in previous:
         signal.signal(sig, cancel)
     deadline = time.monotonic() + config["maximum_seconds"]
+    collector_events = (root / "collector-events.jsonl").open("w")
+    streams.append(collector_events)
+
+    def drain_collectors():
+        for pid, output in collector_outputs.items():
+            pipe = children[pid].stdout
+            while pipe is not None:
+                try:
+                    chunk = os.read(pipe.fileno(), 65536)
+                except BlockingIOError:
+                    break
+                except OSError as error:
+                    errors.add("collector_read:" + str(error.errno or "unknown"))
+                    break
+                if not chunk:
+                    break
+                offset = output.tell()
+                if offset + len(chunk) > 32 * 1024 * 1024:
+                    errors.add("collector:size_bound")
+                    if children[pid].returncode is None:
+                        children[pid].kill()
+                    break
+                output.write(chunk)
+                output.flush()
+                collector_events.write(json.dumps({"utc": utc(), "pid": pid,
+                                                    "file": output.name, "offset": offset,
+                                                    "bytes": len(chunk)}) + "\n")
+                collector_events.flush()
     try:
         # All observers are started before the gate, never spawned by sampling.
         for index, command in enumerate(config.get("collectors", [])):
             try:
                 output = (root / f"collector-{index}-private.log").open("wb")
                 streams.append(output)
-                child = subprocess.Popen(command, stdout=output, stderr=output,
+                child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                          start_new_session=True)
                 children[child.pid] = child
                 collectors.add(child.pid)
                 collector_outputs[child.pid] = output
+                os.set_blocking(child.stdout.fileno(), False)
             except Exception as error:
                 errors.add("collector:" + str(getattr(error, "errno", None) or "unknown"))
         output = (root / "gate-private.log").open("wb")
@@ -186,6 +215,7 @@ def capture(config, observe=sample):
         with (root / "availability.jsonl").open("w") as observations:
             initial_events = None
             while True:
+                drain_collectors()
                 while True:
                     try:
                         pid, status = os.waitpid(-1, os.WNOHANG)
@@ -237,7 +267,15 @@ def capture(config, observe=sample):
                     else:
                         errors.add("observation:size_bound")
                 except Exception as error:
-                    errors.add("observation:" + str(getattr(error, "errno", None) or "unknown"))
+                    classification = "observation:" + str(getattr(error, "errno", None) or "unknown")
+                    errors.add(classification)
+                    try:
+                        observations.write(json.dumps({"utc": utc(), "state": "unknown",
+                                                       "error": classification}) + "\n")
+                        observations.flush()
+                    except OSError:
+                        # The terminal receipt still records the static failure.
+                        pass
                 for pid in collectors:
                     if collector_outputs[pid].tell() > 32 * 1024 * 1024 and children[pid].returncode is None:
                         errors.add("collector:size_bound")
@@ -260,6 +298,9 @@ def capture(config, observe=sample):
             except ChildProcessError:
                 pass
             time.sleep(.02)
+        drain_collectors()
+        for pid in collectors:
+            children[pid].stdout.close()
         for stream in streams:
             stream.flush()
             os.fsync(stream.fileno())

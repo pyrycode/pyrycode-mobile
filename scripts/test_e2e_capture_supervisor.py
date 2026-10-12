@@ -50,6 +50,9 @@ class CaptureLifecycleTest(unittest.TestCase):
         self.assertTrue(receipt["subtree_complete"])
         self.assertIn("observation:11", receipt["errors"])
         self.assertGreaterEqual(len(receipt["reaped"]), 2)
+        observations = [json.loads(line) for line in
+                        (self.root / "evidence" / "availability.jsonl").read_text().splitlines()]
+        self.assertTrue(all(r["state"] == "unknown" and r["utc"] for r in observations))
 
     def test_collector_start_failure_keeps_gate_result_and_waits(self):
         self.config["collectors"] = [["missing-capture-collector"]]
@@ -116,6 +119,16 @@ class CaptureLifecycleTest(unittest.TestCase):
         self.assertEqual(self.module.capture(self.config), 125)
         self.assertIsNone(self.receipt()["gate_exit"])
         self.assertTrue(self.receipt()["subtree_complete"])
+
+    def test_prestarted_collector_has_utc_byte_intervals(self):
+        self.config["collectors"] = [[sys.executable, "-c", "print('emulator-5554 offline', flush=True)"]]
+        self.gate("import time; time.sleep(.1)")
+        self.assertEqual(self.module.capture(self.config), 0)
+        events = [json.loads(line) for line in
+                  (self.root / "evidence" / "collector-events.jsonl").read_text().splitlines()]
+        self.assertTrue(events)
+        self.assertTrue(all(e["utc"] and e["bytes"] > 0 for e in events))
+        self.assertIn("emulator-5554 offline", (self.root / "evidence" / "collector-0-private.log").read_text())
 
 
 if __name__ == "__main__":

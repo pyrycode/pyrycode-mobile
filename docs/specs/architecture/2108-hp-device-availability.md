@@ -76,3 +76,18 @@ Regression contracts: injected EAGAIN followed by delayed gate/setsid-descendant
 Forecast for the recovery remains one capture lifecycle deliverable, approximately 900 total written lines including tests and plan, zero application exported types or simultaneous consumer updates, three acceptance criteria and nine failure classifications. The new uniquely named scripts have no in-flight branch overlap. No live capture is permitted until these supervision regressions pass. Device-loss causality and the required 65-method repaired HP control remain open.
 
 - 2026-10-12 recovery: 286/286 retained artifacts reverified against the unchanged manifest. Seven Linux supervision regressions and four Node admission regressions pass on HP, including real EAGAIN injection with a detached delayed writer under a fake held reservation. These prove diagnostic lifecycle repair only. Authorize one newly supervised diagnostic capture under ordinary heavy admission with the same 1800-second declared execution bound; this supersedes the earlier one-diagnostic limit solely because the previous observer failed. No device-loss mechanism is yet selected and this is not a post-repair device control. Prestarted existing host syscall tracing, if permitted, observes the Gradle parents' wait/kill results without altering renderer policy; missing observations stay unknown.
+
+
+### Recovery transition coverage
+
+| Event | Executed Linux/host regression |
+| --- | --- |
+| Observer spawn/collection reports EAGAIN while gate and detached child continue | `test_eagain_does_not_abandon_delayed_gate_or_detached_descendant`; Node `EAGAIN cannot release fake reservation before detached last write` |
+| Container or host collector cannot start | `test_collector_start_failure_keeps_gate_result_and_waits`; Node `host collector startup failure is unknown while gate status survives` |
+| An artifact directory cannot export | `test_export_failure_still_attempts_other_exports_before_receipt`; Node `export failure propagates without replacing failed gate status` |
+| Cancellation repeats or a child ignores TERM | `test_signal_cancel_and_repeated_signal_cannot_skip_cleanup`, `test_cancel_file_cleans_detached_child_after_gate_exit`, `test_timeout_kills_term_ignoring_child_and_reaps`; Node `host observer ignoring TERM is killed and reaped before completion` |
+| Podman exits before container descendants finish, or an old/incomplete receipt appears | Node `container receipt, not podman exit, orders reservation completion`, `wrong run and incomplete receipt cannot release admission` |
+| Gate cannot start | `test_gate_start_failure_is_durable_without_children` |
+| Prestarted observer emits bytes | `test_prestarted_collector_has_utc_byte_intervals` |
+
+- 2026-10-12: the final source adds bounded nonblocking collector drains with UTC byte intervals and unknown observation records, plus bounded host process-group cleanup and host collector startup handling. Eight Python and six Node regressions pass on Linux/HP. The actual diagnostic received its grant at 05:47:14 UTC before these final collector enhancements were installed; its preserved helper/source hashes, not the branch's later helper versions, identify the active inputs. Its optional existing host parent-wait tracer lacked noninteractive access; parent-owned emulator status/signal remains unknown. No privilege or host policy was changed, and the active inputs are left fixed.
