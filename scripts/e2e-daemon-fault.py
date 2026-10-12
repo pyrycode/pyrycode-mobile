@@ -100,7 +100,9 @@ def main():
                 if self.path == "/test-begin":
                     test_sessions.begin()
                 elif self.path == "/test-end":
-                    test_sessions.end()
+                    removed = test_sessions.end()
+                    print(json.dumps({"event": "test_session_cleanup", "time": time.time(),
+                                      "removed": removed, "remaining_new": 0}), flush=True)
                 elif self.path == "/posts":
                     size = int(self.headers.get("Content-Length", "0"))
                     if not 0 < size <= 1024:

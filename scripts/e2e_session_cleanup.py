@@ -33,6 +33,7 @@ class TestSessions:
         if self.baseline is None:
             raise RuntimeError('test session ownership was not recorded')
         failures = []
+        removed = 0
         for path in self.sockets():
             try:
                 baseline = self.baseline.get(path, set())
@@ -44,6 +45,7 @@ class TestSessions:
                         reply = self.request(path, {'verb': 'sessions.rm', 'sessions': {'id': sid}})
                         if reply.get('ok') is not True:
                             raise RuntimeError('owned session removal was not acknowledged')
+                        removed += 1
                     except (OSError, ValueError, RuntimeError, KeyError) as error:
                         failures.append(error)
                 remaining = {row['id'] for row in self.rows(path)
@@ -56,3 +58,4 @@ class TestSessions:
             # Retain ownership after failure: the next test must not adopt leftovers as its baseline.
             raise RuntimeError('test session cleanup failed') from failures[0]
         self.baseline = None
+        return removed
