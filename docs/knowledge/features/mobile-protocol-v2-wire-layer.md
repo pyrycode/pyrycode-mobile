@@ -38,6 +38,15 @@ data class Envelope(
     val payload: JsonElement = JsonNull,                // absent payload, still a non-null generic carrier
     @SerialName("in_reply_to") val inReplyTo: Long? = null,  // OMITTED when absent
     @SerialName("event_id") val eventId: Long? = null,       // #412: durable replay cursor; OMITTED when absent
+    @SerialName("history_entry_id")
+    @Serializable(with = ReadMarkIdSerializer::class)
+    val historyEntryId: ULong? = null,
+    @SerialName("conversation_id") @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val conversationId: JsonElement? = null,
+    @SerialName("session_id") @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val sessionProvenance: SessionProvenance = SessionProvenance(),
+    @SerialName("session_state_cleared") @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val sessionStateCleared: JsonElement = JsonPrimitive(false),
 )
 ```
 
@@ -177,7 +186,7 @@ no unpaired surrogate, no CR/LF, NEL, Unicode line or paragraph separator, and a
 limit. Invalid payloads return null without retaining parser error text.
 
 The authoritative wire contract remains pyrycode `docs/protocol-mobile.md`, heading
-`reply_suggestion`. Mobile's [remote projection](remote-conversation-repository.md#status-projections-one-file-per-status-event)
+`reply_suggestion`. Mobile's [remote projection](remote-conversation-repository-status-projections.md#status-projections-one-file-per-status-event)
 applies interactive gating and revision ordering and excludes this state from replay and
 history. Daemon text remains inert data and never enters logs; the
 [reading type](conversation-repository-shape.md#shape) redacts all fields in `toString()`.
@@ -350,6 +359,43 @@ Two invariants the override preserves:
 ## Application payloads (decoded on top of `Envelope`)
 
 Split into [Mobile Protocol v2 — wire models + codec — application payloads](mobile-protocol-v2-wire-layer-application-payloads.md) on 2026-09-22 to keep this document under the 50000-byte cap the docs guard enforces. That section, Application payloads (decoded on top of `Envelope`), moved there verbatim, headings and anchors intact.
+
+### Session-scoped live admission (#2084)
+
+`Envelope` now default-tolerantly carries raw `conversationId` (`conversation_id`),
+`sessionProvenance` (`session_id`) and raw `sessionStateCleared`
+(`session_state_cleared`, default false). Their default values are omitted on encode,
+preserving unrelated legacy constructors and outbound bytes. Raw JSON kinds prevent
+primitive-to-string or boolean coercion from granting ownership. `SessionProvenance`
+retains three distinct cases: omitted, explicit null, and a nonempty producing-session
+string; empty or wrong-typed tags are unusable.
+
+On the supplied authoritative route every live frame requires a nonempty JSON-string
+**envelope** conversation id, including a clear with payload `{}`. A payload
+`conversation_id`, if present, must be the identical string. Missing/null/empty/wrong-
+typed envelope ids and malformed/conflicting payload ids are dropped before mutation
+or correlation, without legacy fallback. Neither the current screen, a stored session
+binding nor `in_reply_to` can supply the conversation. Source host comes from the
+authenticated connection. The clear flag must be an unquoted JSON boolean; true requires
+an empty object payload, no correlation and no durable event/history identity.
+
+Summary `current_session_id` is inspected as a JSON string before establishing the
+binding: a nonempty id records identity without inventing activity; an empty string
+reconciles no-session state. Fresh readings must match the reconciled provenance;
+missing never borrows a tagged binding, and explicit null cannot replace it without
+authoritative summary/clear reconciliation. See [family retirement](remote-conversation-repository-status-projections.md#supplied-session-ownership-and-family-retirement-2084).
+
+Before decoding `session_settings` or `session_settings_updated`, require a JSON-string
+payload `session_id`. A nonempty write target must equal the producing envelope session.
+An empty `session_settings` read is unavailable/read-only; an empty update acknowledgement
+is rejected. This check precedes publication and waiter completion, so correlation
+cannot authorize a different session. Diagnostics use only static event/outcome codes,
+never identifiers, prompt text, reading content or parser exceptions.
+
+The wire authority is daemon [Session-scoped live state](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#session-scoped-live-state-v2-supplied-delivery-contract),
+including the conversation-bearing delivery added by daemon #3195. #1988 owns actual
+production negotiation/delivery and combined proof; #1986 owns queue reconciliation,
+and #1947 remains the independent legacy context-reset work.
 
 ### Daemon read fields and confirmation
 

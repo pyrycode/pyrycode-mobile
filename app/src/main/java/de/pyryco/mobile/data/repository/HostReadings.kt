@@ -34,6 +34,12 @@ import kotlinx.datetime.Instant
 class HostReadings(
     now: () -> Instant = Clock.System::now,
 ) {
+    // Provenance accompanies host-held readings across reconnect; it never implies a running process.
+    internal val liveSessionBindings = java.util.concurrent.ConcurrentHashMap<String, de.pyryco.mobile.data.network.SessionProvenance>()
+    internal val retiredLiveSessions =
+        java.util.concurrent
+            .ConcurrentHashMap<String, Set<de.pyryco.mobile.data.network.SessionProvenance>>()
+
     internal val announcedModel = AnnouncedModelProjection()
     internal val sessionFacts = SessionFactsProjection()
     internal val contextUsage = ContextUsageProjection()
@@ -81,6 +87,10 @@ class HostReadings(
         settings: SessionSettings,
     ) {
         sessionSettings.update { it + (conversationId to settings) }
+    }
+
+    internal fun clearSessionSettings(conversationId: String) {
+        sessionSettings.update { it - conversationId }
     }
 
     /** The pairing ended: every read reports nothing from now on. Idempotent. */

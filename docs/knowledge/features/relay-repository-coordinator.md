@@ -21,7 +21,12 @@ switches the active connection's [held clarification-question batches](relay-rep
 sibling [`hostModals`](current-modal-state.md) fold is less eager about it: since
 [#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md) it keeps every outstanding
 permission prompt through a teardown and clears only when a *new* connection is published, not on the
-drop itself. It holds the
+drop itself. On the supplied authoritative route (#2084), the repository instead owns
+the held actionable fold; collection reselects at the owning pump's Open edge so early
+prompts cannot be lost through a replay-zero stream. See
+[prompt collection](relay-repository-coordinator-seams-and-passthroughs.md#modal-event-seam-445-and-the-hoisted-hostmodals-fold-492)
+for local actions, conversation retirement and answered-history/reconnect boundaries.
+It holds the
 [background-task roster](relay-repository-coordinator-seams-and-passthroughs.md#background-task-roster-677)
 the same reset way, except for which task ids have finished, which it retains across every reconnect so a
 completed task cannot come back as live when the daemon re-sends its retained roster. It owns one
@@ -35,6 +40,10 @@ model menu of each conversation and the last successful `session_settings` reply
 (`askedModelMenus`, `modelListAsks`, `heardModelMenus`) stay per connection; a held settings reading is only
 ever read back invalidated (permission mode unknown, memory search `Unknown`, marked `held = true`) so
 nothing automatic acts on it until the new connection's own reply replaces it whole.
+The supplied route holds producing bindings and retired-session fences beside these
+readings; reconnect cannot give an omitted tag the previous session's authority.
+Its settings observation uses admitted connection-local arrivals. #1988 owns production
+activation and collection, #1986 queue/send reconciliation, and #1947 legacy reset.
 
 Package: `de.pyryco.mobile.data.repository` (`RelayRepositoryCoordinator` + the `ManagedSessionPump`
 interface it drives, the latter appended to `SessionPump.kt`), co-located with the

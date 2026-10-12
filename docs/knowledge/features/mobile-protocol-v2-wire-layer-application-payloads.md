@@ -11,7 +11,7 @@ The first one landed in [#316](../codebase/316.md): `ConversationsPayload` / `Co
 - **Object-wrapped, not a bare array.** The `conversations` payload is `{ "conversations": [ … ] }` (server SSOT `conversations_read.go`, #273), so it decodes to a wrapper DTO whose one field is the row list — **not** a top-level `List<…>`.
 - **Timestamps decode to `kotlinx.datetime.Instant` at the DTO** (via an explicit `InstantIso8601Serializer`) — a deliberate departure from `Envelope.ts` staying a `String`: here a domain field (`lastUsedAt`) consumes the instant, so validating the RFC 3339 string at decode keeps the mapper total. One consequence: a malformed timestamp surfaces as **`IllegalArgumentException`** (kotlinx-datetime's `DateTimeFormatException`), **not** a `SerializationException` — a consumer catching decode failures must handle both families (or `Exception`).
 
-Wire-absent domain fields are filled with documented list-tier defaults at the mapping site, never `null`-punned (for `conversations`: `currentSessionId=""`, `sessionHistory=emptyList()`, `isSleeping=false`, `archived=false` — full session/sleep/archive state arrives via the detail + message read paths). These payloads are **decode-only** (server → phone), so they get no encode round-trip test.
+Wire-absent domain fields are filled with documented list-tier defaults at the mapping site, never `null`-punned (for `conversations`: `currentSessionId=""` when no valid summary binding is supplied, `sessionHistory=emptyList()`, `isSleeping=false`, `archived=false` — a valid string `current_session_id` now supplies the summary binding; session history/sleep/archive state arrives via the detail + message read paths). These payloads are **decode-only** (server → phone), so they get no encode round-trip test.
 
 `@SerialName("workspace_label") val workspaceLabel: String? = null` (#720) is the one row field copied verbatim rather than list-tier-defaulted — every row, including archived rows, retains its own exact `workspace_label`/`cwd` pair. Explicit wire `null` and an absent legacy key both decode to `null`; the ticket deliberately chose the legacy-omission-is-null reading over `ignoreUnknownKeys`-adjacent "treat missing as malformed" — see [`data-model.md`](data-model.md#conversation).
 
@@ -149,6 +149,11 @@ honored by [#375](../codebase/375.md)'s `requestScreenSnapshot` (which adds zero
 reply, `conversationId`, and decoded `text` are never logged), not this zero-log-call wire slice.
 
 ### The session-settings read exchange (#590)
+
+On the supplied route, [session-scoped admission](mobile-protocol-v2-wire-layer.md#session-scoped-live-admission-2084)
+validates envelope ownership and the payload write target before typed decoding or
+waiter completion. Empty reads remain unavailable/read-only; update acknowledgements
+require the producing session target.
 
 `SessionSettingsPayloads.kt` (already holding the write half's `SetSessionSettingsPayloadDto`/
 `SessionSettingsUpdatedPayloadDto` — #543) gains the **read** half: `RequestSessionSettingsPayloadDto`

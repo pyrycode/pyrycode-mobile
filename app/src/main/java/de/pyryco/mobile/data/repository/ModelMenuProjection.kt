@@ -41,6 +41,14 @@ internal class ModelMenuProjection(
     private val nextRequestId: () -> Long,
     private val readings: HostReadings,
 ) {
+    /** Retire only this conversation's session-scoped reading. */
+    fun clear(conversationId: String) {
+        modelListAsks.entries.removeIf { it.value == conversationId }
+        heardModelMenus.remove(conversationId)
+        askedModelMenus.remove(conversationId)
+        modelMenusByConversation.update { it - conversationId }
+    }
+
     /**
      * `conversationId -> the model menu heard for it` (#791) — the identifiers, labels, per-row effort levels
      * and auto-mode support the daemon published. Written **only** from the repository's single inbound

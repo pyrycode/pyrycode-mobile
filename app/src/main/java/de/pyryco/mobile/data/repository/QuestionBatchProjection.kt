@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.datetime.Clock
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 
@@ -42,6 +44,7 @@ import kotlinx.serialization.json.encodeToJsonElement
 internal class QuestionBatchProjection(
     private val send: (Envelope) -> Boolean,
     private val nextRequestId: () -> Long,
+    private val authoritative: () -> Boolean = { false },
 ) {
     /**
      * The clarification batches outstanding on **this connection** (#822), folded from `question_shown` /
@@ -52,6 +55,15 @@ internal class QuestionBatchProjection(
      * rule, which the coordinator's modal fold also applies once the next connection is published. On the
      * concrete repository only, like [RemoteConversationRepository.modalEvents].
      */
+    private val retired =
+        java.util.concurrent.ConcurrentHashMap
+            .newKeySet<String>()
+
+    fun clear(conversationId: String) {
+        retired += mutableQuestionBatches.value.filter { it.conversationId == conversationId }.map { it.questionBatchId }
+        mutableQuestionBatches.update { held -> held.filterNot { it.conversationId == conversationId } }
+    }
+
     private val mutableQuestionBatches = MutableStateFlow<List<QuestionBatch>>(emptyList())
     val batches: StateFlow<List<QuestionBatch>> = mutableQuestionBatches.asStateFlow()
 
@@ -67,10 +79,29 @@ internal class QuestionBatchProjection(
             when (envelope.type) {
                 TYPE_QUESTION_SHOWN -> {
                     val batch = MobileJson.decodeFromJsonElement<QuestionShownPayloadDto>(envelope.payload).toBatch()
-                    mutableQuestionBatches.update { it.withShown(batch) }
+                    if (authoritative() &&
+                        mutableQuestionBatches.value.any {
+                            it.questionBatchId == batch.questionBatchId &&
+                                it.conversationId != batch.conversationId
+                        }
+                    ) {
+                        return
+                    }
+                    if (!authoritative() || batch.questionBatchId !in retired) mutableQuestionBatches.update { it.withShown(batch) }
                 }
                 TYPE_QUESTION_DISMISSED -> {
                     val dismissed = MobileJson.decodeFromJsonElement<QuestionDismissedPayloadDto>(envelope.payload)
+                    if (authoritative()) {
+                        val conversation = ((envelope.payload as? JsonObject)?.get("conversation_id") as? JsonPrimitive)?.content
+                        if (mutableQuestionBatches.value.any {
+                                it.questionBatchId == dismissed.questionBatchId &&
+                                    it.conversationId != conversation
+                            }
+                        ) {
+                            return
+                        }
+                        retired += dismissed.questionBatchId
+                    }
                     mutableQuestionBatches.update { it.withDismissed(dismissed.questionBatchId) }
                 }
             }
@@ -95,6 +126,7 @@ internal class QuestionBatchProjection(
                 answers = answers.sortedBy { it.questionIndex }.map { QuestionAnswerEntryDto(it.questionIndex, it.values) },
             )
         sendQuestionFrame(TYPE_QUESTION_ANSWER, MobileJson.encodeToJsonElement(payload))
+        retireAnswered(questionBatchId)
     }
 
     /** The body of [RemoteConversationRepository.refuseQuestionBatch]; its KDoc states the contract. */
@@ -102,6 +134,14 @@ internal class QuestionBatchProjection(
         heldQuestionBatch(questionBatchId)
         val payload = QuestionRefusedPayloadDto(questionBatchId, questionToken("refuse", questionBatchId))
         sendQuestionFrame(TYPE_QUESTION_REFUSED, MobileJson.encodeToJsonElement(payload))
+        retireAnswered(questionBatchId)
+    }
+
+    private fun retireAnswered(id: String) {
+        if (authoritative()) {
+            retired += id
+            mutableQuestionBatches.update { it.withDismissed(id) }
+        }
     }
 
     private fun heldQuestionBatch(questionBatchId: String): QuestionBatch =

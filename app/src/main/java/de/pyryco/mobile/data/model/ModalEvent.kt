@@ -30,6 +30,13 @@ package de.pyryco.mobile.data.model
  * walk-back surface). The subtype names mirror the wire `type` strings 1:1.
  */
 sealed interface ModalEvent {
+    /** Local retirement only; no wire answer or durable row. */
+    data class Cleared(
+        val conversationId: String,
+    ) : ModalEvent {
+        override val modalId: String = ""
+    }
+
     val modalId: String
 
     /**

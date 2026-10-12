@@ -46,6 +46,12 @@ internal class McpStatusProjection(
     private val negotiatedCapabilities: () -> Set<String>,
     private val nextRequestId: () -> Long,
 ) {
+    /** Retire only this conversation's session-scoped reading. */
+    fun clear(conversationId: String) {
+        asks.entries.removeIf { it.value.second == conversationId }
+        statusByConversation.update { it - conversationId }
+    }
+
     /** Which request an envelope id was spent on. A toggle refusal can therefore never settle as a reconnect one. */
     private enum class Verb { Status, Reconnect, Toggle }
 
