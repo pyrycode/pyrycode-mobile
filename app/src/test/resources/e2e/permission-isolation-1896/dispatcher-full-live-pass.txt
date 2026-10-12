@@ -29,5 +29,7 @@ The XML retains every exact counted method outcome from the durable stdout repor
 This summary contains only fixed labels, counts, revisions, source hashes and artifact availability; no keys, tokens or pairing codes.
 Review and dispatcher live validation must run again; preserve needs-real-claude and the full live selection.
 For the next gate, retain private XML, phone logs, matching daemon diagnostics and a hash manifest on the persistent agents volume before worktree cleanup.
-Resume #2047 only after a new failing occurrence supplies the named stage, original cause/deadline, counted XML, retained phone logcat and matching daemon evidence, revisions/provenance and safe published locations.
-Passing results here do not close #2047.
+Reopen/resume #2047 only after a new failing occurrence supplies the named stage, original cause/deadline, counted XML, retained phone logcat and matching daemon evidence, revisions/provenance and safe published locations.
+#2047 was already closed as no longer reproducing by the maintainer on 2026-10-12; historical causation was not claimed.
+Closure decision: https://github.com/pyrycode/pyrycode-mobile/issues/2047#issuecomment-6131411309
+This diagnostics-only checkpoint does not independently attribute or repair the historical failure.
