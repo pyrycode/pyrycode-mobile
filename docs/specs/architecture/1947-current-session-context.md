@@ -42,7 +42,7 @@ No new jobs, flows, mutable state or dispatchers. Existing `viewModelScope` coll
 | --- | --- |
 | Reset replaces session; new replies held | `resetReplacement_hidesOldSources_thenAcceptsContextBeforeSettings` drives the real repository and ViewModel; shared `resetReplacement_updatesBothContextSurfaces` asserts actual unavailable UI. |
 | Fresh context arrives before settings | Same regressions: display the context percentage immediately, without a message. |
-| Current-session settings arrive with no context | `currentSessionSettings_areTheOnlyFallback` proves stale, empty and matching identities. |
+| Current-session settings arrive with no context | `currentSessionSettings_areTheOnlyFallback` proves stale, empty and matching identities; `unresolvedSession_doesNotAllowSettingsFallback_butAcceptsContext` covers an empty binding. |
 | Another conversation resets | `anotherConversationReplacement_keepsTheReading` proves isolation through inbound frames. |
 | Repeat reset, idle and reconnect | Existing `ThreadViewModelContextUsageAskTest` proves one ask per reset end and open/reconnect requests. |
 | Recollection/configuration/process restart | No new retained state; identity is recomputed from repository inputs. Existing repository retention and settings behavior remains. |
@@ -82,3 +82,7 @@ None.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-12
+
+## Revisions
+
+- 2026-10-12: production-path fixtures advertise `thread` as well as `interactive`, because `ConversationListProjection.applySnapshot` accepts summary session bindings only with the negotiated thread capability. The initial fallback test must seed a real accepted binding. Final implementation remains the planned source filter; written work is approximately 470 lines, within every sizing limit.

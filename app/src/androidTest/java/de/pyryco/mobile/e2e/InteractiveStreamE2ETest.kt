@@ -1447,6 +1447,21 @@ class InteractiveStreamE2ETest {
                 }
             val expected = InstrumentationRegistry.getInstrumentation().targetContext.getString(descriptionResource, percent)
             awaitContextSegment(THREAD_TIMEOUT_MS, "the fresh post-reset reading ($percent%)") { it == expected }
+
+            // The modal must show the same fresh reading without another user message (#1947).
+            openRunConfiguration()
+            val contextReading =
+                InstrumentationRegistry.getInstrumentation().targetContext.getString(
+                    R.string.status_sheet_context_used,
+                    percent,
+                )
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(contextReading).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithText("Context window").performScrollTo().assertIsDisplayed()
+            composeTestRule.onNodeWithText(contextReading).performScrollTo().assertIsDisplayed()
+            composeTestRule.onNodeWithText("Done").performClick()
+            awaitContextSegment(THREAD_TIMEOUT_MS, "the fresh reading after closing Run configuration") { it == expected }
         }
     }
 
