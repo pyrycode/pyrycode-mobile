@@ -24,6 +24,18 @@ after boot, then passed on the same image — diagnosed as FCM's first mint fail
 `PushTokenRefresher` (below, #1102) yet in place to ask again; `awaitPushRegistered`'s timeout message
 now reports an in-process token request's own outcome instead of guessing at Play services.
 
+The October 12 HP acquisition failure had a separate cause: the Android API-key
+restriction omitted that build's signing certificate. The operator corrected the
+allowlist in [#2083](https://github.com/pyrycode/pyrycode-mobile/issues/2083#issuecomment-6130075099).
+Correct-identity requests then succeeded while missing and wrong identities stayed
+blocked. This required no change to token acquisition code, installation refresh,
+SDK dependencies or notification privacy rules. A full 65-case HP live run subsequently
+passed both push scenarios and offline-read reconciliation. See the
+[counted evidence and source limits](../../e2e-interactive-stream.md#session-cleanup-and-firebase-recovery-2026-10-12).
+A token-acquisition rejection must be distinguished from token persistence,
+daemon registration and later delivery. A later-stage failure does not establish
+another acquisition defect.
+
 ## Why the SDK is unconditional but push can still be off
 
 `firebase-messaging` (via the Firebase BoM, no `firebase-analytics`) is an unconditional
