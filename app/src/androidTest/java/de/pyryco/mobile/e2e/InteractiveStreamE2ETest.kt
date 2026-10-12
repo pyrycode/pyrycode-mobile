@@ -5429,7 +5429,7 @@ class InteractiveStreamE2ETest {
             sendFromPhone(
                 "Use Bash exactly once with run_in_background=true and timeout=600000. Set command to this exact string: \"$command\". " +
                     "Do not change the command, add a timeout or wait for the background task. " +
-                    "End your own turn immediately with exactly launched1830. Do not use any other tools.",
+                    "Briefly confirm the launch and end your own turn immediately. Do not use any other tools.",
             )
             allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "held Bash did not join a retained roster", allowed, "background_task_roster") {
                 probe.taskId(peer.recorded(chat)) != null
@@ -5485,16 +5485,38 @@ class InteractiveStreamE2ETest {
                     } == true
                 }
             composeTestRule.onAllNodes(taskPill).assertCountEquals(0)
-            val reply = "stop1830reply$key"
-            sendFromPhone("Reply exactly $reply. Do not use tools.")
+            val priorTurns =
+                peer
+                    .recorded(chat)
+                    .filter { it.type == "turn_end" }
+                    .map { peer.field(it, "turn_id") }
+                    .toSet()
+            sendFromPhone("Briefly acknowledge this message. Do not use tools.")
+            val ended =
+                allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "the post-Stop turn did not finish", allowed) {
+                    it.type == "turn_end" && peer.field(it, "turn_id") !in priorTurns
+                }
+            val turnId = requireNotNull(peer.field(ended, "turn_id"))
+            val liveRepositories =
+                checkNotNull(
+                    GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId),
+                ).coordinator.currentRepository
+            val messages =
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        liveRepositories.firstOnLive({ it.observeMessages(chat) }) { holdsSettledAssistantReply(it, turnId) }
+                    }
+                }.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
+            val reply =
+                messages.last {
+                    it.role == Role.Assistant && it.segment?.turnId == turnId && it.parentToolUseId.isEmpty() && it.content.isNotBlank()
+                }
+            val body = hasTestTag("assistant-reply:${reply.id}")
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                assistantText(peer, chat).contains(reply) &&
-                    composeTestRule
-                        .onAllNodes(hasText(reply) and inThreadList(reply), useUnmergedTree = true)
-                        .fetchSemanticsNodes()
-                        .isNotEmpty()
+                composeTestRule.onNode(body, useUnmergedTree = true).isDisplayed()
             }
-            composeTestRule.onNode(hasText(reply) and inThreadList(reply), useUnmergedTree = true).assertIsDisplayed()
+            composeTestRule.onNode(body, useUnmergedTree = true).assertIsDisplayed()
+            composeTestRule.onAllNodes(body, useUnmergedTree = true).assertCountEquals(1)
         } finally {
             try {
                 assertEquals("scenario teardown must release the hold", "released", stopTaskFixtureGet(deviceFixture + "/release"))

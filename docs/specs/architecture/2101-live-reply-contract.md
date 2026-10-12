@@ -70,7 +70,7 @@ its fixed reply, while both callers follow the current connection.
 
 The agent and Copy repairs do not complete migration of the live suite. Shared ping
 checks still prescribe a token across many scenarios. Offline catch-up, queue ordering,
-post-Stop replies and the channel-instructions test also use fixed prose as reply identity.
+the channel-instructions test also uses fixed prose as reply identity.
 Migrate each through its actual turn and message before relaxing the prompt. In particular,
 a prior completed message must not satisfy a follow-up or reconnect check.
 
@@ -78,6 +78,16 @@ Keep exact copied words, sent payloads, file bytes, protocol fields and the mid-
 marker where those values are the feature being exercised. Fixed Markdown layout
 specimens belong in the scripted rendering suite. The shared verification guide now
 states this rule explicitly rather than recommending prescribed live reply tokens.
+
+## Post-Stop reply follow-through
+
+The background-task Stop scenario now leaves the launch acknowledgment and later
+reply wording open. Before sending the later message, it records completed turn IDs.
+It then requires a new completed turn, that turn's settled main reply through the
+current connection, and exactly one visible body with the recorded message ID.
+The held task, real Stop action, completion observation and cleanup are unchanged.
+The existing three reply-completeness and ownership tests pass, as does Android-test
+compilation. Fresh live validation of this extension remains pending.
 
 ## Security review
 
