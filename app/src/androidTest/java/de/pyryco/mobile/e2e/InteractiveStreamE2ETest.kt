@@ -5897,7 +5897,21 @@ class InteractiveStreamE2ETest {
             val completed =
                 peerStep(peer, "await the allowed turn's turn_end") { peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
             val turn = MobileJson.decodeFromJsonElement(TurnEndPayloadDto.serializer(), completed.payload)
+            val completionId = requireNotNull(completed.historyEntryId) { "the completed turn has no durable checkpoint" }
+            assertTrue("the completed turn belongs to the backgrounded conversation", turn.conversationId == chatId)
             val history = peerStep(peer, "read the completed reply for notification evidence") { peer.history(chatId, THREAD_TIMEOUT_MS) }
+            val historyCompletion =
+                requireNotNull(history.singleOrNull { it.type == "turn_end" && it.id == completionId }) {
+                    "independent history lacks the exact completed turn checkpoint"
+                }
+            assertTrue(
+                "independent history confirms the same completed turn",
+                MobileJson.decodeFromJsonElement(TurnEndPayloadDto.serializer(), historyCompletion.payload) == turn,
+            )
+            assertTrue(
+                "independent preview history accounts for every durable ID",
+                history.zipWithNext().all { (newer, older) -> newer.id > older.id && newer.id - older.id == 1uL },
+            )
             val rows = reduceHistoryPage(history.map { HistoryEntry(it.type, it.payload, Instant.parse(it.ts), it.id) }, interactive = true)
             val preview =
                 requireNotNull(
@@ -5906,7 +5920,27 @@ class InteractiveStreamE2ETest {
             assertNotEquals("completion evidence must contain a reply", string(R.string.notification_turn_completed), preview)
 
             // 3. AC-1: the push wakes the app and exactly one private reply alert shows.
-            val alert = awaitAlert(preview, woke)
+            val expectedTag =
+                sha256(
+                    ByteArrayOutputStream()
+                        .apply {
+                            listOf(serverId, chatId).forEach { field ->
+                                val bytes = field.toByteArray(Charsets.UTF_8)
+                                write("${bytes.size}:".toByteArray(Charsets.UTF_8))
+                                write(bytes)
+                            }
+                        }.toByteArray(),
+                )
+            val alert =
+                awaitAlert(preview, woke) { observed ->
+                    assertTrue("the alert belongs to the exact host and conversation", observed.tag == expectedTag)
+                    assertEquals("the conversation alert ID", 0, observed.id)
+                    assertTrue(
+                        "the alert belongs to the exact completed turn checkpoint",
+                        observed.notification.extras.getString("de.pyryco.mobile.notification.COMPLETION_ENTRY_ID") ==
+                            completionId.toString(),
+                    )
+                }
             assertRedactedAlert(
                 alert.notification,
                 string(R.string.notification_turn_completed),
@@ -6122,12 +6156,14 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Wait for the first alert and assert it is the only one and reads [text]. The failure says whether a
-     * wake ever reopened the host link: if it did not, the push never arrived.
+     * Wait for the first alert and assert it is the only one, has the expected identity, and reads [text].
+     * A mismatch fails immediately without printing private text or waiting for a replacement alert.
+     * The failure says whether a wake ever reopened the host link: if it did not, the push never arrived.
      */
     private fun awaitAlert(
         text: String,
         woke: AtomicBoolean,
+        assertIdentity: (StatusBarNotification) -> Unit = {},
     ): StatusBarNotification {
         val deadline = SystemClock.elapsedRealtime() + PUSH_TIMEOUT_MS
         while (attentionAlerts().isEmpty()) {
@@ -6144,16 +6180,17 @@ class InteractiveStreamE2ETest {
         }
         val alerts = attentionAlerts()
         assertEquals("alerts posted", 1, alerts.size)
-        assertEquals(
-            "the alert's text",
-            text,
-            alerts
-                .single()
-                .notification.extras
-                .getCharSequence(Notification.EXTRA_TEXT)
-                ?.toString(),
+        val alert = alerts.single()
+        assertIdentity(alert)
+        assertTrue(
+            "the alert's private text differs from the independently fetched preview",
+            text ==
+                alert
+                    .notification.extras
+                    .getCharSequence(Notification.EXTRA_TEXT)
+                    ?.toString(),
         )
-        return alerts.single()
+        return alert
     }
 
     /** Both push scenarios keep their private content out of the complete public notification object. */

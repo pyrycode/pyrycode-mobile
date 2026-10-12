@@ -497,7 +497,15 @@ class HostConversationSource internal constructor(
                 entries.zipWithNext().all { (newer, older) ->
                     newer.unsignedId > older.unsignedId && newer.unsignedId - older.unsignedId == 1uL
                 }
-            if (!attributed || !completed || !continuous) {
+            val rejection =
+                when {
+                    !attributed -> "attribution"
+                    !completed -> "completion"
+                    !continuous -> "continuity"
+                    else -> null
+                }
+            if (rejection != null) {
+                RelayLog.d { "event=attention_preview outcome=rejected code=$rejection" }
                 null
             } else {
                 val reduced = reduceOrderedHistoryPage(entries, interactive = true)
@@ -524,7 +532,12 @@ class HostConversationSource internal constructor(
                         "background_task_updated",
                     )
                 val retained = entries.filter { it.type in rowTypes }.all { reduced.readFacts[it.unsignedId] != null }
-                if (retained) completionReply(reduced.rows, event.turnId) else null
+                if (retained) {
+                    completionReply(reduced.rows, event.turnId)
+                } else {
+                    RelayLog.d { "event=attention_preview outcome=rejected code=retained" }
+                    null
+                }
             }
         } catch (e: CancellationException) {
             throw e
