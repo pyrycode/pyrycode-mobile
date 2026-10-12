@@ -1,0 +1,40 @@
+{
+  "purpose": "Focused live validation after verifier rework; not dispatcher full-live acceptance.",
+  "mobile": "4258a55ace74ac2de0a94ab009c9ac68b1cfd377",
+  "daemon": "e59635679fe668f18b199944410c9ca1544956b9",
+  "claude": "2.1.280",
+  "process_exit": 0,
+  "selection": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive",
+  "executed": 1,
+  "passed": 1,
+  "failed": 0,
+  "skipped": 0,
+  "target_executed": 1,
+  "target_passed": 1,
+  "completed_stages": 34,
+  "clock_correlation": "Raw phone/host clock offsets not calibrated.",
+  "full_live_proof": "Pending dispatcher full live gate and builder artifact return; both live labels retained.",
+  "daemon_events": [],
+  "sources": [
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/live-rgoj9dyc/dispatcher.xml",
+      "sha256": "ea7c1ce6aa88c80a9e3ed10d2f1f12547a9314ab917d0802eb1f4ead50b5574a"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/live-rgoj9dyc/0-TEST-pixel2Api33Atd-_app-.xml",
+      "sha256": "f0e2b9f5319c2e3132f9705e9137d7ce71998f7ca5a4a6f2fd45ae709eb1b70d"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/live-rgoj9dyc/0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive.txt",
+      "sha256": "6ca93b6911f761121c3c80f13b794f22edbb2539f71ae6472b95c76c4351e903"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/reconnect-footer-evidence/pyry-e2e.A2vdao/daemon.log",
+      "sha256": "70d41929a9cfd96ac7bed7e0e971df390b6aa13c489959bddf13ed4046179c05"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/reconnect-footer-evidence/pyry-e2e.A2vdao/run.txt",
+      "sha256": "3cd2eeaedbbe4676258c1bcfdc2e1dea125500a4a29d74014c723259819a46e4"
+    }
+  ]
+}

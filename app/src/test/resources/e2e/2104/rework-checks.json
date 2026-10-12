@@ -1,0 +1,109 @@
+{
+  "mobile_base": "1a9602826eb8a4f14ecca25278db2bbe5889a13b",
+  "tested_worktree_had_uncommitted_rework": true,
+  "green_source_commits": [
+    "bf83db28a",
+    "4258a55ac"
+  ],
+  "daemon_revision": "e59635679fe668f18b199944410c9ca1544956b9",
+  "limitations": "Controlled red proves off-Main effect continuation, not the exact historical native animator crash. Initial unchanged ping passed 2/2. Dispatcher full scripted and full live gates remain pending.",
+  "unit_red": {
+    "counts": {
+      "executed": 7,
+      "passed": 4,
+      "failed": 3,
+      "skipped": 0
+    },
+    "retained": "app/src/test/resources/e2e/2104/rework-unit-red.xml",
+    "raw_sources": [
+      {
+        "path": "/tmp/builder-2104/unit-red.xml",
+        "sha256": "f4790269e667db2f164e996d51f4ed676fe7efc3b5d3f66c7ec367ae39f30f4f"
+      }
+    ],
+    "contract": "Separate fixture deadlines and unconditional finally cleanup, matching the rejected behavior; 3 new regressions fail."
+  },
+  "unit_green": {
+    "counts": {
+      "executed": 13,
+      "passed": 13,
+      "failed": 0,
+      "skipped": 0
+    },
+    "retained": "app/src/test/resources/e2e/2104/rework-unit-green.xml",
+    "raw_sources": [
+      {
+        "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/app/build/test-results/testDebugUnitTest/TEST-de.pyryco.mobile.e2e.LiveConnectionReadsTest.xml",
+        "sha256": "dbcabfd154b6a89295c31eca1aef19df50ddddf9f49fd4f4db78af6b25a453fc"
+      },
+      {
+        "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/app/build/test-results/testDebugUnitTest/TEST-de.pyryco.mobile.e2e.ModelMenuExpectationsTest.xml",
+        "sha256": "e48bc3b863146602e762ab285736ec41c659914b05a6e660946b3d3c60d0e2de"
+      },
+      {
+        "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/app/build/test-results/testDebugUnitTest/TEST-de.pyryco.mobile.e2e.ReconnectFooterStageTest.xml",
+        "sha256": "41f029e821b7b12c8c4f9aad865df4df13d7fbfe7db6b2242e1510510c38e8fe"
+      }
+    ]
+  },
+  "ping_red": {
+    "counts": {
+      "executed": 3,
+      "passed": 2,
+      "failed": 1,
+      "skipped": 0
+    },
+    "retained": "app/src/test/resources/e2e/2104/rework-ping-red.xml",
+    "raw_sources": [
+      {
+        "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/scripted-u4st6i0e/0-TEST-pixel2Api33Atd-_app-.xml",
+        "sha256": "497b0847470e9ea50dca686a280aeeb3d9cd0b61d2d589b9b5940c488847b729"
+      }
+    ],
+    "logcat_references": [
+      {
+        "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/scripted-u4st6i0e/2-logcat-de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest-workerCompletionKeepsRippleCancellationOnMainThread.txt",
+        "sha256": "599cd3c46e74d7d7ced91cb5e106c861c6b1914142ef23d2cc0ba811cca79ba6"
+      },
+      {
+        "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/scripted-u4st6i0e/0-logcat-de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest-interactiveTurn_seededChannel_durableGapCatchUp.txt",
+        "sha256": "69b58c5f2489efcf6f231abb50d2bba087a49777fb541963ebcb0b8b01b9cd64"
+      },
+      {
+        "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/scripted-u4st6i0e/1-logcat-de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest-interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread.txt",
+        "sha256": "943229f375f8aa8a24ff991dd6aebe9527af72682441f06e0f5464ed5456cbab"
+      }
+    ],
+    "contract": "Original default unconfined composition dispatcher; controlled effect continuation ran off Main."
+  },
+  "ping_green": {
+    "counts": {
+      "executed": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    "retained": "app/src/test/resources/e2e/2104/rework-ping-green.xml",
+    "raw_sources": [
+      {
+        "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/scripted-in5f5ylx/0-TEST-pixel2Api33Atd-_app-.xml",
+        "sha256": "627bf733b3bc639d2a79d450b3dc3b362247ccf3097ad0cb949210587bbb1df1"
+      }
+    ],
+    "logcat_references": [
+      {
+        "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/scripted-in5f5ylx/2-logcat-de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest-workerCompletionKeepsRippleCancellationOnMainThread.txt",
+        "sha256": "854c0c4f1ba464674afa22166cbac57c5f552e46a278b98f77eef7eb0811d42e"
+      },
+      {
+        "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/scripted-in5f5ylx/0-logcat-de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest-interactiveTurn_seededChannel_durableGapCatchUp.txt",
+        "sha256": "23c8c72cbf79b123b2cfc65d5a915c1194090c53e0f7adcf65c6301cd53bd780"
+      },
+      {
+        "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/scripted-in5f5ylx/1-logcat-de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest-interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread.txt",
+        "sha256": "10990620f59133e88cba20f283d61303d5f51e316b8609c837c79820f3a8ff0a"
+      }
+    ],
+    "contract": "StandardTestDispatcher effectContext; worker completion off Main, effect resumption and pressed button disposal on Main."
+  }
+}
