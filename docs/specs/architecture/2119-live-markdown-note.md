@@ -49,8 +49,19 @@ Dispatcher-owned acceptance remains pending: a fresh passing **full** live gate 
 
 ## Open Questions
 
-- Which earliest stage fails, and what mechanism causes it? Resolve through retained failure evidence before claiming repair.
-- Does a controlled regression reproduce that mechanism on the unchanged path? Record the before/after evidence under Revisions.
+Resolved by the controlled matcher regression below. The historical occurrence's exact trigger remains unproven because its stack is unavailable.
+
+## Revisions
+
+### 2026-10-12 — Rendered-link qualification
+
+The baseline and immediate-predecessor live selections passed (1/1 and 2/2, no skips); they do not diagnose the historical flake. A controlled real-Compose fixture established a localized harness defect at the FirstOpen/Reopen tap in `assertLinkOpensNote`: the exact `notePrompt` includes the requested link label, but user bubbles render plain text. When that prompt and the assistant link are composed together, the original substring matcher selects the prompt first. `performFirstLinkClick` then throws “No link found that matches the predicate”; repeating the same first-node selection cannot satisfy the original wait while both nodes remain composed.
+
+`MarkdownNoteLinkTest.thePromptContainingTheRequestedLinkDoesNotCaptureTheAssistantLinkTap` uses the unchanged shared `notePrompt` and `markdownNoteLinkMatcher`, with real user and assistant `MessageBubble`s. Before repair it executed once and failed at the tap, with no skips. Retained stack/count evidence is `app/src/test/resources/markdown-note-2119/matcher-red.xml`; original raw XML is `app/build/test-results/testDebugUnitTest/TEST-de.pyryco.mobile.e2e.MarkdownNoteLinkTest.xml`. This proves the helper mechanism, not the unavailable historical trigger.
+
+Repair only the matcher: require a link annotation whose rendered label equals the requested label, within the same message-bubble ancestry. Keep substring text eligibility, both real-Claude turns, all reader/filename/stale assertions and every deadline. Share the exact prompt and matcher with the controlled tests. Cover first open, reopen after the rewrite, and a plain or incompletely revealed label without any link; the latter must remain ineligible rather than allowing an early tap. No production or visual change. Security re-review: PASS; annotation inspection is test-only, uses no network or paths, and logs no text. Static phase diagnostics retain the earliest failure for future live occurrences.
+
+The identical native Android 13 test also failed with the original matcher (1 executed, 1 failed, 0 skipped, the same no-link stack), then the repaired whole regression class passed 3/3 without skips. Retained native XML and source/revision/phase attribution are in `app/src/test/resources/markdown-note-2119/`, including `evidence.txt`. The final focused JVM selection passed 43/43 without skips. Full dispatcher live acceptance remains pending; no post-repair focused live run is claimed.
 
 ## Security review
 

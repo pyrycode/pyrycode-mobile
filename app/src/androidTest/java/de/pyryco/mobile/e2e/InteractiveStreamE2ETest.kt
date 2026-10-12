@@ -6941,6 +6941,11 @@ class InteractiveStreamE2ETest {
     fun interactiveTurn_markdownLink_opensLiveNoteInReader() {
         val serverId = twoHostArg(ARG_SERVER_ID)
         val peer = runningToolPeer()
+
+        fun <T> step(
+            stage: MarkdownNoteStage,
+            block: () -> T,
+        ): T = markdownNoteStep(stage, { Log.i("MarkdownNote", it) }, block)
         try {
             val stamp = System.currentTimeMillis()
             val fileName = NOTE_FILE_PREFIX + "$stamp.md"
@@ -6950,49 +6955,49 @@ class InteractiveStreamE2ETest {
             val allowed = mutableSetOf<String>()
 
             // 1. A fresh chat X; claude writes the note and replies with a link to it.
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
-            awaitChannelList()
-            awaitConnected()
-            val (chatX, nameX) = answerChat(serverId, NOTE_CHAT_NAME_PREFIX)
-            assertPeerAnswers(peer, chatX)
-            openChatRow(nameX)
-            sendFromPhone(notePrompt(first, fileName, "reply with exactly this markdown link and nothing else: [$linkText]($fileName)"))
-            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the note turn in X did not end", allowed) { it.type == "turn_end" }
+            step(MarkdownNoteStage.PeerConnection) { runBlocking { peer.open(CONNECT_TIMEOUT_MS) } }
+            step(MarkdownNoteStage.ListArrival) { awaitChannelList() }
+            step(MarkdownNoteStage.PhoneConnection) { awaitConnected() }
+            val (chatX, nameX) = step(MarkdownNoteStage.ChatCreation) { answerChat(serverId, NOTE_CHAT_NAME_PREFIX) }
+            step(MarkdownNoteStage.PeerReadiness) { assertPeerAnswers(peer, chatX) }
+            step(MarkdownNoteStage.ThreadOpening) { openChatRow(nameX) }
+            step(MarkdownNoteStage.FirstSend) {
+                sendFromPhone(notePrompt(first, fileName, "reply with exactly this markdown link and nothing else: [$linkText]($fileName)"))
+            }
+            step(MarkdownNoteStage.FirstTurnEnd) {
+                allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the note turn in X did not end", allowed) { it.type == "turn_end" }
+            }
 
             // 2. AC-1, AC-3: the tap opens the reader on the note as it is now, named by its file.
-            assertLinkOpensNote(linkText, fileName, first, stale = null)
+            step(MarkdownNoteStage.FirstOpen) { assertLinkOpensNote(linkText, fileName, first, stale = null) }
 
             // 3. #1067: with the reader still open, the peer has claude rewrite the note; Refresh shows it.
-            runBlocking { peer.sendMessage(chatX, notePrompt(second, fileName, "reply with a single short word"), THREAD_TIMEOUT_MS) }
-            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the rewrite turn in X did not end", allowed) {
-                it.type == "turn_end" && peer.recorded(chatX).count { frame -> frame.type == "turn_end" } >= 2
+            step(MarkdownNoteStage.RewriteSend) {
+                runBlocking { peer.sendMessage(chatX, notePrompt(second, fileName, "reply with a single short word"), THREAD_TIMEOUT_MS) }
             }
-            assertRefreshShowsNote(second, stale = first)
+            step(MarkdownNoteStage.RewriteTurnEnd) {
+                allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the rewrite turn in X did not end", allowed) {
+                    it.type == "turn_end" && peer.recorded(chatX).count { frame -> frame.type == "turn_end" } >= 2
+                }
+            }
+            step(MarkdownNoteStage.Refresh) { assertRefreshShowsNote(second, stale = first) }
 
             // 4. AC-3: back returns to the same thread.
-            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-            awaitThreadComposer()
+            step(MarkdownNoteStage.Back) {
+                composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+                awaitThreadComposer()
+            }
 
             // 5. AC-2, AC-5: the same link now shows the new content only.
-            assertLinkOpensNote(linkText, fileName, second, stale = first)
-            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-            awaitThreadComposer()
+            step(MarkdownNoteStage.Reopen) { assertLinkOpensNote(linkText, fileName, second, stale = first) }
+            step(MarkdownNoteStage.FinalBack) {
+                composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+                awaitThreadComposer()
+            }
         } finally {
             peer.close()
         }
     }
-
-    /**
-     * The #1050 note prompt: write a one-heading markdown note [marker] to [fileName] in the workspace with one
-     * shell command, then [reply]. `printf` with a quoted literal keeps the bytes exactly as written.
-     */
-    private fun notePrompt(
-        marker: String,
-        fileName: String,
-        reply: String,
-    ): String =
-        "Run this exact shell command with your tools: `printf '# $marker\\n' > $fileName`. " +
-            "Do not use Write or Edit, and do not create any other file. After the command returns, $reply."
 
     /**
      * Tap the first [linkText] link in claude's reply and wait for the reader: the note's [marker] heading
@@ -7004,7 +7009,7 @@ class InteractiveStreamE2ETest {
         marker: String,
         stale: String?,
     ) {
-        val link = hasText(linkText, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        val link = markdownNoteLinkMatcher(linkText)
         try {
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
                 runCatching {

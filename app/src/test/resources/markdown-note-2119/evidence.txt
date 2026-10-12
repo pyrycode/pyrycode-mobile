@@ -1,0 +1,53 @@
+Ticket #2119, 2026-10-12: controlled note-link matcher failure.
+
+Historical #2057 failure and retry artifacts under /work/Projects/pyrycode-mobile-agents/logs
+are unavailable here. The local agents logs contain no matching #2057 captures.
+The occurrence is recorded at https://github.com/pyrycode/pyrycode-mobile/issues/2057#issuecomment-6116248301.
+Its 65 executed / 38 failed / 0 skipped full run does not establish this method's failing stage.
+The historical exact trigger remains unproven; no attribution is made from a passing retry.
+
+Fresh baseline command:
+python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_markdownLink_opensLiveNoteInReader
+Mobile e7a553c3d6d374ed47fabe5c2079fa9e7df80ae1, daemon 8091a4730d42f43029eb0b955442dc300106030f,
+Claude Code 2.1.280; 1 executed / 1 passed / 0 failed/errors/skipped; exit 0.
+Raw XML/logcat: build/dispatcher-tests/live-ge7rh4_o/.
+Retained counted dispatcher XML: baseline-live.xml. This precedes the repair.
+
+Fresh immediate-predecessor selection:
+python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_questionAnswer_reachesTheAskingConversation,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_markdownLink_opensLiveNoteInReader
+Mobile plan commit 1792ca60c with uncommitted phase diagnostics; same daemon and Claude revisions.
+2 executed / 2 passed / 0 failed/errors/skipped; exit 0. Named note method explicitly passed.
+Raw XML/logcat: build/dispatcher-tests/live-zytgw171/.
+Retained counted XML: predecessor-live.xml; static phase records: predecessor-phases.txt.
+Both opens and Refresh completed. This also precedes the matcher repair.
+
+Controlled failing stage: FirstOpen/Reopen's performFirstLinkClick in assertLinkOpensNote.
+Shared notePrompt bytes and original substring-plus-bubble matcher are unchanged in the negative control.
+Real user and assistant MessageBubble nodes are simultaneously composed: the prompt contains the
+requested label but is plain text. Selecting the first matching node chooses the prompt and throws
+"Failed to click the link. Reason: No link found that matches the predicate."
+The live wait repeats this same first-node selection while both nodes remain composed.
+The repaired predicate requires a matching rendered link annotation; prompts and incomplete links
+are ineligible. It retains the original text/ancestry condition, assertions and timeouts.
+
+JVM negative: ./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.MarkdownNoteLinkTest --console=plain
+1 executed / 1 failed / 0 skipped; exit 1. Retained stack: matcher-red.xml.
+Raw XML: app/build/test-results/testDebugUnitTest/TEST-de.pyryco.mobile.e2e.MarkdownNoteLinkTest.xml.
+JVM green focused selection: both MarkdownNote classes, MarkdownLinkTapTest,
+ThreadViewModelMarkdownLinkTest and MarkdownReaderScreenTest: 43 executed / 43 passed,
+0 failed/errors/skipped; exit 0. Matcher/phase subset (6/6) retained in matcher-green.xml.
+
+Android 13 negative: ./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.e2e.MarkdownNoteLinkTest#thePromptContainingTheRequestedLinkDoesNotCaptureTheAssistantLinkTap --console=plain
+The original matcher was temporarily restored, with the test otherwise identical to the green test.
+1 executed / 1 failed / 0 skipped; exit 1. Same no-link stack: android-matcher-red.xml.
+Android 13 green: same task selecting the whole MarkdownNoteLinkTest class with the repaired matcher.
+3 executed / 3 passed / 0 failed/errors/skipped; exit 0. Retained XML: android-matcher-green.xml.
+Original raw Android XML: app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/TEST-pixel2Api33Atd-_app-.xml.
+Controlled tests use local models and no daemon or Claude; daemon revision is not applicable.
+Both controlled runs used plan commit 1792ca60c plus the branch's uncommitted controlled fixture;
+the only native red/green implementation difference is the rendered-link annotation predicate.
+Retained XML keeps case identities, counts and failure stacks; properties/system streams are removed.
+
+Pending acceptance: a fresh dispatcher full live gate on the repaired committed branch, explicitly
+executing interactiveTurn_markdownLink_opensLiveNoteInReader, with tested Mobile/daemon revisions,
+raw XML/log references and executed/failed/skipped counts. Neither baseline focused pass proves repair.
