@@ -421,7 +421,8 @@ class EmulatorBuildBeforeMintTest(unittest.TestCase):
                                 TEST_METHOD="interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread")
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(["fixture.Class#interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread",
-                          "fixture.Class#interactiveTurn_seededChannel_durableGapCatchUp"], result.stdout.split(','))
+                          "fixture.Class#interactiveTurn_seededChannel_durableGapCatchUp",
+                          "fixture.Class#workerCompletionKeepsRippleCancellationOnMainThread"], result.stdout.split(','))
         result = self.run_block(block, DETERMINISTIC="1", SCENARIO="stream", TEST_CLASS="fixture.Class", TEST_METHOD="original")
         self.assertEqual("fixture.Class#original", result.stdout)
 

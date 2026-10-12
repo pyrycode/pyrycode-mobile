@@ -1,11 +1,23 @@
 package de.pyryco.mobile.e2e
 
 import android.content.pm.ShortcutManager
+import android.os.Looper
+import androidx.activity.compose.setContent
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -52,9 +64,11 @@ import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,6 +78,8 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.jsonObject
@@ -136,14 +152,72 @@ import org.koin.core.context.GlobalContext
  * the UI strings — or the seeded channel name in `scripts/e2e-emulator.sh` — change, update the
  * constants below.
  */
+@OptIn(ExperimentalTestApi::class, ExperimentalCoroutinesApi::class)
 @RunWith(AndroidJUnit4::class)
 class DeterministicInteractiveStreamE2ETest {
     init {
         grantNotificationPermission()
     }
 
+    // Queue worker resumptions for the Main test clock, including native ripple cancellation.
     @get:Rule
-    val composeTestRule = createAndroidComposeRule<MainActivity>()
+    val composeTestRule = createAndroidComposeRule<MainActivity>(effectContext = StandardTestDispatcher())
+
+    /** A real pressed Material ripple must be disposed on Main after a worker completes an effect. */
+    @Test
+    fun workerCompletionKeepsRippleCancellationOnMainThread() {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val observations = java.util.concurrent.CopyOnWriteArrayList<Pair<String, Boolean>>()
+
+        fun observe(event: String) {
+            observations += event to (Looper.myLooper() == Looper.getMainLooper())
+        }
+        try {
+            composeTestRule.runOnUiThread {
+                composeTestRule.activity.setContent {
+                    var visible by remember { mutableStateOf(true) }
+                    LaunchedEffect(Unit) {
+                        observe("started")
+                        started.complete(Unit)
+                        release.await()
+                        observe("resumed")
+                        visible = false
+                    }
+                    MaterialTheme {
+                        if (visible) {
+                            DisposableEffect(Unit) { onDispose { observe("disposed") } }
+                            Button(onClick = {}) { Text("held ripple") }
+                        } else {
+                            Text("ripple removed")
+                        }
+                    }
+                }
+            }
+            composeTestRule.waitUntil(5_000) { started.isCompleted }
+            composeTestRule.onNodeWithText("held ripple").performTouchInput { down(center) }
+            runBlocking {
+                withTimeout(5_000) {
+                    withContext(Dispatchers.Default) {
+                        observe("worker")
+                        release.complete(Unit)
+                    }
+                }
+            }
+            composeTestRule.waitForIdle()
+            composeTestRule.onNodeWithText("ripple removed").assertIsDisplayed()
+            assertEquals(listOf(false), observations.filter { it.first == "worker" }.map { it.second })
+            assertEquals(listOf(true), observations.filter { it.first == "started" }.map { it.second })
+            assertEquals("effect continuation uses Main", listOf(true), observations.filter { it.first == "resumed" }.map { it.second })
+            assertEquals(
+                "pressed ripple disposal uses Main",
+                listOf(true),
+                observations.filter { it.first == "disposed" }.map { it.second },
+            )
+        } finally {
+            release.complete(Unit)
+        }
+    }
 
     /** #1818: reply's keyboard check needs a real IME, which ATD images omit; selected per method. */
     @get:Rule

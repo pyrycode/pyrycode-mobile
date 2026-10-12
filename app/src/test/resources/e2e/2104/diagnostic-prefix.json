@@ -1,0 +1,82 @@
+{
+  "purpose": "Historical-prefix reproduction; demonstrated native dependency, no Mobile behavioural repair.",
+  "mobile": "7f04ed6d689db388b0bd64fe01a94c45935557c6",
+  "daemon": "46c980feab9109d37ec72bf74577b00924a78632",
+  "claude": "2.1.280",
+  "executed": 23,
+  "passed": 22,
+  "failed": 1,
+  "skipped": 0,
+  "earliest_failed_operation": "ReconnectedSettings",
+  "phone_interval_utc": "2026-10-12T02:05:51.240Z through 02:07:00.511Z; phone/host clock offset not calibrated",
+  "phone_peer_close_codes": [
+    4413,
+    4413,
+    4413,
+    4413,
+    4413,
+    4413
+  ],
+  "blocker": "https://github.com/pyrycode/pyrycode/issues/3214",
+  "full_live_proof": "pending dispatcher after daemon repair",
+  "daemon_events": [
+    {
+      "time": "2026-10-12T02:05:55.110Z",
+      "event": "v2.peer_close.teardown",
+      "conn_id": "client-8e7faba0-dda7-4814-9d83-01e6b404521c-0fa3a7c8",
+      "close_code": "1000"
+    },
+    {
+      "time": "2026-10-12T02:05:55.709Z",
+      "event": "v2.handshake.accept",
+      "conn_id": "client-8e7faba0-dda7-4814-9d83-01e6b404521c-119a7e98"
+    },
+    {
+      "time": "2026-10-12T02:05:57.328Z",
+      "event": "v2.handshake.accept",
+      "conn_id": "client-8e7faba0-dda7-4814-9d83-01e6b404521c-3502f319"
+    },
+    {
+      "time": "2026-10-12T02:06:00.079Z",
+      "event": "v2.handshake.accept",
+      "conn_id": "client-8e7faba0-dda7-4814-9d83-01e6b404521c-5b2c0106"
+    },
+    {
+      "time": "2026-10-12T02:06:04.332Z",
+      "event": "v2.handshake.accept",
+      "conn_id": "client-8e7faba0-dda7-4814-9d83-01e6b404521c-53206ce4"
+    },
+    {
+      "time": "2026-10-12T02:06:13.551Z",
+      "event": "v2.handshake.accept",
+      "conn_id": "client-8e7faba0-dda7-4814-9d83-01e6b404521c-c66e6cab"
+    },
+    {
+      "time": "2026-10-12T02:06:31.355Z",
+      "event": "v2.handshake.accept",
+      "conn_id": "client-8e7faba0-dda7-4814-9d83-01e6b404521c-ec8bdc49"
+    }
+  ],
+  "sources": [
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/live-4ob9intu/dispatcher.xml",
+      "sha256": "3ee12f9eab21cb3d7a4d0bfdc7dc4dfd6ac5bdabbf4f7ac5129f99b2f5c6092a"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/live-4ob9intu/0-TEST-pixel2Api33Atd-_app-.xml",
+      "sha256": "e58ff782be6c3cd81c5819939c5815bc63b33a87cde1aa07a657e79055c95723"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/live-4ob9intu/15-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive.txt",
+      "sha256": "1daa816552bc3bdbedb0a9d8c9fcdc1ad966a71805ad9870833bac69c25a63ed"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/reconnect-footer-evidence/pyry-e2e.8G2Lsc/daemon.log",
+      "sha256": "b91c3fa35e3038687f33cfc61d27adfb34bf5dc618ea88f7c218d1957f8ff245"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/reconnect-footer-evidence/pyry-e2e.8G2Lsc/run.txt",
+      "sha256": "ae6a95d37c31d3e37fc7f0363962453f812e99c0b8213e3b228d6c4f7b8e16eb"
+    }
+  ]
+}

@@ -4837,51 +4837,94 @@ class InteractiveStreamE2ETest {
     fun interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive() {
         val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
         val originals = mutableMapOf<String, SessionSettings>()
-        try {
+
+        fun snapshot(): String {
+            val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+            val bundle = registry.connectionFor(serverId)
+            val status = bundle?.coordinator?.connectionStatus?.value
+            val current = bundle?.coordinator?.currentRepository?.value
+            return "host=${bundle != null} selected=${bundle != null && registry.selected.value === bundle} " +
+                "relay=${status?.relay?.javaClass?.simpleName ?: "absent"} " +
+                "daemon=${status?.pyrycode?.javaClass?.simpleName ?: "absent"} " +
+                "repository=${current != null} generation=${current?.let { System.identityHashCode(it) } ?: 0}"
+        }
+
+        fun <T> step(
+            stage: ReconnectFooterStage,
+            block: () -> T,
+        ): T = reconnectFooterStep(stage, { Log.i("ReconnectFooter", it) }, ::snapshot, block)
+
+        reconnectFooterScenario(cleanup = { step(ReconnectFooterStage.CleanupSettings) { restoreSettings(originals) } }) {
             // 1. One real turn in a fresh chat; the footer shows the post-turn context reading.
-            awaitChannelList()
-            awaitConnected()
-            clearRememberedEffort()
+            step(ReconnectFooterStage.AwaitList) { awaitChannelList() }
+            step(ReconnectFooterStage.AwaitConnection) { awaitConnected() }
+            step(ReconnectFooterStage.ClearRememberedEffort) { clearRememberedEffort() }
             val name = RECONNECT_FOOTER_NAME_PREFIX + System.currentTimeMillis()
-            val chat = prepareChat(name, originals)
-            openChatRow(name)
-            sendFromPhone(PING_PROMPT)
-            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-            val held = awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the first turn") { CONTEXT_REPORTED.matches(it) }
+            val fixtureRepository = step(ReconnectFooterStage.FixtureRepository) { hostRepository() }
+            val chat =
+                runBlocking {
+                    reconnectFooterFixture(
+                        THREAD_TIMEOUT_MS,
+                        { Log.i("ReconnectFooter", it) },
+                        ::snapshot,
+                        create = { fixtureRepository.createDiscussion() },
+                        rename = { fixtureRepository.rename(it.id, name) },
+                    )
+                }
+            originals[chat.id] = step(ReconnectFooterStage.InitialSettings) { freshSettings(chat.id) }
+            step(ReconnectFooterStage.OpenChat) { openChatRow(name) }
+            step(ReconnectFooterStage.FirstSend) { sendFromPhone(PING_PROMPT) }
+            step(ReconnectFooterStage.FirstReply) { composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS) }
+            val held =
+                step(ReconnectFooterStage.FirstFooter) {
+                    awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the first turn") { CONTEXT_REPORTED.matches(it) }
+                }
             // The reading the first turn pushed. Its repository reads the host's readings (#1317), so it stays
             // readable while the link is cut.
-            val preCutRepository = hostRepository()
+            val preCutRepository = step(ReconnectFooterStage.PreCutRepository) { hostRepository() }
             val preCut =
-                runBlocking { withTimeout(REPLY_TIMEOUT_MS) { preCutRepository.observeContextUsage(chat.id).filterNotNull().first() } }
+                step(ReconnectFooterStage.PreCutContext) {
+                    runBlocking {
+                        withTimeout(REPLY_TIMEOUT_MS) { preCutRepository.observeContextUsage(chat.id).filterNotNull().first() }
+                    }
+                }
 
             // 2. Cut the link: the host's context reading is held across it (#1317). Checked while the link is down,
             //    because once it is back the thread's reconnect ask (#1410) may replace the reading with its answer.
-            setHostLink(serverId, up = false)
-            assertEquals(
-                "the held context reading while the link is cut",
-                preCut,
-                runBlocking { preCutRepository.observeContextUsage(chat.id).first() },
-            )
-            awaitContextSegment(THREAD_TIMEOUT_MS, "the held '$held' while the link is cut") { it == held }
-            setHostLink(serverId, up = true)
-            awaitContextSegment(THREAD_TIMEOUT_MS, "a percentage after the reconnect") { CONTEXT_REPORTED.matches(it) }
+            step(ReconnectFooterStage.CutLink) { setHostLink(serverId, up = false) }
+            step(ReconnectFooterStage.HeldContext) {
+                assertEquals(
+                    "the held context reading while the link is cut",
+                    preCut,
+                    runBlocking { preCutRepository.observeContextUsage(chat.id).first() },
+                )
+                awaitContextSegment(THREAD_TIMEOUT_MS, "the held '$held' while the link is cut") { it == held }
+            }
+            step(ReconnectFooterStage.RestoreLink) { setHostLink(serverId, up = true) }
+            step(ReconnectFooterStage.ReconnectedFooter) {
+                awaitContextSegment(THREAD_TIMEOUT_MS, "a percentage after the reconnect") { CONTEXT_REPORTED.matches(it) }
+            }
 
             // 3. Model, effort and permission settle on a fresh reading taken on the new connection.
-            val fresh = freshSettings(chat.id)
+            val fresh = step(ReconnectFooterStage.ReconnectedSettings) { freshSettings(chat.id) }
             assertEquals("the fixture's saved model", "", fresh.model)
             val (effortLabel, effortNote) = appliedEffortFooter(fresh.effectiveEffort)
             val mode = fresh.permissionMode
             assertTrue("the fresh reading after a real turn confirms no permission mode", mode.isNotEmpty())
             // The first turn's announcement is held across the reconnect too (#1317), so the inherited chat
             // marks the row it maps to rather than the default row's resolution (#1308).
-            val announced = announcedModel(chat.id)
+            val announced = step(ReconnectFooterStage.Announcement) { announcedModel(chat.id) }
             check(announced.isNotEmpty()) { "claude's announced model was cut" }
-            val menu = publishedMenu(chat.id)
+            val menu = step(ReconnectFooterStage.ReconnectedMenu) { publishedMenu(chat.id) }
             val marked = announcedRow(menu, announced)
-            awaitAnnouncedMark(menu, marked, claudeFamily(announced).ifEmpty { UNAVAILABLE_MODEL_LABEL })
-            if (marked != null) awaitFooter(changeModelLabel, marked.dropdownLabel(ConversationAgent.Claude))
-            awaitFooter(changeEffortLabel, effortLabel) { it == effortNote }
-            awaitFooter(changePermissionLabel, PermissionModeOption.fromWire(mode)?.label ?: mode.inert())
+            step(ReconnectFooterStage.ReconnectedMark) {
+                awaitAnnouncedMark(menu, marked, claudeFamily(announced).ifEmpty { UNAVAILABLE_MODEL_LABEL })
+                if (marked != null) awaitFooter(changeModelLabel, marked.dropdownLabel(ConversationAgent.Claude))
+            }
+            step(ReconnectFooterStage.ReconnectedEffort) { awaitFooter(changeEffortLabel, effortLabel) { it == effortNote } }
+            step(ReconnectFooterStage.ReconnectedPermission) {
+                awaitFooter(changePermissionLabel, PermissionModeOption.fromWire(mode)?.label ?: mode.inert())
+            }
 
             // 4. A turn on the new connection leaves a context reading, pushed when the turn ends. The held
             //    reading already shows a percentage, so the wait is on the turn itself: its reply is drawn and
@@ -4893,51 +4936,65 @@ class InteractiveStreamE2ETest {
             //    baseline is the pre-cut push. The answer is let land first, moving the reading off the pre-cut
             //    one; an answer equal to it emits nothing and a refused ask sends none, so that wait may time out.
             //    The growth check then accepts only a reading other than the settled one.
-            val repository = hostRepository()
+            val repository = step(ReconnectFooterStage.SecondRepository) { hostRepository() }
             val settled =
-                runBlocking {
-                    withTimeoutOrNull(THREAD_TIMEOUT_MS) { repository.observeContextUsage(chat.id).filterNotNull().first { it != preCut } }
-                } ?: preCut
-            sendFromPhone(PING_PROMPT)
-            val stopControl = hasContentDescription(string(R.string.cd_thread_interrupt))
-            try {
-                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                    composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).fetchSemanticsNodes().size >= 2 &&
-                        composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
+                step(ReconnectFooterStage.SettledContext) {
+                    runBlocking {
+                        withTimeoutOrNull(THREAD_TIMEOUT_MS) {
+                            repository.observeContextUsage(chat.id).filterNotNull().first { it != preCut }
+                        }
+                    } ?: preCut
                 }
-            } catch (e: ComposeTimeoutException) {
-                throw AssertionError("the turn on the new connection never ended with its reply drawn", e)
+            step(ReconnectFooterStage.SecondSend) { sendFromPhone(PING_PROMPT) }
+            step(ReconnectFooterStage.SecondReply) {
+                val stopControl = hasContentDescription(string(R.string.cd_thread_interrupt))
+                try {
+                    composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                        composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).fetchSemanticsNodes().size >= 2 &&
+                            composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
+                    }
+                } catch (e: ComposeTimeoutException) {
+                    throw AssertionError("the turn on the new connection never ended with its reply drawn", e)
+                }
             }
-            try {
-                runBlocking {
-                    withTimeout(REPLY_TIMEOUT_MS) {
-                        repository.observeContextUsage(chat.id).filterNotNull().first {
-                            it != settled && it.totalTokens > preCut.totalTokens
+            step(ReconnectFooterStage.SecondContext) {
+                try {
+                    runBlocking {
+                        withTimeout(REPLY_TIMEOUT_MS) {
+                            repository.observeContextUsage(chat.id).filterNotNull().first {
+                                it != settled && it.totalTokens > preCut.totalTokens
+                            }
                         }
                     }
+                } catch (e: TimeoutCancellationException) {
+                    throw AssertionError(
+                        "no context reading newer than the held one (${preCut.totalTokens} tokens) after the turn on the new connection",
+                        e,
+                    )
                 }
-            } catch (e: TimeoutCancellationException) {
-                throw AssertionError(
-                    "no context reading newer than the held one (${preCut.totalTokens} tokens) after the turn on the new connection",
-                    e,
-                )
             }
-            awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the turn on the new connection") { CONTEXT_REPORTED.matches(it) }
+            step(ReconnectFooterStage.SecondFooter) {
+                awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the turn on the new connection") { CONTEXT_REPORTED.matches(it) }
+            }
 
             // 5. A model picked from the published menu is confirmed by a fresh reading.
             val target =
-                checkNotNull(
-                    usableRows(publishedMenu(chat.id)).firstOrNull {
-                        it.value != INHERITED_MODEL_VALUE && it.value != fresh.model && it.value != marked?.value
-                    },
-                ) {
-                    "the menu publishes no usable model besides the inherited default and the marked row"
+                step(ReconnectFooterStage.ChangedModelMenu) {
+                    checkNotNull(
+                        usableRows(publishedMenu(chat.id)).firstOrNull {
+                            it.value != INHERITED_MODEL_VALUE && it.value != fresh.model && it.value != marked?.value
+                        },
+                    ) {
+                        "the menu publishes no usable model besides the inherited default and the marked row"
+                    }
                 }
-            pickFooterOption(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
-            awaitFooter(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
-            assertEquals("the saved model after the change", target.value, freshSettings(chat.id).model)
-        } finally {
-            restoreSettings(originals)
+            step(ReconnectFooterStage.ChangedModelPick) {
+                pickFooterOption(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
+            }
+            step(ReconnectFooterStage.ChangedModelFooter) { awaitFooter(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude)) }
+            step(ReconnectFooterStage.ChangedModelSettings) {
+                assertEquals("the saved model after the change", target.value, freshSettings(chat.id).model)
+            }
         }
     }
 

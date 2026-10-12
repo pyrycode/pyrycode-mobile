@@ -658,6 +658,18 @@ cleanup() {
   if [[ "${ANSWER_HOME:-}" == /tmp/pyry-e2e-ans.* ]]; then
     rm -rf "${ANSWER_HOME}"
   fi
+  # #2104: keep the phone-correlatable daemon trail on passing runs too, before WORK_DIR goes.
+  # Only this live selection needs it; never copy pairing output or credential-bearing HOME files.
+  if [ -n "${LIVE:-}" ] && [[ "${TEST_TARGET:-}" == *interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive* ]]; then
+    local evidence="${REPO_ROOT}/build/reconnect-footer-evidence/${WORK_DIR##*/}"
+    mkdir -p "${evidence}"
+    for daemon_log in "${WORK_DIR}"/daemon*.log; do
+      [ ! -f "${daemon_log}" ] || cp "${daemon_log}" "${evidence}/"
+    done
+    printf 'mobile=%s\ndaemon=%s\nexit=%s\nselection=%s\n' \
+      "${MOBILE_REVISION:-unavailable}" "${DAEMON_REVISION:-unavailable}" "${code}" "${TEST_TARGET}" > "${evidence}/run.txt"
+    log "reconnect-footer daemon evidence retained at ${evidence}"
+  fi
   if [ "${code}" -ne 0 ]; then
     log "logs kept at ${WORK_DIR} (relay.log, daemon.log, pair.out)"
     if [ -n "${ISO_HOME}" ]; then
@@ -1500,6 +1512,7 @@ if [ -n "${DETERMINISTIC}" ]; then
     TEST_TARGET="${TEST_CLASS}#interactiveTurn_externalForceStop_preparesSettledChannel"
   elif [ "${SCENARIO}" = "ping" ]; then
     TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_seededChannel_durableGapCatchUp"
+    TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#workerCompletionKeepsRippleCancellationOnMainThread"
   fi
 elif [ -n "${LIVE}" ]; then
   # LIVE curates its real-claude turns: ping + create-workspace-folder + new-session + delete +

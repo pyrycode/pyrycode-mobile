@@ -1,0 +1,106 @@
+{
+  "purpose": "Single historical-prefix validation after merged daemon #3214; dispatcher full live proof remains pending.",
+  "mobile": "83f053f587daccc805136e860ce871e2a2dca796",
+  "daemon": "47d00822cc702c896d6234b0447226096edab210",
+  "claude": "2.1.280",
+  "process_exit": 0,
+  "executed": 23,
+  "passed": 23,
+  "failed": 0,
+  "skipped": 0,
+  "target_method": "interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive",
+  "target_executed": 1,
+  "target_passed": 1,
+  "completed_stages": 34,
+  "phone_4413_records": 0,
+  "phone_interval_utc": "2026-10-12T08:05:31.898Z through 08:06:11.205Z; raw phone/host clock offset not calibrated",
+  "repair": "https://github.com/pyrycode/pyrycode/pull/3232",
+  "selection": [
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_pingPrompt_footerShowsContextUsage",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_backgroundAgent_followsBottomUntilFinished",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_peerQueue_staysConsistentAcrossClients",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_twoHostsArchive_staysPerHost",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_twoHostsCollidingConversationId_stayPerHost",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_stopBackgroundTask_completesThenRepliesAgain",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_muteChannel_roundTripsThroughTheHost",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_toolPrompt_rendersToolStepInThread",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_permissionPrompts_heldPerConversation",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_pingPrompt_statusSheetShowsRunningModel",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive"
+  ],
+  "full_live_proof": "pending dispatcher; needs-real-claude and needs-live-artifacts retained",
+  "daemon_events": [
+    {
+      "time": "2026-10-12T08:05:31.585Z",
+      "event": "v2.peer_close.teardown",
+      "conn_id": "client-93386dd9-90f9-441a-acce-b5a10de85dc1-54b5adca",
+      "close_code": "1000"
+    },
+    {
+      "time": "2026-10-12T08:05:31.695Z",
+      "event": "v2.handshake.accept",
+      "conn_id": "client-93386dd9-90f9-441a-acce-b5a10de85dc1-497b79c6"
+    },
+    {
+      "time": "2026-10-12T08:05:36.528Z",
+      "event": "v2.peer_close.teardown",
+      "conn_id": "client-93386dd9-90f9-441a-acce-b5a10de85dc1-497b79c6",
+      "close_code": "1000"
+    },
+    {
+      "time": "2026-10-12T08:05:37.130Z",
+      "event": "v2.handshake.accept",
+      "conn_id": "client-93386dd9-90f9-441a-acce-b5a10de85dc1-d26bb8fa"
+    },
+    {
+      "time": "2026-10-12T08:06:11.054Z",
+      "event": "v2.settings.updated",
+      "conn_id": "client-93386dd9-90f9-441a-acce-b5a10de85dc1-d26bb8fa"
+    },
+    {
+      "time": "2026-10-12T08:06:11.460Z",
+      "event": "v2.settings.updated",
+      "conn_id": "client-93386dd9-90f9-441a-acce-b5a10de85dc1-d26bb8fa"
+    },
+    {
+      "time": "2026-10-12T08:06:12.233Z",
+      "event": "v2.peer_close.teardown",
+      "conn_id": "client-93386dd9-90f9-441a-acce-b5a10de85dc1-d26bb8fa",
+      "close_code": "1001"
+    }
+  ],
+  "sources": [
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/live-37sr41ka/dispatcher.xml",
+      "sha256": "80aee545da7f7dd074977ee7042ce38ab37186d371c368d30324baad451df496"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/live-37sr41ka/0-TEST-pixel2Api33Atd-_app-.xml",
+      "sha256": "2d93af10164b06adbc29a4c72ecf40480f9750193e3480918e067ca097a9850f"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/dispatcher-tests/live-37sr41ka/15-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive.txt",
+      "sha256": "d0b0410cea828a3f1635543255883a28bbbed4875610b758eefd0c5810e4aa68"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/reconnect-footer-evidence/pyry-e2e.nw3PlK/daemon.log",
+      "sha256": "1801034ab11aae30a40a6f2d91d7402260f37d170917f401c4fb2dc8571bf933"
+    },
+    {
+      "path": "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2104/build/reconnect-footer-evidence/pyry-e2e.nw3PlK/run.txt",
+      "sha256": "0d87e2d5667a7fb441bbe84937f52fbe464b3d409d708e7d248cecf882f14eb4"
+    }
+  ]
+}

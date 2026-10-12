@@ -1,0 +1,45 @@
+10-12 02:05:51.240  2969  3011 I ReconnectFooter: event=reconnect_footer stage=AwaitList outcome=start host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.339  2969  3011 I ReconnectFooter: event=reconnect_footer stage=AwaitList outcome=complete host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.340  2969  3011 I ReconnectFooter: event=reconnect_footer stage=AwaitConnection outcome=start host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.340  2969  3011 I ReconnectFooter: event=reconnect_footer stage=AwaitConnection outcome=complete host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.341  2969  3011 I ReconnectFooter: event=reconnect_footer stage=ClearRememberedEffort outcome=start host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.342  2969  3011 I ReconnectFooter: event=reconnect_footer stage=ClearRememberedEffort outcome=complete host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.342  2969  3011 I ReconnectFooter: event=reconnect_footer stage=FixtureRepository outcome=start host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.342  2969  3011 I ReconnectFooter: event=reconnect_footer stage=FixtureRepository outcome=complete host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.342  2969  3011 I ReconnectFooter: event=reconnect_footer stage=CreateChat outcome=start host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.377  2969  3011 I ReconnectFooter: event=reconnect_footer stage=CreateChat outcome=complete host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.378  2969  3011 I ReconnectFooter: event=reconnect_footer stage=RenameChat outcome=start host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.405  2969  3011 I ReconnectFooter: event=reconnect_footer stage=RenameChat outcome=complete host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.405  2969  3011 I ReconnectFooter: event=reconnect_footer stage=InitialSettings outcome=start host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.429  2969  3011 I ReconnectFooter: event=reconnect_footer stage=InitialSettings outcome=complete host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.430  2969  3011 I ReconnectFooter: event=reconnect_footer stage=OpenChat outcome=start host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.656  2969  3011 I ReconnectFooter: event=reconnect_footer stage=OpenChat outcome=complete host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.656  2969  3011 I ReconnectFooter: event=reconnect_footer stage=FirstSend outcome=start host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.862  2969  3011 I ReconnectFooter: event=reconnect_footer stage=FirstSend outcome=complete host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:51.862  2969  3011 I ReconnectFooter: event=reconnect_footer stage=FirstReply outcome=start host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:54.223  2969  3011 I ReconnectFooter: event=reconnect_footer stage=FirstReply outcome=complete host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:54.223  2969  3011 I ReconnectFooter: event=reconnect_footer stage=FirstFooter outcome=start host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:54.239  2969  3011 I ReconnectFooter: event=reconnect_footer stage=FirstFooter outcome=complete host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:54.239  2969  3011 I ReconnectFooter: event=reconnect_footer stage=PreCutRepository outcome=start host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:54.240  2969  3011 I ReconnectFooter: event=reconnect_footer stage=PreCutRepository outcome=complete host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:54.240  2969  3011 I ReconnectFooter: event=reconnect_footer stage=PreCutContext outcome=start host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:54.240  2969  3011 I ReconnectFooter: event=reconnect_footer stage=PreCutContext outcome=complete host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:54.240  2969  3011 I ReconnectFooter: event=reconnect_footer stage=CutLink outcome=start host=true selected=true relay=Connected daemon=Connected repository=true generation=214879502
+10-12 02:05:54.240  2969  3011 I RelayLog: event=transport_end end=local_close code=1000
+10-12 02:05:54.242  2969  3011 I ReconnectFooter: event=reconnect_footer stage=CutLink outcome=complete host=true selected=true relay=Idle daemon=Connected repository=false generation=0
+10-12 02:05:54.242  2969  3011 I ReconnectFooter: event=reconnect_footer stage=HeldContext outcome=start host=true selected=true relay=Idle daemon=Connected repository=false generation=0
+10-12 02:05:54.306  2969  3011 I ReconnectFooter: event=reconnect_footer stage=HeldContext outcome=complete host=true selected=true relay=Idle daemon=Down repository=false generation=0
+10-12 02:05:54.306  2969  3011 I ReconnectFooter: event=reconnect_footer stage=RestoreLink outcome=start host=true selected=true relay=Idle daemon=Down repository=false generation=0
+10-12 02:05:54.864  2969  3011 I ReconnectFooter: event=reconnect_footer stage=RestoreLink outcome=complete host=true selected=true relay=Connected daemon=Handshaking repository=true generation=180971101
+10-12 02:05:54.865  2969  3011 I ReconnectFooter: event=reconnect_footer stage=ReconnectedFooter outcome=start host=true selected=true relay=Connected daemon=Handshaking repository=true generation=180971101
+10-12 02:05:54.870  2969  3750 I RelayLog: event=transport_end end=peer_close code=4413
+10-12 02:05:54.939  2969  3011 I ReconnectFooter: event=reconnect_footer stage=ReconnectedFooter outcome=complete host=true selected=true relay=Reconnecting daemon=Down repository=false generation=0
+10-12 02:05:54.940  2969  3011 I ReconnectFooter: event=reconnect_footer stage=ReconnectedSettings outcome=start host=true selected=true relay=Reconnecting daemon=Down repository=false generation=0
+10-12 02:05:56.491  2969  3750 I RelayLog: event=transport_end end=peer_close code=4413
+10-12 02:05:59.239  2969  3151 I RelayLog: event=transport_end end=peer_close code=4413
+10-12 02:06:03.492  2969  3750 I RelayLog: event=transport_end end=peer_close code=4413
+10-12 02:06:12.716  2969  3750 I RelayLog: event=transport_end end=peer_close code=4413
+10-12 02:06:26.482  2969  3011 I ReconnectFooter: event=reconnect_footer stage=ReconnectedSettings outcome=failure host=true selected=true relay=Reconnecting daemon=Down repository=false generation=0
+10-12 02:06:26.482  2969  3011 I ReconnectFooter: event=reconnect_footer stage=CleanupSettings outcome=start host=true selected=true relay=Reconnecting daemon=Down repository=false generation=0
+10-12 02:06:30.519  2969  3131 I RelayLog: event=transport_end end=peer_close code=4413
+10-12 02:07:00.511  2969  3011 I ReconnectFooter: event=reconnect_footer stage=CleanupSettings outcome=complete host=true selected=true relay=Offline daemon=Down repository=false generation=0
