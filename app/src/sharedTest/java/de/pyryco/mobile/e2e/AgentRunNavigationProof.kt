@@ -120,8 +120,16 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
     assertTrue("opened run must contain every loaded child key", childIndexes().all { it >= 0 })
     // Positive owned visibility first: an off-screen paragraph is not evidence of collapse.
     list.performScrollToNode(ownedChild)
-    questionAnswerTarget(ownedChild).assertIsDisplayed()
-    onAllNodes(ownedChild, useUnmergedTree = true).assertCountEquals(1)
+    // Claude may emit several paragraphs or split text around tools. Visibility, not a
+    // single prescribed paragraph, is the navigation contract.
+    val top = onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot.bottom
+    val bottom = onNodeWithTag("thread-composer").fetchSemanticsNode().boundsInRoot.top
+    assertTrue(
+        "opened run must reveal attributed assistant text",
+        onAllNodes(ownedChild, useUnmergedTree = true).fetchSemanticsNodes().any {
+            it.boundsInRoot.height > 0 && it.boundsInRoot.bottom > top && it.boundsInRoot.top < bottom
+        },
+    )
     record("owned-child-revealed")
     tapAndAwait(opened, closed, "close", expandedAfter = false)
     assertClosed("closed-confirmed")
