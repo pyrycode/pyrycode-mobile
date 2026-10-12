@@ -34,7 +34,7 @@ No production state or jobs change. Existing instrumented `runBlocking` waits us
 | --- | --- |
 | Prior privileged peer closes, current peer reuses pairing | Existing named live scenario; keep both authenticated opens and peer cleanup. |
 | Unrelated selected host absent while target authenticated | `permissionHeldReadinessIgnoresStoppedSelectedHost`. |
-| Selected peer connected while target absent, then target reconnects | `permissionHeldReadinessWaitsForItsOwnHost`. |
+| Selected peer connected while target absent, then target reconnects | `permissionHeldReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected`. |
 | Target relay connected but daemon handshake held, then authenticates | `permissionHeldReadinessWaitsForDaemonHandshake`. |
 | Idle or missing target | `permissionHeldReadinessIdleKeepsDeadline` and `permissionHeldReadinessRejectsMissingHost`. |
 | Permission hold, approval, tool running, turn_end | Existing named live method with fixed stages; no wait or assertion weakened. |
@@ -55,3 +55,8 @@ Write readiness controls first against the original predicate and retain counted
 ## Documentation handoff
 
 Pending documentation stage: `docs/e2e-interactive-stream.md`, permission-held running-tool section — record the demonstrated repair, fixed stages, tested revisions/counts and eventual full live gate evidence; distinguish controlled reproduction from unresolved historical attribution.
+
+## Revisions
+
+- 2026-10-12: Five real-registry controls executed and failed against the extracted original selected-banner predicate. They demonstrate wrong-host blocking, wrong-host false admission, handshake false admission, Idle false admission and missing-host false admission. Implement the proposed addressed-host wait; retain the original deadline and selection. The diagnostic tests also ran red (5 failures) then green (5 passes).
+- 2026-10-12: Fresh baseline capture executed/passed the named method (1/1, no failures/errors/skips), with all 15 stages completed. Phone output and daemon snapshots correlate prior/current authenticated peer admission, chat creation, permission arrival and turn completion; the three display assertions passed. The baseline does not reproduce the historical timeout. Historical operation/cause and any MCP relationship remain unresolved; the readiness repair rests on controlled reproduction, not historical attribution. Preserve full-live acceptance as dispatcher-owned and request a builder return for counted XML/provenance artifacts.

@@ -4,8 +4,21 @@ import androidx.compose.ui.test.ComposeTimeoutException
 import kotlinx.coroutines.TimeoutCancellationException
 
 internal enum class PermissionHeldStage {
-    PriorPeer, ListArrival, Connection, Conversations, ChatCreation, Composer, ChatIdentity,
-    CurrentPeer, Send, PermissionArrival, WaitingDisplay, Approval, RunningDisplay, TurnEnd, LabelRemoval,
+    PriorPeer,
+    ListArrival,
+    Connection,
+    Conversations,
+    ChatCreation,
+    Composer,
+    ChatIdentity,
+    CurrentPeer,
+    Send,
+    PermissionArrival,
+    WaitingDisplay,
+    Approval,
+    RunningDisplay,
+    TurnEnd,
+    LabelRemoval,
 }
 
 internal fun <T> permissionHeldStep(

@@ -1176,7 +1176,10 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertIsDisplayed()
             }
             heldToolStep(peer, PermissionHeldStage.TurnEnd) {
-                peerStep(peer, "await permission-held tool's turn_end") { peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
+                peerStep(
+                    peer,
+                    "await permission-held tool's turn_end",
+                ) { peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
             }
             heldToolStep(peer, PermissionHeldStage.LabelRemoval) {
                 composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -8656,9 +8659,10 @@ class InteractiveStreamE2ETest {
             peerStep(peer, "open running-tool peer") { peer.open(CONNECT_TIMEOUT_MS) }
         }
         heldToolStep(peer, PermissionHeldStage.Send) { sendFromPhone(prompt) }
-        val modalId = heldToolStep(peer, PermissionHeldStage.PermissionArrival) {
-            peerStep(peer, "await held tool's permission modal") { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
-        }
+        val modalId =
+            heldToolStep(peer, PermissionHeldStage.PermissionArrival) {
+                peerStep(peer, "await held tool's permission modal") { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+            }
         return conversationId to modalId
     }
 

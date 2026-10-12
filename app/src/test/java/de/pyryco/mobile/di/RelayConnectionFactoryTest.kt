@@ -47,6 +47,7 @@ import de.pyryco.mobile.data.repository.HostReadingFrames
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.awaitPermissionHeldConnection
 import de.pyryco.mobile.e2e.awaitSendNowConnection
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.thread.AttachmentRead
@@ -125,6 +126,127 @@ class RelayConnectionFactoryTest {
         RelayLog.sink = previousSink
         RelayLog.enabled = previousEnabled
     }
+
+    @Test
+    fun permissionHeldReadinessIgnoresStoppedSelectedHost() =
+        runTest {
+            val f = Fixture(this)
+            f.unavailable = "B"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                f.transports.last().reportAbsent()
+                runCurrent()
+                val selected = registry.selected.value
+                assertSame(registry.connectionFor("B"), selected)
+                assertEquals(RelayLinkStatus.DaemonAbsent, registry.connectionStatus.value.relay)
+
+                awaitPermissionHeldConnection(registry, "A", 30_000)
+
+                assertSame("readiness must not mutate selection", selected, registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun permissionHeldReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected() =
+        runTest {
+            val f = Fixture(this)
+            f.unavailable = "A"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                f.transports.first().reportAbsent()
+                runCurrent()
+                assertEquals(RelayLinkStatus.Connected, registry.connectionStatus.value.relay)
+                val readiness = async { awaitPermissionHeldConnection(registry, "A", 30_000) }
+                runCurrent()
+                assertFalse("another host cannot satisfy permission-held chat readiness", readiness.isCompleted)
+
+                f.unavailable = null
+                registry.connectionFor("A")?.supervisor?.retry()
+                runCurrent()
+                readiness.await()
+                assertSame(registry.connectionFor("B"), registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun permissionHeldReadinessWaitsForDaemonHandshake() =
+        runTest {
+            val f = Fixture(this)
+            f.handshaking = "A"
+            f.store.save(f.a.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                assertEquals(RelayLinkStatus.Connected, registry.connectionStatus.value.relay)
+                assertEquals(de.pyryco.mobile.data.model.PyrycodeLinkStatus.Handshaking, registry.connectionStatus.value.pyrycode)
+                val readiness = async { awaitPermissionHeldConnection(registry, "A", 30_000) }
+                runCurrent()
+                assertFalse("relay Up alone cannot admit the held-tool chat", readiness.isCompleted)
+                f.handshaking = null
+                registry.connectionFor("A")?.supervisor?.close()
+                registry.connectionFor("A")?.supervisor?.connect()
+                runCurrent()
+                readiness.await()
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun permissionHeldReadinessIdleKeepsDeadline() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.a.record)
+            val registry = f.registry()
+            try {
+                runCurrent()
+                val readiness = async { runCatching { awaitPermissionHeldConnection(registry, "A", 30_000) } }
+                runCurrent()
+                advanceTimeBy(29_999)
+                runCurrent()
+                assertFalse("Idle must not satisfy readiness before the unchanged deadline", readiness.isCompleted)
+                advanceTimeBy(1)
+                runCurrent()
+                assertTrue(readiness.await().exceptionOrNull() is kotlinx.coroutines.TimeoutCancellationException)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun permissionHeldReadinessRejectsMissingHost() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                val result = runCatching { awaitPermissionHeldConnection(registry, "A", 30_000) }
+                assertTrue("missing target must fail explicitly", result.exceptionOrNull() is IllegalStateException)
+                assertSame(registry.connectionFor("B"), registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
 
     @Test
     fun sendNowReadinessIgnoresStoppedSelectedHost() =

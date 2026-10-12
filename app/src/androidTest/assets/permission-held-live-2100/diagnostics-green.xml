@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.e2e.PermissionHeldStageTest" timestamp="2026-10-12T00:17:52.065Z" time="0.004" tests="5" failures="0" errors="0" skipped="0">
+    <testcase name="recordsStaticStagesAndReturnsValueWithoutReadingFailureSnapshot" classname="de.pyryco.mobile.e2e.PermissionHeldStageTest" time="0.001" />
+    <testcase name="coroutineTimeoutNamesStageAndPreservesCause" classname="de.pyryco.mobile.e2e.PermissionHeldStageTest" time="0.001" />
+    <testcase name="ordinaryFailuresAndCancellationPropagateUnchanged" classname="de.pyryco.mobile.e2e.PermissionHeldStageTest" time="0.001" />
+    <testcase name="nestedPeerTimeoutKeepsEntireCauseChain" classname="de.pyryco.mobile.e2e.PermissionHeldStageTest" time="0.001" />
+    <testcase name="composeTimeoutNamesDisplayStageAndPreservesCause" classname="de.pyryco.mobile.e2e.PermissionHeldStageTest" time="0.0" />
+  </testsuite>
+</testsuites>

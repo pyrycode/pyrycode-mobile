@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.di.RelayConnectionFactoryTest" timestamp="2026-10-12T00:14:09.497Z" time="0.218" tests="5" failures="5" errors="0" skipped="0">
+    <testcase name="permissionHeldReadinessRejectsMissingHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.161">
+      <failure message="java.lang.AssertionError: missing target must fail explicitly" type="java.lang.AssertionError" />
+    </testcase>
+    <testcase name="permissionHeldReadinessIgnoresStoppedSelectedHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.021">
+      <failure message="kotlinx.coroutines.TimeoutCancellationException: Timed out after 30s of _virtual_ (kotlinx.coroutines.test) time. To use the real time, wrap 'withTimeout' in 'withContext(Dispatchers.Default.limitedParallelism(1))'" type="kotlinx.coroutines.TimeoutCancellationException" />
+    </testcase>
+    <testcase name="permissionHeldReadinessIdleKeepsDeadline" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.007">
+      <failure message="java.lang.AssertionError: Idle must not satisfy readiness before the unchanged deadline" type="java.lang.AssertionError" />
+    </testcase>
+    <testcase name="permissionHeldReadinessWaitsForDaemonHandshake" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.013">
+      <failure message="java.lang.AssertionError: relay Up alone cannot admit the held-tool chat" type="java.lang.AssertionError" />
+    </testcase>
+    <testcase name="permissionHeldReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.015">
+      <failure message="java.lang.AssertionError: another host cannot satisfy permission-held chat readiness" type="java.lang.AssertionError" />
+    </testcase>
+  </testsuite>
+</testsuites>

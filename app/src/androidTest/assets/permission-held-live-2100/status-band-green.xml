@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadStatusBandTest" timestamp="2026-10-12T00:17:56.774Z" time="3.297" tests="7" failures="0" errors="0" skipped="0">
+    <testcase name="everyReading_drawsOneSnowflake_atTheSameLeadingEdge" classname="de.pyryco.mobile.ui.conversations.thread.ThreadStatusBandTest" time="2.862" />
+    <testcase name="waitingForAnswers_keepsItsQuestionGlyph_insteadOfTheSnowflake" classname="de.pyryco.mobile.ui.conversations.thread.ThreadStatusBandTest" time="0.134" />
+    <testcase name="localStages_showOnlyTheirLabel_withoutAStaleThinkingTokenReading" classname="de.pyryco.mobile.ui.conversations.thread.ThreadStatusBandTest" time="0.059" />
+    <testcase name="turningGlyph_keepsItsFigmaSlotAcrossFrames" classname="de.pyryco.mobile.ui.conversations.thread.ThreadStatusBandTest" time="0.055" />
+    <testcase name="turnReadings_sitInTheTaggedReadingBox" classname="de.pyryco.mobile.ui.conversations.thread.ThreadStatusBandTest" time="0.04" />
+    <testcase name="inputField_keepsItsBounds_betweenIdleAndBusy" classname="de.pyryco.mobile.ui.conversations.thread.ThreadStatusBandTest" time="0.077" />
+    <testcase name="label_startsAfterTheFigmaGlyphAndGap_onTheComposerGutter" classname="de.pyryco.mobile.ui.conversations.thread.ThreadStatusBandTest" time="0.039" />
+  </testsuite>
+</testsuites>
