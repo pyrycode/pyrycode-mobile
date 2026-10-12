@@ -6,6 +6,7 @@ import kotlinx.datetime.Instant
 import kotlinx.datetime.serializers.InstantIso8601Serializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Mobile Protocol v2 `conversations` application payload (#316): the single typed
@@ -41,6 +42,7 @@ data class ConversationsPayload(
 @Serializable
 data class ConversationSummaryDto(
     val id: String,
+    @SerialName("current_session_id") val currentSessionId: JsonPrimitive? = null,
     val name: String?,
     @SerialName("is_promoted") val isPromoted: Boolean,
     val cwd: String,

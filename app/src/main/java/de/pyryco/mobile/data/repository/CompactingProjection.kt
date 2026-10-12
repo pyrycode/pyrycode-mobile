@@ -20,6 +20,11 @@ import kotlinx.serialization.json.decodeFromJsonElement
  * connection-scoped exactly as it was when it lived in the repository.
  */
 internal class CompactingProjection {
+    /** Retire only this conversation's session-scoped reading. */
+    fun clear(conversationId: String) {
+        compactingConversations.update { it - conversationId }
+    }
+
     /**
      * The set of conversation ids claude is currently auto-compacting (#596) — membership = compacting.
      * Written **only** from the repository's single inbound collector: a `compacting` envelope's rising edge

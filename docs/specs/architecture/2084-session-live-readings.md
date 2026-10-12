@@ -40,15 +40,15 @@ The existing connection-scope inbound collector serializes reconciliation. Proje
 
 | Event | Required production-handler regression |
 | --- | --- |
-| Summary/replacement and stale push/reply | `AuthoritativeSessionLiveTest`: retired readings and correlation cannot mutate current state |
-| Clear, fresh, repeated clear | `AuthoritativeSessionLiveTest`: family-specific clear and duplicate suppression |
-| Omitted/null/string session | `AuthoritativeSessionLiveTest`: distinct provenance, no binding inference |
-| Equal session identities across conversations/hosts | `AuthoritativeSessionLiveTest`: explicit owner isolation |
-| Malformed/conflicting envelope/payload identity | `AuthoritativeSessionLiveTest`: unchanged state and no fallback |
-| Inactive reconnect readings | `AuthoritativeSessionLiveTest`: retry and compaction falling-edge repair |
-| Answer/dismissal, history replay and reconnect | `AuthoritativeSessionLiveTest` and supplied screen regression: inert history, only outstanding prompts, retired callbacks |
-| Session replacement with durable/queue/account state | `AuthoritativeSessionLiveTest`: preserved items, pending/queued rows and account rate |
-| Recollection/configuration change | supplied screen regression: held current readings and requests, no action replay |
+| Summary/replacement and stale push/reply | `summariesEstablishIdentityWithoutInventingActivityAndOldTagsCannotReturn`, `taggedSettingsRepliesAndUpdatesCannotSettleRetiredSessionRequests` and `retiredMcpCorrelationCannotRestoreAnUnavailableReading` |
+| Clear, fresh, repeated clear | `everyStatusFamilyClearsOnlyItselfAndDuplicateClearKeepsFresh` |
+| Omitted/null/string session | `missingAndNullProvenanceCannotReplaceTaggedReading` and `reconnectWithoutProvenanceCannotReplaceHostHeldTaggedReadings` |
+| Equal session identities across conversations/hosts | `nullAndMissingOwnersRemainIsolatedAcrossConversationsAndHosts` |
+| Malformed/conflicting envelope/payload identity | `malformedConversationIdentityNeverFallsBackToPayload`, `invalidPayloadIdentityAndClearShapeCannotMoveTheSession` and `malformedClearFlagsCannotEraseAReading` |
+| Inactive reconnect readings | `inactiveRetryAndCompactionRepairLostEdgesWithoutDurableRowsOrReadEvidence` |
+| Answer/dismissal, history replay and reconnect | `answeredQuestionsStayInertAndRetiredTapsCannotActOnTheReplacement`, `permissionClearsRetireOnlyTheOwnerWithoutSendingAnswersOrResurrectingHistory` and `suppliedSessionReplacementUpdatesActivityAndRetiresRenderedPromptCallbacks` |
+| Session replacement with durable/queue/account state | `replacementPreservesItemsQueuePendingAndAccountRate` |
+| Recollection/configuration change | `suppliedSessionReplacementUpdatesActivityAndRetiresRenderedPromptCallbacks`: remove and remount the screen around held requests, without action replay |
 
 ## Error handling
 
@@ -78,3 +78,11 @@ None. The delivered conversation-bearing contract was resolved by daemon #3195.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-12
+
+## Revisions
+
+- 2026-10-12: The permission probe demonstrated that the legacy replay-zero stream loses a supplied prompt before subscription. Hold the authoritative host fold in the remote repository and have the supplied coordinator read that current state, forwarding local prompt actions into it. Legacy connections keep their event fold. This is a state-source correction with no visual change or production activation; the ownership and logging security boundaries remain unchanged.
+
+- 2026-10-12: Host-held model/facts/context/menu readings outlive a connection. Keep their producing binding and retired-session fences beside HostReadings; keep clear/fresh acceptance connection-local. Reconnect probes reject untagged replacements and retired readings without manufacturing activity. Decode the clear flag and summary binding as raw JSON kinds before admission to avoid primitive coercion. Capability-aware prompt collection reselects at the owning pump's Open edge. These changes preserve the reviewed ownership boundary and introduce no new I/O or persistent storage.
+
+- 2026-10-12: A delayed MCP refusal probe failed after replacement because the retired ask remained in its correlation ledger. Family retirement also drops the owning conversation's MCP/model-list asks and model-menu request guards. This keeps untagged legacy refusal replies from restoring session-local flags after a clear. The probe drives the real request and inbound refusal; error/provenance logging remains content-free.
