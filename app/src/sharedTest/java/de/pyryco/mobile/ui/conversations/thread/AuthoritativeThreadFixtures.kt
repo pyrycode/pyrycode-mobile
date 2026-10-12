@@ -72,3 +72,20 @@ internal fun authoritativeSnapshot(
     vararg items: ThreadItemDto,
     epoch: String = "epoch",
 ) = AuthoritativeThreadSnapshot(epoch = epoch, items = items.toList(), completedVersion = 100, checkpoint = 90)
+
+/** Daemon prompt_answered notice facts, never an outstanding live request. */
+internal fun authoritativeAnsweredPrompt(
+    id: Long,
+    correlation: String,
+    question: Boolean,
+) = authoritativeItem(
+    id,
+    "notice",
+    subtype = "prompt_answered",
+    session = "new",
+    summary = "Prompt answered: ${if (question) "answer" else "allow"}",
+    content = """{"conversation_id":"c","correlation_id":"$correlation","session_id":"new",
+        "decision":"${if (question) "answer" else "allow"}","behavior":"allow","context":{
+        "tool":"${if (question) "AskUserQuestion" else "Bash"}","class":"${if (question) "question" else "permission"}",
+        "questions":${if (question) """[{"index":0,"text":"Proceed?","values":[{"text":"Yes","meaning":"agree"}]}]""" else "[]"}}}""",
+)

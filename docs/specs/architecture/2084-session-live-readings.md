@@ -5,6 +5,7 @@
 - `data/network/MobileWireModels.kt`: `Envelope` lacks supplied live metadata; preserve default serialization.
 - `data/network/ConversationsPayload.kt`: `ConversationSummaryDto` must consume the daemon's `current_session_id` without treating a stored binding as a running process.
 - `data/repository/RemoteConversationRepository.kt`: `onInbound` is the single connection-owned admission point; live state must bypass read evidence, replay and durable folds.
+- `data/repository/AuthoritativeLiveProgress.kt` and `ui/conversations/thread/AuthoritativeThreadPresentation.kt`: independent transient inputs joined by recorded item/session identity.
 - `data/repository/AuthoritativeThreadRoute.kt` and `AuthoritativeThreadStore.kt`: supplied items remain independently durable and host-scoped.
 - `data/repository/HostReadings.kt`, status projections, `SessionSettingsCommands`, `QuestionBatchProjection` and `BackgroundTaskProjection`: retain existing domain decoding and selectively clear session readings.
 - `data/model/ModalEvent.kt` and `ModalUiState.kt`: host prompt accumulation needs a conversation-only retirement event that never submits an answer.
@@ -41,12 +42,14 @@ The existing connection-scope inbound collector serializes reconciliation. Proje
 | Event | Required production-handler regression |
 | --- | --- |
 | Summary/replacement and stale push/reply | `summariesEstablishIdentityWithoutInventingActivityAndOldTagsCannotReturn`, `taggedSettingsRepliesAndUpdatesCannotSettleRetiredSessionRequests` and `retiredMcpCorrelationCannotRestoreAnUnavailableReading` |
+| Equal settings refresh, including confirmation before acknowledgement | `equalSettingsRepliesKeepPermissionPollingUntilConfirmation` and `successfulPushBeforeAckStillSettlesAnEqualRefresh` |
+| Progress matched to active supplied items, including reused IDs in another session | `suppliedItemProgressIsVisibleWithoutLegacyRosterAndRetiresByFamilyAndSession` |
 | Clear, fresh, repeated clear | `everyStatusFamilyClearsOnlyItselfAndDuplicateClearKeepsFresh` |
 | Omitted/null/string session | `missingAndNullProvenanceCannotReplaceTaggedReading` and `reconnectWithoutProvenanceCannotReplaceHostHeldTaggedReadings` |
 | Equal session identities across conversations/hosts | `nullAndMissingOwnersRemainIsolatedAcrossConversationsAndHosts` |
 | Malformed/conflicting envelope/payload identity | `malformedConversationIdentityNeverFallsBackToPayload`, `invalidPayloadIdentityAndClearShapeCannotMoveTheSession` and `malformedClearFlagsCannotEraseAReading` |
 | Inactive reconnect readings | `inactiveRetryAndCompactionRepairLostEdgesWithoutDurableRowsOrReadEvidence` |
-| Answer/dismissal, history replay and reconnect | `answeredQuestionsStayInertAndRetiredTapsCannotActOnTheReplacement`, `permissionClearsRetireOnlyTheOwnerWithoutSendingAnswersOrResurrectingHistory` and `suppliedSessionReplacementUpdatesActivityAndRetiresRenderedPromptCallbacks` |
+| Answer/dismissal, history replay and reconnect | `answeredQuestionsStayInertAndRetiredTapsCannotActOnTheReplacement`, `permissionClearsRetireOnlyTheOwnerWithoutSendingAnswersOrResurrectingHistory`, `answeredItemReplayAndNewConnectionNeverCreateActionableRequests` and `suppliedSessionReplacementUpdatesActivityAndRetiresRenderedPromptCallbacks` |
 | Session replacement with durable/queue/account state | `replacementPreservesItemsQueuePendingAndAccountRate` |
 | Recollection/configuration change | `suppliedSessionReplacementUpdatesActivityAndRetiresRenderedPromptCallbacks`: remove and remount the screen around held requests, without action replay |
 
@@ -66,7 +69,7 @@ None. The delivered conversation-bearing contract was resolved by daemon #3195.
 
 **Verdict:** PASS
 
-- Trust boundaries: MUST FIX addressed by validating envelope/payload ownership before clear, projection mutation or correlation. Missing and null provenance remain distinct; a stored session never supplies authority.
+- Trust boundaries: MUST FIX addressed by validating envelope/payload ownership before clear, projection mutation or correlation. Settings payload `session_id` must be a string and a nonempty write target must equal the producing envelope session; an empty settings read remains unavailable/read-only, while update acknowledgements require the producing session target. This guard precedes reading publication and waiter completion. Missing and null provenance remain distinct; a stored session never supplies authority.
 - Tokens: no new credential generation/storage. Answer nonces remain inert existing wire identities; retired nonces cannot authorize a send.
 - Files/storage: new state is connection-local heap state. Existing durable/cache writes are excluded from the live path.
 - Android attack surface: no manifest, exported component, intent, WebView or permission change; existing secure prompt presentation is retained.
@@ -86,3 +89,17 @@ None. The delivered conversation-bearing contract was resolved by daemon #3195.
 - 2026-10-12: Host-held model/facts/context/menu readings outlive a connection. Keep their producing binding and retired-session fences beside HostReadings; keep clear/fresh acceptance connection-local. Reconnect probes reject untagged replacements and retired readings without manufacturing activity. Decode the clear flag and summary binding as raw JSON kinds before admission to avoid primitive coercion. Capability-aware prompt collection reselects at the owning pump's Open edge. These changes preserve the reviewed ownership boundary and introduce no new I/O or persistent storage.
 
 - 2026-10-12: A delayed MCP refusal probe failed after replacement because the retired ask remained in its correlation ledger. Family retirement also drops the owning conversation's MCP/model-list asks and model-menu request guards. This keeps untagged legacy refusal replies from restoring session-local flags after a clear. The probe drives the real request and inbound refusal; error/provenance logging remains content-free.
+
+- 2026-10-12 (verifier rework): Preserve settings arrival ordinals independently of value equality so repeated unchanged correlated reads drive `settlePermission`; `equalSettingsRepliesKeepPermissionPollingUntilConfirmation` and `successfulPushBeforeAckStillSettlesAnEqualRefresh` exercise production repository + ViewModel orderings. The missed settings payload write-target boundary is now checked by `SessionLiveAdmission.admit`, with reads, acknowledgements and malformed/correlated targets covered by `settingsPayloadIdentityCannotAuthorizeAnotherSessionOrCompleteItsReply`; the Security review above records this correction. The existing elevated risk remains appropriate.
+
+- 2026-10-12 (verifier rework): `AuthoritativeLiveProgress` and `observeAuthoritativeProgress` supply both tool/task readings independently of the legacy roster. The new `projectAuthoritativeThread` overload joins readings only to active items whose recorded session matches the producing session; clear/fresh processing changes no item, revision or checkpoint. `suppliedItemProgressIsVisibleWithoutLegacyRosterAndRetiresByFamilyAndSession` covers fresh, duplicate clear, replacement and retired progress on the supplied screen. Existing three-argument presentation callers retain their contract; #1988 owns collection/activation.
+
+- 2026-10-12 (verifier rework): Replace the text-only history stand-in with daemon `notice` / `prompt_answered` permission and question records. Replay decoded item envelopes and construct a fresh connection, repository and ViewModel in `answeredItemReplayAndNewConnectionNeverCreateActionableRequests` and `suppliedSessionReplacementUpdatesActivityAndRetiresRenderedPromptCallbacks`. Historical answers remain inert, and only supplied outstanding identities authorize new actions without replay.
+
+## Documentation handoff
+
+Pending for the documentation stage:
+
+- `docs/knowledge/features/remote-conversation-repository.md`, Status projections: authoritative routing, family retirement, settings arrival ordinals and payload write-target validation; preserve durable/pending/queue/account state and exclude live state from read evidence.
+- `docs/knowledge/features/mobile-protocol-v2-wire-layer.md`, Application payloads: envelope conversation ownership and distinct omitted/null/string session provenance, plus settings payload target validation and static diagnostics.
+- `docs/knowledge/features/relay-repository-coordinator.md`, prompt collection; `docs/knowledge/features/thread-screen.md`, supplied presentation: held actionable state, answered-history/reconnect boundaries and `AuthoritativeLiveProgress` inputs. Record the boundaries with #1986, #1988 and #1947.

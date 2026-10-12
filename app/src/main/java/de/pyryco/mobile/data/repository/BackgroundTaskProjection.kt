@@ -104,15 +104,6 @@ internal class BackgroundTaskProjection(
         val progress: BackgroundTaskProgress? = null,
     )
 
-    /** Progress is live; lifecycle/roster facts survive a session replacement. */
-    fun clearProgress(conversationId: String) {
-        pending[conversationId]?.let { held -> pending[conversationId] = held.mapValues { it.value.copy(progress = null) } }
-        mutableRosters.update { held ->
-            val roster = held[conversationId] ?: return@update held
-            held + (conversationId to roster.copy(tasks = roster.tasks.map { it.copy(progress = null) }))
-        }
-    }
-
     fun apply(envelope: Envelope) {
         try {
             when (envelope.type) {

@@ -11,6 +11,7 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.repository.AuthoritativeLiveProgress
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
@@ -73,6 +74,13 @@ internal fun projectAuthoritativeThread(
     host: String,
     conversation: String,
     snapshot: AuthoritativeThreadSnapshot,
+): AuthoritativeThreadPresentation = projectAuthoritativeThread(host, conversation, snapshot, AuthoritativeLiveProgress())
+
+internal fun projectAuthoritativeThread(
+    host: String,
+    conversation: String,
+    snapshot: AuthoritativeThreadSnapshot,
+    progress: AuthoritativeLiveProgress,
 ): AuthoritativeThreadPresentation {
     val scope = listOf(host, conversation, snapshot.epoch.orEmpty(), snapshot.generation.toString()).joinToString("") { "${it.length}:$it" }
 
@@ -115,7 +123,17 @@ internal fun projectAuthoritativeThread(
     val adapted =
         visible.associate { item ->
             val block = if (item.id in agents) identity(item.id) else owners[item.id]?.let(::identity)
-            item.id to item.displayRow(identity(item.id), block, item.parent?.let(::identity).orEmpty())
+            item.id to
+                item.displayRow(
+                    identity(item.id),
+                    block,
+                    item.parent?.let(::identity).orEmpty(),
+                    if (item.active && item.session == progress.sessionId) {
+                        (item.content as? JsonObject)?.text("tool_use_id")?.let { progress.tools[it] }
+                    } else {
+                        null
+                    },
+                )
         }
     val children =
         held.values
@@ -203,6 +221,7 @@ internal fun projectAuthoritativeThread(
                         null,
                         if (item.active) null else BackgroundTaskUpdate("", item.taskStatus(), item.terminalText(), null),
                         isFinished = !item.active,
+                        progress = progress.tasks[taskId].takeIf { item.active && item.session == progress.sessionId },
                     )
             }.groupBy { it.second.taskId }
             .values
@@ -298,6 +317,7 @@ private fun ThreadItemDto.displayRow(
     id: String,
     block: String?,
     parentId: String,
+    elapsedSeconds: Int?,
 ): ThreadRow.Delivered {
     val fields = content as? JsonObject
     val timestamp =
@@ -385,6 +405,7 @@ private fun ThreadItemDto.displayRow(
                                             null,
                                         )
                                     },
+                                elapsedSeconds = elapsedSeconds,
                                 resultDetail = result?.text("result_detail")?.displayText(),
                             ),
                         )

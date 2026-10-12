@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.diagnostics.MessageTrail
+import de.pyryco.mobile.data.model.BackgroundTaskProgress
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
@@ -17,6 +18,7 @@ import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.model.reduce
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
+import de.pyryco.mobile.data.network.BackgroundTaskProgressPayloadDto
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.ConversationResponseDto
@@ -464,8 +466,11 @@ class RemoteConversationRepository(
 
     private val sessionLiveAdmission =
         SessionLiveAdmission(hostReadings.liveSessionBindings, hostReadings.retiredLiveSessions, ::clearAuthoritativeLive)
-    private val authoritativeSettings = MutableStateFlow<Map<String, SessionSettings>>(emptyMap())
-    private val authoritativeToolProgress = MutableStateFlow<Map<String, Map<String, Int>>>(emptyMap())
+    private val authoritativeSettings = MutableStateFlow<Map<String, Pair<Long, SessionSettings>>>(emptyMap())
+
+    // The serialized inbound collector numbers equal replies as well as changed values.
+    private var settingsArrival = 0L
+    private val authoritativeProgress = MutableStateFlow<Map<String, AuthoritativeLiveProgress>>(emptyMap())
     private val admittedModals = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val retiredModals =
         java.util.concurrent.ConcurrentHashMap
@@ -511,7 +516,11 @@ class RemoteConversationRepository(
 
     /** Supplied transient progress, never a durable item or read checkpoint. */
     fun observeAuthoritativeToolProgress(conversationId: String): Flow<Map<String, Int>> =
-        authoritativeToolProgress.map { it[conversationId].orEmpty() }.distinctUntilChanged()
+        observeAuthoritativeProgress(conversationId).map { it.tools }.distinctUntilChanged()
+
+    /** Independent of legacy task rosters; #1988 supplies this reading to the presentation overload. */
+    internal fun observeAuthoritativeProgress(conversationId: String): Flow<AuthoritativeLiveProgress> =
+        authoritativeProgress.map { it[conversationId] ?: AuthoritativeLiveProgress() }.distinctUntilChanged()
 
     private fun clearAuthoritativeLive(
         conversation: String,
@@ -541,8 +550,14 @@ class RemoteConversationRepository(
                 authoritativeSettings.update { it - conversation }
                 hostReadings.clearSessionSettings(conversation)
             }
-            TYPE_TOOL_PROGRESS -> authoritativeToolProgress.update { it - conversation }
-            TYPE_BACKGROUND_TASK_PROGRESS -> backgroundTaskProjection.clearProgress(conversation)
+            TYPE_TOOL_PROGRESS ->
+                authoritativeProgress.update { held ->
+                    held[conversation]?.let { held + (conversation to it.copy(tools = emptyMap())) } ?: held
+                }
+            TYPE_BACKGROUND_TASK_PROGRESS ->
+                authoritativeProgress.update { held ->
+                    held[conversation]?.let { held + (conversation to it.copy(tasks = emptyMap())) } ?: held
+                }
             TYPE_MODAL_SHOWN -> {
                 val retired = admittedModals.filterValues { it == conversation }.keys
                 retiredModals += retired
@@ -559,13 +574,47 @@ class RemoteConversationRepository(
         val conversation = (envelope.payload as JsonObject).getValue("conversation_id").let { (it as JsonPrimitive).content }
         when (envelope.type) {
             TYPE_COMPACTING -> compactingProjection.apply(envelope)
-            TYPE_BACKGROUND_TASK_PROGRESS -> backgroundTaskProjection.apply(envelope)
+            TYPE_BACKGROUND_TASK_PROGRESS ->
+                try {
+                    val reading = MobileJson.decodeFromJsonElement<BackgroundTaskProgressPayloadDto>(envelope.payload)
+                    val progress =
+                        BackgroundTaskProgress(
+                            reading.description,
+                            reading.subagentType,
+                            reading.lastToolName,
+                            reading.totalTokens,
+                            reading.toolUses,
+                            reading.durationMs,
+                            reading.truncatedFields,
+                        )
+                    authoritativeProgress.update {
+                        val held = it[conversation] ?: AuthoritativeLiveProgress()
+                        it +
+                            (
+                                conversation to
+                                    held.copy(
+                                        sessionId = sessionLiveAdmission.currentBinding(conversation)?.takeIf { it.isNotEmpty() },
+                                        tasks = held.tasks + (reading.taskId to progress),
+                                    )
+                            )
+                    }
+                } catch (_: IllegalArgumentException) {
+                    return
+                }
             TYPE_TOOL_PROGRESS ->
                 try {
                     val reading = MobileJson.decodeFromJsonElement<ToolProgressPayloadDto>(envelope.payload)
                     if (reading.elapsedSeconds >= 0) {
-                        authoritativeToolProgress.update {
-                            it + (conversation to (it[conversation].orEmpty() + (reading.toolUseId to reading.elapsedSeconds)))
+                        authoritativeProgress.update {
+                            val held = it[conversation] ?: AuthoritativeLiveProgress()
+                            it +
+                                (
+                                    conversation to
+                                        held.copy(
+                                            sessionId = sessionLiveAdmission.currentBinding(conversation)?.takeIf { it.isNotEmpty() },
+                                            tools = held.tools + (reading.toolUseId to reading.elapsedSeconds),
+                                        )
+                                )
                         }
                     }
                 } catch (_: IllegalArgumentException) {
@@ -574,7 +623,8 @@ class RemoteConversationRepository(
             TYPE_SESSION_SETTINGS ->
                 try {
                     val settings = envelope.payload.toSessionSettings()
-                    authoritativeSettings.update { it + (conversation to settings) }
+                    val arrival = ++settingsArrival
+                    authoritativeSettings.update { it + (conversation to (arrival to settings)) }
                     relayRequests.waiter(envelope.inReplyTo)?.complete(envelope.payload)
                 } catch (_: IllegalArgumentException) {
                     return
@@ -1384,6 +1434,7 @@ class RemoteConversationRepository(
                 .map {
                     it[conversationId]
                 }.distinctUntilChanged()
+                .map { it?.second }
         } else {
             sessionSettingsCommands.observeSessionSettings(conversationId)
         }

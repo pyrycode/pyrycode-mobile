@@ -1,8 +1,14 @@
 package de.pyryco.mobile.data.repository
 
+import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
+import de.pyryco.mobile.ui.conversations.thread.PERMISSION_SETTLE_INTERVAL_MS
+import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.conversations.thread.authoritativeAnsweredPrompt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -10,8 +16,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.encodeToString
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -29,10 +39,12 @@ class AuthoritativeSessionLiveTest {
     private val logs = mutableListOf<String>()
 
     @Before fun captureLogs() {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
         RelayLog.sink = { _, _, message -> logs += message }
     }
 
     @After fun restoreLogs() {
+        Dispatchers.resetMain()
         RelayLog.sink = previousSink
     }
 
@@ -275,6 +287,110 @@ class AuthoritativeSessionLiveTest {
             write.cancel()
         }
 
+    @Test fun equalSettingsRepliesKeepPermissionPollingUntilConfirmation() = permissionPolling(false)
+
+    @Test fun successfulPushBeforeAckStillSettlesAnEqualRefresh() = permissionPolling(true)
+
+    private fun permissionPolling(pushBeforeAck: Boolean) =
+        runTest {
+            val store = androidx.lifecycle.ViewModelStore()
+            try {
+                val (pump, repo) = repository()
+                val vm =
+                    ThreadViewModel(
+                        SavedStateHandle(mapOf("serverId" to "host", "conversationId" to "c")),
+                        repo,
+                        FakeConnectionStateSource(),
+                        ComposerDraftStore(),
+                    )
+                store.put("thread", vm)
+                backgroundScope.launch { vm.state.collect {} }
+                val arrivals = mutableListOf<SessionSettings?>()
+                backgroundScope.launch { repo.observeSessionSettings("c").collect { arrivals += it } }
+                pump.push(summary("s"))
+                pump.push(frame("session_settings", "s", payload = payload(settings("s"))))
+                runCurrent()
+                assertEquals("default", vm.state.value.runConfig.permissionMode)
+                vm.onPermissionModeSelected("plan")
+                runCurrent()
+                val write = pump.sent.single { it.type == "set_session_settings" }
+
+                fun reading(
+                    mode: String,
+                    correlation: Long? = null,
+                ) = frame(
+                    "session_settings",
+                    "s",
+                    payload = payload(settings("s").replace("default", mode)),
+                ).copy(inReplyTo = correlation)
+                if (pushBeforeAck) {
+                    pump.push(reading("plan"))
+                    runCurrent()
+                }
+                pump.push(frame("session_settings_updated", "s", payload = "{\"session_id\":\"s\"}").copy(inReplyTo = write.id))
+                runCurrent()
+                repeat(if (pushBeforeAck) 1 else 3) {
+                    val request = pump.sent.last { it.type == "request_session_settings" }
+                    val before = arrivals.size
+                    pump.push(reading(if (pushBeforeAck) "plan" else "default", request.id))
+                    runCurrent()
+                    assertEquals("equal reply is an arrival", before + 1, arrivals.size)
+                    advanceTimeBy(PERMISSION_SETTLE_INTERVAL_MS + 1)
+                    runCurrent()
+                    if (!pushBeforeAck) assertTrue(pump.sent.last { it.type == "request_session_settings" }.id > request.id)
+                }
+                if (!pushBeforeAck) {
+                    pump.push(reading("plan", pump.sent.last { it.type == "request_session_settings" }.id))
+                    runCurrent()
+                }
+                assertEquals("plan", vm.state.value.runConfig.permissionMode)
+                assertNull(vm.state.value.runConfig.pendingPermission)
+            } finally {
+                store.clear()
+            }
+        }
+
+    @Test fun settingsPayloadIdentityCannotAuthorizeAnotherSessionOrCompleteItsReply() =
+        runTest {
+            val (pump, repo) = repository()
+            pump.push(summary("old"))
+            pump.push(summary("s"))
+            pump.push(frame("session_settings", "s", payload = payload(settings("s"))))
+            runCurrent()
+            val baseline = repo.observeSessionSettings("c").first()
+            val write = async { repo.setSessionSettings("s", permissionMode = "plan") }
+            runCurrent()
+            val request = pump.sent.single { it.type == "set_session_settings" }
+            for (id in listOf("\"old\"", "null", "3", "false", "{}", null)) {
+                val field = id?.let { "\"session_id\":$it" }.orEmpty()
+                for (type in listOf("session_settings", "session_settings_updated")) {
+                    val fields =
+                        if (type == "session_settings") {
+                            settings("s").replace("\"session_id\":\"s\"", field).trimStart(',')
+                        } else {
+                            field
+                        }
+                    pump.push(frame(type, "s", payload = payload(fields)).copy(inReplyTo = request.id))
+                    runCurrent()
+                    assertEquals(baseline, repo.observeSessionSettings("c").first())
+                    assertFalse("invalid $type payload cannot settle a write", write.isCompleted)
+                }
+            }
+            pump.push(frame("session_settings_updated", "s", payload = "{\"session_id\":\"s\"}").copy(inReplyTo = request.id))
+            runCurrent()
+            assertTrue(write.isCompleted)
+            pump.push(frame("session_settings", "s", payload = payload(settings(""))))
+            runCurrent()
+            assertEquals("", repo.observeSessionSettings("c").first()?.sessionId)
+            pump.push(frame("session_settings", tag = "null", clear = true))
+            pump.push(frame("session_settings", tag = "null", payload = payload(settings("s"))))
+            runCurrent()
+            assertNull(repo.observeSessionSettings("c").first())
+            pump.push(frame("session_settings", tag = "null", payload = payload(settings(""))))
+            runCurrent()
+            assertEquals("", repo.observeSessionSettings("c").first()?.sessionId)
+        }
+
     @Test fun metadataRoundTripsOmittedNullAndStringWithoutChangingLegacyBytes() {
         for (tag in listOf(null, "null", "\"s\"")) {
             val decoded = frame("stall", tag = tag)
@@ -353,6 +469,71 @@ class AuthoritativeSessionLiveTest {
             assertEquals(listOf("question_answer"), pump.sent.map { it.type })
         }
 
+    @Test fun answeredItemReplayAndNewConnectionNeverCreateActionableRequests() =
+        runTest {
+            val (oldPump, oldRepo) = repository()
+            oldPump.push(frame("question_shown", "new", clear = true))
+            oldPump.push(frame("question_shown", "new", payload = question("answered-question")))
+            runCurrent()
+            oldRepo.answerQuestionBatch(
+                "answered-question",
+                listOf(
+                    de.pyryco.mobile.data.model
+                        .QuestionAnswer(0, listOf("Yes")),
+                ),
+            )
+            assertEquals(listOf("question_answer"), oldPump.sent.map { it.type })
+            oldPump.close()
+            runCurrent()
+            val (pump, repo) = repository()
+            val items =
+                listOf(
+                    authoritativeAnsweredPrompt(1, "answered-permission", false),
+                    authoritativeAnsweredPrompt(2, "answered-question", true),
+                )
+            repeat(2) {
+                for (item in items) {
+                    val update = AuthoritativeThreadStoreTest.added(item, version = item.rev)
+                    pump.push(Envelope(1, update.type, "2026-10-12T00:00:00Z", update.raw))
+                }
+            }
+            runCurrent()
+            assertEquals(
+                2,
+                repo.authoritativeThreads
+                    .current("host", "c")
+                    .items.size,
+            )
+            assertTrue(
+                repo.authoritativeHostModals.value.outstanding
+                    .isEmpty(),
+            )
+            assertTrue(repo.questionBatches.value.isEmpty())
+            assertTrue(runCatching { repo.answerModal("answered-permission", "deny") }.isFailure)
+            assertTrue(runCatching { repo.refuseQuestionBatch("answered-question") }.isFailure)
+            assertTrue(pump.sent.isEmpty())
+            pump.push(frame("modal_shown", "new", clear = true))
+            pump.push(frame("modal_shown", "new", payload = modal("outstanding-permission")))
+            pump.push(frame("question_shown", "new", clear = true))
+            pump.push(frame("question_shown", "new", payload = question("outstanding-question")))
+            runCurrent()
+            assertEquals(
+                listOf("outstanding-permission"),
+                repo.authoritativeHostModals.value.outstanding
+                    .map { it.modalId },
+            )
+            assertEquals(listOf("outstanding-question"), repo.questionBatches.value.map { it.questionBatchId })
+            repo.refuseQuestionBatch("outstanding-question")
+            assertEquals(listOf("question_refused"), pump.sent.map { it.type })
+            assertTrue(
+                pump.sent
+                    .single()
+                    .payload
+                    .toString()
+                    .contains("outstanding-question"),
+            )
+        }
+
     @Test fun explicitConversationPreventsForeignQuestionDismissal() =
         runTest {
             val (pump, repo) = repository()
@@ -382,18 +563,6 @@ class AuthoritativeSessionLiveTest {
     @Test fun progressAndSuggestionsAreSessionReadingsAndNeverDurableRows() =
         runTest {
             val (pump, repo) = repository()
-            pump.push(
-                frame(
-                    "background_task_started",
-                    payload =
-                        payload(
-                            (
-                                "\"task_id\":\"task\",\"tool_call_id\":\"tool\"," +
-                                    "\"description\":\"task\",\"task_type\":\"local_agent\""
-                            ),
-                        ),
-                ),
-            )
             pump.push(frame("background_task_progress", "s", clear = true))
             val progress =
                 payload(
@@ -408,32 +577,34 @@ class AuthoritativeSessionLiveTest {
                 )
             pump.push(frame("background_task_progress", "s", payload = progress))
             runCurrent()
-            assertNotNull(
-                repo.backgroundTasks.value
-                    .getValue("c")
-                    .tasks
-                    .single()
-                    .progress,
+            assertEquals(
+                "working",
+                repo
+                    .observeAuthoritativeProgress("c")
+                    .first()
+                    .tasks["task"]
+                    ?.description,
             )
             val durable = repo.observeThreadSnapshot("c").first()
             pump.push(frame("background_task_progress", "s", clear = true))
             runCurrent()
-            assertNotNull(
-                repo.backgroundTasks.value
-                    .getValue("c")
-                    .tasks
-                    .single()
-                    .progress,
+            assertEquals(
+                "working",
+                repo
+                    .observeAuthoritativeProgress("c")
+                    .first()
+                    .tasks["task"]
+                    ?.description,
             )
             pump.push(frame("stall", "new", clear = true))
             pump.push(frame("background_task_progress", "s", payload = progress))
             runCurrent()
-            assertNull(
-                repo.backgroundTasks.value
-                    .getValue("c")
+            assertTrue(
+                repo
+                    .observeAuthoritativeProgress("c")
+                    .first()
                     .tasks
-                    .single()
-                    .progress,
+                    .isEmpty(),
             )
             assertEquals(durable, repo.observeThreadSnapshot("c").first())
 
@@ -640,6 +811,8 @@ class AuthoritativeSessionLiveTest {
             sent += envelope
             return true
         }
+
+        fun close() = channel.close()
 
         fun push(envelope: Envelope) {
             channel.trySend(envelope)

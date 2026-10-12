@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.lifecycle.SavedStateHandle
@@ -15,9 +16,12 @@ import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.reduce
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.repository.AuthoritativeLiveProgress
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
+import de.pyryco.mobile.ui.conversations.components.TOOL_ELAPSED_TAG
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,9 +44,9 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class AuthoritativeSessionScreenTest {
     @get:Rule val compose = createComposeRule()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val pump = Pump()
-    private val repo =
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var pump = Pump()
+    private var repo =
         RemoteConversationRepository(
             pump,
             scope,
@@ -57,8 +61,10 @@ class AuthoritativeSessionScreenTest {
             override suspend fun retry() = Unit
         }
     private lateinit var vm: ThreadViewModel
+    private val viewModels = androidx.lifecycle.ViewModelStore()
 
     @After fun close() {
+        viewModels.clear()
         scope.cancel()
     }
 
@@ -71,28 +77,18 @@ class AuthoritativeSessionScreenTest {
             prompt("old", "old-request", "Old request")
         }
         compose.runOnIdle {
-            scope.launch { repo.authoritativeHostModals.collect { host.value = it } }
-            vm =
-                ThreadViewModel(
-                    SavedStateHandle(mapOf("serverId" to "host", "conversationId" to "c")),
-                    repo,
-                    connection,
-                    ComposerDraftStore(),
-                    hostModal = host,
-                    answerModal = { id, option, grant -> repo.answerModal(id, option, grant) },
-                    cancelModal = repo::cancelModal,
-                    recordModalAction = { action ->
-                        repo.recordAuthoritativeModalAction(action)
-                        host.value = host.value.reduce(action)
-                    },
-                )
+            mountViewModel()
         }
-        val durable = authoritativeSnapshot(authoritativeItem(1, content = "{\"text\":\"Historical answered permission\"}"))
+        val answered =
+            listOf(authoritativeAnsweredPrompt(1, "answered-permission", false), authoritativeAnsweredPrompt(2, "answered-question", true))
+        answered.forEach(::item)
         var mounted by mutableStateOf(true)
+        var readingVm by mutableStateOf(vm)
         compose.setContent {
-            val state by vm.state.collectAsState()
-            val thinking by vm.isThinking.collectAsState()
-            val modal by vm.currentModal.collectAsState()
+            val durable by repo.authoritativeThreads.observe("host", "c").collectAsState(initial = authoritativeSnapshot())
+            val state by readingVm.state.collectAsState()
+            val thinking by readingVm.isThinking.collectAsState()
+            val modal by readingVm.currentModal.collectAsState()
             PyrycodeMobileTheme(darkTheme = true) {
                 if (!mounted) return@PyrycodeMobileTheme
                 ThreadScreen(
@@ -135,7 +131,8 @@ class AuthoritativeSessionScreenTest {
             pump.push(Envelope(99, "ack", "2026-10-12T00:00:00Z", inReplyTo = answer.id))
         }
         compose.waitForIdle()
-        compose.onNodeWithText("Historical answered permission").assertIsDisplayed()
+        compose.onNodeWithText("Prompt answered: allow").assertExists()
+        compose.onNodeWithText("Prompt answered: answer").assertExists()
         compose.onNodeWithText("Thinking…").assertDoesNotExist()
         compose.onNodeWithText("Current request").assertDoesNotExist()
         compose.runOnIdle {
@@ -144,6 +141,139 @@ class AuthoritativeSessionScreenTest {
             prompt("new", "new-request", "Current request")
         }
         compose.onNodeWithText("Current request").assertDoesNotExist()
+        compose.runOnIdle {
+            mounted = false
+            viewModels.clear()
+            scope.cancel()
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+            pump = Pump()
+            repo =
+                RemoteConversationRepository(
+                    pump,
+                    scope,
+                    negotiatedCapabilities = { setOf("thread", "interactive") },
+                    authoritativeHostId = "host",
+                )
+            host.value = HostModalState()
+            mountViewModel()
+            readingVm = vm
+            repeat(2) { answered.forEach(::item) }
+            mounted = true
+        }
+        compose.onNodeWithText("Current request").assertDoesNotExist()
+        compose.onNodeWithText("Prompt answered: allow").assertExists()
+        compose.onNodeWithText("Prompt answered: answer").assertExists()
+        compose.runOnIdle {
+            assertTrue(host.value.outstanding.isEmpty())
+            assertTrue(pump.sent.none { it.type in setOf("modal_answer", "question_answer", "question_refused") })
+            push("modal_shown", "new", clear = true)
+            prompt("new", "reconnected-request", "Outstanding after reconnect")
+        }
+        compose.onNodeWithText("Outstanding after reconnect").assertIsDisplayed()
+        compose.runOnIdle {
+            vm.onModalOption("deny", "new-request")
+            assertTrue(pump.sent.none { it.type == "modal_answer" })
+        }
+        compose.onNodeWithText("Deny").performClick()
+        compose.runOnIdle {
+            val answer = pump.sent.single { it.type == "modal_answer" }
+            assertTrue(answer.payload.toString().contains("reconnected-request"))
+            pump.push(Envelope(100, "ack", "2026-10-12T00:00:00Z", inReplyTo = answer.id))
+        }
+    }
+
+    private fun mountViewModel() {
+        scope.launch { repo.authoritativeHostModals.collect { host.value = it } }
+        vm =
+            ThreadViewModel(
+                SavedStateHandle(mapOf("serverId" to "host", "conversationId" to "c")),
+                repo,
+                connection,
+                ComposerDraftStore(),
+                hostModal = host,
+                answerModal = { id, option, grant -> repo.answerModal(id, option, grant) },
+                cancelModal = repo::cancelModal,
+                recordModalAction = { action ->
+                    repo.recordAuthoritativeModalAction(action)
+                    host.value = host.value.reduce(action)
+                },
+            )
+        viewModels.put("thread", vm)
+    }
+
+    @Test fun suppliedItemProgressIsVisibleWithoutLegacyRosterAndRetiresByFamilyAndSession() {
+        val items =
+            listOf(
+                authoritativeItem(
+                    1,
+                    "tool_call",
+                    active = true,
+                    status = "running",
+                    session = "old",
+                    content = """{"name":"Read","tool_use_id":"tool","input_summary":"file"}""",
+                ),
+                authoritativeAgent(2, task = "task", session = "old"),
+            )
+        items.forEach(::item)
+        compose.setContent {
+            val snapshot by repo.authoritativeThreads.observe("host", "c").collectAsState(initial = authoritativeSnapshot())
+            val progress by repo.observeAuthoritativeProgress("c").collectAsState(initial = AuthoritativeLiveProgress())
+            PyrycodeMobileTheme(darkTheme = true) {
+                ThreadScreen(
+                    ThreadUiState("c", "Channel", authoritativeThread = projectAuthoritativeThread("host", "c", snapshot, progress)),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                )
+            }
+        }
+        compose.onNodeWithTag(TOOL_ELAPSED_TAG, useUnmergedTree = true).assertDoesNotExist()
+
+        fun fresh(session: String) {
+            push("tool_progress", session, fields = "\"turn_id\":\"turn\",\"tool_use_id\":\"tool\",\"elapsed_seconds\":7")
+            push(
+                "background_task_progress",
+                session,
+                fields = """"task_id":"task","description":"Working now","subagent_type":"general",
+                "last_tool_name":"Read","total_tokens":100,"tool_uses":1,"duration_ms":200,"truncated_fields":null""",
+            )
+        }
+        compose.runOnIdle {
+            push("tool_progress", "old", clear = true)
+            push("background_task_progress", "old", clear = true)
+            fresh("old")
+        }
+        compose.onNodeWithTag(TOOL_ELAPSED_TAG, useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("1 task running").performClick()
+        compose.onNodeWithText("Working now").assertIsDisplayed()
+        compose.runOnIdle {
+            push("tool_progress", "old", clear = true)
+            push("background_task_progress", "old", clear = true)
+        }
+        compose.onNodeWithText("Working now").assertIsDisplayed()
+        compose.runOnIdle {
+            push("tool_progress", "new", clear = true)
+            fresh("old")
+        }
+        compose.onNodeWithText("Working now").assertDoesNotExist()
+        compose.runOnIdle { fresh("new") }
+        compose.onNodeWithText("Working now").assertDoesNotExist()
+        compose.runOnIdle {
+            val held = repo.authoritativeThreads.current("host", "c")
+            assertEquals(items.map { it.raw }, held.items.map { it.raw })
+            assertEquals(0L, held.checkpoint)
+            assertTrue(pump.sent.isEmpty())
+        }
+    }
+
+    private fun item(item: ThreadItemDto) {
+        pump.push(
+            MobileJson.decodeFromString(
+                """{"id":1,"type":"thread_item_added","ts":"2026-10-12T00:00:00Z",
+            "payload":{"conversation_id":"c","epoch":"epoch","version":${item.rev},"item":${item.raw}}}""",
+            ),
+        )
     }
 
     private fun prompt(

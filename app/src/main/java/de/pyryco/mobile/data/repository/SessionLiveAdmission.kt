@@ -82,6 +82,17 @@ internal class SessionLiveAdmission(
         if (!session.usable) return rejected("session")
         if (envelope.eventId != null || envelope.historyEntryId != null) return rejected("durable_identity")
         if (cleared && (payload.isNotEmpty() || envelope.inReplyTo != null)) return rejected("clear")
+        if (!cleared && family == "session_settings") {
+            val target =
+                (payload["session_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    ?: return rejected("settings_session")
+            // A zero settings read is unavailable/read-only even beside a stored producing binding.
+            if (target.isEmpty()) {
+                if (envelope.type != "session_settings") return rejected("settings_session")
+            } else if (session.raw != JsonPrimitive(target)) {
+                return rejected("settings_session")
+            }
+        }
         val existing =
             owners[conversation] ?: bindings[conversation]?.let { known ->
                 Owner(known).also { owners[conversation] = it }
