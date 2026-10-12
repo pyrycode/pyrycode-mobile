@@ -1,6 +1,6 @@
 {
   "ticket": 2117,
-  "status": "waiting_on_daemon_repair",
+  "status": "mobile_investigation_complete_pending_dispatcher_full_live",
   "blocker": "https://github.com/pyrycode/pyrycode/issues/3214",
   "repair_pr": "https://github.com/pyrycode/pyrycode/pull/3232",
   "historical": {
@@ -96,13 +96,144 @@
     "private_raw_xml": "/tmp/builder-2117/evidence/stage-green.xml"
   },
   "remaining": [
-    "Merge daemon #3214 and use its repair in the configured test daemon source.",
-    "Re-run named target and evidenced prefix; diagnose any remaining Mobile failure before a repair PR.",
-    "Fresh dispatcher full-live target pass with both revisions, Claude version, raw XML/logcat references and counted suite results."
+    "Fresh passing dispatcher full live gate explicitly executes and passes the target, with Mobile/daemon revisions, Claude version, raw XML/logcat references and counted suite/method results.",
+    "Builder return to commit app/src/test/resources/e2e/2117/live-result.json after that gate, before documentation and merge."
   ],
   "limits": [
     "Diagnostics do not repair daemon capacity.",
     "Fresh 4413 readiness failure does not establish the original operation or associate its 4410 records with chosen effort.",
     "No full-live acceptance is claimed."
-  ]
+  ],
+  "post_repair_focused": {
+    "mobile": "c2069771aea475935c87c59d33c10b89211d1279",
+    "daemon": "47d00822cc702c896d6234b0447226096edab210",
+    "claude": "2.1.280",
+    "command": "PYRYCODE_SRC=/tmp/builder-2117/daemon-validation python3 scripts/android-test-gate.py live --tests 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_chosenEffort_appliesFromTheFirstTurn'",
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "exit_status": 0,
+    "artifact_directory": "build/dispatcher-tests/live-bxufaz3q",
+    "completed_stages": 21,
+    "raw_artifacts": [
+      {
+        "path": "build/dispatcher-tests/live-bxufaz3q/0-TEST-pixel2Api33Atd-_app-.xml",
+        "sha256": "0c4ad8a16d6d86f265bd6d1c63505bb6560d4809e5f2016b3e0964fa09e3dd55"
+      },
+      {
+        "path": "build/dispatcher-tests/live-bxufaz3q/0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_chosenEffort_appliesFromTheFirstTurn.txt",
+        "sha256": "7fbd169ee8bcd26330546c0f70ec571143f62accb7717b603da78c31dadb839a"
+      },
+      {
+        "path": "build/dispatcher-tests/live-bxufaz3q/dispatcher.xml",
+        "sha256": "1d0ebc391e34f12482fab15d5a19b260f949a29f19a943c64f2beb101bfd927a"
+      }
+    ],
+    "daemon_regression": {
+      "name": "TestReadinessLegacyReconnectSnapshotCapacity",
+      "command": "go test -race -count=1 -json -run '^TestReadinessLegacyReconnectSnapshotCapacity$' ./internal/relay",
+      "daemon": "47d00822cc702c896d6234b0447226096edab210",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "red_green_owner": "https://github.com/pyrycode/pyrycode/pull/3232",
+      "before": "46c980feab9109d37ec72bf74577b00924a78632",
+      "before_counts": "1 executed; 1 failed; 0 skipped",
+      "after": "7e9ef820c1a368c3bab6e73b9ef917e433500782",
+      "after_counts": "1 executed; 1 passed; 0 skipped",
+      "baseline_limit": "Before/after counts attributed to the daemon owner PR; not rerun by this Mobile continuation."
+    }
+  },
+  "post_repair_prefix": {
+    "mobile": "c2069771aea475935c87c59d33c10b89211d1279",
+    "daemon": "47d00822cc702c896d6234b0447226096edab210",
+    "claude": "2.1.280",
+    "selection": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_pingPrompt_footerShowsContextUsage,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_backgroundAgent_followsBottomUntilFinished,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_peerQueue_staysConsistentAcrossClients,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_twoHostsArchive_staysPerHost,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_stopBackgroundTask_completesThenRepliesAgain,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_muteChannel_roundTripsThroughTheHost,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_toolPrompt_rendersToolStepInThread,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_permissionPrompts_heldPerConversation,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_sendQueuedNow_reachesRunningTurn,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_chosenEffort_appliesFromTheFirstTurn",
+    "counts": {
+      "executed": 27,
+      "passed": 26,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "exit_status": 1,
+    "target": {
+      "name": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_chosenEffort_appliesFromTheFirstTurn",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "completed_stages": [
+        "Readiness",
+        "ClearRemembered",
+        "AcquireRepository",
+        "CreateChat",
+        "RenameChat",
+        "InitialSettings",
+        "PublishedMenu",
+        "OpenChat",
+        "ModelTap",
+        "ModelAcknowledgement",
+        "EffortTap",
+        "EffortAcknowledgement",
+        "ChosenReading",
+        "BeforeTurnFooter",
+        "FirstSend",
+        "DisplayedReply",
+        "AppliedReading",
+        "LeaveChat",
+        "ReopenChat",
+        "ReopenedFooter",
+        "Cleanup"
+      ]
+    },
+    "reconnect_passed": true,
+    "peer_close_4413_count": 0,
+    "missing_session_rejections": 0,
+    "unrelated_failures": [
+      "interactiveTurn_backgroundAgent_followsBottomUntilFinished"
+    ],
+    "unrelated_failure_owner": "https://github.com/pyrycode/pyrycode-mobile/issues/2112",
+    "artifact_directory": "build/dispatcher-tests/live-_omi9k2d",
+    "private_raw_copies": [
+      {
+        "path": "/tmp/builder-2117/evidence/post-repair-prefix27-dispatcher.xml",
+        "sha256": "1de80b488a0e8f285d3079a8760e0bd9dd6e266456d43f4a6de9adf57792db44"
+      },
+      {
+        "path": "/tmp/builder-2117/evidence/post-repair-prefix27-0-TEST-pixel2Api33Atd-_app-.xml",
+        "sha256": "fd174fe14cc969d6cfbbba1fa6ca663d999e5e2de1291d9dcfea10fe9d9311f9"
+      },
+      {
+        "path": "/tmp/builder-2117/evidence/post-repair-prefix27-1-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_chosenEffort_appliesFromTheFirstTurn.txt",
+        "sha256": "4ee4819d9bc312f24000193ca0cff961b24c35a285257288867efa81e9ae7fe6"
+      },
+      {
+        "path": "/tmp/builder-2117/evidence/post-repair-prefix27-18-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive.txt",
+        "sha256": "946b7a39eef79ba19c253ff7a618d7b8eeecb9a79c06a01ca8e1f3955cf33ac5"
+      },
+      {
+        "path": "/tmp/builder-2117/evidence/post-repair-prefix27-daemon.log",
+        "sha256": "910569c83cf0c79d7b43cd57dadd94bf94fef789da7fd85af76951d6664b7f55"
+      }
+    ]
+  },
+  "post_repair_mobile_checks": {
+    "command": "./gradlew testDebugUnitTest --tests 'de.pyryco.mobile.e2e.ChosenEffortStageTest' --tests 'de.pyryco.mobile.e2e.RememberedEffortStageTest' --tests 'de.pyryco.mobile.e2e.RunConfigurationWaitTest' lint assembleDebug compileDebugAndroidTestKotlin spotlessApply --console=plain",
+    "exit_status": 0,
+    "executed": 12,
+    "passed": 12,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "classes": {
+      "ChosenEffortStageTest": 4,
+      "RememberedEffortStageTest": 2,
+      "RunConfigurationWaitTest": 6
+    },
+    "xml_directory": "app/build/test-results/testDebugUnitTest/"
+  }
 }
