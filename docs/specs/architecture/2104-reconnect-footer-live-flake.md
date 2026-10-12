@@ -54,3 +54,9 @@ The dispatcher owns the final fresh full live gate before documentation and merg
 ## Documentation handoff
 
 Pending documentation stage: update `docs/e2e-interactive-stream.md`, “Verification status”, with the established cause, repair, retained evidence and fresh counted dispatcher full-live result. Documentation records evidence; it does not produce the proof.
+
+## Revisions
+
+### 2026-10-12: retain diagnostic daemon evidence before successful cleanup
+
+The harness removes `WORK_DIR` on success. Add scoped cleanup-time retention for live selections containing this scenario: copy only daemon logs and a static revision/exit/selection record to `build/reconnect-footer-evidence/<run>`, before removing temporary material. Pairing files, credentials and isolated HOME contents are excluded. The existing gate already retains method XML/logcat. Test retention on success and failure, and no retention for other selections.
