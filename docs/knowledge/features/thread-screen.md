@@ -144,6 +144,42 @@ versions and the tall-row edge rule. See [testing guidance and counted evidence]
 
 Back, title and overflow stay reachable through their callbacks. The overflow opens `ThreadOverflowMenu` beneath its control; screen-owned state hosts the rename, save-as-channel, status and other modal flows described in the linked topics. Workspace picker state remains in the screen contract for older flows, but the current thread frame and overflow expose no workspace chip, label, picker trigger or workspace-edit action.
 
+## Supplied session readings and presentation (#2084)
+
+Durable item content and actionable live state have separate sources. Current-session
+activity, settings and prompts pass through repository session admission before the
+existing ViewModel/status/modal presentations consume them. Summary bindings identify a
+session without proving a running process. A replacement retires session-local readings
+and callbacks while preserving durable items, supplied pending/queue state and account
+rate readings. [Held prompt collection](relay-repository-coordinator-seams-and-passthroughs.md#modal-event-seam-445-and-the-hoisted-hostmodals-fold-492)
+keeps an admitted request visible even if it arrived before the screen subscribed.
+
+The `projectAuthoritativeThread` overload accepts `AuthoritativeLiveProgress` from
+`observeAuthoritativeProgress`: tool elapsed-time and task progress maps plus producing
+session identity. It joins only to active supplied items whose recorded session matches
+that identity, independently of the legacy task roster. Reusing a tool/task id in a
+later session cannot attach old progress to the new row. Family clears remove only the
+matching transient map; duplicate clears after fresh state preserve it. Progress changes
+no durable item, revision, checkpoint or read evidence. Three-argument presentation
+callers retain their existing contract; #1988 owns collecting these inputs in production.
+
+Answered permission/question `notice` / `prompt_answered` items remain inert historical
+content across replay and a new connection. Only outstanding supplied requests can be
+answered. Clear/replacement never sends an answer; captured request identities and
+ViewModel guards keep retired taps from acting on replacement prompts. Recollection or
+configuration change must not replay an action. `AuthoritativeSessionScreenTest` covers
+session replacement and retired rendered callbacks, real answered-history records and
+fresh connection/repository/ViewModel ownership, plus supplied task/tool progress without
+a legacy roster. Remounting the same ViewModel alone cannot prove reconnect behavior.
+
+\#1988 owns capability activation, delivery and the rung-3
+`InteractiveStreamE2ETest.interactiveTurn_newSession_rendersSessionBoundaryDelimiter`
+proof with current-session status freshness; this supplied-input slice claims no live
+result. #1986 owns pending sends/queue reconciliation, #1947 legacy context reset.
+Existing activity/prompt geometry and assets remain unchanged. See
+[repository retirement](remote-conversation-repository-status-projections.md#supplied-session-ownership-and-family-retirement-2084)
+and [wire ownership](mobile-protocol-v2-wire-layer.md#session-scoped-live-admission-2084).
+
 ## How it works
 
 Split on 2026-09-05 into four documents, listed in § Map above: [ViewModel state](thread-screen-how-it-works-state.md), [the list, the chip, the empty state and the status row](thread-screen-how-it-works-list-and-status-row.md), [the sheets](thread-screen-how-it-works-sheets.md), and [overlays, retry and the app bar](thread-screen-how-it-works-overlays-and-app-bar.md). Every `###` subsection kept its heading and anchor.

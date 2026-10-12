@@ -539,7 +539,7 @@ See [Caching conversation repository — testing](caching-conversation-repositor
   paging](remote-conversation-repository-reads-and-thread-store-history-paging.md) —
   `mergeHistoryRows` and `mergeCachedRows`, the join and hint fill this restore shares with the
   history walk, and where the two merges' position rules diverge
-- [Remote conversation repository § Status projections](remote-conversation-repository.md#status-projections-one-file-per-status-event) —
+- [Remote conversation repository § Status projections](remote-conversation-repository-status-projections.md#status-projections-one-file-per-status-event) —
   `AttachmentOfferProjection`, the source of the cache-only offer row `mergeCachedRows` exists to keep
   in place (#983)
 - [Dependency injection](dependency-injection.md) — `ThreadDestinationFactory.repository` wiring,
