@@ -1,0 +1,57 @@
+Send now viewport diagnosis, 2026-10-12
+
+Failing full diagnostic capture:
+  mobile adb2b069f98327dc3b16f88142bca5b06399c1ff
+  daemon 9c9cd5a25c337666bdbed47c29202e695a172733
+  Claude Code 2.1.280
+  65 executed, 64 passed, 1 failed, 0 errors, 0 skipped, no retries
+  failed: InteractiveStreamE2ETest#interactiveTurn_sendQueuedNow_reachesRunningTurn
+
+Retained phone geometry at 17:56:16.694 local:
+  control bounds: left 390, top 1601, right 516, bottom 1727
+  readable thread bounds: top 182, bottom 1540
+  tap center: x 453, y 1664
+  Send now action receipt: absent
+  Send now accepted/rejected send logs: absent
+  phone and peer: connected throughout the failing queue-removal wait
+
+The control center was behind the composer. The diagnostic made one real tap.
+The app did not receive that action. This occurrence is a test pointer-target
+failure; it is not evidence of a rejected daemon request or a missed peer update.
+Raw logs and XML remain private under the Mobile agents evidence directory:
+  logs/evidence/mobile-recovery-diagnostics-20261012
+  phone/sha256.txt and send-now-failure/sha256.txt identify the retained originals.
+
+Controlled screen regression:
+  SendNowPhoneTest#sendBehindComposerIsRevealedBeforeItsSinglePhysicalTap
+  Original action: 1 executed, 1 failed at expected [42], actual []
+  Repaired action: 1 executed, 1 passed; correct queued ID once, no Cancel
+  With existing queued routing/geometry checks: 19 executed, 19 passed,
+  0 failures/errors/skips. Android-test compilation passed.
+
+The fixture uses the real thread, queued control and composer. It first asserts
+that Compose calls the obscured control displayed, then performs the production
+test action. The repair reveals the target using the existing viewport helper
+before its one pointer tap. The fixed-word marker and all delivery/order/completion
+assertions remain unchanged.
+
+Controlled XML hashes:
+e623146edfd0b6515a2054cc0943c0242313379bf2c7b031621b8f02b1e35d4e  /private/tmp/send-now-2056-red.xml
+06a84b8cec906a56a13e801fa3a9a492923890c3fde46558d86ef1e31c093a27  /private/tmp/send-now-2056-green.xml
+
+Fresh managed checks at c904f2e4e, daemon 9c9cd5a25:
+  live Send now: 1 executed, 1 passed, 0 failed/errors/skipped
+  scripted send-now: 1 executed, 1 passed, 0 failed/errors/skipped
+  no retries
+  private evidence: mobile-send-now-repaired-20261012 and
+                    mobile-send-now-scripted-20261012
+  Each folder contains raw XML, phone/daemon logs and phone checksums.
+  The full combined live gate remains pending.
+
+Combined acceptance, 2026-10-12:
+Mobile d92a2f4e8d7950db249d34a59dfed3d394c9db98 includes this repair, PRs 2111 and 2133, and an experimental Copy action.
+Backend 9c9cd5a25c337666bdbed47c29202e695a172733.
+Full live: 65 executed, 65 passed, 0 failures/errors/skips, no retries. Named Send now case passed.
+Full scripted: 22 executed, 22 passed, 0 failures/errors/skips, no retries.
+Private evidence: mobile-combined-live-20261012 and mobile-combined-scripted-20261012 in the Mobile agents evidence directory.
+This validates the combined candidate. It does not diagnose the separate historical Copy flake.
