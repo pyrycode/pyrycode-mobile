@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" time="2.929" timestamp="2026-10-12T00:23:10" tests="1" failures="0" errors="0" skipped="0">
+    <testcase name="interactiveTurn_seededChannel_toolStepRunsThenCompletes" classname="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" time="2.929" />
+  </testsuite>
+</testsuites>

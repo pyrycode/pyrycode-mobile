@@ -38,6 +38,10 @@ its stage/daemon extracts and exact revision/APK/binary provenance are retained.
 The real-registry controls provide before/after causal proof; this live pass
 confirms the original permission and display contract remains intact.
 
+The existing deterministic tool twin also executed/passed one test, zero
+failures/errors/skips, exit 0, zero real Claude turns (`scripted-tool.xml`). Its
+raw XML/logcat are retained at `/tmp/builder-2100/scripted-tool/`.
+
 Full live acceptance is pending with the dispatcher. A builder return must commit
 `dispatcher-full.xml`, `dispatcher-method.xml` and `dispatcher-provenance.json`
 here, confirming the fresh full gate and named method pass, executed/failed/skipped
