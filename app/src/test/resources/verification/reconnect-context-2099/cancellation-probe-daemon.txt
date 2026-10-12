@@ -1,0 +1,29 @@
+time=2026-10-12T03:25:17.725000+03:00 event=v2.handshake.accept connHash=149b82e7
+time=2026-10-12T03:25:18.320000+03:00 event=v2.handshake.accept connHash=16a53fa5
+time=2026-10-12T03:25:18.575000+03:00 event=create_conversation.created connHash=149b82e7 conversation=21fd0f1e-ca75-4cfa-9354-9825d73ac87c
+time=2026-10-12T03:25:18.654000+03:00 event=v2.context_usage.request.refused connHash=149b82e7 conversation=21fd0f1e-ca75-4cfa-9354-9825d73ac87c code=context_usage.unavailable
+time=2026-10-12T03:25:18.793000+03:00 event=v2.history.served connHash=149b82e7 conversation=21fd0f1e-ca75-4cfa-9354-9825d73ac87c
+time=2026-10-12T03:25:19.331000+03:00 event=rename_conversation.renamed connHash=149b82e7 conversation=21fd0f1e-ca75-4cfa-9354-9825d73ac87c
+time=2026-10-12T03:25:19.672000+03:00 event=v2.peer_close.teardown connHash=149b82e7
+time=2026-10-12T03:25:19.683000+03:00 event=send_message.enqueued connHash=16a53fa5 conversation=21fd0f1e-ca75-4cfa-9354-9825d73ac87c
+time=2026-10-12T03:25:22.152000+03:00 event=v2.handshake.accept connHash=65d5cfce
+time=2026-10-12T03:25:22.182000+03:00 event=v2.peer_close.teardown connHash=65d5cfce
+time=2026-10-12T03:25:22.237000+03:00 event=v2.handshake.accept connHash=4faab313
+time=2026-10-12T03:25:22.280000+03:00 event=v2.peer_close.teardown connHash=4faab313
+time=2026-10-12T03:25:22.329000+03:00 event=v2.handshake.accept connHash=8020214c
+time=2026-10-12T03:25:22.360000+03:00 event=v2.peer_close.teardown connHash=8020214c
+time=2026-10-12T03:25:22.422000+03:00 event=v2.handshake.accept connHash=d09e4728
+time=2026-10-12T03:25:22.453000+03:00 event=v2.peer_close.teardown connHash=d09e4728
+time=2026-10-12T03:25:22.504000+03:00 event=v2.handshake.accept connHash=9b3ed1f2
+time=2026-10-12T03:25:22.539000+03:00 event=v2.peer_close.teardown connHash=9b3ed1f2
+time=2026-10-12T03:25:22.589000+03:00 event=v2.handshake.accept connHash=3a8e4c4e
+time=2026-10-12T03:25:22.618000+03:00 event=v2.peer_close.teardown connHash=3a8e4c4e
+time=2026-10-12T03:25:22.673000+03:00 event=v2.handshake.accept connHash=4dcf1be2
+time=2026-10-12T03:25:22.706000+03:00 event=v2.peer_close.teardown connHash=4dcf1be2
+time=2026-10-12T03:25:22.757000+03:00 event=v2.handshake.accept connHash=d9603095
+time=2026-10-12T03:25:22.788000+03:00 event=v2.peer_close.teardown connHash=d9603095
+time=2026-10-12T03:25:22.841000+03:00 event=v2.handshake.accept connHash=ba1e9beb
+time=2026-10-12T03:25:23.481000+03:00 event=v2.history.served connHash=ba1e9beb conversation=21fd0f1e-ca75-4cfa-9354-9825d73ac87c
+time=2026-10-12T03:25:23.633000+03:00 event=mark_conversation_read.applied connHash=ba1e9beb conversation=21fd0f1e-ca75-4cfa-9354-9825d73ac87c
+time=2026-10-12T03:25:23.734000+03:00 event=v2.peer_close.teardown connHash=16a53fa5
+time=2026-10-12T03:25:24.488000+03:00 event=v2.peer_close.teardown connHash=ba1e9beb

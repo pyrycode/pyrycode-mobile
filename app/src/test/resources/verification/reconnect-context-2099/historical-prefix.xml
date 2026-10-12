@@ -1,0 +1,22 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" tests="13" failures="2" errors="0" skipped="0" time="275.651">
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_pingPrompt_footerShowsContextUsage" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_backgroundAgent_followsBottomUntilFinished">
+      <failure />
+    </testcase>
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_finishedReply_systemCopyCopiesSelectedWord" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_peerQueue_staysConsistentAcrossClients" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_twoHostsArchive_staysPerHost" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_deleteConversation_removesFromListAndClosesThread" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_twoHostsCollidingConversationId_stayPerHost" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_stopBackgroundTask_completesThenRepliesAgain">
+      <failure />
+    </testcase>
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_muteChannel_roundTripsThroughTheHost" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn" />
+  </testsuite>
+</testsuites>

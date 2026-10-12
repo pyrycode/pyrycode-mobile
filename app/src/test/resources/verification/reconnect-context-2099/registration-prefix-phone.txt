@@ -1,0 +1,10 @@
+10-12 03:22:39.603  3001  3037 I ContextReconnect: event=context_reconnect stage=chat_created conversation=6345857d-fc4e-4722-8d9d-610acde04ce5
+10-12 03:22:40.286  3001  3037 I ContextReconnect: event=context_reconnect stage=phone_cut
+10-12 03:22:40.287  3001  3037 I HostLinkWait: event=host_link action=close stage=drive outcome=start; targetPresent=true capturedRegistered=true selectedTarget=true socket=true relay=Connected daemon=Connected repository=true currentRepository=true
+10-12 03:22:40.288  3001  3037 I HostLinkWait: event=host_link action=close stage=repository outcome=start; targetPresent=true capturedRegistered=true selectedTarget=true socket=false relay=Idle daemon=Down repository=false currentRepository=false
+10-12 03:22:40.290  3001  3037 I HostLinkWait: event=host_link action=close stage=repository outcome=complete; targetPresent=true capturedRegistered=true selectedTarget=true socket=false relay=Idle daemon=Down repository=false currentRepository=false
+10-12 03:22:42.457  3001  3037 I ContextReconnect: event=context_reconnect stage=peer_reading_complete
+10-12 03:22:42.457  3001  3037 I HostLinkWait: event=host_link action=reconnect stage=drive outcome=start; targetPresent=true capturedRegistered=true selectedTarget=true socket=false relay=Idle daemon=Down repository=false currentRepository=false
+10-12 03:22:42.457  3001  3037 I HostLinkWait: event=host_link action=reconnect stage=repository outcome=start; targetPresent=true capturedRegistered=true selectedTarget=true socket=false relay=Idle daemon=Down repository=false currentRepository=false
+10-12 03:22:42.546  3001  3037 I HostLinkWait: event=host_link action=reconnect stage=repository outcome=complete; targetPresent=true capturedRegistered=true selectedTarget=true socket=true relay=Connected daemon=Handshaking repository=true currentRepository=true
+10-12 03:22:42.603  3001  3037 I ContextReconnect: event=context_reconnect stage=reopen_without_send

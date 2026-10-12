@@ -1,0 +1,25 @@
+{
+  "mobile": "c69586d17086dd0e0cfa7e86df2e1444887cf059",
+  "daemon": "8091a4730d42f43029eb0b955442dc300106030f",
+  "started_ns": 1791764512063645000,
+  "methods": [
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart",
+    "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn"
+  ],
+  "patch": "diff --git a/app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt b/app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt\nindex 09f248e8a..fbfd05581 100644\n--- a/app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt\n+++ b/app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt\n@@ -837,7 +837,7 @@ class InteractiveStreamE2ETest {\n             }\n             val conversationId = newHostConversationId(serverId, before)\n             val chatName = CONTEXT_ASK_CHAT_NAME_PREFIX + System.currentTimeMillis()\n-            Log.i(\"ContextReconnect\", \"event=context_reconnect stage=chat_created conversation=${UUID.fromString(conversationId)}\")\n+            Log.i(\"ContextReconnect\", \"event=context_reconnect stage=chat_created conversation=${java.util.UUID.fromString(conversationId)}\")\n             renameOpenThread(chatName)\n             leaveThread()\n \n",
+  "exit": 0,
+  "gate_artifacts": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2099/build/dispatcher-tests/live-bn8zpajt",
+  "sha256": {
+    "daemon-b.log": "b2026d15d44fbea07809b3292b5ddfaa4a38162696167582988785aa2ff86783",
+    "daemon-fault.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "daemon.log": "16890e77511e3de41213e760546aef7f51cc8433ec2754750d1a442a57b7ecf3",
+    "phone/dispatcher.xml": "7d63721884928f0e8feb57a857a4e97dba52f5916132e8f77fea934891f65d50",
+    "phone/2-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched.txt": "bd92e3ba76e6a1de195104f24d6ad4f2d7976342d999c2979d6fc2d832f2e831",
+    "phone/0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart.txt": "6572cd79906fc944abca28a028e62bec93ae7e3ee27dff45e19895475692431d",
+    "phone/0-TEST-pixel2Api33Atd-_app-.xml": "2ef96020fb5df7560b4511dbf94d9665d5489e251932e37b5a7ec55386d4d7bf",
+    "phone/1-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn.txt": "2a31509478138eb8ba3d648b4a9d6bbefeafdbb33c064f34b9798c67c6734f5a"
+  },
+  "raw_evidence": "/tmp/builder-2099/registration-prefix",
+  "scope": "builder diagnostic capture; not dispatcher full-live acceptance"
+}
