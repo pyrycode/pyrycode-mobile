@@ -38,6 +38,7 @@ The wrapper is synchronous and owns no jobs or flows. Existing Compose waits and
 | Cancellation | `cancellationIsRecordedAndRethrownWithoutRetry` |
 | Repeated operation/cleanup stages | `repeatedStagesRunOnceEachWithoutRetry` |
 | Diagnostic formatting | `failureMessagesNeverEnterEvidence` |
+| Graph closes during diagnostic snapshot | `snapshotFailureDoesNotChangeScenarioOutcome` |
 
 These tests prove diagnostics, not the intermittent live cause. Existing live identity, reset, prompt and fixture assertions remain enabled.
 
@@ -74,3 +75,7 @@ Pending for documentation stage: update `docs/e2e-interactive-stream.md`, “Emp
 
 **Reviewer:** builder self-review per `builder/security-review.md`
 **Date:** 2026-10-12
+
+## Revisions
+
+2026-10-12: the diagnostic wrapper must also tolerate an unavailable graph snapshot without replacing the operation's failure. The new controlled regression failed before this guard (1 executed/failed, no skips); snapshot exceptions now emit only `snapshot=unavailable`. The first five diagnostics regressions failed against a no-evidence stub (5 executed/failed), then passed with evidence enabled. This is diagnostic red/green proof, not reproduction of the live flake or a behavioural repair.

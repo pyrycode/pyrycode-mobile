@@ -2863,169 +2863,236 @@ class InteractiveStreamE2ETest {
         var channelId: String? = null
         var defaultProbeId: String? = null
         val archivedFixtureIds = mutableListOf<String>()
+
+        fun snapshot(): String {
+            val registry = GlobalContext.getOrNull()?.getOrNull<RelayConnectionRegistry>()
+            val target = registry?.connectionFor(serverId)
+            val selected = registry?.selected?.value
+            val status = target?.coordinator?.connectionStatus?.value
+            return "targetPresent=${target != null} selectedTarget=${target != null && target === selected} " +
+                "targetRepository=${target?.coordinator?.currentRepository?.value != null} " +
+                "targetRelay=${status?.relay?.javaClass?.simpleName ?: "absent"} " +
+                "targetDaemon=${status?.pyrycode?.javaClass?.simpleName ?: "absent"}"
+        }
+
+        fun <T> step(
+            stage: ChannelScenarioStage,
+            block: () -> T,
+        ): T = channelScenarioStep(stage, ::snapshot, { Log.i("ChannelScenario", it) }, block = block)
         try {
-            awaitChannelList()
-            awaitConnected()
+            step(ChannelScenarioStage.ListArrival) { awaitChannelList() }
+            step(ChannelScenarioStage.Connection) { awaitConnected() }
             val originalChannelIds =
-                hostConversationIds(serverId, "the harness's seeded channel", ConversationFilter.Channels) {
-                    twoHostArg(ARG_COLLISION_CONVERSATION_ID) in it
+                step(ChannelScenarioStage.SeededChannels) {
+                    hostConversationIds(serverId, "the harness's seeded channel", ConversationFilter.Channels) {
+                        twoHostArg(ARG_COLLISION_CONVERSATION_ID) in it
+                    }
                 }
             originalChannelIds.forEach { id ->
-                runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).archive(id) } }
-                archivedFixtureIds.add(id)
+                step(ChannelScenarioStage.FixtureArchive) {
+                    runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).archive(id) } }
+                    archivedFixtureIds.add(id)
+                }
             }
-            hostConversationIds(serverId, "an empty Channels section", ConversationFilter.Channels) { it.isEmpty() }
-            val daemonDefault = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).createDiscussion(null) } }
-            defaultProbeId = daemonDefault.id
-            val before = hostConversationIds(serverId, "the default-folder probe") { daemonDefault.id in it }
+            step(ChannelScenarioStage.EmptyChannels) {
+                hostConversationIds(serverId, "an empty Channels section", ConversationFilter.Channels) { it.isEmpty() }
+            }
+            val daemonDefault =
+                step(ChannelScenarioStage.DefaultFolderProbe) {
+                    runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).createDiscussion(null) } }.also {
+                        defaultProbeId =
+                            it.id
+                    }
+                }
+            val before =
+                step(ChannelScenarioStage.DefaultFolderProbe) {
+                    hostConversationIds(serverId, "the default-folder probe") { daemonDefault.id in it }
+                }
 
             // 1. The empty Channels section creates in the host's default working folder.
-            val source = GlobalContext.get().get<HostConversationSource>()
-            composeTestRule.createChannelFromEmptyHost(serverId, LIST_TIMEOUT_MS) {
-                source.snapshots.value
+            step(ChannelScenarioStage.Creation) {
+                val source = GlobalContext.get().get<HostConversationSource>()
+                composeTestRule.createChannelFromEmptyHost(serverId, LIST_TIMEOUT_MS) {
+                    source.snapshots.value
+                }
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodesWithText(string(R.string.create_channel_title)).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextInput(firstName)
+                composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextInput(CHANNEL_PROMPT_FIRST)
+                clickEnabledOk()
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+                }
             }
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(string(R.string.create_channel_title)).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextInput(firstName)
-            composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextInput(CHANNEL_PROMPT_FIRST)
-            clickEnabledOk()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
-            }
-            val id = newHostConversationId(serverId, before).also { channelId = it }
-            val createdCwd = heldConversation(serverId, id).cwd
-            assertEquals("the channel did not use the daemon default", daemonDefault.cwd, createdCwd)
+            val id =
+                step(ChannelScenarioStage.CreationIdentity) {
+                    newHostConversationId(serverId, before).also {
+                        channelId = it
+                        val createdCwd = heldConversation(serverId, it).cwd
+                        assertEquals("the channel did not use the daemon default", daemonDefault.cwd, createdCwd)
+                    }
+                }
 
             // 2. AC-1: one ping starts the channel's session with the first prompt.
-            sendFromPhone(PING_PROMPT)
-            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-            leaveThread()
+            step(ChannelScenarioStage.FirstReply) {
+                sendFromPhone(PING_PROMPT)
+                composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            }
+            step(ChannelScenarioStage.ReturnToList) { leaveThread() }
 
             // 3. AC-1: rename it and change its prompt. The field first reads back the prompt the create wrote.
-            openChannelEditor(firstName)
-            awaitPromptField(CHANNEL_PROMPT_FIRST)
-            composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextReplacement(newName)
-            composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement(CHANNEL_PROMPT_SECOND)
-            composeTestRule.onNodeWithText(EDIT_CHANNEL_OK).performClick()
-            awaitChannelEditorClosed()
-            leaveThread()
+            step(ChannelScenarioStage.EditorOpen) { openChannelEditor(firstName) }
+            step(ChannelScenarioStage.OriginalPromptRead) { awaitPromptField(CHANNEL_PROMPT_FIRST) }
+            step(ChannelScenarioStage.RenameAndPromptSave) {
+                composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextReplacement(newName)
+                composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement(CHANNEL_PROMPT_SECOND)
+                composeTestRule.onNodeWithText(EDIT_CHANNEL_OK).performClick()
+                awaitChannelEditorClosed()
+            }
+            step(ChannelScenarioStage.ReturnToList) { leaveThread() }
 
             // 4. AC-1: reopened, it reads back the new name and prompt, and the running session still has the old one.
-            awaitChannelRow(newName)
-            composeTestRule.onAllNodes(channelRow(firstName)).assertCountEquals(0)
-            openChannelEditor(newName)
-            awaitPromptField(CHANNEL_PROMPT_SECOND)
-            composeTestRule.onNode(hasTestTag(CHANNEL_NAME_FIELD_TAG) and hasText(newName)).assertExists()
-            composeTestRule.onAllNodesWithText(nextSessionLine).onFirst().assertIsDisplayed()
-            composeTestRule.onNodeWithText(modalCancel).performClick()
-            awaitChannelEditorClosed()
-            leaveThread()
+            step(ChannelScenarioStage.EditedPromptRead) {
+                awaitChannelRow(newName)
+                composeTestRule.onAllNodes(channelRow(firstName)).assertCountEquals(0)
+                openChannelEditor(newName)
+                awaitPromptField(CHANNEL_PROMPT_SECOND)
+                composeTestRule.onNode(hasTestTag(CHANNEL_NAME_FIELD_TAG) and hasText(newName)).assertExists()
+                composeTestRule.onAllNodesWithText(nextSessionLine).onFirst().assertIsDisplayed()
+                composeTestRule.onNodeWithText(modalCancel).performClick()
+                awaitChannelEditorClosed()
+                step(ChannelScenarioStage.ReturnToList) { leaveThread() }
+            }
 
             // 5. AC-2: Reset session, then a distinct reply. Whether the respawn was eager or the send spawned the
             //    session, the host reports it runs with the stored prompt once one started after the edit.
-            openRow(newName)
-            composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).fetchSemanticsNodes().isNotEmpty()
+            step(ChannelScenarioStage.ResetBoundary) {
+                openRow(newName)
+                composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).onFirst().performClick()
+                composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
             }
-            composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).onFirst().performClick()
-            composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
-            sendFromPhone("Reply with exactly the word: pong (nothing else).")
-            val secondReply =
-                composeTestRule.onNode(
-                    hasText("pong", ignoreCase = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG)),
-                    useUnmergedTree = true,
-                )
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { secondReply.isDisplayed() }
-            secondReply.assertIsDisplayed()
-            val live = hostRepository(serverId)
-            runBlocking {
-                withTimeout(REPLY_TIMEOUT_MS) {
-                    while (live.requestSystemPrompt(id).sessionPromptStatus != SessionPromptStatus.Matches) {
-                        delay(PROMPT_STATUS_POLL_MS)
+            step(ChannelScenarioStage.SecondReply) {
+                sendFromPhone("Reply with exactly the word: pong (nothing else).")
+                val secondReply =
+                    composeTestRule.onNode(
+                        hasText("pong", ignoreCase = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG)),
+                        useUnmergedTree = true,
+                    )
+                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { secondReply.isDisplayed() }
+                secondReply.assertIsDisplayed()
+            }
+            step(ChannelScenarioStage.MatchingPromptStatus) {
+                val live = hostRepository(serverId)
+                runBlocking {
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        while (live.requestSystemPrompt(id).sessionPromptStatus != SessionPromptStatus.Matches) {
+                            delay(PROMPT_STATUS_POLL_MS)
+                        }
                     }
                 }
             }
-            leaveThread()
+            step(ChannelScenarioStage.ReturnToList) { leaveThread() }
 
             // 6. AC-2: reopened, the same prompt without the next-session line. The filled field is the reading.
-            openChannelEditor(newName)
-            awaitPromptField(CHANNEL_PROMPT_SECOND)
-            composeTestRule.onAllNodesWithText(nextSessionLine).assertCountEquals(0)
+            step(ChannelScenarioStage.ResetPromptRead) {
+                openChannelEditor(newName)
+                awaitPromptField(CHANNEL_PROMPT_SECOND)
+                composeTestRule.onAllNodesWithText(nextSessionLine).assertCountEquals(0)
+            }
 
             // 6b. #1342: emptying the box clears the stored prompt (null, not ""), as desktop's promptWriteFor does.
-            composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement("")
-            composeTestRule.onNodeWithText(EDIT_CHANNEL_OK).performClick()
-            awaitChannelEditorClosed()
-            leaveThread()
-            runBlocking {
-                withTimeout(THREAD_TIMEOUT_MS) {
-                    while (hostRepository(serverId).requestSystemPrompt(id).systemPrompt != null) delay(PROMPT_STATUS_POLL_MS)
+            step(ChannelScenarioStage.PromptClear) {
+                composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement("")
+                composeTestRule.onNodeWithText(EDIT_CHANNEL_OK).performClick()
+                awaitChannelEditorClosed()
+            }
+            step(ChannelScenarioStage.ReturnToList) { leaveThread() }
+            step(ChannelScenarioStage.NullPromptRead) {
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        while (hostRepository(serverId).requestSystemPrompt(id).systemPrompt != null) delay(PROMPT_STATUS_POLL_MS)
+                    }
                 }
             }
 
             // 6c. #1342: Channel info reads the prompt on open and shows it absent: an empty box at zero bytes.
-            openRow(newName)
-            composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
+            step(ChannelScenarioStage.EmptyChannelInfo) {
+                openRow(newName)
+                composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).onFirst().performClick()
+                val emptyBox = hasTestTag(CHANNEL_INFO_PROMPT_FIELD_TAG) and hasText("")
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(emptyBox).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.onNode(emptyBox).performScrollTo()
+                composeTestRule.onNode(hasText("0 / 8192 bytes") and hasAnyAncestor(isDialog())).performScrollTo()
+                composeTestRule.onNode(hasContentDescription("Close") and hasAnyAncestor(isDialog())).performClick()
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasTestTag(CHANNEL_INFO_PROMPT_FIELD_TAG)).fetchSemanticsNodes().isEmpty()
+                }
+                step(ChannelScenarioStage.ReturnToList) { leaveThread() }
             }
-            composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).onFirst().performClick()
-            val emptyBox = hasTestTag(CHANNEL_INFO_PROMPT_FIELD_TAG) and hasText("")
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(emptyBox).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNode(emptyBox).performScrollTo()
-            composeTestRule.onNode(hasText("0 / 8192 bytes") and hasAnyAncestor(isDialog())).performScrollTo()
-            composeTestRule.onNode(hasContentDescription("Close") and hasAnyAncestor(isDialog())).performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasTestTag(CHANNEL_INFO_PROMPT_FIELD_TAG)).fetchSemanticsNodes().isEmpty()
-            }
-            leaveThread()
 
             // The archive below starts from Edit channel again, which now reads an empty box.
-            openChannelEditor(newName)
-            awaitPromptField("")
+            step(ChannelScenarioStage.EditorOpen) { openChannelEditor(newName) }
+            step(ChannelScenarioStage.EmptyEditorRead) { awaitPromptField("") }
 
             // 7. AC-3: archive it from the same modal. The thread returns to the list (#1561), and the channel
             //    leaves Channels for host A's Archive.
-            composeTestRule.onNode(hasText(string(R.string.edit_channel_archive)) and hasClickAction()).performClick()
-            awaitChannelEditorClosed()
-            awaitChannelList()
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                runCatching { scrollListTo(channelRow(newName)) }.isFailure
+            step(ChannelScenarioStage.Archive) {
+                composeTestRule.onNode(hasText(string(R.string.edit_channel_archive)) and hasClickAction()).performClick()
+                awaitChannelEditorClosed()
+                awaitChannelList()
+                composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                    runCatching { scrollListTo(channelRow(newName)) }.isFailure
+                }
+                archivedIds(serverId) { id in it }
             }
-            archivedIds(serverId) { id in it }
 
             // 8. Restore it from the selected host's Archive through the list header menu. The snackbar wait
             //    keeps the restore coroutine from being cancelled by the Back that follows (#551).
-            val koin = GlobalContext.get()
-            selectHost(koin.get(), koin.get(), serverId)
-            openListMenuEntry(R.string.thread_overflow_archive)
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
+            step(ChannelScenarioStage.Restore) {
+                val koin = GlobalContext.get()
+                selectHost(koin.get(), koin.get(), serverId)
+                openListMenuEntry(R.string.thread_overflow_archive)
+                composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                    composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
+                }
+                openArchiveTab(R.string.archived_tab_channels)
+                composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasContentDescription(newName, substring = true)).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.onAllNodes(hasContentDescription(newName, substring = true)).onFirst().performClick()
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodesWithText(RESTORED_SNACKBAR, substring = true).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+                awaitChannelList()
+                awaitChannelRow(newName)
+                composeTestRule.onAllNodes(channelRow(firstName)).assertCountEquals(0)
             }
-            openArchiveTab(R.string.archived_tab_channels)
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasContentDescription(newName, substring = true)).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onAllNodes(hasContentDescription(newName, substring = true)).onFirst().performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(RESTORED_SNACKBAR, substring = true).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-            awaitChannelList()
-            awaitChannelRow(newName)
-            composeTestRule.onAllNodes(channelRow(firstName)).assertCountEquals(0)
         } finally {
             listOfNotNull(channelId, defaultProbeId).forEach { id ->
-                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).delete(id) } } }
-                    .onFailure { Log.w("E2E", "channel cleanup failed: ${it::class.simpleName}") }
+                runCatching {
+                    step(ChannelScenarioStage.CleanupDelete) {
+                        runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).delete(id) } }
+                    }
+                }.onFailure { Log.w("E2E", "channel cleanup failed: ${it::class.simpleName}") }
             }
             archivedFixtureIds.forEach { id ->
-                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).unarchive(id) } } }
-                    .onFailure { Log.w("E2E", "channel fixture restore failed: ${it::class.simpleName}") }
+                runCatching {
+                    step(ChannelScenarioStage.CleanupRestore) {
+                        runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).unarchive(id) } }
+                    }
+                }.onFailure { Log.w("E2E", "channel fixture restore failed: ${it::class.simpleName}") }
             }
         }
     }
