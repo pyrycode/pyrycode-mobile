@@ -2657,6 +2657,18 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
+Every live method owns the daemon sessions it creates. An outer JUnit rule snapshots
+sessions on the launcher's private daemon sockets before the Activity starts. After
+Activity teardown, it removes new non-bootstrap sessions through `sessions.rm`.
+Shared fixture sessions remain. The existing removal operation waits for its child
+and preserves transcripts by default. The controller accepts no caller-supplied
+socket path or session ID. It includes hosts that started during the scenario.
+
+Cleanup runs after success and failure. Its failure fails a green body or is attached
+to the original failure. The controller retains the ownership snapshot after a failed
+cleanup, so the next method cannot silently adopt leaked sessions. This is separate
+from scenario-specific cleanup of chats, pairings and other test data.
+
 The existing deletion scenario
 `InteractiveStreamE2ETest.interactiveTurn_deleteConversation_removesFromListAndClosesThread`
 (#1888) waits for its discussion's owning host immediately before Save and Delete confirmation.
@@ -3621,6 +3633,41 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+### Session cleanup and Firebase recovery, 2026-10-12
+
+The earlier HP full run reached the container's 2048 process/thread limit after
+59 passing cases. Per-test session teardown now removes newly created sessions
+through the owned daemon control sockets. A fresh full HP run passed **65 executed,
+65 passed, 0 failed, 0 errors, 0 skipped**. All 65 cleanup operations completed and
+removed 73 sessions. Per-second resource samples peaked at 569 processes/threads,
+with no limit hits or memory kills. No test workload remained after completion.
+The container limit stayed at 2048.
+
+The same run passed these existing real-FCM and history scenarios for
+[#2055](https://github.com/pyrycode/pyrycode-mobile/issues/2055):
+
+- `interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`
+- `interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread`
+- `interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`
+
+The acquisition cause was an Android API-key restriction missing HP's signing
+certificate. The operator repair belongs to
+[#2083](https://github.com/pyrycode/pyrycode-mobile/issues/2083#issuecomment-6130075099).
+The actual package/certificate identity succeeded after that repair. Missing and
+incorrect identity controls still received `API_KEY_ANDROID_APP_BLOCKED`. This is
+separate from the earlier daemon connection failures. Acquisition, notification
+delivery and reconnect assertions remained enabled without retries.
+
+The full run used Mobile `cbd070f673bf0b75de632145039a0b54b617ee6b`, daemon
+`9c9cd5a25c337666bdbed47c29202e695a172733`, Claude 2.1.280 and the API 33 Google ATD.
+The Mobile revision combines the pending reliability repairs, including an
+experimental Copy candidate. This result does not diagnose the historical Copy
+failure or satisfy #2108's separate historical-source control.
+Private XML, logs, APKs, resource samples and hash manifests are retained on HP in
+`~/pyrycode-runtime/work/Projects/.mobile-reliability-20261012.iEsmXs/cleanup-full-admitted/evidence/`.
+The counted XML SHA-256 is
+`0a354d166780378777d1ee70200dd3a0dbf74d460169e4f6149d64f147b03bf8`.
 
 ### Supplied renderer and scripted display fences (#1985)
 

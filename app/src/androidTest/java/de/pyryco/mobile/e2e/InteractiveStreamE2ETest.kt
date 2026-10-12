@@ -246,6 +246,14 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
  */
 @RunWith(AndroidJUnit4::class)
 class InteractiveStreamE2ETest {
+    /** Outside Activity teardown: close each test's owned daemon sessions even when its body fails. */
+    @get:Rule(order = Int.MIN_VALUE)
+    val sessionCleanup =
+        LiveSessionCleanupRule(
+            begin = { DaemonFaultControl().beginTest() },
+            end = { DaemonFaultControl().endTest() },
+        )
+
     init {
         grantNotificationPermission()
     }

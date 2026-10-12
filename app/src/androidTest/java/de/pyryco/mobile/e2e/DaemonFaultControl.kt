@@ -19,6 +19,10 @@ internal class DaemonFaultControl {
             "the test daemon fault port is missing"
         }.toInt()
 
+    fun beginTest() = request("test-begin")
+
+    fun endTest() = request("test-end")
+
     fun stop() = request("stop")
 
     fun start() = request("start")
@@ -67,7 +71,7 @@ internal class DaemonFaultControl {
     ) {
         Socket().use { socket ->
             socket.connect(InetSocketAddress("10.0.2.2", port), 5_000)
-            socket.soTimeout = if (action == "posts") 120_000 else 15_000
+            socket.soTimeout = if (action == "posts" || action == "test-end") 120_000 else 15_000
             val bytes = body.toByteArray()
             socket.getOutputStream().write("POST /$action HTTP/1.0\r\nContent-Length: ${bytes.size}\r\n\r\n".toByteArray() + bytes)
             val status = socket.getInputStream().bufferedReader().readLine()
