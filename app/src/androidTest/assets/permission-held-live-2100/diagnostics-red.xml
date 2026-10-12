@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.e2e.PermissionHeldStageTest" timestamp="2026-10-12T00:14:22.116Z" time="0.053" tests="5" failures="5" errors="0" skipped="0">
+    <testcase name="recordsStaticStagesAndReturnsValueWithoutReadingFailureSnapshot" classname="de.pyryco.mobile.e2e.PermissionHeldStageTest" time="0.008">
+      <failure message="java.lang.AssertionError: expected:&lt;[event=permission_held_stage stage=Connection status=started, event=permission_held_stage stage=Connection status=completed]&gt; but was:&lt;[]&gt;" type="java.lang.AssertionError" />
+    </testcase>
+    <testcase name="coroutineTimeoutNamesStageAndPreservesCause" classname="de.pyryco.mobile.e2e.PermissionHeldStageTest" time="0.039">
+      <failure message="java.lang.AssertionError" type="java.lang.AssertionError" />
+    </testcase>
+    <testcase name="ordinaryFailuresAndCancellationPropagateUnchanged" classname="de.pyryco.mobile.e2e.PermissionHeldStageTest" time="0.002">
+      <failure message="java.util.NoSuchElementException: List is empty." type="java.util.NoSuchElementException" />
+    </testcase>
+    <testcase name="nestedPeerTimeoutKeepsEntireCauseChain" classname="de.pyryco.mobile.e2e.PermissionHeldStageTest" time="0.002">
+      <failure message="java.lang.AssertionError: expected same:&lt;java.lang.AssertionError: peer diagnostic&gt; was not:&lt;kotlinx.coroutines.TimeoutCancellationException: Timed out after 1ms of _virtual_ (kotlinx.coroutines.test) time. To use the real time, wrap 'withTimeout' in 'withContext(Dispatchers.Default.limitedParallelism(1))'&gt;" type="java.lang.AssertionError" />
+    </testcase>
+    <testcase name="composeTimeoutNamesDisplayStageAndPreservesCause" classname="de.pyryco.mobile.e2e.PermissionHeldStageTest" time="0.0">
+      <failure message="java.lang.AssertionError" type="java.lang.AssertionError" />
+    </testcase>
+  </testsuite>
+</testsuites>

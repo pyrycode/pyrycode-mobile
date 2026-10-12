@@ -1,0 +1,37 @@
+{
+  "mobile_head": "448b2a2b89d8d6eb6c62197a712a29f054cd5775",
+  "purpose": "diagnostic baseline; original selected-banner readiness predicate; uncommitted source recorded by SHA256",
+  "sha256": {
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt": "f33fb36a592c5cdf0ac2a625a2a20db96a28f01848c7c6d35bd4542c331d0102",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/PermissionHeldConnection.kt": "2dd665521e8a1bf4b69383ccb5551177de18a13211b262e531bf18d96b3638f9",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/PermissionHeldStage.kt": "9b71e1d6dc6d24ff3c309b5f1069ca72ae19542eed38f97215fcf358bccf7343",
+    "app/build/outputs/apk/debug/app-debug.apk": "966e7493a9c9de6c13f8478f314006ff6f922d1fa8b763015a3f3c39c49876bb",
+    "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk": "d22db64f38451b3128a23a5e8ac3b54eff6ea0ef072b13aa45d4b242852fa329"
+  },
+  "mobile_test_source_commit": "d8d2fe6e3da5206de20ffedeca44abd5a6c1c82e",
+  "note": "APK sources match this commit; uncommitted unit controls do not participate in instrumented APK",
+  "daemon_binary_sha256": "80e7998e6badf2c83289f85b7b4735a328d200ba8a6d090a949ceb8fafae5744",
+  "daemon_build_info": [
+    "build\tvcs.revision=8091a4730d42f43029eb0b955442dc300106030f",
+    "build\tvcs.time=2026-10-11T12:07:08Z",
+    "build\tvcs.modified=true"
+  ],
+  "harness_reported_mobile_revision": "448b2a2b89d8d6eb6c62197a712a29f054cd5775",
+  "source_note": "Gate captured HEAD before diagnostic commit; APK source hashes match d8d2fe6e3, which commits those exact sources.",
+  "artifacts": {
+    "raw_phone": "/tmp/builder-2100/baseline-live/phone",
+    "raw_daemon": "/tmp/builder-2100/baseline-live/pyry-e2e.3yF6TR/daemon.log",
+    "original_gate": "build/dispatcher-tests/live-f3pi7o5m",
+    "xml": "baseline-live.xml",
+    "phone_stages": "baseline-stages.txt",
+    "daemon_events": "baseline-daemon-events.txt"
+  },
+  "counts": {
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "claude_version": "2.1.280"
+}

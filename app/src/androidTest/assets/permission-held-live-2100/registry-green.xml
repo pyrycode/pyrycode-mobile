@@ -1,0 +1,32 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.di.RelayConnectionFactoryTest" timestamp="2026-10-12T00:17:51.299Z" time="0.765" tests="27" failures="0" errors="0" skipped="0">
+    <testcase name="queuedDestinationRetryCannotReopenAfterBackgroundClose" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.305" />
+    <testcase name="appTooOldRejectionHaltsOnlyItsOwnHostAndCarriesTheSealedMinimum" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.018" />
+    <testcase name="sendNowReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.012" />
+    <testcase name="permissionHeldReadinessRejectsMissingHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.006" />
+    <testcase name="permissionHeldReadinessIgnoresStoppedSelectedHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.006" />
+    <testcase name="sendNowReadinessIgnoresStoppedSelectedHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.005" />
+    <testcase name="hostSnapshotsFollowSavedBundlesAcrossBackgroundRenameAndCredentialRotation" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.041" />
+    <testcase name="unavailableHostDoesNotDelayOtherHostAndFailedSaveDoesNotNotify" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.005" />
+    <testcase name="debugBundlesStayWithExactHostsAcrossSelectionRemovalAndReconnect" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.013" />
+    <testcase name="permissionHeldReadinessIdleKeepsDeadline" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.002" />
+    <testcase name="permissionHeldReadinessWaitsForDaemonHandshake" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.007" />
+    <testcase name="heldReadingsSurviveReconnectButNotRepairOrUnpairAndStayOnTheirHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.033" />
+    <testcase name="handshakingHostHasStatusButNoExactRepositoryWhileAnotherHostIsLive" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.008" />
+    <testcase name="explicitRecordsKeepDialHandshakeAndRekeyIdentityAfterLatestSaveChanges" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.019" />
+    <testcase name="permissionHeldReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.007" />
+    <testcase name="compatibilityWaitsForPairingAndReadsLatestOnForegroundReconnect" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.012" />
+    <testcase name="registryBackgroundAndDisposalFencePendingReadsAndPreserveResumeCursor" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.011" />
+    <testcase name="repositoryForRejectsRetiredRepositoryAtReconnectTransportEdge" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.009" />
+    <testcase name="registryKeepsPeerEventsModalCursorAndPendingReplyThroughOtherHostFailure" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.016" />
+    <testcase name="destinationRetryKeepsLifecycleLockThroughDialAndRejectsRetiredOwners" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.046" />
+    <testcase name="destinationCacheUsesConfiguredWorker" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.008" />
+    <testcase name="pairingStatusWaitsForExactCredentialsAndKeepsConnectedPeer" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.016" />
+    <testcase name="appModuleTracksLatestSurvivorWithoutReplacingStableConsumers" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.019" />
+    <testcase name="destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.102" />
+    <testcase name="registryReconcilesCredentialsButRetainsNamesAndIdenticalRecords" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.012" />
+    <testcase name="reconnectResetAndDisposalStayInsideOwningBundle" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.014" />
+    <testcase name="selectorSharesHostSourceAndKeepsDemoLookupSeparateFromSavedRelayHosts" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.01" />
+  </testsuite>
+</testsuites>

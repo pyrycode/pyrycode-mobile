@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.RunningToolIndicatorTest" timestamp="2026-10-12T00:17:52.141Z" time="4.63" tests="7" failures="0" errors="0" skipped="0">
+    <testcase name="compactionTakesPrecedence_outcomeLeavesRunningToolVisible" classname="de.pyryco.mobile.ui.conversations.thread.RunningToolIndicatorTest" time="3.963" />
+    <testcase name="backgroundTool_doesNotReplaceTheMainTool_orItsWorkingAndIdleFallbacks" classname="de.pyryco.mobile.ui.conversations.thread.RunningToolIndicatorTest" time="0.096" />
+    <testcase name="theToolLabel_replacesTheTokenReadingLabel" classname="de.pyryco.mobile.ui.conversations.thread.RunningToolIndicatorTest" time="0.056" />
+    <testcase name="denial_removesTheLabel_andARespondingBandReadsWorking" classname="de.pyryco.mobile.ui.conversations.thread.RunningToolIndicatorTest" time="0.068" />
+    <testcase name="aNewerOpenCall_replacesTheOlderOnesNameAndSeconds" classname="de.pyryco.mobile.ui.conversations.thread.RunningToolIndicatorTest" time="0.059" />
+    <testcase name="noTurnRunning_noLabel_evenWithARunningRow" classname="de.pyryco.mobile.ui.conversations.thread.RunningToolIndicatorTest" time="0.045" />
+    <testcase name="openProgressResult_eachStateShows_thenTheBandReturnsToThinking" classname="de.pyryco.mobile.ui.conversations.thread.RunningToolIndicatorTest" time="0.075" />
+  </testsuite>
+</testsuites>

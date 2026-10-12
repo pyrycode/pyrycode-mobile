@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.di.RelayConnectionFactoryTest" timestamp="2026-10-12T00:17:51.299Z" time="0.765" tests="5" failures="0" errors="0" skipped="0">
+    <testcase name="permissionHeldReadinessRejectsMissingHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.006" />
+    <testcase name="permissionHeldReadinessIgnoresStoppedSelectedHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.006" />
+    <testcase name="permissionHeldReadinessIdleKeepsDeadline" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.002" />
+    <testcase name="permissionHeldReadinessWaitsForDaemonHandshake" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.007" />
+    <testcase name="permissionHeldReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.007" />
+  </testsuite>
+</testsuites>
