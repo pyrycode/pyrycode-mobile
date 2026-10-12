@@ -5517,18 +5517,8 @@ class InteractiveStreamE2ETest {
             val (chat, name) = answerChat(serverId, "e2e1783-agent-")
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             openChatRow(name)
-            val hold = "curl --max-time 180 --silent --show-error $fixture/hold"
             val childReply = "agent1783_done"
-            val holdTools = "curl --max-time 180 --silent --show-error $fixture/hold-tools"
-            sendFromPhone(
-                "Use Agent once with run_in_background=true, subagent_type=general-purpose and description=Held background agent. " +
-                    "Give it exactly these instructions: first run Bash with timeout 180000 in the foreground: $holdTools . " +
-                    "After that finishes make two separate foreground Bash calls, " +
-                    "each running printf agent1783_ready. Then run Bash with timeout 180000 in the foreground: $hold . " +
-                    "Wait for that command to finish, then reply exactly $childReply as your own ordinary assistant paragraph. " +
-                    "Do not use any other tool yourself or wait for the agent. " +
-                    "End your own turn immediately with exactly: launched1783.",
-            )
+            sendFromPhone(backgroundAgentLaunchPrompt(fixture))
             val launched =
                 allowPromptsUntil(
                     peer,
