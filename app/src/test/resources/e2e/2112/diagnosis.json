@@ -1,0 +1,129 @@
+{
+  "ticket": 2112,
+  "conclusion": "Claude completed with an injection-classified prose refusal before invoking Agent; explain the test-owned fixture purpose in this scenario request.",
+  "provenance": {
+    "mobile": "c69586d17086dd0e0cfa7e86df2e1444887cf059",
+    "mobile_production_tree": "cfc5911723bad305dcf2486283521915dce91b84",
+    "source_patch": "UUID qualification in an unrelated reconnect diagnostic; retained in provenance.json",
+    "daemon": "8091a4730d42f43029eb0b955442dc300106030f",
+    "claude_version": "2.1.280",
+    "announced_model": "claude-haiku-4-5-20251001",
+    "transcript_models": [
+      "claude-haiku-4-5-20251001"
+    ],
+    "permission_mode": "default",
+    "device": "pixel2Api33Atd"
+  },
+  "suite": {
+    "executed": 13,
+    "passed": 11,
+    "failed": 2,
+    "errors": 0,
+    "skipped": 0,
+    "exit": 1
+  },
+  "method": {
+    "name": "interactiveTurn_backgroundAgent_followsBottomUntilFinished",
+    "duration_seconds": 92.148,
+    "outcome": "failed",
+    "stage": "allowPromptsUntil: background_task_started(local_agent)",
+    "deadline_ms": 90000,
+    "permissions_allowed": 0,
+    "peer_link_at_failure": 2,
+    "peer_replacements": 1
+  },
+  "host_utc": {
+    "enqueued": "2026-10-12T00:11:46.177070Z",
+    "claude_user_turn": "2026-10-12T00:11:47.201Z",
+    "durably_delivered": "2026-10-12T00:11:48.097371Z",
+    "main_turn_opened": "2026-10-12T00:11:48.552594Z",
+    "first_assistant_delta": "2026-10-12T00:11:53.731759Z",
+    "turn_end": "2026-10-12T00:11:55.160175Z",
+    "both_phone_and_peer_teardown": "2026-10-12T00:12:29.168Z",
+    "replacement_peer_handshake": "2026-10-12T00:12:30.247Z",
+    "phone_history_resync": "2026-10-12T00:12:30.747Z"
+  },
+  "phone_local_clock": {
+    "method_started": "10-12 03:11:43.464",
+    "initial_send_accepted": "10-12 03:11:44.945",
+    "turn_end_projection": "10-12 03:11:53.923",
+    "transport_failures": "10-12 03:12:27.903 and 03:12:27.907",
+    "method_failed": "10-12 03:13:15.566",
+    "clock_comparison": "Phone/host UTC offset was not sampled; raw clock domains are retained separately, without claiming exact latency across them."
+  },
+  "comparisons": {
+    "accepted_request_delivered_unchanged": true,
+    "accepted_request_present_in_bound_claude_user": true,
+    "claude_reply_equals_daemon_assistant_deltas": true,
+    "claude_reply_classifies_prompt_as_injection": true,
+    "launch_marker_present": false,
+    "request_has_controlled_test_explanation": false,
+    "request_identifies_urls_as_fixtures": false,
+    "claude_reply_contains_refusal_phrase": true,
+    "history_and_claude_session_identity_match": true
+  },
+  "counts": {
+    "claude_tool_use_blocks": 0,
+    "persisted_tool_use": 0,
+    "persisted_background_task_started": 0,
+    "completed_main_turns": 1
+  },
+  "turn": {
+    "outcome": "success",
+    "is_error": false,
+    "duration_ms": 7964
+  },
+  "evidence": {
+    "private_retained_root": "/tmp/builder-2112/evidence",
+    "inputs": [
+      {
+        "artifact": "provenance.json",
+        "sha256": "ad353298d0ff1123cbdfe2cc1339b80145217512e4fbc6af991833576fa701d9"
+      },
+      {
+        "artifact": "daemon.log",
+        "sha256": "fe9b27c5df967d20b72015b60d1eb2422beeb4040e3b839daab5cd9809b7b3fb"
+      },
+      {
+        "artifact": "phone.xml",
+        "sha256": "dfe5209debaca2b1e385923f4ddd755c9ea86506f13b7df3512ad9eb7308165f"
+      },
+      {
+        "artifact": "phone.log",
+        "sha256": "8b1db9fa66126817f2549117199cc44e1c0c2818bb57a7858b878adadb5cf23f"
+      },
+      {
+        "artifact": "history.jsonl",
+        "sha256": "dda68523c91ff0e051a0cc8d19310daf4231feedf8b47376fbb13d4ba1ee54f0"
+      },
+      {
+        "artifact": "claude-transcript.jsonl",
+        "sha256": "8d97f8f71b7497bdd8e7f32f05273049678958ff0a7ee42828187d4a8c14745d"
+      }
+    ]
+  },
+  "limits": [
+    "No full peer frame trace was retained; XML witnesses the absent matching start and open replacement link.",
+    "The daemon persisted no start and Claude invoked no tools; no per-frame relay emission trace was retained.",
+    "Historical origin of ambient Haiku, model dependence of refusal, and SocketException cause remain unresolved.",
+    "Original request lacked controlled-test context; offline prompt regressions cannot reproduce an LLM interpretation.",
+    "Fresh dispatcher full live proof remains pending; no retry or focused live pass is claimed."
+  ],
+  "sources": [
+    {
+      "mobile_revision": "c69586d17086dd0e0cfa7e86df2e1444887cf059",
+      "path": "app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt",
+      "sha256": "be293f19cf46f4aac55bf661d7240d5f530e0747480fa86808399e355852d0be"
+    },
+    {
+      "mobile_revision": "c69586d17086dd0e0cfa7e86df2e1444887cf059",
+      "path": "app/src/androidTest/java/de/pyryco/mobile/e2e/SecondClientPeer.kt",
+      "sha256": "9ee9518270baf2655727df0091ba4f25ff1782b29ac75becbe3aa77bd43b583b"
+    },
+    {
+      "mobile_revision": "c69586d17086dd0e0cfa7e86df2e1444887cf059",
+      "path": "scripts/e2e-emulator.sh",
+      "sha256": "a87b3f9f42a8cf55fe793df3ff740417e243ebbe02ffd6b11a183410e9400399"
+    }
+  ]
+}
