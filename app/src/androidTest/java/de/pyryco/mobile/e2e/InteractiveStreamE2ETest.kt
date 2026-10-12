@@ -5227,23 +5227,27 @@ class InteractiveStreamE2ETest {
         val preferences = GlobalContext.get().get<AppPreferences>()
         val previousCollapse = runBlocking { preferences.collapseToolUses.first() }
         val allowed = mutableSetOf<String>()
-        val token = "child1827_attributed"
         try {
             runBlocking { preferences.setCollapseToolUses(true) }
             awaitChannelList()
             awaitConnected()
-            val (chat, name) = answerChat(twoHostArg(ARG_SERVER_ID), "e2e1827-agent-")
+            val serverId = twoHostArg(ARG_SERVER_ID)
+            val (chat, name) = answerChat(serverId, "e2e1827-agent-")
+            val liveRepositories =
+                checkNotNull(
+                    GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId),
+                ).coordinator.currentRepository
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             openChatRow(name)
             sendFromPhone(
                 "Use Agent once with run_in_background=true, subagent_type=general-purpose and description=Held reply agent. " +
-                    "Give it exactly these instructions: first emit exactly $token as its own ordinary assistant paragraph " +
+                    "Give it exactly these instructions: first briefly explain the work in its own ordinary assistant paragraph " +
                     "before using tools. " +
                     "Then make two separate foreground Bash calls, each running printf ready1827. " +
                     "Then run Bash with timeout 180000 in the foreground: " +
                     "curl --max-time 180 --silent --show-error $fixture/hold-reply . " +
-                    "After that command finishes reply done1827. Do not use any other tool yourself or wait for the agent. " +
-                    "End your own turn immediately with exactly launched1827.",
+                    "After that command finishes briefly confirm completion. Do not use any other tool yourself or wait for the agent. " +
+                    "Briefly confirm that you launched it and end your own turn immediately.",
             )
             val launched =
                 allowPromptsUntil(
@@ -5259,23 +5263,19 @@ class InteractiveStreamE2ETest {
             val task = MobileJson.decodeFromJsonElement(BackgroundTaskStartedPayloadDto.serializer(), launched.payload)
             val agentId = task.toolCallId
             require(agentId.isNotEmpty()) { "background task omitted its Agent join" }
-            allowPromptsUntil(
-                peer,
-                chat,
-                REPLY_TIMEOUT_MS,
-                "no attributed background prose",
-                allowed,
-                frame = "assistant_delta",
-            ) {
-                it.type == "assistant_delta" &&
-                    peer.field(it, "parent_tool_use_id") == agentId &&
-                    peer
-                        .recorded(chat)
-                        .filter { frame ->
-                            frame.type == "assistant_delta" && peer.field(frame, "parent_tool_use_id") == agentId
-                        }.joinToString("") { frame -> peer.field(frame, "text").orEmpty() }
-                        .contains(token)
-            }
+            val childReplyFrame =
+                allowPromptsUntil(
+                    peer,
+                    chat,
+                    REPLY_TIMEOUT_MS,
+                    "no attributed background prose",
+                    allowed,
+                    frame = "assistant_delta",
+                ) {
+                    it.type == "assistant_delta" && peer.field(it, "parent_tool_use_id") == agentId &&
+                        peer.field(it, "text").orEmpty().isNotBlank()
+                }
+            val childTurn = requireNotNull(peer.field(childReplyFrame, "turn_id"))
             allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "launching turn did not end", allowed) { it.type == "turn_end" }
             allowPromptsUntil(
                 peer,
@@ -5287,11 +5287,18 @@ class InteractiveStreamE2ETest {
             ) {
                 it.type == "background_task_progress" && peer.field(it, "task_id") == task.taskId
             }
-            val priorEnds = peer.recorded(chat).count { it.type == "turn_end" }
-            sendFromPhone("Reply exactly main1827_continues. Leave the background agent running.")
-            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "main conversation did not continue", allowed) {
-                it.type == "turn_end" && peer.recorded(chat).count { frame -> frame.type == "turn_end" } > priorEnds
-            }
+            val priorTurns =
+                peer
+                    .recorded(chat)
+                    .filter { it.type == "turn_end" }
+                    .map { peer.field(it, "turn_id") }
+                    .toSet()
+            sendFromPhone("Briefly acknowledge this message. Leave the background agent running.")
+            val mainEnd =
+                allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "main conversation did not continue", allowed) {
+                    it.type == "turn_end" && peer.field(it, "turn_id") !in priorTurns
+                }
+            val mainTurn = requireNotNull(peer.field(mainEnd, "turn_id"))
             assertTrue(
                 "background Agent must remain running during the main reply",
                 peer.recorded(chat).none {
@@ -5303,20 +5310,26 @@ class InteractiveStreamE2ETest {
             val loaded =
                 runBlocking {
                     withTimeout(THREAD_TIMEOUT_MS) {
-                        hostRepository().observeMessages(chat).first { items ->
+                        liveRepositories.firstOnLive({ it.observeMessages(chat) }) { items ->
                             val messages = items.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
-                            messages.any { it.role == Role.Assistant && token in it.content } &&
+                            holdsSettledAssistantReply(items, childTurn, agentId) && holdsSettledAssistantReply(items, mainTurn) &&
                                 messages.any { it.role == Role.Tool && it.toolCall?.parentToolUseId == agentId }
                         }
                     }
                 }.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
-            val held = loaded.filter { it.role == Role.Assistant && token in it.content }
-            assertEquals("one attributed reply segment", 1, held.size)
-            assertEquals(agentId, held.single().parentToolUseId)
+            val held =
+                loaded.filter {
+                    it.role == Role.Assistant && it.segment?.turnId == childTurn && it.parentToolUseId == agentId && it.content.isNotBlank()
+                }
+            assertTrue("the held Agent must supply its own paragraph", held.isNotEmpty())
+            val mainReply =
+                loaded.last {
+                    it.role == Role.Assistant && it.segment?.turnId == mainTurn && it.parentToolUseId.isEmpty() && it.content.isNotBlank()
+                }
             // The root Agent stays separate; its run is keyed by the first loaded child tool.
             val runId = loaded.first { it.role == Role.Tool && it.toolCall?.parentToolUseId == agentId }.id
-            // Exact paragraph matching excludes the user prompt that names the requested token.
-            val reply = hasText(token)
+            // Body identity excludes user prompts and accepts any reply wording or Markdown.
+            val reply = hasTestTag("assistant-reply:${held.last().id}")
             val child = hasTestTag("background-agent-child:$agentId")
             val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:$runId"))
             val expandLabel = string(R.string.tool_run_expand)
@@ -5358,10 +5371,11 @@ class InteractiveStreamE2ETest {
                     composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
             }
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
-            list.performScrollToNode(inThreadList("main1827_continues"))
-            composeTestRule.onNode(inThreadList("main1827_continues"), useUnmergedTree = true).assertIsDisplayed()
+            val mainBody = hasTestTag("assistant-reply:${mainReply.id}")
+            list.performScrollToNode(mainBody)
+            composeTestRule.onNode(mainBody, useUnmergedTree = true).assertIsDisplayed()
             sendFromPhone(
-                "Run exactly this Bash command in the foreground: curl --silent --show-error $fixture/release-reply . Then reply released1827.",
+                "Run exactly this Bash command in the foreground: curl --silent --show-error $fixture/release-reply . Then briefly confirm completion.",
             )
             allowPromptsUntil(
                 peer,

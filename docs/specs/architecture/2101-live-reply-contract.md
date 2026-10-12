@@ -33,6 +33,24 @@ main-based branch. Keep both Mobile dispatchers paused. The broader suite, other
 wording-dependent scenarios, Stop investigation and effort repair remain separate
 work within the reliability investigation.
 
+## Attributed reply scenario follow-up
+
+The integrated check passed all three effort scenarios, but the related attributed
+reply scenario failed while locating a prescribed main-reply phrase. Its child
+ownership and collapse checks had already passed. Private evidence is retained as
+`mobile-effort-recovery-20261012` in the Mobile agents evidence directory.
+
+Give the completed Markdown body a test tag derived from its existing message ID.
+The tag carries no text and changes no layout, interaction or rendering. The live
+test chooses both child and main replies through recorded turn and parent identity,
+then locates their actual rendered bodies by ID. Requests leave wording open.
+User, streaming and other-message bodies cannot satisfy the completed-reply tag.
+
+Two screen regressions failed without the identity tag and pass with it. They cover
+wording and Markdown changes, wrong IDs, user messages and unfinished replies.
+Existing message rendering checks also pass. Run full debug verification and both
+background-agent scenarios before handoff. No full-suite recovery is claimed.
+
 ## Security review
 
 **Verdict:** PASS
@@ -48,7 +66,11 @@ work within the reliability investigation.
 - Files and storage: no production storage changes. Evidence stays in private
   operator storage. Reply text cannot select a file path.
 - Android attack surface: no manifest, exported component, intent, provider or
-  WebView changes. The visibility matcher observes the existing test semantics.
+  WebView changes. The added completed-body test tag contains the existing opaque
+  message ID. It is inert identity data, never a command, URL or authority. Existing
+  agent test tags already carry the corresponding grouping IDs. The body tag is
+  applied only to the finished assistant renderer. User and streaming bodies do
+  not receive it. No reply text or credential is added to the semantics.
 - Cryptography: the existing encrypted phone connection remains unchanged. The
   test does not replace the handshake or bypass authentication.
 - Network: existing launcher, relay, timeouts and cancellation remain in use.
