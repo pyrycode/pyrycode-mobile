@@ -32,6 +32,12 @@ when available, omitting properties, stack bodies and log streams. Stage records
 and daemon extracts omit identifiers/payloads. Raw phone/daemon snapshots remain
 outside the disposable worktree under `/tmp/builder-2100/`.
 
+`focused-live.xml` records the repaired method at Mobile `9ce53a429`: one
+executed/passed, zero failures/errors/skips, exit 0. All fifteen stages completed;
+its stage/daemon extracts and exact revision/APK/binary provenance are retained.
+The real-registry controls provide before/after causal proof; this live pass
+confirms the original permission and display contract remains intact.
+
 Full live acceptance is pending with the dispatcher. A builder return must commit
 `dispatcher-full.xml`, `dispatcher-method.xml` and `dispatcher-provenance.json`
 here, confirming the fresh full gate and named method pass, executed/failed/skipped

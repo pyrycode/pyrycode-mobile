@@ -1,0 +1,33 @@
+{
+  "mobile_revision": "9ce53a429a0645bf141a35efa6ee595f96b5d1ff",
+  "daemon_build_info": [
+    "build\tvcs.revision=8091a4730d42f43029eb0b955442dc300106030f",
+    "build\tvcs.time=2026-10-11T12:07:08Z",
+    "build\tvcs.modified=true"
+  ],
+  "claude_version": "2.1.280",
+  "sha256": {
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt": "fb6cca6cbfb70ce4b6a9c4e156465a3aea6afd75b8b5edca11992d7a23955d00",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/PermissionHeldConnection.kt": "3effeafb84fe628a68505746544bf276026f71a88e503e23f949e3b37e74c04b",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/HostConnection.kt": "a7d435c3a48bb47cc660c82d63f89f33adcf1134faac57bf4122eb48e2088887",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/PermissionHeldStage.kt": "7de1c94f1f95842d9877bd316d5f4c98ffdaaad07693fa223adc9a8cceae7825",
+    "app/build/outputs/apk/debug/app-debug.apk": "966e7493a9c9de6c13f8478f314006ff6f922d1fa8b763015a3f3c39c49876bb",
+    "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk": "20941eae4e6fac5659c8849e515343149c71547f340b3481941e67451c818ab0",
+    "build/e2e-bin/pyry": "80e7998e6badf2c83289f85b7b4735a328d200ba8a6d090a949ceb8fafae5744"
+  },
+  "counts": {
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "artifacts": {
+    "original_gate": "build/dispatcher-tests/live-wmvyrdk4",
+    "raw_phone": "/tmp/builder-2100/focused-live/phone",
+    "raw_daemon": "/tmp/builder-2100/focused-live/pyry-e2e.ba472R/daemon.log",
+    "xml": "focused-live.xml",
+    "phone_stages": "focused-stages.txt",
+    "daemon_events": "focused-daemon-events.txt"
+  }
+}

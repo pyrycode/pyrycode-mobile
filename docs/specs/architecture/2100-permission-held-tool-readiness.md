@@ -49,8 +49,8 @@ Write readiness controls first against the original predicate and retain counted
 
 ## Open Questions
 
-- Does recovered evidence localize the historical timeout? Otherwise explicitly leave causation unresolved.
-- Do controlled regressions demonstrate the candidate readiness defect? Repair only after their red result.
+- Resolved: no failing phone capture was recovered. Historical timeout causation remains unresolved; fresh passing captures localize all operations without attributing that failure.
+- Resolved: all five controls failed against the actual original predicate, then passed against the addressed-host wait.
 
 ## Documentation handoff
 
@@ -60,3 +60,4 @@ Pending documentation stage: `docs/e2e-interactive-stream.md`, permission-held r
 
 - 2026-10-12: Five real-registry controls executed and failed against the extracted original selected-banner predicate. They demonstrate wrong-host blocking, wrong-host false admission, handshake false admission, Idle false admission and missing-host false admission. Implement the proposed addressed-host wait; retain the original deadline and selection. The diagnostic tests also ran red (5 failures) then green (5 passes).
 - 2026-10-12: Fresh baseline capture executed/passed the named method (1/1, no failures/errors/skips), with all 15 stages completed. Phone output and daemon snapshots correlate prior/current authenticated peer admission, chat creation, permission arrival and turn completion; the three display assertions passed. The baseline does not reproduce the historical timeout. Historical operation/cause and any MCP relationship remain unresolved; the readiness repair rests on controlled reproduction, not historical attribution. Preserve full-live acceptance as dispatcher-owned and request a builder return for counted XML/provenance artifacts.
+- 2026-10-12: The repaired named method executed/passed (1/1, zero failures/errors/skips) at Mobile `9ce53a429`, daemon `8091a4730` with dirty-build flag recorded, Claude 2.1.280. All fifteen fixed stages completed, with phone/daemon artifacts retained. Focused success does not satisfy the required dispatcher full live gate. Full registry, diagnostics and existing running-tool/status classes executed/passed 46 tests without failures/errors/skips. The other `holdToolOnPermission` consumer remains the pre-existing ignored manual elapsed scenario; it compiled, and no manual live pass is claimed.

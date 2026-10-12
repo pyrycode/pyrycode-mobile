@@ -1,0 +1,10 @@
+time=2026-10-12T03:20:53.101+03:00 event=v2.handshake.accept
+time=2026-10-12T03:20:53.758+03:00 event=v2.handshake.accept
+time=2026-10-12T03:20:53.813+03:00 event=v2.peer_close.teardown
+time=2026-10-12T03:20:54.012+03:00 event=create_conversation.created
+time=2026-10-12T03:20:54.357+03:00 event=v2.handshake.accept
+time=2026-10-12T03:20:58.999+03:00 event=push_wake.skipped trigger=modal_shown
+time=2026-10-12T03:20:59.191+03:00 outcome=allowed source=remote
+time=2026-10-12T03:21:10.693+03:00 event=push_wake.skipped trigger=turn_end
+time=2026-10-12T03:21:10.856+03:00 event=v2.peer_close.teardown
+time=2026-10-12T03:21:11.619+03:00 event=v2.peer_close.teardown
