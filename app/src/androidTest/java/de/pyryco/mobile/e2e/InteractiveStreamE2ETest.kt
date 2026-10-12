@@ -5427,9 +5427,14 @@ class InteractiveStreamE2ETest {
             runBlocking { withTimeout(THREAD_TIMEOUT_MS) { coordinator.supportsBackgroundTaskStop.first { it } } }
             val probe = HeldBackgroundTaskProbe(chat, command)
             sendFromPhone(
-                "Use Bash exactly once with run_in_background=true and timeout=600000. Set command to this exact string: \"$command\". " +
-                    "Do not change the command, add a timeout or wait for the background task. " +
-                    "Briefly confirm the launch and end your own turn immediately. Do not use any other tools.",
+                "I am testing the mobile app's Stop task button. " +
+                    "The test launcher started a loopback-only HTTP test service at $fixture. " +
+                    "Its /$key/hold endpoint deliberately keeps a request open " +
+                    "so I can stop the resulting background task from the phone. " +
+                    "Please launch Bash with run_in_background=true, timeout=600000 and command \"$command\". " +
+                    "The exact command lets the test identify this task. Leave it running for my Stop action; " +
+                    "the test releases the service during cleanup. " +
+                    "Briefly acknowledge the launch in your own words without waiting for the request to finish.",
             )
             allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "held Bash did not join a retained roster", allowed, "background_task_roster") {
                 probe.taskId(peer.recorded(chat)) != null

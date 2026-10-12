@@ -140,3 +140,21 @@ evidence folders `mobile-combined-live-20261012` and
 
 **Reviewer:** Codex, self-review using the builder security-review procedure.
 **Date:** 2026-10-12
+
+## HP Stop setup refusal
+
+The combined HP capture at `d92a2f4e8d7950db249d34a59dfed3d394c9db98` failed
+before the background-task Stop action. The retained Claude session contains no Bash
+launch. Claude explicitly declined the unexplained localhost request and asked what
+the service was for. The peer connection remained open. This occurrence is a test
+request problem, not evidence of a lost task update or a broken Stop button.
+
+Explain the launcher-owned loopback fixture, its deliberately held request, the
+phone Stop action and cleanup in the request. Retain the exact command and Bash
+background options because the existing probe uses them to identify the held task.
+Acknowledgment wording stays open. Task arrival, retained membership, real phone
+Stop, completion and the later reply keep their existing assertions.
+
+The earlier Mac full pass precedes this request-only change. A focused HP live
+capture must exercise the corrected setup and complete Stop before this new change
+can claim live verification. The raw failed session stays in private evidence.
