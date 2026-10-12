@@ -1,0 +1,20 @@
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-10-11T20:34:36.535Z" hostname="Juhanas-MacBook-Air.local" time="12.506">
+  <properties />
+  <testcase name="aRefusalNotice_keepsTheHeldRows" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="8.43" />
+  <testcase name="section_showsAfterMemoryAndBeforeActions_whenTheCapabilityIsAbsentOrTrue" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="0.277" />
+  <testcase name="text_isCutAt256CodePoints_onlyWhenLonger" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="0.303" />
+  <testcase name="reconnectAndSwitch_eachEmitOneEventWithTheRowsName" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="0.328" />
+  <testcase name="onlyBuiltIns_saysSo_untilShown" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="0.216" />
+  <testcase name="section_isAbsent_whenTheCapabilityIsFalse" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="0.275" />
+  <testcase name="partialList_namesTheDroppedCount" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="0.224" />
+  <testcase name="builtInServers_hiddenUntilShowBuiltIn_andTheTickResetsOnReopen" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="0.324" />
+  <testcase name="rows_showNameAndStatus_reconnectOnlyWhenNotConnected_andSwitchOnUnlessDisabled" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="0.204" />
+  <testcase name="emptyReport_saysNoServers" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="0.187" />
+  <testcase name="theThreeNotices_showTogether_withOrWithoutAReport" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="0.172" />
+  <testcase name="whileToggling_everyControlIsDisabled" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="0.164" />
+  <testcase name="nullReport_saysNoReportYet_withoutShowBuiltIn" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="0.219" />
+  <testcase name="errorLine_showsOnlyWhenNotEmpty" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="0.318" />
+  <testcase name="whileReconnecting_everyControlIsDisabled" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenMcpServersTest" time="0.206" />
+  <system-out />
+  <system-err />
+</testsuite>

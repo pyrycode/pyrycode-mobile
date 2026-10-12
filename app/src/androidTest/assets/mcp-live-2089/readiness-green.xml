@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="de.pyryco.mobile.di.RelayConnectionFactoryTest" tests="5" failures="0" errors="0" skipped="0" timestamp="2026-10-11T23:06:36.847Z">
+  <testcase name="mcpReadinessWaitsForTargetHandshake" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.005" />
+  <testcase name="mcpReadinessIgnoresStoppedSelectedHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.006" />
+  <testcase name="mcpReadinessRejectsMissingTarget" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.005" />
+  <testcase name="mcpReadinessRejectsIdleAtOriginalDeadline" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.005" />
+  <testcase name="mcpReadinessWaitsForTargetDespiteReadySelectedPeer" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.011" />
+</testsuite>

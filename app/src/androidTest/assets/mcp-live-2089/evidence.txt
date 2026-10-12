@@ -1,0 +1,48 @@
+#2089 investigation checkpoint, 2026-10-11
+
+Status: cause and behavior repair remain unresolved. Diagnostic passes are not a repaired-flake claim.
+
+Historical HP run:
+Mobile 2bd039944754f24c920feef0efaec36a8ea7f6db, main ea3ab23e7e14aac63e59a3d05d28473e3905323f.
+Daemon 63aabec70dad3948c916332a139eb22533b8f4b8; Claude 2.1.280.
+Original full gate: 65 executed, 56 passed, 9 failed, 0 errors, 0 skipped; named MCP method failed.
+Same-tree rerun: 9 executed, 6 passed, 3 failed, 0 errors, 0 skipped; named MCP method passed.
+historical-failure.xml and historical-rerun.xml are count-derived named-case extracts, with unchanged original testcase outcomes.
+Original source logs retained locally under /tmp/builder-2089/original/ and on build-hp-1 under /home/juhana/pyrycode-runtime/work/Projects/pyrycode-mobile-agents/logs/.
+Original filename: 2026-10-11T14-45-49-322Z_real-claude-gate_#1977.log
+SHA-256: 938073c629d392f36b468b69d4bf8e4486cd4bf137b1eddd2b93141b09d24baa
+Original stderr SHA-256: 78c816c2267c5e8fbdfe7633471db848f3505eedf2ad0a2043b04f2821740c7e
+Rerun filename: 2026-10-11T14-45-49-322Z_real-claude-gate-rerun_#1977.log
+SHA-256: 9795ec30bdfc20605d8b5d34eb20e96bd2dd01fadced8a18cde5c17dea3e0552
+Rerun stderr SHA-256: 5222a11eea4055c05337ecc1a7e49c6f533daddf47ac03e4bc0e5ffec886eb37
+Named failure: kotlinx.coroutines.TimeoutCancellationException, 30000 ms. Original method source maps this to awaitConnected before createChat; its UI waits throw ComposeTimeoutException.
+Preceding attachment scenario reported its peer link ending cleanly and redialing while awaiting turn_end. This is supporting connection-loss evidence, not an established cause.
+Original per-test phone logs and /tmp/pyry-e2e.XTdbYg daemon evidence were unavailable at the recorded paths when checked on HP. Teardown focus snapshots do not describe timeout-time focus.
+
+Fresh baseline on Mobile b44067bbd991b7d68e0418f88cc2a9e721671c61, daemon 8091a4730d42f43029eb0b955442dc300106030f, Claude 2.1.280:
+Focused named method: 1 executed/passed, 0 failed/errors/skipped; exit 0; build/dispatcher-tests/live-5k57b1h7/dispatcher.xml and adjacent named logcat.
+Stop/attachment/MCP predecessor replay: 3 executed/passed, 0 failed/errors/skipped; exit 0; build/dispatcher-tests/live-_53qvf2j/dispatcher.xml and adjacent logcats.
+Historical 62-method prefix: interrupted with SIGTERM, exit 143, after the unchanged ping method 38 made no completion for more than seven minutes. 37 completed: 36 passed, 1 unrelated background-agent failure, 0 skipped. MCP did not execute. Partial counts/instrumentation and phone logs: build/dispatcher-tests/live-htk9e3x4/. MCP drive unchanged in the installed APK; new diagnostic helper was present but unused. This is not a full gate result.
+Prefix daemon evidence: /var/folders/k0/gc07w9ws319b07n0plnw6y8r0000gn/T/pyry-e2e.ZH3XIK/daemon.log and daemon-b.log; copied with stalled ping evidence at /tmp/builder-2089/prefix-stalled/.
+Existing #2010 reused for the stalled ping observation: https://github.com/pyrycode/pyrycode-mobile/issues/2010#issuecomment-6113616215. No shared cause or dependency on its repair is established.
+Instrumented remaining 24-method suffix on Mobile bda8cc31e3decbe19975bd37df09cd1f1e7ffd93: 24 executed, 21 passed, 3 unrelated failures, 0 errors/skipped; exit 1. Named MCP method executed and passed all eight stages (16 content-free records). Raw report/phone logs: build/dispatcher-tests/live-is21b3u_/. Named-case XML extract and static stage records: instrumented-suffix-mcp.xml and instrumented-suffix-stages.txt. This excludes the stalled predecessor for investigation only, not full-live acceptance.
+Suffix daemon logs retained at /tmp/builder-2089/suffix-evidence/ and /var/folders/k0/gc07w9ws319b07n0plnw6y8r0000gn/T/pyry-e2e.C0Fdx3/. Daemon 8091a4730d42f43029eb0b955442dc300106030f; Claude 2.1.280.
+Suffix test APK SHA-256: c3f7f307fada6a8042cf185c5c2940521d36e797970cd87d4299129b182c97bc
+Suffix application APK SHA-256: 966e7493a9c9de6c13f8478f314006ff6f922d1fa8b763015a3f3c39c49876bb
+Suffix unrelated failures: backgroundAgent_replyStaysUnderAgent (#2013), backgroundTurnEnd_pushPostsOneAlertThatOpensThread (investigate alongside #2055), rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel (#2095). No MCP causal relationship established.
+Two preceding suffix attempts exited 75 after 300 seconds of device occupancy each, with zero executed. The third acquired the device after 65 seconds. These are acquisition outcomes, not test failures.
+Final instrumented 61-method historical-prefix investigation: 61 executed, 54 passed, 7 unrelated failures, 0 errors/skipped; exit 1. MCP executed and passed all eight stages. Only the earlier stalled ping drive is excluded within the historical prefix; this is not configured full-live acceptance. Report/phone logs: build/dispatcher-tests/live-rq_m20a1/. Daemon logs: /tmp/builder-2089/instrumented-prefix-evidence/ and /var/folders/k0/gc07w9ws319b07n0plnw6y8r0000gn/T/pyry-e2e.jpfifL/.
+Prefix gate printed Mobile bda8cc31e3decbe19975bd37df09cd1f1e7ffd93; MCP diagnostic code unchanged in later evidence commits. Prefix test APK SHA-256: 5e0eca642921af8d22a85d9c9520c8ab9a448d7c4bae37a054322e409e5757e8; application APK hash unchanged.
+Prefix unrelated failures: backgroundAgent_followsBottomUntilFinished (#2009); reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn (#2099); permissionHeldTool_statusAreaNamesRunningTool (#2100); sessionError_recoversDroppedAndRetainedBacklog (#1977); both background-push methods (#2055); rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel (#2095). New #2099/#2100 are verified in Backlog with priority:low; existing priorities unchanged.
+Named-case extract and stage records: instrumented-prefix-mcp.xml and instrumented-prefix-stages.txt. Original cause and behavior repair remain unresolved; another failing named execution with correlated stage/connection, phone and daemon evidence is required.
+Prefix test APK SHA-256: 3c8b3f8f0a866e66bda2a2ce45fe837214e64016e74343dfb63967263e53ef93
+Prefix application APK SHA-256: 966e7493a9c9de6c13f8478f314006ff6f922d1fa8b763015a3f3c39c49876bb
+
+Diagnostic regression red: 5 executed, 5 failed, 0 errors/skipped against the passthrough helper; diagnostics-red.xml.
+Diagnostic regression green: 5 executed/passed, 0 failed/errors/skipped; McpScenarioDiagnosticsTest-green.xml.
+Existing MCP coverage green: ThreadScreenMcpServersTest 15/15; ThreadViewModelMcpServersTest 8/8; no failures/errors/skips; adjacent green XML files.
+Commands: testDebugUnitTest with those three class selectors; spotlessApply; lint assembleDebug compileDebugAndroidTestKotlin; spotlessCheck --rerun-tasks --console=plain. All diagnostic green/build/format commands exited 0.
+Fresh full post-verifier live acceptance belongs to the dispatcher and remains pending.
+
+Final prefix dispatcher XML SHA-256: 3fa8b77299cee0f1c340cb53f91e4e070603ae91992e702a9dbdd4c8c233d23a
+Final prefix named phone log SHA-256: d8d17b733a06a76837322a988ea33c37aa3f3156cfb753f63590434b42f93198

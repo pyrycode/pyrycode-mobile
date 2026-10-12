@@ -1,0 +1,92 @@
+{
+  "kind": "focused recurrence assessment; not configured full-live acceptance",
+  "runs": {
+    "repaired-consumers": {
+      "command": "python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_sendQueuedNow_reachesRunningTurn",
+      "exit_code": 1,
+      "mobile_revision": "edfad116e14f10789d3e664c764cc266e91b481c",
+      "main_revision": "83a277afe045ddc734d513f47aad6aa6e2aeeb63",
+      "daemon_source_revision": "c4119af5989f8c9ef14195e8628b649046f7a673",
+      "capture_source_directories": [
+        "/tmp/builder-2089/recurrence-assessment/repaired-consumers/temporary/pyry-e2e.RCKELK"
+      ],
+      "capture_limitation": "100ms snapshot polling; successful harness cleanup can omit final teardown tail.",
+      "binary_sha256": {
+        "build/e2e-bin/pyry": "feff664f44294ed933d0a0bf051ccd19702ed33b8436ba9861a0d3f05dc7ef20",
+        "app/build/outputs/apk/debug/app-debug.apk": "fcd24b6dda5cbf48cc5e4bdb2b2c344b16a854a28b4069424018f66028a17c55",
+        "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk": "09b087a39b303bd11ac1b9252c0f0713e61800efa7c7b88e4572414916e4ab1c"
+      },
+      "daemon_binary_metadata": [
+        "build\tvcs.revision=c4119af5989f8c9ef14195e8628b649046f7a673",
+        "build\tvcs.time=2026-10-12T11:03:22Z",
+        "build\tvcs.modified=true"
+      ],
+      "daemon_source_tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "artifact_sha256": {
+        "daemon-b.log.complete": "e6b24048c882f49702ba530df68772a5bcbf2c9f8ba753bd7790474e965272b4",
+        "daemon-b.log.snapshot": "e6b24048c882f49702ba530df68772a5bcbf2c9f8ba753bd7790474e965272b4",
+        "daemon-fault.log.complete": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "daemon-fault.log.snapshot": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "daemon.log.complete": "e5dc052e9461ca43cfe9f196a7cb933085ab6f7b115b557f7719d37ba7dc832b",
+        "daemon.log.snapshot": "e5dc052e9461ca43cfe9f196a7cb933085ab6f7b115b557f7719d37ba7dc832b",
+        "live-n0y25a9m/0-TEST-pixel2Api33Atd-_app-.xml": "86f6058ae14cd391709f4530d46456562d4196f527c511a2bcc12b60a4464153",
+        "live-n0y25a9m/0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn.txt": "44c9b552cc06357d029b464a3a5f73889ce0f19204f2973ab8144aedb91d79b3",
+        "live-n0y25a9m/1-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_sendQueuedNow_reachesRunningTurn.txt": "333dcf3a87ceb83513076009bf0ac584c6f741018f7d519412f99db289791c27",
+        "live-n0y25a9m/dispatcher.xml": "3b457b33f9ec18b0e5af6f43e9fde6de5d37c751380ca8ef6d6cd484666519b1",
+        "provenance.json": "36b9ea47278887e759ae7abb8878fb5f50b60fb5c00c85343700fa473bc7b059"
+      },
+      "durable_retained_path": "/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/evidence/2089/recurrence-assessment-20261012/repaired-consumers",
+      "counts": {
+        "total": 2,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0,
+        "executed": 2,
+        "passed": 1
+      }
+    },
+    "repaired-scripted": {
+      "command": "python3 scripts/android-test-gate.py scripted mcp-failed",
+      "exit_code": 0,
+      "mobile_revision": "edfad116e14f10789d3e664c764cc266e91b481c",
+      "main_revision": "83a277afe045ddc734d513f47aad6aa6e2aeeb63",
+      "daemon_source_revision": "c4119af5989f8c9ef14195e8628b649046f7a673",
+      "capture_source_directories": [
+        "/tmp/builder-2089/recurrence-assessment/repaired-scripted/temporary/pyry-e2e.Vcomfn"
+      ],
+      "capture_limitation": "100ms snapshot polling; successful harness cleanup can omit final teardown tail.",
+      "binary_sha256": {
+        "build/e2e-bin/pyry": "feff664f44294ed933d0a0bf051ccd19702ed33b8436ba9861a0d3f05dc7ef20",
+        "app/build/outputs/apk/debug/app-debug.apk": "fcd24b6dda5cbf48cc5e4bdb2b2c344b16a854a28b4069424018f66028a17c55",
+        "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk": "09b087a39b303bd11ac1b9252c0f0713e61800efa7c7b88e4572414916e4ab1c"
+      },
+      "daemon_binary_metadata": [
+        "build\tvcs.revision=c4119af5989f8c9ef14195e8628b649046f7a673",
+        "build\tvcs.time=2026-10-12T11:03:22Z",
+        "build\tvcs.modified=true"
+      ],
+      "daemon_source_tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "artifact_sha256": {
+        "daemon-fault.log.snapshot": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "daemon.log.snapshot": "e9ef4f831aa3df85add0954a0048d0bf4a02c5e784a5023c4c35ac0bff31d840",
+        "provenance.json": "e152bab0c396a8830a0170eb1d5409a0d01e9f14d87f10e1a1829a206a47e024",
+        "relay.log.snapshot": "3df440a4a553dcbc406e9ba523b3b1ec7ee688fef46931cd9866ae1c5c6944ce",
+        "scripted-w06l39jt/0-TEST-pixel2Api33Atd-_app-.xml": "61b6f5277e15dc28a805f9e783e987833160434c0ee9358742ea92eb9488a8b8",
+        "scripted-w06l39jt/0-logcat-de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest-interactiveTurn_seededChannel_failedMcpServerPillOpensChannelInfo.txt": "a551daf5f0c486badd0d50f2008738555cad26f357e7648917ad807ac1c510ef",
+        "scripted-w06l39jt/dispatcher.xml": "4258de2649b097696c084b177e11bce73709237d37520b2fd6e6d62fec9d3755"
+      },
+      "durable_retained_path": "/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/evidence/2089/recurrence-assessment-20261012/repaired-scripted",
+      "counts": {
+        "total": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "executed": 1,
+        "passed": 1
+      }
+    }
+  },
+  "send_now_blocker": 2056,
+  "send_now_failure_stage": "observe peer queue removal",
+  "historical_attribution": "Unresolved for #1977 and #2098; controlled readiness and offscreen setup defects established separately."
+}

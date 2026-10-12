@@ -1,0 +1,43 @@
+{
+  "kind": "focused live repair validation; not configured full-live acceptance",
+  "command": "TMPDIR=/tmp/builder-2089/mcp-capture python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn",
+  "mobile_revision": "2fe7f996657005a6700873687dcec98b90954b01",
+  "main_revision": "b44067bbd991b7d68e0418f88cc2a9e721671c61",
+  "daemon_binary_metadata": [
+    "build\tvcs.revision=8091a4730d42f43029eb0b955442dc300106030f",
+    "build\tvcs.modified=true"
+  ],
+  "daemon_source_revision": "8091a4730d42f43029eb0b955442dc300106030f",
+  "counts": {
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "gate_artifact_path": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2089/build/dispatcher-tests/live-kahbccp6",
+  "retained_path": "/tmp/builder-2089/readiness-repair/live-mcp",
+  "artifact_sha256": {
+    "dispatcher.xml": "da64d4bd6840f8a2ae2eba161d0eee4730e3ec7d8cb5d35e11a92e4284fc3740",
+    "daemon-b.log.snapshot": "94e43e2e3d937cd892f8ac1a9b2c5637c0a4814145fee3b026bb82604d07512c",
+    "daemon.log.snapshot": "a0a633a023918561b348c74631eb6a19cf19072fe81c9bf37f601cd944ff9c6b",
+    "daemon-fault.log.snapshot": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "0-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn.txt": "95deaa7cdfa5c13e5cf3748b4582524a6c3ae68c9808e5f459288df56765bce4",
+    "0-TEST-pixel2Api33Atd-_app-.xml": "339df4535668b4f67678844085806a1cb8e198709aca535345af0b2d1a01646f",
+    "daemon-capture.json": "d485a6a1b820396e0653f9d0d50fb08de2d2d1c04c317c7037df329018dad5e7"
+  },
+  "binary_sha256": {
+    "build/e2e-bin/pyry": "80e7998e6badf2c83289f85b7b4735a328d200ba8a6d090a949ceb8fafae5744",
+    "app/build/outputs/apk/debug/app-debug.apk": "966e7493a9c9de6c13f8478f314006ff6f922d1fa8b763015a3f3c39c49876bb",
+    "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk": "8d794fc12dd3749ee8f96f24abf5e4fc67d3c71e19f1002f1621c2b6f5bf6309"
+  },
+  "historical_attribution": "Historical outage cause remains unresolved; controlled readiness defect repaired.",
+  "daemon_source_tracked_diff_sha256_after_run": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "daemon_snapshot_capture": {
+    "source_directories": [
+      "/tmp/builder-2089/mcp-capture/pyry-e2e.B0vO7A"
+    ],
+    "poll_interval_seconds": 0.2,
+    "limitation": "Snapshot before successful harness cleanup; final teardown tail may be absent."
+  }
+}

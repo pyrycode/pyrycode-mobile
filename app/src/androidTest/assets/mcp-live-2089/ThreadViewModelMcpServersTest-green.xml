@@ -1,0 +1,13 @@
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelMcpServersTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-11T20:34:49.047Z" hostname="Juhanas-MacBook-Air.local" time="0.384">
+  <properties />
+  <testcase name="dismiss_releasesBothWaitsOnce" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelMcpServersTest" time="0.249" />
+  <testcase name="reconnectAndToggle_sendOnceEach_forTheThreadsConversation" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelMcpServersTest" time="0.021" />
+  <testcase name="logsAndEvents_carryNoServerNameOrConversationId" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelMcpServersTest" time="0.018" />
+  <testcase name="mcpServersFalse_opensWithoutRequest" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelMcpServersTest" time="0.018" />
+  <testcase name="everyOpening_requestsOnceForTheThreadsConversation" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelMcpServersTest" time="0.017" />
+  <testcase name="archiveFromTheOpenSheet_releasesBothWaits_butFromAClosedSheetReleasesNothing" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelMcpServersTest" time="0.024" />
+  <testcase name="theRepositoryReading_reachesTheState" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelMcpServersTest" time="0.017" />
+  <testcase name="mcpServersTrue_orNoCapabilityList_stillRequests" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelMcpServersTest" time="0.02" />
+  <system-out />
+  <system-err />
+</testsuite>

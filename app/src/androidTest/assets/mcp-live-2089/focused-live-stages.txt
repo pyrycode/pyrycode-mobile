@@ -1,0 +1,17 @@
+10-12 02:08:55.939  2880  2977 I McpScenario: event=mcp_scenario stage=ListArrival status=started
+10-12 02:08:56.174  2880  2977 I McpScenario: event=mcp_scenario stage=ListArrival status=completed
+10-12 02:08:56.174  2880  2977 I McpScenario: event=mcp_scenario stage=Connection status=started
+10-12 02:08:56.175  2880  2977 I McpScenario: event=mcp_readiness targetPresent=true selectedTarget=true targetRelay=Connected targetDaemon=Connected targetRepository=true selectedRelay=Connected selectedDaemon=Connected
+10-12 02:08:56.175  2880  2977 I McpScenario: event=mcp_scenario stage=Connection status=completed
+10-12 02:08:56.175  2880  2977 I McpScenario: event=mcp_scenario stage=ChatSetup status=started
+10-12 02:08:56.614  2880  2977 I McpScenario: event=mcp_scenario stage=ChatSetup status=completed
+10-12 02:08:56.614  2880  2977 I McpScenario: event=mcp_scenario stage=PingDelivery status=started
+10-12 02:08:59.422  2880  2977 I McpScenario: event=mcp_scenario stage=PingDelivery status=completed
+10-12 02:08:59.423  2880  2977 I McpScenario: event=mcp_scenario stage=SheetOpening status=started
+10-12 02:08:59.806  2880  2977 I McpScenario: event=mcp_scenario stage=SheetOpening status=completed
+10-12 02:08:59.806  2880  2977 I McpScenario: event=mcp_scenario stage=McpReport status=started
+10-12 02:08:59.823  2880  2977 I McpScenario: event=mcp_scenario stage=McpReport status=completed
+10-12 02:08:59.823  2880  2977 I McpScenario: event=mcp_scenario stage=ShowBuiltIn status=started
+10-12 02:08:59.974  2880  2977 I McpScenario: event=mcp_scenario stage=ShowBuiltIn status=completed
+10-12 02:08:59.974  2880  2977 I McpScenario: event=mcp_scenario stage=BuiltInRow status=started
+10-12 02:09:00.106  2880  2977 I McpScenario: event=mcp_scenario stage=BuiltInRow status=completed

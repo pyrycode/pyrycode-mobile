@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="de.pyryco.mobile.di.RelayConnectionFactoryTest" tests="5" failures="5" errors="0" skipped="0" timestamp="2026-10-11T23:06:03.585Z">
+  <testcase name="mcpReadinessWaitsForTargetHandshake" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.144">
+    <failure message="java.lang.AssertionError: the relay socket alone cannot satisfy MCP readiness" type="java.lang.AssertionError">java.lang.AssertionError: the relay socket alone cannot satisfy MCP readiness</failure>
+  </testcase>
+  <testcase name="mcpReadinessIgnoresStoppedSelectedHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.023">
+    <failure message="kotlinx.coroutines.TimeoutCancellationException: Timed out after 30s of _virtual_ (kotlinx.coroutines.test) time. To use the real time, wrap 'withTimeout' in 'withContext(Dispatchers.Default.limitedParallelism(1))'" type="kotlinx.coroutines.TimeoutCancellationException">kotlinx.coroutines.TimeoutCancellationException: Timed out after 30s of _virtual_ (kotlinx.coroutines.test) time. To use the real time, wrap 'withTimeout' in 'withContext(Dispatchers.Default.limitedParallelism(1))'</failure>
+  </testcase>
+  <testcase name="mcpReadinessRejectsMissingTarget" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.009">
+    <failure message="java.lang.AssertionError" type="java.lang.AssertionError">java.lang.AssertionError</failure>
+  </testcase>
+  <testcase name="mcpReadinessRejectsIdleAtOriginalDeadline" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.004">
+    <failure message="java.lang.AssertionError: Idle must wait for authentication" type="java.lang.AssertionError">java.lang.AssertionError: Idle must wait for authentication</failure>
+  </testcase>
+  <testcase name="mcpReadinessWaitsForTargetDespiteReadySelectedPeer" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.011">
+    <failure message="java.lang.AssertionError: a ready selected peer cannot satisfy MCP readiness" type="java.lang.AssertionError">java.lang.AssertionError: a ready selected peer cannot satisfy MCP readiness</failure>
+  </testcase>
+</testsuite>

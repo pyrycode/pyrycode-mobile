@@ -1,0 +1,6 @@
+<testsuite name="de.pyryco.mobile.e2e.McpChatSetupTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-12T11:19:40.207Z" hostname="Juhanas-MacBook-Air.local" time="4.514">
+  <properties />
+  <testcase name="connectedTargetBelowChannelsIsCreatedOnce" classname="de.pyryco.mobile.e2e.McpChatSetupTest" time="4.041" />
+  <testcase name="visibleTargetIsCreatedOnceWithoutSelectingAnotherHost" classname="de.pyryco.mobile.e2e.McpChatSetupTest" time="0.06" />
+  <testcase name="missingTargetTimesOutWithoutCreatingOnReadyPeer" classname="de.pyryco.mobile.e2e.McpChatSetupTest" time="0.147" />
+</testsuite>

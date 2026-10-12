@@ -23,6 +23,7 @@ import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.crypto.PairedServerStoreException
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.InnerFrameV2
@@ -47,6 +48,7 @@ import de.pyryco.mobile.data.repository.HostReadingFrames
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.awaitHostConnection
 import de.pyryco.mobile.e2e.awaitSendNowConnection
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.thread.AttachmentRead
@@ -58,6 +60,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
@@ -125,6 +128,156 @@ class RelayConnectionFactoryTest {
         RelayLog.sink = previousSink
         RelayLog.enabled = previousEnabled
     }
+
+    @Test
+    fun mcpReadinessIgnoresStoppedSelectedHost() =
+        runTest {
+            val f = Fixture(this)
+            f.unavailable = "B"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                f.transports.last().reportAbsent()
+                runCurrent()
+                val selected = registry.selected.value
+                assertSame(registry.connectionFor("B"), selected)
+                assertEquals(RelayLinkStatus.DaemonAbsent, registry.connectionStatus.value.relay)
+                assertEquals(
+                    PyrycodeLinkStatus.Connected,
+                    registry
+                        .connectionFor("A")
+                        ?.coordinator
+                        ?.connectionStatus
+                        ?.value
+                        ?.pyrycode,
+                )
+
+                awaitHostConnection(registry, "A", 30_000)
+
+                assertEquals(0L, testScheduler.currentTime)
+                assertSame("MCP readiness must not select its target", selected, registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun mcpReadinessWaitsForTargetDespiteReadySelectedPeer() =
+        runTest {
+            val f = Fixture(this)
+            f.unavailable = "A"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                f.transports.first().reportAbsent()
+                runCurrent()
+                val selected = registry.selected.value
+                assertSame(registry.connectionFor("B"), selected)
+                assertEquals(PyrycodeLinkStatus.Connected, registry.connectionStatus.value.pyrycode)
+                val readiness = async { awaitHostConnection(registry, "A", 30_000) }
+                runCurrent()
+                assertFalse("a ready selected peer cannot satisfy MCP readiness", readiness.isCompleted)
+
+                f.unavailable = null
+                registry.connectionFor("A")?.supervisor?.retry()
+                runCurrent()
+                readiness.await()
+                assertSame(selected, registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun mcpReadinessWaitsForTargetHandshake() =
+        runTest {
+            val f = Fixture(this)
+            f.handshaking = "A"
+            f.store.save(f.a.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                val selected = registry.selected.value
+                assertEquals(RelayLinkStatus.Connected, registry.connectionStatus.value.relay)
+                assertEquals(PyrycodeLinkStatus.Handshaking, registry.connectionStatus.value.pyrycode)
+                val readiness = async { awaitHostConnection(registry, "A", 30_000) }
+                runCurrent()
+                assertFalse("the relay socket alone cannot satisfy MCP readiness", readiness.isCompleted)
+
+                f.transports.single().completeHandshake()
+                runCurrent()
+                readiness.await()
+                assertEquals(PyrycodeLinkStatus.Connected, registry.connectionStatus.value.pyrycode)
+                assertSame(selected, registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun mcpReadinessRejectsIdleAtOriginalDeadline() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.a.record)
+            val registry = f.registry()
+            try {
+                runCurrent()
+                val selected = registry.selected.value
+                assertEquals(RelayLinkStatus.Idle, registry.connectionStatus.value.relay)
+                val readiness = async { runCatching { awaitHostConnection(registry, "A", 30_000) } }
+                runCurrent()
+                advanceTimeBy(29_999)
+                runCurrent()
+                assertFalse("Idle must wait for authentication", readiness.isCompleted)
+                advanceTimeBy(1)
+                runCurrent()
+                assertTrue(readiness.await().exceptionOrNull() is TimeoutCancellationException)
+                assertEquals(30_000L, testScheduler.currentTime)
+
+                registry.connect()
+                runCurrent()
+                assertTrue("a late connection must not revive a timed-out wait", readiness.await().isFailure)
+                assertSame(selected, registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun mcpReadinessRejectsMissingTarget() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                val selected = registry.selected.value
+                assertEquals(PyrycodeLinkStatus.Connected, registry.connectionStatus.value.pyrycode)
+                assertNull(registry.connectionFor("A"))
+
+                val failure = runCatching { awaitHostConnection(registry, "A", 30_000) }.exceptionOrNull()
+
+                assertTrue(failure is IllegalStateException)
+                assertEquals("Live harness host not registered", failure?.message)
+                assertEquals(0L, testScheduler.currentTime)
+                assertSame(selected, registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
 
     @Test
     fun sendNowReadinessIgnoresStoppedSelectedHost() =
