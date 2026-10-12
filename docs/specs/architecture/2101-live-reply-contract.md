@@ -51,6 +51,21 @@ wording and Markdown changes, wrong IDs, user messages and unfinished replies.
 Existing message rendering checks also pass. Run full debug verification and both
 background-agent scenarios before handoff. No full-suite recovery is claimed.
 
+## Finished-reply Copy follow-through
+
+The first complete recovery baseline timed out before the Copy action. Private phone logs
+show the captured connection closing and a replacement receiving the reply. Daemon history
+contains the exact requested words and a successful turn end. The test still observed the
+closed repository for its full deadline. This occurrence is not caused by wording variation.
+
+Move the completion wait to the existing reconnect-aware reader. The fresh chat accepts a
+nonblank completed main assistant reply, excluding user, child and streaming rows. The prompt
+also stops prescribing wording. Locate the completed body through its existing identity tag
+and derive the selected word from its actual rendered text layout. Markdown punctuation is
+not treated as displayed text. Retain the real long press, Android Copy menu, unrelated
+clipboard baseline and exact selected-word clipboard assertion. The controlled fixture keeps
+its fixed reply, while both callers follow the current connection.
+
 ## Security review
 
 **Verdict:** PASS

@@ -355,7 +355,11 @@ class InteractiveStreamE2ETest {
         }
         val conversationId = newHostConversationId(serverId, before)
         sendFromPhone(SELECTION_PROMPT)
-        composeTestRule.assertFinishedReplySystemCopy(hostRepository(serverId), conversationId, REPLY_TIMEOUT_MS)
+        val repositories =
+            checkNotNull(
+                GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId),
+            ).coordinator.currentRepository
+        composeTestRule.assertFinishedReplySystemCopy(repositories, conversationId, REPLY_TIMEOUT_MS)
     }
 
     /**
@@ -5272,7 +5276,8 @@ class InteractiveStreamE2ETest {
                     allowed,
                     frame = "assistant_delta",
                 ) {
-                    it.type == "assistant_delta" && peer.field(it, "parent_tool_use_id") == agentId &&
+                    it.type == "assistant_delta" &&
+                        peer.field(it, "parent_tool_use_id") == agentId &&
                         peer.field(it, "text").orEmpty().isNotBlank()
                 }
             val childTurn = requireNotNull(peer.field(childReplyFrame, "turn_id"))
@@ -5312,7 +5317,8 @@ class InteractiveStreamE2ETest {
                     withTimeout(THREAD_TIMEOUT_MS) {
                         liveRepositories.firstOnLive({ it.observeMessages(chat) }) { items ->
                             val messages = items.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
-                            holdsSettledAssistantReply(items, childTurn, agentId) && holdsSettledAssistantReply(items, mainTurn) &&
+                            holdsSettledAssistantReply(items, childTurn, agentId) &&
+                                holdsSettledAssistantReply(items, mainTurn) &&
                                 messages.any { it.role == Role.Tool && it.toolCall?.parentToolUseId == agentId }
                         }
                     }

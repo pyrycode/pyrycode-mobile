@@ -10,12 +10,14 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.longClick
-import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
@@ -25,10 +27,8 @@ import androidx.test.espresso.ViewAction
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
 import androidx.test.espresso.matcher.ViewMatchers.withText
-import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ConversationRepository
-import de.pyryco.mobile.data.repository.ThreadItem
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -39,39 +39,42 @@ internal const val SELECTION_REPLY = "amber cobalt jade"
 private const val CLIPBOARD_BASELINE = "unrelated clipboard baseline"
 private const val DIAGNOSTIC_TAG = "SelectionCopy"
 internal const val SELECTION_PROMPT =
-    "Reply with exactly these three words on one line, plain text, no punctuation or explanation: amber cobalt jade"
+    "Write a short sentence about colours. Use your own words."
 
 /** Real pointer selection and Android's floating Copy menu; no substituted toolbar or clipboard. */
 internal fun AndroidComposeTestRule<*, *>.assertFinishedReplySystemCopy(
-    repository: ConversationRepository,
+    repositories: StateFlow<ConversationRepository?>,
     conversationId: String,
     timeoutMillis: Long,
 ) {
-    // Text can render while still streaming and unselectable. Gate on the phone's finalized row.
-    val reply =
+    // A reconnect replaces the repository. Never keep observing the torn-down connection.
+    val message =
         runBlocking {
-            withTimeout(timeoutMillis) {
-                repository.observeMessages(conversationId).first { rows ->
-                    rows.filterIsInstance<ThreadItem.MessageItem>().any {
-                        it.message.role == Role.Assistant &&
-                            !it.message.isStreaming &&
-                            it.message.content == SELECTION_REPLY
-                    }
-                }
-            }
-        }.filterIsInstance<ThreadItem.MessageItem>()
-            .single {
-                it.message.role == Role.Assistant && it.message.content == SELECTION_REPLY
-            }.message.content
-    waitUntil(timeoutMillis) {
-        onAllNodesWithText(reply, useUnmergedTree = true).fetchSemanticsNodes().size == 1
-    }
-    val body = onNodeWithText(reply, useUnmergedTree = true).assertIsDisplayed()
+            withTimeout(timeoutMillis) { repositories.awaitFinishedSelectionReply(conversationId) }
+        }
+    val identity = hasTestTag("assistant-reply:${message.id}")
+    val selectable =
+        SemanticsMatcher("completed reply text with a selectable word") { node ->
+            val text =
+                node.config
+                    .getOrNull(SemanticsProperties.Text)
+                    ?.joinToString(" ") { it.text }
+                    .orEmpty()
+            node.config.getOrNull(SemanticsActions.GetTextLayoutResult) != null &&
+                Regex("\\p{L}{2,}").findAll(text).take(2).count() == 2
+        } and (identity or hasAnyAncestor(identity))
+    waitUntil(timeoutMillis) { onAllNodes(selectable, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+    val body = onAllNodes(selectable, useUnmergedTree = true).onFirst().assertIsDisplayed()
     val layouts = mutableListOf<TextLayoutResult>()
     body.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
     val layout = layouts.single()
-    val word = "cobalt"
-    val offset = reply.indexOf(word) + word.length / 2
+    // Use the rendered paragraph, so Markdown syntax is never mistaken for selectable text.
+    val reply = layout.layoutInput.text.text
+    val candidate = Regex("\\p{L}{2,}").findAll(reply).drop(1).first()
+    val offset = candidate.range.first + candidate.value.length / 2
+    val boundary = layout.getWordBoundary(offset)
+    val word = reply.substring(boundary.start, boundary.end)
+    assertTrue("selected word must be a nonempty proper part of the reply", word.isNotBlank() && word.length < reply.length)
     val press = layout.getBoundingBox(offset).center
 
     val context = activity
