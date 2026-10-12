@@ -3227,7 +3227,9 @@ class InteractiveStreamE2ETest {
             step(SendNowStage.AwaitSendNow) {
                 composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(send).fetchSemanticsNodes().isNotEmpty() }
             }
-            step(SendNowStage.TapSendNow) { composeTestRule.onNode(send).performClick() }
+            step(SendNowStage.TapSendNow) {
+                composeTestRule.tapSendNowOnce(send) { Log.i("E2E", it) }
+            }
             step(SendNowStage.ObserveQueueRemoval) {
                 runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.none { it.queuedMsgId == queued.queuedMsgId } } }
             }
