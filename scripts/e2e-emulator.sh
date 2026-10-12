@@ -131,6 +131,15 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ -n "${LIVE}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${E2E_LOGIN_TRIED:-}" ]; then
   E2E_LOGIN_TRIED=1 exec "${REPO_ROOT}/scripts/with-claude-login.sh" bash "${BASH_SOURCE[0]}" "$@"
 fi
+# #2052: the full live suite owns an exclusive dedicated Codex-home lease. A focused
+# selection of another method and every scripted run avoid these prerequisites.
+if [ -n "${LIVE}" ] && [ -z "${DETERMINISTIC}" ] && [ -z "${E2E_CODEX_LEASE:-}" ]; then
+  case "${LIVE_TESTS:-}" in
+    ""|*'#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies'*)
+      exec python3 "${REPO_ROOT}/scripts/e2e-codex-home.py" bash "${BASH_SOURCE[0]}" "$@"
+      ;;
+  esac
+fi
 GRADLEW="${REPO_ROOT}/gradlew"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pyry-e2e.XXXXXX")"
 RELAY_LOG="${WORK_DIR}/relay.log"
@@ -1048,8 +1057,13 @@ elif [ -n "${LIVE}" ]; then
   # LIVE (rung 3): dial the PRODUCTION relay over wss:// (TLS). PYRY_ALLOW_INSECURE_RELAY is NEVER set on
   # this path — TLS-only transport is enforced by omitting the flag here, not by a runtime toggle. Runs
   # under the real HOME (real claude needs ~/.claude auth); isolation is by -pyry-name (~/.pyry/e2e-live/).
-  DAEMON_COMMAND+=(PYRY_MOBILE_V2=1 "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}"
-    "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}" -- --model sonnet)
+  # Codex flags precede Claude passthrough, which must remain last.
+  if [ -n "${E2E_CODEX_BIN:-}" ]; then
+    DAEMON_COMMAND+=(PYRY_MOBILE_V2=1 "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" "-pyry-codex=${E2E_CODEX_BIN}")
+  else
+    DAEMON_COMMAND+=(PYRY_MOBILE_V2=1 "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}")
+  fi
+  DAEMON_COMMAND+=("-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}" -- --model sonnet)
 else
   DAEMON_COMMAND+=(PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1
     "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}" -- --model sonnet)
@@ -1626,6 +1640,7 @@ elif [ -n "${LIVE}" ]; then
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies"
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
 else
   TEST_TARGET="${TEST_CLASS}"
@@ -1643,6 +1658,9 @@ Path(sys.argv[1]).write_text(json.dumps([path for path in sys.argv[2:] if path])
 PY_SESSION_SOCKETS
 
 GRADLE_TEST_ARGS=(-PuseRelayRepository=true)
+if [ -n "${LIVE:-}" ]; then
+  GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.codexPrerequisite="${E2E_CODEX_UNMET-not_provisioned}")
+fi
 if [ -n "${STOP_TASK_URL:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.stopTaskFixtureUrl="${STOP_TASK_URL}")
 fi

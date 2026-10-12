@@ -29,7 +29,7 @@ The scenario creates and owns one fresh Claude channel. Private helpers select u
 
 Overlapping remote branches: #1682, #1689, #1690, #1691, #1693, #1695, #1766, #1869, #1879, #1947, #2009, #2032, #2057, #2088, #2089, #2090, #2091, #2092, #2097, #2098, #2099, #2100, #2102, #2104, #2112, #2114, #2117, #2118, #2119 and #2121 touch shared harness files. Their changes concern other methods or cleanup/diagnostics; this design adds a method, private helpers, selector entry and local launch seam without restructuring those blocks.
 
-Sizing: forecast 1100 written lines including Python lease/probes, Kotlin proof helpers/probes, scenario and plan; at most three new test/helper classes, no production consumers, four criteria, fewer than ten distinct prerequisite rejection categories. One deliverable, within the hard limits.
+Sizing: forecast 1100 written lines including Python lease/probes, Kotlin proof helpers/probes, scenario and plan; three new test classes and one private lease helper class, no production consumers, four criteria, fewer than ten distinct prerequisite rejection categories. One deliverable, within the hard limits.
 
 ## State and concurrency model
 
@@ -67,7 +67,7 @@ Pending documentation stage: `docs/e2e-interactive-stream.md`, The ladder, Live 
 **Verdict:** PASS
 
 - Trust boundaries: explicit environment configuration crosses `CodexHomeLease` validation; canonical paths must exclude personal Codex, current CODEX_HOME and all production instance roots. A dedicated home is operator-provisioned, never inferred from personal configuration. Published rows remain inert UI text.
-- Tokens/secrets: SHOULD FIX implemented by discarding authentication stdout/stderr, never opening sign-in files, and never sending home paths or credentials to instrumentation. Gate-owned Claude authentication is reused. Source login remains in place, including legitimate token renewal by Codex.
+- Tokens/secrets: SHOULD FIX implemented by discarding authentication stdout/stderr, never opening sign-in files, and never sending home paths or credentials to instrumentation. Ambient OpenAI/Codex API credentials and endpoint overrides are removed from the test child; gate-owned Claude authentication is reused. Source login remains in place, including legitimate token renewal by Codex.
 - Files/storage: SHOULD FIX use owner-only lock file with no-follow open, owner validation, canonical-home lock identity, guarded test-instance name and exclusive symlink creation. Unlink only the owned link after daemon teardown. No source-home artifact copy or recursive deletion.
 - Android surface: no new exported component, intent, provider or manifest changes; only a fixed static instrumentation reason.
 - Cryptography: existing Noise and pairing remain unchanged; no new cryptographic primitive or secret comparison.
@@ -75,3 +75,7 @@ Pending documentation stage: `docs/e2e-interactive-stream.md`, The ladder, Live 
 - Errors/logs: fixed failure codes only; authentication process output discarded. No credential or decrypted-body logging added. Existing private daemon evidence is retained by the dispatcher without source-home contents.
 - Concurrency: MUST FIX addressed in design: lease outlives shell and all owned daemon cleanup, inherited descriptor protects wrapper death, and kernel release permits retries after failure. Test observations cannot admit held or predecessor settings.
 - Threat model: malicious relay delays fail bounded waits under existing Noise; disk credential theft is outside this test-only change and remains governed by app Keystore storage; hostile frame rendering uses existing bounded decoders; screenshots/accessibility see only authored fixtures and existing UI, never sign-in data.
+
+## Revisions
+
+- 2026-10-13: Keep the live drive in `AgentSwitchScenario.kt` with private helpers and a single entry function, leaving shared `InteractiveStreamE2ETest` edits additive. Prerequisite admission happens before connection waits. Independently recorded successful `turn_end` frames matched to each finalized reply’s turn identity and finalized repository history are both required; hand-over completions cannot satisfy the reply proof; viewport checks compare adjacent authored rows after scrolling. The source-home wrapper records only the validated numeric Codex version for dispatcher evidence. Measured implementation remains below the forecast and sizing limits.

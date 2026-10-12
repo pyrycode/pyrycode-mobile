@@ -3802,6 +3802,15 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** Real Claude → Codex → Claude, selected and confirmed through Run configuration (#2052). */
+    @Test
+    fun interactiveTurn_switchAgentFromModelPick_confirmsAndReplies() {
+        runAgentSwitchScenario(composeTestRule, { hostRepository() }, ::openRow, ::sendFromPhone) {
+            awaitChannelList()
+            awaitConnected()
+        }
+    }
+
     /**
      * A model change made on the phone reaches only its own conversation and survives a reopen (#545), and
      * an inherited chat marks the model claude announced rather than the `default` row's resolution

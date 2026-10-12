@@ -1,0 +1,59 @@
+package de.pyryco.mobile.e2e
+
+import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.repository.ModelMenu
+import de.pyryco.mobile.data.repository.ModelMenuRow
+import de.pyryco.mobile.data.repository.SessionSettings
+import de.pyryco.mobile.ui.conversations.thread.dropdownLabel
+
+/** A row must be selectable without guessing a family, a cut field or an ambiguous UI label. */
+internal fun switchModelRow(
+    menu: ModelMenu,
+    agent: ConversationAgent,
+): ModelMenuRow? {
+    val rendered = renderedModelRows(menu)
+    return rendered.firstOrNull { row ->
+        row.agent == agent &&
+            row.value.isNotBlank() &&
+            row.resolvedModel.isNotBlank() &&
+            row.truncatedFields.orEmpty().isEmpty() &&
+            row.dropdownLabel(agent).isNotBlank() &&
+            rendered.count { it.dropdownLabel(requireNotNull(it.agent)) == row.dropdownLabel(agent) } == 1
+    }
+}
+
+internal fun isSwitchSuccessor(
+    channel: Conversation,
+    settings: SessionSettings,
+    id: String,
+    predecessors: Set<String>,
+    row: ModelMenuRow,
+): Boolean =
+    channel.id == id &&
+        channel.isPromoted &&
+        channel.agent == row.agent &&
+        channel.currentSessionId.isNotEmpty() &&
+        channel.currentSessionId !in predecessors &&
+        !settings.held &&
+        settings.sessionId == channel.currentSessionId &&
+        settings.model == row.value
+
+/** Earlier replies, queued rows, duplicates and still-streaming copies cannot satisfy a later turn. */
+internal fun hasOrderedSwitchMessages(
+    messages: List<Message>,
+    expected: List<Pair<Role, String>>,
+): Boolean {
+    val indices =
+        expected.map { (role, text) ->
+            messages
+                .withIndex()
+                .filter { (_, message) -> message.role == role && message.content.trim() == text }
+                .singleOrNull()
+                ?.takeUnless { it.value.isStreaming }
+                ?.index ?: return false
+        }
+    return indices.zipWithNext().all { (first, next) -> first < next }
+}
