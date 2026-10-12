@@ -133,7 +133,7 @@ class ChannelInfoSessionSectionTest {
         if (model == null) {
             model = next
             composeTestRule.setContent {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     model?.let {
                         ChannelInfoSheetContent(
                             model = it,

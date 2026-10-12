@@ -19,6 +19,16 @@ names do not prove that two repositories or transports have the same behavior. F
 a new sealed event or wire arm, inspect every type switch, mapper, logging site,
 state projection and test table. A default branch can silently ignore a new case.
 
+## Live Claude reply assertions
+
+Keep ordinary reply requests and assertions flexible about wording. Require exact
+wording only when that wording is the feature under test. Use recorded conversation,
+turn and agent identities to distinguish replies from user prompts and other replies.
+Check completion, delivery and attribution. A reply may span several text rows or
+paragraphs, and a background agent's later reply may have its own turn identity.
+Precise commands that create controlled test conditions and fixed app labels remain
+appropriate. Display tests should use controlled fixtures when they need fixed prose.
+
 ## Gradle and source checks
 
 Use the smallest gate that proves the change, then run the repository guard before

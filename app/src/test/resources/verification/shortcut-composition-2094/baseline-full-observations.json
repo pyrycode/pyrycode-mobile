@@ -1,0 +1,36 @@
+{
+  "source_log": "136-logcat-de.pyryco.mobile.ui.conversations.share.SharingShortcutsDeviceTest-dynamicTargetHasShareContractAndLauncherIntentOpensWithoutChangingDraft.txt",
+  "source_sha256": "fc1306b26c816793b45b764d50c9ce4052497ce8296d367eda2b2ab826c6ca9e",
+  "events": [
+    {
+      "timestamp": "10-11 22:45:06.330",
+      "event": "workspace_startup_started",
+      "main": true
+    },
+    {
+      "timestamp": "10-11 22:45:06.343",
+      "event": "workspace_startup_ready",
+      "main": false
+    },
+    {
+      "timestamp": "10-11 22:45:07.049",
+      "event": "workspace_startup_started",
+      "main": true
+    },
+    {
+      "timestamp": "10-11 22:45:07.056",
+      "event": "workspace_startup_ready",
+      "main": false
+    }
+  ],
+  "ordering_neighbours": [
+    "133-logcat-de.pyryco.mobile.ui.conversations.list.SidebarTreeCaptureTest-enlargedTextAt412By892.txt",
+    "134-logcat-de.pyryco.mobile.ui.conversations.list.SidebarTreeCaptureTest-treeAt412By892.txt",
+    "135-logcat-de.pyryco.mobile.ui.conversations.share.SharingShortcutStoreFailureTest-failedStartupAndRevisionReadsPreservePersistedRecencyAndSystemTargetsUntilRecovery.txt",
+    "136-logcat-de.pyryco.mobile.ui.conversations.share.SharingShortcutsDeviceTest-dynamicTargetHasShareContractAndLauncherIntentOpensWithoutChangingDraft.txt",
+    "137-logcat-de.pyryco.mobile.ui.conversations.thread.AgentNavigationDeviceTest-accessibilityScrollWhileWaiting_cancelsNavigation.txt",
+    "138-logcat-de.pyryco.mobile.ui.conversations.thread.AgentNavigationDeviceTest-conversationSwitch_doesNotReviveRequest.txt",
+    "139-logcat-de.pyryco.mobile.ui.conversations.thread.AgentNavigationDeviceTest-departureAndReturn_doesNotReviveRequest.txt"
+  ],
+  "limits": "Main classification uses logcat PID == TID for the Activity process. No graph Looper observation in the unmodified launcher method. Neighbours describe this run, not a historical cause."
+}

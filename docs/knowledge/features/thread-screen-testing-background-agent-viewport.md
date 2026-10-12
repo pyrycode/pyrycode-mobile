@@ -92,3 +92,35 @@ Fresh full scripted and live runs, including each retained named background-agen
 method's **1/0/0** result, are recorded in
 [background-agent acceptance evidence](../../e2e-interactive-stream.md#background-agent-viewport-preservation-1955).
 Documentation ran only the docs guard.
+
+## Supplied authoritative settlement (#1985)
+
+`AuthoritativeThreadScreenTest` additionally uses complete snapshots through the
+same screen. `hiddenRootSettlementPreservesReaderInItsChildThroughRenderedFrames`
+and `outerSettlementPreservesReaderInNestedForegroundChildThroughRenderedFrames`
+sample native rendered frames while the reader is inside a departing subtree.
+Require stationary history membership/coordinates throughout transfer, not just
+idle state; visible-root-only membership loses hidden roots and nested foreground
+children. `terminalBlockAlreadyAtItsRecordedEndDoesNotRelocateItsReader` rejects
+movement inferred only from another block's insertion.
+
+`readerAwayFromNewestRetainsStationaryAnchorAcrossSettlementAndReload` and
+`followerStaysAtNewestAcrossSettlementAndRepeatedDelivery` preserve the reader/follower
+split across replay. `nestedLaunchStaysBeforeLaterForegroundSiblingAcrossSettlement`
+and `nestedLaunchStaysBeforeLaterSiblingOfHiddenForegroundParentAcrossSettlement`
+retain launch-marker sibling order while the child block settles independently.
+Four projection probes cover active/terminal children under shown/hidden foreground
+parents, with permutation and replay assertions. Also retain two-active-agent,
+prior-session terminal, nested-background independent placement and foreground
+Read/thinking probes: visual bottom pinning must not determine main-turn activity.
+
+All seven named screen methods above executed once and passed in the retained
+`/tmp/builder-1985/bash32-focused/TEST-de.pyryco.mobile.ui.conversations.thread.AuthoritativeThreadScreenTest.xml`
+(`2026-10-11T09:29:06.743Z`): screen class **23 executed, 23 passed, 0 failed,
+0 skipped**. The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2076#issuecomment-6107772890)
+confirms matching **23/0/0** screen and **25/0/0** projection counts in the full JVM
+gate. These supplied-screen probes are JVM evidence; the full UI gate's
+**258/0/1** counts do not establish Android execution of this class. Existing legacy
+viewport coverage above remains intact. [#1988](https://github.com/pyrycode/pyrycode-mobile/issues/1988)
+retains production activation and the two named real-Claude background-agent
+methods plus prior-session terminal integration proof; see [the renderer coverage](thread-screen-testing.md#supplied-authoritative-renderer-1985).

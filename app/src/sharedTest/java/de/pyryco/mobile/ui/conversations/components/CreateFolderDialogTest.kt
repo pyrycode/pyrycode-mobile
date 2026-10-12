@@ -26,7 +26,7 @@ class CreateFolderDialogTest {
     @Test
     fun title_and_label_and_buttons_render() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CreateFolderDialog(onCreate = {}, onDismiss = {})
             }
         }
@@ -61,7 +61,7 @@ class CreateFolderDialogTest {
     @Test
     fun field_reports_focus_once_dialog_composes() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CreateFolderDialog(onCreate = {}, onDismiss = {})
             }
         }
@@ -78,7 +78,7 @@ class CreateFolderDialogTest {
     @Test
     fun create_button_disabled_when_input_blank() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CreateFolderDialog(onCreate = {}, onDismiss = {})
             }
         }
@@ -89,7 +89,7 @@ class CreateFolderDialogTest {
     @Test
     fun create_button_enabled_after_non_blank_input() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CreateFolderDialog(onCreate = {}, onDismiss = {})
             }
         }
@@ -102,7 +102,7 @@ class CreateFolderDialogTest {
     @Test
     fun create_button_stays_disabled_when_input_is_whitespace_only() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CreateFolderDialog(onCreate = {}, onDismiss = {})
             }
         }
@@ -116,7 +116,7 @@ class CreateFolderDialogTest {
     fun tapping_create_invokes_onCreate_with_trimmed_text() {
         var created: String? = null
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CreateFolderDialog(
                     onCreate = { created = it },
                     onDismiss = {},
@@ -135,7 +135,7 @@ class CreateFolderDialogTest {
         var dismissed = 0
         var created: String? = null
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CreateFolderDialog(
                     onCreate = { created = it },
                     onDismiss = { dismissed++ },

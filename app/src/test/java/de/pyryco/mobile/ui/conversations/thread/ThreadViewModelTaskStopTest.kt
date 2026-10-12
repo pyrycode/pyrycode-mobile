@@ -282,4 +282,188 @@ class ThreadViewModelTaskStopTest {
     companion object {
         private fun task(id: String) = BackgroundTask(id, "tool", "local_bash", "description", null, null, null, false)
     }
+
+    @Test fun authoritativeStopUsesRecordedFactsAndSurvivesLegacyRosterUpdates() =
+        runTest {
+            val f = fixture()
+            val snapshot = authoritativeSnapshot(authoritativeAgent(1, task = "recorded"))
+            val p = projectAuthoritativeThread("host-secret", "conversation-secret", snapshot)
+            f.vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(p))
+            val event =
+                ThreadEvent.BackgroundTaskStop(
+                    "recorded",
+                    p.scope,
+                    p.tasks.tasks
+                        .single()
+                        .toolCallId,
+                )
+            f.vm.onOverflowEvent(event)
+            f.vm.onOverflowEvent(event)
+            advanceUntilIdle()
+            assertEquals(listOf("conversation-secret" to "recorded"), f.calls)
+            f.roster.value = BackgroundTaskRoster(emptyList(), 0)
+            advanceUntilIdle()
+            assertEquals(setOf("recorded"), f.vm.state.value.pendingBackgroundTaskIds)
+            f.vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(p))
+            f.vm.onOverflowEvent(event)
+            advanceUntilIdle()
+            assertEquals(1, f.calls.size)
+            f.refusals.emit("recorded")
+            advanceUntilIdle()
+            f.vm.onOverflowEvent(event)
+            advanceUntilIdle()
+            assertEquals(2, f.calls.size)
+            f.vm.onOverflowEvent(
+                ThreadEvent.AuthoritativeThreadPresented(
+                    projectAuthoritativeThread(
+                        "host-secret",
+                        "conversation-secret",
+                        authoritativeSnapshot(authoritativeAgent(1, task = "recorded", active = false)),
+                    ),
+                ),
+            )
+            f.vm.onOverflowEvent(event)
+            advanceUntilIdle()
+            assertEquals(2, f.calls.size)
+            assertTrue(
+                f.vm.state.value.pendingBackgroundTaskIds
+                    .isEmpty(),
+            )
+        }
+
+    @Test fun authoritativeRouteRemovalClearsPendingAndRejectsStaleStop() =
+        runTest {
+            val f = fixture()
+            val p =
+                projectAuthoritativeThread(
+                    "host-secret",
+                    "conversation-secret",
+                    authoritativeSnapshot(authoritativeAgent(1, task = "recorded")),
+                )
+            val stop =
+                ThreadEvent.BackgroundTaskStop(
+                    "recorded",
+                    p.scope,
+                    p.tasks.tasks
+                        .single()
+                        .toolCallId,
+                )
+            val publication = ThreadEvent.AuthoritativeThreadPresented(p)
+            f.vm.onOverflowEvent(publication)
+            f.vm.onOverflowEvent(stop)
+            advanceUntilIdle()
+            assertEquals(setOf("recorded"), f.vm.state.value.pendingBackgroundTaskIds)
+
+            f.vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadRetired(publication.binding))
+            f.vm.onOverflowEvent(stop)
+            advanceUntilIdle()
+            assertTrue(
+                f.vm.state.value.pendingBackgroundTaskIds
+                    .isEmpty(),
+            )
+            assertEquals(listOf("conversation-secret" to "recorded"), f.calls)
+
+            f.vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(p))
+            f.vm.onOverflowEvent(stop)
+            advanceUntilIdle()
+            assertEquals(listOf("conversation-secret" to "recorded", "conversation-secret" to "recorded"), f.calls)
+        }
+
+    @Test fun staleBindingRetirementCannotClearNewerFactsOrPendingAttempt() =
+        runTest {
+            val f = fixture()
+            val p =
+                projectAuthoritativeThread(
+                    "host-secret",
+                    "conversation-secret",
+                    authoritativeSnapshot(authoritativeAgent(1, task = "recorded")),
+                )
+            val old = ThreadEvent.AuthoritativeThreadPresented(p)
+            val current = ThreadEvent.AuthoritativeThreadPresented(p)
+            val stop =
+                ThreadEvent.BackgroundTaskStop(
+                    "recorded",
+                    p.scope,
+                    p.tasks.tasks
+                        .single()
+                        .toolCallId,
+                )
+            f.vm.onOverflowEvent(old)
+            f.vm.onOverflowEvent(stop)
+            advanceUntilIdle()
+            f.vm.onOverflowEvent(current)
+            f.vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadRetired(old.binding))
+            f.vm.onOverflowEvent(stop)
+            advanceUntilIdle()
+            assertEquals(listOf("conversation-secret" to "recorded"), f.calls)
+            assertEquals(setOf("recorded"), f.vm.state.value.pendingBackgroundTaskIds)
+
+            f.vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadRetired(current.binding))
+            f.vm.onOverflowEvent(stop)
+            advanceUntilIdle()
+            assertTrue(
+                f.vm.state.value.pendingBackgroundTaskIds
+                    .isEmpty(),
+            )
+            f.toggle("a")
+            f.stop("a")
+            advanceUntilIdle()
+            assertEquals(listOf("conversation-secret" to "recorded", "conversation-secret" to "a"), f.calls)
+
+            val restored = ThreadEvent.AuthoritativeThreadPresented(p)
+            f.vm.onOverflowEvent(restored)
+            f.vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadRetired(current.binding))
+            f.vm.onOverflowEvent(stop)
+            advanceUntilIdle()
+            assertEquals(
+                listOf("conversation-secret" to "recorded", "conversation-secret" to "a", "conversation-secret" to "recorded"),
+                f.calls,
+            )
+        }
+
+    @Test fun authoritativeStopRejectsForeignOwnersStaleIdentityAndLostCapability() =
+        runTest {
+            val f = fixture()
+
+            fun presentation(
+                host: String = "host-secret",
+                conversation: String = "conversation-secret",
+                epoch: String = "epoch",
+                id: Long = 1,
+            ): AuthoritativeThreadPresentation {
+                val snapshot = authoritativeSnapshot(authoritativeAgent(id, task = "recorded"), epoch = epoch)
+                return projectAuthoritativeThread(host, conversation, snapshot)
+            }
+            val p = presentation()
+            val event =
+                ThreadEvent.BackgroundTaskStop(
+                    "recorded",
+                    p.scope,
+                    p.tasks.tasks
+                        .single()
+                        .toolCallId,
+                )
+            for (foreign in listOf(presentation(host = "other"), presentation(conversation = "other"))) {
+                f.vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(foreign))
+                f.vm.onOverflowEvent(
+                    ThreadEvent.BackgroundTaskStop(
+                        "recorded",
+                        foreign.scope,
+                        foreign.tasks.tasks
+                            .single()
+                            .toolCallId,
+                    ),
+                )
+            }
+            f.vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(presentation(epoch = "new")))
+            f.vm.onOverflowEvent(event)
+            f.vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(presentation(id = 2)))
+            f.vm.onOverflowEvent(event)
+            f.vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(p))
+            f.support.value = false
+            advanceUntilIdle()
+            f.vm.onOverflowEvent(event)
+            advanceUntilIdle()
+            assertTrue(f.calls.isEmpty())
+        }
 }

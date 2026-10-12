@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<testsuite name="de.pyryco.mobile.e2e.RunConfigurationWaitTest" tests="6" failures="0" errors="0" skipped="0" time="12.544" timestamp="2026-10-11T06:14:44" hostname="localhost">
+  <properties>
+    <property name="device" value="pixel2Api33Atd" />
+    <property name="flavor" value="" />
+    <property name="project" value=":app" />
+  </properties>
+  <testcase name="permissiveNotePredicateCannotAcceptPendingPermission" classname="de.pyryco.mobile.e2e.RunConfigurationWaitTest" time="1.633" />
+  <testcase name="optionalNoteMustMatchInsideEffortAndDisappearBeforeAbsentNotePasses" classname="de.pyryco.mobile.e2e.RunConfigurationWaitTest" time="1.365" />
+  <testcase name="optimisticEffortWaitsForAcknowledgementAndFreshReading" classname="de.pyryco.mobile.e2e.RunConfigurationWaitTest" time="3.524" />
+  <testcase name="matchingIndependentReadingCannotCompletePrimingBeforePersistence" classname="de.pyryco.mobile.e2e.RunConfigurationWaitTest" time="3.571" />
+  <testcase name="selectionInAnotherSectionCannotSatisfyEffort" classname="de.pyryco.mobile.e2e.RunConfigurationWaitTest" time="1.241" />
+  <testcase name="absentSectionCannotSatisfyEffortPlaceholder" classname="de.pyryco.mobile.e2e.RunConfigurationWaitTest" time="1.21" />
+</testsuite>
+

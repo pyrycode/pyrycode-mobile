@@ -69,7 +69,7 @@ class ThreadInputBarMessageReplyTest {
         var sends = 0
         rule.setContent {
             focus = LocalFocusManager.current
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CompositionLocalProvider(LocalSoftwareKeyboardController provides keyboard) {
                     Box(Modifier.size(1.dp).focusRequester(otherFocus).focusable())
                     if (mounted) {
@@ -115,7 +115,7 @@ class ThreadInputBarMessageReplyTest {
         var tapped: Message? = null
         var sends = 0
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CompositionLocalProvider(LocalSoftwareKeyboardController provides keyboard) {
                     ThreadScreen(
                         state =

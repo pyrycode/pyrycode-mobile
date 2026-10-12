@@ -68,7 +68,7 @@ class ModelRefusalSwitchBackTest {
         fontScale: Float = 1f,
     ) {
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CompositionLocalProvider(LocalDensity provides Density(1f, fontScale)) {
                     ModelRefusalRow(
                         item = ROW,
@@ -246,7 +246,7 @@ class ModelRefusalSwitchBackTest {
         val later = ROW.copy(originalModel = "claude-haiku-4-5", occurredAt = Instant.parse("2026-09-23T12:00:05Z"))
         val noFallback = ROW.copy(fallbackModel = null)
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
                         ThreadUiState(

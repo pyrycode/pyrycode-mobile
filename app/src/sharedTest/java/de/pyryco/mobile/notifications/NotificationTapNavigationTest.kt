@@ -463,7 +463,7 @@ class NotificationTapNavigationTest {
         }
         compose.setContent {
             KoinIsolatedContext(app) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     nav = rememberNavController()
                     DisposableEffect(nav) {
                         val listener =

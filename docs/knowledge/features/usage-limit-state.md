@@ -120,7 +120,7 @@ identical property. Blast radius is one stale row the next frame corrects.
 
 The behaviour lives in `UsageLimitProjection`
 (`data/repository/UsageLimitProjection.kt`), one of the [status
-projections](remote-conversation-repository.md#status-projections-one-file-per-status-event) beside
+projections](remote-conversation-repository-status-projections.md#status-projections-one-file-per-status-event) beside
 `RemoteConversationRepository`, on the **single existing** inbound collector. In short: a
 connection-scoped `MutableStateFlow<Map<String, UsageLimitReading>>` (a payload-carrying `Map`, the
 `ApiRetryProjection` shape rather than `CompactingProjection`'s membership `Set`, since this frame

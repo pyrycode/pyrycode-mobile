@@ -1,20 +1,26 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.diagnostics.MessageTrail
+import de.pyryco.mobile.data.model.BackgroundTaskProgress
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
+import de.pyryco.mobile.data.model.ModalAction
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.model.reduce
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
+import de.pyryco.mobile.data.network.BackgroundTaskProgressPayloadDto
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
+import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
 import de.pyryco.mobile.data.network.Envelope
@@ -30,6 +36,10 @@ import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.RequestContextUsagePayloadDto
 import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
 import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
+import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_ADDED
+import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_CHANGED
+import de.pyryco.mobile.data.network.TYPE_THREAD_TEXT_APPEND
+import de.pyryco.mobile.data.network.ToolProgressPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
@@ -39,10 +49,12 @@ import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toHistoryPage
 import de.pyryco.mobile.data.network.toMessage
+import de.pyryco.mobile.data.network.toSessionSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -52,6 +64,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -150,7 +163,7 @@ class RemoteConversationRepository(
      * settings reply. **Defaulted to a throwaway instance** on this repository's [now], so existing
      * constructions compile unchanged and keep connection-scoped readings.
      */
-    hostReadings: HostReadings = HostReadings(now),
+    private val hostReadings: HostReadings = HostReadings(now),
     /**
      * The process-wide message trail (#1564), kept in release builds: [sendMessage]'s sent, acknowledged and
      * failed lines and the thread's queued, delivered and dropped ones. [RelayRepositoryCoordinator] threads
@@ -163,15 +176,20 @@ class RemoteConversationRepository(
      * before `Open`. Never the full `conn_id`.
      */
     connToken: () -> String? = { null },
+    /** Supplied authoritative route only; production activation supplies the source in #1988. */
+    private val authoritativeHostId: String = "",
 ) : ConversationRepository,
     ThreadSnapshotSource {
+    internal val authoritativeThreads = AuthoritativeThreadStore()
+    internal val authoritativeRoute = AuthoritativeThreadRoute(authoritativeHostId, authoritativeThreads)
+
     /**
      * The conversation list and the last-message previews (#913): the list projection, the most-recent
      * message per conversation, and every write that folds into either. [onInbound] hands it the
      * `conversations` snapshot, and the mutations and the `message` / `conversation_updated` /
      * `workspace_updated` / `session_transition` arms fold into it once they have decoded their frame.
      */
-    private val conversationListProjection = ConversationListProjection()
+    private val conversationListProjection = ConversationListProjection { CAPABILITY_THREAD in negotiatedCapabilities() }
 
     /**
      * The per-conversation status readings, one small projection per wire event: stall (#395), queue
@@ -412,6 +430,7 @@ class RemoteConversationRepository(
         QuestionBatchProjection(
             send = pump::send,
             nextRequestId = { relayRequests.nextRequestId() },
+            authoritative = ::authoritativeLiveEnabled,
         )
     val questionBatches: StateFlow<List<QuestionBatch>> = questionBatchProjection.batches
 
@@ -432,17 +451,48 @@ class RemoteConversationRepository(
         )
     val backgroundTasks: StateFlow<Map<String, BackgroundTaskRoster>> = backgroundTaskProjection.rosters
 
+    private val suppliedModals = MutableStateFlow(HostModalState())
+    val authoritativeHostModals: StateFlow<HostModalState> get() = suppliedModals
+    internal val usesAuthoritativeLiveState: Boolean get() = authoritativeLiveEnabled()
+
+    internal fun recordAuthoritativeModalAction(action: ModalAction) {
+        if (authoritativeLiveEnabled()) suppliedModals.update { it.reduce(action) }
+    }
+
+    private fun publishAuthoritativeModal(event: ModalEvent) {
+        suppliedModals.update { it.reduce(event) }
+        mutableModalEvents.tryEmit(event)
+    }
+
+    private val sessionLiveAdmission =
+        SessionLiveAdmission(hostReadings.liveSessionBindings, hostReadings.retiredLiveSessions, ::clearAuthoritativeLive)
+    private val authoritativeSettings = MutableStateFlow<Map<String, Pair<Long, SessionSettings>>>(emptyMap())
+
+    // The serialized inbound collector numbers equal replies as well as changed values.
+    private var settingsArrival = 0L
+    private val authoritativeProgress = MutableStateFlow<Map<String, AuthoritativeLiveProgress>>(emptyMap())
+    private val admittedModals = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val retiredModals =
+        java.util.concurrent.ConcurrentHashMap
+            .newKeySet<String>()
+
     init {
         // The single consumer of the hot, single-consumer inbound stream. Cancelled by its owner
         // (#279/#302) when the connection ends; the pump completing `inbound` on teardown also ends it.
         // On any collector-termination mode (scope cancel — the primary teardown trigger — inbound
         // completing, or inbound throwing) the `finally` sweeps still-registered pending requests so
         // an awaiting caller fails fast instead of hanging forever (#488).
+        val expiry =
+            scope.launch {
+                if (authoritativeHostId.isNotEmpty()) authoritativeRoute.runExpiry()
+            }
         scope
             .launch {
                 try {
                     pump.inbound.collect { envelope -> onInbound(envelope) }
                 } finally {
+                    expiry.cancel()
+                    authoritativeRoute.abandon()
                     endSwitchAgentRequests()
                     endBackgroundTaskStops()
                     sessionErrorProjection.reset()
@@ -453,12 +503,180 @@ class RemoteConversationRepository(
                     relayRequests.failAllPending()
                 }
             }.invokeOnCompletion {
+                expiry.cancel()
+                authoritativeRoute.abandon()
                 // Completion also runs if cancellation prevents the collector body from starting.
                 endSwitchAgentRequests()
             }
     }
 
+    private fun authoritativeLiveEnabled(): Boolean =
+        authoritativeHostId.isNotEmpty() &&
+            setOf(CAPABILITY_THREAD, CAPABILITY_INTERACTIVE).all { it in negotiatedCapabilities() }
+
+    /** Supplied transient progress, never a durable item or read checkpoint. */
+    fun observeAuthoritativeToolProgress(conversationId: String): Flow<Map<String, Int>> =
+        observeAuthoritativeProgress(conversationId).map { it.tools }.distinctUntilChanged()
+
+    /** Independent of legacy task rosters; #1988 supplies this reading to the presentation overload. */
+    internal fun observeAuthoritativeProgress(conversationId: String): Flow<AuthoritativeLiveProgress> =
+        authoritativeProgress.map { it[conversationId] ?: AuthoritativeLiveProgress() }.distinctUntilChanged()
+
+    private fun clearAuthoritativeLive(
+        conversation: String,
+        family: String?,
+    ) {
+        sessionLiveAdmission.currentBinding(conversation)?.let { conversationListProjection.updateCurrentSessionId(conversation, it) }
+        if (family == null) {
+            SessionLiveAdmission.families.filterNot { it == TYPE_RATE_LIMITED }.forEach { clearAuthoritativeLive(conversation, it) }
+            return
+        }
+        when (family) {
+            TYPE_TURN_STATE -> turnPhaseProjection.clear(conversation)
+            TYPE_STALL -> stallProjection.clear(conversation)
+            TYPE_API_RETRY -> apiRetryProjection.clear(conversation)
+            TYPE_COMPACTING -> compactingProjection.clear(conversation)
+            TYPE_THINKING_PROGRESS -> thinkingProgressProjection.clear(conversation)
+            TYPE_RESETTING -> resettingProjection.clear(conversation)
+            TYPE_MODEL_ANNOUNCED -> announcedModelProjection.clear(conversation)
+            TYPE_SESSION_FACTS -> sessionFactsProjection.clear(conversation)
+            TYPE_CONTEXT_USAGE -> contextUsageProjection.onSessionTransition(conversation)
+            TYPE_SESSION_ERROR -> sessionErrorProjection.clear(conversation)
+            TYPE_MCP_STATUS -> mcpStatusProjection.clear(conversation)
+            TYPE_MODEL_LIST -> modelMenuProjection.clear(conversation)
+            TYPE_SLASH_COMMAND_LIST -> slashCommandMenuProjection.clear(conversation)
+            TYPE_REPLY_SUGGESTION -> replySuggestionProjection.clear(conversation)
+            TYPE_SESSION_SETTINGS -> {
+                authoritativeSettings.update { it - conversation }
+                hostReadings.clearSessionSettings(conversation)
+            }
+            TYPE_TOOL_PROGRESS ->
+                authoritativeProgress.update { held ->
+                    held[conversation]?.let { held + (conversation to it.copy(tools = emptyMap())) } ?: held
+                }
+            TYPE_BACKGROUND_TASK_PROGRESS ->
+                authoritativeProgress.update { held ->
+                    held[conversation]?.let { held + (conversation to it.copy(tasks = emptyMap())) } ?: held
+                }
+            TYPE_MODAL_SHOWN -> {
+                val retired = admittedModals.filterValues { it == conversation }.keys
+                retiredModals += retired
+                retired.forEach(admittedModals::remove)
+                publishAuthoritativeModal(ModalEvent.Cleared(conversation))
+            }
+            TYPE_QUESTION_SHOWN -> questionBatchProjection.clear(conversation)
+            // The quota belongs to the host's account, not the retired process.
+            TYPE_RATE_LIMITED -> Unit
+        }
+    }
+
+    private fun applyAuthoritativeLive(envelope: Envelope) {
+        val conversation = (envelope.payload as JsonObject).getValue("conversation_id").let { (it as JsonPrimitive).content }
+        when (envelope.type) {
+            TYPE_COMPACTING -> compactingProjection.apply(envelope)
+            TYPE_BACKGROUND_TASK_PROGRESS ->
+                try {
+                    val reading = MobileJson.decodeFromJsonElement<BackgroundTaskProgressPayloadDto>(envelope.payload)
+                    val progress =
+                        BackgroundTaskProgress(
+                            reading.description,
+                            reading.subagentType,
+                            reading.lastToolName,
+                            reading.totalTokens,
+                            reading.toolUses,
+                            reading.durationMs,
+                            reading.truncatedFields,
+                        )
+                    authoritativeProgress.update {
+                        val held = it[conversation] ?: AuthoritativeLiveProgress()
+                        it +
+                            (
+                                conversation to
+                                    held.copy(
+                                        sessionId = sessionLiveAdmission.currentBinding(conversation)?.takeIf { it.isNotEmpty() },
+                                        tasks = held.tasks + (reading.taskId to progress),
+                                    )
+                            )
+                    }
+                } catch (_: IllegalArgumentException) {
+                    return
+                }
+            TYPE_TOOL_PROGRESS ->
+                try {
+                    val reading = MobileJson.decodeFromJsonElement<ToolProgressPayloadDto>(envelope.payload)
+                    if (reading.elapsedSeconds >= 0) {
+                        authoritativeProgress.update {
+                            val held = it[conversation] ?: AuthoritativeLiveProgress()
+                            it +
+                                (
+                                    conversation to
+                                        held.copy(
+                                            sessionId = sessionLiveAdmission.currentBinding(conversation)?.takeIf { it.isNotEmpty() },
+                                            tools = held.tools + (reading.toolUseId to reading.elapsedSeconds),
+                                        )
+                                )
+                        }
+                    }
+                } catch (_: IllegalArgumentException) {
+                    return
+                }
+            TYPE_SESSION_SETTINGS ->
+                try {
+                    val settings = envelope.payload.toSessionSettings()
+                    val arrival = ++settingsArrival
+                    authoritativeSettings.update { it + (conversation to (arrival to settings)) }
+                    relayRequests.waiter(envelope.inReplyTo)?.complete(envelope.payload)
+                } catch (_: IllegalArgumentException) {
+                    return
+                }
+            TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED ->
+                decodeModalEvent(envelope)?.let { event ->
+                    when (event) {
+                        is ModalEvent.Shown ->
+                            if (event.modalId !in retiredModals) {
+                                if (admittedModals[event.modalId]?.let { it != conversation } == true) return
+                                admittedModals[event.modalId] = conversation
+                                publishAuthoritativeModal(event)
+                            }
+                        is ModalEvent.Dismissed ->
+                            if (admittedModals[event.modalId] == conversation) {
+                                admittedModals.remove(event.modalId)
+                                retiredModals += event.modalId
+                                publishAuthoritativeModal(event)
+                            }
+                        is ModalEvent.Cleared -> Unit
+                    }
+                }
+            else -> routeInbound(envelope)
+        }
+    }
+
     private fun onInbound(envelope: Envelope) {
+        if (authoritativeLiveEnabled() && SessionLiveAdmission.family(envelope.type) != null) {
+            sessionLiveAdmission.admit(envelope)?.let(::applyAuthoritativeLive)
+            return
+        }
+        if (authoritativeLiveEnabled() && envelope.type == TYPE_CONVERSATIONS) {
+            val summaries =
+                try {
+                    MobileJson.decodeFromJsonElement<ConversationsPayload>(envelope.payload).conversations
+                } catch (
+                    _: IllegalArgumentException,
+                ) {
+                    return
+                }
+            summaries.forEach { row ->
+                row.currentSessionId?.takeIf { it.isString }?.let { sessionLiveAdmission.summary(row.id, it.content) }
+            }
+        }
+
+        if (envelope.type in setOf(TYPE_THREAD_ITEM_ADDED, TYPE_THREAD_ITEM_CHANGED, TYPE_THREAD_TEXT_APPEND)) {
+            val capabilities = negotiatedCapabilities()
+            if (authoritativeHostId.isNotEmpty() && CAPABILITY_THREAD in capabilities && CAPABILITY_INTERACTIVE in capabilities) {
+                authoritativeRoute.accept(envelope)
+            }
+            return
+        }
         val payload = envelope.payload as? JsonObject
         val conversation = (payload?.get("conversation_id") as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
         val before = threadProjection.readRows(conversation)
@@ -1211,10 +1429,31 @@ class RemoteConversationRepository(
 
     /** The run configuration of a conversation's session (#590); see [SessionSettingsCommands.observeSessionSettings]. */
     override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> =
-        sessionSettingsCommands.observeSessionSettings(conversationId)
+        if (authoritativeLiveEnabled()) {
+            authoritativeSettings
+                .map {
+                    it[conversationId]
+                }.distinctUntilChanged()
+                .map { it?.second }
+        } else {
+            sessionSettingsCommands.observeSessionSettings(conversationId)
+        }
 
     /** Invalidate a conversation's settings reading (#590); see [SessionSettingsCommands.refreshSessionSettings]. */
-    override fun refreshSessionSettings(conversationId: String) = sessionSettingsCommands.refreshSessionSettings(conversationId)
+    override fun refreshSessionSettings(conversationId: String) {
+        if (authoritativeLiveEnabled()) {
+            pump.send(
+                Envelope(
+                    relayRequests.nextRequestId(),
+                    "request_session_settings",
+                    Clock.System.now().toString(),
+                    JsonObject(mapOf("conversation_id" to JsonPrimitive(conversationId))),
+                ),
+            )
+        } else {
+            sessionSettingsCommands.refreshSessionSettings(conversationId)
+        }
+    }
 
     /**
      * Send one `request_context_usage` naming [conversationId] (#1410), the `askForModelMenu` posture in
@@ -1435,10 +1674,24 @@ class RemoteConversationRepository(
         modalId: String,
         optionId: String,
         alwaysAllow: Boolean = false,
-    ): Unit = conversationCommands.answerModal(modalId, optionId, alwaysAllow)
+    ) {
+        if (authoritativeLiveEnabled()) check(admittedModals.containsKey(modalId)) { "permission request not outstanding" }
+        conversationCommands.answerModal(modalId, optionId, alwaysAllow)
+        if (authoritativeLiveEnabled()) {
+            admittedModals.remove(modalId)
+            retiredModals += modalId
+        }
+    }
 
     /** Cancel the surfaced modal (#438); see [ConversationCommands.cancelModal]. */
-    suspend fun cancelModal(modalId: String): Unit = conversationCommands.cancelModal(modalId)
+    suspend fun cancelModal(modalId: String) {
+        if (authoritativeLiveEnabled()) check(admittedModals.containsKey(modalId)) { "permission request not outstanding" }
+        conversationCommands.cancelModal(modalId)
+        if (authoritativeLiveEnabled()) {
+            admittedModals.remove(modalId)
+            retiredModals += modalId
+        }
+    }
 
     /** Current connection's detection capability, disabled permanently on collector termination. */
     val supportsBackgroundTaskStop: Boolean get() = backgroundTaskStops.supported

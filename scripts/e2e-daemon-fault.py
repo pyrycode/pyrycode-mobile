@@ -6,6 +6,7 @@ daemon's existing private home and never passes through this control protocol.
 """
 
 import argparse
+from e2e_session_cleanup import TestSessions
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
@@ -41,6 +42,9 @@ def main():
     parser.add_argument("--log", required=True)
     parser.add_argument("--ready-token", default="")
     parser.add_argument("--control-socket", required=True)
+    parser.add_argument("--cleanup-sockets-file", default="")
+    parser.add_argument("--stream-release-file", default="")
+    parser.add_argument("--stream-result-release-file", default="")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -77,13 +81,29 @@ def main():
             child.terminate()
             child.wait(timeout=10)
 
+    def cleanup_sockets():
+        if not args.cleanup_sockets_file:
+            raise RuntimeError("session cleanup is not configured")
+        paths = json.loads(Path(args.cleanup_sockets_file).read_text())
+        if args.control_socket not in paths or not Path(args.control_socket).exists():
+            raise RuntimeError("primary test daemon is unavailable for cleanup")
+        return [path for path in paths if Path(path).exists()]
+
+    test_sessions = TestSessions(cleanup_sockets)
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, _format, *_args):
             pass
 
         def do_POST(self):
             try:
-                if self.path == "/posts":
+                if self.path == "/test-begin":
+                    test_sessions.begin()
+                elif self.path == "/test-end":
+                    removed = test_sessions.end()
+                    print(json.dumps({"event": "test_session_cleanup", "time": time.time(),
+                                      "removed": removed, "remaining_new": 0}), flush=True)
+                elif self.path == "/posts":
                     size = int(self.headers.get("Content-Length", "0"))
                     if not 0 < size <= 1024:
                         raise ValueError("invalid synthetic post control")
@@ -94,6 +114,13 @@ def main():
                     offset = Path(args.log).stat().st_size
                     if start():
                         await_relay_ready(offset)
+                elif self.path in ("/stream-release", "/stream-finish"):
+                    release = args.stream_release_file if self.path == "/stream-release" else args.stream_result_release_file
+                    if not release:
+                        self.send_error(404)
+                        return
+                    # Paths are fixed by the isolated harness; this request accepts no path or content.
+                    Path(release).touch()
                 elif self.path != "/status":
                     self.send_error(404)
                     return
@@ -104,7 +131,7 @@ def main():
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
-            except (ValueError, OSError, RuntimeError, subprocess.TimeoutExpired):
+            except (ValueError, KeyError, OSError, RuntimeError, subprocess.TimeoutExpired):
                 self.send_error(503, "owned daemon transition failed")
 
     server = HTTPServer(("127.0.0.1", 0), Handler)

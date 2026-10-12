@@ -319,6 +319,18 @@ and the preserved native XML on `pixel2Api33Atd` (Android 13 Google ATD):
 
 ### Reader presentation and earlier coverage
 
+`MarkdownReaderScreenTest.leavingTheReader_cancelsItsActiveAndPendingErrorNotices`
+must establish both an active notice and a queued second occurrence before leaving
+the reader (#2042). File operations complete outside the Compose clock: observe both
+static open-operation outcomes and hold notice time while the first occurrence remains
+active. After changing visibility, deliver `Snapshot.sendApplyNotifications()` before
+driving the clock until actual composition disposal; changing the visibility flag alone
+does not prove disposal. Assert the pill is absent and notice state is null, then retain
+the original 4,100 ms advance and assert the occurrence has not changed, proving the
+queued notice never started. Restore the diagnostic logger and clock in `finally`.
+This synchronizes the fixture's asynchronous preconditions; it does not establish a
+production cause for the earlier unmatched full-suite failure or its teardown exception.
+
 The current reader-menu captures are retained under
 [`reader-actions-1667/`](../../../app/src/androidTest/assets/reader-actions-1667/):
 `reference-412x892.png`, dark `menu-412x892.png`, `menu-light-412x892.png`,

@@ -76,24 +76,47 @@ Rows and exact read evidence travel together. See
 [worker admission, pacing and cancellation](thread-screen-how-it-works-state.md#combineobserveconversations-observemessages-pendingworkspacepickerstateinwhilesubscribed--three-upstreams-since-137)
 and [frame probes](thread-screen-testing.md#frame-paced-content-1968).
 
-**Foreground read checkpoints (#1912).** `ThreadReadViewport` sends
-`ThreadEvent.NewestContentPresented` only when the destination is resumed, the newest
-rendered row has finished its reveal for the exact version on screen, and that row's
-trailing edge sits inside the message viewport, below the measured header or top-overlay
-pills and above the composer and IME. Any surface that hides the list blocks it: the
-permission or question prompt, Channel info, the background-task panel, the status sheet,
-rename, edit-channel, save-as-channel, delete and workspace dialogs, the overflow and header
-menus and slash-command suggestions. Such surfaces leave the destination resumed and the
-list composed, so lifecycle alone cannot prove sight; a reply that arrives behind one
-qualifies only after it closes. A row update while the reader has scrolled away, merely
-opening the thread, or a recomposition with an unchanged checkpoint sends nothing. A
-shown Agent block takes the lifecycle claims of its hidden local-agent task updates, so a
-changed block must itself be presented; plain task lifecycle is deliberately invisible
-receipt. The ViewModel forwards only increasing checkpoints. Repository rules for
-claims, barriers and retries are under
+**Foreground read checkpoints (#1912, #2085).** `ThreadReadViewport` sends
+`ThreadEvent.NewestContentPresented` only while the destination is resumed and
+unobscured, after exact row reveal completes and its readable trailing edge is
+inside the measured message viewport, below the header/top-overlay pills and
+above the composer/IME. Permission/question prompts, Channel info, background-task
+and status panels, editing/workspace dialogs, overflow/header menus and slash
+suggestions block sight even though the destination remains resumed. Opening,
+receipt, scrolled-away updates and unchanged recomposition do not establish sight.
+A shown legacy Agent block must itself be presented; hidden task lifecycle is receipt.
+
+For the supplied authoritative presentation, coverage comes only from the store's
+certified `checkpoint`, never `completedVersion`, a batch maximum or item revisions.
+Usable `lastShownVersion` and confirmed `readUpTo` are separate summary facts.
+Unavailable shown metadata, partial catch-up, repair/reset, coverage below shown,
+rows beyond coverage or no shown-row evidence reaching the watermark withhold a
+checkpoint. Hidden/state-only changes grant no sight. Qualification is bounded by
+the shown watermark and requires the newest shown row currently visible plus sight
+of **every shown row revision above confirmed read**, including an older row appended
+between confirmed read and the newest watermark. Seeing only the newest row can
+otherwise mark an intermediate offscreen append read.
+
+Authoritative candidates and the composition-local seen ledger use scoped list keys
+and exact revisions. Equal banners, refusals, dividers and compactions cannot share
+sight through displayed-value equality. The ledger resets when the presentation
+instance changes; replacement/removal and host, conversation, epoch or generation
+changes retire readiness. `ThreadViewModel` validates the carried key/revision proof,
+active presentation and composition binding, exact owner and captured facade
+connection identity before forwarding an increasing checkpoint. A reconnect cannot
+reuse a mounted composition's sight. Host availability fences authoritative sight;
+legacy/local fallback retains its existing behavior.
+
+The supplied-input seam remains dormant until #1988 activates capability selection
+and authoritative input collection; #1984 owns sync/cache integration. #1988 also
+owns `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` and the
+combined partial-reconnect/unseen-content daemon acceptance. This slice changes no
+follow-to-latest presentation and claims no live proof. Qualified work uses the
+existing host-owned retry path after screen closure or disconnect; only daemon
+confirmation advances shared read. See
 [daemon conversation read marks](remote-conversation-repository.md#daemon-conversation-read-marks).
 
-Since #1953, UI-local read bookkeeping holds only one `ThreadReadCandidate`: the
+On the legacy route since #1953, UI-local read bookkeeping holds only one `ThreadReadCandidate`: the
 newest rendered delivered row's exact version and list key, with layout, readable
 edge and reveal readiness. Invisible info banners do not become candidates; a queued
 newest row blocks qualification. Version/key changes and removal followed by
@@ -120,6 +143,42 @@ versions and the tall-row edge rule. See [testing guidance and counted evidence]
 `ThreadScreen` uses a `Scaffold` with `ThreadTopAppBar`, a message-region `Box` containing either `EmptyThreadState` or the remembered reverse-layout `LazyColumn`, and a composer column in `bottomBar`. Connecting and Reconnecting appear in the composer status band; Offline Retry and pairing Re-pair appear in `ThreadTopOverlay`, pinned over the message region without reflowing the list. The list folds delivered and queued rows, draws every row at full opacity (session boundaries included, since #1578), and leaves each row's rendering to its own component. The footer, attachments and input keep their existing behavior and visual ownership. The header menu uses the shared Actions overlay below the live button (#1666), hosted over the Scaffold with IME-constrained scrolling and header-priority Back; see [overlay wiring](thread-screen-how-it-works-overlays-and-app-bar.md#header-actions-overlay-1666).
 
 Back, title and overflow stay reachable through their callbacks. The overflow opens `ThreadOverflowMenu` beneath its control; screen-owned state hosts the rename, save-as-channel, status and other modal flows described in the linked topics. Workspace picker state remains in the screen contract for older flows, but the current thread frame and overflow expose no workspace chip, label, picker trigger or workspace-edit action.
+
+## Supplied session readings and presentation (#2084)
+
+Durable item content and actionable live state have separate sources. Current-session
+activity, settings and prompts pass through repository session admission before the
+existing ViewModel/status/modal presentations consume them. Summary bindings identify a
+session without proving a running process. A replacement retires session-local readings
+and callbacks while preserving durable items, supplied pending/queue state and account
+rate readings. [Held prompt collection](relay-repository-coordinator-seams-and-passthroughs.md#modal-event-seam-445-and-the-hoisted-hostmodals-fold-492)
+keeps an admitted request visible even if it arrived before the screen subscribed.
+
+The `projectAuthoritativeThread` overload accepts `AuthoritativeLiveProgress` from
+`observeAuthoritativeProgress`: tool elapsed-time and task progress maps plus producing
+session identity. It joins only to active supplied items whose recorded session matches
+that identity, independently of the legacy task roster. Reusing a tool/task id in a
+later session cannot attach old progress to the new row. Family clears remove only the
+matching transient map; duplicate clears after fresh state preserve it. Progress changes
+no durable item, revision, checkpoint or read evidence. Three-argument presentation
+callers retain their existing contract; #1988 owns collecting these inputs in production.
+
+Answered permission/question `notice` / `prompt_answered` items remain inert historical
+content across replay and a new connection. Only outstanding supplied requests can be
+answered. Clear/replacement never sends an answer; captured request identities and
+ViewModel guards keep retired taps from acting on replacement prompts. Recollection or
+configuration change must not replay an action. `AuthoritativeSessionScreenTest` covers
+session replacement and retired rendered callbacks, real answered-history records and
+fresh connection/repository/ViewModel ownership, plus supplied task/tool progress without
+a legacy roster. Remounting the same ViewModel alone cannot prove reconnect behavior.
+
+\#1988 owns capability activation, delivery and the rung-3
+`InteractiveStreamE2ETest.interactiveTurn_newSession_rendersSessionBoundaryDelimiter`
+proof with current-session status freshness; this supplied-input slice claims no live
+result. #1986 owns pending sends/queue reconciliation, #1947 legacy context reset.
+Existing activity/prompt geometry and assets remain unchanged. See
+[repository retirement](remote-conversation-repository-status-projections.md#supplied-session-ownership-and-family-retirement-2084)
+and [wire ownership](mobile-protocol-v2-wire-layer.md#session-scoped-live-admission-2084).
 
 ## How it works
 

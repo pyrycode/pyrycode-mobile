@@ -21,6 +21,11 @@ import kotlinx.serialization.json.decodeFromJsonElement
  * connection-scoped exactly as it was when it lived in the repository.
  */
 internal class ApiRetryProjection {
+    /** Retire only this conversation's session-scoped reading. */
+    fun clear(conversationId: String) {
+        apiRetryByConversation.update { it - conversationId }
+    }
+
     /**
      * `conversationId -> current API-retry status` (#593) — whether claude is stuck retrying an API
      * error, and at which attempt. Written **only** from the repository's single inbound collector: each

@@ -31,7 +31,7 @@ class PasteCodeDialogTest {
     @Test
     fun title_label_and_buttons_render() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 PasteCodeDialog(onDismiss = {}, onValidPayload = {})
             }
         }
@@ -46,7 +46,7 @@ class PasteCodeDialogTest {
     fun validPaste_handsOffPayload_andShowsNoError() {
         var captured: String? = null
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 PasteCodeDialog(onDismiss = {}, onValidPayload = { captured = it })
             }
         }
@@ -63,7 +63,7 @@ class PasteCodeDialogTest {
     fun validPaste_trimsSurroundingWhitespace_beforeHandOff() {
         var captured: String? = null
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 PasteCodeDialog(onDismiss = {}, onValidPayload = { captured = it })
             }
         }
@@ -79,7 +79,7 @@ class PasteCodeDialogTest {
     fun invalidPaste_showsInlineError_andDoesNotHandOff() {
         var captured: String? = null
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 PasteCodeDialog(onDismiss = {}, onValidPayload = { captured = it })
             }
         }
@@ -96,7 +96,7 @@ class PasteCodeDialogTest {
         var dismissed = 0
         var captured: String? = null
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 PasteCodeDialog(
                     onDismiss = { dismissed++ },
                     onValidPayload = { captured = it },

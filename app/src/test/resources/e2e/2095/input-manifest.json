@@ -1,0 +1,22 @@
+[
+  {
+    "path": "/tmp/builder-2088/evidence/fresh-prefix-0-TEST-pixel2Api33Atd-_app-.xml",
+    "sha256": "c0eb8627553ebe212a620e3208d74a894ae9fdbaeafbbacd104ef4743fe72e22"
+  },
+  {
+    "path": "/tmp/builder-2088/evidence/fresh-prefix-42-logcat-de.pyryco.mobile.e2e.InteractiveStreamE2ETest-interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel.txt",
+    "sha256": "f4b2fc007f6de071c2962fd5974f60f0e647e9f05578809111cecbf2e48f5cc6"
+  },
+  {
+    "path": "/tmp/builder-2088/evidence/fresh-prefix-daemon.log",
+    "sha256": "e17b9ba64fc85502c2616a020bc578343537472461b7fddbc5a2ecb8472657ff"
+  },
+  {
+    "path": "/Users/juhanailmoniemi/.pyry/e2e-auto-56577b3f/conversations/14084011-2adb-4fbd-9951-301cf6f5ccac/history/segment-00000000000000000001.jsonl",
+    "sha256": "350c20da5196c9612f330299291d8a6324810aae27a4c6dc5d6d9c8322253ee3"
+  },
+  {
+    "path": "/Users/juhanailmoniemi/.claude/projects/-Users-juhanailmoniemi/8732d945-41ef-4ff7-919a-ba7683ea040e.jsonl",
+    "sha256": "695ca59e91cd797c65d1dd23dd3427daaa68296aec8c2acf98c2f9d5b56e6184"
+  }
+]

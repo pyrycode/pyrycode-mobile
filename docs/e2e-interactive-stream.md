@@ -428,8 +428,9 @@ The method is `@Ignore` and excluded from the curated live suite. Claude can fin
 navigation; even a long prompt cannot fence that transient window, and pausing Compose leaves
 backend execution running. No passing live reopen assertion is claimed. Its rung-4 twin,
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`,
-uses `reopen-stream` to hold the prefix, release a suffix on the second send, then withhold
-completion until the third send after a still-open suffix display checkpoint. See
+uses `reopen-stream` to hold the prefix, release its suffix through the isolated
+controller after the phone's reopen display checkpoint, then withhold completion
+until a separate still-open suffix display checkpoint. See
 [deterministic sequence](#scenarios-454) and [counted evidence](#verification-status).
 
 For manual promotion, remove the method's ignore and run:
@@ -542,13 +543,15 @@ fixed the historical symptom. The missing current close proof is resolved; see
 
 **Finished-reply partial Copy (#1674).**
 `InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord`
-requests `amber cobalt jade` in a fresh discussion, waits for the exact assistant row to be
-finalized, long-presses the independently known middle word `cobalt`, and invokes Android's
-actual system Copy action. The platform clipboard must replace unrelated baseline text with
+requests a short sentence in a fresh discussion and follows the current repository across
+reconnects until a main assistant reply is finalized. Its existing message identity locates
+the completed body. The test derives a word from the rendered paragraph's text layout,
+long-presses it, and invokes Android's actual system Copy action. The platform clipboard must replace unrelated baseline text with
 exactly that word, shorter than the reply. Its rung-4 twin is
 `DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_systemCopyCopiesSelectedWord`,
 using the seeded channel and `selection-copy.jsonl` through the real scripted harness.
-Both run on a device without substituted menu/clipboard providers or production test tags.
+Both run on a device without substituted menu or clipboard providers. The body identity tag
+selects the actual assistant renderer; it does not replace the pointer or platform action.
 The live method is in the curated full suite; run the focused deterministic scenario with
 `python3 scripts/android-test-gate.py scripted selection-copy`. `scripted-all` includes it too.
 
@@ -1435,6 +1438,20 @@ methods stay excluded. With #1208's tool-use method and #1286's Offline Retry pr
 `scripts/e2e-emulator.sh` now lists 44 runnable methods and `android-test-gate.py` requires
 44 executed tests. Script tests check the floor and the
 restored methods' explicit presence, as well as excluding ignored methods.
+The real primary test daemon explicitly launches with `--model sonnet`. The recommended
+`default` menu row can differ from an ambient launch default. The archived failure used
+Haiku despite selecting an effort level from the recommended Sonnet row. Scripted launches
+remain unchanged. This base argument does not save a Mobile model; explicit per-session
+model choices still override it. Applied effort must remain a fresh child-reported fact.
+
+The 2026-10-12 combined full managed live gate passed all 65 curated methods, including
+all three effort scenarios, with no failures, errors, skips or retries. The operator ran
+that gate while both Mobile dispatchers remained paused. The exact Mobile/backend
+revisions, Claude version and private XML/logcat references with hashes are retained in
+[`live-result.json`](../app/src/test/resources/e2e/2095/live-result.json). The combined
+candidate also includes reply and Send now repairs and an experimental Copy action.
+That evidence does not establish the separate historical Copy failure's cause.
+
 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` (**one** turn) starts a chat with no
 saved or remembered effort, sends the ping prompt, and asserts the next fresh reply carries
 `effective_effort` (an omitted key fails the method) and a non-empty `permissionMode`. Since
@@ -1462,6 +1479,48 @@ already carries `effective_effort`. See [Thread composer footer §
 Sourcing](knowledge/features/thread-composer-footer.md#sourcing) and [Thread composer footer — remembered
 effort recall](knowledge/features/thread-composer-footer-effort-recall.md) for the production ranking and
 recall rules these methods assert against.
+
+### Remembered effort acknowledgement barrier (#2075)
+
+The existing rung-3
+`InteractiveStreamE2ETest#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel`
+keeps its two real-Claude turns, restart persistence, recall before each first
+message, applied effort after each turn, empty saved model, explicit saved-effort
+protection and failure cleanup. Priming now waits for section settlement **and**
+the actual remembered-effort value; the shared section wait cannot accept unrelated
+text while Effort is applying. Both acknowledgement/fresh-read and delayed-storage
+orderings have [controlled regression evidence](knowledge/features/thread-composer-footer-effort-recall.md#remembered-effort-recall-686).
+No `DeterministicInteractiveStreamE2ETest` twin was added.
+
+The [fresh dispatcher full-live gate](https://github.com/pyrycode/pyrycode-mobile/issues/2075#issuecomment-6106491190)
+on 2026-10-11 ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`:
+**65 executed, 65 passed, 0 failed, 0 skipped**. Its retained JUnit report explicitly
+includes this method as passed; this was a full-suite run, not a focused retry.
+Mobile `feature/2075` was `398909331159`, merged with main `0acab7ce274b`.
+The matching diagnostic log records daemon
+`a536d17b1e182fb5398a5458e3afe6079b37a510`, despite the dispatcher's summary lacking
+a `daemon-revision` annotation. Reports are
+`2026-10-11T06-49-08-127Z_real-claude-gate_#2075.log` and its matching `.stderr.log`
+in the dispatcher repository's `logs/` directory.
+
+Fixed `RememberedEffort` diagnostics distinguish fixture preparation, priming
+acknowledgement/persistence, graph restart, chat/channel recall before send,
+first-turn applied readings, explicit-choice protection and cleanup. They emit
+static stage/outcome codes and preserve the original failure cause. However, the
+fresh gate's referenced `build/dispatcher-tests/live-robi4mcf` artifact directory
+is no longer present, and the retained report/diagnostic log does not include
+these stage records. Stage-by-stage live capture is unavailable and remains an
+explicit evidence limitation; no stage capture is claimed. The
+[verifier's return disposition](https://github.com/pyrycode/pyrycode-mobile/pull/2077#issuecomment-6106591453)
+confirms that the counted named full-suite pass satisfies live acceptance. No
+additional live run is required to recreate successful stage records.
+
+The archived #1869 occurrence remains unattributed: its failing stage and daemon
+revision are unavailable. The old wait existed on reported mobile `f98d50139d`
+(main `6629a7a538`) and unchanged passing mobile `0acab7ce274b`. The earlier
+unchanged focused pass on daemon `a536d17b1e18` (1 executed/passed, 0 failed/skipped)
+does not establish its cause. #2075 repairs independently reproduced harness races.
 
 The **operator-bypass permission** scenario (#687 —
 `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`) rides the curated `LIVE=1`
@@ -2598,6 +2657,18 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
+Every live method owns the daemon sessions it creates. An outer JUnit rule snapshots
+sessions on the launcher's private daemon sockets before the Activity starts. After
+Activity teardown, it removes new non-bootstrap sessions through `sessions.rm`.
+Shared fixture sessions remain. The existing removal operation waits for its child
+and preserves transcripts by default. The controller accepts no caller-supplied
+socket path or session ID. It includes hosts that started during the scenario.
+
+Cleanup runs after success and failure. Its failure fails a green body or is attached
+to the original failure. The controller retains the ownership snapshot after a failed
+cleanup, so the next method cannot silently adopt leaked sessions. This is separate
+from scenario-specific cleanup of chats, pairings and other test data.
+
 The existing deletion scenario
 `InteractiveStreamE2ETest.interactiveTurn_deleteConversation_removesFromListAndClosesThread`
 (#1888) waits for its discussion's owning host immediately before Save and Delete confirmation.
@@ -3122,8 +3193,8 @@ The configured `scripted-all` gate includes `ping` and retains both methods:
 | `selection-copy` (#1674) | finished assistant prose copies only the long-pressed word through Android’s system menu | `selection-copy.jsonl` | one |
 | `direct-share` (#1729) | published shortcut stages text in its thread without a picker or send; explicit Send receives ping | `ping.jsonl` | one |
 | `ping` (default, #1842) | original single-line reply plus durable reconnect newest-page delivery and reader-driven gap catch-up | `ping.jsonl` | one, reused by both methods |
-| `reopen-stream` (#1762) | arrived prefix is immediate on reopen and retained when a suffix composes while the turn stays open; one final combined reply | `reopen-stream-open.jsonl` + `reopen-stream-done.jsonl` | **two** (suffix on second send, terminal result on third) |
-| `stream` (#1765, #1817, #1818) | arrived words display while the same reply stays streaming; all three deltas settle into one complete reply without a caret; side copy reads user, held-stream and finished assistant source while timestamps stay hidden; reply stages exact quotes of the held stream and the user message, unchanged by later chunks, with focus and keyboard and no send | `stream.jsonl` + `stream-end.jsonl` | **two** (completion on second send) |
+| `reopen-stream` (#1762) | arrived prefix is immediate on reopen and retained when a suffix composes while the turn stays open; one final combined reply | `reopen-stream-open.jsonl` + `reopen-stream-done.jsonl` | **two** (phone-checkpoint suffix and terminal-result releases) |
+| `stream` (#1765, #1817, #1818) | arrived words display while the same reply stays streaming; all three deltas settle into one complete reply without a caret; side copy reads user, held-stream and finished assistant source while timestamps stay hidden; reply stages exact quotes of the held stream and the user message, unchanged by later chunks, with focus and keyboard and no send | `stream.jsonl` + `stream-end.jsonl` | **two** (phone display-checkpoint release) |
 | `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
 | `tool` (#455) | a tool step shows **running** in flight, then **done** after the result | `tool-open.jsonl` + `tool-done.jsonl` | **two** |
 | `tool-failed` (#455) | a failing tool step renders **failed** | `tool-failed.jsonl` | one |
@@ -3137,6 +3208,11 @@ The configured `scripted-all` gate includes `ping` and retains both methods:
 | `context-overflow` (#1473) | the combined top-overlay context/Compact pill (#1603) renders after a `prompt_too_long` turn end, and tapping Compact reaches the daemon's child | `context-overflow.jsonl` | one |
 
 ### Scripted ping durable-gap proof (#1842)
+
+The ping method also proves the foreground correlated read and list-only peer attention
+clear. Its #2070 diagnostics identify the selected reply's claims, receipt holes and
+stored gaps without logging content; assertions, ordered selection, coverage checks and
+deadlines remain intact. See [receipt-continuity evidence](#scripted-ping-receipt-continuity-2070).
 
 Run `python3 scripts/android-test-gate.py scripted ping` to execute both
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`
@@ -3168,6 +3244,15 @@ pull-loop condition would try to reveal a nonexistent marker. Keep chronological
 exactly-once reply, settled reply, reply placement between batches and held cached-row assertions.
 These checks prove delivery and reader demand rather than automatic viewport following. See
 [the history-demand contract](knowledge/features/thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
+
+Since #2069, passive diagnostics correlate page receipt counts and durable spans/gaps with
+projected anchors and composed-marker counts at newest receipt, each completed pull, fixture
+recovery and final exhaustive search. They log static phases, numbers and booleans only and
+initiate no demand. A zero composed count in one lazy viewport is insufficient: the independent
+final `performScrollToNode` search accepts only Compose's specific exhausted-search assertion.
+Recovered fixture content also cannot fill an omitted non-rendering durable identity. The
+[original/repaired comparison](#scripted-durable-gap-closure-2069) establishes the daemon-owned
+cause while preserving every shared proof assertion, deadline and physical-pull bound.
 
 **Fragmented projection regression evidence (#1917, 2026-10-07).** The
 [verifier's inspected fresh XML](https://github.com/pyrycode/pyrycode-mobile/pull/1929#issuecomment-6047583572)
@@ -3352,19 +3437,37 @@ the context notice is gone. No live rung-3 twin is possible: real Claude cannot 
 is the held twin of the manual word-reveal observation. `stream.jsonl` emits two
 arrivals forming a multi-word prefix without a terminal record. The test observes `Hello, streamed`
 in a displayed bubble and verifies the assistant row is still streaming and the
-turn non-idle. Only after that checkpoint does its explicit second send release
-`stream-end.jsonl`, carrying the third delta and terminal result. Elapsed time alone
-cannot release completion. Together the fragments retain the three distinct
+turn non-idle. Only after the held display/copy/reply checkpoints does
+`DaemonFaultControl.releaseStream()` release `stream-end.jsonl`, carrying the
+third delta and terminal result. The isolated controller touches a fixed harness-owned
+release path; elapsed time alone cannot release completion. Together the fragments retain the three distinct
 assistant `message.id`s and assemble one reply, `Hello, streamed world`.
 
 The test awaits that same reply ID with exact complete text, `isStreaming == false`
 and an idle turn before checking the displayed final body without its caret.
-The release send remains real user input and can produce another assistant turn.
 Completion selects exactly one assistant with the captured `held.id`, preserving
 duplicate-ID rejection without assuming the conversation has only one reply (#1793).
+The fixture starts with a fixed synthetic replay user echo to establish initial
+delivery. The display release introduces no additional prompt or user echo (#1985).
 Caret absence alone cannot establish completion because the caret blinks. This
 scenario stays selected by `scripted stream` and `scripted-all`; it asserts display
 and settlement, not cadence or a live catch-up deadline.
+
+**`stream-queued-echo`** — enabled by #2078 in
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply`.
+This separate legacy reproduction displays the held two-delta prefix and captures its reply id,
+sends a follow-up through the owning repository, observes the own echo queued, then releases
+the third delta and result. The captured row must contain all three fragments through completion,
+with no suffix row. It uses the held stream fixture and zero real Claude turns. Run it in isolation:
+
+```sh
+DETERMINISTIC=1 SCENARIO=stream-queued-echo PYRY_FORCE_TEST_RUN=1 bash scripts/e2e-emulator.sh
+```
+
+The manual selection is absent from `scripted-all`; that gate cannot substitute for the isolated
+run. Retain fresh named XML and executed/failed/skipped counts, and run the existing
+`python3 scripts/android-test-gate.py scripted stream` scenario too. See
+[counted evidence](#legacy-queued-follow-up-continuity-2078).
 
 **`spinner`** — the thinking state is transient: a single fragment with `thinking` then `end_turn` would
 flip `isThinking` true→false before Compose lays out the spinner. The harness therefore holds the turn
@@ -3530,6 +3633,251 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+### Session cleanup and Firebase recovery, 2026-10-12
+
+The earlier HP full run reached the container's 2048 process/thread limit after
+59 passing cases. Per-test session teardown now removes newly created sessions
+through the owned daemon control sockets. A fresh full HP run passed **65 executed,
+65 passed, 0 failed, 0 errors, 0 skipped**. All 65 cleanup operations completed and
+removed 73 sessions. Per-second resource samples peaked at 569 processes/threads,
+with no limit hits or memory kills. No test workload remained after completion.
+The container limit stayed at 2048.
+
+The same run passed these existing real-FCM and history scenarios for
+[#2055](https://github.com/pyrycode/pyrycode-mobile/issues/2055):
+
+- `interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`
+- `interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread`
+- `interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`
+
+The acquisition cause was an Android API-key restriction missing HP's signing
+certificate. The operator repair belongs to
+[#2083](https://github.com/pyrycode/pyrycode-mobile/issues/2083#issuecomment-6130075099).
+The actual package/certificate identity succeeded after that repair. Missing and
+incorrect identity controls still received `API_KEY_ANDROID_APP_BLOCKED`. This is
+separate from the earlier daemon connection failures. Acquisition, notification
+delivery and reconnect assertions remained enabled without retries.
+
+The full run used Mobile `cbd070f673bf0b75de632145039a0b54b617ee6b`, daemon
+`9c9cd5a25c337666bdbed47c29202e695a172733`, Claude 2.1.280 and the API 33 Google ATD.
+The Mobile revision combines the pending reliability repairs, including an
+experimental Copy candidate. This result does not diagnose the historical Copy
+failure or satisfy #2108's separate historical-source control.
+Private XML, logs, APKs, resource samples and hash manifests are retained on HP in
+`~/pyrycode-runtime/work/Projects/.mobile-reliability-20261012.iEsmXs/cleanup-full-admitted/evidence/`.
+The counted XML SHA-256 is
+`0a354d166780378777d1ee70200dd3a0dbf74d460169e4f6149d64f147b03bf8`.
+
+### Supplied renderer and scripted display fences (#1985)
+
+The additive supplied authoritative renderer has [counted projection/screen evidence](knowledge/features/thread-screen-testing.md#supplied-authoritative-renderer-1985).
+Production negotiation, store collection and activated-route rung-3 acceptance remain
+with [#1988](https://github.com/pyrycode/pyrycode-mobile/issues/1988), including
+`InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`,
+`interactiveTurn_backgroundAgent_replyStaysUnderAgent`, prior-session terminal agents
+and combined daemon #3077 proof. The existing legacy background-agent ladder coverage
+does not establish activated-route execution.
+
+The repaired `stream` and `reopen-stream` fixtures prepend a fixed synthetic replay
+user echo. Their isolated controller releases held content only after the phone
+proves the preceding display checkpoint; incidental second/third sends previously
+introduced a user echo between the measured prefix and suffix. Stream completion
+retains same-reply identity, copy/reply, prefix/streaming, completion/idle and caret
+assertions. Reopen retains paused-clock immediate prefix/reveal checks;
+`DaemonFaultControl.releaseStream()` follows the reopened-prefix checkpoint,
+then `finishStream()` follows the displayed suffix while the same reply
+is still streaming and the turn non-idle. Both release paths are optional fixed
+files owned by the isolated harness, with idempotent controller actions.
+
+The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2076#issuecomment-6107772890)
+on `63c64b73b909` and dispatcher gate report record full `scripted-all`:
+**22 executed, 22 passed, 0 failed, 0 skipped** across 21 scenarios.
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
+and `interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`
+each executed once and passed (**1/0/0**). These are named results from the full
+suite, not separate focused runs. Documentation also inspected retained builder
+XML `/tmp/builder-1985/stream-green-TEST-pixel2Api33Atd-_app-.xml` and
+`reopen-green-TEST-pixel2Api33Atd-_app-.xml`: each **1 executed, 1 passed,
+0 failed, 0 skipped**, timestamped `2026-10-11T08:38:15` and `08:39:10` respectively.
+Those earlier focused reports supplement the final gate record.
+
+The legacy queued-echo reproduction is now enabled and repaired by #2078; its separate
+isolated proof is recorded below. Production negotiated daemon-thread reconciliation remains
+with [#1986](https://github.com/pyrycode/pyrycode-mobile/issues/1986). The pre-ship
+command remains `python3 scripts/android-test-gate.py live`.
+
+### Legacy queued follow-up continuity (#2078)
+
+[PR #2082's verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2082)
+on `e8b2cb84ba7d3b7e58ab1db4663a5ee25d4fa5b9` confirms the enabled reproduction and
+fresh builder evidence. Documentation inspected both retained XML reports:
+
+| Builder run | Named `DeterministicInteractiveStreamE2ETest` method | Executed | Passed | Failed | Skipped |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Isolated `stream-queued-echo` | `interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply` | 1 | 1 | 0 | 0 |
+| `python3 scripts/android-test-gate.py scripted stream` | `interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread` | 1 | 1 | 0 | 0 |
+
+The isolated builder command used `PYRY_BIN="$PWD/build/e2e-bin/pyry"`,
+`RELAY_BIN="$PWD/build/e2e-bin/pyrycode-relay"`, `DETERMINISTIC=1`,
+`SCENARIO=stream-queued-echo` and `PYRY_FORCE_TEST_RUN=1` with `bash scripts/e2e-emulator.sh`.
+Both runs used zero real Claude turns and daemon revision
+`63aabec70dad3948c916332a139eb22533b8f4b8`. XML paths:
+`/tmp/builder-2078/rework-queued-echo-green/TEST-pixel2Api33Atd-_app-.xml`
+(timestamp `2026-10-11T11:15:48`) and
+`/tmp/builder-2078/rework-stream-green/TEST-pixel2Api33Atd-_app-.xml`
+(timestamp `2026-10-11T11:15:09`). Each report explicitly contains its named passing
+method, with zero errors. The stream gate artifacts are `build/dispatcher-tests/scripted-q6gxx5jg/`.
+These are separate builder runs, not results inferred from the full suite.
+
+The final dispatcher gates on the reviewed commit report UI **258 executed/passed,
+0 failed, 1 skipped** and scripted-all **22 executed/passed, 0 failed, 0 skipped**.
+The stream method passed in scripted-all; queued-echo is manual and is proved by the
+isolated run above. The UI skip is `RenameDialogCaptureTest.renameAtFigmaViewport`.
+No additional real-Claude acceptance is required for this legacy repository repair.
+
+The held reply's split came from an invisible Info receipt after a correctly parked echo,
+not missing open-phase evidence. History reconciliation also needs pending echo context while
+retaining reserved placement and renderer ownership. See
+[assistant continuity](knowledge/features/remote-conversation-repository-assistant-reply-segments.md)
+and [queue history](knowledge/features/queued-backlog.md#queued-display-metadata-and-history).
+
+### Scripted durable-gap closure (#2069)
+
+The [verifier's PASS on PR #2072](https://github.com/pyrycode/pyrycode-mobile/pull/2072#issuecomment-6105030442)
+confirms that the final wait detected genuine missing receipts, rather than stale projection or
+incorrect absence detection. After three physical pulls on the original daemon, all 245 held
+rows needed for fixture recovery were present, but durable ids 243 (`send_accepted`) and 250
+(`send_delivered`) were absent. Coverage retained `1–242`, `244–249`, `251–495`; projection
+selected anchors 242/249 and exhaustive Compose search found two markers. The daemon's legacy
+pager filtered these queued-send facts. Closed [daemon #3167](https://github.com/pyrycode/pyrycode/issues/3167),
+merged through [PR #3168](https://github.com/pyrycode/pyrycode/pull/3168), supplies their
+non-rendering receipts; Mobile production behavior remains unchanged.
+
+On 2026-10-11, the original ordered pair ran on managed Pixel 2 API 33 ATD at app
+`6b7f96f232bf18d3f76fa3e63fda4e016dea8524`, with relay
+`a7a05d1f123d42fa17ac23b5e4d10a8f741a4911` and zero real Claude turns:
+
+| Daemon revision | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original `b75aea7948b3c1b0c70983b11ea4047b09862099` | 2 | 0 | 2 | 0 | 0 |
+| Repaired `a3ca005f05e95650d10b7e07cb5d190252acbd1a` | 2 | 2 | 0 | 0 | 0 |
+
+Both counted reports name `DeterministicInteractiveStreamE2ETest` methods
+`interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` and
+`interactiveTurn_seededChannel_durableGapCatchUp`; each repaired method executed/passed 1,
+with 0 failed/errors/skipped. The repaired first older page contains 200 receipts rather
+than 198. Two physical pulls recover the fixture and join coverage `1–495`; projection has
+no markers and the independent search records `search_absent` without another request.
+
+The repaired invocation was:
+
+```sh
+ANDROID_GATE_WAIT_SECONDS=2700 PYRYCODE_SRC=/tmp/builder-2069/daemon-repaired PYRYCODE_RELAY_SRC=/Users/juhanailmoniemi/Workspace/Projects/pyrycode-relay python3 scripts/android-test-gate.py scripted ping
+```
+
+The original invocation differs only in `PYRYCODE_SRC=/tmp/builder-2069/daemon-original`.
+Both use unmodified archives of the recorded daemon revisions. Retained
+[original counted XML](../app/src/androidTest/assets/durable-2069/original-counted.xml),
+[repaired counted XML](../app/src/androidTest/assets/durable-2069/repaired-counted.xml),
+[original observations](../app/src/androidTest/assets/durable-2069/original-observations.txt),
+[repaired observations](../app/src/androidTest/assets/durable-2069/repaired-observations.txt)
+and [hole metadata](../app/src/androidTest/assets/durable-2069/original-hole-metadata.json)
+provide content-free evidence. The [manifest](../app/src/androidTest/assets/durable-2069/invocations.json)
+records full commands, revisions, hashes and absolute builder artifact paths. Original raw XML
+was `build/dispatcher-tests/scripted-nptg2jkb/0-TEST-pixel2Api33Atd-_app-.xml`; repaired raw XML
+was `build/dispatcher-tests/scripted-ed0na53x/0-TEST-pixel2Api33Atd-_app-.xml`. These raw reports,
+APKs and binaries are no longer present at their recorded worktree paths. The verifier inspected
+retained sanitized reports and observations but could not revalidate the recorded matching app
+APK hashes.
+
+The dispatcher configured gate at `6787b79cec36aa69cd37a2b1021e22e9a8e6149d` passed at
+`2026-10-11T03:26:43.073Z`:
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`.
+The supplied gate report and verifier's inspected fresh XML record **22 executed/passed,
+0 failed/errors/skipped**. Both named methods above executed/passed 1 each, with
+0 failed/errors/skipped, in `build/dispatcher-tests/scripted-all-s4c4eh0k/ping-0-TEST-installed.xml`;
+`dispatcher.xml` in that directory records totals. These are full configured-suite passes.
+Binary metadata identifies older configured daemon `a536d17b1e182fb5398a5458e3afe6079b37a510`,
+`vcs.modified=true`, with the same relay revision above. This meets the counted method-execution
+requirement despite the plan's repaired-source request; repair acceptance rests on the isolated
+repaired pair. No repaired-daemon full-suite pass is claimed.
+
+The verifier also inspected fresh unit reports for all six selected classes: 64 executed/passed,
+0 failed/errors/skipped, including five new `ScriptedDurableGapCoverageTest` probes. The retained
+`coverage-focused-counted.xml` duplicates ten unsigned-coverage cases and omits `HistoryCoverageTest`,
+so its 64 records are only 54 unique class/method pairs and cannot independently prove that total.
+The [controlled red report](../app/src/androidTest/assets/durable-2069/coverage-red-counted.xml)
+records 1 executed/failed, 0 passed/errors/skipped after omitting delivery receipt 3 from the
+repaired fixture (expected continuous `1–7`, actual `1–2` and `4–7`). Receipt restoration removes
+the marker without replacing read content. No fresh rung-3 execution is claimed:
+[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) retains ownership of
+`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`.
+
+### Scripted ping receipt continuity (#2070)
+
+The [verifier's PASS on PR #2071](https://github.com/pyrycode/pyrycode-mobile/pull/2071)
+certifies the daemon-owned queued-send repair without changing Mobile production rules.
+The original settled reply retained claims 9/10 but lacked delivery receipt 8; repeated
+observations retained hole (7,9), ruling out observation timing and lost-version claims.
+Daemon [#3167](https://github.com/pyrycode/pyrycode/issues/3167), merged at
+`a3ca005f05e95650d10b7e07cb5d190252acbd1a`, accounts for queued-send acceptance/delivery
+through existing nonvisual receipts. The repaired reply has receipts 1–12, checkpoint 12
+and no unknowns, unidentified entries or stored gaps.
+
+On 2026-10-11 the unchanged ordered selection ran on managed Pixel 2 API 33 ATD:
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted ping`.
+Both methods belong to `DeterministicInteractiveStreamE2ETest`; every run uses zero
+real Claude turns.
+
+| Ordered-pair evidence | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original daemon `b75aea7948b3`, app `f079a4595240` | 2 | 0 | 2 | 0 | 0 |
+| Older configured daemon `a536d17b1e18` control | 2 | 2 | 0 | 0 | 0 |
+| Repaired daemon `a3ca005f05e9`, app `ffb7b9a12098` | 2 | 2 | 0 | 0 | 0 |
+
+The older control predates queued-send facts and is not repair acceptance. The repaired
+pair used relay `a7a05d1f123d42fa17ac23b5e4d10a8f741a4911` and app
+`ffb7b9a12098592733d764a60cb36682d6e2624f`. Each repaired method executed/passed 1,
+with 0 failed/errors/skipped:
+
+- `interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`: the displayed
+  reply's repository checkpoint receives foreground correlated confirmation. A fresh post
+  stays unread on the list until the peer confirms reading that exact post, then attention
+  clears without phone reopen. All existing assertions and coverage checks passed.
+- `interactiveTurn_seededChannel_durableGapCatchUp`: passed completely in this fresh
+  pair. [#2069's independent comparison](#scripted-durable-gap-closure-2069) confirms that
+  omitted queued-send receipts also caused its final marker-closure failure.
+
+Retained [original XML](../app/src/androidTest/assets/read-2070/original-daemon-counted.xml)
+and [repaired XML](../app/src/androidTest/assets/read-2070/repaired-daemon-counted.xml)
+name both methods. The [manifest](../app/src/androidTest/assets/read-2070/invocations.json)
+contains exact environment-qualified commands, full app/daemon/relay revisions, binary/APK
+hashes and original artifact paths. Repaired raw artifacts were under
+`build/dispatcher-tests/scripted-xg79z1pa/`, including `0-TEST-pixel2Api33Atd-_app-.xml`.
+Raw builder XML/binaries are no longer available at the absolute worktree paths; the
+verifier inspected retained counted reports and diagnostics but could not revalidate those hashes.
+The [controlled red XML](../app/src/androidTest/assets/read-2070/unit-receipt-hole-red-counted.xml)
+records 1 executed/failed, 0 passed/errors/skipped when delivery receipt 3 was omitted
+(expected checkpoint 7, actual null). Restoring the exported real-store fixture made the
+six-class [focused unit selection](../app/src/androidTest/assets/read-2070/unit-repaired-counted.xml)
+pass 53 executed/passed, 0 failed/errors/skipped, including all three new projection probes.
+Receipt-only arrival, unknown/malformed receipts and unseen-version controls remain conservative.
+
+The dispatcher configured gate on `9e39c124b1cc588392fa50eb7eb4ed3a5161e7eb` passed at
+`2026-10-11T02:47:14.446Z`:
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`.
+Its counted report records **22 executed/passed, 0 failed/errors/skipped**. Both ping and
+durable-gap methods above executed/passed 1, failed/errors/skipped 0, in
+`build/dispatcher-tests/scripted-all-jv7n7so8/ping-0-TEST-installed.xml`;
+`dispatcher.xml` records the suite totals. These named passes are in the full configured
+suite, not a separate focused dispatcher run. As the verifier records, binary metadata
+and checkpoint-10 diagnostics identify the older configured daemon `a536d17b1e18`, rather
+than the repaired revision requested by the plan/PR. Counted configured-gate execution
+satisfies the method-execution check; receipt-repair acceptance rests on the repaired
+ordered pair above. No full suite against the repaired daemon is claimed. There is no
+remaining #2069 failure in this configured run. The existing real-Claude operator proofs
+and pre-ship live command remain unchanged.
 
 ### Empty-host channel setup (#1897)
 
@@ -4106,7 +4454,7 @@ full-run device artifacts were in `build/dispatcher-tests/live-0vm8oz36/`.
 \#1969's subsequent full live-proof results and missing daemon revision are recorded above.
 The permanent mobile receipt and
 confirmation regressions are described in
-[remote repository testing](knowledge/features/remote-conversation-repository.md#testing).
+[remote repository testing](knowledge/features/remote-conversation-repository-testing.md#testing).
 
 **Shared daemon unread (#1883, 2026-10-08).** The dispatcher ran fresh full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
@@ -5978,6 +6326,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 ## Follow-ups to ticket
 
+- **Remembered effort acknowledgement/persistence (#2075):** The existing rung-3
+  `InteractiveStreamE2ETest#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel`
+  passed in the [fresh full live suite](#remembered-effort-acknowledgement-barrier-2075).
+  Shared `RunConfigurationWaitTest` controls cover both settlement orderings;
+  no `DeterministicInteractiveStreamE2ETest` twin was added. Live acceptance is
+  satisfied; the unavailable `RememberedEffort` stage capture remains an explicit
+  evidence limitation, with no additional live run required. Historical #1869
+  attribution remains unproven. The pre-ship command remains
+  `python3 scripts/android-test-gate.py live`.
+
 - **Empty-host channel setup (#1897):** The existing rung-3
   `InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack` uses the
   loaded target-host snapshot and host-qualified Channels plus, with unchanged functional coverage
@@ -6103,7 +6461,8 @@ The remaining checks here are specific to a real relay or real Claude execution:
 - **Durable reconnect catch-up (#1842):** rung-4
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`
   is selected by ordinary `ping` and configured `scripted-all`, alongside the original ping.
-  [Counted evidence](#verification-status) closes this deterministic delivery repair.
+  [Counted evidence](#scripted-durable-gap-closure-2069) establishes #2069's missing
+  non-rendering receipt cause and closes its deterministic handoff without changing the proof.
   [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) closed the rung-3
   `InteractiveStreamE2ETest` operator-flow extension and the
   [external app force-stop proof](#external-app-force-stop-proof-1833).
@@ -6143,10 +6502,22 @@ The remaining checks here are specific to a real relay or real Claude execution:
   #1818 added reply and the midpoint split of the action targets.
   The pre-ship command stays `python3 scripts/android-test-gate.py live`.
 
+- **Authoritative activation (#1988) and queued echo (#2078):** supplied-snapshot
+  renderer proof and repaired deterministic display fences are recorded
+  [above](#supplied-renderer-and-scripted-display-fences-1985). #1988 retains the
+  activated-route background-agent methods and prior-session terminal regression;
+  #2078 enables the separate
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply`
+  reproduction. Its required isolated manual `stream-queued-echo` run and the existing stream
+  scenario each passed 1 executed, 0 failed, 0 skipped; see
+  [counted evidence](#legacy-queued-follow-up-continuity-2078). No coverage follow-up remains
+  for legacy continuity; negotiated reconciliation remains #1986.
+
 - **Stream completion identity (#1793):**
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
-  retains the captured reply ID after its release send, which may create another
-  assistant turn. Keep this selector scoped to that reply while rejecting duplicate
+  retains the captured reply ID after a phone display-checkpoint controller release
+  without an incidental send. The fixture includes a fixed replay user echo for initial
+  delivery. Keep this selector scoped to that reply while rejecting duplicate
   IDs; preserve every prefix, streaming, completion, idle, display and caret assertion.
 
 - **Word reveal (#1765):** the held `stream` twin,
@@ -6169,7 +6540,8 @@ The remaining checks here are specific to a real relay or real Claude execution:
 - **Ongoing-reply reopen (#1762):**
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`
   passed both the repaired focused `reopen-stream` run and `scripted-all`; the separate
-  second-send suffix and third-send result fences keep both display checkpoints on an open reply.
+  phone-checkpoint suffix and completion fences keep both display checkpoints on an open reply.
+  The fixture's fixed replay user echo establishes initial delivery; neither release sends a prompt.
   `InteractiveStreamE2ETest.interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately`
   remains ignored, excluded from the curated selector and manual/unproven because Claude may
   finish during navigation. Follow the [un-ignore and named-run procedure](#what-rung-3-is-made-of)
@@ -6348,6 +6720,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   run, not a full-suite pass. Retained dispatcher reports are
   `2026-10-04T08-35-25-235Z_real-claude-gate_#1631.log` and its `-rerun_#1631.log` counterpart.
 
+
+- **Scripted read receipt continuity (#2070):**
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`
+  retains the foreground and peer-read twin of the existing `InteractiveStreamE2ETest`
+  operator proofs. Daemon #3167 closes the queued-send receipt hole; Mobile barriers and
+  all device assertions remain intact. [Counted evidence](#scripted-ping-receipt-continuity-2070)
+  distinguishes repaired ordered-pair acceptance from the older-daemon configured gate.
+  [#2069's durable-gap evidence](#scripted-durable-gap-closure-2069) independently confirms
+  the same producer defect; no new scenario or selector is added.
 
 - **Shared unread (#1883):**
   `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` now proves

@@ -21,6 +21,11 @@ import kotlinx.serialization.json.decodeFromJsonElement
  * menu until the daemon's connect-time snapshot replaces it. Nothing here logs.
  */
 internal class SlashCommandMenuProjection {
+    /** Retire only this conversation's session-scoped reading. */
+    fun clear(conversationId: String) {
+        menusByConversation.update { it - conversationId }
+    }
+
     /**
      * `conversationId -> the slash-command menu last heard for it on this host`. Written **only** from the
      * repository's single inbound collector: each frame is a full snapshot that **replaces** that

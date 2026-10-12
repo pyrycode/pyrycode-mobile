@@ -2,7 +2,7 @@
 
 Split out of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md) on 2026-09-05 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md); see that document for what it does, its edge cases and its links.
 
-**The thread store, the minted-id ledger and the pending drops now live in `ThreadProjection`** (#912), an `internal class` in `data/repository/ThreadProjection.kt`, split out of `RemoteConversationRepository` the way the status events were (#819 — see [Status projections](remote-conversation-repository.md#status-projections-one-file-per-status-event)). The repository still owns the connection's single inbound collector and every `interactive` capability gate; each thread frame's `onInbound` arm now hands off to a public method on the projection instead of a private method on the repository itself, and `sendMessage`, `dropQueuedMessage` and `requestHistory` record into it directly rather than into a repository field. The move changed no fold behaviour, so the sections below still describe it accurately — where a snippet shows a `private val` or `private fun` on `RemoteConversationRepository`, read it as the same member, now on `ThreadProjection` and mostly public (`observe`, `appendMessages`, `appendSessionBoundary`, `applyUnrecognizedMessage`, `applyBanner`, `applyCompactionBoundary`, `applyToolUse`, `applyToolResult`, `applyToolDenied`, `applyToolProgress`, `applyAssistantDelta`, `finalizeAssistantTurn`, `recordMinted`, `recordDrop`, `withdrawDrop`, `settleDrops`, `mergeHistoryPage`, `remove`); `removeOwnEcho`, `appendUnrecognizedMessage`, `appendBanner`, `appendCompactionBoundary` and the three `decode…` functions stayed private, just on the new class. `settleDrops` also gained an explicit `QueueProjection` parameter, since it no longer sits in the same class as `queueProjection`.
+**The legacy raw-event thread store, the minted-id ledger and the pending drops now live in `ThreadProjection`** (#912), an `internal class` in `data/repository/ThreadProjection.kt`, split out of `RemoteConversationRepository` the way the status events were (#819 — see [Status projections](remote-conversation-repository-status-projections.md#status-projections-one-file-per-status-event)). The repository still owns the connection's single inbound collector and every `interactive` capability gate; each legacy thread frame's `onInbound` arm now hands off to a public method on the projection instead of a private method on the repository itself, and `sendMessage`, `dropQueuedMessage` and `requestHistory` record into it directly rather than into a repository field. The move changed no fold behaviour, so the sections below still describe it accurately — where a snippet shows a `private val` or `private fun` on `RemoteConversationRepository`, read it as the same member, now on `ThreadProjection` and mostly public (`observe`, `appendMessages`, `appendSessionBoundary`, `applyUnrecognizedMessage`, `applyBanner`, `applyCompactionBoundary`, `applyToolUse`, `applyToolResult`, `applyToolDenied`, `applyToolProgress`, `applyAssistantDelta`, `finalizeAssistantTurn`, `recordMinted`, `recordDrop`, `withdrawDrop`, `settleDrops`, `mergeHistoryPage`, `remove`); `removeOwnEcho`, `appendUnrecognizedMessage`, `appendBanner`, `appendCompactionBoundary` and the three `decode…` functions stayed private, just on the new class. `settleDrops` also gained an explicit `QueueProjection` parameter, since it no longer sits in the same class as `queueProjection`.
 
 **The list projection and the last-message previews now live in `ConversationListProjection`** (#913), an `internal class` in `data/repository/ConversationListProjection.kt`, split out the same way. The repository still decodes the frames the list state doesn't own alone (`message`, `conversation_updated`, `workspace_updated` each also feed something else), but the `conversations` snapshot decode moved wholesale into `applySnapshot`, and every list write and read is now a public method on the projection: `upsertConversation`, `applyWorkspaceLabel`, `recordLastMessage`, `updateCurrentSessionId`, `remove`, `observe`, `observeLastMessage`, `current`, plus the private `project`. Where the sections below show `projection` or `lastMessages` as a `private val` on `RemoteConversationRepository`, or show one of those names as a repository method, read it as the same member, now on `ConversationListProjection`. `removeConversation` stays split across two projections: it calls `ConversationListProjection.remove` and `ThreadProjection.remove` side by side, and `promote` / `archiveWorkspace`'s one-time snapshot reads are `ConversationListProjection.current()`.
 
@@ -291,6 +291,90 @@ below](#the-unified-thread-store-and-the-session_transition-fold-336)):
 > message` per row). Deferred by evidence — no live backfill yet (`max_messages` unexercised; the
 > backend dispatcher is pyrycode #248), no observed perf failure. Swap to a `LinkedHashMap<messageId,
 > Message>` accumulator when large-thread backfill goes live; the change is internal to `appendMessages`.
+
+## Authoritative daemon items alongside the raw-event projection
+
+`RemoteConversationRepository.authoritativeThreads` (#2043) is an additive,
+in-memory `AuthoritativeThreadStore`; existing `ThreadSnapshotSource` and
+`observeMessages` consumers still read `ThreadProjection`. Authoritative items
+never become raw history events. `observe(host, conversation)` selects one atomic
+snapshot containing complete `ThreadItemDto` items, epoch, `completedVersion`,
+resumable `checkpoint`, `repairNeeded`, `resetNeeded` and a local `generation`.
+Synchronous synchronized mutations publish a single StateFlow map; recollection
+reads held facts, and process death loses them. The daemon's
+[supplied delivery contract](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#daemon-thread-updates-v2-supplied-delivery-contract)
+and [ADR 042](https://github.com/pyrycode/pyrycode/blob/main/docs/knowledge/decisions/042-daemon-built-thread.md)
+remain the authority for wire facts.
+
+### Supplied route and connection ownership
+
+The defaulted `authoritativeHostId` constructor argument is empty. The three live
+thread verbs reach `AuthoritativeThreadRoute` only with a nonempty supplied source
+host and both `thread` and `interactive` in the negotiated capability set. This
+interception precedes legacy unread, replay-cursor and projection side effects;
+without the gate those verbs are ignored. Production hello still omits `thread`,
+so normal connections retain their raw-event behavior.
+
+The route reuses the [bounded thread decoder](mobile-protocol-v2-wire-layer.md#supplied-thread-updates-and-continuation-admission)
+and serializes decode, expiry, reset and certification. Only `Complete` applies
+items. `Pending` captures the conversation's generation without publishing partial
+facts; `Repair` marks its owner, or conservatively all known snapshots for that
+host when no owner can be recovered. A connection-scope child ticks expiry every
+second even without inbound traffic. Collector termination cancels it and abandons
+assembly, including cancellation before collection starts. Reconnect uses a fresh
+route/decoder, so fragments cannot combine across connections. Route reset discards
+that conversation's pending assembly; successful complete certification does too.
+
+### Item application and explicit clears
+
+Identity includes host, conversation, epoch and item id. Full items and supplied
+batches are atomic upserts: only strictly newer revisions replace held content,
+repeated delivery adds no duplicate, and omitted items remain held. Kind is stable
+within an epoch. Positive delivered order is the sole sort key; absent order stays
+absent, and an explicit zero clear is not a position. Equal-order ties and unordered
+items gain no inferred daemon ordering. Parent, session, agent, no-child, active,
+shown, required summaries and unknown kind/status/content facts remain as supplied;
+neither a roster nor the current session fills missing attribution.
+
+Changes require the held revision to equal `base_rev` and a strictly newer target
+revision. Named values replace whole values, including explicit clears; omitted
+keys remain unchanged and `content` is never deep-merged. `ThreadItemDto.decodeReplacement`
+retains optional null clears in raw JSON while exposing typed optional facts as
+unset. Reusing the ordinary full-item decoder here would reject valid clears;
+weakening that decoder would loosen wire admission. Append accepts only
+`user_message`/`assistant_message` content objects with string text, preserves other
+content keys, and adds the exact suffix once, including an empty suffix. A replayed
+patch requests repair rather than reporting idempotent success. Missing bases,
+invalid known fields, immutable id/kind changes or invalid history numbers leave
+completed facts/progress unchanged. Item ids are positive, revision is at least id,
+version is at least revision, and history numbers stay below 2^53.
+
+### Repair, checkpoints and reset generations
+
+A full batch or newer live version raises completed progress but never certifies
+covered history or advances the resumable checkpoint. `requestRepair` is sticky:
+later valid live updates can improve held facts without clearing repair or moving
+that checkpoint. Only `establishComplete` merges supplied full items and explicitly
+certifies a version at least all held completed progress in the current generation,
+then advances the checkpoint and clears repair. A supplied batch alone cannot prove
+catch-up completeness; callers must establish that separately.
+
+An unexpected epoch clears only the affected host/conversation's items and progress,
+increments generation and enters reset-needed state. Further application is blocked
+until explicit `reset` installs an epoch. Reset clears items/checkpoint and leaves
+repair needed until complete certification. Every application/certification carries
+a captured generation; stale work cannot repopulate reset state even if an epoch is
+reused. Outcomes distinguish `Applied`, `Ignored`, `RepairNeeded`, `ResetNeeded` and
+`StaleGeneration`. Snapshot strings redact contents and diagnostics use static codes.
+
+`AuthoritativeThreadStoreTest` probes overlap/replay convergence, host/conversation
+isolation, exact-base patches, optional clears, unknown facts, sticky repair and
+reset fencing. `RemoteConversationRepositoryAuthoritativeTest` exercises supplied
+capability gates, legacy isolation, partial completion/failure, idle expiry,
+abandonment and reused-epoch pending work. These are supplied-input contract probes.
+Catch-up/page wire DTOs belong to #2040, scheduling/cache writes to #1984, rendering
+to #1985, and production negotiation/activation plus combined live proof to #1988.
+See the [architecture plan](../../specs/architecture/2043-authoritative-thread-store.md).
 
 ## The unified thread store and the `session_transition` fold (#336)
 

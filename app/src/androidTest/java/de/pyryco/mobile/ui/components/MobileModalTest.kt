@@ -126,7 +126,7 @@ class MobileModalTest {
         small: Boolean = false,
     ) {
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 if (small) {
                     DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 640.dp))) {
                         ModalContent(overflow, Modifier.size(320.dp, 640.dp))
@@ -221,7 +221,7 @@ class MobileModalTest {
     @Test
     fun gate_window_is_secure_filters_obscured_touches_and_only_cancel_dismisses() {
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 MobileGateModal(title = "Gate title", cancelLabel = "Cancel", onCancel = { dismissals++ }) {
                     dialogView = LocalView.current
                     Text("Gate content")
@@ -519,7 +519,7 @@ class MobileModalTest {
         lateinit var launcherInputMode: InputModeManager
         lateinit var dialogInputMode: InputModeManager
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 var open by remember { mutableStateOf(false) }
                 launcherInputMode = LocalInputModeManager.current
                 Column {

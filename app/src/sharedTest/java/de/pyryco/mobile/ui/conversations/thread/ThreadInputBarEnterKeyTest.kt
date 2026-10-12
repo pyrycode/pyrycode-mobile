@@ -34,7 +34,7 @@ class ThreadInputBarEnterKeyTest {
 
     private fun setComposer() {
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadInputBar(
                     text = draft,
                     onTextChange = { draft = it },

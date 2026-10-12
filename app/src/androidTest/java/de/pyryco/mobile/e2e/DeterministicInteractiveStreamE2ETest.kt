@@ -88,7 +88,7 @@ import org.koin.core.context.GlobalContext
  * selected by `SCENARIO` in `scripts/e2e-emulator.sh`):
  *  - `ping` (default, #431) — a single-line reply renders.
  *  - `stream` (#454, #1765) — arrived words display while held open, then complete in the same reply.
- *  - `reopen-stream` (#1762) — arrived prefix renders immediately on reopening, before the second-send release.
+ *  - `reopen-stream` (#1762) — arrived prefix renders immediately on reopening, before its display-checkpoint release.
  *  - `spinner` (#454) — the thinking spinner shows mid-turn, then clears at turn end (a two-fixture
  *    drop holds the turn open so the transient state is observable; see the method KDoc).
  *  - `tool` (#455) — a tool step renders running mid-turn, then done after the result (two-fixture
@@ -233,7 +233,11 @@ class DeterministicInteractiveStreamE2ETest {
                 }
             }
         typeAndSend(SELECTION_PROMPT)
-        composeTestRule.assertFinishedReplySystemCopy(repository, conversationId, REPLY_TIMEOUT_MS)
+        composeTestRule.assertFinishedReplySystemCopy(
+            GlobalContext.get().get<RelayRepositoryCoordinator>().currentRepository,
+            conversationId,
+            REPLY_TIMEOUT_MS,
+        )
     }
 
     /** Preparation only. A host process executes actual app death after this instrumentation exits. */
@@ -465,7 +469,21 @@ class DeterministicInteractiveStreamE2ETest {
                                     snapshot.rows
                                         .filterIsInstance<ThreadItem.MessageItem>()
                                         .lastOrNull { it.message.role == Role.Assistant && it.message.content == PING }
-                                reply?.let { snapshot.readEvidence.checkpoint(it, 0uL) }
+                                reply?.let {
+                                    val evidence = snapshot.readEvidence
+                                    val checkpoint = evidence.checkpoint(it, 0uL)
+                                    val receipts = evidence.facts.keys.sorted()
+                                    android.util.Log.i(
+                                        "ScriptedReadProof",
+                                        "event=reply_checkpoint checkpoint=$checkpoint streaming=${it.message.isStreaming} " +
+                                            "deltas=${it.message.segment?.deltas?.size} claims=${evidence.versions[it]?.sorted()} " +
+                                            "receipts=$receipts holes=${receipts.zipWithNext().filter { (a, b) -> b - a > 1u }} " +
+                                            "unknown=${evidence.facts.filterValues { fact -> fact == null }.keys.sorted()} " +
+                                            "gaps=${evidence.gaps.map { gap -> gap.anchor to gap.edge }} " +
+                                            "unidentified=${evidence.unidentified.size}",
+                                    )
+                                    checkpoint
+                                }
                             }.first()
                     }
                 if (checkpoint == null) {
@@ -695,7 +713,7 @@ class DeterministicInteractiveStreamE2ETest {
         }
     }
 
-    /** #1762: fragment B cannot arrive until the immediate reopen assertion sends message #2. */
+    /** #1762: fragment B cannot arrive until the phone proves the immediate reopen checkpoint. */
     @Test
     fun interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately() {
         arriveInSeededThread()
@@ -762,11 +780,7 @@ class DeterministicInteractiveStreamE2ETest {
             composeTestRule.onAllNodes(prefix, useUnmergedTree = true).assertCountEquals(1)
             composeTestRule.onAllNodesWithText(REOPEN_SUFFIX, substring = true).assertCountEquals(0)
             assertOpenReply(REOPEN_PREFIX)
-            // Prepare the enqueue while paused: one frame makes the composer's send action ready.
-            composeTestRule.onNode(hasSetTextAction()).performTextInput(SECOND_PROMPT)
-            composeTestRule.mainClock.advanceTimeByFrame()
-            composeTestRule.waitForIdle()
-            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+            DaemonFaultControl().releaseStream()
             val combined = REOPEN_PREFIX + REOPEN_SUFFIX
             runBlocking {
                 withTimeout(REPLY_TIMEOUT_MS) {
@@ -794,7 +808,7 @@ class DeterministicInteractiveStreamE2ETest {
             composeTestRule.mainClock.autoAdvance = true
         }
         // Completion is fenced separately, after the still-open suffix-arrival display checkpoint.
-        typeAndSend("finish")
+        DaemonFaultControl().finishStream()
         val combined = REOPEN_PREFIX + REOPEN_SUFFIX
         val fullReply = hasText(combined, substring = true) and inBubble
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
@@ -831,7 +845,7 @@ class DeterministicInteractiveStreamE2ETest {
     }
 
     /**
-     * `stream` (#1765): two arrivals stay open until their words display. The explicit second send
+     * `stream` (#1765): two arrivals stay open until their words display. The phone's checkpoint
      * releases `stream-end.jsonl`; the same reply then contains all three deltas without its caret.
      * Repository settlement and idle phase establish completion, independently of caret blinking.
      */
@@ -898,8 +912,8 @@ class DeterministicInteractiveStreamE2ETest {
                 .filterIsInstance<ThreadItem.MessageItem>()
                 .count { it.message.role == Role.User },
         )
-        // Explicit test-driver send releases later chunks while the phone's staged quote stays open.
-        runBlocking { repository.sendMessage(conversationId, SECOND_PROMPT) }
+        // Release later chunks without another turn while the phone's staged quote stays open.
+        DaemonFaultControl().releaseStream()
         val finished =
             runBlocking {
                 withTimeout(REPLY_TIMEOUT_MS) {
@@ -910,7 +924,7 @@ class DeterministicInteractiveStreamE2ETest {
                             }
                         }
                     repository.observeTurnPhase(conversationId).first { it == LiveSessionEvent.TurnState.Phase.Idle }
-                    // The release prompt can produce its own reply; select the captured fixture.
+                    // Keep the same captured reply identity through all three deltas.
                     rows
                         .filterIsInstance<ThreadItem.MessageItem>()
                         .single { it.message.role == Role.Assistant && it.message.id == held.id }
@@ -936,6 +950,80 @@ class DeterministicInteractiveStreamE2ETest {
                 .text,
         )
         composeTestRule.assertSideMessageReply(finished, staged + "Assistant:\n\"${finished.content}\"\n")
+    }
+
+    /** A queued own follow-up and its hidden receipt keep the held legacy reply in one row. */
+    @Test
+    fun interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply() {
+        arriveInSeededThread()
+        val repository =
+            requireNotNull(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository.value,
+            )
+        runBlocking {
+            var checkpoint = "conversation"
+            var snapshotShape = "unobserved"
+            try {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    val conversationId =
+                        repository
+                            .observeConversations(ConversationFilter.All)
+                            .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                            .single { it.name == SEED_CHANNEL_NAME }
+                            .id
+                    checkpoint = "held prefix"
+                    repository.sendMessage(conversationId, SEND_PROMPT)
+                    val held =
+                        repository
+                            .observeMessages(conversationId)
+                            .first { rows ->
+                                rows.filterIsInstance<ThreadItem.MessageItem>().any {
+                                    it.message.content.trimEnd() == STREAMED_PREFIX && it.message.isStreaming
+                                }
+                            }.filterIsInstance<ThreadItem.MessageItem>()
+                            .single { it.message.role == Role.Assistant }
+                            .message
+                    val prefix = hasText(STREAMED_PREFIX, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+                    composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                        composeTestRule.onAllNodes(prefix, useUnmergedTree = true).fetchSemanticsNodes().size == 1
+                    }
+                    composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
+                    checkpoint = "queued follow-up"
+                    val sent = repository.sendMessage(conversationId, SECOND_PROMPT)
+                    val queued = repository.observeQueue(conversationId).first { rows -> rows.any { it.text == SECOND_PROMPT } }
+                    assertTrue("the queued entry did not retain the phone-owned echo id", queued.any { it.messageId == sent.id })
+                    repository.observeMessages(conversationId).first { rows ->
+                        rows.filterIsInstance<ThreadItem.MessageItem>().any { it.message.id == held.id && it.message.isStreaming }
+                    }
+                    checkpoint = "same reply completion"
+                    DaemonFaultControl().releaseStream()
+                    val finished =
+                        repository.observeMessages(conversationId).first { rows ->
+                            snapshotShape =
+                                rows.filterIsInstance<ThreadItem.MessageItem>().joinToString { row ->
+                                    val message = row.message
+                                    "${message.role}:${message.content.length}:${message.segment?.firstSeq}:${message.segment?.lastSeq}:" +
+                                        "${message.isStreaming}:${message.id == held.id}"
+                                }
+                            rows.filterIsInstance<ThreadItem.MessageItem>().any {
+                                it.message.id == held.id && !it.message.isStreaming && it.message.content == STREAMED_REPLY
+                            }
+                        }
+                    assertEquals(
+                        listOf(held.id),
+                        finished
+                            .filterIsInstance<ThreadItem.MessageItem>()
+                            .filter { it.message.segment?.turnId == held.segment?.turnId }
+                            .map { it.message.id },
+                    )
+                }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                throw AssertionError("queued echo checkpoint timed out: $checkpoint; shape=$snapshotShape", e)
+            }
+        }
     }
 
     /**

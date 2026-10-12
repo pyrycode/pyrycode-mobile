@@ -8,6 +8,55 @@ and its links.
 
 ## Test scheduling and harnesses
 
+The instrumentation Compose 1.10.4 rule's default unconfined composition dispatcher
+can resume a suspended startup producer inline on its completion worker. In #2094,
+the launcher replacement failure reached `NavHost.setGraph` from DataStore through
+the test frame/apply interceptors, before external-target routing. Adding another
+Main routing turn cannot repair that composition boundary.
+`SharingShortcutsDeviceTest` supplies `StandardTestDispatcher` as its rule's
+`effectContext`, queuing composition work for the Main test-clock pump. Keep this
+configuration local to the affected rule; no global Main replacement or lifecycle
+enforcement change is needed. See [shortcut navigation testing](navigation.md#testing).
+
+`workerCompletionKeepsStartupAndNavigationOnMainThread` uses that same rule, holds
+a Main-started producer, proves the held UI, then completes it on an owned worker
+before checking startup resumption and every real Navigation Compose graph
+composition. Assert the completion is off Main and both later boundaries are on
+Main. A graph-only assertion can pass while startup resumed on a worker: in the
+retained red run, startup resumed off Main at virtual clock 16 and the later clock
+pump composed the graph on Main at 32. Bounded Main-hold and worker snapshot-apply
+variants did not force off-main graph delivery; they remain diagnostics, while the
+fresh launcher failure separately proves the graph/lifecycle violation. Keep
+observations bounded and content-free, join worker completion and release held
+work in guaranteed cleanup.
+
+The [retained diagnosis and red/green evidence](../../../app/src/test/resources/verification/shortcut-composition-2094/README.md)
+compares the same baseline `3918ef87d14d6add0013c9f4d5538c0d22d87c5e`: the full
+configured UI gate passed 259 executed tests with one skip, but the fresh isolated
+launcher method failed once. Prior-method shared state is therefore unnecessary
+to reproduce this violation; suite ordering, isolated success and cleanup-time
+focus cannot establish its cause. The exact historical interleaving and a
+production-device occurrence remain unestablished. The minimal controlled
+regression failed its startup Main assertion before the dispatcher change and
+passed afterward (one executed each, zero errors/skips).
+
+The [fresh repaired full-gate verdict](https://github.com/pyrycode/pyrycode-mobile/pull/2110#issuecomment-6115101072)
+resolves the pending full-gate handoff on
+`ada13ce7e0091da85495876e5a6fbdb4f331b65b`:
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui` exited 0
+with **260 executed, 260 passed, 0 failed, 0 errors, 1 skipped**. Both
+`SharingShortcutsDeviceTest.dynamicTargetHasShareContractAndLauncherIntentOpensWithoutChangingDraft`
+and `workerCompletionKeepsStartupAndNavigationOnMainThread` explicitly passed,
+neither skipped. The fresh managed-device report timestamp was
+`2026-10-11T23:20:51`, at
+`app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/TEST-pixel2Api33Atd_0-_app-.xml`
+in the verifier worktree; sanitized XML is retained in
+`/work/Projects/pyrycode-mobile-agents/logs/verifier-gate_#2094_7.log` and
+`/tmp/verifier-2110/dispatcher-ui.xml`, SHA-256
+`b65932aa79675b5d751bf53ca6b33975df9406a4938eb6c87abcf92256feb28a`.
+This full-suite evidence supplements the builder's focused checks; #2057 still
+requires its own fresh gates and real-Claude acceptance after this repair lands.
+
 Shared screen tests cannot assume an empty application singleton on the device:
 Robolectric recreates the application/Koin graph per method, while instrumentation
 keeps it across methods. `SharePickerTest` retains the production
@@ -256,7 +305,7 @@ Main after reset, reporting `UncaughtExceptionsBeforeTest` at the next registry
 test. Keep host/content/queue/action/reconnect assertions intact while fixing
 scheduling and teardown. See the
 [review and counted regression evidence](https://github.com/pyrycode/pyrycode-mobile/pull/2024#issuecomment-6091171021)
-and [saved-thread phase evidence](thread-screen-testing.md#allocation-margin-and-retained-evidence-2018).
+and [saved-thread phase evidence](thread-screen-testing-saved-first-draw.md#allocation-margin-and-retained-evidence-2018).
 
 The #726 proof holds only when it runs on the thread that later calls `resetMain()` — #892 found a
 case where it does not. With an `UnconfinedTestDispatcher` installed as `Main`, a resumption resumes
@@ -288,6 +337,24 @@ the changed function into a scratch file, add strict shell options and test it w
 stubbed helpers. Exercise preflight guards with nonexistent `PYRY_BIN` and relay
 paths so the script cannot start a real process. Keep the scratch file outside the
 worktree.
+
+The shared daemon-controller launch must also work under macOS Bash 3.2 with
+`set -euo pipefail` when optional flags are absent. Expanding an empty optional
+array under nounset failed before instrumentation in ordinary scripted and both
+real-Claude modes, even though configured stream selections passed (#1985).
+`DAEMON_CONTROL_ARGS` is seeded with required controller options before optional
+fixed suffix/completion release paths are appended. Preserve quoted argument
+boundaries and the separation from the daemon command.
+
+`EmulatorControllerLaunchTest` runs the actual top-level launch block with
+`/bin/bash` and a stub controller for scripted ping, default real-Claude, live
+real-Claude, stream and reopen-stream. Its five cases check readiness, exact
+optional arguments, paths with spaces and retained live TLS flags without a daemon
+or credentials. The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2076#issuecomment-6107772890)
+records all five passing within `python3 -m unittest discover -s scripts`:
+**88 executed, 88 passed, 0 failed, 0 skipped**. These launch probes prove command
+construction; real-Claude operation remains a separate gate. The repaired full
+scripted gate passed **22/0/0**, including both ping methods, **2/0/0**.
 
 Shell teardown must preserve the original test result. A final optional check
 such as `[ -n "$ISO_HOME" ] && ...` can return failure when no isolated home exists,

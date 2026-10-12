@@ -1,0 +1,5 @@
+<testsuites><testsuite name="de.pyryco.mobile.ui.conversations.share.SharingShortcutsDeviceTest" tests="1" failures="1" errors="0" skipped="0" time="1.145" timestamp="2026-10-11T22:57:27"><testcase name="workerCompletionKeepsStartupAndNavigationOnMainThread" classname="de.pyryco.mobile.ui.conversations.share.SharingShortcutsDeviceTest" time="1.145"><failure type="">at org.junit.Assert.fail(Assert.java:89)
+at org.junit.Assert.failNotEquals(Assert.java:835)
+at org.junit.Assert.assertEquals(Assert.java:120)
+at org.junit.Assert.assertEquals(Assert.java:146)
+at de.pyryco.mobile.ui.conversations.share.SharingShortcutsDeviceTest.workerCompletionKeepsStartupAndNavigationOnMainThread(SharingShortcutsDeviceTest.kt:98)</failure></testcase></testsuite></testsuites>

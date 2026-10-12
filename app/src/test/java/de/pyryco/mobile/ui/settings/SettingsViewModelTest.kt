@@ -175,16 +175,6 @@ class SettingsViewModelTest {
         }
 
     @Test
-    fun onSelectTheme_persistsLight() =
-        runTest(dispatcher) {
-            val prefs = AppPreferences(newDataStore())
-            val vm = makeVm(prefs)
-            vm.onSelectTheme(ThemeMode.LIGHT)
-            advanceUntilIdle()
-            assertEquals(ThemeMode.LIGHT, prefs.themeMode.first())
-        }
-
-    @Test
     fun onSelectTheme_persistsDark() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
@@ -216,9 +206,9 @@ class SettingsViewModelTest {
             vm.onSelectTheme(ThemeMode.DARK)
             advanceUntilIdle()
             assertEquals(ThemeMode.DARK, vm.themeMode.value)
-            vm.onSelectTheme(ThemeMode.LIGHT)
+            vm.onSelectTheme(ThemeMode.SYSTEM)
             advanceUntilIdle()
-            assertEquals(ThemeMode.LIGHT, vm.themeMode.value)
+            assertEquals(ThemeMode.SYSTEM, vm.themeMode.value)
             collector.cancel()
         }
 

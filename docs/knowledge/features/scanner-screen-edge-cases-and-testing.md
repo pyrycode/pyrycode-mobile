@@ -85,12 +85,20 @@ dummy host was removed, preventing pairing state from contaminating later tests.
 
 `ScannerScreenTest` covers the Pairing title, permission/decoded viewport shells,
 denial/error fallbacks, fake camera slot and fingerprint display, accessibility,
-confirmation callbacks and 48 dp actions. `ScannerFrameTest` exercises 412×892 and
-360×640 dp in light and dark themes, asserting divider/camera presence, clickable
-Back/Paste, square reticle bounds, the centered 248 dp reference reticle, and
-separation between the reticle, helper card, camera window and paste action.
-The #1213 fixture also checks root atmospheric pixels and 1.5× text at
-360×640 dp. Its Scaffold padding must be consumed before the screen applies
+confirmation callbacks and 48 dp actions. The current `ScannerFrameTest` is
+dark-only: `fullSizeDarkFrames` uses 412×892 dp, `compactDarkFrames` uses
+360×640 dp, and `compactEnlargedTextFrames` uses 360×640 dp at font scale 1.5.
+Each checks exactly one Back and one Paste callback with a stub camera slot,
+asserting divider/camera presence, clickable Back/Paste, square reticle bounds,
+the centered 248 dp reference reticle at full size, and separation between the
+reticle, helper card, camera window and paste action. The full-size fixture also
+checks root atmospheric pixels. Historical light/dark results below describe
+older fixtures; they do not describe current coverage. See
+[HP renderer validation and current counted gates](development-verification.md#managed-device-verification-hp-renderer-workaround)
+for #2051's affected-host enlarged 1/1, class 3/3 and all-three-method UI passes.
+These establish fixture execution, not live CameraX binding or QR pairing.
+
+The frame fixture’s Scaffold padding must be consumed before the screen applies
 `systemBarsPadding()`; otherwise a screenshot can show doubled system insets
 while layout assertions still pass.
 

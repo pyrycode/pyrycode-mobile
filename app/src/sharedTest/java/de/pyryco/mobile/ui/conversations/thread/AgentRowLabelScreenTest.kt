@@ -76,7 +76,7 @@ class AgentRowLabelScreenTest {
     ) {
         collapse = collapsed
         compose.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = ThreadUiState("c", "Channel", items = items, hasMessages = true),
                     onBack = {},

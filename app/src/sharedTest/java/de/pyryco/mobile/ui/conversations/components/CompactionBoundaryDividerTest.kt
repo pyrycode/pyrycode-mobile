@@ -23,7 +23,7 @@ class CompactionBoundaryDividerTest {
 
     private fun setContent(item: ThreadItem.CompactionBoundary) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CompactionBoundaryDivider(item = item)
             }
         }

@@ -38,7 +38,9 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — screen snapshot, dequeue, interrupt and new session](remote-conversation-repository-control-sends.md) — `requestScreenSnapshot(conversationId) — the parser-independent screen-snapshot read (#375)`, `requestHistory(conversationId, cursor, limit) — the on-disk history page read (#623)`, `dropQueuedMessage(conversationId, queuedMessageId) — the dequeue_message outbound send (#466)`, `interrupt(conversationId) — explicitly targeted v2 interrupt`, `startNewSession() — explicitly targeted v2 new_session`, `answerQuestionBatch(questionBatchId, answers) / refuseQuestionBatch(questionBatchId) — the v2 question_answer / question_refused sends (#825)`
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — state and concurrency, error handling and the hand-off](remote-conversation-repository-state-errors-and-handoff.md) — `State & concurrency model`, `Error handling`, `Hand-off — the live binding`
 
-The sections that stay here: `## Where it sits in the Phase 4 stack`, `## Status projections: one file per status event`, `## The repository split (#912–#916): complete`, `## The `SessionPump` consumed contract`, `## Stubs — none remain; every method is now live`, `## Daemon conversation read marks`, `## Testing`, `## Related`.
+- [Remote repository — testing](remote-conversation-repository-testing.md#testing) — fake-pump scheduling and read-evidence invariant probes, split for #2070.
+
+The sections that stay here: `## Where it sits in the Phase 4 stack`, `## Status projections: one file per status event`, `## The repository split (#912–#916): complete`, `## The SessionPump consumed contract`, `## Stubs — none remain; every method is now live`, `## Daemon conversation read marks`, the testing pointer and `## Related`.
 
 ## Where it sits in the Phase 4 stack
 
@@ -73,102 +75,9 @@ retrieval](attachment-retrieval.md).
 
 ## Status projections: one file per status event
 
-Since 2026-09-22 the status events the thread observes each live in their own small internal class
-beside the repository: `StallProjection` (#395), `QueueProjection` (#460), `ApiRetryProjection` (#593),
-`SessionErrorProjection` (#1677),
-`CompactingProjection` (#596), `ThinkingProgressProjection` (#801), `UsageLimitProjection` (#802),
-`AnnouncedModelProjection` (#890), `SessionFactsProjection` (#890) and `McpStatusProjection` (#1343).
-`McpStatusProjection` is the one member of this family that also owns three outbound sends and their own
-refusal-correlation ledger — the `ModelMenuProjection`/`request_model_list` shape, not the simpler
-read-only siblings — and, like `ModelMenuProjection`, it is deliberately **not** promoted into
-[`HostReadings`](relay-repository-coordinator.md): a reconnect starts the MCP reading from nothing on
-purpose, so #1345's failure notice knows to ask again. See [Remote conversation repository — the MCP
-status reading and the reconnect/toggle sends](remote-conversation-repository-mcp-status.md).
-Each holds the state, the decoder and the cold read that used to sit in `RemoteConversationRepository`,
-under the same names, so the per-event sections in the
-[thread-observables document](remote-conversation-repository-thread-observables.md) and the
-[live-stream document's `model_announced` / `session_facts` section](remote-conversation-repository-live-stream-and-modals.md#model_announced--session_facts--the-announced-model-and-session-facts-readings-890)
-still describe them. Only the owning class changed, and behaviour did not. `UsageLimitProjection`'s
-clearing edge is self-contained — a benign `status` frame clears its own entry inside `apply`, so it
-needs no hook on another event's arm the way the stall/thinking-progress clears do.
-`AnnouncedModelProjection` and `SessionFactsProjection` are each cleared only by the
-`session_transition` arm, the same `ResettingProjection` shape, since neither `model_announced` nor
-`session_facts` carries a falling edge of its own.
-
-`AttachmentOfferProjection` (#898) holds the files the daemon offered per conversation on this
-connection — state, decoder and read in the same one-class-per-event shape — but sits outside this
-gated family: its `onInbound` arm calls `apply(envelope)` **unconditionally**, with no
-`CAPABILITY_INTERACTIVE in negotiatedCapabilities()` check. The protocol delivers `attachment_offered`
-to every attached client, outside the interactive family, the same posture as the upload leg's
-`attachment_stored` (see `AttachmentUploadTransfer` below); the daemon routes nothing, so filtering on
-`conversation_id` happens inside `observe`, as every other arm's projection does. First arrival wins for
-a repeated attachment id. See [Conversation repository → `AttachmentOffer`](conversation-repository.md)
-for the domain type, the id-shape validation and the code-point-level display-name cleaning, and its
-SECURITY note.
-
-**A first-seen offer is also a thread row (#983).** `AttachmentOfferProjection` takes the repository's
-`threadProjection` as a constructor parameter — the one dependency between two status-family
-projections — and, only on the first sighting of an attachment id (decided inside the same
-`MutableStateFlow.update` that records the offer, not after it), calls
-`threadProjection.appendMessages` with an assistant-side row built by `attachmentOfferRow`: id
-`"attachment-offer-<attachmentId>"`, empty text, one `MessageAttachment` carrying the offer's cleaned
-name and no MIME hint (the wire sends none). That id is derived from the validated attachment id, not a
-per-process counter, so the same offer arriving again on another connection, or the row the disk cache
-restores, joins on `message_id` through `ThreadProjection.appendMessages` / `mergeCachedRows` rather than
-duplicating; the `attachment-offer-` prefix keeps it out of the wire's UUID `message_id`/`turn_id`/
-`tool_use_id` namespace. A repeat offer on the same connection adds no row. Because the constructor now
-depends on `threadProjection`, `attachmentOfferProjection`'s field declaration in
-`RemoteConversationRepository` had to move below `threadProjection`'s — Kotlin initializes properties in
-declaration order, so the dependency's declaration position is load-bearing, not stylistic. See [Caching
-conversation repository § How the restore merges with live
-rows](caching-conversation-repository.md#how-the-restore-merges-with-live-rows) for why a cache-only row
-like this one needs its own merge to keep its place across a reconnect or a cold restore.
-
-The repository keeps three things. Its `onInbound` arm checks the negotiated `interactive` capability
-and calls the projection's `apply(envelope)`. Its `observe…` override returns the projection's
-`observe(conversationId)`. And a clear that one event causes in another stays in the arm that causes
-it, through the projection's `clear`: every decoded live-session event clears that conversation's
-stall, and a `turn_end` or `session_transition` clears its thinking-progress reading.
-Session errors clear only on send entry, a decoded recognized non-idle `turn_state`,
-or connection teardown; see [conversation session errors](remote-conversation-repository-state-errors-and-handoff.md#conversation-session-errors-1677)
-for validation, observation and clearing rules.
-`dropQueuedMessage` reads `QueueProjection.current` to resolve the echo id before it sends.
-
-`ReplySuggestionProjection` (#1865) holds live/reconciled next-reply state, with one
-immutable-map entry per `(conversationId, sessionId)`. Validation completes before the
-atomic revision comparison and replacement: only a strictly higher revision replaces an
-entry, and a clear stays in the map so stale sets cannot revive it. Unrelated pairs do not
-re-emit the observed pair. Separate per-host remote instances isolate even identical pairs.
-The inbound `reply_suggestion` arm requires negotiated `interactive`; its
-[decoder checks presence and exact JSON kinds](mobile-protocol-v2-wire-layer.md#reply-suggestion-validation-1865).
-Malformed input changes neither text nor watermark and leaves the consumer alive.
-
-This projection stays outside `HostReadings` and persistent cache. Each fresh handshake
-constructs an empty projection, allowing lower revisions after a daemon restart; inbound
-consumer termination also resets text and watermarks. The cache wrapper forwards the
-observation by interface delegation without storing it. Suggestions bypass replay-cursor
-recording even when malformed, reject envelopes carrying `event_id`, and are never
-restored from history. Applying one calls no thread, live-session-event or turn-state
-operation. Diagnostics contain only static outcomes (accepted, stale, malformed, reset),
-with no text, identities, payloads or parser exceptions.
-
-A new status event takes the same shape: a new `…Projection.kt` holding its state, decoder and read,
-plus one field, one arm and one override in the repository. The split exists so that sibling tickets
-adding events in parallel stop editing the same lines of one very large file.
-
-**The thread store followed the same split (#912), as `ThreadProjection`.** (See § The repository split
-(#912–#916): complete, below, for the full command-class picture #914–#916 added on top of this.) It isn't a status event —
-it's the thread itself: the ordered per-conversation rows, the minted-id ledger (#781) and the
-pending-drops ledger (#859), plus every write that folds a thread row (`appendMessages`,
-`appendSessionBoundary`, `applyUnrecognizedMessage`, `applyBanner`, `applyCompactionBoundary`,
-`applyToolUse`/`applyToolResult`/`applyToolDenied`/`applyToolProgress`,
-`applyAssistantDelta`/`finalizeAssistantTurn`, `mergeHistoryPage` and `remove`). The repository still owns
-the `interactive` gate in each `onInbound` arm and still owns `requestHistory`, which records into the
-projection instead of into a repository field; `sendMessage` and `dropQueuedMessage` moved on to
-`MessageCommands` (#915), which records into the same projection. `observeMessages` fans out through
-`threadProjection.observe(conversationId)`. See
-[Remote conversation repository — reads and the thread store](remote-conversation-repository-reads-and-thread-store.md)
-for the store itself.
+See [status projections](remote-conversation-repository-status-projections.md#status-projections-one-file-per-status-event)
+for legacy event ownership and [supplied session admission and retirement](remote-conversation-repository-status-projections.md#supplied-session-ownership-and-family-retirement-2084),
+including settings arrivals, prompt ownership and preservation of durable/queue/account state.
 
 ## The repository split (#912–#916): complete
 
@@ -268,16 +177,19 @@ until that milestone lands. See [`../codebase/507.md`](../codebase/507.md).
 
 ## Daemon conversation read marks
 
-`observeReadMarks(conversationId)` exposes `ConversationReadMarks(readUpTo: ULong?,
-latestEntryId: ULong?)` in the durable history id space (#1881). It emits null until
-either live fact is heard. A null field means unavailable; zero is a valid known
-value. Only a present `readUpTo` establishes daemon read-mark support on this
-connection, so a latest-id-only reading or cached conversation cannot establish it.
-Local `ReadPosition` remains the fallback. These repository facts support agreement
-between phone and desktop; viewport eligibility, attention dots and notification
-cancellation belong to the dependent UI slices.
+`observeReadMarks(conversationId)` exposes default-tolerant
+`ConversationReadMarks(readUpTo, latestEntryId, lastShownVersion, threadSupported)`
+in the common history-entry number space (#1881, #2085). Confirmed `readUpTo`, legacy
+activity `latestEntryId` and current shown availability remain separate. Null is
+unavailable; zero is explicit. Thread support chooses `lastShownVersion` as the
+unread watermark; legacy connections choose `latestEntryId`. Unavailable thread
+metadata withholds an authoritative unread verdict and sight qualification, without
+substituting legacy activity, zero or local `ReadPosition`. On legacy connections,
+a present `readUpTo` establishes shared read support; otherwise local fallback remains.
+Summary receipt never marks content read. Attention prompt/running precedence stays
+unchanged; notification coverage also requires usable shown metadata on thread connections.
 
-`latestEntryId` is the filtered unread watermark, not the highest received durable
+On legacy connections, `latestEntryId` is the filtered unread watermark, not the highest received durable
 id (#1948). Live and replay receipt and fetched history exclude exactly `turn_state`,
 `stall`, `api_retry`, `compacting` and `session_transition` when raising it, matching
 the daemon's watermark and mark-read clamp. Every other durable type counts,
@@ -288,15 +200,16 @@ authoritative merge inputs. Filtering before the monotonic merge matters: once a
 status tail has raised latest, a lower daemon watermark cannot undo it. Reconnecting
 and fetching history must apply the same filter or the tail returns as unread.
 
-`ConversationListProjection` keeps rows and a conversation-keyed fact ledger in one
-atomic state. List snapshots replace rows while merging each supplied fact by unsigned
-maximum. Both ordinary correlated updates and unsolicited `conversation_updated`
-pushes merge the read mark and preserve the latest durable id held from a list:
-updates supply no latest id. Omitted fields never erase held facts. Empty or excluding
-snapshots retain the ledger, so a stale reappearance cannot regress either fact.
-This monotonic rule applies within one host connection generation. Separate remote
-instances isolate hosts even when conversation ids match; a fresh connection starts
-with no facts. Read marks stay outside persistent cache and `HostReadings`.
+`ConversationListProjection` keeps rows and the conversation-keyed fact ledger in
+one atomic state. List snapshots replace rows while confirmed read and legacy latest
+merge by unsigned maximum; updates preserve held latest because they supply no
+latest id. Thread snapshots/updates replace shown availability: omitted, null or
+malformed shown metadata invalidates an older usable watermark. Valid shown values
+merge monotonically while available; legacy receipt cannot raise shown metadata.
+Empty/excluding snapshots retain the ledger. Session replacement does not reset
+confirmed read. Separate remote instances isolate hosts with colliding conversation
+ids; a fresh connection starts with fresh facts and support. Read facts remain outside
+persistent cache and `HostReadings`.
 
 `markConversationRead(conversationId, upTo: ULong): Result<ULong>` delegates to
 `ConversationCommands`. It registers the request identity before sending and waits for
@@ -307,10 +220,20 @@ Unsolicited pushes can update observation but cannot complete the request. The r
 value is the stored monotonic mark after confirmation, which may be clamped below the
 requested id or unchanged for a no-op; sending alone never advances the projection.
 Server errors, send refusal and transport teardown return sanitized failures; caller
-cancellation propagates. The repository performs no retry: the viewport slice owns it.
+cancellation propagates. The command layer performs no retry; qualified work uses the host-owned retry path below.
 See [wire validation and confirmation](mobile-protocol-v2-wire-layer.md#daemon-read-fields-and-confirmation).
 
-**What may become a read mark (#1912).** `ThreadSnapshot.readEvidence` binds durable
+**Authoritative foreground evidence (#2085).** The supplied presentation uses the
+store-certified complete checkpoint, usable shown summary and carried foreground
+sight of scoped row keys/exact revisions above confirmed read. Receipt, highest item
+revision and `completedVersion` cannot certify catch-up. The newest row must currently
+be visible with reveal complete, and intermediate unread appends need their own sight.
+Retired composition, host, epoch, generation and captured connection bindings reject
+new qualification. See [foreground checkpoints](thread-screen.md#what-it-does).
+The seam remains dormant; #1988 owns activation and combined daemon/live acceptance,
+with #1984 owning sync/cache and #1986 queue settlement.
+
+**Legacy receipt evidence (#1912).** `ThreadSnapshot.readEvidence` binds durable
 `history_entry_id` claims to the exact row version they produced, across history pages,
 direct live delivery and reconnect replay, including every delta folded into a streaming
 row. Envelope ids, replay `event_id`, a list's latest id and fetched rows never prove
@@ -342,6 +265,23 @@ an otherwise valid page still blocks the checkpoint even when stored `gaps` is e
 Controlled reproduction established daemon ownership; historical live captures
 lacked IDs, leaving their exact sequence unproven.
 
+Queued-send facts need the same continuity contract (#2070). The displayed settled
+scripted reply retained exact claims 9/10, but received IDs 7 and 9 surrounded omitted
+`send_delivered` ID 8. Two observations ten seconds apart retained that binding and
+hole with no unknowns, unidentified entries or stored gaps: neither version loss nor
+collector timing caused the null checkpoint. A total binding count and zero malformed
+counts cannot establish the selected reply's continuity. Daemon
+[#3167](https://github.com/pyrycode/pyrycode/issues/3167) repaired live publication and
+legacy paging of queued acceptance/delivery as existing empty info-banner receipts.
+Mobile's production evidence rules remain unchanged. With receipts 1–12 accounted for,
+the represented reply's claims 9/10 extend to checkpoint 12. Unknown/malformed receipts,
+unidentified content, numeric holes and stored gaps still block; receipts, overlapping
+history and reconnect never grant an unseen version sight. Only foreground presentation
+and correlated daemon confirmation qualify the phone read. A peer confirmation may
+clear list attention without reopening the phone thread. See the
+[controlled probes](remote-conversation-repository-testing.md#testing) and
+[ordered-pair evidence](../../e2e-interactive-stream.md#scripted-ping-receipt-continuity-2070).
+
 Receipt accounting, the exact presented version, client latest and correlated
 confirmation must agree. Daemon [#3029](https://github.com/pyrycode/pyrycode/issues/3029)
 repaired a second mismatch: stored visibility excluded successful `turn_end` from the
@@ -362,8 +302,10 @@ summary is matched on its displayed fields, not its phone-clock time.
 `ReadCheckpointRetries` keeps the highest qualified checkpoint per host connection
 source and conversation for the app process. It retries on that host's next connection,
 even after the thread closed, and clears only on a confirmed mark at or beyond it. A
-failed or malformed reply keeps it, and it is never sent to another host. Daemons that
-never report `read_up_to` receive no command and keep local `ReadPosition`. The thread
+failed/malformed reply or clamped/no-op confirmation below the pending target keeps it,
+while peer confirmation at or beyond the target clears it. Work never crosses hosts.
+Legacy daemons that never report `read_up_to` receive no command and keep local
+`ReadPosition`. Thread support with unavailable read/shown facts withholds qualification. The thread
 ViewModel shares one snapshot subscription for rows and evidence, because each cold
 subscription sends its own `backfill_since`.
 
@@ -378,64 +320,7 @@ would reset latest ids and put new unread entries behind an already-read checkpo
 
 ## Testing
 
-JVM unit only (`app/src/test/.../data/repository/RemoteConversationRepositoryTest.kt`, `./gradlew test`),
-JUnit4 + `runTest` + a hand-written **fake `SessionPump`** — `inbound` backed by a
-`Channel<Envelope>(UNLIMITED).receiveAsFlow()` (so test pushes are not lost before the collector attaches);
-`send` records each envelope and returns `true`; a `push` helper feeds inbound. The repository is
-constructed with `backgroundScope` so its collector auto-cancels at test end. `conversations` payloads are
-built from the same object-wrapped-array fixture shape as `ConversationsPayloadTest` via
-`MobileJson.parseToJsonElement(raw)`.
-
-> **Test idiom (reusable across the sibling slices #313/#314/#329):** drive the push→demux→project→emit
-> cascade with **`runCurrent()`, not `advanceUntilIdle()`**. With a `Channel.receiveAsFlow()` inbound
-> feeding a single repository-internal collector on `backgroundScope`, `advanceUntilIdle()` does not
-> deliver the buffered channel item to the background collector (there are no timers to elapse), leaving
-> projection-dependent assertions empty; `runCurrent()` drains the whole current-time cascade
-> deterministically. See [[remote-repo-test-runcurrent-not-advanceuntilidle]] and
-> [`codebase/312.md`](../codebase/312.md) § Lessons learned.
-
-`RemoteConversationRepositoryReplySuggestionTest` uses the real decoder/repository and
-channel-backed fake pumps for 13 invariant probes. Coverage includes late subscription
-after set and clear, every arrival order with duplicate/decreasing revisions, retained
-clear watermarks and reconciled null, independent conversations/sessions/hosts, malformed
-high revisions followed by lower valid updates, exact ASCII/multibyte byte limits and the
-full unsigned revision range. It also probes non-interactive/default absence, connection
-termination, [facade replacement](stable-conversation-repository.md#testing), cache
-passthrough without storage access, and diagnostic redaction. The no-thread/turn probe
-feeds both an event-id-bearing suggestion and a history entry: checking text alone would
-miss accidental replay-cursor advancement, thread rows or live turn events.
-
-`ConversationReadMarksTest` probes list/push arrival permutations, stale and duplicate
-facts, empty/excluding snapshots, unsigned bounds, malformed input followed by valid
-input, host/generation isolation, exact outbound integer JSON and confirmed-write
-failures. Its two session-rotation regressions exercise repeated `startNewSession` and
-`changeWorkspace` calls: assert retained old history ids, an unchanged latest id at
-rotation, and new entries above the checkpoint that can be marked. Clamping tests
-without a session boundary cannot catch a history reset.
-
-The watermark regressions drive both live/replay and correlated history for every
-excluded type, status-only pages, duplicates, reordered/overlapping pages and a
-history reload after reconnect, while retaining original entries and IDs. They also
-require later non-excluded content, including unknown types, to raise latest.
-`ThreadReadClaimsTest.understoodUsageWindowReceiptsExtendPresentationButMalformedWindowsRemainBarriers`
-separately guards decoded clearing edges versus malformed/non-interactive evidence;
-an unread-only assertion would miss a valid receipt that still blocks phone reads.
-
-`ThreadReadRuntimeReceiptsTest` decodes the serialized real-store examples from
-[daemon PR #3034](https://github.com/pyrycode/pyrycode/pull/3034) in
-`app/src/test/resources/daemon-contract/runtime-read-{enabled,disabled}.json` through
-the real DTO, ordered reducer and projection. Its probes are
-`runtimeReceiptRepairsTheDiagnosedHoleWithoutChangingContent`,
-`invariantOnlyUnderstoodIdentifiedReceiptsAccountForTheHole`,
-`invariantReplayAndOverlappingHistoryPreserveExactClaims` and
-`invariantMissingLiveIdentityNeedsHistoryAndFreshConnectionHasNoSight`.
-They retain omitted-ID, unknown/malformed, stored-gap, exact-version, replay,
-missing-identity and fresh-connection barriers. Reordering moves the nonvisual receipt;
-arbitrarily reversing content lifecycle entries is not an equivalent history page.
-`ConversationReadMarksTest.runtimeReceiptHistoryRequiresCorrelatedDaemonReadConfirmation`
-exercises both controls through the repository: no command before presentation, no
-confirmation from sending or unrelated replies, clamped read/latest agreement, and
-host/conversation isolation. A checkpoint-only assertion would miss the clamp defect.
+See [repository testing and read-evidence invariant probes](remote-conversation-repository-testing.md#testing).
 
 ## Related
 

@@ -733,7 +733,7 @@ if [ -n "${DETERMINISTIC}" ]; then
   FIXTURE_FILE_2="${FIXTURE_FILE_2:-}"
   # How the watcher fences drop B (the 2nd drop): `enqueue` = the 2nd `send_message.enqueued` (the held-open
   # two-drop scenarios); `disconnect` = the relay logging the phone-leg drop (replay-order #477, whose phone
-  # is offline when drop B must fire). Only the replay-order arm overrides it.
+  # is offline when drop B must fire); `phone-checkpoint` = the phone has checked its displayed prefix.
   DROP_B_FENCE="enqueue"
   case "${SCENARIO}" in
     session-error)
@@ -760,11 +760,20 @@ if [ -n "${DETERMINISTIC}" ]; then
       TEST_METHOD="interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/stream.jsonl}"
       FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/stream-end.jsonl}"  # completion follows the displayed-prefix checkpoint
+      DROP_B_FENCE=phone-checkpoint
+      ;;
+    stream-queued-echo)
+      # Manual ignored reproduction owned by #2078, separate from the display-only stream gate.
+      TEST_METHOD="interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/stream.jsonl}"
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/stream-end.jsonl}"
+      DROP_B_FENCE=phone-checkpoint
       ;;
     reopen-stream)
       TEST_METHOD="interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/reopen-stream-open.jsonl}"
       FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/reopen-stream-done.jsonl}"
+      DROP_B_FENCE=phone-checkpoint
       ;;
     spinner)
       TEST_METHOD="interactiveTurn_seededChannel_showsThinkingSpinnerDuringTurn"
@@ -838,7 +847,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/context-overflow.jsonl}"
       ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: reopen-stream | selection-copy | background-agent | ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal | mcp-failed | context-overflow)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: reopen-stream | selection-copy | background-agent | ping | stream | stream-queued-echo | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal | mcp-failed | context-overflow)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
@@ -1027,7 +1036,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       "PYRY_FAKE_CLAUDE_STREAM_REPLAY_RELEASE=${REPLAY_RELEASE}")
   fi
   if [ "${SCENARIO}" = "reopen-stream" ]; then
-    # #1762: let the suffix compose while still streaming; result delivery needs enqueue #3.
+    # #1762: let the suffix compose while still streaming; the phone separately releases completion.
     E2E_HELD_RESULT_RELEASE="${WORK_DIR}/release-terminal-result"
     REPLAY_ENV+=("E2E_HELD_RESULT_CHILD=${FAKE_BIN}" "E2E_HELD_RESULT_RELEASE=${E2E_HELD_RESULT_RELEASE}")
     FAKE_BIN="${REPO_ROOT}/scripts/e2e-held-result.py"
@@ -1040,14 +1049,26 @@ elif [ -n "${LIVE}" ]; then
   # this path — TLS-only transport is enforced by omitting the flag here, not by a runtime toggle. Runs
   # under the real HOME (real claude needs ~/.claude auth); isolation is by -pyry-name (~/.pyry/e2e-live/).
   DAEMON_COMMAND+=(PYRY_MOBILE_V2=1 "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}"
-    "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}")
+    "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}" -- --model sonnet)
 else
   DAEMON_COMMAND+=(PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1
-    "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}")
+    "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}" -- --model sonnet)
 fi
+# #2095: the remembered-effort scenario keeps saved model empty and uses the default menu's levels.
+# An operator Haiku default reports no applied effort. Pin the real test launch to Sonnet; per-session
+# model choices still override this base, and the phone must supply its own recalled effort.
 FAULT_PORT_FILE="${WORK_DIR}/daemon-fault-port"
-python3 "${REPO_ROOT}/scripts/e2e-daemon-fault.py" --port-file "${FAULT_PORT_FILE}" --log "${DAEMON_LOG}" \
-  --ready-token 'relay: conn established' --control-socket "${ISO_HOME:-${HOME}}/.pyry/${PYRY_NAME}.sock" \
+# Seed required arguments so Bash 3.2 nounset never expands an empty array.
+DAEMON_CONTROL_ARGS=(--port-file "${FAULT_PORT_FILE}" --log "${DAEMON_LOG}"
+  --ready-token 'relay: conn established' --control-socket "${ISO_HOME:-${HOME}}/.pyry/${PYRY_NAME}.sock"
+  --cleanup-sockets-file "${WORK_DIR}/test-session-sockets.json")
+if [ -n "${DETERMINISTIC}" ] && [ "${DROP_B_FENCE}" = "phone-checkpoint" ]; then
+  DAEMON_CONTROL_ARGS+=(--stream-release-file "${REPLAY_RELEASE}")
+  if [ "${SCENARIO}" = "reopen-stream" ]; then
+    DAEMON_CONTROL_ARGS+=(--stream-result-release-file "${E2E_HELD_RESULT_RELEASE}")
+  fi
+fi
+python3 "${REPO_ROOT}/scripts/e2e-daemon-fault.py" "${DAEMON_CONTROL_ARGS[@]}" \
   -- "${DAEMON_COMMAND[@]}" >"${WORK_DIR}/daemon-fault.log" 2>&1 &
 DAEMON_PID=$!
 FAULT_DEADLINE=$((SECONDS + 10))
@@ -1438,8 +1459,8 @@ fi
 
 # ---- 4b. release a held stream fragment after an explicit test action ---------
 # First-fragment replay belongs to fakeclaude's user-envelope handler. Only the
-# second fragment needs a host signal: enqueue #2, or a phone disconnect while
-# replay-order deliberately keeps the phone offline.
+# second fragment needs a host signal: a phone display checkpoint, enqueue #2,
+# or a phone disconnect while replay-order deliberately keeps the phone offline.
 if [ -n "${DETERMINISTIC}" ] && [ -n "${FIXTURE_FILE_2}" ]; then
   log "arming second-fragment release: ${DROP_B_FENCE}"
   (
@@ -1449,15 +1470,19 @@ if [ -n "${DETERMINISTIC}" ] && [ -n "${FIXTURE_FILE_2}" ]; then
       while [ "$(grep -cF "${DISCONNECT_TOKEN}" "${DISCONNECT_LOG}" 2>/dev/null || true)" -le "${disconnect_base}" ]; do sleep 0.2; done
     elif [ "${DROP_B_FENCE}" = "send-now" ]; then
       while ! grep -qF 'relay: v2 send_queued_now delivered' "${DAEMON_LOG}"; do sleep 0.1; done
+    elif [ "${DROP_B_FENCE}" = "phone-checkpoint" ]; then
+      # The selected test proves the displayed prefix before releasing the next delta.
+      # A release must not require another prompt that changes the active turn.
+      while [ ! -f "${REPLAY_RELEASE}" ]; do sleep 0.1; done
     else
       while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || true)" -lt 2 ]; do sleep 0.2; done
     fi
     touch "${REPLAY_RELEASE}"
     log "released second stream fragment"
     if [ "${SCENARIO}" = "reopen-stream" ]; then
-      while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || true)" -lt 3 ]; do sleep 0.2; done
+      while [ ! -f "${E2E_HELD_RESULT_RELEASE}" ]; do sleep 0.1; done
       touch "${E2E_HELD_RESULT_RELEASE}"
-      log "released terminal result after third enqueue"
+      log "released terminal result after phone display checkpoint"
     fi
   ) &
   WATCHER_PID=$!
@@ -1607,6 +1632,16 @@ else
 fi
 log "running ${DEVICE}DebugAndroidTest (headless emulator: boot → install → ${TEST_TARGET} → teardown)…"
 log "  phone relayUrl = ${PHONE_RELAY_URL}"
+# Fixed launcher-owned socket paths. The phone cannot supply paths or session IDs.
+python3 - "${WORK_DIR}/test-session-sockets.json" \
+  "${ISO_HOME:-${HOME}}/.pyry/${PYRY_NAME}.sock" "${HOME}/.pyry/${PYRY_NAME_B}.sock" \
+  "${BYPASS_HOME:+${BYPASS_HOME}/.pyry/${PYRY_NAME_BYPASS}.sock}" \
+  "${ANSWER_HOME:+${ANSWER_HOME}/.pyry/${PYRY_NAME_ANSWER}.sock}" <<'PY_SESSION_SOCKETS'
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps([path for path in sys.argv[2:] if path]))
+PY_SESSION_SOCKETS
+
 GRADLE_TEST_ARGS=(-PuseRelayRepository=true)
 if [ -n "${STOP_TASK_URL:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.stopTaskFixtureUrl="${STOP_TASK_URL}")

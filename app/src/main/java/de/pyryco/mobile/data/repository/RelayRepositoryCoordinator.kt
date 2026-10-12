@@ -6,7 +6,6 @@ import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalAction
-import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
@@ -34,6 +33,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
@@ -42,7 +42,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -221,19 +220,6 @@ class RelayRepositoryCoordinator(
     val liveSessionEvents: Flow<LiveSessionEvent> =
         activeConnection.flatMapLatest { conn -> conn?.repo?.liveSessionEvents ?: emptyFlow() }
 
-    /** The decoded v2 interactive **modal** lifecycle events (#437) for the current connection, surfaced
-     *  off the connection-scoped concrete [RemoteConversationRepository] through [activeConnection]'s
-     *  [Connection.repo], like [liveSessionEvents]. Each connection's stream starts with one `null`, the
-     *  reconnect marker (#1337): [flatMapLatest] emits it as the first value of the new connection's inner
-     *  flow, after the prior connection's collection is cancelled and before any of the new connection's
-     *  frames. Empty between connections, so a teardown folds nothing. **Private** (#492): its sole consumer
-     *  is [hostModals]. */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private val modalEvents: Flow<ModalEvent?> =
-        activeConnection.flatMapLatest { conn ->
-            conn?.repo?.modalEvents?.onStart<ModalEvent?> { emit(null) } ?: emptyFlow()
-        }
-
     /**
      * Every prompt this host holds (#1337): each outstanding prompt across all its conversations, and the ones
      * dismissed on this connection, folded **once at this process-scoped layer** from [modalEvents] via
@@ -261,8 +247,18 @@ class RelayRepositoryCoordinator(
 
     init {
         scope.launch {
-            modalEvents.collect { event ->
-                hostModalState.update { state -> if (event == null) state.reconnected() else state.reduce(event) }
+            activeConnection.collectLatest { connection ->
+                val repo = connection?.repo ?: return@collectLatest
+                connection.pump.state.map { repo.usesAuthoritativeLiveState }.distinctUntilChanged().collectLatest { authoritative ->
+                    if (authoritative) {
+                        repo.authoritativeHostModals.collect { supplied ->
+                            hostModalState.update { supplied.copy(rejectedConversations = it.rejectedConversations) }
+                        }
+                    } else {
+                        hostModalState.update { it.reconnected() }
+                        repo.modalEvents.collect { event -> hostModalState.update { it.reduce(event) } }
+                    }
+                }
             }
         }
     }
@@ -273,6 +269,7 @@ class RelayRepositoryCoordinator(
      * Non-suspending, so the thread's next synchronous read already sees it. No log: actions carry modal ids.
      */
     fun recordModalAction(action: ModalAction) {
+        activeConnection.value?.repo?.recordAuthoritativeModalAction(action)
         hostModalState.update { it.reduce(action) }
     }
 

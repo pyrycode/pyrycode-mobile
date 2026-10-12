@@ -1,0 +1,50 @@
+[
+  {
+    "repository": "Mobile",
+    "revision": "b44067bbd991b7d68e0418f88cc2a9e721671c61",
+    "path": "app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt",
+    "sha256": "46ceee872fd0d964264cc8d804b85ecedeaabfeb513eb6fee91bbe4fefdc0999"
+  },
+  {
+    "repository": "Mobile",
+    "revision": "b44067bbd991b7d68e0418f88cc2a9e721671c61",
+    "path": "app/src/main/java/de/pyryco/mobile/data/network/SessionSettingsPayloads.kt",
+    "sha256": "83a007d7ee7e94bdd5b92e6c7a887506f3c2bc7ea9e15936ef95babb3fce53dc"
+  },
+  {
+    "repository": "Mobile",
+    "revision": "b44067bbd991b7d68e0418f88cc2a9e721671c61",
+    "path": "app/src/main/java/de/pyryco/mobile/data/repository/SessionSettingsCommands.kt",
+    "sha256": "9531eb35e7fb089e00142973112f83fa05e27439262e3c79c55665aab628994d"
+  },
+  {
+    "repository": "Mobile",
+    "revision": "b44067bbd991b7d68e0418f88cc2a9e721671c61",
+    "path": "scripts/e2e-emulator.sh",
+    "sha256": "a87b3f9f42a8cf55fe793df3ff740417e243ebbe02ffd6b11a183410e9400399"
+  },
+  {
+    "repository": "daemon",
+    "revision": "8091a4730d42f43029eb0b955442dc300106030f",
+    "path": "cmd/pyry/session_router.go",
+    "sha256": "33a33e1a36b7d2d6f792395d6654341bbb005d44ba0ec66bcf103478fb819cbe"
+  },
+  {
+    "repository": "daemon",
+    "revision": "8091a4730d42f43029eb0b955442dc300106030f",
+    "path": "internal/streamsup/parser_queries.go",
+    "sha256": "c3294e7ab9027b06cdfb1df35f92616607d6c5002015d5d92b163497ce153130"
+  },
+  {
+    "repository": "daemon",
+    "revision": "8091a4730d42f43029eb0b955442dc300106030f",
+    "path": "internal/streamsup/runner_control.go",
+    "sha256": "2f859e1113ff66663c8c29a026fb649516b01a12444fb3f4a6414f0c6b18e1d2"
+  },
+  {
+    "repository": "daemon",
+    "revision": "8091a4730d42f43029eb0b955442dc300106030f",
+    "path": "internal/relay/v2session_settings.go",
+    "sha256": "41362cda042843ddd7b84d27604faa21fe825eedacd8d3f394d15a0ce3f0ecc9"
+  }
+]

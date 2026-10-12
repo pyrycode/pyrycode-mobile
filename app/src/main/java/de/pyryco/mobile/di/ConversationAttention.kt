@@ -140,12 +140,12 @@ internal data class HostAttentionState(
     fun withReadMarks(marks: Map<String, ConversationReadMarks>): HostAttentionState =
         if (marks == readMarks) this else copy(readMarks = marks)
 
-    private fun usesSharedMark(id: String): Boolean = readMarks[id]?.readUpTo != null
+    private fun usesSharedMark(id: String): Boolean = readMarks[id]?.let { it.threadSupported || it.readUpTo != null } == true
 
     private fun unread(id: String): Boolean {
         val marks = readMarks[id]
-        val confirmed = marks?.readUpTo ?: return positions[id]?.unread == true
-        return marks.latestEntryId?.let { it > confirmed } == true
+        val confirmed = marks?.readUpTo ?: return marks?.threadSupported != true && positions[id]?.unread == true
+        return marks.unreadWatermark?.let { it > confirmed } == true
     }
 
     /** The host's connection is gone, so nothing on it can be seen running or busy. Everything else stays. */

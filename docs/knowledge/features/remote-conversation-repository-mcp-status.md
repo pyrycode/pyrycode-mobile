@@ -40,6 +40,6 @@ The report and the five flags are the only state this ticket produces; rendering
 
 - [Conversation repository § `McpStatus`/`McpStatusReport`/`McpServerStatus`](conversation-repository-shape.md#shape) — the domain types and interface shape.
 - [Conversation repository — Conventions](conversation-repository-conventions.md) — the no-op default exception these six members join.
-- [Remote conversation repository § Status projections](remote-conversation-repository.md#status-projections-one-file-per-status-event) — where this projection sits among its siblings.
+- [Remote conversation repository § Status projections](remote-conversation-repository-status-projections.md#status-projections-one-file-per-status-event) — where this projection sits among its siblings.
 - [Remote conversation repository — the model-list and slash-command-list menu retentions](remote-conversation-repository-model-and-slash-command-menus.md) — the closest sibling shape, including its own ask-ledger and refusal-correlation reasoning.
 - pyrycode `docs/protocol-mobile.md` §§ `mcp_status`, "Asking for MCP status on demand", "Actuating MCP servers on demand" — wire SSOT, not restated here.

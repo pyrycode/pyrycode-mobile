@@ -74,7 +74,7 @@ class ThreadScreenChannelInfoTest {
         state: ThreadUiState = channelInfoState(),
     ) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = state,
                     onBack = {},
@@ -163,7 +163,7 @@ class ThreadScreenChannelInfoTest {
                 ),
             )
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = state.value,
                     onBack = {},
@@ -213,7 +213,7 @@ class ThreadScreenChannelInfoTest {
             }
         composeTestRule.setContent {
             CompositionLocalProvider(LocalUriHandler provides uriHandler) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         state =
                             channelInfoState().copy(

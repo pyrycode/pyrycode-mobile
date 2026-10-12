@@ -67,7 +67,7 @@ class ThreadFrameTest {
         onInterrupt: () -> Unit = {},
     ) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = state(displayName),
                     onBack = onBack,
@@ -254,7 +254,7 @@ class ThreadFrameTest {
         var sends = 0
         var interrupts = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadInputBar(
                     text = "queued while busy",
                     onTextChange = {},
@@ -278,7 +278,7 @@ class ThreadFrameTest {
         var sends = 0
         var interrupts = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadInputBar(
                     text = "",
                     onTextChange = {},
@@ -300,7 +300,7 @@ class ThreadFrameTest {
     @Test
     fun inputButton_isDisabledSendWhenIdleAndEmpty() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadInputBar(text = "", onTextChange = {}, onSend = {})
             }
         }

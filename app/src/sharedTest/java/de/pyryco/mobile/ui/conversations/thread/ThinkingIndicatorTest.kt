@@ -64,7 +64,7 @@ class ThinkingIndicatorTest {
     @Test
     fun indicator_shown_when_thinking_with_messages() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = populatedState(),
                     onBack = {},
@@ -82,7 +82,7 @@ class ThinkingIndicatorTest {
     @Test
     fun indicator_shown_when_thinking_empty_thread() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = emptyState(),
                     onBack = {},
@@ -100,7 +100,7 @@ class ThinkingIndicatorTest {
     @Test
     fun indicator_hidden_when_not_thinking() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = populatedState(),
                     onBack = {},
@@ -119,7 +119,7 @@ class ThinkingIndicatorTest {
     fun indicator_tracks_the_hoisted_flag_with_no_local_state() {
         var thinking by mutableStateOf(false)
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = populatedState(),
                     onBack = {},
@@ -163,7 +163,7 @@ class ThinkingIndicatorTest {
     fun aFallingReadingUpdatesTheLabel() {
         var progress by mutableStateOf<ThinkingProgress?>(ThinkingProgress(184, 64))
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = populatedState(),
                     onBack = {},
@@ -219,7 +219,7 @@ class ThinkingIndicatorTest {
 
     private fun setThreadScreen(progress: ThinkingProgress?) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = populatedState(),
                     onBack = {},
