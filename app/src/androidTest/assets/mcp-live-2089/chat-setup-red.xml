@@ -1,0 +1,8 @@
+<testsuite name="de.pyryco.mobile.e2e.McpChatSetupTest" tests="3" skipped="0" failures="1" errors="0" timestamp="2026-10-12T11:18:34.652Z" hostname="Juhanas-MacBook-Air.local" time="5.667">
+  <properties />
+  <testcase name="connectedTargetBelowChannelsIsCreatedOnce" classname="de.pyryco.mobile.e2e.McpChatSetupTest" time="5.146">
+    <failure message="androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 1000 ms" type="androidx.compose.ui.test.ComposeTimeoutException" />
+  </testcase>
+  <testcase name="visibleTargetIsCreatedOnceWithoutSelectingAnotherHost" classname="de.pyryco.mobile.e2e.McpChatSetupTest" time="0.107" />
+  <testcase name="missingTargetTimesOutWithoutCreatingOnReadyPeer" classname="de.pyryco.mobile.e2e.McpChatSetupTest" time="0.144" />
+</testsuite>

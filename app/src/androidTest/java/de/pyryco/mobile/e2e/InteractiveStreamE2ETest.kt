@@ -757,7 +757,13 @@ class InteractiveStreamE2ETest {
             val selected = registry?.selected?.value
             val targetStatus = target?.coordinator?.connectionStatus?.value
             val selectedStatus = selected?.coordinator?.connectionStatus?.value
+            val rows =
+                GlobalContext.getOrNull()?.getOrNull<HostConversationSource>()?.snapshots?.value?.firstOrNull {
+                    it.serverId ==
+                        serverId
+                }
             return "targetPresent=${target != null} selectedTarget=${target != null && target === selected} " +
+                "targetRowsLoaded=${rows?.rowsLoaded == true} targetChannels=${rows?.channels?.size?.coerceAtMost(999) ?: 0} " +
                 "targetRelay=${targetStatus?.relay?.javaClass?.simpleName ?: "absent"} " +
                 "targetDaemon=${targetStatus?.pyrycode?.javaClass?.simpleName ?: "absent"} " +
                 "targetRepository=${target?.coordinator?.currentRepository?.value != null} " +
@@ -776,7 +782,7 @@ class InteractiveStreamE2ETest {
             Log.i("McpScenario", "event=mcp_readiness ${connectionSnapshot()}")
         }
         step(McpScenarioStage.ChatSetup) {
-            createChat(serverId)
+            composeTestRule.awaitMcpChatAddControl(serverId, LIST_TIMEOUT_MS) { Log.i("McpScenario", it) }.performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
