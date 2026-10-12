@@ -5523,19 +5523,22 @@ class InteractiveStreamE2ETest {
             awaitChannelList()
             awaitConnected()
             val (chat, name) = answerChat(serverId, "e2e1783-agent-")
+            val liveRepositories =
+                checkNotNull(
+                    GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId),
+                ).coordinator.currentRepository
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             openChatRow(name)
             val hold = "curl --max-time 180 --silent --show-error $fixture/hold"
-            val childReply = "agent1783_done"
             val holdTools = "curl --max-time 180 --silent --show-error $fixture/hold-tools"
             sendFromPhone(
                 "Use Agent once with run_in_background=true, subagent_type=general-purpose and description=Held background agent. " +
                     "Give it exactly these instructions: first run Bash with timeout 180000 in the foreground: $holdTools . " +
                     "After that finishes make two separate foreground Bash calls, " +
                     "each running printf agent1783_ready. Then run Bash with timeout 180000 in the foreground: $hold . " +
-                    "Wait for that command to finish, then reply exactly $childReply as your own ordinary assistant paragraph. " +
+                    "Wait for that command to finish, then briefly describe its completion in your own assistant paragraph. " +
                     "Do not use any other tool yourself or wait for the agent. " +
-                    "End your own turn immediately with exactly: launched1783.",
+                    "Briefly confirm that you launched it and end your own turn immediately.",
             )
             val launched =
                 allowPromptsUntil(
@@ -5605,24 +5608,40 @@ class InteractiveStreamE2ETest {
                         !peer.field(it, "status").isNullOrEmpty()
                 },
             )
-            val newer = "Reply exactly newer1783. Leave the background agent running."
-            val priorEnds = peer.recorded(chat).count { it.type == "turn_end" }
+            val newer = "Briefly acknowledge this new message. Leave the background agent running."
+            val priorTurns =
+                peer
+                    .recorded(chat)
+                    .filter { it.type == "turn_end" }
+                    .map { peer.field(it, "turn_id") }
+                    .toSet()
             sendFromPhone(newer)
-            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "newer phone turn did not finish", allowed) {
-                it.type == "turn_end" && peer.recorded(chat).count { frame -> frame.type == "turn_end" } > priorEnds
-            }
+            val newerEnd =
+                allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "newer phone turn did not finish", allowed) {
+                    it.type == "turn_end" && peer.field(it, "turn_id") !in priorTurns
+                }
+            val newerTurn = requireNotNull(peer.field(newerEnd, "turn_id"))
             // The peer connection can finish before the phone folds and renders that same reply.
+            var newerWait = "messages"
+            var newerReadings = emptyList<String>()
             runBlocking {
-                withTimeout(THREAD_TIMEOUT_MS) {
-                    hostRepository().observeMessages(chat).first { items ->
-                        items.filterIsInstance<ThreadItem.MessageItem>().any {
-                            it.message.role == Role.Assistant &&
-                                it.message.parentToolUseId.isEmpty() &&
-                                "newer1783" in it.message.content &&
-                                !it.message.isStreaming
+                withTimeoutDiagnostic({ "Newer reply wait=$newerWait phone=$newerReadings; ${peer.linkState()}" }) {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        liveRepositories.firstOnLive({ it.observeMessages(chat) }) { items ->
+                            val messages = items.filterIsInstance<ThreadItem.MessageItem>()
+                            newerReadings =
+                                messages.map {
+                                    val m = it.message
+                                    "role=${m.role},main=${m.parentToolUseId.isEmpty()},turn=${m.segment?.turnId == newerTurn},streaming=${m.isStreaming}"
+                                }
+                            holdsSettledAssistantReply(items, newerTurn)
+                        }
+                        newerWait = "phase"
+                        liveRepositories.firstOnLive({ it.observeTurnPhase(chat) }) {
+                            newerWait = "phase:$it"
+                            it == LiveSessionEvent.TurnState.Phase.Idle
                         }
                     }
-                    hostRepository().observeTurnPhase(chat).first { it == LiveSessionEvent.TurnState.Phase.Idle }
                 }
             }
             val go = string(R.string.agent_go_to)
@@ -5665,7 +5684,7 @@ class InteractiveStreamE2ETest {
                 },
             )
             sendFromPhone(
-                "Run exactly this Bash command in the foreground: curl --silent --show-error $fixture/release . Then reply released1783.",
+                "Run exactly this Bash command in the foreground: curl --silent --show-error $fixture/release . Then briefly confirm completion.",
             )
             allowPromptsUntil(
                 peer,
@@ -5684,22 +5703,65 @@ class InteractiveStreamE2ETest {
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(string(R.string.agent_finished)).fetchSemanticsNodes().isNotEmpty()
             }
-            val later = "Reply exactly later1783."
+            val later = "Briefly acknowledge this later message."
+            val beforeLater =
+                peer
+                    .recorded(chat)
+                    .filter { it.type == "turn_end" }
+                    .map { peer.field(it, "turn_id") }
+                    .toSet()
             sendFromPhone(later)
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(inThreadList("later1783"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            val laterEnd =
+                allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "later phone turn did not finish", allowed) {
+                    it.type == "turn_end" && peer.field(it, "turn_id") !in beforeLater
+                }
+            val laterTurn = requireNotNull(peer.field(laterEnd, "turn_id"))
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    liveRepositories.firstOnLive({ it.observeMessages(chat) }) { holdsSettledAssistantReply(it, laterTurn) }
+                }
             }
             composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
             composeTestRule.onNodeWithText(string(R.string.agent_finished)).assertIsDisplayed()
+            // A late child reply can have its own turn identity. Its parent identifies
+            // the Agent; do not require the launching main turn's identity.
+            val childReplyFrame =
+                allowPromptsUntil(
+                    peer,
+                    chat,
+                    THREAD_TIMEOUT_MS,
+                    "finished Agent supplied no attributed reply",
+                    allowed,
+                    frame = "assistant_delta",
+                ) {
+                    it.type == "assistant_delta" &&
+                        peer.field(it, "parent_tool_use_id") == agentId &&
+                        peer.field(it, "text").orEmpty().isNotBlank()
+                }
+            val childReplyTurn = requireNotNull(peer.field(childReplyFrame, "turn_id"))
+            var lastOwnedReadings = emptyList<String>()
             val ownedMessages =
                 runBlocking {
-                    withTimeout(THREAD_TIMEOUT_MS) {
-                        hostRepository().observeMessages(chat).first { items ->
-                            items.filterIsInstance<ThreadItem.MessageItem>().any {
-                                it.message.role == Role.Assistant &&
-                                    it.message.parentToolUseId == agentId &&
-                                    childReply in it.message.content &&
-                                    !it.message.isStreaming
+                    withTimeoutDiagnostic({
+                        val frames = peer.recorded(chat)
+                        val ownedReply =
+                            frames.any {
+                                it.type == "assistant_delta" &&
+                                    peer.field(it, "parent_tool_use_id") == agentId &&
+                                    peer.field(it, "turn_id") == childReplyTurn &&
+                                    peer.field(it, "text").orEmpty().isNotBlank()
+                            }
+                        "Agent completion reply missing: peer_owned_reply=$ownedReply phone=$lastOwnedReadings; ${peer.linkState()}"
+                    }) {
+                        withTimeout(THREAD_TIMEOUT_MS) {
+                            liveRepositories.firstOnLive({ it.observeMessages(chat) }) { items ->
+                                val messages = items.filterIsInstance<ThreadItem.MessageItem>()
+                                lastOwnedReadings =
+                                    messages.map {
+                                        val m = it.message
+                                        "role=${m.role},owned=${m.parentToolUseId == agentId},turn=${m.segment?.turnId == childReplyTurn},text=${m.content.isNotBlank()},streaming=${m.isStreaming}"
+                                    }
+                                holdsSettledAssistantReply(items, childReplyTurn, agentId)
                             }
                         }
                     }
@@ -5733,7 +5795,13 @@ class InteractiveStreamE2ETest {
                 agentId = agentId,
                 runId = runId,
                 childIds = ownedMessages.map { it.id },
-                ownedChild = hasText(childReply) and hasAnyAncestor(hasTestTag("background-agent-child:$agentId")),
+                ownedChild =
+                    SemanticsMatcher("nonempty attributed assistant paragraph") { node ->
+                        node.config
+                            .getOrNull(SemanticsProperties.Text)
+                            .orEmpty()
+                            .any { it.text.isNotBlank() }
+                    } and hasAnyAncestor(hasTestTag("background-agent-child:$agentId")),
                 goLabel = go,
                 markerMatcher = marker,
                 expandLabel = string(R.string.tool_run_expand),
@@ -5747,7 +5815,7 @@ class InteractiveStreamE2ETest {
                 runBlocking { hostRepository().observeMessages(chat).first() }
                     .filterIsInstance<ThreadItem.MessageItem>()
                     .map { it.message }
-                    .last { it.role == Role.User && "later1783" in it.content }
+                    .last { it.role == Role.User && it.content == later }
                     .id
             val indexForKey =
                 composeTestRule
