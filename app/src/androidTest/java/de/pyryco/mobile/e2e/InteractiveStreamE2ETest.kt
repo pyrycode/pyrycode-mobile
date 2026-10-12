@@ -1940,12 +1940,17 @@ class InteractiveStreamE2ETest {
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
         awaitChannelList()
 
-        // 2. Wait for the relay connection to open before creating — rename round-trips to the daemon.
-        awaitConnected()
-
-        // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
-        //    plain discussion suffices — "Rename" is mutationsSupported-gated only, reachable on it.
-        createChat()
+        // 2–3. Wait for this host's loaded live list, then scroll to its Chats plus. A long Channels
+        // section can keep the control outside lazy composition; create once after locating it (#2057).
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val source = GlobalContext.get().get<HostConversationSource>()
+        composeTestRule
+            .awaitRenameChatAddControl(
+                serverId,
+                LIST_TIMEOUT_MS,
+                snapshots = { source.snapshots.value },
+                evidence = { Log.i("RenameSetup", "event=rename_setup $it") },
+            ).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -1974,26 +1979,19 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
 
         // 6. Top-bar assertion (AC-2, surface #1 — in-thread). This wait spans the rename round-trip
-        //    (conversation_updated → state.displayName); there is NO PopBack, so the thread stays open and the
-        //    top bar re-labels in place. The dialog has already left composition (Save flips showRenameDialog
-        //    false synchronously), so the match is the top bar Text, not the dismissing field. Tolerant:
-        //    substring, generous timeout, presence.
+        //    (conversation_updated → state.displayName); the thread stays open and its top bar relabels.
+        //    Require dialog closure so the submitted title in its field cannot satisfy the assertion.
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodes(isDialog()).fetchSemanticsNodes().isEmpty() &&
+                composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
 
         // 7. List assertion (AC-2, surface #2 — after popping back). Tap Back, wait for the list marker (the
-        //    thread has popped back), then wait for the unique name on a recents row and confirm it is
-        //    displayed. The same conversation_updated fold upserts the list projection → observeConversations
-        //    re-emits with the new name; the waitUntil covers that round-trip. A genuine inversion of step 4's
-        //    absence, on the list surface, same unique token.
+        //    thread has popped back), then locate its Chats row even beyond a long Channels section.
         composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
         awaitChannelList()
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
+        composeTestRule.awaitArchiveRoundTripChat(uniqueName, LIST_TIMEOUT_MS)
     }
 
     /**
