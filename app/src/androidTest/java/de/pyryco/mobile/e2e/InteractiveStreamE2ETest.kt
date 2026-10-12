@@ -837,10 +837,12 @@ class InteractiveStreamE2ETest {
             }
             val conversationId = newHostConversationId(serverId, before)
             val chatName = CONTEXT_ASK_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            Log.i("ContextReconnect", "event=context_reconnect stage=chat_created conversation=${UUID.fromString(conversationId)}")
             renameOpenThread(chatName)
             leaveThread()
 
             // 2. With the phone's link cut, the peer's turn runs to its end and the daemon publishes its reading.
+            Log.i("ContextReconnect", "event=context_reconnect stage=phone_cut")
             setHostLink(serverId, up = false)
             runBlocking {
                 peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS)
@@ -849,6 +851,7 @@ class InteractiveStreamE2ETest {
             }
 
             // 3. A fresh connection: the phone holds no reading for the chat, so only the open's ask can fill it.
+            Log.i("ContextReconnect", "event=context_reconnect stage=peer_reading_complete")
             setHostLink(serverId, up = true)
             awaitChannelList()
             assertNull(
@@ -858,6 +861,7 @@ class InteractiveStreamE2ETest {
 
             // 4. Open the chat and send nothing: the open's ask fills the reading. Waiting on the reading itself,
             // not only the footer, because the footer also renders a percentage from session_settings alone.
+            Log.i("ContextReconnect", "event=context_reconnect stage=reopen_without_send")
             openChatRow(chatName)
             runBlocking {
                 withTimeout(THREAD_TIMEOUT_MS) {
@@ -9037,16 +9041,29 @@ class InteractiveStreamE2ETest {
         serverId: String,
         up: Boolean,
     ) {
-        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+        val bundle = checkNotNull(registry.connectionFor(serverId)) { "host not registered" }
+
+        fun snapshot(): String {
+            val target = registry.connectionFor(serverId)
+            val status = bundle.coordinator.connectionStatus.value
+            return "targetPresent=${target != null} capturedRegistered=${target === bundle} " +
+                "selectedTarget=${target != null && registry.selected.value === target} " +
+                "socket=${bundle.supervisor.currentConnection.value != null} " +
+                "relay=${bundle.supervisor.relayStatus.value.javaClass.simpleName} " +
+                "daemon=${status.pyrycode.javaClass.simpleName} " +
+                "repository=${bundle.coordinator.currentRepository.value != null} " +
+                "currentRepository=${target?.coordinator?.currentRepository?.value != null}"
+        }
         runBlocking {
-            withTimeoutDiagnostic({
-                "host link ${if (up) "reconnect" else "close"} timed out; repository present=${bundle.coordinator.currentRepository.value != null}"
-            }) {
-                withTimeout(CONNECT_TIMEOUT_MS) {
-                    if (up) bundle.supervisor.connect() else bundle.supervisor.close()
-                    bundle.coordinator.currentRepository.first { (it != null) == up }
-                }
-            }
+            awaitHostLinkChange(
+                up,
+                CONNECT_TIMEOUT_MS,
+                { if (up) bundle.supervisor.connect() else bundle.supervisor.close() },
+                bundle.coordinator.currentRepository.map { it != null },
+                ::snapshot,
+                { Log.i("HostLinkWait", it) },
+            )
         }
     }
 
