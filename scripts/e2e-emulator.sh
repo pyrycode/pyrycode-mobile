@@ -133,6 +133,7 @@ if [ -n "${LIVE}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${E2E_LOGI
 fi
 GRADLEW="${REPO_ROOT}/gradlew"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pyry-e2e.XXXXXX")"
+LATER_REPLY_CAPTURE_STARTED_NS="$(python3 -c 'import time; print(time.time_ns())')"
 RELAY_LOG="${WORK_DIR}/relay.log"
 DAEMON_LOG="${WORK_DIR}/daemon.log"
 PAIR_OUT="${WORK_DIR}/pair.out"
@@ -643,6 +644,15 @@ cleanup() {
   [ -n "${ANSWER_PID:-}" ] && kill "${ANSWER_PID}" 2>/dev/null || true
   [ -n "${RELAY_PID}" ] && kill "${RELAY_PID}" 2>/dev/null || true
   wait 2>/dev/null || true
+  # #2114: retain only this scenario's private owning-host evidence before HOME removal.
+  # The launcher supplies ownership directly; directory ages and other runs are irrelevant.
+  if [ -n "${LIVE:-}" ] && [[ ",${TEST_TARGET:-}," == *"#interactiveTurn_backgroundAgent_followsBottomUntilFinished,"* ]]; then
+    python3 "${REPO_ROOT}/scripts/later-reply-host-evidence.py" \
+      --home "${DAEMON_HOME:-}" --instance "${PYRY_NAME}" \
+      --root "${LATER_REPLY_EVIDENCE_ROOT:-/tmp/pyry-later-reply-evidence}" \
+      --started "${LATER_REPLY_CAPTURE_STARTED_NS}" --status "${code}" \
+      || log "later_reply_host_capture=failed original_result_preserved=true"
+  fi
   # The operator-bypass HOME (#687) goes whatever the exit code: it holds a copy of ~/.claude.json and the
   # witness file. Only a path this script minted is removed. Its daemon log stays in WORK_DIR as the rest do.
   # A failed run first keeps claude's session transcripts (#977): regular *.jsonl files under
