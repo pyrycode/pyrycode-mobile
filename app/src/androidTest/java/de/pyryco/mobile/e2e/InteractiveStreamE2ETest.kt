@@ -8647,14 +8647,24 @@ class InteractiveStreamE2ETest {
             runBlocking { awaitPermissionHeldConnection(GlobalContext.get().get<RelayConnectionRegistry>(), serverId, CONNECT_TIMEOUT_MS) }
             Log.i("PermissionHeldTool", "event=permission_held_readiness ${heldToolConnectionSnapshot(peer)}")
         }
-        val before = heldToolStep(peer, PermissionHeldStage.Conversations) { hostConversationIds(serverId) }
+
+        fun liveRepository() =
+            checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+                .coordinator.currentRepository
+        val before =
+            heldToolStep(peer, PermissionHeldStage.Conversations) {
+                runBlocking { liveRepository().awaitPermissionHeldConversationIds(LIST_TIMEOUT_MS) }
+            }
         heldToolStep(peer, PermissionHeldStage.ChatCreation) { createChat(serverId) }
         heldToolStep(peer, PermissionHeldStage.Composer) {
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
         }
-        val conversationId = heldToolStep(peer, PermissionHeldStage.ChatIdentity) { newHostConversationId(serverId, before) }
+        val conversationId =
+            heldToolStep(peer, PermissionHeldStage.ChatIdentity) {
+                runBlocking { liveRepository().awaitPermissionHeldChatId(before, LIST_TIMEOUT_MS) }
+            }
         heldToolStep(peer, PermissionHeldStage.CurrentPeer) {
             peerStep(peer, "open running-tool peer") { peer.open(CONNECT_TIMEOUT_MS) }
         }

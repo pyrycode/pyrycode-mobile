@@ -46,3 +46,23 @@ Full live acceptance is pending with the dispatcher. A builder return must commi
 `dispatcher-full.xml`, `dispatcher-method.xml` and `dispatcher-provenance.json`
 here, confirming the fresh full gate and named method pass, executed/failed/skipped
 counts, tested Mobile/daemon revisions and XML/logcat/daemon artifact paths.
+
+Verifier finding 1 rework: `rework-conversations-red.xml` records four executed
+controls, two passing and two failing specifically at the lost-timeout-cause
+assertion. This ran against an uncommitted extraction of `d151f844c`'s original
+conversation-list predicate, including `withTimeoutOrNull`. Both actual
+permission-held read paths then switched to `withTimeout`; the same four controls
+passed with no failures/errors/skips (`rework-conversations-green.xml`). They
+check the unchanged 29999/30000 ms deadline, Conversations/ChatIdentity attribution,
+one lazy connection/peer snapshot, the original coroutine timeout cause, empty
+initial lists and chat identity across repository replacement. Raw red/green XML
+is under `/tmp/builder-2100/rework-1/`; the complete six-class focused selection
+executed/passed 54 tests with zero failures/errors/skips.
+
+The rework's `python3 scripts/android-test-gate.py scripted tool` executed/passed
+one test with zero failures/errors/skips, exit 0 and zero real Claude turns
+(`rework-scripted-tool.xml`). XML/logcat are at
+`build/dispatcher-tests/scripted-j66wil_b/`, copied to
+`/tmp/builder-2100/rework-1/scripted-tool/`. Its reported Mobile revision is
+`d151f844c` with the uncommitted rework present; daemon revision is `8091a4730`.
+This deterministic pass does not replace the pending dispatcher full live proof.

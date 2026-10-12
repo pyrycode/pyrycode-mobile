@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="de.pyryco.mobile.e2e.PermissionHeldConversationsTest" tests="4" skipped="0" failures="2" errors="0" timestamp="2026-10-12T01:24:04.744Z" hostname="Juhanas-MacBook-Air.local" time="0.104">
+  <testcase name="chatIdentityWaitsForNewIdAcrossRepositoryReplacement" classname="de.pyryco.mobile.e2e.PermissionHeldConversationsTest" time="0.093" />
+  <testcase name="missingNewChatKeepsChatIdentityStageSnapshotAndTimeoutCause" classname="de.pyryco.mobile.e2e.PermissionHeldConversationsTest" time="0.005">
+    <failure message="java.lang.AssertionError: lost timeout cause: java.lang.AssertionError: the phone's live repository never listed a new chat's id within 30000 ms" type="java.lang.AssertionError" />
+  </testcase>
+  <testcase name="missingInitialSnapshotKeepsConversationsStageSnapshotAndTimeoutCause" classname="de.pyryco.mobile.e2e.PermissionHeldConversationsTest" time="0.002">
+    <failure message="java.lang.AssertionError: lost timeout cause: java.lang.AssertionError: the phone's live repository never listed its conversation list within 30000 ms" type="java.lang.AssertionError" />
+  </testcase>
+  <testcase name="initialSnapshotAcceptsEmptyListWithoutReadingDiagnosticSnapshot" classname="de.pyryco.mobile.e2e.PermissionHeldConversationsTest" time="0.001" />
+</testsuite>
