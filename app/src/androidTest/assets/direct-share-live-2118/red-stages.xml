@@ -1,0 +1,20 @@
+<testsuite tests="6" failures="6" errors="0" skipped="0">
+  <testcase classname="de.pyryco.mobile.e2e.DirectShareStageTest" name="diagnosticSnapshotIsBounded">
+    <failure />
+  </testcase>
+  <testcase classname="de.pyryco.mobile.e2e.DirectShareStageTest" name="nestedPeerTimeoutKeepsItsCauseAndFailedStage">
+    <failure />
+  </testcase>
+  <testcase classname="de.pyryco.mobile.e2e.DirectShareStageTest" name="successfulAsynchronousStagesReturnTheirResultOnce">
+    <failure />
+  </testcase>
+  <testcase classname="de.pyryco.mobile.e2e.DirectShareStageTest" name="outerCreationDeadlineRecordsTheInnerStageBeforeCleanup">
+    <failure />
+  </testcase>
+  <testcase classname="de.pyryco.mobile.e2e.DirectShareStageTest" name="diagnosticFailureDoesNotMaskTheAsynchronousOperation">
+    <failure />
+  </testcase>
+  <testcase classname="de.pyryco.mobile.e2e.DirectShareStageTest" name="recorderFailureDoesNotMaskTheOperationOrItsSnapshot">
+    <failure />
+  </testcase>
+</testsuite>

@@ -1,0 +1,71 @@
+{
+  "mobile": "187cd0e2139da0c510be4a08efe0c9561c550de9",
+  "main": "cfc5911723bad305dcf2486283521915dce91b84",
+  "daemon": "7a1daa57bae0c88a0c96b2b4e62c990fa76f47ca",
+  "full": {
+    "executed": 65,
+    "passed": 27,
+    "failed": 38,
+    "errors": 0,
+    "skipped": 0,
+    "named": {
+      "executed": 1,
+      "failed": 1,
+      "passed": 0,
+      "skipped": 0,
+      "stderr": "bare coroutine timeout 30000 ms; stage unknown"
+    }
+  },
+  "rerun": {
+    "executed": 38,
+    "passed": 11,
+    "failed": 27,
+    "errors": 0,
+    "skipped": 0,
+    "named": {
+      "executed": 1,
+      "failed": 0,
+      "passed": 1,
+      "skipped": 0
+    }
+  },
+  "base": {
+    "executed": 27,
+    "passed": 12,
+    "failed": 15,
+    "errors": 0,
+    "skipped": 0,
+    "named_executed": 0
+  },
+  "artifacts": [
+    {
+      "path": "/tmp/builder-2117/evidence/2026-10-12T00-46-19-896Z_real-claude-gate-base_#2057.log",
+      "sha256": "461b7ed262053c314049c176d60e9c1b58e3309f34d59b4a3e0bac0b4b7605e9"
+    },
+    {
+      "path": "/tmp/builder-2117/evidence/2026-10-12T00-46-19-896Z_real-claude-gate-base_#2057.stderr.log",
+      "sha256": "503226abda52fc98a4824d433e33202063dabcb91d1a26e0935f4a6ddea5ad27"
+    },
+    {
+      "path": "/tmp/builder-2117/evidence/2026-10-12T00-46-19-896Z_real-claude-gate-rerun_#2057.log",
+      "sha256": "ad3745e96c6953f39f3dfa04f11abaaabbe7fdc0113c6960880c175f81a82587"
+    },
+    {
+      "path": "/tmp/builder-2117/evidence/2026-10-12T00-46-19-896Z_real-claude-gate-rerun_#2057.stderr.log",
+      "sha256": "8ddaaff4bba326a119958f9f66e3a611a47330558a21734afe38d8bc14d2442f"
+    },
+    {
+      "path": "/tmp/builder-2117/evidence/2026-10-12T00-46-19-896Z_real-claude-gate_#2057.log",
+      "sha256": "045baf4962e13ca7b68df6efe49057fe86ec7d1cdcbb5bb6d0286ae460df935a"
+    },
+    {
+      "path": "/tmp/builder-2117/evidence/2026-10-12T00-46-19-896Z_real-claude-gate_#2057.meta.log",
+      "sha256": "b85a142dc7a93d877543008ab1a1fdd4d2cc45e9c354ee3381e971dffd7b83d0"
+    },
+    {
+      "path": "/tmp/builder-2117/evidence/2026-10-12T00-46-19-896Z_real-claude-gate_#2057.stderr.log",
+      "sha256": "7f6a93b330abc7f3e2346f10e59be6b61b80bb59dfaf29f4b7e8c1e3f1d4e2a8"
+    }
+  ],
+  "inventory_check": "all seven report/stderr/meta digests matched the provided inventory locally"
+}
