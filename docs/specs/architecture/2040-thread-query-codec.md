@@ -76,3 +76,7 @@ None. One request per instance is the correlation boundary; scheduler concurrenc
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-12
+
+## Revisions
+
+- 2026-10-12: `terminalFramesCannotUseObjectContinuationToBypassAdmission` failed (one executed, one failed, no skips): an error with object continuation bypassed ordinary byte admission. Restrict assembly classification to `thread_items`; reset/error envelopes always receive bounded ordinary admission. This implements the existing terminal-never-fragments contract. Added inclusive combined-budget, atomic rejection and unsigned multipart probes; none changes coverage or scheduling ownership.
