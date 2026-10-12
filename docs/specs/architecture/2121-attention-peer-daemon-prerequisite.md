@@ -72,3 +72,10 @@ Pending for the documentation stage: update `docs/e2e-interactive-stream.md`, â€
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-12
+
+## Revisions
+
+- 2026-10-12: fresh identical control probes reconfirmed the owning defect: `5d931a3b` executed 2/failed 2 with wire closure `4413` before snapshot 0/64; `8eabb607` executed 2/passed 2, zero errors/skips. The permanent regression also executed/passed 1/1 on merged `47d00822`; all repaired production files match that merge. A scratch invocation with zero selected tests was excluded from evidence.
+- 2026-10-12: admission regression `test_full_live_rejects_pre_repair_daemon` executed 1/failed 1 before implementation because the old daemon was admitted. The repaired guard and existing host-prompt coverage executed/passed 12/12. The guard is local to the existing revision/startup boundary; no scenario/helper or product behavior changed.
+- 2026-10-12: fresh baseline `build/dispatcher-tests/live-jmxknsdm/dispatcher.xml` and repaired `build/dispatcher-tests/live-ajyw3ysg/dispatcher.xml` each executed/passed the named live method 1/1 with zero failures/errors/skips and exit 0. Mobile HEAD `8200bfb47` (repaired run includes the prerequisite working-tree changes), daemon `47d00822cc702c896d6234b0447226096edab210`, Claude 2.1.280, `pixel2Api33Atd`. Retained count-derived evidence is under `scripts/e2e-fixtures/attention-peer-2121/`. Full dispatcher live acceptance remains pending, with `dispatcher-full-counted.xml` and final metadata to commit on the builder's return.
+- 2026-10-12: both focused harness test files executed/passed 39/39 with loopback fixture access; lint and debug assembly passed. Retaining all historical case identities plus the reproducible wire probe expands final written work to approximately 720 lines, above the initial forecast but below every hard sizing boundary; zero Android production changes or exported production types, one added shell call site and four prerequisite reject branches.

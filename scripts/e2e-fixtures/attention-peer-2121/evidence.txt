@@ -1,0 +1,62 @@
+#2121 attention-peer investigation and admission repair, 2026-10-12
+
+Historical failure stage: peerStep("open attention peer"), before openChatRow(A),
+B's turn, or attention_pill_probe. No open session settled within 30 seconds.
+Mobile: 187cd0e2139da0c510be4a08efe0c9561c550de9
+Daemon: 7a1daa57bae0c88a0c96b2b4e62c990fa76f47ca
+Claude: 2.1.280
+Original full gate: 65 executed, 27 passed, 38 failed, 0 errors, 0 skipped.
+Same-tree rerun: 38 executed, 11 passed, 27 failed, 0 errors, 0 skipped.
+The named method failed in the full gate and passed in the rerun.
+
+Historical counted XML, stderr and private daemon logs were recovered from HP
+in the previous builder run. Their original phone XML/logcat is unavailable.
+The dispatcher XML retained here is count-derived: case identity, outcome and
+suite counts survive, while failure bodies/log output are removed.
+Original dispatcher source paths and SHA-256 hashes are in evidence.json.
+Private daemon logs remain outside Git in /tmp/builder-2121/.
+Accepted historical peer handshakes did not settle. Their precise closure cause
+cannot be established from surviving evidence. A later 4410 record is not
+attributed to the earlier attempts.
+
+Controlled causal evidence, distinct from a passing live rerun:
+Identical TestReadinessLegacyReconnectSnapshotCapacity and
+TestAttentionPeerReconnectSnapshotCapacity drive the real daemon transport.
+Hold transport acknowledgement during an interactive-only handshake with 64
+retained model snapshots within ordinary queue count/byte bounds, then release.
+The task-local wire probe is retained verbatim as attention-peer-capacity-probe.go.txt.
+The permanent readiness regression belongs to pyrycode #3214 / PR #3232.
+Use the same tests on 5d931a3b and 8eabb607 with testHostedRealTransport's wires,
+entered and delivered observation channels at 128 (the old fixture had 32).
+This fixture-only enlargement keeps its recorder from blocking the wire proof.
+The probe/readiness files are byte-identical on both controls; hashes are recorded.
+Command: go test -race -count=1 -json -run '^Test(ReadinessLegacyReconnectSnapshotCapacity|AttentionPeerReconnectSnapshotCapacity)$' ./internal/relay
+Pre-repair: 2 executed, 2 failed; wire closure 4413 before snapshot 0/64.
+Post-repair: 2 executed, 2 passed; 0 failed/errors/skips.
+Merged 47d00822 permanent readiness regression: 1 executed, 1 passed,
+0 failed/errors/skips. Repaired production files match the merged source.
+Fresh control timestamps: pre-repair 08:57:03-08:57:05 UTC; post-repair
+08:59:42-08:59:44 UTC; merged regression 08:59:46-08:59:48 UTC.
+An attempted zero-test invocation in a different scratch folder was discarded;
+it is not counted as a passing probe.
+
+Mobile admission regression: the old harness accepted a daemon before #3214.
+test_full_live_rejects_pre_repair_daemon: 1 executed, 1 failed before the guard.
+After repair, the focused admission and existing host-prompt tests passed 12/12.
+The new guard checks VCS ancestry before daemon startup for full live runs and
+selections containing this method, without skipping or retrying any assertion.
+
+Two fresh focused live drives used the versioned isolated 47d00822 daemon:
+baseline build/dispatcher-tests/live-jmxknsdm/dispatcher.xml and repaired
+build/dispatcher-tests/live-ajyw3ysg/dispatcher.xml, each 1 executed/passed,
+0 failed/errors/skips, exit 0. Mobile HEAD 8200bfb47; the repaired drive includes
+the prerequisite working-tree changes. Claude 2.1.280, pixel2Api33Atd, live TLS relay.
+The existing same-permission Waiting navigation, peer-only answer, real completion,
+Finished visibility, explicit five-second expiry and no-replay assertions all ran.
+No Mobile scenario or product code changed. Earlier #1735 expiry and #1905
+paired-host isolation repairs stay intact; neither explains this peer-open stage.
+
+Pending: dispatcher-owned fresh passing FULL live gate after verification.
+Retain dispatcher-full-counted.xml and update evidence.json with tested revisions,
+all outcome counts and explicit named-method execution/result on builder return.
+Focused passes do not satisfy that final acceptance.

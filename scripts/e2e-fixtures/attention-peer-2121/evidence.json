@@ -1,0 +1,141 @@
+{
+  "historical_mobile": "187cd0e2139da0c510be4a08efe0c9561c550de9",
+  "historical_daemon": "7a1daa57bae0c88a0c96b2b4e62c990fa76f47ca",
+  "historical_claude": "2.1.280",
+  "historical_stage": "open attention peer",
+  "historical_phone_close_code": "unavailable",
+  "runs": [
+    {
+      "name": "historical-full",
+      "source": "/tmp/builder-2121/2026-10-12T00-46-19-896Z_real-claude-gate_#2057.log",
+      "sha256": "045baf4962e13ca7b68df6efe49057fe86ec7d1cdcbb5bb6d0286ae460df935a",
+      "counts": {
+        "executed": 65,
+        "passed": 27,
+        "failed": 38,
+        "errors": 0,
+        "skipped": 0
+      },
+      "named_method": "failed",
+      "count_derived_xml": "historical-full-counted.xml"
+    },
+    {
+      "name": "historical-rerun",
+      "source": "/tmp/builder-2121/2026-10-12T00-46-19-896Z_real-claude-gate-rerun_#2057.log",
+      "sha256": "ad3745e96c6953f39f3dfa04f11abaaabbe7fdc0113c6960880c175f81a82587",
+      "counts": {
+        "executed": 38,
+        "passed": 11,
+        "failed": 27,
+        "errors": 0,
+        "skipped": 0
+      },
+      "named_method": "passed",
+      "count_derived_xml": "historical-rerun-counted.xml"
+    },
+    {
+      "name": "focused-baseline",
+      "mobile": "8200bfb47",
+      "daemon": "47d00822cc702c896d6234b0447226096edab210",
+      "source": "build/dispatcher-tests/live-jmxknsdm/dispatcher.xml",
+      "sha256": "bf76cf72aec52cfd320dc9aaf036167d4e626b6d959693ecd579e29dad20b0da",
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "named_method": "passed"
+    },
+    {
+      "name": "focused-repaired",
+      "mobile": "8200bfb47378521fac0d25855213f558793fd64e plus prerequisite working-tree changes",
+      "daemon": "47d00822cc702c896d6234b0447226096edab210",
+      "claude": "2.1.280",
+      "source": "build/dispatcher-tests/live-ajyw3ysg/dispatcher.xml",
+      "sha256": "4b66003d80a16a44deca74518c73c3e47f53509aa23608fd7f9de68a94d0a804",
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "named_method": "passed",
+      "process_exit": 0
+    }
+  ],
+  "controlled": {
+    "command": "go test -race -count=1 -json -run '^Test(ReadinessLegacyReconnectSnapshotCapacity|AttentionPeerReconnectSnapshotCapacity)$' ./internal/relay",
+    "probe_sha256": "40c62da5e26f2041a89948b5f817089ec4032ba17609059c4be34530742ece2e",
+    "readiness_test_sha256": "489d25d1d595ee6825eb86605dd050cffb4113e200845db392f34a8081314e4a",
+    "before": {
+      "revision": "5d931a3b9eb5b03101373928e88d418742ac1ddd",
+      "executed": 2,
+      "passed": 0,
+      "failed": 2,
+      "errors": 0,
+      "skipped": 0,
+      "process_exit": 1,
+      "wire_observation": "4413 before snapshot 0/64"
+    },
+    "after": {
+      "revision": "8eabb607c19ee51072012647eb2f2793646f758d",
+      "executed": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "process_exit": 0
+    },
+    "merged_permanent_regression": {
+      "revision": "47d00822cc702c896d6234b0447226096edab210",
+      "test": "TestReadinessLegacyReconnectSnapshotCapacity",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "process_exit": 0
+    },
+    "observation_capacity": 128,
+    "production_matches_merge": true
+  },
+  "admission_regression": {
+    "red": {
+      "mobile_plan": "8200bfb47",
+      "test": "AttentionPeerDaemonPrerequisiteTest.test_full_live_rejects_pre_repair_daemon",
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "observation": "old daemon was admitted"
+    },
+    "green_focused": {
+      "executed": 12,
+      "passed": 12,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "affected_harness_files": {
+      "executed": 39,
+      "passed": 39,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "command": "python3 -m unittest scripts.test_e2e_attention_prerequisite scripts.test_e2e_emulator_gradle",
+      "process_exit": 0
+    }
+  },
+  "pending_dispatcher_full_live": {
+    "required": true,
+    "named_method": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_otherConversationAttentionPills_waitingAndFinished",
+    "retain_on_builder_return": [
+      "dispatcher-full-counted.xml",
+      "evidence.json: final tested revisions and executed/passed/failed/error/skipped counts"
+    ]
+  }
+}
