@@ -53,7 +53,7 @@ class EffortDefaultLaunchTest(unittest.TestCase):
 
     def assert_effort_capable_default(self, launch):
         args = launch["args"]
-        # The archived run inherited Haiku from operator settings despite a Sonnet default menu.
+        # The archived run inherited an ambient Haiku default despite a Sonnet default menu.
         # The test daemon must choose its own effort-capable base without saving a phone model.
         self.assertEqual("sonnet", launch["launch_model"], "real launch still inherits the operator's Haiku default")
         self.assertIn("--", args, "real launch still inherits the operator's Haiku default")
