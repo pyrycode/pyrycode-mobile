@@ -1,0 +1,54 @@
+# #2108: HP historical device availability
+
+## Files read
+
+- `scripts/android-test-gate.py`, `scripts/agent-tool.py`: delegate to the agents-owned gate; Mobile does not own admission or custody.
+- `scripts/e2e-emulator.sh`: `cleanup` and the managed-device invocation; teardown targets run-owned daemon processes.
+- `app/src/androidTest/java/de/pyryco/mobile/e2e/E2eInstrumentationRunner.kt`: `quietSystem` and `finish`; emulator settings and test assertions remain unchanged.
+- `docs/knowledge/features/development-verification.md`: the HP SwANGLE policy and the distinction between device disappearance and an established native crash.
+- `docs/specs/architecture/2088-phone-attachment-stall.md` on `feature/2088`: historical overlay, private capture retention and missing listener finishes.
+- Agents `scripts/android-test-gate.py`: `device_hold`, `run_on_device` and `stop_emulator`; ownership remains in the agents repository.
+- HP's installed `mobile-emulator.py`: renderer policy remains `-gpu swangle`.
+- HP's existing diagnostic admission example `ticket-2051-focused-20261011/run.mts`: ordinary heavy-manager admission and child completion before reservation release.
+
+## Context
+
+The retained run selected 65 historical methods but recorded 55 executed, 52 passed, three failures and zero skips. Only 54 cases completed. The attention-pill case started at 2026-10-11T22:28:58.084Z; its guest log ends at 22:28:59.491Z and UTP marks interruption at 22:29:00.703Z. Attachment capture never started. All 13 current manifest artifacts verify. Emulator process exit, signal origin and custody completion are not established by that archive. No production mechanism is selected from `device offline`.
+
+This is one investigation and demonstrated repair. Forecast remains below 750 written lines, five public declarations, ten simultaneous consumers and ten reject branches, with three acceptance criteria. Recount before any causal implementation. Current planned repository surface is this unique plan; no overlapping feature file requires redesign. No decision record is needed for capture-only investigation.
+
+## Design
+
+Preserve the original historical checkout, overlay and raw gate/UTP/logcat evidence in a private persistent HP archive before further execution. Build one isolated reconstruction from Mobile `2bd039944754f24c920feef0efaec36a8ea7f6db`, daemon `63aabec70dad3948c916332a139eb22533b8f4b8`, Claude 2.1.280 and the exact recorded capture overlay. Verify source, overlay, APK, gate, launcher and tool identities; record every difference.
+
+Use the existing authenticated heavy-manager channel and ordinary delegated live gate, retaining device custody. A bounded capture-only observer records UTC process identity/state/disappearance, adb state, custody metadata and host/guest observations alongside the unmodified selected-method manifest and raw results. It neither owns nor alters renderer/custody policy. Maximum admitted execution duration is 1800 seconds, written before execution; timeout is unsuccessful, never a retry instruction. There is at most one fresh diagnostic reproduction before choosing the causal repair, not a repeat-until-pass loop.
+
+Correlate observed events before selecting a mechanism. Unknown exit status or signal stays unknown. If repair belongs to a runner, host, launcher or daemon owner, search/file and natively link that owning issue, then wait for its repair. A Mobile repair requires a revision to this plan specifying its contract and a failing-before/passing-after regression. A passing baseline alone cannot establish a cause or fulfill repair acceptance.
+
+After a demonstrated repair, obtain the required fresh historical HP control, with all 65 methods completed, zero skips, no unfinished case and no device loss. Report product failures separately; completion is not a clean live PASS. Publish paths, identities, counts and digests only. Private raw logs never enter source assets or a public report.
+
+## State and concurrency model
+
+Only the diagnostic coordinator owns its observer subprocesses. Heavy admission precedes device execution; ordinary gate custody covers boot, tests and teardown. Stop and reap only observer children. Preserve run exit status, capture artifacts before releasing the admitted reservation, and record cancellation explicitly. No application coroutine, flow or lifecycle changes are planned.
+
+## State transitions and identity reuse
+
+| Event | Evidence or regression |
+| --- | --- |
+| Device boots, goes offline, disappears or changes PID | UTC process/adb samples, process start identity and UTP interval correlation |
+| Gate returns or exceeds the declared duration | Durable exit/timeout record and observer completion before admission release |
+| Another gate queues for the same device | Existing custody metadata; observer cannot acquire or release that hold |
+| Historical method identifier repeats | Preserve actual start/finish records and counted XML; an interrupted record is not completion |
+
+## Error handling
+
+Missing observations remain unknown. Capture failure does not replace the gate result, change assertions/deadlines, skip a method or trigger another run. A causal repair outside Mobile is a native blocker; missing access or inability to establish the required mechanism is an incomplete builder outcome.
+
+## Testing strategy
+
+Recheck retained checksums, raw XML and UTP completion counts. Verify observer bounds and source equality before the single diagnostic run. A demonstrated Mobile repair will add its production regression here before implementation and run focused existing coverage plus required build/lint/format/pre-verify checks. The affected HP control must complete the original 65 methods, explicitly including the attention-pill and phone attachment methods. The dispatcher subsequently owns the configured current-branch full live gate, including both named outcomes, suite counts, revisions and retained XML/logcat locations.
+
+## Open Questions
+
+- Which operation and causal mechanism made the device unavailable? Unknown pending correlated process, guest, adb and custody evidence.
+- Does its repair belong to Mobile? Unknown; do not substitute a Mobile runner implementation for an owning-repository repair.
