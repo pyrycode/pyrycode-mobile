@@ -1,0 +1,6 @@
+<testsuite tests="4" failures="0" errors="0" skipped="0">
+  <testcase classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" name="directShareReadinessIgnoresStoppedSelectedHost" />
+  <testcase classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" name="directShareReadinessRejectsMissingHost" />
+  <testcase classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" name="directShareReadinessKeepsDeadline" />
+  <testcase classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" name="directShareReadinessWaitsForAddressedAuthentication" />
+</testsuite>

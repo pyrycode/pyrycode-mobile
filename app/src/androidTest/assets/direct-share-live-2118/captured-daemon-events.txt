@@ -1,0 +1,20 @@
+time=2026-10-12T10:26:36.317+03:00 event=v2.handshake.accept
+time=2026-10-12T10:26:37.043+03:00 event=v2.handshake.accept
+time=2026-10-12T10:26:37.481+03:00 event=create_conversation.created
+time=2026-10-12T10:26:37.514+03:00 event=rename_conversation.renamed
+time=2026-10-12T10:26:37.562+03:00 event=create_conversation.created
+time=2026-10-12T10:26:37.595+03:00 event=rename_conversation.renamed
+time=2026-10-12T10:26:37.629+03:00 event=v2.history.served entries=0 bytes=134
+time=2026-10-12T10:26:37.902+03:00 event=v2.history.served entries=0 bytes=134
+time=2026-10-12T10:26:38.826+03:00 event=v2.history.served entries=0 bytes=135
+time=2026-10-12T10:26:38.976+03:00 event=v2.history.served entries=0 bytes=133
+time=2026-10-12T10:26:39.032+03:00 event=v2.attachment.stored total_chunks=1
+time=2026-10-12T10:26:39.146+03:00 event=v2.attachment.stored total_chunks=3
+time=2026-10-12T10:26:39.175+03:00 event=send_message.enqueued attachment_count=2
+time=2026-10-12T10:26:42.002+03:00 event=push_wake.skipped
+time=2026-10-12T10:26:42.032+03:00 event=v2.history.served entries=15 bytes=26723
+time=2026-10-12T10:26:42.091+03:00 event=v2.attachment.request.served
+time=2026-10-12T10:26:42.120+03:00 event=v2.attachment.request.served
+time=2026-10-12T10:26:42.185+03:00 event=v2.history.served entries=0 bytes=134
+time=2026-10-12T10:26:42.221+03:00 event=v2.peer_close.teardown
+time=2026-10-12T10:26:43.265+03:00 event=v2.peer_close.teardown

@@ -47,6 +47,7 @@ import de.pyryco.mobile.data.repository.HostReadingFrames
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.awaitHostConnection
 import de.pyryco.mobile.e2e.awaitSendNowConnection
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.thread.AttachmentRead
@@ -125,6 +126,102 @@ class RelayConnectionFactoryTest {
         RelayLog.sink = previousSink
         RelayLog.enabled = previousEnabled
     }
+
+    @Test
+    fun directShareReadinessIgnoresStoppedSelectedHost() =
+        runTest {
+            val f = Fixture(this)
+            f.unavailable = "B"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                f.transports.last().reportAbsent()
+                runCurrent()
+                val selected = registry.selected.value
+                assertSame(registry.connectionFor("B"), selected)
+                assertEquals(RelayLinkStatus.DaemonAbsent, registry.connectionStatus.value.relay)
+                awaitHostConnection(registry, "A", 30_000)
+                assertSame("readiness must not change selection", selected, registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun directShareReadinessWaitsForAddressedAuthentication() =
+        runTest {
+            val f = Fixture(this)
+            f.handshaking = "A"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                assertSame(registry.connectionFor("B"), registry.selected.value)
+                assertEquals(de.pyryco.mobile.data.model.PyrycodeLinkStatus.Connected, registry.connectionStatus.value.pyrycode)
+                val target = checkNotNull(registry.connectionFor("A"))
+                assertEquals(RelayLinkStatus.Connected, target.coordinator.connectionStatus.value.relay)
+                assertEquals(de.pyryco.mobile.data.model.PyrycodeLinkStatus.Handshaking, target.coordinator.connectionStatus.value.pyrycode)
+                val readiness = async { awaitHostConnection(registry, "A", 30_000) }
+                runCurrent()
+                assertFalse("healthy selected Y must not admit unauthenticated X", readiness.isCompleted)
+                f.transports.first().completeHandshake()
+                runCurrent()
+                readiness.await()
+                assertSame(registry.connectionFor("B"), registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun directShareReadinessKeepsDeadline() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.a.record)
+            val registry = f.registry()
+            try {
+                runCurrent()
+                val readiness = async { runCatching { awaitHostConnection(registry, "A", 30_000) } }
+                runCurrent()
+                advanceTimeBy(29_999)
+                runCurrent()
+                assertFalse("Idle must not admit Direct Share", readiness.isCompleted)
+                advanceTimeBy(1)
+                runCurrent()
+                assertTrue(readiness.await().exceptionOrNull() is kotlinx.coroutines.TimeoutCancellationException)
+                registry.connect()
+                runCurrent()
+                assertTrue("no late admission after deadline", readiness.isCompleted)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun directShareReadinessRejectsMissingHost() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                val result = runCatching { awaitHostConnection(registry, "A", 30_000) }
+                assertTrue("missing X must not borrow Y", result.exceptionOrNull() is IllegalStateException)
+                assertSame(registry.connectionFor("B"), registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
 
     @Test
     fun sendNowReadinessIgnoresStoppedSelectedHost() =

@@ -1,0 +1,122 @@
+{
+  "mobile_revision": "d3de084921476d1e4ebf21fc8cae8c022ca04df1",
+  "main_revision": "e7a553c3d6d374ed47fabe5c2079fa9e7df80ae1",
+  "daemon_build_info": [
+    "build\tvcs.revision=5d931a3b9eb5b03101373928e88d418742ac1ddd",
+    "build\tvcs.time=2026-10-12T07:14:48Z",
+    "build\tvcs.modified=true"
+  ],
+  "daemon_tracked_source_diff": "clean; Go modified flag reflects untracked .codex/ and AGENTS.md in sibling checkout",
+  "sha256": {
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt": "282b6201e242de3a2e9dd67980a0c84c30d599752d3985bd9f3b7896df39550a",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/HostConnection.kt": "a7d435c3a48bb47cc660c82d63f89f33adcf1134faac57bf4122eb48e2088887",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/DirectShareStage.kt": "618610a27323f575c5382a0784ab90679f9340d989df560b8b68c6e39f4efd2e",
+    "app/src/test/java/de/pyryco/mobile/e2e/DirectShareStageTest.kt": "faa52a1112fb6c7d9a577bc63259265a5881a2a8c77936841cd910e804c73b47",
+    "app/src/test/java/de/pyryco/mobile/di/RelayConnectionFactoryTest.kt": "bc7c1e00e1be16201bc3f3fe55f24e6dd39765385ac454526817d42c30604a5e",
+    "app/build/outputs/apk/debug/app-debug.apk": "151de3d9a4b84bc7fd90eec123e4b614d00bb53fec18f4d40245221df6bad00a",
+    "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk": "878963b3b3cde5cd131ac628eec87959d336f6d74779573de3c6be39756bfec1",
+    "build/e2e-bin/pyry": "9b37822f7d5daba9fc2def9253c50d6b231490034dc3f4270463891918a48a75"
+  },
+  "regression_red": {
+    "executed": 10,
+    "passed": 0,
+    "failed": 10,
+    "errors": 0,
+    "skipped": 0,
+    "readiness": "exact prior awaitConnected predicate on the real registry",
+    "diagnostics": "pass-through stage helper; final behavioral tests, before whitespace-only formatting",
+    "source_hashes": {
+      "app/src/sharedTest/java/de/pyryco/mobile/e2e/HostConnection.kt": "338434b3295f11bf74ab62bc9a44103f5b5b8320204779e7cf8d5ce7d77f48de",
+      "app/src/sharedTest/java/de/pyryco/mobile/e2e/DirectShareStage.kt": "45fa91074626592e5cbc99a21b165684523120f5d8f9dd5d619e90fab0a89fd5",
+      "app/src/test/java/de/pyryco/mobile/e2e/DirectShareStageTest.kt": "d4267f98458a911564b463cfcfc4dfd0976f60dbbe63b95434695cdfe941e7c7",
+      "app/src/test/java/de/pyryco/mobile/di/RelayConnectionFactoryTest.kt": "bc7c1e00e1be16201bc3f3fe55f24e6dd39765385ac454526817d42c30604a5e"
+    }
+  },
+  "regression_green": {
+    "executed": 10,
+    "passed": 10,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "focused_unit": {
+    "executed": 32,
+    "passed": 32,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "portable_runs": {
+    "focused_live": {
+      "path": "build/dispatcher-tests/live-4t9j2e7_",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "daemon_capture": "not retained by successful harness cleanup"
+    },
+    "captured_live": {
+      "path": "build/dispatcher-tests/live-2dmxgu3s",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "daemon_capture": {
+        "command": [
+          "python3",
+          "scripts/android-test-gate.py",
+          "live",
+          "--tests",
+          "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes"
+        ],
+        "started": 1791789968.7466471,
+        "ended": 1791790005.541806,
+        "exit": 0,
+        "capture_limit": "Last 1 MiB per isolated daemon log, sampled during execution before successful harness cleanup.",
+        "captures": {
+          "daemon-fault.log": {
+            "original": "/tmp/builder-2118/live-tmp/pyry-e2e.xuS0p6/daemon-fault.log",
+            "copied": "/tmp/builder-2118/evidence/captured-live/daemon-fault.log",
+            "time": 1791790005.237547,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "daemon-b.log": {
+            "original": "/tmp/builder-2118/live-tmp/pyry-e2e.xuS0p6/daemon-b.log",
+            "copied": "/tmp/builder-2118/evidence/captured-live/daemon-b.log",
+            "time": 1791790005.2372842,
+            "bytes": 2344,
+            "sha256": "914318e51f9c976ee95240ebfa644f1af00086e6f75df8ada583f341b437fb5b"
+          },
+          "daemon.log": {
+            "original": "/tmp/builder-2118/live-tmp/pyry-e2e.xuS0p6/daemon.log",
+            "copied": "/tmp/builder-2118/evidence/captured-live/daemon.log",
+            "time": 1791790005.292,
+            "bytes": 10511,
+            "sha256": "389434903b69f9fa48ea34e3d2157208ab9803f59c22305d9a7acdc9d7265c57"
+          },
+          "daemon-answer.log": {
+            "original": "/tmp/builder-2118/live-tmp/pyry-e2e.xuS0p6/daemon-answer.log",
+            "copied": "/tmp/builder-2118/evidence/captured-live/daemon-answer.log",
+            "time": 1791790005.293032,
+            "bytes": 2680,
+            "sha256": "8e63b330c5a68890cdbc038f9be806d0beca0d471c37bfb4c0b81965ba9b9d1d"
+          }
+        }
+      }
+    },
+    "scripted_direct_share": {
+      "path": "build/dispatcher-tests/scripted-dvnwd34w",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "limits": [
+    "Controlled readiness defect does not identify the historical failing operation.",
+    "Both focused live captures passed; ordering-dependent configured full-live proof remains dispatcher-owned.",
+    "Normalized XML retains only case names and outcomes; raw reports/logcat remain at listed paths.",
+    "Daemon snapshots are bounded samples taken during execution, not a guarantee of complete shutdown logs."
+  ]
+}

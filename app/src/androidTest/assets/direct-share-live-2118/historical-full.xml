@@ -1,0 +1,5 @@
+<testsuite tests="1" failures="1" errors="0" skipped="0">
+  <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes">
+    <failure />
+  </testcase>
+</testsuite>
