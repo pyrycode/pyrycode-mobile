@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites tests="1" failures="1" errors="0" skipped="0" time="2.007" timestamp="2026-10-12T05:43:36" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.e2e.MarkdownNoteLinkTest" tests="1" failures="1" errors="0" skipped="0" time="1.62" timestamp="2026-10-12T05:43:36" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="thePromptContainingTheRequestedLinkDoesNotCaptureTheAssistantLinkTap" classname="de.pyryco.mobile.e2e.MarkdownNoteLinkTest" time="1.62">
+      <failure>java.lang.AssertionError: Failed to click the link.
+Reason: No link found that matches the predicate.
+at androidx.compose.ui.test.ActionsKt.performFirstLinkClick(Actions.kt:741)
+at androidx.compose.ui.test.ActionsKt.performFirstLinkClick$default(Actions.kt:717)
+at de.pyryco.mobile.e2e.MarkdownNoteLinkTest.thePromptContainingTheRequestedLinkDoesNotCaptureTheAssistantLinkTap(MarkdownNoteLinkTest.kt:49)
+</failure>
+    </testcase>
+  </testsuite>
+</testsuites>
