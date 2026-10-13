@@ -53,7 +53,14 @@ internal class DaemonFaultControl {
         runBlocking {
             val failures =
                 async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
-                    OfflineRetryWindow.awaitDeadline(supervisor)
+                    OfflineRetryWindow.awaitDeadline(supervisor) { backoff ->
+                        Log.i(
+                            "DaemonFaultControl",
+                            "event=offline_retry_capped_backoff attempt=${backoff.attempt} " +
+                                "observed_lag_ms=${backoff.startedAt.elapsedNow().inWholeMilliseconds} " +
+                                "proof_budget_ms=20000 passive_min_ms=24000",
+                        )
+                    }
                 }
             try {
                 stop()
@@ -64,7 +71,10 @@ internal class DaemonFaultControl {
             }
         }
 
-    fun recoveryTimeRemaining(deadline: TimeMark): Long = OfflineRetryWindow.remainingMs(deadline)
+    fun recoveryTimeRemaining(deadline: TimeMark): Long =
+        OfflineRetryWindow.remainingMs(deadline).also {
+            Log.i("DaemonFaultControl", "event=offline_retry_recovery_budget remaining_ms=$it")
+        }
 
     private fun request(
         action: String,

@@ -81,9 +81,9 @@ def main():
                 "ready": ready, "phase": phase, "log_offset": log_offset,
                 "elapsed_ms": int((time.monotonic() - started) * 1000)}
 
-    def record(action, status, started):
+    def record(action, status, started, snapshot=None):
         print(json.dumps({"event": "daemon_fault_transition", "time": time.time(),
-                          **evidence(action, status, started)}), flush=True)
+                          **(evidence(action, status, started) if snapshot is None else snapshot)}), flush=True)
 
     def start():
         nonlocal child, generation, log_offset, ready, phase
@@ -187,8 +187,12 @@ def main():
                     status = 404
             except (ValueError, KeyError, OSError, RuntimeError, subprocess.TimeoutExpired):
                 status = 503
-            payload = json.dumps(evidence(action, status, started)).encode()
-            record(action, status, started)
+            snapshot = evidence(action, status, started)
+            if action == "start" and status == 200 and not (snapshot["running"] and snapshot["ready"]):
+                status = 503
+                snapshot["http_status"] = status
+            payload = json.dumps(snapshot).encode()
+            record(action, status, started, snapshot)
             try:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")

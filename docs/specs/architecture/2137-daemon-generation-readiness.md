@@ -85,3 +85,8 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md`, “Offline
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-13
+
+## Revisions
+
+- 2026-10-13: The first passing scripted capture showed that existing phone logs omit the actual capped-backoff observation. Add an optional callback to `OfflineRetryWindow.awaitDeadline` carrying the exact producer snapshot, tested by `immediateDaemonAbsentDials_doNotRequireEveryConnectingEmission`. The device client emits only attempt/observer lag and remaining original budget; deadlines and scenario assertions stay unchanged. This complements #2107's scenario diagnostics without reproducing them.
+- 2026-10-13: The gate-built daemon omits VCS metadata. Record configured source revision separately from binary-reported revision and retain its SHA-256 digest. Successful historical cleanup deleted the first base daemon capture; subsequent comparisons retain open handles before disposal. Managed feature-branch harnesses now default to private per-ticket retention, with an explicit destination override for detached comparisons, so the dispatcher full gate preserves boundary logs too.

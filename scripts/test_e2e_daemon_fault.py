@@ -281,6 +281,19 @@ else: time.sleep(120)
             self.assertFalse(payload["running"])
             self.assertFalse(payload["ready"])
 
+    def test_success_snapshot_cannot_report_an_exited_or_unready_child(self):
+        script = "import time; print('relay: conn established', flush=True); time.sleep(0.03)"
+        with self.controller(script) as (request, _):
+            for _ in range(5):
+                status, payload = request("start")
+                if status == 200:
+                    self.assertTrue(payload["running"])
+                    self.assertTrue(payload["ready"])
+                    self.assertEqual("ready", payload["phase"])
+                else:
+                    self.assertEqual(503, status)
+                time.sleep(0.04)
+
     def test_no_token_mode_preserves_owned_process_only(self):
         unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
         try:

@@ -55,6 +55,24 @@ class FaultEvidenceTest(unittest.TestCase):
             self.assertEqual(1, len(saved))
             self.assertEqual("synthetic-boundary", saved[0].read_text())
 
+    def test_managed_feature_cleanup_defaults_to_private_ticket_evidence(self):
+        harness = Path(__file__).with_name("e2e-emulator.sh").read_text()
+        cleanup = harness[harness.index("cleanup() {"):harness.index("trap cleanup EXIT")]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "work"
+            source.mkdir()
+            (source / "daemon.log").write_text("managed-boundary")
+            result = subprocess.run(["/bin/bash", "-c", 'log() { :; }\ngit() { printf "feature/2137\\n"; }\n' + cleanup + '\ncleanup'],
+                env={**os.environ, "WORK_DIR": str(source), "REPO_ROOT": str(Path(__file__).resolve().parents[1]),
+                     "E2E_FAULT_EVIDENCE_DIR": "", "AGENTS_REPO_PATH": str(root / "agents")},
+                capture_output=True, text=True, timeout=10)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertFalse(source.exists())
+            saved = list((root / "agents/logs/evidence/2137/harness").glob("fault-*/daemon.log"))
+            self.assertEqual(1, len(saved))
+            self.assertEqual("managed-boundary", saved[0].read_text())
+
 
 if __name__ == "__main__":
     unittest.main()
