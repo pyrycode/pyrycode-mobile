@@ -1,0 +1,65 @@
+# Interrupted-upload live readiness (#2138)
+
+## Files read
+
+- `app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt`: `interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes`, `cutLinkOn`, `LinkCut`, `awaitComposerHolds`, `setHostLink`, and `awaitConnected`; preserve the interrupted-transfer proof and its deadlines.
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/SendNowConnection.kt`: `awaitSendNowConnection` supplies the explicit-host relay-and-authentication contract.
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/SendNowStage.kt` and `PermissionIsolationStage.kt`: fixed stage labels and original timeout causes are the diagnostic analogue.
+- `app/src/test/java/de/pyryco/mobile/di/RelayConnectionFactoryTest.kt`: `Fixture` and the Send now readiness checks exercise the real registry, supervisor, and Noise handshake.
+- `docs/knowledge/features/attachment-upload.md`: the cut must occur synchronously after an intermediate chunk; either connection-loss or send-failure settlement is valid.
+- `docs/knowledge/features/development-verification-emulator-evidence.md`: private XML, phone logs, daemon evidence, hashes, and revisions must survive checkout cleanup; passing runs cannot establish historical causation.
+- `$AGENTS_REPO_PATH/builder/device-tests.md`: focused live execution and durable private artifact retention.
+- `origin/feature/2118`'s `HostConnection.kt`: use the same additive shared helper contract; unrelated Direct Share diagnostics remain outside this ticket.
+
+## Context
+
+The upload targets the harness host explicitly but setup and reconnect use `awaitConnected`, which follows selection and accepts a legacy relay-only signal (including deliberate Idle). This can admit an unavailable or unauthenticated target, or block a healthy target behind an unrelated stopped selection. October 12 failure/rerun logs are reported retained on macbook but are unavailable locally. Repair the controlled defect without claiming it explains an unlocated historical failure. No decision record is needed.
+
+Remote overlaps in `InteractiveStreamE2ETest` include #1682, #1689, #1690, #1691, #1693, #1695, #1766, #1869, #1879, #1947, #2009, #2032, #2052, #2057, #2088, #2089, #2090, #2091, #2092, #2098, #2099, #2100, #2102, #2104, #2112, #2114, #2117, #2118, and #2119. Changes stay local to this method and additive registry tests. #2118 proposes the identical shared helper; it is not required to land first.
+
+## Design
+
+Add internal `awaitHostConnection(registry, serverId, timeoutMs, missingHostMessage)` under sharedTest, matching #2118's proposed helper and #1898's shipped contract. It observes the addressed bundle's combined status until relay and authenticated daemon are both Connected. Wire only the interrupted-upload setup and post-cut readiness waits. Leave selection and unrelated callers unchanged.
+
+Add `InterruptedUploadStage` and `interruptedUploadStep` under sharedTest. Fixed stages cover fixture/setup, peer admission, channel list, target readiness, conversation creation/opening, attachment selection, chunk cut, composer retention, pre-retry history, reconnect, retry, real-turn completion, final history, and retrieval/digest verification. The wrapper executes each operation once, adds no timeout or retry, emits content-free start/pass/failure labels, and preserves original failures as causes. Caller cancellation propagates unchanged. Link snapshots include only presence/selection booleans, static relay/daemon class labels, repository presence, and peer link metadata. Never include prompt, filename, attachment ID, frame content, or digest in stage output.
+
+Retain the existing synchronous intermediate-chunk cut and all zero-message, retained-composer, exactly-one-message/attachment, and digest assertions. Preserve the finally cleanup of link-cut sink, host link, activity monitor, fixture URIs, and peer. No production code or wire contract changes.
+
+## State and concurrency model
+
+The helper collects the target coordinator's existing StateFlow under the original `CONNECT_TIMEOUT_MS`; it owns no background job. Registry tests inject StandardTestDispatcher. Instrumented operations retain their existing runBlocking/Compose waits. The diagnostic wrapper is synchronous and does not collect or mutate connection state.
+
+## State transitions and identity reuse
+
+| Event | Check |
+| --- | --- |
+| Target ready while selected host is stopped | `interruptedUploadReadinessIgnoresStoppedSelectedHost` |
+| Target unavailable while selected peer is authenticated; reconnect same host | `interruptedUploadReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected` |
+| Target relay Connected, daemon Handshaking | `interruptedUploadReadinessWaitsForAuthentication` |
+| Idle target never becomes ready before deadline | `interruptedUploadReadinessKeepsDeadline` |
+| Caller cancels target wait | `interruptedUploadReadinessPropagatesCancellation` |
+| Chunk cut, failed draft retention, reconnect, retry of same conversation | Existing named real-Claude scenario, with unchanged proof |
+| Repeated diagnostic invocation, failure or cancellation | `InterruptedUploadStageTest` verifies single execution, unchanged deadline, exact causes, and cancellation |
+
+No process-death or screen-restoration state is added.
+
+## Error handling
+
+Missing target fails immediately with a static message. Readiness expiration retains the supplied timeout; no selected-peer fallback. Diagnostics classify timeout, assertion, and operation failure using static labels, retaining the original cause without publishing its message. Ordinary CancellationException is rethrown. Cleanup remains guaranteed by finally.
+
+## Testing strategy
+
+Write real-registry regression tests first and run them against the legacy selected-host wait to observe the wrong-host and handshake failures, then repair the shared wait and rerun the full affected registry class. Add JVM wrapper tests for one execution, value return, timeout budget/cause, assertion cause, Compose timeout cause, cancellation, and content-free records. Device-only reason: the existing live scenario requires real picker/IME, relay/Noise teardown, and real Claude; run only its named method with the live launcher and inspect fresh counted XML. Preserve private artifacts and commit reviewed content-free summaries under `app/src/test/resources/e2e/interrupted-upload-2138/`. Focused JVM checks, lint, assembleDebug, androidTest compilation, formatting, and final pre-verify are builder work. Post-verifier full live acceptance is dispatcher work.
+
+## Open Questions
+
+- Can the October 12 paired logs be recovered locally? Check their original paths and retained inventory; if unavailable, record that gap and keep historical attribution unproven.
+- Will #2118 land before the final merge? Reconcile the identical helper additively; do not migrate its unrelated scenario.
+
+## Documentation handoff
+
+Pending for documentation: update `docs/e2e-interactive-stream.md`, interrupted-attachment-transfer coverage, with the evidenced readiness defect, historical attribution limits, controlled regression counts, and fresh full-live method outcome/revisions/artifact locations. Documentation consumes builder and dispatcher evidence; it does not obtain live proof.
+
+## Sizing
+
+One deliverable, four acceptance criteria, approximately 650 written lines including plan, five readiness tests, diagnostic tests and reviewed evidence; one new internal enum, two live consumer updates, and no production failure branches. All builder ceilings hold.
