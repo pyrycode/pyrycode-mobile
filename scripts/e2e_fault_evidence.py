@@ -15,7 +15,14 @@ def digest(path):
 
 def retain(source, destination, mobile_revision, daemon_revision, binary, daemon_source=""):
     destination = Path(destination)
+    missing = []
+    parent = destination
+    while not parent.exists():
+        missing.append(parent)
+        parent = parent.parent
     destination.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for parent in missing:
+        parent.chmod(0o700)
     destination.chmod(0o700)
     saved = Path(tempfile.mkdtemp(prefix="fault-", dir=destination))
     for name in ("daemon.log", "daemon-fault.log", "daemon-b.log", "daemon-answer.log", "daemon-bypass.log", "relay.log"):

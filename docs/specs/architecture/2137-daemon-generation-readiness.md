@@ -42,6 +42,7 @@ An opt-in private evidence destination in the existing emulator harness retains 
 | Registered generation stops and successor has no token | `test_stopped_generation_token_cannot_qualify_successor` |
 | Registered generation exits and is replaced | `test_exited_generation_token_cannot_qualify_successor` |
 | Child exits before readiness | `test_early_exit_reports_exit` |
+| Child exits between registration observation and response | `test_success_snapshot_cannot_report_an_exited_or_unready_child` |
 | No-token mode and unrelated living process | `test_no_token_mode_preserves_owned_process_only` |
 | Registration token spans a scan boundary | `test_registration_token_across_chunks` |
 | Controller HTTP failure vs client I/O exception | Client evidence tests and existing restoration diagnostics when #2107 lands |
@@ -62,8 +63,8 @@ Push the coherent candidate before final verification. Merge current main, prese
 
 ## Open Questions
 
-- Does the controller defect explain either historical failure? Resolve only from fresh correlated artifacts, keeping historical uncertainty when evidence cannot establish causation.
-- Will #2107 land during this run? Integrate through main if available and preserve its scenario diagnostics/restoration behavior.
+- Resolved: the controller's false success is reproduced on the recorded base using an owned unready child. Both historical live revisions pass fresh focused comparisons with pinned daemon source `e810c8a85064d2cd290285095fc16cd8941f3236` and identical binary SHA-256. The original reports/captures are unavailable here, so their distinct start/recovery failures remain unattributed; no additional causal native blocker was established.
+- Resolved: #2107 is still open at `24836461b40c4c2ba6259dc12a66da0c16cad8ec` and absent from the final merged main `b107f97a7`. This repair remains local and compatible with its scenario diagnostics/restoration helper; preserve that work when main integrates it.
 
 ## Documentation handoff
 
@@ -90,3 +91,6 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md`, “Offline
 
 - 2026-10-13: The first passing scripted capture showed that existing phone logs omit the actual capped-backoff observation. Add an optional callback to `OfflineRetryWindow.awaitDeadline` carrying the exact producer snapshot, tested by `immediateDaemonAbsentDials_doNotRequireEveryConnectingEmission`. The device client emits only attempt/observer lag and remaining original budget; deadlines and scenario assertions stay unchanged. This complements #2107's scenario diagnostics without reproducing them.
 - 2026-10-13: The gate-built daemon omits VCS metadata. Record configured source revision separately from binary-reported revision and retain its SHA-256 digest. Successful historical cleanup deleted the first base daemon capture; subsequent comparisons retain open handles before disposal. Managed feature-branch harnesses now default to private per-ticket retention, with an explicit destination override for detached comparisons, so the dispatcher full gate preserves boundary logs too.
+- 2026-10-13: Use one refreshed snapshot for the start response and matching transition record. If exit is observed after readiness, return 503 rather than a success payload whose running/readiness fields are false. The interrupted worker's tested candidate at `72311218f35c62db6037a7539d61db431cd89049` passes focused scripted and live scenarios, each 1 executed/passed with zero failures/skips. Recovered private XML/logcat, controller/daemon logs, input hashes and verified manifests are under `$AGENTS_REPO_PATH/logs/evidence/2137/recovered-mac-20261013/`; reviewed counted outcomes are under `app/src/test/resources/e2e/offline-retry-2137/`. Full scripted/full-live acceptance remains dispatcher-owned.
+
+- 2026-10-13: Resume the interrupted worker from the verified operator handoff archive at commit `72311218f35c62db6037a7539d61db431cd89049`, preserving its unfinished patch and reviewed summaries. Restore all 56 raw evidence files privately with a new verified manifest; portable controller/retention probes and focused JVM coverage pass on HP. The recovered retention change makes every newly created evidence ancestor owner-only. Main remains `b107f97a7`; additional harness overlaps #1766, #2088, #2090, #2097, #2104, #2114 and #2121 leave this local cleanup addition independent.

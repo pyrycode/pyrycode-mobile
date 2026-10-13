@@ -24,7 +24,9 @@ class FaultEvidenceTest(unittest.TestCase):
             (source / "daemon-b.log").symlink_to(source / "pair.out")
             binary = root / "binary"
             binary.write_bytes(b"test-binary")
-            saved = module.retain(source, root / "private", "a" * 40, "b" * 40, binary)
+            saved = module.retain(source, root / "private/issue/harness", "a" * 40, "b" * 40, binary)
+            for directory in [root / "private", root / "private/issue", root / "private/issue/harness"]:
+                self.assertEqual(0o700, stat.S_IMODE(directory.stat().st_mode))
             self.assertEqual({"daemon.log", "daemon-fault.log", "inputs.json", "SHA256SUMS"}, {p.name for p in saved.iterdir()})
             self.assertEqual(0o700, stat.S_IMODE(saved.stat().st_mode))
             for path in saved.iterdir():
