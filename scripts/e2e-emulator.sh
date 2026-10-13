@@ -131,19 +131,23 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ -n "${LIVE}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${E2E_LOGIN_TRIED:-}" ]; then
   E2E_LOGIN_TRIED=1 exec "${REPO_ROOT}/scripts/with-claude-login.sh" bash "${BASH_SOURCE[0]}" "$@"
 fi
-# #2052: the full live suite owns an exclusive dedicated Codex-home lease. A focused
-# selection of another method and every scripted run avoid these prerequisites.
-if [ -n "${LIVE}" ] && [ -z "${DETERMINISTIC}" ] && [ -z "${E2E_CODEX_LEASE:-}" ]; then
-  case "${LIVE_TESTS:-}" in
-    ""|*'#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies'*)
-      PYRY_NAME="${PYRY_NAME}" exec python3 "${REPO_ROOT}/scripts/e2e-codex-home.py" bash "${BASH_SOURCE[0]}" "$@"
-      ;;
+# #2052: normalize real selection before startup. Both the default class and the
+# curated full LIVE suite include switching; focused selections use exact entries.
+REAL_TEST_TARGET="${LIVE_TESTS:-${TEST_CLASS}}"
+E2E_AGENT_SWITCH_SELECTED=""
+if [ -z "${DETERMINISTIC}" ]; then
+  case ",${REAL_TEST_TARGET}," in
+    *,${TEST_CLASS},*|*,${TEST_CLASS}'#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies',*)
+      E2E_AGENT_SWITCH_SELECTED=1 ;;
   esac
+fi
+if [ -n "${E2E_AGENT_SWITCH_SELECTED}" ] && [ -z "${E2E_CODEX_LEASE:-}" ]; then
+  PYRY_NAME="${PYRY_NAME}" exec python3 "${REPO_ROOT}/scripts/e2e-codex-home.py" bash "${BASH_SOURCE[0]}" "$@"
 fi
 GRADLEW="${REPO_ROOT}/gradlew"
 # A refused home must never reach daemon startup: even an unavailable Codex binary
 # lets the daemon prepare its home first. Count the named failure without pairing.
-if [ -n "${LIVE}" ] && [ -z "${DETERMINISTIC}" ] && [ -n "${E2E_CODEX_UNMET:-}" ]; then
+if [ -n "${E2E_AGENT_SWITCH_SELECTED}" ] && [ -n "${E2E_CODEX_UNMET:-}" ]; then
   exec "${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" --rerun \
     -PuseRelayRepository=true \
     -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies \
@@ -1082,7 +1086,9 @@ elif [ -n "${LIVE}" ]; then
   DAEMON_COMMAND+=("-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}" -- --model sonnet)
 else
   DAEMON_COMMAND+=(PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1
-    "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}" -- --model sonnet)
+    "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}")
+  if [ -n "${E2E_CODEX_BIN:-}" ]; then DAEMON_COMMAND+=("-pyry-codex=${E2E_CODEX_BIN}"); fi
+  DAEMON_COMMAND+=("-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}" -- --model sonnet)
 fi
 # #2095: the remembered-effort scenario keeps saved model empty and uses the default menu's levels.
 # An operator Haiku default reports no applied effort. Pin the real test launch to Sonnet; per-session
@@ -1659,7 +1665,7 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies"
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
 else
-  TEST_TARGET="${TEST_CLASS}"
+  TEST_TARGET="${REAL_TEST_TARGET}"
 fi
 log "running ${DEVICE}DebugAndroidTest (headless emulator: boot → install → ${TEST_TARGET} → teardown)…"
 log "  phone relayUrl = ${PHONE_RELAY_URL}"
@@ -1674,7 +1680,7 @@ Path(sys.argv[1]).write_text(json.dumps([path for path in sys.argv[2:] if path])
 PY_SESSION_SOCKETS
 
 GRADLE_TEST_ARGS=(-PuseRelayRepository=true)
-if [ -n "${LIVE:-}" ]; then
+if [ -n "${E2E_AGENT_SWITCH_SELECTED:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.codexPrerequisite="${E2E_CODEX_UNMET-not_provisioned}")
 fi
 if [ -n "${STOP_TASK_URL:-}" ]; then
