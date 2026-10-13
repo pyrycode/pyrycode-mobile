@@ -47,6 +47,7 @@ import de.pyryco.mobile.data.repository.HostReadingFrames
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.awaitHostConnection
 import de.pyryco.mobile.e2e.awaitSendNowConnection
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.thread.AttachmentRead
@@ -125,6 +126,221 @@ class RelayConnectionFactoryTest {
         RelayLog.sink = previousSink
         RelayLog.enabled = previousEnabled
     }
+
+    @Test
+    fun interruptedUploadReadinessIgnoresStoppedSelectedHost() =
+        runTest {
+            val f = Fixture(this)
+            f.unavailable = "B"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                f.transports.last().reportAbsent()
+                runCurrent()
+                val selected = registry.selected.value
+                assertSame(registry.connectionFor("B"), selected)
+                assertEquals(RelayLinkStatus.DaemonAbsent, registry.connectionStatus.value.relay)
+
+                awaitHostConnection(registry, "A", 30_000)
+
+                assertSame("readiness must not mutate selection", selected, registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun interruptedUploadReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected() =
+        runTest {
+            val f = Fixture(this)
+            f.unavailable = "A"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                f.transports.first().reportAbsent()
+                runCurrent()
+                assertEquals(RelayLinkStatus.Connected, registry.connectionStatus.value.relay)
+                val readiness = async { awaitHostConnection(registry, "A", 30_000) }
+                runCurrent()
+                assertFalse("another host cannot satisfy interrupted upload readiness", readiness.isCompleted)
+
+                f.unavailable = null
+                registry.connectionFor("A")?.supervisor?.retry()
+                runCurrent()
+                readiness.await()
+                assertSame(registry.connectionFor("B"), registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun interruptedUploadReadinessWaitsForAuthentication() =
+        runTest {
+            val f = Fixture(this)
+            f.handshaking = "A"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                val target = checkNotNull(registry.connectionFor("A"))
+                assertEquals(RelayLinkStatus.Connected, target.coordinator.connectionStatus.value.relay)
+                assertEquals(de.pyryco.mobile.data.model.PyrycodeLinkStatus.Handshaking, target.coordinator.connectionStatus.value.pyrycode)
+                val readiness = async { awaitHostConnection(registry, "A", 30_000) }
+                runCurrent()
+                assertFalse("relay alone must not admit upload", readiness.isCompleted)
+                f.transports.first().completeHandshake()
+                runCurrent()
+                readiness.await()
+                assertSame(registry.connectionFor("B"), registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun interruptedUploadReadinessKeepsDeadline() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.a.record)
+            val registry = f.registry()
+            try {
+                runCurrent()
+                val readiness = async { runCatching { awaitHostConnection(registry, "A", 30_000) } }
+                runCurrent()
+                advanceTimeBy(29_999)
+                runCurrent()
+                assertFalse("Idle must not admit upload", readiness.isCompleted)
+                advanceTimeBy(1)
+                runCurrent()
+                assertTrue(readiness.await().exceptionOrNull() is kotlinx.coroutines.TimeoutCancellationException)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun interruptedUploadReadinessPropagatesCancellation() =
+        runTest {
+            val f = Fixture(this)
+            f.handshaking = "A"
+            f.store.save(f.a.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                val readiness = async { awaitHostConnection(registry, "A", 30_000) }
+                runCurrent()
+                readiness.cancel()
+                readiness.join()
+                assertTrue("cancellation must stop readiness", readiness.isCancelled)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun sendNowReadinessWaitsForAuthentication() =
+        runTest {
+            val f = Fixture(this)
+            f.handshaking = "A"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                val target = checkNotNull(registry.connectionFor("A"))
+                assertEquals(RelayLinkStatus.Connected, target.coordinator.connectionStatus.value.relay)
+                assertEquals(de.pyryco.mobile.data.model.PyrycodeLinkStatus.Handshaking, target.coordinator.connectionStatus.value.pyrycode)
+                val readiness = async { awaitSendNowConnection(registry, "A", 30_000) }
+                runCurrent()
+                assertFalse("relay alone must not admit Send now", readiness.isCompleted)
+                f.transports.first().completeHandshake()
+                runCurrent()
+                readiness.await()
+                assertSame(registry.connectionFor("B"), registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun sendNowReadinessKeepsDeadline() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.a.record)
+            val registry = f.registry()
+            try {
+                runCurrent()
+                val readiness = async { runCatching { awaitSendNowConnection(registry, "A", 30_000) } }
+                runCurrent()
+                advanceTimeBy(29_999)
+                runCurrent()
+                assertFalse("Idle must not admit Send now", readiness.isCompleted)
+                advanceTimeBy(1)
+                runCurrent()
+                assertTrue(readiness.await().exceptionOrNull() is kotlinx.coroutines.TimeoutCancellationException)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun sendNowReadinessPropagatesCancellation() =
+        runTest {
+            val f = Fixture(this)
+            f.handshaking = "A"
+            f.store.save(f.a.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                val readiness = async { awaitSendNowConnection(registry, "A", 30_000) }
+                runCurrent()
+                readiness.cancel()
+                readiness.join()
+                assertTrue("cancellation must stop readiness", readiness.isCancelled)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun readinessEntryPointsKeepTheirMissingHostMessages() =
+        runTest {
+            val f = Fixture(this)
+            val registry = f.registry()
+            try {
+                runCurrent()
+                val upload = runCatching { awaitHostConnection(registry, "missing", 30_000) }.exceptionOrNull()
+                val sendNow = runCatching { awaitSendNowConnection(registry, "missing", 30_000) }.exceptionOrNull()
+                assertTrue(upload is IllegalStateException)
+                assertTrue(sendNow is IllegalStateException)
+                assertEquals("Live harness host not registered", upload?.message)
+                assertEquals("Send now harness host not registered", sendNow?.message)
+                assertEquals(0L, testScheduler.currentTime)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
 
     @Test
     fun sendNowReadinessIgnoresStoppedSelectedHost() =

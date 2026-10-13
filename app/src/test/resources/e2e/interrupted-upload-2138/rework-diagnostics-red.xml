@@ -1,0 +1,34 @@
+<testsuite name="de.pyryco.mobile.e2e.InterruptedUploadStageTest" tests="16" failures="8" errors="0" skipped="0" timestamp="2026-10-13T13:25:41.952Z">
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="callerTimeoutOrNullReturnsNullWithoutFailureDiagnostics" time="0.082">
+    <failure message="controlled diagnostic boundary regression" />
+  </testcase>
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="operationFailureRunsOnceAndRetainsCause" time="0.005" />
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="callerTimeoutRetainsExactCancellation" time="0.003">
+    <failure message="controlled diagnostic boundary regression" />
+  </testcase>
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="asynchronousCallerCancellationPropagatesThroughAnOperationWrapper" time="0.004">
+    <failure message="controlled diagnostic boundary regression" />
+  </testcase>
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="timeoutPreservesDeadlineCauseAndSingleExecution" time="0.002" />
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="successRunsOnceReturnsValueAndDoesNotReadFailureSnapshot" time="0.008" />
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="wrappedOperationDeadlineRetainsExactWrapperAndDeadline" time="0.003">
+    <failure message="controlled diagnostic boundary regression" />
+  </testcase>
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="wrappedCallerTimeoutStillReturnsNull" time="0.004">
+    <failure message="controlled diagnostic boundary regression" />
+  </testcase>
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="multiplyWrappedCoroutineTimeoutRetainsEntireChain" time="0.003">
+    <failure message="controlled diagnostic boundary regression" />
+  </testcase>
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="callerCancellationPropagatesUnchanged" time="0.002" />
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="multiplyWrappedComposeTimeoutRetainsEntireChain" time="0.002">
+    <failure message="controlled diagnostic boundary regression" />
+  </testcase>
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="composeTimeoutRetainsOriginalCause" time="0.002" />
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="cyclicOrdinaryCausesTerminateWithoutChangingTheChain" time="0.002" />
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="wrappedComposeTimeoutRetainsExactWrapper" time="0.002">
+    <failure message="controlled diagnostic boundary regression" />
+  </testcase>
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="repeatedStagesRunEachOperationOnce" time="0.002" />
+  <testcase classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" name="assertionRetainsOriginalCauseWithoutPublishingItsContent" time="0.002" />
+</testsuite>

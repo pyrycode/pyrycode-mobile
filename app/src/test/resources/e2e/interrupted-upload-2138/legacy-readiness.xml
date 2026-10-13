@@ -1,0 +1,17 @@
+<testsuite name="de.pyryco.mobile.di.RelayConnectionFactoryTest" tests="5" failures="5" errors="0" skipped="0" timestamp="2026-10-13T06:57:02.037Z">
+  <testcase name="interruptedUploadReadinessIgnoresStoppedSelectedHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest">
+    <failure message="controlled baseline regression" />
+  </testcase>
+  <testcase name="interruptedUploadReadinessPropagatesCancellation" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest">
+    <failure message="controlled baseline regression" />
+  </testcase>
+  <testcase name="interruptedUploadReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest">
+    <failure message="controlled baseline regression" />
+  </testcase>
+  <testcase name="interruptedUploadReadinessKeepsDeadline" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest">
+    <failure message="controlled baseline regression" />
+  </testcase>
+  <testcase name="interruptedUploadReadinessWaitsForAuthentication" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest">
+    <failure message="controlled baseline regression" />
+  </testcase>
+</testsuite>

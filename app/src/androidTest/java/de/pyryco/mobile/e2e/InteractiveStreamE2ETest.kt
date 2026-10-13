@@ -6809,59 +6809,104 @@ class InteractiveStreamE2ETest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.addMonitor(stub)
         var cut: LinkCut? = null
+
+        fun links(): String {
+            val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+            val bundle = registry.connectionFor(serverId)
+            val status = bundle?.coordinator?.connectionStatus?.value
+            return "host=${bundle != null} selected=${bundle != null && registry.selected.value === bundle} " +
+                "relay=${status?.relay?.javaClass?.simpleName ?: "absent"} daemon=${status?.pyrycode?.javaClass?.simpleName ?: "absent"} " +
+                "repository=${bundle?.coordinator?.currentRepository?.value != null}; peer=${peer.linkState()}"
+        }
+
+        fun <T> step(
+            stage: InterruptedUploadStage,
+            block: () -> T,
+        ): T = runBlocking { interruptedUploadStep(stage, ::links, { Log.i("InterruptedUpload", it) }, block) }
+
+        fun awaitUploadHost() {
+            runBlocking { awaitHostConnection(GlobalContext.get().get<RelayConnectionRegistry>(), serverId, CONNECT_TIMEOUT_MS) }
+        }
+
         try {
-            val stamp = System.currentTimeMillis()
-            val document = documentFixture("upload-$stamp")
-            val documentName = INTERRUPT_FILE_PREFIX + "upload-$stamp.txt"
-            val totalChunks = (document.size + ATTACHMENT_CHUNK_BYTES - 1) / ATTACHMENT_CHUNK_BYTES
-            check(totalChunks > CUT_AFTER_CHUNK + 1) { "the document fixture has no chunk after the cut" }
+            val (document, documentName, totalChunks) =
+                step(InterruptedUploadStage.Fixtures) {
+                    val stamp = System.currentTimeMillis()
+                    val bytes = documentFixture("upload-$stamp")
+                    val chunks = (bytes.size + ATTACHMENT_CHUNK_BYTES - 1) / ATTACHMENT_CHUNK_BYTES
+                    check(chunks > CUT_AFTER_CHUNK + 1) { "the document fixture has no chunk after the cut" }
+                    Triple(bytes, INTERRUPT_FILE_PREFIX + "upload-$stamp.txt", chunks)
+                }
 
-            // 1. The peer records from here on; the phone opens a fresh chat X and attaches the document.
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
-            awaitChannelList()
-            awaitConnected()
-            val (chatX, nameX) = answerChat(serverId, INTERRUPT_CHAT_NAME_PREFIX)
-            assertPeerAnswers(peer, chatX)
-            openChatRow(nameX)
-            attachDocument(stub, documentName, document, inserted)
+            // The peer records from here on; the phone opens a fresh chat and attaches the document.
+            step(InterruptedUploadStage.PeerAdmission) { runBlocking { peer.open(CONNECT_TIMEOUT_MS) } }
+            step(InterruptedUploadStage.ChannelList) { awaitChannelList() }
+            step(InterruptedUploadStage.SetupReadiness) { awaitUploadHost() }
+            val (chatX, nameX) = step(InterruptedUploadStage.CreateChat) { answerChat(serverId, INTERRUPT_CHAT_NAME_PREFIX) }
+            step(InterruptedUploadStage.PeerHistory) { assertPeerAnswers(peer, chatX) }
+            step(InterruptedUploadStage.OpenChat) { openChatRow(nameX) }
+            step(InterruptedUploadStage.AttachmentSelection) { attachDocument(stub, documentName, document, inserted) }
 
-            // 2. AC-1: send, and cut the link once chunk CUT_AFTER_CHUNK is sent. The send fails and keeps both.
-            cut = cutLinkOn(serverId) { it.startsWith(CHUNK_SENT_EVENT) && it.endsWith(" index=$CUT_AFTER_CHUNK total=$totalChunks") }
-            sendFromPhone(PING_PROMPT)
-            cut.await("the upload never sent chunk $CUT_AFTER_CHUNK")
-            cut.close()
-            awaitComposerHolds(PING_PROMPT, documentName)
-            assertEquals(
-                "user messages in the peer's view of X after the failed send",
-                0,
-                userMessages(
-                    runBlocking {
-                        peer.history(chatX, THREAD_TIMEOUT_MS)
-                    },
-                ),
-            )
+            // Cut synchronously after the observed intermediate chunk; another chunk remains unsent.
+            val uploadCut =
+                step(InterruptedUploadStage.ArmCut) {
+                    cutLinkOn(serverId) { it.startsWith(CHUNK_SENT_EVENT) && it.endsWith(" index=$CUT_AFTER_CHUNK total=$totalChunks") }
+                }
+            cut = uploadCut
+            step(InterruptedUploadStage.Send) { sendFromPhone(PING_PROMPT) }
+            step(InterruptedUploadStage.ChunkCut) {
+                uploadCut.await("the upload never sent chunk $CUT_AFTER_CHUNK")
+                uploadCut.close()
+            }
+            step(InterruptedUploadStage.ComposerRetention) { awaitComposerHolds(PING_PROMPT, documentName) }
+            step(InterruptedUploadStage.UnsentHistory) {
+                assertEquals(
+                    "user messages in the peer's view of X after the failed send",
+                    0,
+                    userMessages(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }),
+                )
+            }
 
-            // 3. AC-1: restore the link and send again; the message reaches claude and its turn ends.
-            setHostLink(serverId, up = true)
-            awaitConnected()
-            val send = hasContentDescription(CD_SEND_MESSAGE) and isEnabled()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(send).fetchSemanticsNodes().isNotEmpty() }
-            composeTestRule.onAllNodes(send).onFirst().performClick()
-            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the retried attachment turn in X did not end") { it.type == "turn_end" }
+            // Restore the same host, await authentication, and retry the retained draft once.
+            step(InterruptedUploadStage.Reconnect) { setHostLink(serverId, up = true) }
+            step(InterruptedUploadStage.RetryReadiness) { awaitUploadHost() }
+            step(InterruptedUploadStage.Retry) {
+                val send = hasContentDescription(CD_SEND_MESSAGE) and isEnabled()
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(send).fetchSemanticsNodes().isNotEmpty() }
+                composeTestRule.onAllNodes(send).onFirst().performClick()
+            }
+            step(InterruptedUploadStage.TurnCompletion) {
+                allowPromptsUntil(
+                    peer,
+                    chatX,
+                    WAIT_TURN_TIMEOUT_MS,
+                    "the retried attachment turn in X did not end",
+                ) { it.type == "turn_end" }
+            }
 
-            // 4. AC-1: the peer's view of X holds one user message naming one id, which fetches the fixture's bytes.
-            val named = userMessageAttachmentIds(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) })
-            assertEquals("user messages in the peer's view of X", 1, named.size)
-            val ids = named.single()
-            assertEquals("attachment ids named by X's user message", 1, ids.size)
-            val fetched = runBlocking { peer.retrieveAttachment(chatX, ids.single(), REPLY_TIMEOUT_MS) }
-            assertEquals("digest of the file the peer fetched", sha256(document), sha256(fetched.bytes))
+            // Exactly one user message names exactly one attachment with the fixture's digest.
+            val ids =
+                step(InterruptedUploadStage.FinalHistory) {
+                    val named = userMessageAttachmentIds(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) })
+                    assertEquals("user messages in the peer's view of X", 1, named.size)
+                    named.single().also { assertEquals("attachment ids named by X's user message", 1, it.size) }
+                }
+            step(InterruptedUploadStage.Retrieval) {
+                val fetched = runBlocking { peer.retrieveAttachment(chatX, ids.single(), REPLY_TIMEOUT_MS) }
+                assertEquals("digest of the file the peer fetched", sha256(document), sha256(fetched.bytes))
+            }
         } finally {
             cut?.close()
             runCatching { setHostLink(serverId, up = true) }
-            instrumentation.removeMonitor(stub)
-            deleteFixtures(inserted)
-            peer.close()
+            try {
+                instrumentation.removeMonitor(stub)
+            } finally {
+                try {
+                    deleteFixtures(inserted)
+                } finally {
+                    peer.close()
+                }
+            }
         }
     }
 

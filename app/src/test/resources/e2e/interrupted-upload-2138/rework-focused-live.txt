@@ -1,0 +1,15 @@
+Focused managed rework live result (#2138)
+Command: standard managed live launcher selecting interrupted upload and Send now.
+Process exit: 0
+Selected methods: 2 executed/passed, 0 failed/errors/skipped.
+Interrupted upload: 1 executed/passed, 0 failed/errors/skipped.
+Send now: 1 executed/passed, 0 failed/errors/skipped.
+All 19 upload diagnostic stages started/passed exactly once in retained phone logcat.
+Mobile: 177e342cfe1ab90de646d30196f33620aabd35f2
+Daemon: eb3c757cac48a65f536bdc0dfdc92f0adbd82c3f
+Claude Code: 2.1.280
+Original method XML timestamp: 2026-10-13T13:33:51
+Private evidence: $AGENTS_REPO_PATH/logs/evidence/2138/rework-focused-live-20261013T1332Z/
+Retained: original/countable XML, correlated phone logcats, emulator log, source hashes and provenance.
+Unavailable: matching daemon logs removed by standard harness cleanup; no durable full process stdout/stderr.
+This is builder-focused validation; fresh post-verifier full dispatcher acceptance remains pending.

@@ -1,0 +1,21 @@
+<testsuite name="de.pyryco.mobile.e2e.InterruptedUploadStageTest" tests="7" failures="6" errors="0" skipped="0" timestamp="2026-10-13T06:56:07.451Z">
+  <testcase name="operationFailureRunsOnceAndRetainsCause" classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest">
+    <failure message="controlled baseline regression" />
+  </testcase>
+  <testcase name="timeoutPreservesDeadlineCauseAndSingleExecution" classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest">
+    <failure message="controlled baseline regression" />
+  </testcase>
+  <testcase name="successRunsOnceReturnsValueAndDoesNotReadFailureSnapshot" classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest">
+    <failure message="controlled baseline regression" />
+  </testcase>
+  <testcase name="callerCancellationPropagatesUnchanged" classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest" />
+  <testcase name="composeTimeoutRetainsOriginalCause" classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest">
+    <failure message="controlled baseline regression" />
+  </testcase>
+  <testcase name="repeatedStagesRunEachOperationOnce" classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest">
+    <failure message="controlled baseline regression" />
+  </testcase>
+  <testcase name="assertionRetainsOriginalCauseWithoutPublishingItsContent" classname="de.pyryco.mobile.e2e.InterruptedUploadStageTest">
+    <failure message="controlled baseline regression" />
+  </testcase>
+</testsuite>
