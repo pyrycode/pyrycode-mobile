@@ -1,0 +1,17 @@
+Dispatcher full live evidence, 2026-10-13T10:20:14.762Z
+Command: ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live
+Exit: 0; wall clock: 1077.441 seconds.
+Suite: 65 executed, 65 passed, 0 failed, 0 errors, 0 skipped.
+Named method: de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes
+Named method: 1 executed, 1 passed, 0 failed, 0 errors, 0 skipped.
+Mobile: 732bf5756ca2d1be0d78526b654eb9a35bebe9fe
+Merged main: b107f97a743a508fb9182fdc165b3e084180e250 (candidate was 0 commits behind).
+Daemon: eb3c757cac48a65f536bdc0dfdc92f0adbd82c3f (retained gate stderr).
+Suite XML time: 1014.693 seconds; individual method duration is not retained.
+Private verified artifacts: $AGENTS_REPO_PATH/logs/evidence/2138/dispatcher-full-live-20261013T102014Z/
+Available: exact dispatcher stdout, stderr, metadata, extracted counted XML, provenance.json and SHA256SUMS.
+XML origin: dispatcher-full-live.xml is the exact counted testsuites XML from stdout, not original instrumentation XML.
+Unavailable: original per-test XML, correlated phone logcat, matching harness daemon logs, per-stage phone records and Claude Code version.
+Temporary sources no longer exist: real-claude-gate-2138/build/dispatcher-tests/live-p6yjf9nk and build/session-error-evidence/pyry-e2e.oUDOSZ.
+The pass proves this scenario executed its unchanged transfer/composer/history/digest assertions. It does not establish historical causation or replace missing raw artifacts.
+This is the returned evidence checkpoint; review and dispatcher live acceptance run again after artifact publication.
