@@ -1,0 +1,23 @@
+{
+  "revision": "d338bf705bc76e41c20cf24d1d3b0d1fb79864dd",
+  "uncommitted_diff_sha256": "126de636954aee11e566d4ceab3132e17902bcc625cf2bb6388ec347090fdc6f",
+  "command": "./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#heldCpuPipeCancelsAndClosesItsDescriptor -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e -Pandroid.testInstrumentationRunnerArguments.disableAnimations=true --console=plain",
+  "exit_code": 1,
+  "raw_evidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2143/pipe-red",
+  "counts": {
+    "recorded": 1,
+    "executed": 1,
+    "passed": 0,
+    "failed": 1,
+    "errors": 0,
+    "skipped": 0
+  },
+  "methods": {
+    "heldCpuPipeCancelsAndClosesItsDescriptor": "failed"
+  },
+  "sources": {
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "72c1864ca4b8d5ed064eb41656c37429df3a4f7df1abf75f83506b14562e205e",
+    "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "df15f0d6c7f3114adab4e239a8a94c952c7c1d226333d01c24d06db7079d303f",
+    "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "767787bf12a4269f3cb12eb0654a133c38e5441457803bf4982b3c72f0dd61ab"
+  }
+}

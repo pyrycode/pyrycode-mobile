@@ -305,7 +305,7 @@ Main after reset, reporting `UncaughtExceptionsBeforeTest` at the next registry
 test. Keep host/content/queue/action/reconnect assertions intact while fixing
 scheduling and teardown. See the
 [review and counted regression evidence](https://github.com/pyrycode/pyrycode-mobile/pull/2024#issuecomment-6091171021)
-and [saved-thread phase evidence](thread-screen-testing-saved-first-draw.md#allocation-margin-and-retained-evidence-2018).
+and [saved-thread phase evidence](thread-screen-testing-saved-first-draw-comparisons.md#allocation-margin-and-retained-evidence-2018).
 
 The #726 proof holds only when it runs on the thread that later calls `resetMain()` — #892 found a
 case where it does not. With an `UnconfinedTestDispatcher` installed as `Main`, a resumption resumes

@@ -142,7 +142,7 @@ the full typed `CachedThread` decoder and independent fallback.
 
 A rows-only API is insufficient if its repository waits for optional coverage to
 seed order before publishing. See [rows-first merging](caching-conversation-repository.md#how-the-restore-merges-with-live-rows)
-and [controlled first-draw evidence](thread-screen-testing-saved-first-draw.md#allocation-margin-and-retained-evidence-2018).
+and [controlled first-draw evidence](thread-screen-testing-saved-first-draw-comparisons.md#allocation-margin-and-retained-evidence-2018).
 Canonical persisted bytes, SHA-256 proofs and the serializer/provider stay unchanged.
 
 Since #2026, thread records, their independent fallback, header reads and optional
@@ -165,7 +165,7 @@ reduces the mandatory metadata writer reread's allocation before cold restore.
 `DecodedThreadRestoreTest.persistedTimestampParsingRetainsCalendarValidationAndLegacyFormats`
 pins the fallback and calendar behavior. Freshness, version, row/metadata rejection
 and canonical proof checks remain in the same synchronous operation; see
-[measured first-draw evidence](thread-screen-testing-saved-first-draw.md#allocation-margin-and-retained-evidence-2018).
+[measured first-draw evidence](thread-screen-testing-saved-first-draw-comparisons.md#allocation-margin-and-retained-evidence-2018).
 
 Row validation uses one identity-set pass and rejects every running tool and
 kind-specific duplicate as before. Coverage validation checks already-normalized
