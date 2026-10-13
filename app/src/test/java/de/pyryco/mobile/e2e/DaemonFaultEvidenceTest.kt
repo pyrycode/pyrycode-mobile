@@ -22,7 +22,7 @@ class DaemonFaultEvidenceTest {
         runBlocking {
             val root =
                 generateSequence(
-                    File(System.getProperty("user.dir")),
+                    File(".").absoluteFile,
                 ) { it.parentFile }.first { File(it, "scripts/e2e-daemon-fault.py").isFile }
             val fixture = Files.createTempDirectory("daemon-fault-timeout-").toFile()
             val portFile = File(fixture, "port")

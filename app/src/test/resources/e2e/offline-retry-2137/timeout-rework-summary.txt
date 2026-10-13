@@ -18,6 +18,8 @@ Focused JVM selection: 47 executed/passed, 0 failures/errors/skips:
 DaemonFaultEvidenceTest 7, OfflineRetryWindowTest 3,
 RelayConnectionSupervisorTest 37. Original exception identity, passive-recovery
 negative control and original-deadline coverage pass.
+Final affected-class rerun after removing the nullable-Java directory lookup:
+DaemonFaultEvidenceTest 7 executed/passed, 0 failures/errors/skips.
 Lint, assembleDebug, compileDebugAndroidTestKotlin, spotlessApply and forced
 spotlessCheck pass.
 
@@ -39,7 +41,7 @@ deadline, pill clearing and newly rendered reply assertions.
 
 Private XML/logcat, controller/daemon/relay logs, input hashes and manifests:
 /work/Projects/pyrycode-mobile-agents/logs/evidence/2137/rework-timeout-hp-20261013/
-20 unique raw/input files; 36 manifest entries verified, zero mismatches.
+21 unique raw/input files; 37 manifest entries verified, zero mismatches.
 Reviewed counted XML: scripted-timeout-rework.xml and live-timeout-rework.xml.
 
 Historical causation remains unresolved: the original controller/daemon captures
