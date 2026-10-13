@@ -1,6 +1,7 @@
 import importlib.util
 import os
 import signal
+import shutil
 import time
 from pathlib import Path
 import subprocess
@@ -157,6 +158,71 @@ class CodexHomeLeaseTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn('outcome=ready', result.stdout)
         self.assertFalse((self.operator / '.pyry/e2e-live/codex-home').is_symlink())
+
+    def run_refusal_launch(self, env):
+        """Real wrapper and shell admission, then the real primary launch with an inert daemon."""
+        scripts = self.root / 'scripts'
+        scripts.mkdir(exist_ok=True)
+        shutil.copyfile(Path(__file__).with_name('e2e-codex-home.py'), scripts / 'e2e-codex-home.py')
+        script = Path(__file__).with_name('e2e-emulator.sh').read_text()
+        start = script.index('DAEMON_COMMAND=(env)')
+        launch = script[start:script.index('\nFAULT_PORT_FILE=', start)]
+        shell = scripts / 'e2e-emulator.sh'
+        shell.write_text(script[:script.index('\nWORK_DIR=')] + '\n' + launch + '\n"${DAEMON_COMMAND[@]}"\n')
+        gradle = self.root / 'gradlew'
+        gradle.write_text('#!/usr/bin/env python3\nimport os, sys, json\nfrom pathlib import Path\n'
+                          'Path(os.environ["GRADLE_RECORD"]).write_text(json.dumps(sys.argv[1:]))\nsys.exit(1)\n')
+        gradle.chmod(0o700)
+        daemon = self.root / 'pyry'
+        # Mirror daemon startup: prepareCodexHome follows the home before checking the binary.
+        daemon.write_text('#!/usr/bin/env python3\nimport os\nfrom pathlib import Path\n'
+                          'home = Path(os.environ["HOME"]) / ".pyry" / os.environ["PYRY_NAME"] / "codex-home"\n'
+                          'home.mkdir(parents=True, exist_ok=True)\n(home / "config.toml").write_text("daemon-probed")\n')
+        daemon.chmod(0o700)
+        return subprocess.run(['/bin/bash', str(shell)], capture_output=True, text=True, timeout=20,
+                              env=dict(env, LIVE='1', DETERMINISTIC='', LIVE_TESTS='', E2E_LOGIN_TRIED='1',
+                                       PORT='12345', PYRY_BIN=str(daemon), GRADLE_RECORD=str(self.root / 'gradle.json')))
+
+    def assert_counted_refusal(self, result, reason):
+        import json
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn('outcome=' + reason, result.stdout)
+        args = json.loads((self.root / 'gradle.json').read_text())
+        self.assertIn('-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.e2e.'
+                      'InteractiveStreamE2ETest#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies', args)
+        self.assertIn('-Pandroid.testInstrumentationRunnerArguments.codexPrerequisite=' + reason, args)
+        self.assertIn('-Pandroid.testInstrumentationRunnerArguments.codexPrerequisiteOnly=true', args)
+        self.assertIn('--rerun', args)
+        self.assertFalse(any('relayUrl=' in arg or 'token=' in arg for arg in args))
+        self.assertNotIn('fixture-secret', result.stdout + result.stderr)
+
+    def test_refused_existing_link_never_reaches_daemon_preparation(self):
+        for target in (self.home, self.operator / '.codex', self.operator / '.pyry/production/codex-home'):
+            with self.subTest(target=target):
+                target.mkdir(parents=True, exist_ok=True)
+                config = target / 'config.toml'
+                config.write_text('unchanged')
+                self.link.parent.mkdir(parents=True, exist_ok=True)
+                self.link.symlink_to(target)
+                try:
+                    result = self.run_refusal_launch(self.env)
+                    self.assertEqual('unchanged', config.read_text())
+                    self.assertEqual(target, self.link.resolve())
+                    self.assert_counted_refusal(result, 'instance_home_exists')
+                finally:
+                    self.link.unlink()
+        self.assertEqual('fixture-secret-do-not-copy', self.login.read_text())
+
+    def test_missing_prerequisites_leave_instance_clean_for_corrected_retry(self):
+        result = self.run_refusal_launch(dict(self.env, PYRY_CODEX_CAPTURE_HOME=''))
+        self.assertFalse(self.link.exists())
+        self.assert_counted_refusal(result, 'configuration_missing')
+        retry = self.run_refusal_launch(self.env)
+        self.assertEqual(0, retry.returncode, retry.stderr)
+        self.assertIn('outcome=ready', retry.stdout)
+        self.assertEqual('daemon-probed', (self.home / 'config.toml').read_text())
+        self.assertFalse(self.link.is_symlink())
+        self.assertEqual('fixture-secret-do-not-copy', self.login.read_text())
 
     def test_shell_or_controller_failure_cannot_release_home_with_live_daemon(self):
         helper = str(Path(__file__).with_name('e2e-codex-home.py'))

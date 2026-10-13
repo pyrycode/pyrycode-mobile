@@ -250,7 +250,13 @@ class InteractiveStreamE2ETest {
     @get:Rule(order = Int.MIN_VALUE)
     val sessionCleanup =
         LiveSessionCleanupRule(
-            begin = { DaemonFaultControl().beginTest() },
+            begin = {
+                val args = InstrumentationRegistry.getArguments()
+                if (args.getString("codexPrerequisiteOnly") == "true") {
+                    error("agent_switch_prerequisite=${switchPrerequisiteReason(args.getString("codexPrerequisite"))}")
+                }
+                DaemonFaultControl().beginTest()
+            },
             end = { DaemonFaultControl().endTest() },
         )
 

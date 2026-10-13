@@ -141,6 +141,15 @@ if [ -n "${LIVE}" ] && [ -z "${DETERMINISTIC}" ] && [ -z "${E2E_CODEX_LEASE:-}" 
   esac
 fi
 GRADLEW="${REPO_ROOT}/gradlew"
+# A refused home must never reach daemon startup: even an unavailable Codex binary
+# lets the daemon prepare its home first. Count the named failure without pairing.
+if [ -n "${LIVE}" ] && [ -z "${DETERMINISTIC}" ] && [ -n "${E2E_CODEX_UNMET:-}" ]; then
+  exec "${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" --rerun \
+    -PuseRelayRepository=true \
+    -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies \
+    -Pandroid.testInstrumentationRunnerArguments.codexPrerequisiteOnly=true \
+    -Pandroid.testInstrumentationRunnerArguments.codexPrerequisite="${E2E_CODEX_UNMET}" --console=plain
+fi
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pyry-e2e.XXXXXX")"
 RELAY_LOG="${WORK_DIR}/relay.log"
 DAEMON_LOG="${WORK_DIR}/daemon.log"

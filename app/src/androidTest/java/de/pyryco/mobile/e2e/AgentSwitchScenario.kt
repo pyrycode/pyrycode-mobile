@@ -272,7 +272,7 @@ private fun assertSwitchHistory(
     return messages
 }
 
-private fun switchPrerequisiteReason(reason: String?): String =
+internal fun switchPrerequisiteReason(reason: String?): String =
     reason?.takeIf {
         it in
             setOf(
