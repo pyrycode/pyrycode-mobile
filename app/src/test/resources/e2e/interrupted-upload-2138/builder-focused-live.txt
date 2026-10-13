@@ -1,0 +1,13 @@
+Builder-focused live evidence, 2026-10-13
+Command: python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes
+Exit: 0
+Selected method and focused suite: 1 executed, 1 passed, 0 failed, 0 errors, 0 skipped.
+Mobile: 20d13f3cf15a57ee56bb3d5f5ffd4e2e4d48daad
+Daemon: eb3c757cac48a65f536bdc0dfdc92f0adbd82c3f
+Claude Code: 2.1.280
+Private verified artifacts: $AGENTS_REPO_PATH/logs/evidence/2138/focused-live-20261013T0802Z/
+Available: original method XML, dispatcher counted XML, correlated method phone logcat, emulator log, provenance.json and SHA256SUMS. Source hashes cover the live class and both new shared helpers.
+Unavailable: matching harness daemon logs; successful standard harness cleanup removed them. The rejected custom capture wrapper was not used.
+All 19 fixed stages have one start and one pass, including SetupReadiness, ChunkCut, ComposerRetention, UnsentHistory, Reconnect, RetryReadiness, Retry, TurnCompletion, FinalHistory and Retrieval.
+The unchanged assertions prove intermediate-chunk interruption, retained text/attachment, zero user messages before retry, exactly one user message/attachment after retry, real turn completion and fixture digest equality.
+This focused pass is not full dispatcher live acceptance and does not prove the historical reconnect cause.
