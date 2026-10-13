@@ -128,12 +128,13 @@ def main():
                     ready, phase = True, "ready"
                     return
                 tail = scanned[-(len(token) - 1):] if len(token) > 1 else b""
-            if time.monotonic() >= deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 phase = "registration_timeout"
                 raise RuntimeError("owned daemon did not register at relay")
             if chunk:
                 continue
-            time.sleep(0.05)
+            time.sleep(min(0.05, remaining))
 
     def stop():
         nonlocal ready, phase

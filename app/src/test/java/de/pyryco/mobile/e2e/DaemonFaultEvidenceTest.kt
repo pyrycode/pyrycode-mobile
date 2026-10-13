@@ -1,12 +1,102 @@
 package de.pyryco.mobile.e2e
 
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
+import java.nio.file.Files
+import java.util.concurrent.TimeUnit
 
 class DaemonFaultEvidenceTest {
+    @Test
+    fun defaultRegistrationTimeoutReachesTheClientOverTheRealSocket() =
+        runBlocking {
+            val root =
+                generateSequence(
+                    File(System.getProperty("user.dir")),
+                ) { it.parentFile }.first { File(it, "scripts/e2e-daemon-fault.py").isFile }
+            val fixture = Files.createTempDirectory("daemon-fault-timeout-").toFile()
+            val portFile = File(fixture, "port")
+            val controllerLog = File(fixture, "controller.log")
+            // Hold dispatch briefly before the real default registration wait; equal budgets must fail.
+            val launcher =
+                """
+                import runpy, sys, time
+                def dispatch(frame, event, arg):
+                    if frame.f_code.co_name == 'await_relay_ready' and event == 'call':
+                        time.sleep(0.25)
+                    return dispatch
+                sys.settrace(dispatch)
+                runpy.run_path('e2e-daemon-fault.py', run_name='__main__')
+                """.trimIndent()
+            val controller =
+                ProcessBuilder(
+                    "python3",
+                    "-c",
+                    launcher,
+                    "--port-file",
+                    portFile.path,
+                    "--log",
+                    File(fixture, "child.log").path,
+                    "--control-socket",
+                    File(fixture, "control.sock").path,
+                    "--ready-token",
+                    "relay: conn established",
+                    "--",
+                    "python3",
+                    "-c",
+                    "import time; time.sleep(120)",
+                ).directory(File(root, "scripts")).redirectErrorStream(true).redirectOutput(controllerLog).start()
+            try {
+                withTimeout(5_000) {
+                    while (!portFile.isFile) {
+                        assertTrue("owned controller exited before publishing its port", controller.isAlive)
+                        delay(20)
+                    }
+                }
+                val port = portFile.readText().trim().toInt()
+                checkedDaemonFaultRequest("stop", {}) { exchangeDaemonFaultRequest("127.0.0.1", port, "stop") }
+                val records = mutableListOf<String>()
+                val caught =
+                    assertThrows(IllegalStateException::class.java) {
+                        checkedDaemonFaultRequest("start", records::add) { exchangeDaemonFaultRequest("127.0.0.1", port, "start") }
+                    }
+                val evidence = records.single()
+                assertTrue(
+                    evidence,
+                    evidence.startsWith("action=start http_status=503 generation=2 phase=registration_timeout elapsed_ms="),
+                )
+                assertFalse(evidence.contains("failure=transport"))
+                assertTrue(caught.message.orEmpty().contains(evidence))
+                val transition = controllerLog.readLines().map { Json.parseToJsonElement(it).jsonObject }.last()
+                assertEquals("start", transition.getValue("action").jsonPrimitive.content)
+                assertEquals("503", transition.getValue("http_status").jsonPrimitive.content)
+                assertEquals("2", transition.getValue("generation").jsonPrimitive.content)
+                assertEquals("registration_timeout", transition.getValue("phase").jsonPrimitive.content)
+                assertEquals("true", transition.getValue("running").jsonPrimitive.content)
+                assertEquals("false", transition.getValue("ready").jsonPrimitive.content)
+                assertTrue(
+                    transition
+                        .getValue("elapsed_ms")
+                        .jsonPrimitive.content
+                        .toLong() >= 15_000,
+                )
+            } finally {
+                controller.destroy()
+                assertTrue("owned controller did not join", controller.waitFor(12, TimeUnit.SECONDS))
+                fixture.deleteRecursively()
+            }
+        }
+
     @Test
     fun transportFailurePreservesTheOriginalExceptionWithoutLoggingItsMessage() {
         val original = java.io.IOException("private-cause")

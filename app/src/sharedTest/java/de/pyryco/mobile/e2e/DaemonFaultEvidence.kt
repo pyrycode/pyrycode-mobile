@@ -4,7 +4,38 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import java.net.InetSocketAddress
+import java.net.Socket
 import kotlin.time.TimeSource
+
+internal fun exchangeDaemonFaultRequest(
+    host: String,
+    port: Int,
+    action: String,
+    body: String = "",
+): String =
+    Socket().use { socket ->
+        socket.connect(InetSocketAddress(host, port), 5_000)
+        socket.soTimeout =
+            when (action) {
+                "posts", "test-end" -> 120_000
+                // Registration has a 15-second budget; allow bounded dispatch and response delivery.
+                "start" -> 17_000
+                else -> 15_000
+            }
+        val bytes = body.toByteArray()
+        socket.getOutputStream().write("POST /$action HTTP/1.0\r\nContent-Length: ${bytes.size}\r\n\r\n".toByteArray() + bytes)
+        val response = StringBuilder()
+        val reader = socket.getInputStream().bufferedReader()
+        val buffer = CharArray(512)
+        while (true) {
+            val count = reader.read(buffer)
+            if (count < 0) break
+            check(response.length + count <= 4096) { "owned test daemon control response exceeded limit" }
+            response.append(buffer, 0, count)
+        }
+        response.toString()
+    }
 
 internal fun checkedDaemonFaultRequest(
     action: String,

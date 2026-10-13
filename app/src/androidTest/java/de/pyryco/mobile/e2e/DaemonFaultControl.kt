@@ -9,8 +9,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import java.net.InetSocketAddress
-import java.net.Socket
 import kotlin.time.TimeMark
 
 /** Controls only the first daemon process owned by this e2e harness invocation. */
@@ -81,22 +79,7 @@ internal class DaemonFaultControl {
         body: String = "",
     ) {
         checkedDaemonFaultRequest(action, { Log.i("DaemonFaultControl", "event=daemon_fault_request $it") }) {
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress("10.0.2.2", port), 5_000)
-                socket.soTimeout = if (action == "posts" || action == "test-end") 120_000 else 15_000
-                val bytes = body.toByteArray()
-                socket.getOutputStream().write("POST /$action HTTP/1.0\r\nContent-Length: ${bytes.size}\r\n\r\n".toByteArray() + bytes)
-                val response = StringBuilder()
-                val reader = socket.getInputStream().bufferedReader()
-                val buffer = CharArray(512)
-                while (true) {
-                    val count = reader.read(buffer)
-                    if (count < 0) break
-                    check(response.length + count <= 4096) { "owned test daemon control response exceeded limit" }
-                    response.append(buffer, 0, count)
-                }
-                response.toString()
-            }
+            exchangeDaemonFaultRequest("10.0.2.2", port, action, body)
         }
     }
 }
