@@ -84,7 +84,7 @@ die() { printf '%s\\n' "$1" >&2; exit 1; }
         self.check_launch("1", "", "reopen-stream", "phone-checkpoint", True)
 
 
-class TurnProvenanceTest(unittest.TestCase):
+class DaemonFaultTest(unittest.TestCase):
     def test_authored_completion_requires_daemon_recorded_successor_and_agent(self):
         spec = importlib.util.spec_from_file_location('fault', ROOT / 'e2e-daemon-fault.py')
         module = importlib.util.module_from_spec(spec)
@@ -124,7 +124,6 @@ class TurnProvenanceTest(unittest.TestCase):
             self.assertFalse(module.turn_matches_session(socket, body))
 
 
-class DaemonFaultTest(unittest.TestCase):
     def test_termination_kills_and_joins_daemon_that_ignores_term(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)
@@ -160,7 +159,7 @@ class DaemonFaultTest(unittest.TestCase):
 
     def test_stop_then_start_replaces_only_the_owned_child(self):
         with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp)
+            path = Path(temp).resolve()
             controller = subprocess.Popen(
                 [
                     sys.executable,
@@ -170,7 +169,7 @@ class DaemonFaultTest(unittest.TestCase):
                     "--log",
                     str(path / "child.log"),
                     "--control-socket",
-                    str(path / "control.sock"),
+                    str(path / "e2e-fixture.sock"),
                     "--ready-token",
                     "relay: conn established",
                     "--stream-release-file",
@@ -202,6 +201,16 @@ class DaemonFaultTest(unittest.TestCase):
 
                 first = request("status")
                 self.assertTrue(first["running"])
+                history = path / "e2e-fixture/conversations/channel/history"
+                history.mkdir(parents=True)
+                entry = {"type": "turn_end", "payload": {"turn_id": "authored"},
+                         "session": {"kind": "codex", "session_id": "successor"}}
+                (history / "segment-00000000000000000001.jsonl").write_text(json.dumps(entry) + "\n")
+                for session, matched in (("successor", True), ("predecessor", False)):
+                    body = {"conversation": "channel", "turn": "authored", "session": session, "agent": "codex"}
+                    with urlopen(Request(f"http://127.0.0.1:{port}/turn-provenance", data=json.dumps(body).encode()), timeout=5) as response:
+                        self.assertEqual(200, response.status)
+                        self.assertEqual({"matches": matched}, json.load(response))
                 self.assertFalse((path / "suffix-release").exists())
                 self.assertFalse((path / "result-release").exists())
                 self.assertEqual(first["pid"], request("stream-release")["pid"])
