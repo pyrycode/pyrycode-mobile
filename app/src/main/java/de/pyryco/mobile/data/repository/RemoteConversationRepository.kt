@@ -95,7 +95,7 @@ import kotlinx.serialization.json.encodeToJsonElement
  * `changeWorkspace`). [delete] and [createWorkspaceFolder] keep their interface
  * defaults — intentionally outside this slice's surface.
  */
-class RemoteConversationRepository(
+class RemoteConversationRepository internal constructor(
     private val pump: SessionPump,
     scope: CoroutineScope,
     /**
@@ -178,10 +178,12 @@ class RemoteConversationRepository(
     connToken: () -> String? = { null },
     /** Supplied authoritative route only; production activation supplies the source in #1988. */
     private val authoritativeHostId: String = "",
+    internal val authoritativeThreads: AuthoritativeThreadStore = AuthoritativeThreadStore(),
+    private val authoritativeNowMillis: () -> Long = { System.nanoTime() / 1000000 },
 ) : ConversationRepository,
     ThreadSnapshotSource {
-    internal val authoritativeThreads = AuthoritativeThreadStore()
-    internal val authoritativeRoute = AuthoritativeThreadRoute(authoritativeHostId, authoritativeThreads)
+    internal val authoritativeRoute: AuthoritativeThreadRoute =
+        AuthoritativeThreadRoute(authoritativeHostId, authoritativeThreads, onRepair = { authoritativeQueries.repair(it) })
 
     /**
      * The conversation list and the last-message previews (#913): the list projection, the most-recent
@@ -280,6 +282,30 @@ class RemoteConversationRepository(
      * fails waiters through it, and the [init] collector's `finally` sweeps it last.
      */
     private val relayRequests = RelayRequests(send = pump::send)
+    private val authoritativeQueries: AuthoritativeThreadQueries =
+        AuthoritativeThreadQueries(
+            authoritativeHostId,
+            authoritativeThreads,
+            authoritativeRoute,
+            ::authoritativeLiveEnabled,
+            relayRequests::nextRequestId,
+            pump::send,
+            authoritativeNowMillis,
+        )
+
+    internal fun openAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.open(conversationId)
+
+    internal fun requestOlderAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.older(conversationId)
+
+    internal fun cancelAuthoritativeThread(conversationId: String) = authoritativeQueries.cancel(conversationId)
+
+    internal fun resetAuthoritativeThread(
+        conversationId: String,
+        epoch: String,
+    ): Boolean = authoritativeQueries.reset(conversationId, epoch)
+
+    internal fun observeAuthoritativeThread(conversationId: String): Flow<AuthoritativeThreadSnapshot> =
+        authoritativeThreads.observe(authoritativeHostId, conversationId)
 
     /**
      * The conversation commands (#914): create, promote, rename, archive, unarchive, delete, new session,
@@ -486,12 +512,18 @@ class RemoteConversationRepository(
             scope.launch {
                 if (authoritativeHostId.isNotEmpty()) authoritativeRoute.runExpiry()
             }
+        val queryExpiry =
+            scope.launch {
+                if (authoritativeHostId.isNotEmpty()) authoritativeQueries.runExpiry()
+            }
         scope
             .launch {
                 try {
                     pump.inbound.collect { envelope -> onInbound(envelope) }
                 } finally {
                     expiry.cancel()
+                    queryExpiry.cancel()
+                    authoritativeQueries.abandon()
                     authoritativeRoute.abandon()
                     endSwitchAgentRequests()
                     endBackgroundTaskStops()
@@ -504,6 +536,8 @@ class RemoteConversationRepository(
                 }
             }.invokeOnCompletion {
                 expiry.cancel()
+                queryExpiry.cancel()
+                authoritativeQueries.abandon()
                 authoritativeRoute.abandon()
                 // Completion also runs if cancellation prevents the collector body from starting.
                 endSwitchAgentRequests()
@@ -652,6 +686,12 @@ class RemoteConversationRepository(
     }
 
     private fun onInbound(envelope: Envelope) {
+        if (authoritativeLiveEnabled() &&
+            envelope.type in setOf("thread_items", "thread_reset", TYPE_ERROR) &&
+            authoritativeQueries.accept(envelope)
+        ) {
+            return
+        }
         if (authoritativeLiveEnabled() && SessionLiveAdmission.family(envelope.type) != null) {
             sessionLiveAdmission.admit(envelope)?.let(::applyAuthoritativeLive)
             return

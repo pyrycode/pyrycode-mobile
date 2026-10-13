@@ -80,3 +80,8 @@ None. Empty initial epoch may receive a terminal reset; the coordinator follows 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-13
+
+## Revisions
+
+- 2026-10-13: `liveRepairDuringCatchUpCannotBeClearedByItsOldMarker` exposed that a failed live patch need not raise applied progress. The route now notifies only actual repair outcomes, with their conversation owner, outside its lock. The coordinator retires that conversation's active query and requests fresh catch-up, so an older successful marker cannot clear the newly discovered gap. This strengthens the concurrency finding above without introducing another checkpoint authority.
+- 2026-10-13: `delayedLiveRepairCannotRetireWorkAfterReset` reproduced a notification crossing a reused-epoch reset after the route lock was released. Repair notifications now capture affected conversation generations under that lock; the coordinator ignores retired generations. The notification remains outside the lock to preserve lock order.
