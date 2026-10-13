@@ -88,6 +88,8 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.ATTACHMENT_CHUNK_BYTES
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
@@ -99,10 +101,12 @@ import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.HistoryEntryDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
+import de.pyryco.mobile.data.network.PairingParseResult
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
+import de.pyryco.mobile.data.network.parsePairingPayload
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.ConnectionStateSource
@@ -4543,7 +4547,7 @@ class InteractiveStreamE2ETest {
         fun <T> step(
             stage: QuestionAnswerStage,
             block: () -> T,
-        ): T = questionAnswerStep(stage, peer::linkState, block)
+        ): T = questionAnswerStep(stage, { "${answerPhoneState(serverId)}; peer=${peer.linkState()}" }, block)
         try {
             step(QuestionAnswerStage.PairPhone) { pairAnswerHost() }
             val (chat, name) = step(QuestionAnswerStage.CreateChat) { answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "q-") }
@@ -7752,11 +7756,29 @@ class InteractiveStreamE2ETest {
 
     /** Pair the answer daemon by code, as #687 pairs its host. This pairing is the phone's only privileged one. */
     internal fun pairAnswerHost(pairCode: String = answerArg(ARG_ANSWER_PAIR_CODE)) {
+        val record = (parsePairingPayload(pairCode.trim()) as? PairingParseResult.Success)?.server
+
+        fun step(
+            stage: AnswerHostPairingStage,
+            block: () -> Unit,
+        ) = answerHostPairingStep(stage, { answerPhoneState(record?.serverId) }, { Log.i("AnswerPairing", it) }, block)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        awaitChannelList()
-        // Pairing verifies the new host; a preceding host may be offline independently.
-        instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
-        pairHostByCode(pairCode, ANSWER_HOST_NAME)
+        step(AnswerHostPairingStage.List) { awaitChannelList() }
+        step(AnswerHostPairingStage.Permission) {
+            instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+        }
+        pairHostByCode(pairCode, ANSWER_HOST_NAME, ::step)
+    }
+
+    /** Synchronous addressed-phone facts, independent of compatibility selection and unopened peers. */
+    private fun answerPhoneState(serverId: String?): String {
+        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+        val bundle = serverId?.let(registry::connectionFor)
+        val status = bundle?.coordinator?.connectionStatus?.value
+        return "registered=${bundle != null} selected=${bundle != null && registry.selected.value === bundle} " +
+            "relay_ready=${status?.relay == RelayLinkStatus.Connected} " +
+            "daemon_ready=${status?.pyrycode == PyrycodeLinkStatus.Connected} " +
+            "repository=${bundle?.coordinator?.currentRepository?.value != null}"
     }
 
     /**
@@ -8989,28 +9011,39 @@ class InteractiveStreamE2ETest {
     private fun pairHostByCode(
         pairCode: String,
         hostName: String = HOST_B_NAME,
+        step: (AnswerHostPairingStage, () -> Unit) -> Unit = { _, action -> action() },
     ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val pairControl = context.getString(R.string.cd_pair_another_host)
-        composeTestRule.onNode(hasContentDescription(pairControl)).performClick()
         val pasteLink = hasText(PASTE_CODE_LINK, substring = true) and hasClickAction()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(pasteLink).fetchSemanticsNodes().isNotEmpty()
+        step(AnswerHostPairingStage.Scanner) {
+            composeTestRule.onNode(hasContentDescription(pairControl)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(pasteLink).fetchSemanticsNodes().isNotEmpty()
+            }
         }
-        composeTestRule.onAllNodes(pasteLink).onFirst().performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasSetTextAction() and hasText(PAIR_CODE_FIELD)).fetchSemanticsNodes().isNotEmpty()
+        step(AnswerHostPairingStage.Code) {
+            composeTestRule.onAllNodes(pasteLink).onFirst().performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasSetTextAction() and hasText(PAIR_CODE_FIELD)).fetchSemanticsNodes().isNotEmpty()
+            }
         }
-        composeTestRule.onNode(hasSetTextAction() and hasText(HOST_NAME_FIELD)).performTextInput(hostName)
-        composeTestRule.onNode(hasSetTextAction() and hasText(PAIR_CODE_FIELD)).performTextInput(pairCode)
-        composeTestRule.onNode(hasText(PAIR_BUTTON) and hasClickAction()).performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(CONFIRM_PAIRING).fetchSemanticsNodes().isNotEmpty()
+        step(AnswerHostPairingStage.Enter) {
+            composeTestRule.onNode(hasSetTextAction() and hasText(HOST_NAME_FIELD)).performTextInput(hostName)
+            composeTestRule.onNode(hasSetTextAction() and hasText(PAIR_CODE_FIELD)).performTextInput(pairCode)
+            composeTestRule.onNode(hasText(PAIR_BUTTON) and hasClickAction()).performClick()
         }
-        composeTestRule.onNodeWithText(CONFIRM_PAIRING).performClick()
-        // Save, then up to the view model's 30 s connection wait, then the pop back to the list.
-        composeTestRule.waitUntil(PAIR_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
+        step(AnswerHostPairingStage.Fingerprint) {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(CONFIRM_PAIRING).fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        step(AnswerHostPairingStage.Confirm) { composeTestRule.onNodeWithText(CONFIRM_PAIRING).performClick() }
+        step(AnswerHostPairingStage.ReturnList) {
+            // Save, then up to the view model's 30 s connection wait, then the pop back to the list.
+            composeTestRule.waitUntil(PAIR_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
+            }
         }
     }
 

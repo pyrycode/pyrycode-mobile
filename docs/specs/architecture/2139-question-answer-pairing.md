@@ -81,3 +81,7 @@ One deliverable, four acceptance criteria, approximately 650 written lines, at m
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-13
+
+## Revisions
+
+- 2026-10-13: the unchanged focused baseline passed 1/1. The immediate historical predecessor plus the named method passed 2/2, and prior answer-host pairing/removal plus Direct Share plus the named method passed 3/3. All had zero failures/errors/skips, daemon `eb3c757cac48a65f536bdc0dfdc92f0adbd82c3f`. Diagnostic contract control executed 3 tests with 2 failures, then the diagnostic and existing pairing classes passed 20/20. These checks establish diagnostic coverage and retained answer proof, not a source-defect repair. Preserve this distinction while checking the historical predecessor prefix.
