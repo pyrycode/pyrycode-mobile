@@ -3,6 +3,9 @@ package de.pyryco.mobile.ui.conversations.thread
 import android.os.Debug
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
@@ -40,19 +43,22 @@ import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSnapshotSource
 import de.pyryco.mobile.e2e.awaitEmulatorCpuIdle
-import de.pyryco.mobile.e2e.parseEmulatorCpuTicks
+import de.pyryco.mobile.e2e.readEmulatorCpuTicks
+import de.pyryco.mobile.e2e.withEmulatorCpuSample
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -76,23 +82,107 @@ class SavedThreadFirstDrawDeviceTest {
         val online: Boolean,
     )
 
-    private fun awaitDeviceReadiness() {
-        runBlocking {
-            awaitEmulatorCpuIdle(
-                sample = {
-                    ParcelFileDescriptor
-                        .AutoCloseInputStream(
-                            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("cat /proc/stat"),
-                        ).use { parseEmulatorCpuTicks(it.bufferedReader().readLine()) }
-                },
-                onWindow = { Log.i("SavedThreadEnvironment", "event=cpu_window idle_pct=$it") },
+    private fun awaitDeviceReadiness(case: String) {
+        val windows = ArrayDeque<Long>()
+        val samples = ArrayDeque<String>()
+        var stage = "acquire"
+        var started = SystemClock.elapsedRealtime()
+        try {
+            runBlocking {
+                awaitEmulatorCpuIdle(
+                    sample = {
+                        stage = "acquire"
+                        started = SystemClock.elapsedRealtime()
+                        withEmulatorCpuSample(
+                            acquire = {
+                                val shellStarted = SystemClock.elapsedRealtime()
+                                try {
+                                    InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("cat /proc/stat")
+                                } finally {
+                                    Log.i(
+                                        "SavedThreadEnvironment",
+                                        "event=cpu_acquire case=$case shell_ms=${SystemClock.elapsedRealtime() - shellStarted}",
+                                    )
+                                }
+                            },
+                            read = { source ->
+                                val acquiredMs = SystemClock.elapsedRealtime() - started
+                                stage = "read"
+                                started = SystemClock.elapsedRealtime()
+                                try {
+                                    readCpuCounters(source)
+                                } finally {
+                                    val readingMs = SystemClock.elapsedRealtime() - started
+                                    val durations = "acquire_ms=$acquiredMs read_ms=$readingMs"
+                                    if (samples.size == 12) samples.removeFirst()
+                                    samples.addLast(durations)
+                                    Log.i("SavedThreadEnvironment", "event=cpu_sample case=$case $durations")
+                                }
+                            },
+                        )
+                    },
+                    onWindow = {
+                        if (windows.size == 12) windows.removeFirst()
+                        windows.addLast(it)
+                        stage = "window"
+                        Log.i("SavedThreadEnvironment", "event=cpu_window case=$case idle_pct=$it")
+                    },
+                )
+            }
+        } catch (error: Exception) {
+            val kind = if (error is TimeoutCancellationException) "deadline" else "sample_failure"
+            Log.i(
+                "SavedThreadEnvironment",
+                "event=cpu_readiness_failed case=$case kind=$kind stage=$stage stage_ms=${SystemClock.elapsedRealtime() - started} windows=$windows samples=$samples",
             )
+            throw error
         }
-        Log.i("SavedThreadEnvironment", "event=cpu_idle")
+        Log.i("SavedThreadEnvironment", "event=cpu_idle case=$case")
     }
 
     private val selected = mutableStateOf<Opening?>(null)
     private var activeProbe: Probe? = null
+
+    private suspend fun readCpuCounters(source: ParcelFileDescriptor): Pair<Long, Long> {
+        val fd = source.fileDescriptor
+        val flags = Os.fcntlInt(fd, OsConstants.F_GETFL, 0)
+        Os.fcntlInt(fd, OsConstants.F_SETFL, flags or OsConstants.O_NONBLOCK)
+        return readEmulatorCpuTicks { bytes, offset, length ->
+            try {
+                Os.read(fd, bytes, offset, length).let { if (it == 0) -1 else it }
+            } catch (error: ErrnoException) {
+                if (error.errno != OsConstants.EAGAIN) throw error
+                0
+            }
+        }
+    }
+
+    @Test fun heldCpuPipeCancelsAndClosesItsDescriptor() {
+        val pipe = ParcelFileDescriptor.createPipe()
+        val worker = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        // The original blocking reader needs a bounded release to let a red run finish.
+        worker.launch {
+            delay(1500)
+            ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use {
+                it.write("cpu 1 2 3 4 5 6 7 8\n".encodeToByteArray())
+            }
+        }
+        try {
+            val result =
+                runBlocking {
+                    runCatching {
+                        withEmulatorCpuSample(acquire = { pipe[0] }, read = {
+                            withTimeout(100) { readCpuCounters(it) }
+                        })
+                    }
+                }
+            assertTrue("held CPU pipe must cancel before its writer releases", result.exceptionOrNull() is TimeoutCancellationException)
+            assertFalse(pipe[0].fileDescriptor.valid())
+        } finally {
+            worker.cancel()
+            pipe.forEach { it.close() }
+        }
+    }
 
     private class Probe(
         val name: String,
@@ -145,7 +235,7 @@ class SavedThreadFirstDrawDeviceTest {
                         val delegate = HeldNewest()
                         var repo: CachingConversationRepository? = null
                         repeat(2) { opening ->
-                            awaitDeviceReadiness()
+                            awaitDeviceReadiness("$name online=$online opening=$opening projection_hold_ms=$projectionDelayMs")
                             val probe =
                                 Probe("$name online=$online opening=$opening", (rows.last() as ThreadItem.MessageItem).message.content)
                             activeProbe = probe
@@ -168,7 +258,7 @@ class SavedThreadFirstDrawDeviceTest {
         val rows = listOf(ThreadItem.MessageItem(Message("slow", "s", Role.User, "Slow saved row.", Instant.fromEpochSeconds(1), false)))
         withFixture("slow", rows, null) { root ->
             val delegate = HeldNewest()
-            awaitDeviceReadiness()
+            awaitDeviceReadiness("negative-control")
             val probe = Probe("negative-control", (rows.last() as ThreadItem.MessageItem).message.content)
             activeProbe = probe
             openAndMeasure(repository(root, delegate, 3000), delegate, false, probe, rows, null)

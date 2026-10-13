@@ -1,0 +1,26 @@
+{
+  "revision": "d338bf705bc76e41c20cf24d1d3b0d1fb79864dd",
+  "uncommitted_diff_sha256": "16b54604ce6cc4b6e2881292994ee998104d0009b39f75fc0a7c4705c25a3311",
+  "command": "./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e -Pandroid.testInstrumentationRunnerArguments.disableAnimations=true --console=plain",
+  "exit_code": 0,
+  "raw_evidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2143/class-green",
+  "counts": {
+    "recorded": 4,
+    "executed": 4,
+    "passed": 4,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "methods": {
+    "slowRestore_negativeControlRejectsTheSameFirstDrawBound": "passed",
+    "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen": "passed",
+    "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen": "passed",
+    "heldCpuPipeCancelsAndClosesItsDescriptor": "passed"
+  },
+  "sources": {
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b76344d827dd69b4356d27e1620e21c120668af0cc8fa8d36e05a5c1c2a9b33b",
+    "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "df15f0d6c7f3114adab4e239a8a94c952c7c1d226333d01c24d06db7079d303f",
+    "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "07b697f780bf83202a39e31b5730f4429d86c64764012575738bde2629a36295"
+  }
+}
