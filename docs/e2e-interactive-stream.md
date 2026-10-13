@@ -2358,6 +2358,29 @@ scenarios exercise the existing lifecycle-checked exact-host action with a real
 failure, without injected UI connection state. Only the harness-owned daemon is
 stopped; pairing material remains in its private host storage.
 
+Registration readiness is generation-scoped (#2137). With a token configured,
+every start verifies that the current living owned child has emitted it since
+that generation's log byte boundary, including the initially spawned child and a
+child retained after a registration timeout. A repeated start cannot spawn a
+second living child or convert timeout into success without registration. Stop
+and observed exit invalidate readiness; stale tokens cannot qualify a successor.
+Ready-child starts remain idempotent; no-token mode checks owned-process liveness.
+The final response and transition record share one refreshed snapshot, so an exit
+observed after registration returns HTTP 503 rather than false success.
+
+The controller retains its 15-second registration wait. Only the client's start
+response read gets 17 seconds for bounded dispatch and delivery; neither wait
+renews the producer-anchored 20-second recovery deadline. Equal 15-second waits
+previously hid HTTP registration-timeout evidence behind a socket timeout.
+`DaemonFaultEvidenceTest.defaultRegistrationTimeoutReachesTheClientOverTheRealSocket`
+exercises the shared real exchange against an owned unready child at the default
+controller timeout with 250-ms dispatch lag; canned parser responses cannot catch
+that boundary. Static action, HTTP status, generation, phase and elapsed timing
+distinguish spawn failure, registration timeout, exit and client transport failure.
+Transport failures rethrow the original throwable; arbitrary response/daemon/error
+text stays out of published diagnostics. See [retention](knowledge/features/development-verification-emulator-evidence.md#device-gate-artifact-retention)
+and [counted evidence and historical limits](#offline-retry-registration-evidence-2137).
+
 ### Phone read-mark proof (#1912)
 
 `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` keeps its
@@ -3641,6 +3664,93 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+### Offline Retry registration evidence (#2137)
+
+The established controller defect is independent of historical live causation:
+on base Mobile `427640d577b3aec8a15bd5f44ae22c881f194da2`, an owned child that
+stays alive without the readiness token yields stop **200**, first start **503**,
+then an incorrect second-start **200**. Registration was checked only on spawn.
+Generation-scoped checks now cover initial unready children, repeated timeout,
+late same-generation readiness, stopped/exited stale tokens, early exit, spawn
+failure, chunk boundaries, ready-child idempotence and unrelated-process ownership.
+The separate response-timeout defect reproduced as **1 executed/failed, 0 skipped**
+with `SocketTimeoutException`; the repaired real exchange returns **503**,
+generation **2**, `registration_timeout`, and matching living/unready transition
+evidence. These causes explain the controlled defects, not the original live red.
+
+Recovered original #1977 reports show **65 executed / 61 passed / 4 failed**,
+rerun **4 / 3 / 1**, and base **1 / 0 / 1**, all **0 skipped**. Branch/rerun
+exhausted repository-recovery windows of **11867/13430 ms**; base failed at start.
+Original controller/daemon captures are gone, leaving these distinct phases
+unattributed. The original full report names daemon `126d7ca662a38fdd399cacd2ea09bcb12304c892`;
+rerun/base name `e810c8a85064d2cd290285095fc16cd8941f3236`.
+Fresh focused historical comparisons of that base and branch
+`d4015481c26ff8ea9b3613aba927facd5033186c` each passed **1 executed, 0 failed/skipped**
+with daemon source `e810c8a85064d2cd290285095fc16cd8941f3236` and identical binary
+SHA-256 `4f2a987f312fa7379ee1ca9d4f1dc774f60341d68ac4eb7b98092d506c9de1f3`.
+Neither new passes nor daemon-version differences establish a historical cause;
+no additional causal native blocker was established. PR #2107's exact-host setup,
+phase diagnostics and restoration helper remained open and absent from this
+integration; preserve them when they land.
+
+The [builder record](https://github.com/pyrycode/pyrycode-mobile/pull/2147) and
+[final verifier](https://github.com/pyrycode/pyrycode-mobile/pull/2147#issuecomment-6147293516)
+record repair Mobile `9c89eccfd99faf7d492c3ddc16b1f73a0325bcf5`, with main
+`dc3ac93ab2f42dce9056b328ce05e39b935b6202` merged: **19 controller tests** and
+**47 focused JVM tests** (7 evidence, 3 deadline, 37 supervisor), all executed/passed,
+**0 failed/errors/skipped**. Passive-recovery negative coverage passed. Fresh
+scripted `offline-retry` and the named focused live method each passed
+**1 executed, 0 failed/errors/skipped**. Scripted/live respectively observed capped
+attempt **6**, lag **0/1 ms**, **19444/19413 ms** of the original budget remaining,
+generation-2 registration **50/101 ms**, and one Retry dispatch each. Both retain
+the real outage, visible Offline pill/null repository before tapping, same-host
+bundle/conversation recovery before the original deadline, pill clearing and a
+new rendered reply.
+
+Final dispatcher acceptance tested Mobile
+`dfdb0ab6136467237060b2e541b8acff11e717bd` with main
+`dc3ac93ab2f42dce9056b328ce05e39b935b6202` merged:
+
+| Gate (2026-10-13) | Executed | Passed | Failed | Skipped | Named Offline Retry result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Configured `scripted-all`, verifier gate 8 | 22 | 22 | 0 | 0 | `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply` passed |
+| Full dispatcher `live`, output 18:50:02.228Z | 65 | 65 | 0 | 0 | `InteractiveStreamE2ETest.interactiveTurn_offlineRetry_reconnectsSameHostAndReplies` passed |
+
+Both fresh aggregate XML reports explicitly contain the named method without
+failure or skip. The [live gate comment](https://github.com/pyrycode/pyrycode-mobile/issues/2137#issuecomment-6153134593)
+records exit 0 in 1144.7 seconds. Its XML has no daemon-revision annotation;
+companion stderr records daemon `eb3c757cac48a65f536bdc0dfdc92f0adbd82c3f`.
+Final scripted harness `inputs.json` records that same source/reported revision
+and binary SHA-256 `8e94ff43007ee7637ba04730f350bf9ec014b0525605fc800cbe1f21be1542e0`;
+this digest is also the builder's focused-run input. No final full-live binary
+hash is inferred from that agreement.
+
+Retained evidence on the persistent agents volume:
+
+- Reviewed builder XML/static summaries: [`offline-retry-2137/`](../app/src/test/resources/e2e/offline-retry-2137/).
+- Private historical XML/logcat and correlated controller/daemon captures:
+  `$AGENTS_REPO_PATH/logs/evidence/2137/recovered-mac-20261013/`;
+  recovered original dispatcher reports and resumed native evidence:
+  `resumed-hp-20261013/`; intermediate repair evidence: `rework-1b353f-hp-20261013/`.
+- Final focused repair XML/logcat, boundary logs, inputs and red/green exchange XML:
+  `$AGENTS_REPO_PATH/logs/evidence/2137/rework-timeout-hp-20261013/`.
+  The verifier verified **37 manifest entries / 21 unique raw/input files**, zero
+  mismatches. This is focused evidence, not the final full suites.
+- Final scripted boundary captures and manifests:
+  `$AGENTS_REPO_PATH/logs/evidence/2137/harness/fault-*/`; `inputs.json` distinguishes
+  final `dfdb0ab6136467237060b2e541b8acff11e717bd` captures from earlier candidates.
+- Final counted XML survives in `$AGENTS_REPO_PATH/logs/verifier-gate_#2137_8.log`
+  and `2026-10-13T18-50-02-228Z_real-claude-gate_#2137.log`; live diagnostics survive
+  in the matching `.stderr.log`.
+
+The final worktree directories `build/dispatcher-tests/scripted-all-nurawsly/`
+and `build/dispatcher-tests/live-cwjrhlga/` are gone. No persistent final full-live
+phone logcat, controller/daemon boundary capture, binary-hash input or verified
+raw manifest was found. Stderr's worktree-local session-error evidence path is
+also gone. Counted acceptance passed, but required final artifact retention is
+unfinished and routed back to verification; builder captures do not substitute
+for the full-gate boundary evidence. Historical uncertainty remains explicit.
 
 ### Permission-isolation diagnostics (#1896)
 
@@ -7076,6 +7186,10 @@ The remaining checks here are specific to a real relay or real Claude execution:
   `python3 scripts/android-test-gate.py scripted offline-retry`; it proves the real
   outage and Retry path with `ping.jsonl`, using zero real-Claude turns. See
   [Offline Retry proof](#offline-retry-proof) for the boundary that excludes passive recovery.
+  \#2137 keeps both scenarios and their original deadline, adds generation-scoped
+  restart registration, and records final **22/22 scripted** and **65/65 live**
+  acceptance in [registration evidence](#offline-retry-registration-evidence-2137).
+  Required final raw full-live retention remains a verification handoff.
 
 - **Coverage — hardened:** [#1785](https://github.com/pyrycode/pyrycode-mobile/issues/1785)
   repairs the shared observer for

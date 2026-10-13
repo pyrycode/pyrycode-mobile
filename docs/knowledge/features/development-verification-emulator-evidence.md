@@ -448,6 +448,19 @@ tokens, pairing codes, credential homes and raw prompt/frame/clipboard content.
 Preserving an original exception as cause does not make its nested message safe
 to publish unreviewed.
 
+The daemon fault harness (#2137) retains a narrow daemon/controller/relay log
+allowlist and static input hashes before successful cleanup as well as failure
+cleanup. Managed feature runs default to private per-ticket retention under
+`$AGENTS_REPO_PATH/logs/evidence/<ticket>/harness/`; detached comparisons need an
+explicit `E2E_FAULT_EVIDENCE_DIR`. Freeze the launch executable resolved through
+PATH and hash that selection, recording configured source revision separately
+when the binary omits VCS metadata. New evidence ancestors must be owner-only;
+retention must preserve the original cleanup exit status and owned-process disposal
+under nounset. Pairing files, credential homes and transcripts are excluded.
+This harness capture does not retain gate XML or phone logcat automatically, and
+its existence on a builder run does not prove survival on the final dispatcher
+run. See [Offline Retry artifact availability](../../e2e-interactive-stream.md#offline-retry-registration-evidence-2137).
+
 For [permission isolation](permission-modal-overlay-testing.md#held-per-conversation-diagnostics-1896),
 the committed
 [`permission-isolation-1896/`](../../../app/src/test/resources/e2e/permission-isolation-1896/)
