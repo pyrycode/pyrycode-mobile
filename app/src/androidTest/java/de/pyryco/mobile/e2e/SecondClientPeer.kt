@@ -22,6 +22,7 @@ import de.pyryco.mobile.data.network.QuestionAnswerPayloadDto
 import de.pyryco.mobile.data.network.QuestionShownPayloadDto
 import de.pyryco.mobile.data.network.QueueStatePayloadDto
 import de.pyryco.mobile.data.network.QueuedMessageDto
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RenameWorkspacePayloadDto
 import de.pyryco.mobile.data.network.RequestAttachmentPayloadDto
 import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
@@ -557,12 +558,16 @@ class SecondClientPeer(
                 withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
                     // The events channel buffers, so Up is waiting here even if it fired before this read; the
                     // attempt is its only reader. The pump expects a transport that is already up.
+                    RelayLog.i { "event=peer_open stage=relay" }
                     transport.connect()
                     if (transport.events.first() !is TransportEvent.Up) return@withTimeoutOrNull null
+                    RelayLog.i { "event=peer_open stage=handshake" }
                     pump.start()
                     if (pump.state.first { it !is PumpState.Handshaking } !is PumpState.Open) return@withTimeoutOrNull null
                     val dialed = Link(pump, scope.launch { pump.inbound.collect(::record) })
+                    RelayLog.i { "event=peer_open stage=settlement" }
                     val probe = attempt(dialed, "list_conversations", JsonObject(emptyMap())) { id -> inReplyTo == id }
+                    RelayLog.i { "event=peer_open stage=settlement answered=${probe is RedialingLink.Attempt.Answered}" }
                     dialed.takeIf { probe is RedialingLink.Attempt.Answered }
                 }
             return settled
