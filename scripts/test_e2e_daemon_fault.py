@@ -152,16 +152,45 @@ class DaemonFaultTest(unittest.TestCase):
 
 class GenerationReadinessTest(unittest.TestCase):
     @contextmanager
-    def controller(self, script, token="relay: conn established"):
+    def controller(self, script, token="relay: conn established", executable=False, exit_after_registration=False):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary)
+            launch = [sys.executable, str(ROOT / "e2e-daemon-fault.py")]
+            if exit_after_registration:
+                # Trace the response snapshot after registration, then join the owned child before refresh.
+                # This forces the boundary without relying on a short process lifetime or poll count.
+                launch = [sys.executable, "-c", """import importlib.util, json, os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv.pop(1))
+spec = importlib.util.spec_from_file_location('fault', Path(sys.path[0]) / 'e2e-daemon-fault.py')
+fault = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fault)
+def boundary(frame, event, arg):
+    if (frame.f_code.co_name == 'evidence' and event == 'call'
+            and frame.f_locals['action'] == 'start' and frame.f_locals['ready']):
+        child = frame.f_locals['child']
+        Path(os.environ['GENERATION_FIXTURE'], 'observed-ready.json').write_text(json.dumps({
+            'ready': frame.f_locals['ready'], 'phase': frame.f_locals['phase'],
+            'generation': frame.f_locals['generation'], 'running': child.poll() is None}))
+        child.terminate()
+        child.wait(timeout=5)
+    return boundary
+sys.settrace(boundary)
+fault.main()
+""", str(ROOT)]
+            command = [sys.executable, "-c", script]
+            if executable:
+                child_script = path / "child"
+                child_script.write_text(f"#!{sys.executable}\n" + script + "\n")
+                child_script.chmod(0o700)
+                command = [str(child_script)]
             with (path / "controller.log").open("wb") as output:
                 process = subprocess.Popen([
-                    sys.executable, str(ROOT / "e2e-daemon-fault.py"),
+                    *launch,
                     "--port-file", str(path / "port"), "--log", str(path / "child.log"),
                     "--control-socket", str(path / "control.sock"), "--ready-token", token,
                     "--ready-timeout", "0.25",
-                    "--", sys.executable, "-c", script,
+                    "--", *command,
                 ], env={**os.environ, "GENERATION_FIXTURE": str(path)}, stdout=output, stderr=output)
                 try:
                     deadline = time.monotonic() + 5
@@ -281,18 +310,44 @@ else: time.sleep(120)
             self.assertFalse(payload["running"])
             self.assertFalse(payload["ready"])
 
+    def test_spawn_failure_is_not_an_exit_of_the_new_generation(self):
+        script = "import time; print('relay: conn established', flush=True); time.sleep(120)"
+        with self.controller(script, executable=True) as (request, path):
+            status, first = request("start")
+            self.assertEqual(200, status)
+            self.assertTrue(first["ready"])
+            self.assertEqual(200, request("stop")[0])
+            (path / "child").unlink()
+            status, failed = request("start")
+            self.assertEqual(503, status)
+            self.assertEqual(first["generation"] + 1, failed["generation"])
+            self.assertEqual("spawn_failed", failed["phase"])
+            self.assertFalse(failed["running"])
+            self.assertFalse(failed["ready"])
+            self.assertIsNone(failed["pid"])
+            self.assertEqual("spawn_failed", request("status")[1]["phase"])
+            records = [json.loads(line) for line in (path / "controller.log").read_text().splitlines()]
+            transition = next(row for row in records if row["action"] == "start" and row["generation"] == failed["generation"])
+            self.assertEqual(failed, {key: transition[key] for key in failed})
+            spawn = next(row for row in records if row["action"] == "spawn" and row["generation"] == failed["generation"])
+            self.assertEqual((503, "spawn_failed", False, False),
+                             (spawn["http_status"], spawn["phase"], spawn["running"], spawn["ready"]))
+
     def test_success_snapshot_cannot_report_an_exited_or_unready_child(self):
-        script = "import time; print('relay: conn established', flush=True); time.sleep(0.03)"
-        with self.controller(script) as (request, _):
-            for _ in range(5):
-                status, payload = request("start")
-                if status == 200:
-                    self.assertTrue(payload["running"])
-                    self.assertTrue(payload["ready"])
-                    self.assertEqual("ready", payload["phase"])
-                else:
-                    self.assertEqual(503, status)
-                time.sleep(0.04)
+        script = "import time; print('relay: conn established', flush=True); time.sleep(120)"
+        with self.controller(script, exit_after_registration=True) as (request, path):
+            status, payload = request("start")
+            observed = json.loads((path / "observed-ready.json").read_text())
+            self.assertEqual({"ready": True, "phase": "ready", "running": True,
+                              "generation": payload["generation"]}, observed)
+            self.assertEqual(503, status)
+            self.assertEqual("exited", payload["phase"])
+            self.assertFalse(payload["running"])
+            self.assertFalse(payload["ready"])
+            records = [json.loads(line) for line in (path / "controller.log").read_text().splitlines()]
+            transition = records[-1]
+            self.assertEqual("daemon_fault_transition", transition["event"])
+            self.assertEqual(payload, {key: transition[key] for key in payload})
 
     def test_no_token_mode_preserves_owned_process_only(self):
         unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])

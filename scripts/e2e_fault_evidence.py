@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -37,8 +38,10 @@ def retain(source, destination, mobile_revision, daemon_revision, binary, daemon
         if digest(path) != digest(saved / name):
             raise RuntimeError("fault evidence verification failed")
     revision = lambda value: value if re.fullmatch(r"[0-9a-f]{40,64}", value) else "unavailable"
+    binary = str(binary)
+    resolved_binary = binary if "/" in binary else shutil.which(binary)
     metadata = {"mobile_revision": revision(mobile_revision), "daemon_revision": revision(daemon_revision),
-                "daemon_sha256": digest(binary) if Path(binary).is_file() else "unavailable"}
+                "daemon_sha256": digest(resolved_binary) if resolved_binary and Path(resolved_binary).is_file() else "unavailable"}
     if daemon_source:
         result = subprocess.run(["git", "-C", daemon_source, "rev-parse", "HEAD"], capture_output=True, text=True)
         metadata["daemon_source_revision"] = revision(result.stdout.strip())

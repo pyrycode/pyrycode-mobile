@@ -42,6 +42,7 @@ An opt-in private evidence destination in the existing emulator harness retains 
 | Registered generation stops and successor has no token | `test_stopped_generation_token_cannot_qualify_successor` |
 | Registered generation exits and is replaced | `test_exited_generation_token_cannot_qualify_successor` |
 | Child exits before readiness | `test_early_exit_reports_exit` |
+| New generation cannot spawn after its predecessor stops | `test_spawn_failure_is_not_an_exit_of_the_new_generation`, `DaemonFaultEvidenceTest.spawnFailureKeepsItsDistinctPhaseWithoutPublishingErrorText` |
 | Child exits between registration observation and response | `test_success_snapshot_cannot_report_an_exited_or_unready_child` |
 | No-token mode and unrelated living process | `test_no_token_mode_preserves_owned_process_only` |
 | Registration token spans a scan boundary | `test_registration_token_across_chunks` |
@@ -51,7 +52,7 @@ An opt-in private evidence destination in the existing emulator harness retains 
 
 ## Error handling
 
-Use fixed registration-timeout, child-exited, stop-timeout and control-failure codes. Failed transitions return HTTP 503 with safe generation/phase evidence. Unknown controls stay 404. Arbitrary request paths, exception messages and daemon log bytes never enter diagnostics. Original client exceptions remain the same throwable, so #2107's restoration helper can retain its primary and suppressed failure evidence.
+Use fixed spawn-failed, registration-timeout, child-exited, stop-timeout and control-failure codes. A generation whose spawn fails has no child; refresh cannot attribute its predecessor's exit to it. Failed transitions return HTTP 503 with safe generation/phase evidence. Unknown controls stay 404. Arbitrary request paths, exception messages and daemon log bytes never enter diagnostics. Original client exceptions remain the same throwable, so #2107's restoration helper can retain its primary and suppressed failure evidence.
 
 ## Testing strategy
 
@@ -96,3 +97,5 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md`, “Offline
 - 2026-10-13: Resume the interrupted worker from the verified operator handoff archive at commit `72311218f35c62db6037a7539d61db431cd89049`, preserving its unfinished patch and reviewed summaries. Restore all 56 raw evidence files privately with a new verified manifest; portable controller/retention probes and focused JVM coverage pass on HP. The recovered retention change makes every newly created evidence ancestor owner-only. Main remains `b107f97a7`; additional harness overlaps #1766, #2088, #2090, #2097, #2104, #2114 and #2121 leave this local cleanup addition independent.
 
 - 2026-10-13: Fresh HP scripted and focused live checks on `97e51941c44af3a2d364075d0bbca853fc94ae5a`, with main `b107f97a7` merged, each execute/pass 1 test with zero failures/errors/skips and successful cleanup. Daemon source/reported revision `eb3c757cac48a65f536bdc0dfdc92f0adbd82c3f`, binary SHA-256 `8e94ff43007ee7637ba04730f350bf9ec014b0525605fc800cbe1f21be1542e0`. Resumed private captures and verified manifests are under `$AGENTS_REPO_PATH/logs/evidence/2137/resumed-hp-20261013/`. Original HP reports are recovered and confirm the previously reported counts/phases; all their temporary capture paths are gone. The original full gate reports daemon `126d7ca662a38fdd399cacd2ea09bcb12304c892`, while its rerun/base report `e810c8a85064d2cd290285095fc16cd8941f3236`; these version differences and new passes establish no historical cause. PR #2107 remains open. Dispatcher owns final configured scripted-all/full-live acceptance; documentation remains pending.
+
+- 2026-10-13: Rework findings 1–4 require managed default retention only after `REPO_ROOT` exists, with extracted cleanup preserving exit status and owned-process disposal under nounset. Exercise both real retention modes under nounset with managed environment enabled. Detach the predecessor before spawn and retain `spawn_failed` in controller/client evidence. Freeze the launch executable resolved through PATH and hash that selection. Replace the short-lived exit probe with a trace at the registered response snapshot, joining the owned child before refresh; require readiness observation, HTTP 503 and identical transition evidence, including a negative control with the final-snapshot guard removed. These local changes remain compatible with #2052 ownership changes and #2107 scenario diagnostics; no Retry deadline or assertion changes.

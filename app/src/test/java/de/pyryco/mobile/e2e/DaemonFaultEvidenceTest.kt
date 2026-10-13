@@ -47,6 +47,17 @@ class DaemonFaultEvidenceTest {
     }
 
     @Test
+    fun spawnFailureKeepsItsDistinctPhaseWithoutPublishingErrorText() {
+        val response =
+            "HTTP/1.0 503 Service Unavailable\r\n\r\n" +
+                """{"generation":2,"phase":"spawn_failed","error":"private-path"}"""
+        assertEquals(
+            "action=start http_status=503 generation=2 phase=spawn_failed elapsed_ms=1",
+            daemonFaultEvidence("start", response, 1),
+        )
+    }
+
+    @Test
     fun malformedAndUntrustedEvidenceCannotPublishResponseText() {
         for (body in listOf("private-error", """{"generation":{},"phase":"private-error"}""", """{"generation":-1,"phase":{}}""")) {
             val evidence = daemonFaultEvidence("private-action", "HTTP/1.0 503 private-status\r\n\r\n$body", 0)

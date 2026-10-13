@@ -88,13 +88,20 @@ def main():
     def start():
         nonlocal child, generation, log_offset, ready, phase
         if not refresh():
+            started = time.monotonic()
             log_offset = log.seek(0, 2)
             generation += 1
             ready = False
             phase = "spawning"
-            child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+            child = None  # The exited predecessor does not belong to the new generation.
+            try:
+                child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+            except OSError:
+                phase = "spawn_failed"
+                record("spawn", 503, started)
+                raise
             phase = "spawned"
-            record("spawn", 0, time.monotonic())
+            record("spawn", 0, started)
 
     def await_relay_ready():
         nonlocal ready, phase

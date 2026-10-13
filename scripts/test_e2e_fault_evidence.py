@@ -7,9 +7,24 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 class FaultEvidenceTest(unittest.TestCase):
+    def test_path_binary_retains_the_launched_executable_digest(self):
+        spec = importlib.util.spec_from_file_location("evidence", Path(__file__).with_name("e2e_fault_evidence.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "pyry"
+            binary.write_text("#!/bin/sh\nexit 0\n")
+            binary.chmod(0o700)
+            with patch.dict(os.environ, {"PATH": str(root) + os.pathsep + os.environ["PATH"]}):
+                saved = module.retain(root, root / "private", "a" * 40, "b" * 40, "pyry")
+            metadata = json.loads((saved / "inputs.json").read_text())
+            self.assertEqual(module.digest(binary), metadata["daemon_sha256"])
+
     def test_retention_is_allowlisted_private_and_hash_verified(self):
         spec = importlib.util.spec_from_file_location("evidence", Path(__file__).with_name("e2e_fault_evidence.py"))
         module = importlib.util.module_from_spec(spec)
@@ -48,9 +63,11 @@ class FaultEvidenceTest(unittest.TestCase):
             source = root / "work"
             source.mkdir()
             (source / "daemon.log").write_text("synthetic-boundary")
-            result = subprocess.run(["/bin/bash", "-c", 'log() { :; }\n' + cleanup + '\ncleanup'],
+            result = subprocess.run(["/bin/bash", "-c", 'set -euo pipefail\nlog() { :; }\n' + cleanup + '\ncleanup'],
                 env={**os.environ, "WORK_DIR": str(source), "REPO_ROOT": str(Path(__file__).resolve().parents[1]),
-                     "E2E_FAULT_EVIDENCE_DIR": str(root / "private")}, capture_output=True, text=True, timeout=10)
+                     "E2E_FAULT_EVIDENCE_DIR": str(root / "private"), "AGENTS_REPO_PATH": str(root / "agents"),
+                     "WATCHER_PID": "", "DAEMON_PID": "", "RELAY_PID": "", "ISO_HOME": ""},
+                capture_output=True, text=True, timeout=10)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertFalse(source.exists())
             saved = list((root / "private").glob("fault-*/daemon.log"))
@@ -60,20 +77,38 @@ class FaultEvidenceTest(unittest.TestCase):
     def test_managed_feature_cleanup_defaults_to_private_ticket_evidence(self):
         harness = Path(__file__).with_name("e2e-emulator.sh").read_text()
         cleanup = harness[harness.index("cleanup() {"):harness.index("trap cleanup EXIT")]
+        selection = harness[harness.index('command -v "${PYRY_BIN}"'):
+                            harness.index('\ncommand -v python3', harness.index('command -v "${PYRY_BIN}"'))]
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "work"
             source.mkdir()
             (source / "daemon.log").write_text("managed-boundary")
-            result = subprocess.run(["/bin/bash", "-c", 'log() { :; }\ngit() { printf "feature/2137\\n"; }\n' + cleanup + '\ncleanup'],
+            binary = root / "pyry"
+            binary.write_text("#!/bin/sh\nprintf 'selected\\n'\n")
+            binary.chmod(0o700)
+            decoy = root / "decoy"
+            decoy.mkdir()
+            (decoy / "pyry").write_text("#!/bin/sh\nprintf 'wrong\\n'\n")
+            (decoy / "pyry").chmod(0o700)
+            body = 'set -euo pipefail\nlog() { :; }\ndie() { exit 9; }\ngit() { printf "feature/2137\\n"; }\n'
+            body += selection + '\nPATH="$DECOY_PATH:$PATH"\n"$PYRY_BIN" > "$BINARY_CAPTURE"\n' + cleanup + '\ncleanup'
+            result = subprocess.run(["/bin/bash", "-c", body],
                 env={**os.environ, "WORK_DIR": str(source), "REPO_ROOT": str(Path(__file__).resolve().parents[1]),
-                     "E2E_FAULT_EVIDENCE_DIR": "", "AGENTS_REPO_PATH": str(root / "agents")},
+                     "E2E_FAULT_EVIDENCE_DIR": "", "AGENTS_REPO_PATH": str(root / "agents"),
+                     "WATCHER_PID": "", "DAEMON_PID": "", "RELAY_PID": "", "ISO_HOME": "",
+                     "PYRY_BIN": "pyry", "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                     "DECOY_PATH": str(decoy), "BINARY_CAPTURE": str(root / "launched")},
                 capture_output=True, text=True, timeout=10)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertFalse(source.exists())
             saved = list((root / "agents/logs/evidence/2137/harness").glob("fault-*/daemon.log"))
             self.assertEqual(1, len(saved))
             self.assertEqual("managed-boundary", saved[0].read_text())
+            self.assertEqual("selected\n", (root / "launched").read_text())
+            import hashlib
+            metadata = json.loads((saved[0].parent / "inputs.json").read_text())
+            self.assertEqual(hashlib.sha256(binary.read_bytes()).hexdigest(), metadata["daemon_sha256"])
 
 
 if __name__ == "__main__":

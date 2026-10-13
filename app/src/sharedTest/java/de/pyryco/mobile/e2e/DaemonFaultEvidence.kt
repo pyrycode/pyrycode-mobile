@@ -63,6 +63,7 @@ internal fun daemonFaultEvidence(
                         "stopped",
                         "spawning",
                         "spawned",
+                        "spawn_failed",
                         "waiting",
                         "ready",
                         "disabled",

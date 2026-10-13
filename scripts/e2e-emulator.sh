@@ -645,7 +645,8 @@ cleanup() {
   wait 2>/dev/null || true
   # Managed feature branches retain their fault boundary even after a passing full gate.
   # An explicit destination also supports detached historical comparisons.
-  if [ -z "${E2E_FAULT_EVIDENCE_DIR:-}" ] && [ -n "${AGENTS_REPO_PATH:-}" ]; then
+  # Extracted cleanup fixtures can inherit the agents path without full-harness setup.
+  if [ -z "${E2E_FAULT_EVIDENCE_DIR:-}" ] && [ -n "${AGENTS_REPO_PATH:-}" ] && [ -n "${REPO_ROOT:-}" ]; then
     local evidence_branch
     evidence_branch="$(git -C "${REPO_ROOT}" branch --show-current 2>/dev/null || true)"
     if [[ "${evidence_branch}" =~ ^feature/[0-9]+$ ]]; then
@@ -737,6 +738,7 @@ fi
 # LIVE spawns no local relay (it dials the production relay), so the relay binary is not required there.
 [ -n "${LIVE}" ] || command -v "${RELAY_BIN}" >/dev/null 2>&1 || die "relay binary '${RELAY_BIN}' not found (set RELAY_BIN)"
 command -v "${PYRY_BIN}"  >/dev/null 2>&1 || die "pyry binary '${PYRY_BIN}' not found (set PYRY_BIN)"
+PYRY_BIN="$(command -v "${PYRY_BIN}")" # Freeze the PATH selection used by launch and evidence retention.
 command -v python3        >/dev/null 2>&1 || die "python3 not found (needed to decode the pairing payload)"
 [ -x "${GRADLEW}" ] || die "gradlew not found/executable at ${GRADLEW}"
 

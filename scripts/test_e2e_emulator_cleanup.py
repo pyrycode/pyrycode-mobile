@@ -19,7 +19,9 @@ class EmulatorCleanupTest(unittest.TestCase):
                         home.mkdir()
                     env = dict(os.environ, WORK_DIR=str(work),
                                ISO_HOME=str(home) if isolated else "",
-                               WATCHER_PID="", DAEMON_PID="", RELAY_PID="")
+                               WATCHER_PID="", DAEMON_PID="", RELAY_PID="",
+                               AGENTS_REPO_PATH=str(Path(tmp) / "agents"), E2E_FAULT_EVIDENCE_DIR="")
+                    env.pop("REPO_ROOT", None)  # Extracted cleanup has no full-harness setup.
                     result = subprocess.run(
                         ["bash", "-c", "set -euo pipefail\nlog() { :; }\n" + cleanup
                          + "\ntrap cleanup EXIT\nexit " + str(code)],
