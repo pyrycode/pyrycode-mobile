@@ -51,6 +51,7 @@ import de.pyryco.mobile.data.network.toHistoryPage
 import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toSessionSettings
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -180,6 +181,11 @@ class RemoteConversationRepository internal constructor(
     private val authoritativeHostId: String = "",
     internal val authoritativeThreads: AuthoritativeThreadStore = AuthoritativeThreadStore(),
     private val authoritativeNowMillis: () -> Long = { System.nanoTime() / 1000000 },
+    /** A supplied non-managed pump provides its connection owner's retirement here. */
+    private val retireAuthoritativeConnection: () -> Unit = {
+        (pump as? ManagedSessionPump)?.close()
+        scope.cancel()
+    },
 ) : ConversationRepository,
     ThreadSnapshotSource {
     internal val authoritativeRoute: AuthoritativeThreadRoute =
@@ -291,6 +297,7 @@ class RemoteConversationRepository internal constructor(
             relayRequests::nextRequestId,
             pump::send,
             authoritativeNowMillis,
+            retireAuthoritativeConnection,
         )
 
     internal fun openAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.open(conversationId)

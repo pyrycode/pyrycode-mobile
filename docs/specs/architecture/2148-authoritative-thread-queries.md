@@ -63,6 +63,10 @@ Typed decoder outcomes and store outcomes stay internal. Additive command seams 
 
 Write failing repository probes first, then implement. Use channel-backed fake pumps, shared stores and `runTest` clocks. Probe all four invariants with duplicate/reordered batches, empty and one-row replies, boundary ties, out-of-range parents, interrupted delivery and retired work. Run the new query class, existing authoritative store/route tests, decoder tests and legacy repository tests, then lint, assembleDebug, Spotless and final pre-verify. No screen/device/live scenario is required for this additive data seam; #1988 owns activation and combined live proof.
 
+## Documentation handoff
+
+Pending for the documentation stage: update `docs/knowledge/features/remote-conversation-repository-reads-and-thread-store.md`, “Supplied route and connection ownership” and “Repair, checkpoints and reset generations”, with query command/observation seams, remote-slot draining and connection retirement, numeric coverage and checkpoint certification, parent extras and retry behavior. Document shared-store boundaries for #2149/#1986/#1988 and the generation-captured repair notification lessons; link the daemon protocol rather than duplicating it.
+
 ## Open Questions
 
 None. Empty initial epoch may receive a terminal reset; the coordinator follows with a zero-version window in the reported epoch. History numbers above the store's existing safe integer domain fail without certification.

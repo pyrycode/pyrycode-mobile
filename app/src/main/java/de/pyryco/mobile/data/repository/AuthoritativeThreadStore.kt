@@ -195,6 +195,12 @@ internal class AuthoritativeThreadStore {
                 }
             }
             is ThreadQueryReply.Coverage.Window -> {
+                if (certified.lowerOrder > 9007199254740991uL ||
+                    certified.upperOrder > 9007199254740991uL ||
+                    certified.continuation > 9007199254740991uL
+                ) {
+                    return requestRepair(host, conversation)
+                }
                 val range =
                     AuthoritativeThreadCoverage(certified.lowerOrder, certified.upperOrder, certified.continuation, certified.olderExists)
                 if (request is ThreadQueryRequest.Page) {

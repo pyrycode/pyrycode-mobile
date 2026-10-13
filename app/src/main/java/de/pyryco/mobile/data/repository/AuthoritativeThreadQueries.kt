@@ -10,6 +10,8 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.datetime.Clock
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
 
 /** One connection's unfinished query slot. Shared facts survive reconnect; pending work never does. */
@@ -21,6 +23,7 @@ internal class AuthoritativeThreadQueries(
     private val nextId: () -> Long,
     private val send: (Envelope) -> Boolean,
     private val nowMillis: () -> Long,
+    private val retireConnection: () -> Unit = {},
 ) {
     private data class Intent(
         val conversation: String,
@@ -31,11 +34,16 @@ internal class AuthoritativeThreadQueries(
         val decoder: ThreadQueryDecoder,
         val generation: Long,
         val started: Long,
-    )
+    ) {
+        var abandonedAt: Long? = null
+    }
 
     private val connection = UUID.randomUUID().toString()
     private val opened = mutableSetOf<String>()
     private val queued = ArrayDeque<Intent>()
+
+    // Keep correlation ownership for this connection; late errors must never enter legacy evidence.
+    private val ownedRequests = mutableSetOf<Long>()
     private var active: Active? = null
     private var closed = false
 
@@ -96,23 +104,27 @@ internal class AuthoritativeThreadQueries(
     @Synchronized
     fun accept(envelope: Envelope): Boolean {
         val held = active
-        if (held == null || envelope.inReplyTo != held.decoder.requestId) return envelope.type in setOf("thread_items", "thread_reset")
+        if (held == null || envelope.inReplyTo != held.decoder.requestId) {
+            return envelope.type in setOf("thread_items", "thread_reset") ||
+                (envelope.type == "error" && envelope.inReplyTo in ownedRequests)
+        }
         val request = held.decoder.request
         if (store.current(host, request.conversationId).generation != held.generation) {
             retire("generation")
             if (request.conversationId in opened) enqueue(Intent(request.conversationId, false))
-            dispatch()
-            return true
         }
         if (nowMillis() - held.started >= QUERY_TIMEOUT_MILLIS) {
             retire("timeout")
+        }
+        if (held.abandonedAt != null) {
+            if (isTerminal(envelope, held)) retire("drained", failed = false, remoteComplete = true)
             dispatch()
             return true
         }
         held.decoder.decode(envelope).forEach { outcome ->
             when (outcome) {
                 is ThreadDecodeOutcome.Pending -> Unit
-                is ThreadDecodeOutcome.Repair -> retire("malformed")
+                is ThreadDecodeOutcome.Repair -> retire("malformed", remoteComplete = isTerminal(envelope, held))
                 is ThreadDecodeOutcome.Complete ->
                     when (val reply = outcome.value) {
                         is ThreadQueryReply.Batch -> {
@@ -139,14 +151,15 @@ internal class AuthoritativeThreadQueries(
                             retire(
                                 if (result == AuthoritativeThreadOutcome.Applied) "complete" else "coverage",
                                 failed = result != AuthoritativeThreadOutcome.Applied,
+                                remoteComplete = true,
                             )
                         }
                         is ThreadQueryReply.Reset -> {
-                            retire("reset", failed = false)
+                            retire("reset", failed = false, remoteComplete = true)
                             route.reset(request.conversationId, reply.checkpoint.epoch)
                             enqueue(Intent(request.conversationId, false))
                         }
-                        is ThreadQueryReply.Failure -> retire("failure")
+                        is ThreadQueryReply.Failure -> retire("failure", remoteComplete = true)
                     }
             }
         }
@@ -164,6 +177,15 @@ internal class AuthoritativeThreadQueries(
     @Synchronized
     private fun expire() {
         val held = active ?: return
+        val abandonedAt = held.abandonedAt
+        if (abandonedAt != null) {
+            if (nowMillis() - abandonedAt >= QUERY_TIMEOUT_MILLIS) {
+                abandon()
+                RelayLog.i { "event=thread_sync code=drain_timeout" }
+                retireConnection()
+            }
+            return
+        }
         if (nowMillis() - held.started >= QUERY_TIMEOUT_MILLIS || held.decoder.expire().isNotEmpty()) {
             retire("timeout")
             dispatch()
@@ -175,12 +197,17 @@ internal class AuthoritativeThreadQueries(
         closed = true
         queued.clear()
         opened.clear()
-        retire("disconnected")
+        retire("disconnected", remoteComplete = true)
     }
 
     private fun enqueue(intent: Intent) {
         val running = active?.decoder?.request
-        if (running?.conversationId == intent.conversation && (running is ThreadQueryRequest.Page) == intent.older) return
+        if (active?.abandonedAt == null &&
+            running?.conversationId == intent.conversation &&
+            (running is ThreadQueryRequest.Page) == intent.older
+        ) {
+            return
+        }
         if (intent !in queued) queued.addLast(intent)
     }
 
@@ -197,23 +224,44 @@ internal class AuthoritativeThreadQueries(
                     ThreadQueryRequest.CatchUp(intent.conversation, snapshot.epoch.orEmpty(), snapshot.checkpoint.toULong())
                 }
             val id = nextId()
+            ownedRequests += id
             active = Active(ThreadQueryDecoder(host, connection, id, request, nowMillis = nowMillis), snapshot.generation, nowMillis())
             RelayLog.i { "event=thread_sync code=requested" }
-            if (!send(Envelope(id, request.type, Clock.System.now().toString(), request.payload()))) retire("send_failed")
+            if (!send(Envelope(id, request.type, Clock.System.now().toString(), request.payload()))) {
+                retire("send_failed", remoteComplete = true)
+            }
         }
     }
 
     private fun retire(
         code: String,
         failed: Boolean = true,
+        remoteComplete: Boolean = false,
     ) {
         val held = active ?: return
-        active = null
+        if (remoteComplete) active = null
         held.decoder.abandon()
-        if (failed && store.current(host, held.decoder.request.conversationId).generation == held.generation) {
+        if (failed && held.abandonedAt == null && store.current(host, held.decoder.request.conversationId).generation == held.generation) {
             store.requestRepair(host, held.decoder.request.conversationId)
         }
+        if (!remoteComplete && held.abandonedAt == null) held.abandonedAt = nowMillis()
         RelayLog.i { "event=thread_sync code=$code" }
+    }
+
+    /** Draining proves remote retirement only: discarded batches and markers never certify facts. */
+    private fun isTerminal(
+        envelope: Envelope,
+        held: Active,
+    ): Boolean {
+        if (envelope.type !in setOf("error", "thread_reset") &&
+            (envelope.payload as? JsonObject)?.get("final") != JsonPrimitive(true)
+        ) {
+            return false
+        }
+        val drain = ThreadQueryDecoder(host, connection, held.decoder.requestId, held.decoder.request, nowMillis = nowMillis)
+        return drain.decode(envelope).any {
+            it is ThreadDecodeOutcome.Complete && it.value !is ThreadQueryReply.Batch
+        }
     }
 
     private companion object {

@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.TYPE_THREAD_TEXT_APPEND
 import de.pyryco.mobile.data.network.ThreadItemDto
@@ -16,6 +17,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -63,8 +65,10 @@ class AuthoritativeThreadQueriesTest {
                 )
             store.reset("host", "c", "e")
             queries.open("c")
+            val old = pump.sent.last()
             route.accept(live(patch(TYPE_THREAD_TEXT_APPEND, 9, 25, "\"text\":\"gap\"", 25)))
             queries.reset("c", "e")
+            queries.accept(queryError(old))
             val fresh = pump.sent.last().id
             delayedRepair()
             assertEquals(fresh, pump.sent.last().id)
@@ -261,8 +265,11 @@ class AuthoritativeThreadQueriesTest {
             runCurrent()
             assertEquals(2, pump.sent.size)
             assertEquals("other", field(pump.sent.last(), "conversation_id"))
+            val other = pump.sent.last()
             repo.cancelAuthoritativeThread("other")
             repo.openAuthoritativeThread("c")
+            pump.push(queryError(other))
+            runCurrent()
             assertEquals("10", field(pump.sent.last(), "version"))
             assertEquals("e", field(pump.sent.last(), "epoch"))
             assertTrue(
@@ -319,6 +326,8 @@ class AuthoritativeThreadQueriesTest {
             runCurrent()
             assertEquals(10L, repo.authoritativeThreads.current("host", "c").checkpoint)
             repo.openAuthoritativeThread("c")
+            pump.push(queryError(interrupted))
+            runCurrent()
             val retry = pump.sent.last()
             assertNotEquals(interrupted.id, retry.id)
             assertEquals("10", field(retry, "version"))
@@ -403,6 +412,8 @@ class AuthoritativeThreadQueriesTest {
                         ?.continuation,
                 )
                 assertEquals(10L, repo.authoritativeThreads.current("host", "c").checkpoint)
+                pump.push(queryError(request))
+                runCurrent()
             }
             repo.requestOlderAuthoritativeThread("c")
             pump.push(window(pump.sent.last(), 10, 1, 5, false))
@@ -445,12 +456,13 @@ class AuthoritativeThreadQueriesTest {
             repo.openAuthoritativeThread("c")
             val old = pump.sent.last()
             repo.resetAuthoritativeThread("c", "e")
-            val fresh = pump.sent.last()
-            assertNotEquals(old.id, fresh.id)
-            assertEquals("0", field(fresh, "version"))
+            assertEquals(old.id, pump.sent.last().id)
             pump.push(batch(old, 30, listOf(item(1, 30, 5))))
             pump.push(success(old, 30))
             runCurrent()
+            val fresh = pump.sent.last()
+            assertNotEquals(old.id, fresh.id)
+            assertEquals("0", field(fresh, "version"))
             assertTrue(store.current("host", "c").items.isEmpty())
             assertNull(store.current("host", "c").coverage)
             assertEquals(1, store.current("host", "other").items.size)
@@ -497,24 +509,171 @@ class AuthoritativeThreadQueriesTest {
             assertEquals(newRepo.observeAuthoritativeThread("c").first(), newRepo.observeAuthoritativeThread("c").first())
         }
 
-    @Test fun cancellationAndSendFailureReleaseSlot() =
+    @Test fun abandonedQueriesDrainRemoteSlotBeforeDispatchAcrossConversations() =
+        runTest {
+            for (cause in listOf("cancel", "timeout", "reset", "repair", "malformed", "application")) {
+                val (pump, repo) = repository()
+                pump.enforceSlot = true
+                repo.authoritativeThreads.reset("host", "other", "e")
+                seed(pump, repo)
+                repo.openAuthoritativeThread("c")
+                val retired = pump.sent.last()
+                repo.openAuthoritativeThread("other")
+                when (cause) {
+                    "cancel" -> repo.cancelAuthoritativeThread("c")
+                    "timeout" -> {
+                        advanceTimeBy(31000)
+                        runCurrent()
+                    }
+                    "reset" -> repo.resetAuthoritativeThread("c", "e")
+                    "repair" -> pump.push(live(patch(TYPE_THREAD_TEXT_APPEND, 9, 25, "\"text\":\"gap\"", 25)))
+                    "malformed" -> pump.push(reply(retired, "thread_items", "{}"))
+                    "application" -> pump.push(batch(retired, 20, listOf(item(1, 20, 5, kind = "agent"))))
+                }
+                runCurrent()
+                assertEquals(cause, retired.id, pump.sent.last().id)
+                // Local retry is admitted, but the held provider still owns the remote slot.
+                repo.openAuthoritativeThread("c")
+                val abandoned = repo.authoritativeThreads.current("host", "c")
+                pump.push(batch(retired, 20, listOf(item(1, 20, 5))))
+                runCurrent()
+                assertEquals(cause, abandoned, repo.authoritativeThreads.current("host", "c"))
+                pump.push(
+                    if (cause == "cancel") {
+                        reply(retired, "thread_reset", "{\"conversation_id\":\"c\",\"epoch\":\"retired\",\"version\":20}")
+                    } else {
+                        queryError(retired)
+                    },
+                )
+                runCurrent()
+                val other = pump.sent.last()
+                assertEquals(cause, "other", field(other, "conversation_id"))
+                pump.push(window(other, 0, 0, 0, false))
+                runCurrent()
+                val retry = pump.sent.last()
+                assertEquals("c", field(retry, "conversation_id"))
+                assertNotEquals(retired.id, retry.id)
+                assertEquals(if (cause == "reset") "0" else "10", field(retry, "version"))
+                pump.push(if (cause == "reset") window(retry, 20, 5, 21, true) else success(retry, 25))
+                runCurrent()
+                assertTrue(cause, pump.rejected.isEmpty())
+                assertFalse(repo.authoritativeThreads.current("host", "c").repairNeeded)
+            }
+        }
+
+    @Test fun missingRetiredTerminalClosesConnectionAndReconnectUsesCertifiedFacts() =
+        runTest {
+            val store = AuthoritativeThreadStore()
+            val owned = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+            val (pump, repo) = repository(store, owned)
+            pump.enforceSlot = true
+            seed(pump, repo)
+            repo.openAuthoritativeThread("c")
+            repo.openAuthoritativeThread("other")
+            advanceTimeBy(61000)
+            runCurrent()
+            assertTrue(pump.closed)
+            assertEquals(2, pump.sent.size)
+            assertTrue(pump.rejected.isEmpty())
+            assertFalse(repo.openAuthoritativeThread("c"))
+            assertEquals(10L, store.current("host", "c").checkpoint)
+            val (freshPump, freshRepo) = repository(store)
+            freshRepo.openAuthoritativeThread("c")
+            assertEquals("10", field(freshPump.sent.last(), "version"))
+            freshPump.push(success(freshPump.sent.last(), 10))
+            runCurrent()
+            assertFalse(store.current("host", "c").repairNeeded)
+        }
+
+    @Test fun retiredErrorsNeverChangeLegacyReadEvidenceOrReplacementQuery() =
+        runTest {
+            for (cause in listOf("cancel", "timeout", "reset", "complete")) {
+                val (pump, repo) = repository()
+                seed(pump, repo)
+                val evidence = repo.observeThreadSnapshot("c").first().readEvidence
+                repo.openAuthoritativeThread("c")
+                val retired = pump.sent.last { it.type == "thread_catch_up" }
+                when (cause) {
+                    "cancel" -> repo.cancelAuthoritativeThread("c")
+                    "timeout" -> {
+                        advanceTimeBy(31000)
+                        runCurrent()
+                    }
+                    "reset" -> repo.resetAuthoritativeThread("c", "e")
+                    else -> pump.push(success(retired, 10))
+                }
+                runCurrent()
+                pump.push(queryError(retired))
+                runCurrent()
+                assertEquals(cause, evidence, repo.observeThreadSnapshot("c").first().readEvidence)
+                repo.openAuthoritativeThread("c")
+                val replacement = pump.sent.last { it.type == "thread_catch_up" }
+                pump.push(queryError(retired))
+                runCurrent()
+                assertEquals(cause, replacement.id, pump.sent.last { it.type == "thread_catch_up" }.id)
+                assertEquals(cause, evidence, repo.observeThreadSnapshot("c").first().readEvidence)
+                pump.push(if (cause == "reset") window(replacement, 10, 5, 11, true) else success(replacement, 10))
+                runCurrent()
+                assertFalse(cause, repo.authoritativeThreads.current("host", "c").repairNeeded)
+                // Unrelated correlated errors keep their existing legacy route.
+                pump.push(queryError(retired.copy(id = -1)))
+                runCurrent()
+                assertNotEquals(evidence, repo.observeThreadSnapshot("c").first().readEvidence)
+            }
+        }
+
+    @Test fun windowCoverageRejectsUnsupportedNumbersWithoutAdvancingCertifiedFacts() =
+        runTest {
+            val max = 9007199254740991L
+            for ((lower, upper) in listOf(max + 1 to max + 2, 5L to max + 1)) {
+                for (existingCoverage in listOf(false, true)) {
+                    val (pump, repo) = repository()
+                    repo.authoritativeThreads.reset("host", "c", "e")
+                    if (existingCoverage) {
+                        repo.openAuthoritativeThread("c")
+                        val first = pump.sent.last()
+                        pump.push(live(added(item(1, 20, 5), version = 20)))
+                        pump.push(window(first, 10, 5, 11, true))
+                        runCurrent()
+                    }
+                    val prior = repo.authoritativeThreads.current("host", "c")
+                    repo.openAuthoritativeThread("c")
+                    pump.push(window(pump.sent.last(), 30, lower, upper, true))
+                    runCurrent()
+                    val held = repo.authoritativeThreads.current("host", "c")
+                    assertEquals(prior.coverage, held.coverage)
+                    assertEquals(prior.checkpoint, held.checkpoint)
+                    assertTrue(held.repairNeeded)
+                    if (!existingCoverage) assertFalse(repo.requestOlderAuthoritativeThread("c"))
+                }
+            }
+            val (pump, repo) = repository()
+            repo.authoritativeThreads.reset("host", "c", "e")
+            repo.openAuthoritativeThread("c")
+            pump.push(window(pump.sent.last(), 10, max - 1, max, true))
+            runCurrent()
+            assertEquals(
+                max.toULong(),
+                repo.authoritativeThreads
+                    .current("host", "c")
+                    .coverage
+                    ?.upperOrder,
+            )
+            repo.requestOlderAuthoritativeThread("c")
+            assertEquals((max - 1).toString(), field(pump.sent.last(), "before_order"))
+        }
+
+    @Test fun refusedSendDoesNotOccupyRemoteSlotAndRetryUsesFreshIdentity() =
         runTest {
             val (pump, repo) = repository()
-            repo.openAuthoritativeThread("c")
-            val retired = pump.sent.last()
-            repo.openAuthoritativeThread("other")
-            repo.cancelAuthoritativeThread("c")
-            assertEquals("other", field(pump.sent.last(), "conversation_id"))
-            pump.push(reply(retired, "thread_reset", "{\"conversation_id\":\"c\",\"epoch\":\"bad\",\"version\":1}"))
-            runCurrent()
-            assertNull(repo.authoritativeThreads.current("host", "c").epoch)
-            repo.cancelAuthoritativeThread("other")
+            pump.enforceSlot = true
             pump.acceptSend = false
             repo.openAuthoritativeThread("c")
             val refused = pump.sent.last()
             pump.acceptSend = true
             repo.openAuthoritativeThread("c")
             assertNotEquals(refused.id, pump.sent.last().id)
+            assertTrue(pump.rejected.isEmpty())
         }
 
     @Test fun liveRepairRequestsCatchUpForOpenedConversation() =
@@ -582,6 +741,16 @@ class AuthoritativeThreadQueriesTest {
         type: String,
         raw: String,
     ) = Envelope(1000, type, "2026-10-13T10:00:00Z", MobileJson.parseToJsonElement(raw), inReplyTo = request.id)
+
+    private fun queryError(request: Envelope) =
+        reply(
+            request,
+            "error",
+            "{\"conversation_id\":\"${field(
+                request,
+                "conversation_id",
+            )}\",\"code\":\"thread.query_failed\",\"message\":\"private\",\"retryable\":true}",
+        )
 
     private fun batch(
         request: Envelope,
@@ -673,22 +842,58 @@ class AuthoritativeThreadQueriesTest {
         }
     }
 
-    private class Pump : SessionPump {
+    private class Pump : ManagedSessionPump {
         private val channel = Channel<Envelope>(Channel.UNLIMITED)
         override val inbound = channel.receiveAsFlow()
         val sent = mutableListOf<Envelope>()
         var acceptSend = true
+        var enforceSlot = false
+        var closed = false
+        val rejected = mutableListOf<Long>()
+        private var occupied: Long? = null
+        override val state = MutableStateFlow<PumpState>(PumpState.Handshaking)
+
+        override fun start() = Unit
 
         override fun send(envelope: Envelope): Boolean {
             sent += envelope
-            return acceptSend
+            if (!acceptSend) return false
+            if (enforceSlot && envelope.type in setOf("thread_catch_up", "thread_page")) {
+                if (occupied != null) {
+                    rejected += envelope.id
+                    channel.trySend(queryErrorForBusy(envelope))
+                } else {
+                    occupied = envelope.id
+                }
+            }
+            return true
         }
 
         fun push(envelope: Envelope) {
+            val raw = envelope.payload as? JsonObject
+            if (envelope.inReplyTo == occupied &&
+                (
+                    envelope.type in setOf("error", "thread_reset") ||
+                        (envelope.type == "thread_items" && raw?.get("final") == JsonPrimitive(true))
+                )
+            ) {
+                occupied = null
+            }
             channel.trySend(envelope)
         }
 
-        fun close() {
+        private fun queryErrorForBusy(request: Envelope) =
+            Envelope(
+                1000,
+                "error",
+                request.ts,
+                MobileJson.parseToJsonElement("{\"code\":\"thread.query_failed\",\"message\":\"busy\",\"retryable\":true}"),
+                inReplyTo = request.id,
+            )
+
+        override fun close() {
+            closed = true
+            occupied = null
             channel.close()
         }
     }
