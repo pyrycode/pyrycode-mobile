@@ -5,6 +5,7 @@
 - `scripts/e2e-daemon-fault.py`: `start`, `await_relay_ready`, `stop`, and `Handler.do_POST` currently verify registration only on a new child.
 - `scripts/test_e2e_daemon_fault.py`: `DaemonFaultTest` provides the owned-process HTTP fixture; extend it with generation lifecycle probes.
 - `app/src/androidTest/java/de/pyryco/mobile/e2e/DaemonFaultControl.kt`: `request` discards HTTP phase evidence; its socket timeout coincides with the registration timeout.
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/DaemonFaultEvidence.kt` and `app/src/test/java/de/pyryco/mobile/e2e/DaemonFaultEvidenceTest.kt`: share the bounded socket exchange with the device consumer so JVM coverage can drive the real controller and evidence wrapper.
 - `InteractiveStreamE2ETest.kt`: `interactiveTurn_offlineRetry_reconnectsSameHostAndReplies` preserves the outage, null repository, visible pill, deadline, identity and new reply checks.
 - `DeterministicInteractiveStreamE2ETest.kt`: `interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply` is the deterministic recovery proof.
 - `scripts/e2e-emulator.sh`: `cleanup` deletes successful daemon/controller captures; retain an allowlisted private capture before disposal when explicitly configured.
@@ -47,6 +48,7 @@ An opt-in private evidence destination in the existing emulator harness retains 
 | No-token mode and unrelated living process | `test_no_token_mode_preserves_owned_process_only` |
 | Registration token spans a scan boundary | `test_registration_token_across_chunks` |
 | Controller HTTP failure vs client I/O exception | Client evidence tests and existing restoration diagnostics when #2107 lands |
+| Default registration timeout reaches the client after dispatch lag | `DaemonFaultEvidenceTest.defaultRegistrationTimeoutReachesTheClientOverTheRealSocket` |
 | Retry window is observed late or expires | Existing `OfflineRetryWindowTest` and passive-redial `RelayConnectionSupervisorTest` coverage |
 | Real outage, restore, exact-host Retry and new reply | Focused scripted `offline-retry`; historical focused live comparisons; dispatcher final full-live gate |
 
@@ -80,7 +82,7 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md`, “Offline
 - [Files and storage] SHOULD FIX: successful cleanup currently loses raw evidence. The explicit evidence destination must use private directories/files, a narrow file allowlist and verified hashes; raw evidence remains outside Git.
 - [Android attack surface] Only test APK code changes; exported components, intents, providers and production network endpoints do not change.
 - [Cryptography] Reuse existing Noise IK and Keystore behavior; no key, nonce, token comparison or wire change.
-- [Network and I/O] Bound log-scan memory and response parsing. Registration waits remain bounded; retain the original producer deadline. HTTP control remains the existing test-only loopback endpoint.
+- [Network and I/O] Bound log-scan memory and response parsing. Registration waits remain bounded at 15 seconds; start responses have a separate 17-second socket read budget for dispatch and delivery. Retain the original producer deadline. HTTP control remains the existing test-only loopback endpoint.
 - [Errors/logs] MUST FIX addressed in design: never include arbitrary HTTP/error/daemon text in published diagnostics. Record only static action, numeric HTTP status/generation/timing and fixed phases; preserve original exception privately.
 - [Concurrency] Serialized HTTP ownership prevents duplicate live children. Readiness invalidates on stop/exit and offsets prevent stale-generation reuse. Tests drive repeat/exit/restart paths.
 - [Threat model] A malicious relay may deny/delay registration; this fails boundedly without weakening Noise or Retry assertions. Rooted-device token theft, hostile application frames and UI-side leakage retain existing protocol mitigations; this test-harness change adds no production surface.
@@ -89,6 +91,8 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md`, “Offline
 **Date:** 2026-10-13
 
 ## Revisions
+
+- 2026-10-13: Re-review of `0ad4d31b4` found that the client's 15-second read timeout races the controller's 15-second registration wait, hiding HTTP 503/generation/registration-timeout evidence as a transport failure. Keep registration at 15 seconds, cap each polling sleep to its remaining wait, and give only `start` a separate 17-second read budget for dispatch and response delivery. Move the existing bounded socket exchange into shared test source and exercise it through `checkedDaemonFaultRequest` against the actual default-configured Python controller and an owned live-but-unready child, with a deterministic 250-ms dispatch delay. Require safe HTTP 503/generation/readiness-timeout evidence and matching controller records; first observe the old 15-second client fail. Existing connect/other-action timeouts, original throwable propagation and the producer-anchored 20-second scenario deadline remain intact; registration, socket delivery, and later recovery consume that existing deadline. Overlaps #2052 and #2091 remain local and independent. This rework adds approximately 130 written lines, no production types or API migration, staying below the ticket limits. Security re-review: the response remains bounded to 4096 characters and uses the existing static evidence allowlist; the test child reads no credentials and cleanup joins only its owned process.
 
 - 2026-10-13: The first passing scripted capture showed that existing phone logs omit the actual capped-backoff observation. Add an optional callback to `OfflineRetryWindow.awaitDeadline` carrying the exact producer snapshot, tested by `immediateDaemonAbsentDials_doNotRequireEveryConnectingEmission`. The device client emits only attempt/observer lag and remaining original budget; deadlines and scenario assertions stay unchanged. This complements #2107's scenario diagnostics without reproducing them.
 - 2026-10-13: The gate-built daemon omits VCS metadata. Record configured source revision separately from binary-reported revision and retain its SHA-256 digest. Successful historical cleanup deleted the first base daemon capture; subsequent comparisons retain open handles before disposal. Managed feature-branch harnesses now default to private per-ticket retention, with an explicit destination override for detached comparisons, so the dispatcher full gate preserves boundary logs too.
