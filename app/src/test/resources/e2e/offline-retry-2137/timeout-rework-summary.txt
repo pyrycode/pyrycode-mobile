@@ -1,0 +1,51 @@
+#2137 response/registration timeout rework, 2026-10-13, build-hp-1
+
+Mobile tested/pushed: 9c89eccfd99faf7d492c3ddc16b1f73a0325bcf5
+Merged main: dc3ac93ab2f42dce9056b328ce05e39b935b6202
+Daemon source/reported: eb3c757cac48a65f536bdc0dfdc92f0adbd82c3f
+Daemon binary SHA-256: 8e94ff43007ee7637ba04730f350bf9ec014b0525605fc800cbe1f21be1542e0
+
+Established response boundary: the actual shared client socket and default Python
+controller, with an owned unready child and 250-ms dispatch delay, reproduce a
+SocketTimeoutException using the old 15000-ms client budget. Red XML: 1 executed,
+1 failed, 0 errors/skips. With a 17000-ms start-response budget and bounded polling
+sleep, the same test receives HTTP 503, generation 2, registration_timeout, with
+matching controller records showing running=true and ready=false. Registration
+still waits 15 seconds. The original producer-anchored 20-second deadline remains.
+
+Focused controller Python regressions: 19 executed/passed, 0 failures/errors/skips.
+Focused JVM selection: 47 executed/passed, 0 failures/errors/skips:
+DaemonFaultEvidenceTest 7, OfflineRetryWindowTest 3,
+RelayConnectionSupervisorTest 37. Original exception identity, passive-recovery
+negative control and original-deadline coverage pass.
+Lint, assembleDebug, compileDebugAndroidTestKotlin, spotlessApply and forced
+spotlessCheck pass.
+
+Fresh scripted offline-retry: gate exit 0; 1 executed/passed, 0 failures/errors/skips.
+Method: DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply
+Capped attempt 6; observer lag 0 ms; original remaining budget 19444 ms;
+generation-2 registration 50 ms; one Retry dispatch. Final ready-child restoration
+is idempotent (same generation, ready=true, response in 0 ms).
+
+Fresh focused live: gate exit 0; 1 executed/passed, 0 failures/errors/skips.
+Method: InteractiveStreamE2ETest.interactiveTurn_offlineRetry_reconnectsSameHostAndReplies
+Capped attempt 6; observer lag 1 ms; original remaining budget 19413 ms;
+generation-2 registration 101 ms; one Retry dispatch. Final ready-child restoration
+is idempotent (same generation, ready=true, response in 0 ms).
+
+Both fresh scenarios retain the real outage, visible Offline pill and null
+repository before tap, same-host bundle/conversation recovery before the original
+deadline, pill clearing and newly rendered reply assertions.
+
+Private XML/logcat, controller/daemon/relay logs, input hashes and manifests:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2137/rework-timeout-hp-20261013/
+20 unique raw/input files; 36 manifest entries verified, zero mismatches.
+Reviewed counted XML: scripted-timeout-rework.xml and live-timeout-rework.xml.
+
+Historical causation remains unresolved: the original controller/daemon captures
+are missing. Fresh passes and daemon-version differences establish no historical
+cause. Earlier pinned comparisons and original reports remain in the prior
+ticket evidence directories. No additional causal native blocker was established.
+PR #2107 remains open; preserve its diagnostics/restoration helper on integration.
+Dispatcher-owned final scripted-all and full-live gates remain pending after
+re-review. Documentation stage consumes those counts and the retained evidence.
