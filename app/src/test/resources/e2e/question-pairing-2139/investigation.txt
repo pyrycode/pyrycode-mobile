@@ -65,3 +65,26 @@ under $AGENTS_REPO_PATH/logs/evidence/2139/native-setup-20261013/.
 Mobile production pairing/registry/lifecycle/network/activity source is identical
 between original 0c9e9a6f49 and baseline dc3ac93ab2; changes in daemon revision
 alone therefore do not establish attribution to a mobile or daemon defect.
+
+Checkpoint verification at fdddbcc11 after the final main merge (main already
+merged): lint, assembleDebug, instrumentation compilation and focused tests
+passed. Final assembleDebug and scripts/pre-verify.py --gradle passed, including
+forced Spotless and compilation of every Kotlin source set. No completion PR
+has been opened because no source-defect repair is demonstrated.
+
+Final historical-daemon prefix comparison: 29 executed/passed, named question
+1 executed/passed, 0 failed/errors/skipped. Instrumented mobile source remained
+05d9e194a; the command started with only subsequent unit/evidence edits pending.
+Historical daemon: 9c9cd5a25c337666bdbed47c29202e695a172733. Fresh raw XML and
+phone logs, with verified hashes, survive under:
+$AGENTS_REPO_PATH/logs/evidence/2139/historical-daemon-prefix-20261013/
+Partial during-run and late-run daemon snapshots are retained there; the final
+tail was removed by successful launcher cleanup. All retained manifests verify.
+
+All six managed live diagnosis runs passed: 67 total executed/passed methods,
+6 named question executions/passes, 0 failed/errors/skipped. These are bounded
+diagnosis runs, not a post-verifier full dispatcher gate. No supported source
+cause or controlled pairing red/green repair was found. A fresh failing phone
+setup occurrence with pairing substage and addressed-host state is needed to
+select a repair. The original phone capture is unavailable. Do not close #2139
+or treat this diagnostic checkpoint as fulfilling its repair criterion.
