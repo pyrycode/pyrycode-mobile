@@ -6822,7 +6822,7 @@ class InteractiveStreamE2ETest {
         fun <T> step(
             stage: InterruptedUploadStage,
             block: () -> T,
-        ): T = interruptedUploadStep(stage, ::links, { Log.i("InterruptedUpload", it) }, block)
+        ): T = runBlocking { interruptedUploadStep(stage, ::links, { Log.i("InterruptedUpload", it) }, block) }
 
         fun awaitUploadHost() {
             runBlocking { awaitHostConnection(GlobalContext.get().get<RelayConnectionRegistry>(), serverId, CONNECT_TIMEOUT_MS) }
