@@ -8,7 +8,7 @@ Private capture regressions: 3 executed/passed, 0 failed/skipped.
 Focused JVM: DaemonFaultEvidenceTest 5/5, OfflineRetryWindowTest 3/3,
 RelayConnectionSupervisorTest 37/37; each 0 failed/errors/skipped.
 
-Original report observations are from the refined issue, not recovered raw reports:
+Original dispatcher reports are now recovered and privately hash-verified on HP:
 full live 65 executed / 61 passed / 4 failed; rerun 4 / 3 / 1; base 1 / 0 / 1.
 The branch/rerun repository recovery windows were 11867/13430 ms.
 The original base failed at start. These distinct phases remain unattributed.
@@ -53,3 +53,26 @@ b6e982b491be8ccb5e2ca098bc4fafcfddb43fa089b608b7f973a2647ff6a173.
 All 56 private raw files and existing manifests verified after recovery.
 Fresh portable regressions on HP: controller 18/18 and retention 3/3.
 Fresh focused JVM regressions on HP: 45/45, zero failed/errors/skipped.
+
+Resumed HP candidate 97e51941c44af3a2d364075d0bbca853fc94ae5a:
+fresh scripted offline-retry: 1 executed/passed, zero failures/errors/skips, exit 0.
+Daemon revision/source eb3c757cac48a65f536bdc0dfdc92f0adbd82c3f,
+binary SHA-256 8e94ff43007ee7637ba04730f350bf9ec014b0525605fc800cbe1f21be1542e0.
+Actual attempt 6, observer lag 1 ms, remaining producer budget 19417 ms.
+Restart generation 2 registered in 50 ms; one host_retry_requested observed.
+Private XML/logcat, boundary captures and manifests:
+$AGENTS_REPO_PATH/logs/evidence/2137/resumed-hp-20261013/scripted/.
+Fresh historical controller reproduction independently reconfirms 200/503/200;
+private static result/controller logs: resumed-hp-20261013/controller-red/.
+Original 6 dispatcher reports retained under resumed-hp-20261013/original-reports/.
+Original full gate daemon revision 126d7ca662a38fdd399cacd2ea09bcb12304c892;
+original rerun/base daemon revision e810c8a85064d2cd290285095fc16cd8941f3236.
+Their missing original daemon/controller captures still prevent causal attribution.
+
+Fresh focused live on the same resumed HP Mobile/daemon/binary revisions:
+interactiveTurn_offlineRetry_reconnectsSameHostAndReplies: 1 executed/passed,
+zero failures/errors/skips, gate exit 0. Attempt 6 observed with 2 ms lag;
+19824 ms remained in the original budget. Generation 2 registered in 107 ms;
+one host_retry_requested observed. Private captures: resumed-hp-20261013/live/.
+scripted-hp.xml and live-hp.xml contain reviewed counted HP outcomes.
+Both normal gate cleanups completed successfully. Final full suites remain pending.
