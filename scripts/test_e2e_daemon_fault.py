@@ -2,6 +2,7 @@
 
 import json
 import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
@@ -83,6 +84,39 @@ die() { printf '%s\\n' "$1" >&2; exit 1; }
 
 
 class DaemonFaultTest(unittest.TestCase):
+    def test_termination_kills_and_joins_daemon_that_ignores_term(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp)
+            ready = path / "daemon-pid"
+            controller = subprocess.Popen([
+                sys.executable, str(ROOT / "e2e-daemon-fault.py"),
+                "--port-file", str(path / "port"), "--log", str(path / "log"),
+                "--control-socket", str(path / "socket"), "--", sys.executable, "-c",
+                "import os,signal,time; from pathlib import Path; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "Path(os.environ['READY']).write_text(str(os.getpid())); time.sleep(120)",
+            ], env=dict(os.environ, READY=str(ready)), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            try:
+                deadline = time.monotonic() + 5
+                while not ready.exists() and controller.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(ready.exists())
+                pid = int(ready.read_text())
+                controller.terminate()
+                controller.wait(timeout=15)
+                self.assertEqual(0, controller.returncode)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+            finally:
+                if ready.exists():
+                    try:
+                        os.kill(int(ready.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                if controller.poll() is None:
+                    controller.kill()
+                controller.communicate(timeout=5)
+
     def test_stop_then_start_replaces_only_the_owned_child(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)

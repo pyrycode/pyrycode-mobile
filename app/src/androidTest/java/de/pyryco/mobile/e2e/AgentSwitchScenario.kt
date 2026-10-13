@@ -3,6 +3,7 @@ package de.pyryco.mobile.e2e
 import android.util.Log
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasAnyAncestor
@@ -40,6 +41,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -89,10 +91,18 @@ internal fun runAgentSwitchScenario(
         ) {
             val prompt = "Reply with exactly $marker. No tools or other text."
             expected += Role.User to prompt
-            expected += Role.Assistant to marker
             send(prompt)
-            val messages = assertSwitchHistory(rule, repository(), channel.id, expected)
-            val reply = messages.single { it.role == Role.Assistant && it.content.trim() == marker }
+            val reply =
+                runBlocking {
+                    withTimeout(180_000) {
+                        repository()
+                            .observeMessages(channel.id)
+                            .map { items ->
+                                finalizedSwitchReply(items.filterIsInstance<ThreadItem.MessageItem>().map { it.message }, marker)
+                            }.filterNotNull()
+                            .first()
+                    }
+                }
             val turnId = reply.segment?.turnId ?: reply.ordinaryId
             check(!turnId.isNullOrEmpty()) { "agent_switch_reply_identity_missing" }
             // Switching can itself emit a hand-over turn_end; count alone cannot prove this authored reply.
@@ -114,6 +124,8 @@ internal fun runAgentSwitchScenario(
                     }
                 }
             check(!completed.isError && completed.stopReason == "end_turn") { "agent_switch_reply_not_successful" }
+            expected += Role.Assistant to reply.content.trim()
+            assertSwitchHistory(rule, repository(), channel.id, expected)
             Log.i("AgentSwitchE2E", "event=agent_switch_reply outcome=finalized ordinal=$occurrence")
         }
 
@@ -247,16 +259,23 @@ private fun assertSwitchHistory(
                     .map { it.message }
             }
         }
-    val list = rule.onNode(hasScrollToNodeAction())
+    val list = rule.onNode(hasScrollToNodeAction(), useUnmergedTree = true)
     // Adjacent authored rows are deliberately short enough to compare in the same viewport.
     for (pair in expected.zipWithNext()) {
-        fun target(text: String) = hasText(text) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
-        list.performScrollToNode(target(pair.second.second))
-        list.performScrollToNode(target(pair.first.second))
-        rule.onNode(target(pair.first.second), useUnmergedTree = true).assertIsDisplayed()
-        rule.onNode(target(pair.second.second), useUnmergedTree = true).assertIsDisplayed()
-        val first = rule.onNode(target(pair.first.second), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        val next = rule.onNode(target(pair.second.second), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        fun target(expected: Pair<Role, String>): SemanticsMatcher {
+            val message = messages.single { it.role == expected.first && it.content.trim() == expected.second }
+            return if (message.role == Role.Assistant) {
+                hasTestTag("assistant-reply:${message.id}")
+            } else {
+                hasText(message.content.trim()) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+            }
+        }
+        list.performScrollToNode(target(pair.second))
+        list.performScrollToNode(target(pair.first))
+        rule.onNode(target(pair.first), useUnmergedTree = true).assertIsDisplayed()
+        rule.onNode(target(pair.second), useUnmergedTree = true).assertIsDisplayed()
+        val first = rule.onNode(target(pair.first), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val next = rule.onNode(target(pair.second), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertTrue("authored message order changed in the thread", first.top < next.top)
     }
     return messages

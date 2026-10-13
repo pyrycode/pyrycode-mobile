@@ -31,5 +31,17 @@ class EmulatorCleanupTest(unittest.TestCase):
                         self.assertEqual(code != 0, home.exists())
 
 
+    def test_owned_controller_cleanup_failure_fails_green_and_preserves_red(self):
+        script = Path(__file__).with_name("e2e-emulator.sh").read_text()
+        cleanup = script[script.index("cleanup() {"):script.index("trap cleanup EXIT")]
+        for code in (0, 7):
+            with tempfile.TemporaryDirectory() as tmp:
+                env = dict(os.environ, WORK_DIR=tmp, ISO_HOME="", WATCHER_PID="", DAEMON_PID="", RELAY_PID="")
+                result = subprocess.run(["/bin/bash", "-c", "set -euo pipefail\nlog() { :; }\n" + cleanup
+                    + "\n(exit 9) &\nDAEMON_PID=$!\ntrap cleanup EXIT\nexit " + str(code)],
+                    env=env, capture_output=True, text=True, timeout=5)
+                self.assertEqual(code or 1, result.returncode, result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

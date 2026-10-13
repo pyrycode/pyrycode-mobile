@@ -54,4 +54,17 @@ class AgentSwitchProofTest {
         assertFalse(hasOrderedSwitchMessages(messages.map { if (it.content == "fresh") it.copy(isStreaming = true) else it }, expected))
         assertFalse(hasOrderedSwitchMessages(messages.map { if (it.content == "fresh") it.copy(content = "reply") else it }, expected))
     }
+
+    @Test fun finalizedMarkerAllowsSurroundingTextButRejectsDuplicatesStreamingAndReplay() {
+        val reply = Message("reply", "session", Role.Assistant, "Here is **codex2052**.", time, isStreaming = false)
+        assertEquals(reply, finalizedSwitchReply(listOf(reply), "codex2052"))
+        assertEquals(null, finalizedSwitchReply(listOf(reply, reply.copy(id = "duplicate")), "codex2052"))
+        assertEquals(null, finalizedSwitchReply(listOf(reply.copy(isStreaming = true)), "codex2052"))
+        assertEquals(null, finalizedSwitchReply(listOf(reply), "claude2052"))
+        val prompt = Message("user", "session", Role.User, "ask", time, isStreaming = false)
+        val expected = listOf(Role.User to prompt.content, Role.Assistant to reply.content)
+        assertTrue(hasOrderedSwitchMessages(listOf(prompt, reply), expected))
+        assertFalse(hasOrderedSwitchMessages(listOf(reply, prompt), expected))
+        assertFalse(hasOrderedSwitchMessages(listOf(prompt, reply.copy(content = "codex2052")), expected))
+    }
 }

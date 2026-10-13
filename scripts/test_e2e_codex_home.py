@@ -139,6 +139,93 @@ class CodexHomeLeaseTest(unittest.TestCase):
             self.assertEqual('', retry.reason)
 
 
+    def test_default_live_name_reaches_real_wrapper(self):
+        script = Path(__file__).with_name('e2e-emulator.sh').read_text()
+        start = script.index('# #2052:')
+        block = script[start:script.index('\nGRADLEW=', start)]
+        fake_bash = self.root / 'bash'
+        fake_bash.write_text('#!/bin/sh\n[ "$PYRY_NAME" = e2e-live ] && [ -L "$HOME/.pyry/e2e-live/codex-home" ]\n')
+        fake_bash.chmod(0o700)
+        env = dict(self.env, REPO_ROOT=str(Path(__file__).resolve().parent.parent), LIVE='1',
+                   DETERMINISTIC='', LIVE_TESTS='', PATH=str(self.root) + os.pathsep + os.environ['PATH'])
+        env.pop('PYRY_NAME', None)
+        env.pop('E2E_CODEX_LEASE', None)
+        snippet = self.root / 'selection.sh'
+        snippet.write_text('set -euo pipefail\nPYRY_NAME="${PYRY_NAME:-e2e-live}"\n' + block)
+        result = subprocess.run(['/bin/bash', str(snippet)],
+                                env=env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn('outcome=ready', result.stdout)
+        self.assertFalse((self.operator / '.pyry/e2e-live/codex-home').is_symlink())
+
+    def test_shell_or_controller_failure_cannot_release_home_with_live_daemon(self):
+        helper = str(Path(__file__).with_name('e2e-codex-home.py'))
+        controller = str(Path(__file__).with_name('e2e-daemon-fault.py'))
+        daemon = self.root / 'daemon.py'
+        daemon.write_text("import os, signal, time\nfrom pathlib import Path\n"
+                          "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                          "Path(os.environ['DAEMON_READY']).write_text(str(os.getpid()))\n"
+                          "while True: time.sleep(0.05)\n")
+        for failure in ('shell', 'controller', 'termination'):
+            ready = self.root / ('ready-' + failure)
+            shell = self.root / 'owned.sh'
+            shell.write_text('set -eu\npython3 "$CONTROLLER" --port-file "$PORT_FILE" --log "$LOG_FILE" '
+                             '--control-socket "$CONTROL_SOCKET" -- python3 "$DAEMON" &\ncontroller=$!\necho "$controller" > "$CONTROLLER_PID"\n'
+                             'while [ ! -f "$DAEMON_READY" ]; do sleep 0.02; done\n'
+                             + {'shell': 'exit 7\n', 'controller': 'kill -KILL "$controller"; wait "$controller"\n',
+                                'termination': "trap 'kill \"$controller\"; wait \"$controller\"' EXIT\nwait \"$controller\"\n"}[failure])
+            env = dict(self.env, CONTROLLER=controller, DAEMON=str(daemon), DAEMON_READY=str(ready),
+                       PORT_FILE=str(self.root / 'port'), LOG_FILE=str(self.root / 'daemon.log'),
+                       CONTROL_SOCKET=str(self.root / 'control.sock'), CONTROLLER_PID=str(self.root / 'controller-pid'))
+            process = subprocess.Popen([sys.executable, helper, '/bin/bash', str(shell)], env=env,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                deadline = time.monotonic() + 10
+                while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                if not ready.exists():
+                    os.set_blocking(process.stderr.fileno(), False)
+                    self.fail(os.read(process.stderr.fileno(), 8192).decode())
+                pid = int(ready.read_text())
+                with self.lease(dict(self.env, PYRY_NAME='e2e-contender')) as contender:
+                    self.assertEqual('home_busy', contender.reason)
+                self.assertTrue(self.link.is_symlink())
+                if failure == 'termination':
+                    process.terminate()
+                process.communicate(timeout=25)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+                self.assertFalse(self.link.is_symlink())
+                self.assertEqual('fixture-secret-do-not-copy', self.login.read_text())
+                with self.lease() as retry:
+                    self.assertEqual('', retry.reason)
+                if failure != 'termination':
+                    self.assertNotEqual(0, process.returncode)
+            finally:
+                for record in (ready, self.root / 'controller-pid'):
+                    if record.exists():
+                        try:
+                            os.kill(int(record.read_text()), signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                if process.poll() is None:
+                    process.terminate()
+                process.communicate(timeout=25)
+
+
+    def test_wrapper_spawn_failure_releases_home(self):
+        original = self.module.subprocess.Popen
+        def launch(command, **kwargs):
+            if command == ['/missing-fixture']:
+                raise OSError('fixture')
+            return original(command, **kwargs)
+        with patch.dict(os.environ, self.env, clear=True), patch.object(self.module.subprocess, 'Popen', side_effect=launch):
+            with self.assertRaises(OSError):
+                self.module.main(['/missing-fixture'])
+        self.assertFalse(self.link.is_symlink())
+        with self.lease() as retry:
+            self.assertEqual('', retry.reason)
+
     def test_codex_never_inherits_ambient_api_credentials(self):
         with self.lease(dict(self.env, OPENAI_API_KEY='fixture-secret', CODEX_API_KEY='fixture-secret',
                              OPENAI_BASE_URL='https://private.invalid')) as lease:
@@ -186,7 +273,7 @@ class CodexShellIntegrationTest(unittest.TestCase):
                 env = dict(os.environ, REPO_ROOT=str(root), LIVE=live, DETERMINISTIC=deterministic, LIVE_TESTS=tests)
                 env.pop('E2E_CODEX_LEASE', None)
                 snippet = root / 'selection.sh'
-                snippet.write_text('set -euo pipefail\n'+block)
+                snippet.write_text('set -euo pipefail\nPYRY_NAME=e2e-live\n'+block)
                 result = subprocess.run(['/bin/bash', str(snippet)], env=env,
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(0, result.returncode, result.stderr)

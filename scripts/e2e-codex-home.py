@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import select
 import stat
 import subprocess
 import sys
@@ -23,6 +24,7 @@ class CodexHomeLease:
         self.lock_fd = None
         self.link = None
         self.link_identity = None
+        self.cleanup_confirmed = True
 
     def __enter__(self):
         try:
@@ -108,7 +110,7 @@ class CodexHomeLease:
 
     def close(self):
         try:
-            if self.link and self.link.is_symlink() and self.link.lstat().st_ino == self.link_identity:
+            if self.cleanup_confirmed and self.link and self.link.is_symlink() and self.link.lstat().st_ino == self.link_identity:
                 self.link.unlink()
         finally:
             if self.lock_fd is not None:
@@ -130,8 +132,23 @@ def main(command):
         else:
             env.pop('E2E_CODEX_BIN', None)
             print('event=codex_prerequisite outcome=' + lease.reason, flush=True)
-        descriptors = () if lease.lock_fd is None else (lease.lock_fd,)
+        lifetime_read, lifetime_write = os.pipe()
+        env['E2E_CODEX_LIFETIME_FD'] = str(lifetime_write)
+        if lease.lock_fd is not None:
+            env['E2E_CODEX_LEASE_FD'] = str(lease.lock_fd)
+        descriptors = (lifetime_write,) + (() if lease.lock_fd is None else (lease.lock_fd,))
+
+        def exited(timeout):
+            # No writer sends data. EOF proves all inheriting owners have closed/exited.
+            return bool(select.select([lifetime_read], [], [], timeout)[0]) and os.read(lifetime_read, 1) == b''
+
+        def terminate_group(sig):
+            try:
+                os.killpg(child.pid, sig)
+            except ProcessLookupError:
+                pass
         child = None
+        status = 1
         pending_signals = []
 
         def forward(received, _frame):
@@ -142,17 +159,40 @@ def main(command):
 
         previous = {sig: signal.signal(sig, forward) for sig in (signal.SIGTERM, signal.SIGINT)}
         try:
-            child = subprocess.Popen(command, env=env, pass_fds=descriptors)
+            child = subprocess.Popen(command, env=env, pass_fds=descriptors, start_new_session=True)
+            os.close(lifetime_write)
+            lifetime_write = None
             for received in pending_signals:
                 forward(received, None)
             status = child.wait()
         finally:
-            # An exception cannot release the login while the shell still owns live daemons.
-            if child is not None and child.poll() is None:
-                child.terminate()
-                child.wait()
-            for sig, handler in previous.items():
-                signal.signal(sig, handler)
+            if lifetime_write is not None:
+                os.close(lifetime_write)
+            try:
+                if child is not None:
+                    if child.poll() is None:
+                        terminate_group(signal.SIGTERM)
+                        try:
+                            child.wait(timeout=12)
+                        except subprocess.TimeoutExpired:
+                            terminate_group(signal.SIGKILL)
+                            child.wait()
+                    # Shell/controller failure can leave a daemon alive. Retain the link/lease
+                    # until the inherited lifetime witness closes, after forced teardown if needed.
+                    if not exited(0):
+                        terminate_group(signal.SIGTERM)
+                        if not exited(12):
+                            terminate_group(signal.SIGKILL)
+                            lease.cleanup_confirmed = exited(5)
+                        print('event=codex_cleanup outcome=forced', flush=True)
+                        status = status or 1
+                    if not lease.cleanup_confirmed:
+                        print('event=codex_cleanup outcome=unconfirmed', flush=True)
+                        status = status or 1
+            finally:
+                os.close(lifetime_read)
+                for sig, handler in previous.items():
+                    signal.signal(sig, handler)
         return status if status >= 0 else 128 - status
 
 

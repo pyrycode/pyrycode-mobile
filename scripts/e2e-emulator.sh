@@ -136,7 +136,7 @@ fi
 if [ -n "${LIVE}" ] && [ -z "${DETERMINISTIC}" ] && [ -z "${E2E_CODEX_LEASE:-}" ]; then
   case "${LIVE_TESTS:-}" in
     ""|*'#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies'*)
-      exec python3 "${REPO_ROOT}/scripts/e2e-codex-home.py" bash "${BASH_SOURCE[0]}" "$@"
+      PYRY_NAME="${PYRY_NAME}" exec python3 "${REPO_ROOT}/scripts/e2e-codex-home.py" bash "${BASH_SOURCE[0]}" "$@"
       ;;
   esac
 fi
@@ -651,6 +651,13 @@ cleanup() {
   [ -n "${BYPASS_PID:-}" ] && kill "${BYPASS_PID}" 2>/dev/null || true
   [ -n "${ANSWER_PID:-}" ] && kill "${ANSWER_PID}" 2>/dev/null || true
   [ -n "${RELAY_PID}" ] && kill "${RELAY_PID}" 2>/dev/null || true
+  # Joining the controller proves the primary daemon was joined, including forced teardown.
+  if [ -n "${DAEMON_PID}" ]; then
+    if ! wait "${DAEMON_PID}" 2>/dev/null; then
+      log "event=owned_daemon_cleanup outcome=failed"
+      [ "${code}" -ne 0 ] || code=1
+    fi
+  fi
   wait 2>/dev/null || true
   # The operator-bypass HOME (#687) goes whatever the exit code: it holds a copy of ~/.claude.json and the
   # witness file. Only a path this script minted is removed. Its daemon log stays in WORK_DIR as the rest do.

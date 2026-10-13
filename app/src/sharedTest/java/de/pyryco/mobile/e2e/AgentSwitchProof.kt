@@ -57,3 +57,9 @@ internal fun hasOrderedSwitchMessages(
         }
     return indices.zipWithNext().all { (first, next) -> first < next }
 }
+
+/** Admit one finalized marker-bearing reply; retain its actual body for later exact history proof. */
+internal fun finalizedSwitchReply(
+    messages: List<Message>,
+    marker: String,
+): Message? = messages.singleOrNull { it.role == Role.Assistant && it.content.contains(marker) }?.takeUnless { it.isStreaming }

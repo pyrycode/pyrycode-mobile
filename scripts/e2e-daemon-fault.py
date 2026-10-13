@@ -9,6 +9,7 @@ import argparse
 from e2e_session_cleanup import TestSessions
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import os
 from pathlib import Path
 import re
 import socket
@@ -57,7 +58,10 @@ def main():
     def start():
         nonlocal child
         if child is None or child.poll() is not None:
-            child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+            # Keep the wrapper's lease and lifetime witness through the actual daemon.
+            descriptors = tuple(int(os.environ[key]) for key in ("E2E_CODEX_LEASE_FD", "E2E_CODEX_LIFETIME_FD")
+                                if os.environ.get(key))
+            child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, pass_fds=descriptors)
             return True
         return False
 
@@ -79,7 +83,11 @@ def main():
         nonlocal child
         if child is not None and child.poll() is None:
             child.terminate()
-            child.wait(timeout=10)
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
 
     def cleanup_sockets():
         if not args.cleanup_sockets_file:
@@ -137,6 +145,9 @@ def main():
     server = HTTPServer(("127.0.0.1", 0), Handler)
 
     def shutdown(_signum, _frame):
+        # A repeated shutdown must not interrupt the daemon join in finally.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, shutdown)
