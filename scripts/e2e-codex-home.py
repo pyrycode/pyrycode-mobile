@@ -11,6 +11,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 
 class CodexHomeLease:
@@ -138,54 +139,66 @@ def main(command):
             env['E2E_CODEX_LEASE_FD'] = str(lease.lock_fd)
         descriptors = (lifetime_write,) + (() if lease.lock_fd is None else (lease.lock_fd,))
 
-        def exited(timeout):
-            # No writer sends data. EOF proves all inheriting owners have closed/exited.
-            return bool(select.select([lifetime_read], [], [], timeout)[0]) and os.read(lifetime_read, 1) == b''
+        def witness_closed():
+            return bool(select.select([lifetime_read], [], [], 0)[0]) and os.read(lifetime_read, 1) == b''
+
+        def group_alive():
+            # Go's os/exec closes ExtraFiles but preserves the group. Inspect only numeric
+            # ownership and process state, never command lines or environments.
+            result = subprocess.run(['/bin/ps', '-axo', 'pgid=,stat='], capture_output=True,
+                                    text=True, timeout=2, check=True)
+            return any(int(group) == child.pid and not state.startswith('Z')
+                       for group, state in (line.split() for line in result.stdout.splitlines()))
 
         def terminate_group(sig):
             try:
                 os.killpg(child.pid, sig)
             except ProcessLookupError:
                 pass
+
         child = None
         status = 1
-        pending_signals = []
+        cancelled = []
 
         def forward(received, _frame):
-            if child is None:
-                pending_signals.append(received)
-            elif child.poll() is None:
-                child.send_signal(received)
+            # Interrupt the polling wait immediately; escalation is owned by finally.
+            cancelled.append(received)
+
+        def await_exit(timeout):
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                child.poll()  # reap the direct child before checking its process group
+                if not group_alive() and witness_closed():
+                    return True
+                time.sleep(0.05)
+            return False
 
         previous = {sig: signal.signal(sig, forward) for sig in (signal.SIGTERM, signal.SIGINT)}
         try:
             child = subprocess.Popen(command, env=env, pass_fds=descriptors, start_new_session=True)
             os.close(lifetime_write)
             lifetime_write = None
-            for received in pending_signals:
-                forward(received, None)
-            status = child.wait()
+            while child.poll() is None and not cancelled:
+                time.sleep(0.05)
+            status = child.returncode if child.returncode is not None else 128 + cancelled[0]
         finally:
             if lifetime_write is not None:
                 os.close(lifetime_write)
             try:
                 if child is not None:
-                    if child.poll() is None:
-                        terminate_group(signal.SIGTERM)
-                        try:
-                            child.wait(timeout=12)
-                        except subprocess.TimeoutExpired:
-                            terminate_group(signal.SIGKILL)
-                            child.wait()
-                    # Shell/controller failure can leave a daemon alive. Retain the link/lease
-                    # until the inherited lifetime witness closes, after forced teardown if needed.
-                    if not exited(0):
-                        terminate_group(signal.SIGTERM)
-                        if not exited(12):
-                            terminate_group(signal.SIGKILL)
-                            lease.cleanup_confirmed = exited(5)
-                        print('event=codex_cleanup outcome=forced', flush=True)
-                        status = status or 1
+                    # EOF fences only descriptor holders. Always fence the actual group too,
+                    # including a Codex child orphaned by daemon crash/forced termination.
+                    try:
+                        if group_alive() or not witness_closed():
+                            terminate_group(signal.SIGTERM)
+                            if not await_exit(12):
+                                terminate_group(signal.SIGKILL)
+                                lease.cleanup_confirmed = await_exit(5)
+                            print('event=codex_cleanup outcome=forced', flush=True)
+                            status = status or 1
+                    except (OSError, subprocess.SubprocessError, ValueError):
+                        terminate_group(signal.SIGKILL)
+                        lease.cleanup_confirmed = False
                     if not lease.cleanup_confirmed:
                         print('event=codex_cleanup outcome=unconfirmed', flush=True)
                         status = status or 1

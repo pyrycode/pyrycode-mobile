@@ -1,6 +1,7 @@
 """Process ownership proof for the e2e Offline Retry fault controller."""
 
 import json
+import importlib.util
 import os
 import signal
 from pathlib import Path
@@ -81,6 +82,46 @@ die() { printf '%s\\n' "$1" >&2; exit 1; }
 
     def test_reopen_stream_launch_preserves_both_release_arguments(self):
         self.check_launch("1", "", "reopen-stream", "phone-checkpoint", True)
+
+
+class TurnProvenanceTest(unittest.TestCase):
+    def test_authored_completion_requires_daemon_recorded_successor_and_agent(self):
+        spec = importlib.util.spec_from_file_location('fault', ROOT / 'e2e-daemon-fault.py')
+        module = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(ROOT))
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            sys.path.pop(0)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            socket = root / 'e2e-fixture.sock'
+            history = root / 'e2e-fixture/conversations/channel/history'
+            history.mkdir(parents=True)
+            entry = {'type': 'turn_end', 'payload': {'turn_id': 'authored'},
+                     'session': {'kind': 'codex', 'session_id': 'successor'}}
+            (history / 'segment-00000000000000000001.jsonl').write_text(json.dumps(entry) + '\n')
+            body = {'conversation': 'channel', 'turn': 'authored', 'session': 'successor', 'agent': 'codex'}
+            self.assertTrue(module.turn_matches_session(socket, body))
+            for key, value in [('session', 'predecessor'), ('agent', 'claude'), ('turn', 'handover')]:
+                self.assertFalse(module.turn_matches_session(socket, dict(body, **{key: value})))
+            for value in ('../production', '', 'x' * 129):
+                with self.assertRaises(ValueError):
+                    module.turn_matches_session(socket, dict(body, conversation=value))
+            segment = history / 'segment-00000000000000000001.jsonl'
+            segment.write_text(json.dumps(entry) + '\n' + json.dumps(entry) + '\n')
+            self.assertFalse(module.turn_matches_session(socket, body))
+            segment.unlink()
+            victim = root / 'private-login'
+            victim.write_text('fixture-secret')
+            segment.symlink_to(victim)
+            with self.assertRaises(ValueError):
+                module.turn_matches_session(socket, body)
+            self.assertEqual('fixture-secret', victim.read_text())
+            segment.unlink()
+            entry.pop('session')
+            (history / 'segment-00000000000000000001.jsonl').write_text(json.dumps(entry) + '\n')
+            self.assertFalse(module.turn_matches_session(socket, body))
 
 
 class DaemonFaultTest(unittest.TestCase):

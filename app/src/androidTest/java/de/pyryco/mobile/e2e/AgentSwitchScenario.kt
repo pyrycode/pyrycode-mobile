@@ -3,12 +3,9 @@ package de.pyryco.mobile.e2e
 import android.util.Log
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
-import androidx.compose.ui.test.SemanticsMatcher
-import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
-import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isEnabled
@@ -18,7 +15,6 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performScrollToNode
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.model.ConversationAgent
@@ -33,7 +29,6 @@ import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.RelayConnectionRegistry
-import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.dropdownLabel
 import de.pyryco.mobile.ui.conversations.thread.inert
 import kotlinx.coroutines.TimeoutCancellationException
@@ -44,11 +39,18 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.koin.core.context.GlobalContext
+import java.net.HttpURLConnection
+import java.net.URI
 
-/** Three real turns. Only the model selections and their confirmations mutate agent settings. */
+/** Five real turns: three authored replies and two automatic outgoing hand-over turns. */
 internal fun runAgentSwitchScenario(
     rule: ComposeTestRule,
     repository: () -> ConversationRepository,
@@ -88,6 +90,8 @@ internal fun runAgentSwitchScenario(
         fun turn(
             marker: String,
             occurrence: Int,
+            session: String,
+            agent: ConversationAgent,
         ) {
             val prompt = "Reply with exactly $marker. No tools or other text."
             expected += Role.User to prompt
@@ -124,12 +128,17 @@ internal fun runAgentSwitchScenario(
                     }
                 }
             check(!completed.isError && completed.stopReason == "end_turn") { "agent_switch_reply_not_successful" }
+            runBlocking {
+                withTimeout(30_000) {
+                    while (!matchesSwitchTurnSession(args.getString("daemonFaultPort"), channel.id, turnId, session, agent)) delay(100)
+                }
+            }
             expected += Role.Assistant to reply.content.trim()
             assertSwitchHistory(rule, repository(), channel.id, expected)
             Log.i("AgentSwitchE2E", "event=agent_switch_reply outcome=finalized ordinal=$occurrence")
         }
 
-        turn("baseline2052", 1)
+        turn("baseline2052", 1, baseline.sessionId, ConversationAgent.Claude)
         for ((index, row) in rows.withIndex()) {
             selectSwitchModel(rule, row)
             val successor = awaitSwitchSuccessor(repository(), channel.id, predecessors, row)
@@ -147,7 +156,7 @@ internal fun runAgentSwitchScenario(
             )
             assertSwitchEfforts(rule, row)
             assertSwitchHistory(rule, repository(), channel.id, expected)
-            turn(if (index == 0) "codex2052" else "claude2052", index + 2)
+            turn(if (index == 0) "codex2052" else "claude2052", index + 2, successor.sessionId, requireNotNull(row.agent))
         }
     } catch (error: Throwable) {
         failure = error
@@ -259,25 +268,7 @@ private fun assertSwitchHistory(
                     .map { it.message }
             }
         }
-    val list = rule.onNode(hasScrollToNodeAction(), useUnmergedTree = true)
-    // Adjacent authored rows are deliberately short enough to compare in the same viewport.
-    for (pair in expected.zipWithNext()) {
-        fun target(expected: Pair<Role, String>): SemanticsMatcher {
-            val message = messages.single { it.role == expected.first && it.content.trim() == expected.second }
-            return if (message.role == Role.Assistant) {
-                hasTestTag("assistant-reply:${message.id}")
-            } else {
-                hasText(message.content.trim()) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
-            }
-        }
-        list.performScrollToNode(target(pair.second))
-        list.performScrollToNode(target(pair.first))
-        rule.onNode(target(pair.first), useUnmergedTree = true).assertIsDisplayed()
-        rule.onNode(target(pair.second), useUnmergedTree = true).assertIsDisplayed()
-        val first = rule.onNode(target(pair.first), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        val next = rule.onNode(target(pair.second), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        assertTrue("authored message order changed in the thread", first.top < next.top)
-    }
+    assertRenderedSwitchHistory(rule, messages, expected)
     return messages
 }
 
@@ -295,3 +286,40 @@ private fun switchPrerequisiteReason(reason: String?): String =
             )
     }
         ?: "not_provisioned"
+
+private fun matchesSwitchTurnSession(
+    port: String?,
+    channel: String,
+    turn: String,
+    session: String,
+    agent: ConversationAgent,
+): Boolean {
+    val number = requireNotNull(port?.toIntOrNull()).also { require(it in 1..65535) }
+    val connection = URI("http://10.0.2.2:$number/turn-provenance").toURL().openConnection() as HttpURLConnection
+    try {
+        connection.connectTimeout = 5000
+        connection.readTimeout = 5000
+        connection.requestMethod = "POST"
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/json")
+        val body =
+            JsonObject(
+                mapOf(
+                    "conversation" to JsonPrimitive(channel),
+                    "turn" to JsonPrimitive(turn),
+                    "session" to JsonPrimitive(session),
+                    "agent" to JsonPrimitive(agent.name.lowercase()),
+                ),
+            )
+        connection.outputStream.use { it.write(body.toString().toByteArray()) }
+        check(connection.responseCode == 200) { "agent_switch_turn_provenance_unavailable" }
+        val response = connection.inputStream.bufferedReader().use { it.readText() }
+        return MobileJson
+            .parseToJsonElement(response)
+            .jsonObject["matches"]
+            ?.jsonPrimitive
+            ?.booleanOrNull == true
+    } finally {
+        connection.disconnect()
+    }
+}

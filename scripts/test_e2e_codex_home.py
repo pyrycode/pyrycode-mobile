@@ -127,7 +127,7 @@ class CodexHomeLeaseTest(unittest.TestCase):
             self.assertTrue(ready.exists())
             process.send_signal(signal.SIGTERM)
             stdout, stderr = process.communicate(timeout=10)
-            self.assertEqual(0, process.returncode, stderr)
+            self.assertNotEqual(0, process.returncode, stderr)
             self.assertTrue(cleanup.exists())
             self.assertFalse(self.link.is_symlink())
             self.assertNotIn('fixture-secret', stdout + stderr)
@@ -212,6 +212,75 @@ class CodexHomeLeaseTest(unittest.TestCase):
                     process.terminate()
                 process.communicate(timeout=25)
 
+
+    def test_descriptor_closing_agent_is_fenced_even_after_witness_eof(self):
+        self.assert_owned_teardown(cancel=False)
+
+    def test_cancellation_bounds_unresponsive_shell_and_foreground_agent(self):
+        self.assert_owned_teardown(cancel=True)
+
+    def assert_owned_teardown(self, cancel):
+        helper = str(Path(__file__).with_name('e2e-codex-home.py'))
+        ready = self.root / 'agent-ready'
+        terminating = self.root / 'agent-terminating'
+        release = self.root / 'agent-release'
+        agent = self.root / 'agent.py'
+        agent.write_text("import os, signal, time\nfrom pathlib import Path\n"
+                         "for key in ('E2E_CODEX_LEASE_FD', 'E2E_CODEX_LIFETIME_FD'):\n os.close(int(os.environ[key]))\n"
+                         "def stop(*_):\n Path(os.environ['TERMINATING']).touch()\n"
+                         "signal.signal(signal.SIGTERM, stop)\nPath(os.environ['READY']).write_text(str(os.getpid()))\n"
+                         "while not Path(os.environ['RELEASE']).exists(): time.sleep(0.02)\n")
+        shell = self.root / 'shell.py'
+        shell.write_text("import os, signal, subprocess, sys, time\nfrom pathlib import Path\n"
+                         "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                         "subprocess.Popen([sys.executable, os.environ['AGENT']], close_fds=False)\n"
+                         "while not Path(os.environ['READY']).exists(): time.sleep(0.02)\n"
+                         + ("while True: time.sleep(0.02)\n" if cancel else "sys.exit(7)\n"))
+        env = dict(self.env, READY=str(ready), TERMINATING=str(terminating), RELEASE=str(release), AGENT=str(agent))
+        process = subprocess.Popen([sys.executable, helper, sys.executable, str(shell)], env=env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        pid = None
+        try:
+            deadline = time.monotonic() + 8
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(ready.exists())
+            pid = int(ready.read_text())
+            if cancel:
+                process.terminate()
+            deadline = time.monotonic() + 4
+            while not terminating.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(terminating.exists(), 'actual agent must be terminated even after pipe EOF')
+            self.assertIsNone(process.poll())
+            self.assertTrue(self.link.is_symlink())
+            with self.lease(dict(self.env, PYRY_NAME='e2e-contender')) as contender:
+                self.assertEqual('home_busy', contender.reason)
+            release.touch()
+            stdout, stderr = process.communicate(timeout=20)
+            self.assertNotEqual(0, process.returncode)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
+            self.assertFalse(self.link.is_symlink())
+            self.assertEqual('fixture-secret-do-not-copy', self.login.read_text())
+            self.assertNotIn('fixture-secret', stdout + stderr)
+            with self.lease() as retry:
+                self.assertEqual('', retry.reason)
+        finally:
+            release.touch()
+            if ready.exists():
+                try:
+                    os.killpg(os.getpgid(int(ready.read_text())), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=5)
+            if pid is not None:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
     def test_wrapper_spawn_failure_releases_home(self):
         original = self.module.subprocess.Popen
