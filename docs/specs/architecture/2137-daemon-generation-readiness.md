@@ -1,0 +1,87 @@
+# #2137 — Generation-scoped e2e daemon readiness
+
+## Files read
+
+- `scripts/e2e-daemon-fault.py`: `start`, `await_relay_ready`, `stop`, and `Handler.do_POST` currently verify registration only on a new child.
+- `scripts/test_e2e_daemon_fault.py`: `DaemonFaultTest` provides the owned-process HTTP fixture; extend it with generation lifecycle probes.
+- `app/src/androidTest/java/de/pyryco/mobile/e2e/DaemonFaultControl.kt`: `request` discards HTTP phase evidence; its socket timeout coincides with the registration timeout.
+- `InteractiveStreamE2ETest.kt`: `interactiveTurn_offlineRetry_reconnectsSameHostAndReplies` preserves the outage, null repository, visible pill, deadline, identity and new reply checks.
+- `DeterministicInteractiveStreamE2ETest.kt`: `interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply` is the deterministic recovery proof.
+- `scripts/e2e-emulator.sh`: `cleanup` deletes successful daemon/controller captures; retain an allowlisted private capture before disposal when explicitly configured.
+- `docs/knowledge/features/relay-reconnect-supervisor.md`: actual capped-backoff observation and the producer-anchored deadline must remain intact.
+- `docs/knowledge/features/development-verification-emulator-evidence.md`: raw XML/logcat and correlated daemon evidence need durable private storage and a verified manifest.
+- `docs/e2e-interactive-stream.md`: “Offline Retry proof” owns the unchanged timing contract and rung vocabulary.
+- Sibling `pyrycode/docs/protocol-mobile.md`: “Security model” owns the relay/Noise threat contract; this repair changes no frames.
+
+## Context
+
+The concrete controller bug is independently reproducible: a readiness timeout leaves a living child, and the next start succeeds without registration. Initial startup also leaves an unverified living child. Historical branch recovery timeouts and the base start failure identify different boundaries; they do not establish a common cause. The original dispatcher reports and newest raw captures are unavailable on this Mac. Fresh comparisons must keep that uncertainty explicit. No decision record is needed.
+
+One deliverable, five acceptance criteria, approximately 750 written lines, no exported production types and no production API migration. Overlaps: #2052 adds process-descriptor ownership/termination and provenance controls; #2091 (PR #2107) adds scenario setup and phase/restoration diagnostics. These are compatible local changes. Preserve them when main integrates them; do not duplicate #2107's scenario diagnostics.
+
+## Design
+
+Keep the single owned `Popen` in the controller. Record a monotonically increasing generation and its log byte offset before each spawn. Readiness belongs to that living generation only. Every start checks registration, including the initially living child and a child retained after a timeout. A registered living child remains idempotent. No-token mode succeeds on process liveness alone. Stop and observed exit invalidate readiness. The timeout remains 15 seconds by default; a bounded explicit timeout option lets portable regressions execute quickly.
+
+Scan the current generation's log from its boundary incrementally in bounded chunks, preserving token overlap across chunks. Never print log contents. HTTP outcomes expose only fixed action/status, generation, readiness/phase and elapsed milliseconds. Controller transition records use the same static vocabulary. Client diagnostics read bounded HTTP/JSON evidence, allowlist phase fields, log no response/error text, and rethrow original transport exceptions without replacement. HTTP failures carry the safe controller evidence.
+
+An opt-in private evidence destination in the existing emulator harness retains only daemon/controller/relay logs and static input revision/binary hashes before cleanup, with owner-only permissions. Pairing files, homes and transcripts are excluded. Unit tests exercise retention without a daemon or credential. XML and phone logcat are copied from fresh gate artifacts into the persistent agents evidence directory with a verified SHA-256 manifest. Reviewed counted summaries may be committed under test resources; raw captures stay private.
+
+## State and concurrency model
+
+`HTTPServer` serializes all requests and owns one child. No threads, coroutines, locks or app flows are added. Startup spawns once and publishes the control port without claiming readiness. Stop terminates and joins only its owned process. A readiness timeout retains that process for later verification rather than spawning a second child. Client socket work keeps its existing instrumentation ownership and timeout; no scenario recovery deadline is restarted or extended.
+
+## State transitions and identity reuse
+
+| Event | Required coverage |
+| --- | --- |
+| Initial living child has no token | `test_initial_unready_child_cannot_succeed` |
+| Stop, restart times out, repeated start | `test_timeout_then_start_remains_unready_without_duplicate_child` |
+| Token arrives after timeout in same generation | `test_late_readiness_qualifies_only_the_same_living_generation` |
+| Registered child receives repeated starts | `test_ready_start_is_idempotent` |
+| Registered generation stops and successor has no token | `test_stopped_generation_token_cannot_qualify_successor` |
+| Registered generation exits and is replaced | `test_exited_generation_token_cannot_qualify_successor` |
+| Child exits before readiness | `test_early_exit_reports_exit` |
+| No-token mode and unrelated living process | `test_no_token_mode_preserves_owned_process_only` |
+| Registration token spans a scan boundary | `test_registration_token_across_chunks` |
+| Controller HTTP failure vs client I/O exception | Client evidence tests and existing restoration diagnostics when #2107 lands |
+| Retry window is observed late or expires | Existing `OfflineRetryWindowTest` and passive-redial `RelayConnectionSupervisorTest` coverage |
+| Real outage, restore, exact-host Retry and new reply | Focused scripted `offline-retry`; historical focused live comparisons; dispatcher final full-live gate |
+
+## Error handling
+
+Use fixed registration-timeout, child-exited, stop-timeout and control-failure codes. Failed transitions return HTTP 503 with safe generation/phase evidence. Unknown controls stay 404. Arbitrary request paths, exception messages and daemon log bytes never enter diagnostics. Original client exceptions remain the same throwable, so #2107's restoration helper can retain its primary and suppressed failure evidence.
+
+## Testing strategy
+
+Write portable synthetic-process probes first and observe the existing false success. Run `python3 -m unittest discover -s scripts -p test_e2e_daemon_fault.py` and focused evidence/parser tests. Device-only source is necessary because the client controls a real host-loopback daemon over a device socket; pure parsing coverage belongs in JVM tests/shared source where practical.
+
+Run the existing deadline/passive-recovery unit coverage, lint, debug assembly, Android-test compilation, Spotless apply and forced check. Run the focused scripted `offline-retry` through the normal gate and inspect actual XML counts. Historical branch/base comparisons use separate temporary checkouts, pinned test-only daemon source/binary, builder-only gate authentication and the named live method; retain phase diagnostics before disposal. A changed daemon revision or passing rerun does not prove the historical cause. If an evidenced required repair belongs elsewhere, link its owner issue rather than broadening this ticket.
+
+Push the coherent candidate before final verification. Merge current main, preserve #2107 if it has landed, then run `assembleDebug` and `scripts/pre-verify.py --gradle` with the concrete PR body. Dispatcher owns full `scripted-all` and final full-live acceptance, including the exact named method and suite counts; pending dispatcher execution is explicit handoff.
+
+## Open Questions
+
+- Does the controller defect explain either historical failure? Resolve only from fresh correlated artifacts, keeping historical uncertainty when evidence cannot establish causation.
+- Will #2107 land during this run? Integrate through main if available and preserve its scenario diagnostics/restoration behavior.
+
+## Documentation handoff
+
+Pending documentation stage: update `docs/e2e-interactive-stream.md`, “Offline Retry proof” and “Verification status”, with generation-scoped registration readiness, established cause and historical limits, durable evidence locations, final scripted/full-live revisions and counts. Preserve the producer-anchored deadline contract. Documentation consumes builder/dispatcher evidence.
+
+## Security review
+
+**Verdict:** PASS
+
+- [Trust boundaries] The test-only controller accepts fixed controls; `Handler.do_POST` exposes only allowlisted generation/readiness evidence. Client parsing bounds response bytes and accepts fixed fields/phases. Daemon text is scanned as bytes solely for the configured token and is never echoed.
+- [Tokens and credentials] No new credentials, storage or authentication lookup. Never copy homes, pairing output, tokens or login files into evidence. Existing builder-only live launcher owns authentication.
+- [Files and storage] SHOULD FIX: successful cleanup currently loses raw evidence. The explicit evidence destination must use private directories/files, a narrow file allowlist and verified hashes; raw evidence remains outside Git.
+- [Android attack surface] Only test APK code changes; exported components, intents, providers and production network endpoints do not change.
+- [Cryptography] Reuse existing Noise IK and Keystore behavior; no key, nonce, token comparison or wire change.
+- [Network and I/O] Bound log-scan memory and response parsing. Registration waits remain bounded; retain the original producer deadline. HTTP control remains the existing test-only loopback endpoint.
+- [Errors/logs] MUST FIX addressed in design: never include arbitrary HTTP/error/daemon text in published diagnostics. Record only static action, numeric HTTP status/generation/timing and fixed phases; preserve original exception privately.
+- [Concurrency] Serialized HTTP ownership prevents duplicate live children. Readiness invalidates on stop/exit and offsets prevent stale-generation reuse. Tests drive repeat/exit/restart paths.
+- [Threat model] A malicious relay may deny/delay registration; this fails boundedly without weakening Noise or Retry assertions. Rooted-device token theft, hostile application frames and UI-side leakage retain existing protocol mitigations; this test-harness change adds no production surface.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-10-13
