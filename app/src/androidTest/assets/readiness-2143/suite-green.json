@@ -1,0 +1,43 @@
+{
+  "revision": "cfa988b2fd4c9f4b082d723ff33ddce25595bd07",
+  "uncommitted_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "command": "UI_GATE_FULL=1 UI_DEVICE_ALL=1 timeout 2400 python3 scripts/android-test-gate.py ui",
+  "exit_code": 0,
+  "raw_evidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2143/suite-green",
+  "counts": {
+    "recorded": 1611,
+    "executed": 1609,
+    "passed": 1609,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 2
+  },
+  "methods": {
+    "slowRestore_negativeControlRejectsTheSameFirstDrawBound": "passed",
+    "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen": "passed",
+    "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen": "passed",
+    "heldCpuPipeCancelsAndClosesItsDescriptor": "passed"
+  },
+  "sources": {
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b76344d827dd69b4356d27e1620e21c120668af0cc8fa8d36e05a5c1c2a9b33b",
+    "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "df15f0d6c7f3114adab4e239a8a94c952c7c1d226333d01c24d06db7079d303f",
+    "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "07b697f780bf83202a39e31b5730f4429d86c64764012575738bde2629a36295"
+  },
+  "configuration": {
+    "device": "pixel2Api33Atd",
+    "api": 33,
+    "shards": 2,
+    "selection": "all non-e2e device and shared tests",
+    "animations_disabled": true,
+    "forced_execution": true
+  },
+  "readiness_observation": {
+    "samples": 86,
+    "max_acquire_ms": 11,
+    "max_read_ms": 33,
+    "windows": 69,
+    "busy_windows": 1,
+    "minimum_idle_pct": 77,
+    "held_sampling_observed": false
+  }
+}

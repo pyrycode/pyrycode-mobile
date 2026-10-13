@@ -1,0 +1,34 @@
+{
+  "revision": "cfa988b2fd4c9f4b082d723ff33ddce25595bd07",
+  "uncommitted_diff_sha256": "10467c6242289c63c2d059088e2c7de420a6984027d127527ab1f45d94d9ece3",
+  "command": "timeout 900 ./gradlew :app:testDebugUnitTest --rerun --tests de.pyryco.mobile.e2e.EmulatorCpuReadinessTest --console=plain",
+  "exit_code": 0,
+  "raw_evidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2143/unit-resume",
+  "counts": {
+    "recorded": 12,
+    "executed": 12,
+    "passed": 12,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "methods": {
+    "heldReadClosesItsSourceAtTheReadinessDeadline": "passed",
+    "heldAcquisitionCannotHoldTheReadinessDeadline": "passed",
+    "malformedReadFailsAndClosesTheSource": "passed",
+    "shortOrMalformedCountersRejectReadiness": "passed",
+    "cancellationDuringAcquisitionClosesTheLateSourceWithoutReadingIt": "passed",
+    "cpuTicksExcludeGuestTimesAlreadyCountedInUserTimes": "passed",
+    "partialNonblockingReadsUseOnlyTheBoundedCpuLine": "passed",
+    "continuouslyBusyDeviceFailsInsteadOfChangingTheDrawBound": "passed",
+    "busyWindowRestartsTheFourConsecutiveIdleWindows": "passed",
+    "eofAndOverlongCpuLinesRejectReadiness": "passed",
+    "cancellationDuringReadClosesTheSource": "passed",
+    "readyWindowsCloseEverySource": "passed"
+  },
+  "sources": {
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b76344d827dd69b4356d27e1620e21c120668af0cc8fa8d36e05a5c1c2a9b33b",
+    "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "df15f0d6c7f3114adab4e239a8a94c952c7c1d226333d01c24d06db7079d303f",
+    "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "07b697f780bf83202a39e31b5730f4429d86c64764012575738bde2629a36295"
+  }
+}
