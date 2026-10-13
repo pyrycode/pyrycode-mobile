@@ -1,5 +1,6 @@
 package de.pyryco.mobile.e2e
 
+import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import kotlinx.coroutines.CoroutineStart
@@ -69,13 +70,23 @@ internal class DaemonFaultControl {
         action: String,
         body: String = "",
     ) {
-        Socket().use { socket ->
-            socket.connect(InetSocketAddress("10.0.2.2", port), 5_000)
-            socket.soTimeout = if (action == "posts" || action == "test-end") 120_000 else 15_000
-            val bytes = body.toByteArray()
-            socket.getOutputStream().write("POST /$action HTTP/1.0\r\nContent-Length: ${bytes.size}\r\n\r\n".toByteArray() + bytes)
-            val status = socket.getInputStream().bufferedReader().readLine()
-            check(status?.startsWith("HTTP/1.0 200") == true) { "owned test daemon control failed" }
+        checkedDaemonFaultRequest(action, { Log.i("DaemonFaultControl", "event=daemon_fault_request $it") }) {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress("10.0.2.2", port), 5_000)
+                socket.soTimeout = if (action == "posts" || action == "test-end") 120_000 else 15_000
+                val bytes = body.toByteArray()
+                socket.getOutputStream().write("POST /$action HTTP/1.0\r\nContent-Length: ${bytes.size}\r\n\r\n".toByteArray() + bytes)
+                val response = StringBuilder()
+                val reader = socket.getInputStream().bufferedReader()
+                val buffer = CharArray(512)
+                while (true) {
+                    val count = reader.read(buffer)
+                    if (count < 0) break
+                    check(response.length + count <= 4096) { "owned test daemon control response exceeded limit" }
+                    response.append(buffer, 0, count)
+                }
+                response.toString()
+            }
         }
     }
 }

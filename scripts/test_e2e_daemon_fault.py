@@ -9,6 +9,8 @@ import tempfile
 import time
 import unittest
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+from contextlib import contextmanager
 
 
 ROOT = Path(__file__).resolve().parent
@@ -146,6 +148,159 @@ class DaemonFaultTest(unittest.TestCase):
                 controller.terminate()
                 controller.wait(timeout=5)
                 controller.stderr.close()
+
+
+class GenerationReadinessTest(unittest.TestCase):
+    @contextmanager
+    def controller(self, script, token="relay: conn established"):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            with (path / "controller.log").open("wb") as output:
+                process = subprocess.Popen([
+                    sys.executable, str(ROOT / "e2e-daemon-fault.py"),
+                    "--port-file", str(path / "port"), "--log", str(path / "child.log"),
+                    "--control-socket", str(path / "control.sock"), "--ready-token", token,
+                    "--ready-timeout", "0.25",
+                    "--", sys.executable, "-c", script,
+                ], env={**os.environ, "GENERATION_FIXTURE": str(path)}, stdout=output, stderr=output)
+                try:
+                    deadline = time.monotonic() + 5
+                    while not (path / "port").exists() and process.poll() is None and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    self.assertTrue((path / "port").exists(), "controller did not publish its port")
+                    port = int((path / "port").read_text())
+
+                    def request(action):
+                        try:
+                            response = urlopen(Request(f"http://127.0.0.1:{port}/{action}", data=b""), timeout=17)
+                        except HTTPError as error:
+                            response = error
+                        with response:
+                            body = response.read()
+                            try:
+                                payload = json.loads(body)
+                            except ValueError:
+                                payload = {}
+                            return response.status, payload
+
+                    yield request, path
+                finally:
+                    process.terminate()
+                    process.wait(timeout=12)
+
+    def test_initial_unready_child_cannot_succeed(self):
+        with self.controller("import time; time.sleep(120)") as (request, _):
+            before = request("status")[1]
+            self.assertTrue(before["running"])
+            status, _ = request("start")
+            self.assertEqual(503, status, "a living child is not relay readiness")
+            self.assertEqual(before["pid"], request("status")[1]["pid"])
+
+    def test_timeout_then_start_remains_unready_without_duplicate_child(self):
+        with self.controller("import time; time.sleep(120)") as (request, _):
+            request("stop")
+            self.assertEqual(503, request("start")[0])
+            first = request("status")[1]
+            status, second = request("start")
+            self.assertEqual(503, status)
+            self.assertEqual(first["pid"], second["pid"])
+            self.assertEqual(first["generation"], second["generation"])
+            self.assertEqual("registration_timeout", second["phase"])
+            self.assertFalse(second["ready"])
+
+    def test_late_readiness_qualifies_only_the_same_living_generation(self):
+        script = """import os,time
+from pathlib import Path
+release = Path(os.environ['GENERATION_FIXTURE']) / 'release'
+while not release.exists(): time.sleep(0.01)
+print('relay: conn established', flush=True)
+time.sleep(120)
+"""
+        with self.controller(script) as (request, path):
+            self.assertEqual(503, request("start")[0])
+            first = request("status")[1]
+            (path / "release").touch()
+            status, ready = request("start")
+            self.assertEqual(200, status)
+            self.assertTrue(ready["ready"])
+            self.assertEqual(first["pid"], ready["pid"])
+            self.assertEqual(first["generation"], ready["generation"])
+
+    def test_ready_start_is_idempotent(self):
+        with self.controller("import time; print('relay: conn established', flush=True); time.sleep(120)") as (request, _):
+            status, first = request("start")
+            self.assertEqual(200, status)
+            for _ in range(2):
+                status, repeated = request("start")
+                self.assertEqual(200, status)
+                self.assertEqual(first["pid"], repeated["pid"])
+                self.assertEqual(first["generation"], repeated["generation"])
+                self.assertTrue(repeated["ready"])
+
+    def first_generation_ready_script(self, exit_after_ready=False):
+        return """import os,time
+from pathlib import Path
+path = Path(os.environ['GENERATION_FIXTURE'])
+first = not (path / 'spawned').exists()
+(path / 'spawned').touch()
+if first: print('relay: conn established', flush=True)
+if first and EXIT_AFTER_READY:
+    while not (path / 'exit').exists(): time.sleep(0.01)
+else: time.sleep(120)
+""".replace("EXIT_AFTER_READY", repr(exit_after_ready))
+
+    def test_stopped_generation_token_cannot_qualify_successor(self):
+        with self.controller(self.first_generation_ready_script()) as (request, _):
+            status, first = request("start")
+            self.assertEqual(200, status)
+            stopped = request("stop")[1]
+            self.assertFalse(stopped["ready"])
+            status, next_child = request("start")
+            self.assertEqual(503, status)
+            self.assertGreater(next_child["generation"], first["generation"])
+            self.assertFalse(next_child["ready"])
+
+    def test_exited_generation_token_cannot_qualify_successor(self):
+        with self.controller(self.first_generation_ready_script(True)) as (request, path):
+            self.assertEqual(200, request("start")[0])
+            (path / "exit").touch()
+            deadline = time.monotonic() + 3
+            while request("status")[1]["running"] and time.monotonic() < deadline:
+                time.sleep(0.02)
+            exited = request("status")[1]
+            self.assertFalse(exited["running"])
+            self.assertFalse(exited["ready"])
+            self.assertEqual("exited", exited["phase"])
+            self.assertEqual(503, request("start")[0])
+
+    def test_early_exit_reports_exit(self):
+        with self.controller("import time; time.sleep(0.05)") as (request, _):
+            status, payload = request("start")
+            self.assertEqual(503, status)
+            self.assertEqual("exited", payload["phase"])
+            self.assertFalse(payload["running"])
+            self.assertFalse(payload["ready"])
+
+    def test_no_token_mode_preserves_owned_process_only(self):
+        unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        try:
+            with self.controller("import time; time.sleep(120)", token="") as (request, _):
+                status, first = request("start")
+                self.assertEqual(200, status)
+                self.assertEqual("disabled", first["phase"])
+                self.assertEqual(first["pid"], request("start")[1]["pid"])
+                request("stop")
+                self.assertIsNone(unrelated.poll())
+                self.assertEqual(200, request("start")[0])
+        finally:
+            unrelated.terminate()
+            unrelated.wait(timeout=5)
+
+    def test_registration_token_across_chunks(self):
+        script = "import time; print('x' * 4090 + 'relay: conn established', flush=True); time.sleep(120)"
+        with self.controller(script) as (request, _):
+            self.assertEqual(200, request("start")[0])
+            self.assertTrue(request("status")[1]["ready"])
 
 
 import importlib.util
