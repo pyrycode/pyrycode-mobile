@@ -42,3 +42,21 @@ The dispatcher full live gate starting at 2026-10-13T10:20:14.762Z passed: **65 
 `dispatcher-full-live.xml` preserves the exact counted XML from retained stdout; it is not original instrumentation XML. `dispatcher-full-live.txt` records counts, revisions and artifact limits. Exact stdout/stderr/metadata, extracted XML, provenance and verified hashes now survive privately at `$AGENTS_REPO_PATH/logs/evidence/2138/dispatcher-full-live-20261013T102014Z/`, with owner-only directories/files. `private-artifact-sha256.txt` includes their hashes. Original per-test XML, correlated phone logcat and matching harness daemon logs were not retained before the gate worktree was removed; no hashes or stage outcomes are invented for them. No code consumes this resource directory, so no matching reader/schema changes are needed.
 
 This full run is the returned evidence checkpoint, not final acceptance of the artifact commit. Review and the dispatcher live gate run again after publication; `needs-real-claude` remains. Documentation consumes these exact outcomes and gaps.
+
+
+## Cancellation-boundary rework
+
+The verifier's FAIL at `02bd70b05` identified caller-owned timeouts converted into assertions, wrapped coroutine/Compose timeouts classified as ordinary failures, and duplicated readiness implementations. The boundary now captures its caller coroutine context and checks cancellation before failure classification. Direct cancellation keeps the caught exception; cancellation hidden by an operation wrapper propagates from the cancelled caller. Operation-owned deadlines leave the caller active, retain the exact caught exception/wrapper as cause, and receive a fixed timeout stage. The identity-based cause walk terminates on cyclic chains and never emits exception messages. Both readiness entry points share `awaitHostConnection`; Send now preserves its missing-host message.
+
+| Rework capture | Tests | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `rework-diagnostics-red.xml` | 16 | 8 | 8 | 0 | 0 |
+| `rework-diagnostics-green.xml` | 16 | 16 | 0 | 0 | 0 |
+| `rework-readiness-green.xml` | 31 | 31 | 0 | 0 | 0 |
+| `rework-focused-live.xml` | 2 | 2 | 0 | 0 | 0 |
+
+Baseline diagnostic source was `02bd70b05`. The initial probes precede a stack-trace-aware assertion adjustment: exact caller exception identity is checked immediately across the diagnostic boundary, before the enclosing `withTimeout` can recover a stack trace. This preserves the cancellation contract; the old boundary still produces an assertion. All eight failing paths are covered by green checks. Original private red/green XML, counts and candidate source hashes survive under `$AGENTS_REPO_PATH/logs/evidence/2138/rework-20261013T1325Z/`, with owner-only permissions and verified manifests.
+
+The standard focused managed live run at mobile `177e342cfe1ab90de646d30196f33620aabd35f2` and daemon `eb3c757cac48a65f536bdc0dfdc92f0adbd82c3f` passed upload once and Send now once. All 19 upload stages started/passed once in correlated phone logcat. Original method XML, counted XML, both phone logs, emulator log, provenance and verified hashes survive under `$AGENTS_REPO_PATH/logs/evidence/2138/rework-focused-live-20261013T1332Z/`. Matching daemon logs had been removed by successful standard harness cleanup when an ordinary copy was attempted; the empty snapshot record reports that gap. No durable complete process stdout/stderr was captured. `rework-focused-live.txt` records the counts and limitations.
+
+The existing controlled legacy readiness failures, historical post-cut reconnect phase and attribution limits remain valid; all 22 earlier committed private-artifact hashes were reverified. This focused pass exercises the preserved interrupted-chunk, retained composer/attachment, zero pre-retry messages, exactly one final message/attachment, real-turn completion and digest proof. It does not establish the historical underlying cause or replace renewed post-verifier full dispatcher live acceptance. Return fresh exact `dispatcher-full-live.xml` and `.txt`, extend the private hash manifest and this summary after that gate. Preserve available original XML, phone/daemon evidence and revision provenance privately before cleanup, with explicit gaps. Documentation remains pending.
