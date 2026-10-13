@@ -66,7 +66,11 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodyLarge.copy(lineHeightStyle = FrameLineBox),
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Switch(checked = pushNotifications, onCheckedChange = onTogglePushNotifications)
+            Switch(
+                checked = pushNotifications,
+                onCheckedChange = onTogglePushNotifications,
+                modifier = Modifier.semantics { contentDescription = "Push notifications when claude responds" },
+            )
         }
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),

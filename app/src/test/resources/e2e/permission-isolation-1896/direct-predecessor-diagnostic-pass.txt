@@ -1,0 +1,56 @@
+Builder diagnostic with original direct predecessor; no repair or historical-cause attribution claimed.
+Artifact directory: build/dispatcher-tests/live-e1k3zm8g
+2 executed, 2 passed, 0 failed, 0 skipped; exit 0.
+
+10-10 04:10:07.240  2932  3003 I PermissionIsolation: event=step_start stage=PairPhone
+10-10 04:10:08.641  2932  3003 I PermissionIsolation: event=step_complete stage=PairPhone
+10-10 04:10:08.641  2932  3003 I PermissionIsolation: event=step_start stage=CreateA
+10-10 04:10:08.716  2932  3003 I PermissionIsolation: event=step_complete stage=CreateA
+10-10 04:10:08.716  2932  3003 I PermissionIsolation: event=step_start stage=CreateB
+10-10 04:10:08.792  2932  3003 I PermissionIsolation: event=step_complete stage=CreateB
+10-10 04:10:08.792  2932  3003 I PermissionIsolation: event=step_start stage=OpenPeer
+10-10 04:10:08.905  2932  3003 I PermissionIsolation: event=step_complete stage=OpenPeer
+10-10 04:10:08.905  2932  3003 I PermissionIsolation: event=step_start stage=OpenA
+10-10 04:10:09.170  2932  3003 I PermissionIsolation: event=step_complete stage=OpenA
+10-10 04:10:09.170  2932  3003 I PermissionIsolation: event=step_start stage=SendA
+10-10 04:10:09.407  2932  3003 I PermissionIsolation: event=step_complete stage=SendA
+10-10 04:10:09.408  2932  3003 I PermissionIsolation: event=step_start stage=AwaitA
+10-10 04:10:12.990  2932  3003 I PermissionIsolation: event=step_complete stage=AwaitA
+10-10 04:10:12.990  2932  3003 I PermissionIsolation: event=step_start stage=DrawA
+10-10 04:10:13.237  2932  3003 I PermissionIsolation: event=step_complete stage=DrawA
+10-10 04:10:13.237  2932  3003 I PermissionIsolation: event=step_start stage=LeaveA
+10-10 04:10:13.337  2932  3003 I PermissionIsolation: event=step_complete stage=LeaveA
+10-10 04:10:13.337  2932  3003 I PermissionIsolation: event=step_start stage=OpenB
+10-10 04:10:13.554  2932  3003 I PermissionIsolation: event=step_complete stage=OpenB
+10-10 04:10:13.554  2932  3003 I PermissionIsolation: event=step_start stage=SendB
+10-10 04:10:13.806  2932  3003 I PermissionIsolation: event=step_complete stage=SendB
+10-10 04:10:13.806  2932  3003 I PermissionIsolation: event=step_start stage=AwaitB
+10-10 04:10:18.817  2932  3003 I PermissionIsolation: event=step_complete stage=AwaitB
+10-10 04:10:18.817  2932  3003 I PermissionIsolation: event=step_start stage=DrawB
+10-10 04:10:19.054  2932  3003 I PermissionIsolation: event=step_complete stage=DrawB
+10-10 04:10:19.054  2932  3003 I PermissionIsolation: event=step_start stage=LeaveB
+10-10 04:10:19.254  2932  3003 I PermissionIsolation: event=step_complete stage=LeaveB
+10-10 04:10:19.254  2932  3003 I PermissionIsolation: event=step_start stage=ReopenA
+10-10 04:10:19.437  2932  3003 I PermissionIsolation: event=step_complete stage=ReopenA
+10-10 04:10:19.437  2932  3003 I PermissionIsolation: event=step_start stage=RedrawA
+10-10 04:10:19.470  2932  3003 I PermissionIsolation: event=step_complete stage=RedrawA
+10-10 04:10:19.470  2932  3003 I PermissionIsolation: event=step_start stage=ArmA
+10-10 04:10:19.604  2932  3003 I PermissionIsolation: event=step_complete stage=ArmA
+10-10 04:10:19.604  2932  3003 I PermissionIsolation: event=step_start stage=ConfirmA
+10-10 04:10:19.639  2932  3003 I PermissionIsolation: event=step_complete stage=ConfirmA
+10-10 04:10:19.639  2932  3003 I PermissionIsolation: event=step_start stage=DismissA
+10-10 04:10:19.666  2932  3003 I PermissionIsolation: event=step_complete stage=DismissA
+10-10 04:10:19.666  2932  3003 I PermissionIsolation: event=step_start stage=RemoveA
+10-10 04:10:19.822  2932  3003 I PermissionIsolation: event=step_complete stage=RemoveA
+10-10 04:10:19.822  2932  3003 I PermissionIsolation: event=step_start stage=LeaveAnsweredA
+10-10 04:10:19.970  2932  3003 I PermissionIsolation: event=step_complete stage=LeaveAnsweredA
+10-10 04:10:19.970  2932  3003 I PermissionIsolation: event=step_start stage=ReopenB
+10-10 04:10:20.204  2932  3003 I PermissionIsolation: event=step_complete stage=ReopenB
+10-10 04:10:20.204  2932  3003 I PermissionIsolation: event=step_start stage=RedrawB
+10-10 04:10:20.237  2932  3003 I PermissionIsolation: event=step_complete stage=RedrawB
+10-10 04:10:20.237  2932  3003 I PermissionIsolation: event=step_start stage=AllowB
+10-10 04:10:20.268  2932  3003 I PermissionIsolation: event=step_complete stage=AllowB
+10-10 04:10:20.268  2932  3003 I PermissionIsolation: event=step_start stage=RemoveB
+10-10 04:10:20.387  2932  3003 I PermissionIsolation: event=step_complete stage=RemoveB
+10-10 04:10:20.387  2932  3003 I PermissionIsolation: event=step_start stage=EndB
+10-10 04:10:21.682  2932  3003 I PermissionIsolation: event=step_complete stage=EndB

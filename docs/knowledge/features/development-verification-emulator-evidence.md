@@ -426,12 +426,48 @@ A device gate run (`ui`, `scripted`, `scripted-all` or `live`) copies each fresh
 per-test `logcat-*.txt` into that run's `build/dispatcher-tests/<mode>-*` artifact
 directory next to the XML it already copies (`fresh_logcats` in
 `scripts/android-test-gate.py`, the sibling of `fresh_reports`) — the next run
-overwrites AGP's originals under `androidTest-results/`, so this is the only place
-they survive (#1039). To diagnose a relay connection drop, read those
+overwrites AGP's originals under `androidTest-results/`, so these copies preserve
+them between runs (#1039). They still disappear when the gate worktree is removed.
+To diagnose a relay connection drop, read those
 [`RelayLog`](relay-log.md) `event=transport_end` / `event=pump_teardown` lines
 alongside the daemon's `daemon.log` by timestamp; neither side logs the other's
 cause, so correlating by time is what tells a phone-side, relay-side or network
 ending apart.
+
+### Device-gate artifact retention
+
+A counted stdout report proves method outcomes, but cannot replace per-test phone
+logcat and matching daemon diagnostics. Before gate worktree and daemon cleanup,
+retain fresh XML, phone logs, correlated daemon evidence, tested revisions and a
+verified SHA-256 manifest privately on the persistent agents volume, under
+`$AGENTS_REPO_PATH/logs/evidence/1896/<run>/` for this investigation. Keep directories
+owner-only (0700) and files owner-only (0600). Publish separately reviewed
+summaries containing only allowlisted method outcomes, counts, fixed stage labels,
+safe stack evidence, revisions, hashes and artifact availability. Exclude keys,
+tokens, pairing codes, credential homes and raw prompt/frame/clipboard content.
+Preserving an original exception as cause does not make its nested message safe
+to publish unreviewed.
+
+For [permission isolation](permission-modal-overlay-testing.md#held-per-conversation-diagnostics-1896),
+the committed
+[`permission-isolation-1896/`](../../../app/src/test/resources/e2e/permission-isolation-1896/)
+keeps historical counted XML and the scheduler-only 30-second stack, builder
+selections of **1/1, 3/3 and 2/2 passes** (each 0 failed/skipped), and
+`dispatcher-full-live-pass.{xml,txt}` from the earlier 2026-10-12 full dispatcher
+run (**65 executed/passed, 0 failed/errors/skipped**). The private source copies
+and `SHA256SUMS` survive under
+`$AGENTS_REPO_PATH/logs/evidence/1896/2026-10-12T20-20-20-895Z/`.
+Its temporary `real-claude-gate-1896/build/dispatcher-tests/live-ki7gd6v9`
+and `/tmp/pyry-e2e-ans.Z7u8UW` directories are gone; their paths are provenance,
+not retrievable captures. Per-test XML/phone logcat and matching answer-daemon
+evidence are unavailable, and surviving stderr has no permission-stage lines.
+Do not reconstruct them from a pass or from aggregate stdout.
+
+The renewed [full live acceptance](../../e2e-interactive-stream.md#permission-isolation-diagnostics-1896)
+also passed **65 executed/passed, 0 failed, 0 skipped**, including the named method.
+Its durable counted report is distinct from the committed earlier run. Neither
+pass establishes the historical cause or an artifact-retention implementation
+repair; this checkpoint documents the retention requirement and known limits.
 
 ## Share failure presentation (#1824)
 

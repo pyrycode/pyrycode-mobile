@@ -380,6 +380,14 @@ delimiter positioned between the two cross-session messages, driven through the 
 
 ## What rung 3 is made of
 
+**Held permission isolation (#1337/#1896).**
+`InteractiveStreamE2ETest.interactiveTurn_permissionPrompts_heldPerConversation`
+keeps A and B outstanding, confirms A by physical phone taps and resolves B by
+peer answer. Fixed-stage diagnostics preserve original causes and deadlines;
+[testing details](knowledge/features/permission-modal-overlay-testing.md#held-per-conversation-diagnostics-1896)
+and [counted full-live evidence](#permission-isolation-diagnostics-1896) distinguish
+diagnostic coverage from historical repair attribution.
+
 **Suggested-reply confirmation (#1866).**
 `InteractiveStreamE2ETest.interactiveTurn_replySuggestion_longPressSends` sends
 ping in a fresh discussion, waits for its real reply and daemon suggestion, then
@@ -3634,6 +3642,33 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+### Permission-isolation diagnostics (#1896)
+
+The existing rung-3
+`InteractiveStreamE2ETest.interactiveTurn_permissionPrompts_heldPerConversation`
+now retains fixed setup/upstream/render/answer stages and exact original timeout
+causes, with unchanged deadlines, physical two-tap confirmation and A/B isolation.
+See [held-per-conversation testing](knowledge/features/permission-modal-overlay-testing.md#held-per-conversation-diagnostics-1896).
+No `DeterministicInteractiveStreamE2ETest` twin was added; deterministic wrapper
+and phone probes supplement this real-Claude scenario.
+
+The [renewed full dispatcher gate](https://github.com/pyrycode/pyrycode-mobile/issues/1896#issuecomment-6133945618)
+ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
+on 2026-10-12, testing `feature/1896` at `0c9e9a6f49f3` merged with
+`origin/main` at `427640d577b3`: **65 executed, 65 passed, 0 failed, 0 skipped**,
+exit 0 in 18m 29s. Fresh counted XML explicitly includes this method as passed.
+Report and diagnostics are
+`$AGENTS_REPO_PATH/logs/2026-10-12T22-18-19-388Z_real-claude-gate_#1896.{log,stderr.log}`;
+the report has no daemon-revision annotation. This is full-suite acceptance,
+separate from the earlier 65-pass evidence handoff and builder selections of
+1, 3 and 2 passes. The committed `dispatcher-full-live-pass.{xml,txt}` describes
+the earlier run, not this renewed acceptance. See
+[retention limits](knowledge/features/development-verification-emulator-evidence.md#device-gate-artifact-retention).
+
+This closes the diagnostic live handoff without attributing or repairing the
+historical intermittent failure. #2047 remains maintainer-closed under its
+[fresh-failure reopen condition](knowledge/features/permission-modal-overlay-testing.md#held-per-conversation-diagnostics-1896).
+
 ### Session cleanup and Firebase recovery, 2026-10-12
 
 The earlier HP full run reached the container's 2048 process/thread limit after
@@ -6325,6 +6360,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Permission-isolation diagnostics (#1896):** The existing rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_permissionPrompts_heldPerConversation`
+  passed in the [renewed full 65-test live suite](#permission-isolation-diagnostics-1896).
+  No scenario or `DeterministicInteractiveStreamE2ETest` twin was added.
+  #2047 is maintainer-closed; a new failure with retained stage, original cause,
+  phone/daemon captures and source provenance is required to reopen it.
+  Missing historical captures remain explicit. The pre-ship command stays
+  `python3 scripts/android-test-gate.py live`.
 
 - **Remembered effort acknowledgement/persistence (#2075):** The existing rung-3
   `InteractiveStreamE2ETest#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel`

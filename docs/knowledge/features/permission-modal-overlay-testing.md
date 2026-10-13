@@ -118,6 +118,39 @@ ladder](../../e2e-interactive-stream.md) for the curated list and how a method j
 > Prove *which* prompt was dismissed with `awaitModalDismissed(modalId)` instead, as
 > `interactiveTurn_permissionPrompts_heldPerConversation` does for A's id.
 
+## Held-per-conversation diagnostics (#1896)
+
+The existing rung-3 method remains enabled, with its original scroll/physical
+two-tap sequence and A/B identity assertions. Test-only `PermissionIsolationStage`
+labels distinguish setup, sends, upstream `modal_shown` arrival, phone rendering,
+arming/confirmation, answer dismissal and B's turn end. `permissionIsolationStep`
+wraps coroutine and Compose timeouts in an assertion whose cause is the exact
+original exception; it adds no retry and changes no deadline. Ordinary assertions
+and cancellation retain their original objects. Peer link state is read lazily
+only on timeout; progress logs use fixed labels, without permission text.
+
+`PermissionIsolationStepTest` checks every stage's label, exact cause identity,
+unchanged virtual deadline, safe outer message and lazy diagnostics.
+`PermissionIsolationPhoneProbeTest` keeps real pointer taps against short threads
+with short, medium and long inert permission text: semantic clicks would bypass
+chrome interception. These passing probes do not attribute the historical flake.
+The [verifier](https://github.com/pyrycode/pyrycode-mobile/pull/2030#issuecomment-6132854554)
+confirmed **71 executed/passed, 0 failed/errors/skipped** across diagnostics (3),
+phone probes (3), modal state (21) and modal rendering (44). The
+[fresh full dispatcher live gate](../../e2e-interactive-stream.md#permission-isolation-diagnostics-1896)
+separately passed the named method with **65 executed/passed, 0 failed, 0 skipped**.
+
+This checkpoint is diagnostics only. The historical scheduler-only 30000 ms
+timeout identifies neither of the 90000 ms upstream waits; passing repetitions
+do not establish a repair cause. The
+[maintainer closed #2047 as no longer reproducing](https://github.com/pyrycode/pyrycode-mobile/issues/2047#issuecomment-6131411309),
+superseding the earlier keep-open requirement without proving historical causation.
+Reopen/resume it only for a new failure retaining the named stage, original
+cause/deadline, counted XML, per-test phone logcat and matching daemon evidence,
+with tested revisions/provenance and safe published locations. See
+[device-gate artifact retention](development-verification-emulator-evidence.md#device-gate-artifact-retention)
+for private captures, sanitized summaries and unavailable temporary paths.
+
 ## Related
 
 - [Permission-modal overlay](permission-modal-overlay.md) — the render surface this page tests.

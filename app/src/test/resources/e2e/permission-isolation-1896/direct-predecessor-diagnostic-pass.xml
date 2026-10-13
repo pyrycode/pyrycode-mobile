@@ -1,0 +1,6 @@
+<testsuites>
+  <testsuite name="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" tests="2" failures="0" errors="0" skipped="0" time="28.812">
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_permissionPrompts_heldPerConversation" />
+  </testsuite>
+</testsuites>
