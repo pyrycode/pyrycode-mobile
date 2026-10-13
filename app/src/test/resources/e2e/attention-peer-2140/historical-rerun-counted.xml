@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" tests="3" failures="0" errors="0" skipped="0" time="36.265">
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_questionAnswer_reachesTheAskingConversation" />
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_attentionDot_followsARealTurn" />
+  </testsuite>
+</testsuites>

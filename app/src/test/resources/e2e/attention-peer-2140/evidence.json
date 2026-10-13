@@ -1,0 +1,150 @@
+{
+  "issue": 2140,
+  "blocker": "pyrycode/pyrycode-relay#194",
+  "method": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn",
+  "runs": [
+    {
+      "name": "historical-failure",
+      "mobile_revision": "0c9e9a6f49f3282cb1680d598c10af3bf02702c0",
+      "daemon_revision": "9c9cd5a25c337666bdbed47c29202e695a172733",
+      "source_report": "/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/2026-10-12T21-36-36-886Z_real-claude-gate_#1896.log",
+      "source_report_sha256": "727ee87234979b0b89c287058677a91c20ae4176ca2778b79497fe84b79e439d",
+      "suite": {
+        "executed": 65,
+        "passed": 62,
+        "failed": 3,
+        "errors": 0,
+        "skipped": 0
+      },
+      "attention_method": {
+        "executed": 1,
+        "passed": 0,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "historical-rerun",
+      "mobile_revision": "0c9e9a6f49f3282cb1680d598c10af3bf02702c0",
+      "daemon_revision": "9c9cd5a25c337666bdbed47c29202e695a172733",
+      "source_report": "/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/2026-10-12T21-36-36-886Z_real-claude-gate-rerun_#1896.log",
+      "source_report_sha256": "8e6f161e931ebe726ba5ab50563e7d735393b65a50a8810be6bc8b82f641fbeb",
+      "suite": {
+        "executed": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "attention_method": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "baseline-isolated",
+      "mobile_revision": "b107f97a743a508fb9182fdc165b3e084180e250",
+      "daemon_revision": "9c9cd5a25c337666bdbed47c29202e695a172733",
+      "source_report": "build/dispatcher-tests/live-4v9qsua5/dispatcher.xml",
+      "source_report_sha256": "40ed6b7c6bef183c885ab956a3649391c3720b18b68e69889400d93fd0cd45d3",
+      "suite": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "attention_method": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "baseline-predecessor",
+      "mobile_revision": "d46d27cd919ce0fa0429b3d3a6d40167004d4b87",
+      "daemon_revision": "9c9cd5a25c337666bdbed47c29202e695a172733",
+      "source_report": "build/dispatcher-tests/live-spjduh0p/dispatcher.xml",
+      "source_report_sha256": "2801798c8b90f6e4df5048dc7558aa370822d3ad1c407e79271de8e759c03b99",
+      "suite": {
+        "executed": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "attention_method": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "diagnostic-predecessors",
+      "mobile_revision": "6772a7af486c7f7a0eee3b6a4550e01ece4f7848",
+      "daemon_revision": "9c9cd5a25c337666bdbed47c29202e695a172733",
+      "source_report": "build/dispatcher-tests/live-zyohbsli/dispatcher.xml",
+      "source_report_sha256": "e6fc1b16cd51d5193e7f3a98f82820dcdded32779482a0e5cd6a7cd14ca89cbf",
+      "suite": {
+        "executed": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "attention_method": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    }
+  ],
+  "independent_observation": {
+    "method": "interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation",
+    "stage": "relay",
+    "http_status": 503,
+    "consecutive_refused_dials": 3,
+    "relay_event": "conn_cap_reached",
+    "relay_path": "/v1/client",
+    "relay_event_times_utc": [
+      "2026-10-13T11:10:27.968Z",
+      "2026-10-13T11:10:29.034Z",
+      "2026-10-13T11:10:31.093Z"
+    ],
+    "handshake_reached_on_refused_dials": false,
+    "attention_first_dial_settled": true
+  },
+  "deployed_relay": {
+    "reported_version": "v0.1.4",
+    "tag_default_max_connections": 20,
+    "active_machines": 1,
+    "memory_mb": 256,
+    "explicit_cap_override": false
+  },
+  "private_evidence_root": "/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/evidence/2140",
+  "unavailable": [
+    "Original per-test phone logs",
+    "First isolated baseline daemon capture",
+    "Historical per-run binary hashes"
+  ],
+  "historical_cause": "not established",
+  "causal_repair": "pending owning relay issue",
+  "full_dispatcher_live_acceptance": "pending after owning repair and verifier",
+  "focused_unit_counts": {
+    "executed": 22,
+    "passed": 22,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  }
+}
