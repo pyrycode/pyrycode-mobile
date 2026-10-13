@@ -63,7 +63,7 @@ class SettingsScreenTest {
             }
         }
 
-        val toggle = rule.onAllNodes(switch)[0]
+        val toggle = rule.onNode(hasContentDescription("Push notifications when claude responds") and isToggleable())
         toggle.assertIsOff().performClick().assertIsOn()
         rule.onNodeWithText("Notification sound").assertHasNoClickAction()
         rule.runOnIdle { assertEquals(1, toggles) }
