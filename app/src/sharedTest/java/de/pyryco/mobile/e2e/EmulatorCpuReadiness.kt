@@ -1,7 +1,58 @@
 package de.pyryco.mobile.e2e
 
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
+import java.io.Closeable
+import kotlin.coroutines.resumeWithException
+
+internal suspend fun <T : Closeable> withEmulatorCpuSample(
+    acquire: () -> T,
+    read: suspend (T) -> Pair<Long, Long>,
+    dispatcher: CoroutineDispatcher = Dispatchers.IO,
+): Pair<Long, Long> {
+    // Binder acquisition may ignore interruption. Bound the caller without joining that worker;
+    // cancellation owns any descriptor returned later through resume's resource cleanup.
+    val worker = CoroutineScope(Job() + dispatcher)
+    val source =
+        suspendCancellableCoroutine<T> { continuation ->
+            continuation.invokeOnCancellation { worker.cancel() }
+            worker.launch {
+                try {
+                    continuation.resume(acquire()) { _, resource, _ -> resource.close() }
+                } catch (error: Exception) {
+                    continuation.resumeWithException(error)
+                } finally {
+                    worker.cancel()
+                }
+            }
+        }
+    return source.use { read(it) }
+}
+
+/** A nonblocking reader returns zero while held, and -1 at EOF. Only the first CPU line is used. */
+internal suspend fun readEmulatorCpuTicks(readAvailable: (ByteArray, Int, Int) -> Int): Pair<Long, Long> {
+    val bytes = ByteArray(4096)
+    var size = 0
+    while (true) {
+        val count = readAvailable(bytes, size, bytes.size - size)
+        require(count >= 0) { "device CPU counters unavailable" }
+        if (count == 0) {
+            delay(10)
+            continue
+        }
+        val end = (size until size + count).firstOrNull { bytes[it] == '\n'.code.toByte() }
+        size += count
+        if (end != null) return parseEmulatorCpuTicks(bytes.decodeToString(0, end))
+        require(size < bytes.size) { "device CPU counters exceed bound" }
+    }
+}
 
 internal fun parseEmulatorCpuTicks(line: String): Pair<Long, Long> {
     val fields = line.trim().split(Regex("\\s+"))
@@ -11,7 +62,7 @@ internal fun parseEmulatorCpuTicks(line: String): Pair<Long, Long> {
 }
 
 internal suspend fun awaitEmulatorCpuIdle(
-    sample: () -> Pair<Long, Long>,
+    sample: suspend () -> Pair<Long, Long>,
     onWindow: (Long) -> Unit = {},
 ) {
     withTimeout(30000) {

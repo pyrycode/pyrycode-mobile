@@ -61,3 +61,9 @@ Run focused unit tests, lint, assembly, Android-test compilation, formatting, an
 ## Documentation handoff
 
 Pending documentation stage: `docs/knowledge/features/thread-screen-testing-saved-first-draw.md`, saved-thread first-draw testing: record the original failing counts, fresh comparison evidence, controlled sampling defect and cancellation repair. Preserve the distinction between responsive readiness exhaustion, held sampling and measured latency, and the unresolved historical cause.
+
+## Revisions
+
+2026-10-13: The unchanged in-depth baseline completed 1608/1608 executed/passed, zero failures/errors and two existing skips. All original eight draws passed (141/82/122/81/489/203/514/198 ms); the delayed-projection twin passed and slow restore rejected the same bound at 3073 ms. Historical phase detail remains unavailable.
+
+The synchronous extraction reproduced acquisition-clock blocking (one executed/failed) and real Android held-pipe timeout failure (one executed/failed), with bounded emergency releases. Reusing PR #2080 at `fa1a3bc04dcabd1cd78d44d0d37d7ed50736869c` made all 12 unit controls and all four device methods pass, zero failures/errors/skips. Source parity is recorded in `app/src/androidTest/assets/readiness-2143/reuse.json`. Original focused-class draws were 148/128/124/144/462/254/475/217 ms; slow restore rejected the identical bound at 3438 ms. These resolve the local controlled-repair question; they do not resolve historical causation.

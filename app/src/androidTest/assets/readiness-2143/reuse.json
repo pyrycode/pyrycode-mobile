@@ -1,0 +1,11 @@
+{
+  "donor_pr": "https://github.com/pyrycode/pyrycode-mobile/pull/2080",
+  "donor_revision": "fa1a3bc04dcabd1cd78d44d0d37d7ed50736869c",
+  "source_hashes": {
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b76344d827dd69b4356d27e1620e21c120668af0cc8fa8d36e05a5c1c2a9b33b",
+    "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "df15f0d6c7f3114adab4e239a8a94c952c7c1d226333d01c24d06db7079d303f",
+    "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "07b697f780bf83202a39e31b5730f4429d86c64764012575738bde2629a36295"
+  },
+  "historical_cause": "Not established: baseline suite passed unchanged and original phase logs are unavailable.",
+  "controlled_cause": "Synchronous acquisition and pipe reading cannot cooperate with the readiness coroutine deadline; both local controls failed before correction."
+}
