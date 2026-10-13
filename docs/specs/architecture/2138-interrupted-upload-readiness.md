@@ -63,3 +63,7 @@ Pending for documentation: update `docs/e2e-interactive-stream.md`, interrupted-
 ## Sizing
 
 One deliverable, four acceptance criteria, approximately 650 written lines including plan, five readiness tests, diagnostic tests and reviewed evidence; one new internal enum, two live consumer updates, and no production failure branches. All builder ceilings hold.
+
+## Revisions
+
+- 2026-10-13: checked both original macbook-shaped and local agents log paths; neither October 12 paired output is present, and original XML/phone/daemon artifacts and inventory hashes are unavailable locally. Historical stage/cause remains unproven. The controlled legacy wait failed all five readiness checks; explicit-host authenticated readiness passed the complete 27-test registry class. The diagnostic baseline failed six of seven checks, and the wrapper passed all seven after implementation. Raw XML and reviewed summaries are retained separately. The helper matches #2118's additive proposal without requiring that branch or migrating Direct Share.

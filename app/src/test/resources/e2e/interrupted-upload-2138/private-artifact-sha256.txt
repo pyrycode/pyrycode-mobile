@@ -1,0 +1,4 @@
+2068d06df2ac4338cb70c715a01e6ac651921f8e1c4799935fd465e11be1dfea  legacy-red.xml
+a22e44224cedf6cec89e73cbdba618068bb249cb2bd0e03aa5353364c49d65c4  stage-baseline-red.xml
+0b0ccac0b163b3df203be6abbecb281e9d48184e39ec2faffb5abd2dcdcb104b  green-de.pyryco.mobile.di.RelayConnectionFactoryTest.xml
+be573fd20ee69e269c468cf4af07db69d222d6ed2c94674315c70f8fa9ba8a8f  green-de.pyryco.mobile.e2e.InterruptedUploadStageTest.xml

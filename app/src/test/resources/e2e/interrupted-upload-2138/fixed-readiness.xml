@@ -1,0 +1,29 @@
+<testsuite name="de.pyryco.mobile.di.RelayConnectionFactoryTest" tests="27" failures="0" errors="0" skipped="0" timestamp="2026-10-13T06:57:47.761Z">
+  <testcase name="queuedDestinationRetryCannotReopenAfterBackgroundClose" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="appTooOldRejectionHaltsOnlyItsOwnHostAndCarriesTheSealedMinimum" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="sendNowReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="interruptedUploadReadinessIgnoresStoppedSelectedHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="sendNowReadinessIgnoresStoppedSelectedHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="hostSnapshotsFollowSavedBundlesAcrossBackgroundRenameAndCredentialRotation" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="unavailableHostDoesNotDelayOtherHostAndFailedSaveDoesNotNotify" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="debugBundlesStayWithExactHostsAcrossSelectionRemovalAndReconnect" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="interruptedUploadReadinessPropagatesCancellation" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="heldReadingsSurviveReconnectButNotRepairOrUnpairAndStayOnTheirHost" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="handshakingHostHasStatusButNoExactRepositoryWhileAnotherHostIsLive" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="interruptedUploadReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="explicitRecordsKeepDialHandshakeAndRekeyIdentityAfterLatestSaveChanges" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="compatibilityWaitsForPairingAndReadsLatestOnForegroundReconnect" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="interruptedUploadReadinessKeepsDeadline" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="registryBackgroundAndDisposalFencePendingReadsAndPreserveResumeCursor" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="repositoryForRejectsRetiredRepositoryAtReconnectTransportEdge" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="registryKeepsPeerEventsModalCursorAndPendingReplyThroughOtherHostFailure" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="destinationRetryKeepsLifecycleLockThroughDialAndRejectsRetiredOwners" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="destinationCacheUsesConfiguredWorker" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="pairingStatusWaitsForExactCredentialsAndKeepsConnectedPeer" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="appModuleTracksLatestSurvivorWithoutReplacingStableConsumers" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="registryReconcilesCredentialsButRetainsNamesAndIdenticalRecords" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="interruptedUploadReadinessWaitsForAuthentication" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="reconnectResetAndDisposalStayInsideOwningBundle" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+  <testcase name="selectorSharesHostSourceAndKeepsDemoLookupSeparateFromSavedRelayHosts" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" />
+</testsuite>
