@@ -1,0 +1,67 @@
+#2139 investigation checkpoint, 2026-10-13
+
+Historical failure: mobile 0c9e9a6f49f3282cb1680d598c10af3bf02702c0,
+merged main 427640d577, daemon 9c9cd5a25c337666bdbed47c29202e695a172733.
+Recovered stderr locates pairHostByCode's final channel-list wait after
+fingerprint confirmation: 60-second Compose timeout, before peer opening.
+Historical full run: 65 executed, 62 passed, 3 failed, 0 errors/skipped.
+Historical subset rerun: 3 executed/passed, 0 failed/errors/skipped.
+The named method executed once and failed in the full run, then passed once.
+Seven accepted answer-daemon handshakes and unopened-peer state do not
+establish the phone's readiness or the source cause. Original method XML and
+phone logcat are unavailable. Recovered raw evidence remains private at:
+$AGENTS_REPO_PATH/logs/evidence/reliability-20261013/
+
+Builder comparisons, each using the standard managed live gate:
+- Unchanged isolated baseline: 1 executed/passed, 0 failed/errors/skipped.
+  Mobile dc3ac93ab2f42dce9056b328ce05e39b935b6202.
+- Immediate Direct Share predecessor then question: 2 executed/passed,
+  0 failed/errors/skipped; named question 1 executed/passed.
+- Prior answer-host pairing/removal, Direct Share, then question:
+  3 executed/passed, 0 failed/errors/skipped; named question 1 executed/passed.
+  Both smaller comparisons ran the f40406d66 plan commit with diagnostic
+  working-tree edits. They are investigation runs, not a clean final candidate.
+- Historical 29-method prefix on the committed diagnostic checkpoint:
+  29 executed/passed, 0 failed/errors/skipped; named question 1 executed/passed.
+  Mobile 05d9e194a; the exact XML retains original method order.
+All four used daemon eb3c757cac48a65f536bdc0dfdc92f0adbd82c3f.
+
+Private retained XML and phone logs (owner-only files with verified hashes):
+$AGENTS_REPO_PATH/logs/evidence/2139/baseline-focused-20261013/
+$AGENTS_REPO_PATH/logs/evidence/2139/predecessor-pair-20261013/
+$AGENTS_REPO_PATH/logs/evidence/2139/answer-host-reuse-20261013/
+$AGENTS_REPO_PATH/logs/evidence/2139/historical-prefix-20261013/
+Successful launcher cleanup removed matching daemon logs in the smaller runs.
+The prefix's partial during-run daemon logs are retained under its
+'daemon-capture-during-run' directory; its final tail is unavailable.
+
+Diagnostic legacy control: 3 executed, 1 passed, 2 failed, 0 errors/skipped.
+Diagnostic implementation: 5 executed/passed, 0 failed/errors/skipped.
+Existing PairCodeViewModelTest and PairingVerificationTest: 17 executed/passed,
+0 failed/errors/skipped. These 22 passes verify diagnostics and current pairing
+contracts; they are not a controlled reproduction or repair of the live flake.
+Raw control XML is private under 'diagnostic-controls-20261013'.
+
+The helper keeps each existing operation once, fingerprint confirmation,
+exact-target authenticated verification, the 30/60-second deadlines, original
+causes and caller cancellation. No retry, skip, extended timeout or relaxed
+question assertion was introduced. Both question answer round-trips and finally
+cleanup remain intact. A supported source defect and red/green pairing repair
+are still required; this checkpoint must not be presented as ticket completion.
+Post-verifier full dispatcher live acceptance and documentation remain pending.
+
+Historical daemon comparison: the same three-method answer-host reuse sequence
+passed 3/3, named question 1/1, 0 failed/errors/skipped, against exact historical
+daemon 9c9cd5a25c337666bdbed47c29202e695a172733. The standard gate built it from
+an unchanged detached temporary clone; the live sibling checkout was unchanged.
+Native/shared instrumented source remained at 05d9e194a, with subsequent unit
+and evidence edits. Private artifacts and hashes survive under:
+$AGENTS_REPO_PATH/logs/evidence/2139/historical-daemon-reuse-20261013/
+Matching daemon logs are unavailable after successful cleanup.
+
+Existing native AnswerHostSetupTest and AnswerHostSetupCleanupTest: 5 executed
+and passed, 0 failed/errors/skipped. Fresh raw XML and device diagnostics survive
+under $AGENTS_REPO_PATH/logs/evidence/2139/native-setup-20261013/.
+Mobile production pairing/registry/lifecycle/network/activity source is identical
+between original 0c9e9a6f49 and baseline dc3ac93ab2; changes in daemon revision
+alone therefore do not establish attribution to a mobile or daemon defect.

@@ -2,6 +2,11 @@ package de.pyryco.mobile.e2e
 
 import androidx.compose.ui.test.ComposeTimeoutException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -9,6 +14,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class AnswerHostPairingStageTest {
     @Test
     fun successRunsOnceAndReturnsValue() {
@@ -64,5 +70,57 @@ class AnswerHostPairingStageTest {
         } catch (error: CancellationException) {
             assertSame(original, error)
         }
+    }
+
+    @Test
+    fun callerTimeoutKeepsItsDeadlineAndCancellation() =
+        runTest {
+            var runs = 0
+            var original: CancellationException? = null
+            var preserved = false
+            try {
+                withTimeout(100) {
+                    try {
+                        answerHostPairingStep(AnswerHostPairingStage.Confirm, { error("cancelled caller must not read diagnostics") }, {}) {
+                            runs++
+                            try {
+                                delay(200)
+                            } catch (error: CancellationException) {
+                                original = error
+                                throw error
+                            }
+                        }
+                    } catch (error: CancellationException) {
+                        // Check before withTimeout's coroutine stack recovery can copy the exception.
+                        assertSame(original, error)
+                        preserved = true
+                        throw error
+                    }
+                }
+                fail("expected caller timeout")
+            } catch (_: CancellationException) {
+                assertTrue(preserved)
+            }
+            assertEquals(100L, currentTime)
+            assertEquals(1, runs)
+        }
+
+    @Test
+    fun failureReadsPhoneSnapshotOnceAndKeepsTheOriginalFailure() {
+        val original = IllegalStateException("fixture secret")
+        var reads = 0
+        val records = mutableListOf<String>()
+        try {
+            answerHostPairingStep(AnswerHostPairingStage.Enter, {
+                reads++
+                "registered=false selected=false relay_ready=false daemon_ready=false repository=false"
+            }, records::add) { throw original }
+            fail("expected original failure")
+        } catch (error: IllegalStateException) {
+            assertSame(original, error)
+        }
+        assertEquals(1, reads)
+        assertTrue(records.last().contains("stage=enter code and name outcome=failed"))
+        assertTrue(records.none { it.contains("fixture secret") })
     }
 }
