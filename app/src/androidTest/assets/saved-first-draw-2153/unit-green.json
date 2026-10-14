@@ -1,0 +1,22 @@
+{
+  "revision": "d7f0ee0a3-with-repair-and-test-sink",
+  "counts": {
+    "executed": 148,
+    "passed": 148,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "classes": [
+    "de.pyryco.mobile.data.repository.CachedThreadWorkerTest",
+    "de.pyryco.mobile.data.repository.CachingConversationRepositoryTest",
+    "de.pyryco.mobile.data.repository.CoalescedThreadWritesTest",
+    "de.pyryco.mobile.data.repository.HistoryAliasCorrelationTest",
+    "de.pyryco.mobile.data.repository.HistoryDurabilityTest",
+    "de.pyryco.mobile.data.repository.HistoryMessageIdentityTest",
+    "de.pyryco.mobile.data.repository.HistoryReconciliationTest",
+    "de.pyryco.mobile.ui.conversations.thread.SavedThreadOpenTest",
+    "de.pyryco.mobile.ui.conversations.thread.ThreadHistoryProjectionWorkerTest"
+  ],
+  "failed_methods": []
+}

@@ -1,0 +1,61 @@
+{
+  "revision": "6eb138928073c30ef41c5a064854bef7776b5dd5",
+  "configuration": "UI_GATE_FULL=1 UI_DEVICE_ALL=1; Pixel 2 API 33 ATD; two shards; animations disabled",
+  "source_hashes": {
+    "app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt": "dc853bc6d3c002f867c1b15f3612291e9974a5de948bf9e799a9620fe499b0a8",
+    "app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt": "46f95c812c939203b1ac6305510c30fa67eb047f7bda93a20e5d0d8e5bb7ce6b",
+    "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt": "b4d368409007458f291ac072e6b0327ce624fd53987a662be65fdcd529253ba4",
+    "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "07b697f780bf83202a39e31b5730f4429d86c64764012575738bde2629a36295"
+  },
+  "counts": {
+    "executed": 1609,
+    "passed": 1609,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 2
+  },
+  "selected": [
+    {
+      "method": "slowRestore_negativeControlRejectsTheSameFirstDrawBound",
+      "passed": true
+    },
+    {
+      "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+      "passed": true
+    },
+    {
+      "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+      "passed": true
+    },
+    {
+      "method": "heldCpuPipeCancelsAndClosesItsDescriptor",
+      "passed": true
+    }
+  ],
+  "phases": {
+    "487-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-heldCpuPipeCancelsAndClosesItsDescriptor.txt": [],
+    "486-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen.txt": [
+      ": case=ordinary online=false opening=0 rows=20 durable=20 spans=0 restored_ms=34 snapshot_ms=43 complete_ms=57 drawn_ms=121",
+      ": case=ordinary online=false opening=1 rows=20 durable=20 spans=0 restored_ms=20 snapshot_ms=26 complete_ms=43 drawn_ms=108",
+      ": case=ordinary online=true opening=0 rows=20 durable=20 spans=0 restored_ms=7 snapshot_ms=34 complete_ms=50 drawn_ms=116",
+      ": case=ordinary online=true opening=1 rows=20 durable=20 spans=0 restored_ms=15 snapshot_ms=21 complete_ms=26 drawn_ms=74",
+      ": case=fragmented online=false opening=0 rows=18000 durable=36000 spans=18000 restored_ms=419 snapshot_ms=420 complete_ms=444 drawn_ms=538",
+      ": case=fragmented online=false opening=1 rows=18000 durable=36000 spans=18000 restored_ms=44 snapshot_ms=60 complete_ms=73 drawn_ms=154",
+      ": case=fragmented online=true opening=0 rows=18000 durable=36000 spans=18000 restored_ms=294 snapshot_ms=295 complete_ms=309 drawn_ms=399",
+      ": case=fragmented online=true opening=1 rows=18000 durable=36000 spans=18000 restored_ms=46 snapshot_ms=56 complete_ms=86 drawn_ms=158"
+    ],
+    "488-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen.txt": [
+      ": case=ordinary online=false opening=0 rows=20 durable=20 spans=0 restored_ms=19 snapshot_ms=24 complete_ms=29 drawn_ms=82",
+      ": case=ordinary online=false opening=1 rows=20 durable=20 spans=0 restored_ms=16 snapshot_ms=21 complete_ms=26 drawn_ms=75",
+      ": case=ordinary online=true opening=0 rows=20 durable=20 spans=0 restored_ms=37 snapshot_ms=40 complete_ms=57 drawn_ms=97",
+      ": case=ordinary online=true opening=1 rows=20 durable=20 spans=0 restored_ms=18 snapshot_ms=24 complete_ms=41 drawn_ms=87",
+      ": case=fragmented online=false opening=0 rows=18000 durable=36000 spans=18000 restored_ms=311 snapshot_ms=312 complete_ms=324 drawn_ms=406",
+      ": case=fragmented online=false opening=1 rows=18000 durable=36000 spans=18000 restored_ms=39 snapshot_ms=63 complete_ms=80 drawn_ms=171",
+      ": case=fragmented online=true opening=0 rows=18000 durable=36000 spans=18000 restored_ms=305 snapshot_ms=306 complete_ms=320 drawn_ms=403",
+      ": case=fragmented online=true opening=1 rows=18000 durable=36000 spans=18000 restored_ms=58 snapshot_ms=73 complete_ms=86 drawn_ms=155"
+    ],
+    "489-logcat-de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest-slowRestore_negativeControlRejectsTheSameFirstDrawBound.txt": [
+      ": case=negative-control rows=1 durable=1 spans=0 restored_ms=3009 snapshot_ms=3035 complete_ms=3052 drawn_ms=3080"
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "candidate_commit": "6eb138928073c30ef41c5a064854bef7776b5dd5",
+  "focused_device_source_hashes": {
+    "app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt": "dc853bc6d3c002f867c1b15f3612291e9974a5de948bf9e799a9620fe499b0a8",
+    "app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt": "46f95c812c939203b1ac6305510c30fa67eb047f7bda93a20e5d0d8e5bb7ce6b",
+    "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt": "b4d368409007458f291ac072e6b0327ce624fd53987a662be65fdcd529253ba4",
+    "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "07b697f780bf83202a39e31b5730f4429d86c64764012575738bde2629a36295"
+  },
+  "matched_candidate": true,
+  "unit_final_test_sha256": "93dc01411336ef2e0881856bc46e08bd9e36421b9f90e264e59f0ddeb0651485"
+}

@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -17,15 +18,27 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import kotlin.coroutines.CoroutineContext
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CachedThreadWorkerTest {
+    private val oldSink = RelayLog.sink
+
+    @Before fun setup() {
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After fun teardown() {
+        RelayLog.sink = oldSink
+    }
+
     @Test
     fun readableRowsDoNotWaitForOptionalHistoryButLiveMergeDoes() =
         runTest {
@@ -239,7 +252,8 @@ class CachedThreadWorkerTest {
             drain(worker)
             assertEquals(100_000, delivered.single().rows.size)
             assertEquals(ThreadReadEvidence(), delivered.single().readEvidence)
-            assertTrue(reads >= 100_000)
+            assertEquals("validated cache rows must reach first delivery without reconciliation traversal", 0, reads)
+            assertSame(guarded, delivered.single().rows)
             assertEquals(0, worker.count)
             assertTrue(cache.writes.isEmpty())
             val beforeEquality = reads
@@ -383,6 +397,46 @@ class CachedThreadWorkerTest {
             job.cancel()
         }
 
+    @Test fun initialRowsOnlySnapshotReusesValidatedRowsAndKeepsReceiptMetadataOnRecollection() =
+        runTest {
+            val worker = HeldWorker()
+            val rows = listOf(row("saved", role = Role.User), row("reply"))
+            val cache = Cache(rows)
+            val source = Source(ThreadSnapshot(emptyList()))
+            val repository = CachingConversationRepository(source, cache, "h", processingDispatcher = worker)
+            repeat(2) { opening ->
+                val evidence = ThreadReadEvidence(facts = mapOf((opening + 1).toULong() to true))
+                val original =
+                    ThreadSnapshot(
+                        emptyList(),
+                        unsignedHistoryOrder = mapOf(rows.first().mergeIdentity() to (opening + 1).toULong()),
+                        readEvidence = evidence,
+                    )
+                source.snapshots.value = original
+                val readings = mutableListOf<ThreadSnapshot>()
+                val gate = CompletableDeferred<Unit>()
+                val reader =
+                    backgroundScope.launch {
+                        repository.observeThreadSnapshot("c").collect {
+                            readings += it
+                            gate.await()
+                        }
+                    }
+                try {
+                    drain(worker)
+                    assertSame("every fresh collection can publish its validated cache list", rows, readings.single().rows)
+                    assertSame(evidence, readings.single().readEvidence)
+                    assertSame(original.unsignedHistoryOrder, readings.single().unsignedHistoryOrder)
+                    assertSame(original.suppressedUserMessageIds, readings.single().suppressedUserMessageIds)
+                } finally {
+                    reader.cancel()
+                    gate.complete(Unit)
+                    drain(worker)
+                }
+            }
+            assertTrue("an unchanged rows-only open must not rewrite persisted rows", cache.writes.isEmpty())
+        }
+
     @Test fun identityInvariant_overlapReplayAndReconnectKeepCacheOnlyNeighbours() =
         runTest(UnconfinedTestDispatcher()) {
             val a = row("a")
@@ -493,19 +547,23 @@ class CachedThreadWorkerTest {
 
     @Test fun cancellationInvariant_heldWorkerCannotPublishOrWriteAfterExit() =
         runTest {
-            val worker = HeldWorker()
-            val cache = Cache(listOf(row("old")))
-            val source = Source(ThreadSnapshot(listOf(row("new"))))
-            val repository = CachingConversationRepository(source, cache, "h", processingDispatcher = worker)
-            val readings = mutableListOf<ThreadSnapshot>()
-            val job = backgroundScope.launch { repository.observeThreadSnapshot("c").collect { readings += it } }
-            runCurrent()
-            worker.next() // initialize order, then hold the captured live merge
-            runCurrent()
-            assertTrue(worker.count > 0)
-            job.cancel()
-            drain(worker)
-            assertTrue(readings.isEmpty())
-            assertTrue(cache.writes.isEmpty())
+            for (live in listOf(emptyList(), listOf(row("new")))) {
+                val worker = HeldWorker()
+                val cache = Cache(listOf(row("old")))
+                val source = Source(ThreadSnapshot(live))
+                val repository = CachingConversationRepository(source, cache, "h", processingDispatcher = worker)
+                val readings = mutableListOf<ThreadSnapshot>()
+                val job = backgroundScope.launch { repository.observeThreadSnapshot("c").collect { readings += it } }
+                runCurrent()
+                if (live.isNotEmpty()) {
+                    worker.next() // initialize order, then hold the captured live merge
+                    runCurrent()
+                }
+                assertTrue(worker.count > 0)
+                job.cancel()
+                drain(worker)
+                assertTrue(readings.isEmpty())
+                assertTrue(cache.writes.isEmpty())
+            }
         }
 }
