@@ -10,6 +10,8 @@ import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.network.ThreadQueryReply
+import de.pyryco.mobile.data.network.ThreadQueryRequest
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.added
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.item
 import kotlinx.coroutines.CompletableDeferred
@@ -513,61 +515,171 @@ class AuthoritativeThreadCacheTest {
             assertFacts(fileCache(), "host", repo.authoritativeThreads.current("host", "c"))
         }
 
-    @Test fun deletionFencesCapturedRestore() = runTest {
-        val cache = fileCache()
-        val saved = AuthoritativeThreadSnapshot("e", listOf(item(1, 10, 5)), 10, 10,
-            coverage = AuthoritativeThreadCoverage(5u, 11u, 5u, true)).toSavedAuthoritativeThread()
-        cache.writeAuthoritativeThread("host", "c", saved)
-        val held = HeldCache(cache)
-        val captured = CompletableDeferred<Unit>()
-        val release = CompletableDeferred<Unit>()
-        held.afterRead = { captured.complete(Unit)
-            release.await() }
-        val repo = wrapper(held)
-        val result = CompletableDeferred<AuthoritativeThreadSnapshot>()
-        val restore = backgroundScope.launch { result.complete(repo.observeAuthoritativeThread("c").first()) }
-        runCurrent()
-        assertTrue(captured.isCompleted)
-        repo.delete("c")
-        release.complete(Unit)
-        runCurrent()
-        restore.join()
-        assertTrue(result.await().items.isEmpty())
-        assertEquals(0L, result.await().checkpoint)
-        assertNull(result.await().coverage)
-        assertNull(fileCache().readAuthoritativeThread("host", "c"))
-    }
+    @Test fun deletionFencesCapturedRestore() =
+        runTest {
+            val cache = fileCache()
+            val saved =
+                AuthoritativeThreadSnapshot(
+                    "e",
+                    listOf(item(1, 10, 5)),
+                    10,
+                    10,
+                    coverage = AuthoritativeThreadCoverage(5u, 11u, 5u, true),
+                ).toSavedAuthoritativeThread()
+            cache.writeAuthoritativeThread("host", "c", saved)
+            val held = HeldCache(cache)
+            val captured = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            held.afterRead = {
+                captured.complete(Unit)
+                release.await()
+            }
+            val repo = wrapper(held)
+            val result = CompletableDeferred<AuthoritativeThreadSnapshot>()
+            val restore = backgroundScope.launch { result.complete(repo.observeAuthoritativeThread("c").first()) }
+            runCurrent()
+            assertTrue(captured.isCompleted)
+            repo.delete("c")
+            release.complete(Unit)
+            runCurrent()
+            restore.join()
+            assertTrue(result.await().items.isEmpty())
+            assertEquals(0L, result.await().checkpoint)
+            assertNull(result.await().coverage)
+            assertNull(fileCache().readAuthoritativeThread("host", "c"))
+        }
 
-    @Test fun resetDuringInflightWriteCannotRestoreRetiredItems() = runTest {
-        val held = HeldCache(fileCache())
-        val repo = wrapper(held)
-        val entered = CompletableDeferred<Unit>()
-        val release = CompletableDeferred<Unit>()
-        held.beforeWrite = { entered.complete(Unit)
-            release.await() }
-        val observer = backgroundScope.launch { repo.observeAuthoritativeThread("c").collect {} }
-        runCurrent()
-        apply(repo, 10)
-        runCurrent()
-        advanceTimeBy(101)
-        runCurrent()
-        assertTrue(entered.isCompleted)
-        val resetResult = CompletableDeferred<Result<Unit>>()
-        val reset = backgroundScope.launch { resetResult.complete(repo.resetAuthoritativeThread("c", "e")) }
-        runCurrent()
-        assertFalse(resetResult.isCompleted)
-        release.complete(Unit)
-        runCurrent()
-        reset.join()
-        assertTrue(resetResult.await().isSuccess)
-        observer.cancelAndJoin()
-        val offline = wrapper().observeAuthoritativeThread("c").first()
-        assertEquals("e", offline.epoch)
-        assertTrue(offline.items.isEmpty())
-        assertEquals(0L, offline.checkpoint)
-        assertNull(offline.coverage)
-        assertEquals(listOf(10L, 0L), held.writes.map { it.appliedVersion })
-    }
+    @Test fun resetDuringInflightWriteCannotRestoreRetiredItems() =
+        runTest {
+            val held = HeldCache(fileCache())
+            val repo = wrapper(held)
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            held.beforeWrite = {
+                entered.complete(Unit)
+                release.await()
+            }
+            val observer = backgroundScope.launch { repo.observeAuthoritativeThread("c").collect {} }
+            runCurrent()
+            apply(repo, 10)
+            runCurrent()
+            advanceTimeBy(101)
+            runCurrent()
+            assertTrue(entered.isCompleted)
+            val resetResult = CompletableDeferred<Result<Unit>>()
+            val reset = backgroundScope.launch { resetResult.complete(repo.resetAuthoritativeThread("c", "e")) }
+            runCurrent()
+            assertFalse(resetResult.isCompleted)
+            release.complete(Unit)
+            runCurrent()
+            reset.join()
+            assertTrue(resetResult.await().isSuccess)
+            observer.cancelAndJoin()
+            val offline = wrapper().observeAuthoritativeThread("c").first()
+            assertEquals("e", offline.epoch)
+            assertTrue(offline.items.isEmpty())
+            assertEquals(0L, offline.checkpoint)
+            assertNull(offline.coverage)
+            assertEquals(listOf(10L, 0L), held.writes.map { it.appliedVersion })
+        }
+
+    @Test fun certificationOnlyChangesPersistAtomically() =
+        runTest {
+            val held = HeldCache(fileCache())
+            val repo = wrapper(held)
+            val observer = backgroundScope.launch { repo.observeAuthoritativeThread("c").collect {} }
+            runCurrent()
+            apply(repo, 10)
+            runCurrent()
+            advanceTimeBy(101)
+            runCurrent()
+            val uncertified = repo.authoritativeThreads.current("host", "c")
+            val checkpoint =
+                ThreadQueryReply.Checkpoint(
+                    MobileJson.parseToJsonElement("""{"conversation_id":"c","epoch":"e","version":10}""") as JsonObject,
+                )
+            assertEquals(
+                AuthoritativeThreadOutcome.Applied,
+                repo.authoritativeThreads.certifyQuery(
+                    "host",
+                    ThreadQueryRequest.CatchUp("c", "e", 0u),
+                    ThreadQueryReply.Success(JsonObject(emptyMap()), checkpoint, ThreadQueryReply.Coverage.Window(5u, 11u, 5u, true)),
+                    0,
+                ),
+            )
+            runCurrent()
+            advanceTimeBy(101)
+            runCurrent()
+            val certified = repo.authoritativeThreads.current("host", "c")
+            assertEquals(uncertified.items.map { it.raw }, certified.items.map { it.raw })
+            assertEquals(10L, certified.checkpoint)
+            assertEquals(AuthoritativeThreadCoverage(5u, 11u, 5u, true), certified.coverage)
+            assertFacts(fileCache(), "host", certified)
+            observer.cancelAndJoin()
+            assertEquals(listOf(0L, 10L), held.writes.map { it.checkpoint })
+        }
+
+    @Test fun olderCapturedEmissionCannotOverwriteNewerCommitOnCancellation() =
+        runTest {
+            val held = HeldCache(fileCache())
+            val repo = wrapper(held)
+            val captured = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val newerDelivery = CompletableDeferred<Unit>()
+            val holdNewerDelivery = CompletableDeferred<Unit>()
+            val older =
+                backgroundScope.launch {
+                    repo.observeAuthoritativeThread("c").collect {
+                        if (it.completedVersion == 10L) {
+                            captured.complete(Unit)
+                            release.await()
+                        } else if (it.completedVersion == 20L) {
+                            newerDelivery.complete(Unit)
+                            holdNewerDelivery.await()
+                        }
+                    }
+                }
+            runCurrent()
+            apply(repo, 10)
+            runCurrent()
+            assertTrue(captured.isCompleted)
+            val newer = backgroundScope.launch { repo.observeAuthoritativeThread("c").collect {} }
+            runCurrent()
+            apply(repo, 20)
+            runCurrent()
+            advanceTimeBy(101)
+            runCurrent()
+            newer.cancelAndJoin()
+            val committed = repo.authoritativeThreads.current("host", "c")
+            assertFacts(fileCache(), "host", committed)
+            release.complete(Unit)
+            runCurrent()
+            assertTrue(newerDelivery.isCompleted)
+            older.cancelAndJoin()
+            assertFacts(fileCache(), "host", committed)
+            assertEquals(listOf(20L), held.writes.map { it.appliedVersion })
+        }
+
+    @Test fun resetFailurePreservesSavedRepresentationAndReportsContentFreeFailure() =
+        runTest {
+            val held = HeldCache(fileCache())
+            val repo = wrapper(held)
+            val observer = backgroundScope.launch { repo.observeAuthoritativeThread("c").collect {} }
+            runCurrent()
+            apply(repo, 10)
+            runCurrent()
+            advanceTimeBy(101)
+            runCurrent()
+            observer.cancelAndJoin()
+            val prior = repo.authoritativeThreads.current("host", "c")
+            val logs = mutableListOf<String>()
+            RelayLog.sink = { _, _, line -> logs += line }
+            held.fail = true
+            assertTrue(repo.resetAuthoritativeThread("c", "private-reset-epoch").isFailure)
+            assertFacts(fileCache(), "host", prior)
+            assertTrue(logs.contains("event=authoritative_cache_reset_failed"))
+            assertTrue(logs.none { "private-reset-epoch" in it || "test failure" in it })
+        }
 
     @Test fun identityProbesConvergeWithoutExpandingCoverage() =
         runTest {

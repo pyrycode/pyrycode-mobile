@@ -316,7 +316,7 @@ class CachingConversationRepository(
                 persistAuthoritative(conversationId, candidate)
                     ?: Result.success(Unit)
             }
-        }
+        }.onFailure { RelayLog.d { "event=authoritative_cache_reset_failed" } }
     }
 
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =

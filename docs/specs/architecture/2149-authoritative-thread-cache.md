@@ -41,14 +41,19 @@ Cold observers own their structured writer child and 100ms timer. Item preparati
 | --- | --- |
 | Restart with fresh cache/repository offline, then negotiated reconnect | `restartRestoresFactsAndOnlyCertifiedReconnectCheckpoint` |
 | Partial query with newer live revision and outside parent, disconnect/restart | `interruptedBatchesKeepPriorCertificationWithNewestItems` |
+| Completion changes only checkpoint/coverage after items were saved | `certificationOnlyChangesPersistAtomically` |
 | Repeated/reordered/overlapping revisions, empty and single-item records | `identityProbesConvergeWithoutExpandingCoverage` |
 | Restore suspended across newer live items/certification | `staleRestoreCannotReplaceNewerLiveFactsOrCertification` |
 | Restore suspended across reset, including reused epoch and repeated reset | `resetFencesCapturedRestoreAndFinalWrites` |
+| Reset waits for an in-flight old-generation write before durable replacement | `resetDuringInflightWriteCannotRestoreRetiredItems` |
 | Older collector/final flush after newer committed state | `olderFinalFlushCannotOverwriteNewerCommit` |
+| Older captured emission returns after a newer save, then collection is cancelled | `olderCapturedEmissionCannotOverwriteNewerCommitOnCancellation` |
 | I/O held while another snapshot arrives | `heldIoDoesNotBlockAuthoritativeDelivery` |
 | Save fails then unchanged emission/final flush retries | `failedSavePreservesAtomicRecordAndBaseline` |
+| Reset mutation fails | `resetFailurePreservesSavedRepresentationAndReportsContentFreeFailure` |
 | Cancellation after atomic commit before result delivery | `postCommitCancellationKeepsSuccessfulBaseline` |
 | Confirmed deletion during pending/in-flight/final writes; another host with same id | `deletionFencesWritesAndKeepsOtherHost` |
+| Confirmed deletion after disk restore has captured its result | `deletionFencesCapturedRestore` |
 | Refused deletion | `refusedDeletionPreservesSavedFacts` |
 
 No UI lifecycle state is added; re-collection and cancellation are covered above. Connection capability and transient state remain owned by the remote connection.
@@ -64,6 +69,11 @@ Write failing repository tests first using `TemporaryFolder`, real `FileConversa
 ## Open Questions
 
 None. The additive supplied seam intentionally stops before production route activation.
+
+## Documentation handoff
+
+- Pending for the documentation stage: `docs/knowledge/features/conversation-cache-contract.md`, “The contract”, and `conversation-cache-layout.md`, “Layout”: the separate atomic authoritative family, ownership validation, raw full-item retention and certification loss on trimming.
+- Pending for the documentation stage: `docs/knowledge/features/caching-conversation-repository.md`, “What is written, and when” and “State and concurrency”: the supplied authoritative save/restore/open/reset seams, shared writer ordering, restore/deletion/reset fences and reporting reset failures. Production route activation and combined live proof remain with #1988.
 
 ## Security review
 
