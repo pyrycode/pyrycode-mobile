@@ -816,7 +816,12 @@ fun ThreadScreen(
                             }
                         val readRow = newestRenderedRow as? ThreadRow.Delivered
                         val readItem = readRow?.item
-                        val readKey = newestRenderedRow?.listKey(rows.indexOf(newestRenderedRow))
+                        val readKey =
+                            if (authoritative != null) {
+                                authoritative.newestReadKey
+                            } else {
+                                newestRenderedRow?.listKey(rows.indexOf(newestRenderedRow))
+                            }
                         val authoritativeCandidates =
                             remember(authoritative, rows) {
                                 if (authoritative == null) {

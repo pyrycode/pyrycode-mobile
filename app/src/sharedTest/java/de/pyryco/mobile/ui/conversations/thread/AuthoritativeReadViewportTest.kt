@@ -207,6 +207,60 @@ class AuthoritativeReadViewportTest {
         }
     }
 
+    @Test fun sendingTailAllowsViewedHistoryAndReplyWhileFeedbackRemains() = readWithTail("sending")
+
+    @Test fun waitingTailAllowsViewedHistoryAndReplyWhileFeedbackRemains() = readWithTail("queued")
+
+    @Test fun lostTailAllowsViewedHistoryAndReplyWhileFeedbackRemains() = readWithTail("lost")
+
+    private fun readWithTail(status: String) {
+        val snapshot = authoritativeSendTail(status)
+        val p = projectAuthoritativeThread("h", "c", snapshot)
+        val tailKey = p.rows.last().listKey(0)
+        val tailOnly = projectAuthoritativeThread("h", "c", snapshot.copy(items = snapshot.items.filter { it.order == null }))
+        owner.registry.currentState = Lifecycle.State.RESUMED
+        state.value = state.value.copy(authoritativeThread = tailOnly, readMarks = facts(4u))
+        mount()
+        settle()
+        compose.runOnIdle {
+            assertTrue(events.isEmpty())
+            state.value = state.value.copy(authoritativeThread = p)
+        }
+        compose.waitForIdle()
+        compose.waitUntil(5000) { events.size == 1 }
+        compose.runOnIdle {
+            assertEquals(4uL, events.single().checkpoint)
+            assertEquals(p.rows.first().listKey(0), events.single().rowKey)
+            assertEquals(p.shownRowRevisions, events.single().seenRowRevisions)
+        }
+
+        val reply =
+            projectAuthoritativeThread(
+                "h",
+                "c",
+                snapshot.copy(items = snapshot.items + authoritativeItem(3, rev = 5), checkpoint = 5),
+            )
+        compose.runOnIdle {
+            assertEquals(tailKey, reply.rows.last().listKey(0))
+            state.value = state.value.copy(authoritativeThread = reply, readMarks = facts(5u).copy(readUpTo = 4u))
+        }
+        compose.waitForIdle()
+        compose.waitUntil(5000) { events.size == 2 }
+        compose.runOnIdle {
+            assertEquals(listOf(4uL, 5uL), events.map { it.checkpoint })
+            assertEquals(reply, events.last().presentation)
+            assertEquals(
+                reply.rows
+                    .filterIsInstance<ThreadRow.Delivered>()
+                    .last()
+                    .listKey(0),
+                events.last().rowKey,
+            )
+            assertEquals(reply.shownRowRevisions, events.last().seenRowRevisions)
+            assertTrue(events.all { tailKey !in it.seenRowRevisions })
+        }
+    }
+
     private fun mount() {
         compose.setContent {
             CompositionLocalProvider(LocalLifecycleOwner provides owner, LocalThreadListCompositionObserver provides { list = it }) {

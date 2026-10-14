@@ -53,6 +53,7 @@ Store mutation remains synchronized and publishes one hot snapshot. Registration
 | Disconnect/replacement, epoch reset/reused generation | pending retention and stale action probes |
 | Reused queue handle, terminal item, failed/no-op action | bound payload/retirement probes |
 | Screen re-collection / receiver replacement | existing action publisher plus captured queue event tests |
+| Sending, Waiting or Lost tail remains while viewed history gains a delivered reply | `sendingWaitingAndLostTailsPreserveExactHistoryReadRequirements` and the three `AuthoritativeReadViewportTest` tail probes |
 | Process death | pending feedback intentionally excluded from cache; accepted items use existing cache contract |
 
 ## Error handling
@@ -67,11 +68,21 @@ Test first with focused store/repository/presentation unit probes and fake pumps
 
 None.
 
+## Documentation handoff
+
+Pending for the documentation stage:
+
+- `docs/knowledge/features/thread-screen.md`, What it does: pending-send ownership, receipt-only acknowledgement, queued/delivered/hidden-drop/Lost identity and placement, and read-eligible history beneath waiting tails.
+- `docs/knowledge/features/queued-backlog.md`, Dropping a queued entry / Sending a queued entry now: exact guarded payloads, current-session eligibility, malformed/terminal/stale rejection, failure/no-op behavior and retained legacy controls.
+- `docs/knowledge/features/remote-conversation-repository-send-create-promote-rename.md`, sendMessage, and `remote-conversation-repository-reads-and-thread-store.md`, Authoritative daemon items alongside the raw-event projection: exact host/conversation/device/client correlation, admitted-revision/omission rules, process-memory/reconnect limits and no automatic resend.
+- `docs/knowledge/features/device-static-keystore.md`, Wiring & usage: per-host public-key wiring without private-key access. Preserve #1988's ownership of activation and combined deterministic/live proof; that evidence remains pending.
+
 ## Revisions
 
 - 2026-10-14: Preserve `QueuedMessageRow`'s public signature (eleven existing callers). Its body delegates to an internal `AuthoritativeSendRow` used by the thread; legacy defaults are unchanged. Four new types/composables total. Register provisional feedback before the suspending public identity read, then identify it under the store lock; this preserves immediate feedback even when key storage is delayed.
 - 2026-10-14: Connection collector completion also retires its bound command source, even when a supplied test capability function remains true. Reconnect may forward a captured target only through the replacement repository and after current store validation.
 - 2026-10-14: `retiredSendSourceCannotRegisterFeedbackInItsReplacementStore` failed because a caller retained a disconnected repository reference. Supplied host sources now reject a new send before provisional registration after collector completion; default legacy sources retain their existing path. Source refusal emits a static lifecycle/error code.
+- 2026-10-14: Verifier finding 1 exposed that waiting tails became the newest read key despite carrying no ordered revision. `AuthoritativeThreadPresentation.newestReadKey` now selects the final delivered row with admitted shown revision evidence; both `ThreadScreen` candidate selection and `readCheckpoint` use it. All exact sight, summary and certified-coverage requirements remain in force, and no provisional or unordered tail can certify reads. Shared viewport probes cover each tail and a delivered reply while it remains; checkpoint probes also reject tail keys, stale/missing sight and incomplete coverage. No in-flight branch overlaps the rework files.
 
 ## Security review
 
@@ -85,6 +96,7 @@ None.
 - Network/I/O: reuse envelope, pump and existing deadlines/caps; exact integers avoid floating-point conversion.
 - Errors/logs: static action/settlement event codes only; redacted `toString` for new content-bearing types.
 - Concurrency: MUST FIX addressed in design. Bound target revalidation and send have no suspension between them; generation fences old facts/actions, and acknowledgements cannot recreate feedback.
+- Read-evidence rework: only delivered rows present in `shownRowRevisions` supply `newestReadKey`; a forged tail key or revision cannot qualify. Existing scope/connection ownership, exact revision sight and certified coverage still gate the ViewModel's write. No new I/O, secret, storage, rendering or coroutine boundary is introduced.
 - Threat model: relay delay/reordering/drop is covered by recovery and revision probes. Hostile malformed content cannot create actionable targets. Existing Keystore wrapping handles token theft; UI screenshot/accessibility exposure remains existing platform behavior outside this slice (#1988 does not change it).
 
 **Reviewer:** builder self-review per `builder/security-review.md`

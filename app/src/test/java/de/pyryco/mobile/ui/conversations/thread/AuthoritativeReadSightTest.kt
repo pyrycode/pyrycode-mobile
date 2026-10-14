@@ -41,6 +41,44 @@ class AuthoritativeReadSightTest {
         RelayLog.enabled = logging
     }
 
+    @Test fun sendingWaitingAndLostTailsPreserveExactHistoryReadRequirements() {
+        for (status in listOf("sending", "queued", "lost")) {
+            val snapshot = authoritativeSendTail(status)
+            val p = projectAuthoritativeThread("h", "c", snapshot)
+            val key = p.rows.first().listKey(0)
+            val tailKey = p.rows.last().listKey(0)
+            assertEquals(status, 4uL, p.readCheckpoint(key, facts(4u), p.shownRowRevisions))
+            assertNull(status, p.readCheckpoint(key, facts(4u), emptyMap()))
+            assertNull(status, p.readCheckpoint(key, facts(4u), mapOf(key to 3L)))
+            assertNull(status, p.readCheckpoint(tailKey, facts(4u), p.shownRowRevisions + (tailKey to 4L)))
+            assertNull(status, p.readCheckpoint(key, facts(5u), p.shownRowRevisions))
+            val partial = projectAuthoritativeThread("h", "c", snapshot.copy(checkpoint = 3))
+            assertNull(status, partial.readCheckpoint(key, facts(4u), p.shownRowRevisions))
+
+            val reply =
+                projectAuthoritativeThread(
+                    "h",
+                    "c",
+                    snapshot.copy(items = snapshot.items + authoritativeItem(3, rev = 5), checkpoint = 5),
+                )
+            val replyKey =
+                reply.rows
+                    .filterIsInstance<ThreadRow.Delivered>()
+                    .last()
+                    .listKey(0)
+            assertEquals(status, tailKey, reply.rows.last().listKey(0))
+            assertNull(status, reply.readCheckpoint(key, facts(5u), reply.shownRowRevisions))
+            assertNull(status, reply.readCheckpoint(replyKey, facts(5u), p.shownRowRevisions))
+            assertNull(status, reply.readCheckpoint(replyKey, facts(5u), mapOf(replyKey to 5L)))
+            assertEquals(status, 5uL, reply.readCheckpoint(replyKey, facts(5u).copy(readUpTo = 4u), mapOf(replyKey to 5L)))
+            assertEquals(status, 5uL, reply.readCheckpoint(replyKey, facts(5u), reply.shownRowRevisions))
+
+            val tailOnly = projectAuthoritativeThread("h", "c", snapshot.copy(items = snapshot.items.filter { it.order == null }))
+            assertTrue(status, tailOnly.shownRowRevisions.isEmpty())
+            assertNull(status, tailOnly.readCheckpoint(tailKey, facts(4u), mapOf(tailKey to 4L)))
+        }
+    }
+
     @Test fun completeCoverageCannotBeInferredFromABatchOrHighestItemRevision() {
         val row = authoritativeItem(1, rev = 8)
         val partial = authoritativeSnapshot(row).copy(checkpoint = 5, completedVersion = 100)

@@ -39,6 +39,9 @@ class AuthoritativeThreadPresentation internal constructor(
     internal val certifiedCheckpoint: Long?,
     internal val shownRowRevisions: Map<String, Long>,
 ) {
+    /** Waiting feedback carries no ordered read revision; anchor sight to admitted history. */
+    internal val newestReadKey = rows.lastOrNull { it is ThreadRow.Delivered && it.listKey(0) in shownRowRevisions }?.listKey(0)
+
     /** Revisions impose conservative sight requirements; only the certified boundary supplies coverage. */
     internal fun readCheckpoint(
         newestKey: String?,
@@ -51,7 +54,7 @@ class AuthoritativeThreadPresentation internal constructor(
         val coverage = certifiedCheckpoint?.toULong() ?: return null
         if (shown == 0uL || shown <= confirmed || coverage < shown || newestKey == null) return null
         val newestRevision = shownRowRevisions[newestKey] ?: return null
-        if (rows.lastOrNull()?.listKey(0) != newestKey || seen[newestKey] != newestRevision) return null
+        if (newestReadKey != newestKey || seen[newestKey] != newestRevision) return null
         if (shownRowRevisions.values.any { it.toULong() > coverage }) return null
         // The summary can be newer than every supplied shown row: complete sight is then unproven.
         if (shownRowRevisions.values.none { it.toULong() >= shown }) return null
