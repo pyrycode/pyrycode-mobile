@@ -11,6 +11,11 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/src/main/roomSchemas")
 }
 
 // Firebase client configuration (#579). Applied only when the file is present, so builds
@@ -245,6 +250,8 @@ afterEvaluate {
 }
 
 dependencies {
+    implementation(libs.androidx.room.runtime)
+    ksp(libs.androidx.room.compiler)
     implementation(platform(libs.androidx.compose.bom))
     implementation(platform(libs.koin.bom))
     // #361: push only. No firebase-analytics; builds without google-services.json run with push off.

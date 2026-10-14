@@ -28,8 +28,12 @@ ktlint = "1.5.0"
 snipmeHighlights = "1.1.0"
 spotless = "8.10.3"
 robolectric = "4.17"
+room = "2.8.4"
+ksp = "2.3.6"
 
 [libraries]
+androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 haze = { group = "dev.chrisbanes.haze", name = "haze", version.ref = "haze" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "coreSplashscreen" }
@@ -76,9 +80,9 @@ robolectric-annotations = { group = "org.robolectric", name = "annotations", ver
 snipme-highlights = { group = "dev.snipme", name = "highlights", version.ref = "snipmeHighlights" }
 
 [plugins]
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 google-services = { id = "com.google.gms.google-services", version.ref = "googleServices" }
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
-
