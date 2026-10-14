@@ -395,6 +395,93 @@ class LegacyRoomStorageTest {
             assertEquals(mapOf(50uL to "gap-walk"), evidence.unsignedWalks)
         }
 
+    @Test fun boundedEvidenceInvariant_sharedGapBoundaryKeepsBothSides() = runTest { assertSharedGapBoundary(0u) }
+
+    @Test fun boundedEvidenceInvariant_olderEvidenceDoesNotGrowSharedBoundaryPages() = runTest { assertSharedGapBoundary(40000u) }
+
+    @Test fun boundedEvidenceInvariant_sharedGapBoundaryPreservesUnsignedExtremes() =
+        runTest {
+            assertSharedGapBoundary(
+                ULong.MAX_VALUE - 5u,
+            )
+        }
+
+    private suspend fun assertSharedGapBoundary(shift: ULong) {
+        val rows = listOf(row(1), row(2), row(3))
+        val ids = listOf(1uL, 3uL, 5uL).map { it + shift }
+        val claims =
+            coverage(rows, ids)
+                .copy(
+                    unsignedCursors = ids.associateWith { "cursor-$it" },
+                    unsignedWalks = ids.dropLast(1).associateWith { "walk-$it" },
+                ).validated(rows)
+        seed(open(), rows, HistoryPosition("saved", false, claims))
+
+        suspend fun traverse(expected: HistoryCoverage): LegacyRoomStorage.ReadCounts {
+            var token: LegacyThreadPage.Continuation? = null
+            var middleCounts: LegacyRoomStorage.ReadCounts? = null
+            var restored = emptyList<ThreadItem>()
+            for (index in rows.indices.reversed()) {
+                val store = open()
+                val page =
+                    requireNotNull(
+                        token?.let { store.beforePage("Host", "thread", it, 1) }
+                            ?: store.newestPage("Host", "thread", 1),
+                    )
+                val counts = store.lastReadCounts
+                val evidence = requireNotNull(page.evidence)
+                val gaps = expected.unsignedGaps.filter { ids[index] in it.anchor..it.edge }
+                assertEquals(listOf(rows[index]), page.rows)
+                assertEquals(gaps, evidence.unsignedGaps)
+                assertEquals(gaps.associate { it.anchor to expected.unsignedWalks.getValue(it.anchor) }, evidence.unsignedWalks)
+                assertEquals(
+                    (listOf(ids[index]) + gaps.map { it.edge }).associateWith { expected.unsignedCursors.getValue(it) },
+                    evidence.unsignedCursors,
+                )
+                assertEquals(mapOf(rows[index].historyKeys().first() to ids[index]), evidence.unsignedRowOrder)
+                assertEquals(1, counts.rowReads)
+                assertEquals(1, counts.rowDecodes)
+                restored = page.rows + restored
+                token = page.continuation
+                if (index == 0) assertNull(token) else assertTrue(token != null)
+                if (index == 1) {
+                    middleCounts = counts
+                    assertEquals(1, counts.ordinalReads)
+                    assertTrue(counts.evidenceReads <= 16)
+                    assertTrue(counts.evidenceDecodes <= 14)
+                    // The page-edge lookup can mask a missing gap cursor; check this sibling query too.
+                    val boundary = ids[index].toString().padStart(20, '0')
+                    assertEquals(
+                        gaps.map { it.edge }.toSet(),
+                        requireNotNull(database)
+                            .legacy()
+                            .gapCursors("Host", "thread", boundary, boundary)
+                            .map { it.key.toULong() }
+                            .toSet(),
+                    )
+                }
+            }
+            assertEquals(rows, restored)
+            return requireNotNull(middleCounts)
+        }
+
+        val small = traverse(claims)
+        println("legacy_room_boundary_probe baseline=$small")
+        if (shift == 0uL) return
+        val older = (1..1000).map { (it * 2 + 1).toULong() }
+        val grown =
+            claims
+                .copy(
+                    unsignedSpans = older.map { UnsignedHistorySpan(it, it) } + claims.unsignedSpans,
+                    unsignedGaps = (older + ids).zipWithNext { anchor, edge -> UnsignedHistoryGap(anchor, edge) },
+                    unsignedCursors = claims.unsignedCursors + older.associateWith { "cursor-$it" },
+                    unsignedWalks = claims.unsignedWalks + older.associateWith { "walk-$it" },
+                ).validated(rows)
+        open().writeHistoryPosition("Host", "thread", HistoryPosition("saved", false, grown)).getOrThrow()
+        assertEquals(small, traverse(grown))
+        println("legacy_room_boundary_probe older_evidence=4000 counts=$small")
+    }
+
     @Test fun committedEvidenceInvariant_parseableInvalidSpansAndClaimsAreIsolated() =
         runTest {
             val rows = listOf(row(1), row(2))

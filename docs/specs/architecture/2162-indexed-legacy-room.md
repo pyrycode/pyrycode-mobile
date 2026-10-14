@@ -71,6 +71,7 @@ materialize the full bounded snapshot; page reads must never do so.
 | Failed mutation or cancelled transaction | `atomicityInvariant_failureAndCancellationKeepCommittedSnapshot` |
 | Sparse spans and unknown cursor walk, fragmented 18000-row fixture | `boundedEvidenceInvariant_fragmentedFixtureDoesNotDecodeOutsideWindow` |
 | Older cursor/walk growth inside one continuous span | `boundedEvidenceInvariant_olderCursorsAndWalksDoNotGrowContinuousSpanPages` |
+| Two gaps touch a page boundary, including unsigned extremes and older evidence growth | `boundedEvidenceInvariant_sharedGapBoundaryKeepsBothSides`, `boundedEvidenceInvariant_olderEvidenceDoesNotGrowSharedBoundaryPages`, `boundedEvidenceInvariant_sharedGapBoundaryPreservesUnsignedExtremes` |
 | Parseable corrupt selected evidence and fragment bindings | `committedEvidenceInvariant_parseableInvalidSpansAndClaimsAreIsolated`, `committedEvidenceInvariant_parseableInvalidFragmentBindingsAreIsolated` |
 | Unsigned extremes and aliased fragments | `unsignedAndFragmentInvariant_exactEvidenceSurvivesRestart` |
 
@@ -116,6 +117,8 @@ five acceptance criteria, fewer than ten classified reject branches.
 - Network/IO: no network work; row cap and bounded query/decode contract limit page materialization.
   Cursor/walk selection uses the selected claim window and nearest gap/unknown/edge candidates,
   never the full endpoints of a continuous received span.
+  Closed-interval selection includes the strict predecessor and intervals starting at the page
+  boundary; gap walks and nearest gap-edge cursors use that same bounded, owner-scoped rule.
 - Errors/logs: SHOULD FIX implemented with redacted result strings, static diagnostics and
   causeless classified mutation exceptions; test hostile content/owner/cursor values.
 - Concurrency: one database transaction per snapshot/mutation; cancellation propagates; fresh
@@ -156,3 +159,9 @@ the corrected disk read/decode probes and retained file-codec regressions. Keep 
   Use separate indexed cursor/walk anchor lookups: a broad evidence join exceeded the unchanged
   fragmented traversal timeout. Claims with matching SQL indexes also undergo semantic checks.
   Query the unknown walk separately from the page range so both branches can seek the low index.
+- 2026-10-14 (shared-endpoint verifier finding 1): use `low < first` for the predecessor
+  in `intervals`, `gapWalks` and `gapCursors`, retaining `high >= first` and `low <= last`.
+  Selecting a gap starting exactly at the boundary must not hide the preceding gap ending there.
+  Fresh-instance one-row disk traversal checks both gaps, both retry walks and nearest cursors,
+  and excludes non-intersecting intervals. Shifted and maximum-unsigned variants add 4000 older
+  evidence cells without increasing the middle page's row/evidence read or decode counts.

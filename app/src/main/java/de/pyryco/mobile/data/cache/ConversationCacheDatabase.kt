@@ -106,8 +106,10 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
             last: Int,
         ): List<Evidence>
 
+        // Closed intervals need the strict predecessor as well as intervals starting at first.
+        // Keep the same intersection rule in gapWalks and gapCursors.
         @Query(
-            "SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind=:kind AND low BETWEEN COALESCE((SELECT low FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind=:kind AND low<=:first ORDER BY low DESC LIMIT 1),:first) AND :last AND high>=:first ORDER BY low",
+            "SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind=:kind AND low BETWEEN COALESCE((SELECT low FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind=:kind AND low<:first ORDER BY low DESC LIMIT 1),:first) AND :last AND high>=:first ORDER BY low",
         )
         suspend fun intervals(
             host: String,
@@ -155,7 +157,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         ): List<Evidence>
 
         @Query(
-            "SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='cursors' AND low IN (SELECT (SELECT MIN(c.low) FROM legacy_evidence c WHERE c.host=:host AND c.conversation=:conversation AND c.kind='cursors' AND c.low>=g.high) FROM legacy_evidence g WHERE g.host=:host AND g.conversation=:conversation AND g.kind='gaps' AND g.low BETWEEN COALESCE((SELECT low FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='gaps' AND low<=:first ORDER BY low DESC LIMIT 1),:first) AND :last AND g.high>=:first)",
+            "SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='cursors' AND low IN (SELECT (SELECT MIN(c.low) FROM legacy_evidence c WHERE c.host=:host AND c.conversation=:conversation AND c.kind='cursors' AND c.low>=g.high) FROM legacy_evidence g WHERE g.host=:host AND g.conversation=:conversation AND g.kind='gaps' AND g.low BETWEEN COALESCE((SELECT low FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='gaps' AND low<:first ORDER BY low DESC LIMIT 1),:first) AND :last AND g.high>=:first)",
         )
         suspend fun gapCursors(
             host: String,
@@ -165,7 +167,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         ): List<Evidence>
 
         @Query(
-            "SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='walks' AND low IN (SELECT low FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='gaps' AND low BETWEEN COALESCE((SELECT low FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='gaps' AND low<=:first ORDER BY low DESC LIMIT 1),:first) AND :last AND high>=:first)",
+            "SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='walks' AND low IN (SELECT low FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='gaps' AND low BETWEEN COALESCE((SELECT low FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='gaps' AND low<:first ORDER BY low DESC LIMIT 1),:first) AND :last AND high>=:first)",
         )
         suspend fun gapWalks(
             host: String,
