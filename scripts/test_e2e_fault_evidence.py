@@ -16,7 +16,7 @@ class FaultEvidenceTest(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             binary = root / "pyry"
             binary.write_text("#!/bin/sh\nexit 0\n")
             binary.chmod(0o700)
@@ -30,7 +30,7 @@ class FaultEvidenceTest(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             source = root / "source"
             source.mkdir()
             (source / "daemon.log").write_text("private-daemon-fixture")
@@ -59,7 +59,8 @@ class FaultEvidenceTest(unittest.TestCase):
         harness = Path(__file__).with_name("e2e-emulator.sh").read_text()
         cleanup = harness[harness.index("cleanup() {"):harness.index("trap cleanup EXIT")]
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
+            (root / "agents").mkdir()
             source = root / "work"
             source.mkdir()
             (source / "daemon.log").write_text("synthetic-boundary")
@@ -80,7 +81,8 @@ class FaultEvidenceTest(unittest.TestCase):
         selection = harness[harness.index('command -v "${PYRY_BIN}"'):
                             harness.index('\ncommand -v python3', harness.index('command -v "${PYRY_BIN}"'))]
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
+            (root / "agents").mkdir()
             source = root / "work"
             source.mkdir()
             (source / "daemon.log").write_text("managed-boundary")
@@ -110,6 +112,116 @@ class FaultEvidenceTest(unittest.TestCase):
             metadata = json.loads((saved[0].parent / "inputs.json").read_text())
             self.assertEqual(hashlib.sha256(binary.read_bytes()).hexdigest(), metadata["daemon_sha256"])
 
+
+    def test_unknown_identities_and_configured_source_revision(self):
+        spec = importlib.util.spec_from_file_location("evidence", Path(__file__).with_name("e2e_fault_evidence.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            repo = Path(__file__).resolve().parents[1]
+            expected = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+            saved = module.retain(root, root / "private", "secret-revision", "", "missing-synthetic-binary", str(repo), 17)
+            metadata = json.loads((saved / "inputs.json").read_text())
+            self.assertEqual("unavailable", metadata["mobile_revision"])
+            self.assertEqual("unavailable", metadata["daemon_revision"])
+            self.assertEqual("unavailable", metadata["daemon_sha256"])
+            self.assertEqual(expected, metadata["daemon_source_revision"])
+            self.assertEqual(17, metadata["harness_exit_code"])
+            self.assertEqual(dict.fromkeys(module.LOG_NAMES, "unavailable"), metadata["availability"])
+
+    def test_all_logs_and_fifo_exclusion(self):
+        spec = importlib.util.spec_from_file_location("evidence", Path(__file__).with_name("e2e_fault_evidence.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            source = root / "source"
+            source.mkdir()
+            for name in module.LOG_NAMES:
+                (source / name).write_text("synthetic-" + name)
+            saved = module.retain(source, root / "private", "", "", "")
+            metadata = json.loads((saved / "inputs.json").read_text())
+            self.assertEqual(dict.fromkeys(module.LOG_NAMES, "retained"), metadata["availability"])
+            for name in module.LOG_NAMES:
+                self.assertEqual((source / name).read_bytes(), (saved / name).read_bytes())
+            (source / "relay.log").unlink()
+            os.mkfifo(source / "relay.log")
+            saved = module.retain(source, root / "private", "", "", "")
+            self.assertEqual("unavailable", json.loads((saved / "inputs.json").read_text())["availability"]["relay.log"])
+            self.assertFalse((saved / "relay.log").exists())
+
+    def test_partial_hash_failure_records_availability_and_never_claims_complete(self):
+        spec = importlib.util.spec_from_file_location("evidence", Path(__file__).with_name("e2e_fault_evidence.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            (root / "daemon.log").write_text("private-synthetic")
+            (root / "relay.log").write_text("synthetic-relay")
+            real_digest = module.hashlib.file_digest
+            # The first retained-file digest is daemon.log; avoid host-specific fd paths.
+            calls = 0
+            def changed_digest(reader, algorithm):
+                nonlocal calls
+                calls += 1
+                return module.hashlib.sha256(b"wrong-copy") if calls == 1 else real_digest(reader, algorithm)
+            with patch.object(module.hashlib, "file_digest", side_effect=changed_digest):
+                with self.assertRaises(module.RetentionError) as caught:
+                    module.retain(root, root / "private", "", "", "")
+            saved = caught.exception.saved
+            self.assertFalse((saved / "daemon.log").exists())
+            metadata = json.loads((saved / "inputs.json").read_text())
+            self.assertEqual("partial", metadata["retention_status"])
+            self.assertEqual("failed", metadata["availability"]["daemon.log"])
+            self.assertEqual("retained", metadata["availability"]["relay.log"])
+
+    def test_cli_partial_failure_has_only_fixed_summary_and_escaped_destination(self):
+        spec = importlib.util.spec_from_file_location("evidence", Path(__file__).with_name("e2e_fault_evidence.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            (root / "daemon.log").write_text("secret-log")
+            args = ["evidence", "--source", str(root), "--destination", str(root / "private\npath")]
+            output = io.StringIO()
+            with patch("sys.argv", args), patch.object(module, "write_private", side_effect=OSError("secret-error")), redirect_stdout(output):
+                self.assertEqual(1, module.main())
+            self.assertEqual(1, len(output.getvalue().splitlines()))
+            self.assertIn("retention=partial", output.getvalue())
+            self.assertIn("availability=incomplete", output.getvalue())
+            self.assertNotIn("secret", output.getvalue())
+            self.assertIn("private\\npath", output.getvalue())
+
+    def test_existing_managed_evidence_ancestors_become_private(self):
+        spec = importlib.util.spec_from_file_location("evidence", Path(__file__).with_name("e2e_fault_evidence.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            destination = root / "agents/logs/evidence/2145/harness"
+            destination.mkdir(parents=True)
+            for directory in (destination, destination.parent, destination.parent.parent):
+                directory.chmod(0o755)
+            module.retain(root, destination, "", "", "", agents_root=str(root / "agents"))
+            for directory in (destination, destination.parent, destination.parent.parent):
+                self.assertEqual(0o700, stat.S_IMODE(directory.stat().st_mode))
+
+    def test_destination_symlinks_are_rejected_without_writing_or_chmod(self):
+        spec = importlib.util.spec_from_file_location("evidence", Path(__file__).with_name("e2e_fault_evidence.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            (root / "outside").mkdir(mode=0o755)
+            (root / "link").symlink_to(root / "outside")
+            for destination in (root / "link", root / "link/child"):
+                with self.subTest(destination=destination), self.assertRaises(module.RetentionError):
+                    module.retain(root, destination, "", "", "")
+            self.assertEqual([], list((root / "outside").iterdir()))
+            self.assertEqual(0o755, stat.S_IMODE((root / "outside").stat().st_mode))
 
 if __name__ == "__main__":
     unittest.main()

@@ -71,3 +71,8 @@ Pending documentation stage: update `docs/knowledge/features/development-verific
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-14
+
+## Revisions
+
+- 2026-10-14: Descriptor traversal encountered macOS's root-owned `/var` and `/tmp` aliases. Resolve only root-owned symlinks at the filesystem's top level, then pin the canonical directory; caller-owned evidence ancestors and all source log symlinks remain rejected. Directory/FIFO log entries are checked with `fstat` before wrapping a file reader and are unavailable rather than copy failures.
+- 2026-10-14: An existing 0755 managed evidence ancestor failed the permission regression. Enforce 0700 through the managed evidence subtree on descriptor traversal, preserving unrelated agents directories. Partial CLI output uses `retention=partial`, and metadata/manifest read-back verification completes before the completion summary.
