@@ -57,7 +57,8 @@ class OfflineRetryWindowTest {
                     dispatcher = StandardTestDispatcher(testScheduler),
                     random = Random(42),
                 )
-            val deadline = async { runCatching { OfflineRetryWindow.awaitDeadline(supervisor) } }
+            val observed = mutableListOf<RelayBackoff>()
+            val deadline = async { runCatching { OfflineRetryWindow.awaitDeadline(supervisor, observed::add) } }
             runCurrent()
             supervisor.connect()
             try {
@@ -71,6 +72,8 @@ class OfflineRetryWindowTest {
                         "observation=${result.exceptionOrNull()}",
                     result.isSuccess,
                 )
+                assertEquals(6, observed.single().attempt)
+                assertEquals(OfflineRetryWindow.deadlineFor(observed.single()), result.getOrThrow())
             } finally {
                 supervisor.close()
             }

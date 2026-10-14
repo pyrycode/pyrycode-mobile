@@ -643,6 +643,22 @@ cleanup() {
   [ -n "${ANSWER_PID:-}" ] && kill "${ANSWER_PID}" 2>/dev/null || true
   [ -n "${RELAY_PID}" ] && kill "${RELAY_PID}" 2>/dev/null || true
   wait 2>/dev/null || true
+  # Managed feature branches retain their fault boundary even after a passing full gate.
+  # An explicit destination also supports detached historical comparisons.
+  # Extracted cleanup fixtures can inherit the agents path without full-harness setup.
+  if [ -z "${E2E_FAULT_EVIDENCE_DIR:-}" ] && [ -n "${AGENTS_REPO_PATH:-}" ] && [ -n "${REPO_ROOT:-}" ]; then
+    local evidence_branch
+    evidence_branch="$(git -C "${REPO_ROOT}" branch --show-current 2>/dev/null || true)"
+    if [[ "${evidence_branch}" =~ ^feature/[0-9]+$ ]]; then
+      E2E_FAULT_EVIDENCE_DIR="${AGENTS_REPO_PATH}/logs/evidence/${evidence_branch#feature/}/harness"
+    fi
+  fi
+  if [ -n "${E2E_FAULT_EVIDENCE_DIR:-}" ]; then
+    python3 "${REPO_ROOT}/scripts/e2e_fault_evidence.py" --source "${WORK_DIR}" \
+      --destination "${E2E_FAULT_EVIDENCE_DIR}" --mobile-revision "${MOBILE_REVISION:-}" \
+      --daemon-revision "${DAEMON_REVISION:-}" --binary "${PYRY_BIN:-}" --daemon-source "${PYRYCODE_SRC:-}" \
+      || { log "fault boundary evidence retention failed"; code=1; }
+  fi
   # The operator-bypass HOME (#687) goes whatever the exit code: it holds a copy of ~/.claude.json and the
   # witness file. Only a path this script minted is removed. Its daemon log stays in WORK_DIR as the rest do.
   # A failed run first keeps claude's session transcripts (#977): regular *.jsonl files under
@@ -722,6 +738,7 @@ fi
 # LIVE spawns no local relay (it dials the production relay), so the relay binary is not required there.
 [ -n "${LIVE}" ] || command -v "${RELAY_BIN}" >/dev/null 2>&1 || die "relay binary '${RELAY_BIN}' not found (set RELAY_BIN)"
 command -v "${PYRY_BIN}"  >/dev/null 2>&1 || die "pyry binary '${PYRY_BIN}' not found (set PYRY_BIN)"
+PYRY_BIN="$(command -v "${PYRY_BIN}")" # Freeze the PATH selection used by launch and evidence retention.
 command -v python3        >/dev/null 2>&1 || die "python3 not found (needed to decode the pairing payload)"
 [ -x "${GRADLEW}" ] || die "gradlew not found/executable at ${GRADLEW}"
 

@@ -9,6 +9,7 @@ import argparse
 from e2e_session_cleanup import TestSessions
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import math
 from pathlib import Path
 import re
 import socket
@@ -41,6 +42,7 @@ def main():
     parser.add_argument("--port-file", required=True)
     parser.add_argument("--log", required=True)
     parser.add_argument("--ready-token", default="")
+    parser.add_argument("--ready-timeout", type=float, default=15)
     parser.add_argument("--control-socket", required=True)
     parser.add_argument("--cleanup-sockets-file", default="")
     parser.add_argument("--stream-release-file", default="")
@@ -50,36 +52,101 @@ def main():
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         parser.error("daemon command is required")
+    if not math.isfinite(args.ready_timeout) or not 0 < args.ready_timeout <= 15:
+        parser.error("readiness timeout must be positive and at most 15 seconds")
+    token = args.ready_token.encode()
+    if len(token) > 256:
+        parser.error("readiness token is too large")
 
     log = open(args.log, "ab", buffering=0)
     child = None
+    generation = 0
+    log_offset = 0
+    ready = False
+    phase = "stopped"
+
+    def refresh():
+        nonlocal ready, phase
+        running = child is not None and child.poll() is None
+        if not running:
+            ready = False
+            if child is not None and phase != "stopped":
+                phase = "exited"
+        return running
+
+    def evidence(action, status, started):
+        running = refresh()
+        return {"action": action, "http_status": status, "running": running,
+                "pid": child.pid if running else None, "generation": generation,
+                "ready": ready, "phase": phase, "log_offset": log_offset,
+                "elapsed_ms": int((time.monotonic() - started) * 1000)}
+
+    def record(action, status, started, snapshot=None):
+        print(json.dumps({"event": "daemon_fault_transition", "time": time.time(),
+                          **(evidence(action, status, started) if snapshot is None else snapshot)}), flush=True)
 
     def start():
-        nonlocal child
-        if child is None or child.poll() is not None:
-            child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
-            return True
-        return False
+        nonlocal child, generation, log_offset, ready, phase
+        if not refresh():
+            started = time.monotonic()
+            log_offset = log.seek(0, 2)
+            generation += 1
+            ready = False
+            phase = "spawning"
+            child = None  # The exited predecessor does not belong to the new generation.
+            try:
+                child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+            except OSError:
+                phase = "spawn_failed"
+                record("spawn", 503, started)
+                raise
+            phase = "spawned"
+            record("spawn", 0, started)
 
-    def await_relay_ready(offset):
-        if not args.ready_token:
+    def await_relay_ready():
+        nonlocal ready, phase
+        if not refresh():
+            raise RuntimeError("owned daemon exited before relay registration")
+        if ready:
             return
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            if child.poll() is not None:
+        if not token:
+            ready, phase = True, "disabled"
+            return
+        phase = "waiting"
+        deadline = time.monotonic() + args.ready_timeout
+        offset, tail = log_offset, b""
+        while True:
+            if not refresh():
                 raise RuntimeError("owned daemon exited before relay registration")
             with open(args.log, "rb") as reader:
                 reader.seek(offset)
-                if args.ready_token.encode() in reader.read():
+                chunk = reader.read(4096)
+            if chunk:
+                scanned = tail + chunk
+                offset += len(chunk)
+                if token in scanned and refresh():
+                    ready, phase = True, "ready"
                     return
-            time.sleep(0.05)
-        raise RuntimeError("owned daemon did not register at relay")
+                tail = scanned[-(len(token) - 1):] if len(token) > 1 else b""
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                phase = "registration_timeout"
+                raise RuntimeError("owned daemon did not register at relay")
+            if chunk:
+                continue
+            time.sleep(min(0.05, remaining))
 
     def stop():
-        nonlocal child
+        nonlocal ready, phase
+        ready = False
+        phase = "stopped"
         if child is not None and child.poll() is None:
             child.terminate()
-            child.wait(timeout=10)
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                phase = "stop_timeout"
+                raise
 
     def cleanup_sockets():
         if not args.cleanup_sockets_file:
@@ -96,6 +163,10 @@ def main():
             pass
 
         def do_POST(self):
+            started = time.monotonic()
+            actions = {"/test-begin", "/test-end", "/posts", "/stop", "/start", "/stream-release", "/stream-finish", "/status"}
+            action = self.path[1:] if self.path in actions else "unknown"
+            status = 200
             try:
                 if self.path == "/test-begin":
                     test_sessions.begin()
@@ -111,28 +182,33 @@ def main():
                 elif self.path == "/stop":
                     stop()
                 elif self.path == "/start":
-                    offset = Path(args.log).stat().st_size
-                    if start():
-                        await_relay_ready(offset)
+                    start()
+                    await_relay_ready()
                 elif self.path in ("/stream-release", "/stream-finish"):
                     release = args.stream_release_file if self.path == "/stream-release" else args.stream_result_release_file
                     if not release:
-                        self.send_error(404)
-                        return
-                    # Paths are fixed by the isolated harness; this request accepts no path or content.
-                    Path(release).touch()
+                        status = 404
+                    else:
+                        # Paths are fixed by the isolated harness; this request accepts no path or content.
+                        Path(release).touch()
                 elif self.path != "/status":
-                    self.send_error(404)
-                    return
-                payload = json.dumps({"running": child is not None and child.poll() is None,
-                                      "pid": child.pid if child is not None and child.poll() is None else None}).encode()
-                self.send_response(200)
+                    status = 404
+            except (ValueError, KeyError, OSError, RuntimeError, subprocess.TimeoutExpired):
+                status = 503
+            snapshot = evidence(action, status, started)
+            if action == "start" and status == 200 and not (snapshot["running"] and snapshot["ready"]):
+                status = 503
+                snapshot["http_status"] = status
+            payload = json.dumps(snapshot).encode()
+            record(action, status, started, snapshot)
+            try:
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
-            except (ValueError, KeyError, OSError, RuntimeError, subprocess.TimeoutExpired):
-                self.send_error(503, "owned daemon transition failed")
+            except OSError:
+                record("response_transport", 0, started)
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
 
