@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/** Complete daemon facts only. Generation belongs to asynchronous sync work, not wire identity. */
+/** Admitted daemon facts and provisional feedback. Certification excludes local sends. */
 internal data class AuthoritativeThreadSnapshot(
     val epoch: String? = null,
     val items: List<ThreadItemDto> = emptyList(),
@@ -25,6 +25,7 @@ internal data class AuthoritativeThreadSnapshot(
     val resetNeeded: Boolean = false,
     val generation: Long = 0,
     val coverage: AuthoritativeThreadCoverage? = null,
+    val pendingSends: List<AuthoritativePendingSend> = emptyList(),
 ) {
     override fun toString(): String = "AuthoritativeThreadSnapshot(content=***)"
 }
@@ -42,6 +43,53 @@ internal enum class AuthoritativeThreadOutcome { Applied, Ignored, RepairNeeded,
 /** In-memory facts keyed by source and conversation, independent of legacy projection/cache. */
 internal class AuthoritativeThreadStore {
     private val snapshots = MutableStateFlow<Map<Pair<String, String>, AuthoritativeThreadSnapshot>>(emptyMap())
+
+    @Synchronized
+    fun registerPending(
+        host: String,
+        conversation: String,
+        deviceId: String?,
+        message: de.pyryco.mobile.data.model.Message,
+    ) {
+        val current = current(host, conversation)
+        publish(host, conversation, current.copy(pendingSends = current.pendingSends + AuthoritativePendingSend(deviceId, message)))
+        RelayLog.i { "event=thread_send code=provisional" }
+    }
+
+    @Synchronized
+    fun identifyPending(
+        host: String,
+        conversation: String,
+        messageId: String,
+        deviceId: String?,
+    ) {
+        val current = current(host, conversation)
+        publish(
+            host,
+            conversation,
+            current.copy(
+                pendingSends =
+                    current.pendingSends.map {
+                        if (it.message.id == messageId) it.copy(deviceId = deviceId) else it
+                    },
+            ),
+        )
+    }
+
+    @Synchronized
+    fun isCurrentQueueTarget(target: AuthoritativeQueueTarget): Boolean {
+        val current = current(target.host, target.conversation)
+        if (current.resetNeeded || current.epoch != target.epoch || current.generation != target.generation) return false
+        val item = current.items.firstOrNull { it.id == target.acceptedItemId } ?: return false
+        return authoritativeQueueTarget(target.host, target.conversation, target.epoch, target.generation, item) == target
+    }
+
+    /** Keep validation and fire-and-forget send inside the same admission lock. */
+    @Synchronized
+    fun withCurrentQueueTarget(
+        target: AuthoritativeQueueTarget,
+        send: () -> Boolean,
+    ): Boolean = isCurrentQueueTarget(target) && send()
 
     fun current(
         host: String,
@@ -301,7 +349,16 @@ internal class AuthoritativeThreadStore {
     ): AuthoritativeThreadOutcome {
         if (host.isEmpty() || conversation.isEmpty() || epoch.isEmpty()) return requestRepair(host, conversation)
         val generation = current(host, conversation).generation + 1
-        publish(host, conversation, AuthoritativeThreadSnapshot(epoch = epoch, generation = generation, repairNeeded = true))
+        publish(
+            host,
+            conversation,
+            AuthoritativeThreadSnapshot(
+                epoch = epoch,
+                generation = generation,
+                repairNeeded = true,
+                pendingSends = current(host, conversation).pendingSends,
+            ),
+        )
         RelayLog.i { "event=thread_store code=reset" }
         return AuthoritativeThreadOutcome.Applied
     }
@@ -325,6 +382,7 @@ internal class AuthoritativeThreadStore {
                     generation = current.generation + 1,
                     repairNeeded = true,
                     resetNeeded = true,
+                    pendingSends = current.pendingSends,
                 ),
             )
             RelayLog.i { "event=thread_store code=epoch" }
@@ -371,6 +429,8 @@ internal class AuthoritativeThreadStore {
         conversation: String,
         snapshot: AuthoritativeThreadSnapshot,
     ) {
-        snapshots.value = snapshots.value + ((host to conversation) to snapshot)
+        val unresolved = snapshot.pendingSends.filterNot { pending -> snapshot.items.any { it.matchesPending(pending) } }
+        if (unresolved.size != snapshot.pendingSends.size) RelayLog.i { "event=thread_send code=settled" }
+        snapshots.value = snapshots.value + ((host to conversation) to snapshot.copy(pendingSends = unresolved))
     }
 }

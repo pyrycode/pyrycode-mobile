@@ -50,6 +50,7 @@ import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toHistoryPage
 import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toSessionSettings
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
@@ -181,6 +182,7 @@ class RemoteConversationRepository internal constructor(
     private val authoritativeHostId: String = "",
     internal val authoritativeThreads: AuthoritativeThreadStore = AuthoritativeThreadStore(),
     private val authoritativeNowMillis: () -> Long = { System.nanoTime() / 1000000 },
+    private val authoritativeDeviceId: suspend (String) -> String? = { null },
     /** A supplied non-managed pump provides its connection owner's retirement here. */
     private val retireAuthoritativeConnection: () -> Unit = {
         (pump as? ManagedSessionPump)?.close()
@@ -190,6 +192,8 @@ class RemoteConversationRepository internal constructor(
     ThreadSnapshotSource {
     internal val authoritativeRoute: AuthoritativeThreadRoute =
         AuthoritativeThreadRoute(authoritativeHostId, authoritativeThreads, onRepair = { authoritativeQueries.repair(it) })
+
+    @Volatile private var authoritativeCommandsEnded = false
 
     /**
      * The conversation list and the last-message previews (#913): the list projection, the most-recent
@@ -348,6 +352,23 @@ class RemoteConversationRepository internal constructor(
             queueProjection = queueProjection,
             trail = messageTrail,
             connToken = connToken,
+            registerAuthoritativeSend = { conversation, message ->
+                if (authoritativeHostId.isNotEmpty() && authoritativeCommandsEnded) {
+                    RelayLog.i { "event=thread_send code=source_retired" }
+                    throw IllegalStateException("send source unavailable")
+                }
+                val enabled = authoritativeHostId.isNotEmpty() && authoritativeLiveEnabled()
+                if (enabled) {
+                    authoritativeThreads.registerPending(authoritativeHostId, conversation, null, message)
+                    authoritativeThreads.identifyPending(
+                        authoritativeHostId,
+                        conversation,
+                        message.id,
+                        authoritativeDeviceId(authoritativeHostId),
+                    )
+                }
+                enabled
+            },
         )
 
     /**
@@ -546,6 +567,7 @@ class RemoteConversationRepository internal constructor(
                     relayRequests.failAllPending()
                 }
             }.invokeOnCompletion {
+                authoritativeCommandsEnded = true
                 expiry.cancel()
                 queryExpiry.cancel()
                 authoritativeQueries.abandon()
@@ -1710,6 +1732,33 @@ class RemoteConversationRepository internal constructor(
         conversationId: String,
         queuedMessageId: Long,
     ): Unit = messageCommands.sendQueuedNow(conversationId, queuedMessageId)
+
+    override suspend fun actOnAuthoritativeQueue(
+        target: AuthoritativeQueueTarget,
+        sendNow: Boolean,
+    ): Result<Unit> {
+        if (authoritativeCommandsEnded ||
+            target.host != authoritativeHostId ||
+            !authoritativeLiveEnabled()
+        ) {
+            RelayLog.i { "event=thread_queue_action code=source_unavailable" }
+            return Result.failure(IllegalStateException("queue source unavailable"))
+        }
+        return try {
+            if (authoritativeThreads.withCurrentQueueTarget(target) { messageCommands.actOnAuthoritativeQueue(target, sendNow) }) {
+                RelayLog.i { "event=thread_queue_action code=sent" }
+                Result.success(Unit)
+            } else {
+                RelayLog.i { "event=thread_queue_action code=unavailable" }
+                Result.failure(IllegalStateException("queue item unavailable"))
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            RelayLog.i { "event=thread_queue_action code=failed" }
+            Result.failure(IllegalStateException("queue action failed"))
+        }
+    }
 
     /** Drop a queued message over fire-and-forget `dequeue_message` (#466); see [MessageCommands.dropQueuedMessage]. */
     override suspend fun dropQueuedMessage(

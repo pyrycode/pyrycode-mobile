@@ -18,6 +18,7 @@ import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
+import de.pyryco.mobile.data.repository.authoritativeQueueTarget
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -205,6 +206,32 @@ internal fun projectAuthoritativeThread(
                 .filter { it.active }
                 .sortedBy { it.order }
                 .flatMap { backgroundContents.getValue(it.id) }
+    val waiting =
+        held.values
+            .filter { it.shown && it.kind == "user_message" && (it.order ?: 0) <= 0 && it.status in setOf("queued", "lost") }
+            .sortedBy { it.id }
+            .map { item ->
+                val fields = item.content as? JsonObject
+                ThreadRow.Queued(
+                    queuedMessageId = 0,
+                    text = (fields?.text("text") ?: item.summary).displayText(),
+                    echoId = null,
+                    identityKey = "msg:${identity(item.id)}",
+                    target = authoritativeQueueTarget(host, conversation, snapshot.epoch.orEmpty(), snapshot.generation, item),
+                    status = item.status,
+                    authoritative = true,
+                )
+            } +
+            snapshot.pendingSends.map { send ->
+                ThreadRow.Queued(
+                    0,
+                    send.message.content.displayText(),
+                    null,
+                    identityKey = "pending:${host.length}:$host${conversation.length}:$conversation:${send.message.id}",
+                    status = "sending",
+                    authoritative = true,
+                )
+            }
     val tasks =
         held.values
             .sortedBy { it.order ?: Long.MAX_VALUE }
@@ -230,7 +257,7 @@ internal fun projectAuthoritativeThread(
         scope,
         host,
         conversation,
-        rows,
+        rows + waiting,
         rows.filterIsInstance<ThreadRow.Delivered>().map { it.item },
         depths,
         BackgroundTaskRoster(tasks, 0),

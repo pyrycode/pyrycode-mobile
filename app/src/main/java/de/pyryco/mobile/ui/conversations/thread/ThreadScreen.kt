@@ -125,7 +125,6 @@ import de.pyryco.mobile.ui.conversations.components.MessageContentGutter
 import de.pyryco.mobile.ui.conversations.components.ModelRefusalRow
 import de.pyryco.mobile.ui.conversations.components.NoticePill
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlay
-import de.pyryco.mobile.ui.conversations.components.QueuedMessageRow
 import de.pyryco.mobile.ui.conversations.components.RenameDialog
 import de.pyryco.mobile.ui.conversations.components.ResettingIndicator
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
@@ -1108,12 +1107,26 @@ fun ThreadScreen(
                                     // two cannot drift apart. The id is bound here, so the row never
                                     // holds one.
                                     is ThreadRow.Queued ->
-                                        QueuedMessageRow(
+                                        de.pyryco.mobile.ui.conversations.components.AuthoritativeSendRow(
                                             text = row.text,
-                                            onDrop = { onDropQueued(row.queuedMessageId) },
+                                            onDrop =
+                                                if (row.authoritative) {
+                                                    row.target?.let { target ->
+                                                        { onOverflowEvent(ThreadEvent.AuthoritativeQueueAction(target, false)) }
+                                                    }
+                                                } else {
+                                                    { onDropQueued(row.queuedMessageId) }
+                                                },
+                                            status = row.status,
                                             onSendNow =
                                                 if (state.runConfig.midTurnInputSupported) {
-                                                    { onSendQueuedNow(row.queuedMessageId) }
+                                                    if (row.authoritative) {
+                                                        row.target?.let { target ->
+                                                            { onOverflowEvent(ThreadEvent.AuthoritativeQueueAction(target, true)) }
+                                                        }
+                                                    } else {
+                                                        { onSendQueuedNow(row.queuedMessageId) }
+                                                    }
                                                 } else {
                                                     null
                                                 },

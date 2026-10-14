@@ -67,6 +67,12 @@ Test first with focused store/repository/presentation unit probes and fake pumps
 
 None.
 
+## Revisions
+
+- 2026-10-14: Preserve `QueuedMessageRow`'s public signature (eleven existing callers). Its body delegates to an internal `AuthoritativeSendRow` used by the thread; legacy defaults are unchanged. Four new types/composables total. Register provisional feedback before the suspending public identity read, then identify it under the store lock; this preserves immediate feedback even when key storage is delayed.
+- 2026-10-14: Connection collector completion also retires its bound command source, even when a supplied test capability function remains true. Reconnect may forward a captured target only through the replacement repository and after current store validation.
+- 2026-10-14: `retiredSendSourceCannotRegisterFeedbackInItsReplacementStore` failed because a caller retained a disconnected repository reference. Supplied host sources now reject a new send before provisional registration after collector completion; default legacy sources retain their existing path. Source refusal emits a static lifecycle/error code.
+
 ## Security review
 
 **Verdict:** PASS
