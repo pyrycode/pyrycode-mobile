@@ -16,7 +16,7 @@ import org.junit.Test
 
 class AgentSwitchProofTest {
     private val time = Instant.parse("2026-10-13T00:00:00Z")
-    private val row = ModelMenuRow("resolved", "family", "Published", listOf("low", "high"), false, null, ConversationAgent.Codex)
+    private val row = ModelMenuRow(SWITCH_CODEX_MODEL, "family", "Published", listOf("low", "high"), false, null, ConversationAgent.Codex)
     private val channel = Conversation("channel", "test", "", "successor", listOf("old"), true, time, agent = ConversationAgent.Codex)
     private val settings = SessionSettings("successor", "family", "low", EffectiveEffort.Applied("low"), "default", false, 0, 0)
 
@@ -30,6 +30,15 @@ class AgentSwitchProofTest {
         assertEquals(null, switchModelRow(ModelMenu(listOf(row.copy(agent = ConversationAgent.Claude)), 0), ConversationAgent.Codex))
         val hidden = List(32) { row.copy(agent = ConversationAgent.Claude, displayName = "row$it") } + row
         assertEquals(null, switchModelRow(ModelMenu(hidden, 0), ConversationAgent.Codex))
+    }
+
+    @Test fun codexSelectionTakesOnlyLunaEvenWhenAnotherCodexRowLeads() {
+        val sol = row.copy(resolvedModel = "gpt-6.1-sol", value = "sol", displayName = "GPT-6.1 Sol")
+        assertEquals(row, switchModelRow(ModelMenu(listOf(sol, row), 0), ConversationAgent.Codex))
+        assertEquals(null, switchModelRow(ModelMenu(listOf(sol), 0), ConversationAgent.Codex))
+        val claude =
+            row.copy(resolvedModel = "claude-opus", value = "opus", displayName = "Opus", agent = ConversationAgent.Claude)
+        assertEquals(claude, switchModelRow(ModelMenu(listOf(sol, claude), 0), ConversationAgent.Claude))
     }
 
     @Test fun successorRequiresFreshMatchingAgentChannelSessionAndModel() {

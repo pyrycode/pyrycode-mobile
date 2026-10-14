@@ -9,6 +9,12 @@ import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.ui.conversations.thread.dropdownLabel
 
+/**
+ * The only Codex model a live switch may run on: GPT-6 Luna, the cheapest. Matched on the published
+ * `resolved_model`, never on list position, so a menu that leads with Sol or Astra cannot select them.
+ */
+internal const val SWITCH_CODEX_MODEL = "gpt-6-luna"
+
 /** A row must be selectable without guessing a family, a cut field or an ambiguous UI label. */
 internal fun switchModelRow(
     menu: ModelMenu,
@@ -17,6 +23,7 @@ internal fun switchModelRow(
     val rendered = renderedModelRows(menu)
     return rendered.firstOrNull { row ->
         row.agent == agent &&
+            (agent != ConversationAgent.Codex || row.resolvedModel == SWITCH_CODEX_MODEL) &&
             row.value.isNotBlank() &&
             row.resolvedModel.isNotBlank() &&
             row.truncatedFields.orEmpty().isEmpty() &&
