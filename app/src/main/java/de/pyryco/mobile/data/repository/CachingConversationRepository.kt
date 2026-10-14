@@ -2,9 +2,11 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
+import de.pyryco.mobile.data.cache.SavedAuthoritativeThread
 import de.pyryco.mobile.data.cache.cacheableThreadRows
 import de.pyryco.mobile.data.cache.settledThreadRows
 import de.pyryco.mobile.data.cache.threadRowsWereTrimmed
+import de.pyryco.mobile.data.cache.toSavedAuthoritativeThread
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.network.RelayLog
@@ -93,6 +95,9 @@ class CachingConversationRepository(
     // and a write from that collector after the removal would put the rows straight back.
     private val deleted = ConcurrentHashMap.newKeySet<String>()
     private val historyWrites = Mutex()
+    private val authoritativeRemote = (delegate as? RemoteConversationRepository)?.takeIf { it.authoritativeStoreFor(serverId) != null }
+    internal val authoritativeThreads = authoritativeRemote?.authoritativeStoreFor(serverId) ?: AuthoritativeThreadStore()
+    private val persistedAuthoritative = ConcurrentHashMap<String, CacheCandidate>()
 
     private data class DrawnThread(
         val rows: List<ThreadItem>,
@@ -115,6 +120,8 @@ class CachingConversationRepository(
         val drawn: DrawnThread,
         val cacheable: List<ThreadItem>,
         val ready: CompletableDeferred<Unit> = CompletableDeferred(),
+        val authoritative: SavedAuthoritativeThread? = null,
+        val storeGeneration: Long = 0,
     )
 
     private inner class ThreadWriter(
@@ -122,6 +129,7 @@ class CachingConversationRepository(
         private val scope: CoroutineScope,
         restored: List<ThreadItem>,
         private val collectionCoverageRevision: Long,
+        private val initialAuthoritative: SavedAuthoritativeThread? = null,
     ) {
         private val latest = AtomicReference<CacheCandidate?>()
         private val retry = AtomicBoolean()
@@ -153,12 +161,33 @@ class CachingConversationRepository(
             if (!changed && !superseded && !retry.getAndSet(false)) return
             retry.set(false)
             val candidate = CacheCandidate(drawn, cacheable)
+            schedule(candidate)
+        }
+
+        fun accept(
+            snapshot: AuthoritativeThreadSnapshot,
+            capture: Long,
+        ) {
+            if (snapshot.epoch == null) return
+            val saved = snapshot.toSavedAuthoritativeThread()
+            val previous = latest.get()
+            if (saved == (previous?.authoritative ?: initialAuthoritative) && !retry.getAndSet(false)) return
+            retry.set(false)
+            val candidate =
+                CacheCandidate(DrawnThread(emptyList(), capture), emptyList(), authoritative = saved, storeGeneration = snapshot.generation)
+            schedule(candidate, immediate = snapshot.generation > (previous?.storeGeneration ?: 0))
+        }
+
+        private fun schedule(
+            candidate: CacheCandidate,
+            immediate: Boolean = false,
+        ) {
             latest.set(candidate)
             timer?.cancel()
             // Signal readiness separately so a long write cannot queue obsolete intermediate rows.
             timer =
                 scope.launch {
-                    delay(100)
+                    if (!immediate) delay(100)
                     candidate.ready.complete(Unit)
                     signals.trySend(Unit)
                 }
@@ -168,6 +197,7 @@ class CachingConversationRepository(
             if (candidate === completed) return
             val result =
                 historyWrites.withLock {
+                    if (candidate.authoritative != null) return@withLock persistAuthoritative(conversationId, candidate)
                     val persisted = persistedThreads[conversationId]
                     if (conversationId in deleted ||
                         candidate.drawn.generation <= (persisted?.coverageGeneration ?: 0)
@@ -201,6 +231,90 @@ class CachingConversationRepository(
                 writer.cancelAndJoin()
                 signals.close()
                 latest.get()?.let { persist(it) }
+            }
+        }
+    }
+
+    /** Called only under historyWrites; started mutations finish with their successful baseline. */
+    private suspend fun persistAuthoritative(
+        conversationId: String,
+        candidate: CacheCandidate,
+    ): Result<Unit>? {
+        val saved = candidate.authoritative ?: return null
+        val current = authoritativeThreads.current(serverId, conversationId)
+        val persisted = persistedAuthoritative[conversationId]
+        if (conversationId in deleted || candidate.storeGeneration != current.generation ||
+            candidate.drawn.generation <= (persisted?.drawn?.generation ?: 0)
+        ) {
+            return null
+        }
+        if (saved == persisted?.authoritative) {
+            persistedAuthoritative[conversationId] = candidate
+            return Result.success(Unit)
+        }
+        return withContext(NonCancellable) {
+            val result = cache.writeAuthoritativeThread(serverId, conversationId, saved)
+            if (result.isSuccess) persistedAuthoritative[conversationId] = candidate
+            result
+        }
+    }
+
+    private suspend fun restoreAuthoritative(conversationId: String): SavedAuthoritativeThread? {
+        if (conversationId in deleted) return null
+        val generation = authoritativeThreads.current(serverId, conversationId).generation
+        val saved = cache.readAuthoritativeThread(serverId, conversationId) ?: return null
+        historyWrites.withLock {
+            if (conversationId !in deleted) authoritativeThreads.restore(serverId, conversationId, saved.toSnapshot(), generation)
+        }
+        return saved
+    }
+
+    /** Supplied cache seam; #1988 selects the production route using current negotiation. */
+    internal fun observeAuthoritativeThread(conversationId: String): Flow<AuthoritativeThreadSnapshot> =
+        flow {
+            val restored = restoreAuthoritative(conversationId)
+            coroutineScope {
+                val writer = ThreadWriter(conversationId, this, emptyList(), 0, restored)
+                try {
+                    authoritativeThreads.observe(serverId, conversationId).collect { snapshot ->
+                        val capture = generations.incrementAndGet()
+                        emit(if (conversationId in deleted) AuthoritativeThreadSnapshot() else snapshot)
+                        withContext(processingDispatcher) { writer.accept(snapshot, capture) }
+                    }
+                } finally {
+                    writer.finish()
+                }
+            }
+        }
+
+    internal suspend fun openAuthoritativeThread(conversationId: String): Boolean {
+        restoreAuthoritative(conversationId)
+        return conversationId !in deleted && authoritativeRemote?.openAuthoritativeThread(conversationId) == true
+    }
+
+    /** Reset acknowledgement includes durable invalidation; failure leaves the last successful record intact. */
+    internal suspend fun resetAuthoritativeThread(
+        conversationId: String,
+        epoch: String,
+    ): Result<Unit> {
+        if (conversationId in deleted) return Result.success(Unit)
+        if (authoritativeRemote == null || !authoritativeRemote.resetAuthoritativeThread(conversationId, epoch)) {
+            if (authoritativeThreads.reset(serverId, conversationId, epoch) != AuthoritativeThreadOutcome.Applied) {
+                return Result.failure(IllegalArgumentException("invalid authoritative reset"))
+            }
+        }
+        val snapshot = authoritativeThreads.current(serverId, conversationId)
+        val candidate =
+            CacheCandidate(
+                DrawnThread(emptyList(), generations.incrementAndGet()),
+                emptyList(),
+                authoritative = snapshot.toSavedAuthoritativeThread(),
+                storeGeneration = snapshot.generation,
+            )
+        return withContext(NonCancellable) {
+            historyWrites.withLock {
+                persistAuthoritative(conversationId, candidate)
+                    ?: Result.success(Unit)
             }
         }
     }
@@ -386,6 +500,7 @@ class CachingConversationRepository(
             historyWrites.withLock {
                 drawnThreads.remove(conversationId)
                 persistedThreads.remove(conversationId)
+                persistedAuthoritative.remove(conversationId)
                 cache.removeConversation(serverId, conversationId)
             }
         }.onFailure { RelayLog.d { "event=conversation_cache_remove_failed" } }

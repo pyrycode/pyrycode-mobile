@@ -300,6 +300,10 @@ class RemoteConversationRepository internal constructor(
             retireAuthoritativeConnection,
         )
 
+    /** The cache may borrow this supplied store only for its exact host namespace. */
+    internal fun authoritativeStoreFor(host: String): AuthoritativeThreadStore? =
+        authoritativeThreads.takeIf { host == authoritativeHostId }
+
     internal fun openAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.open(conversationId)
 
     internal fun requestOlderAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.older(conversationId)

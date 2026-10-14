@@ -81,3 +81,7 @@ None. The additive supplied seam intentionally stops before production route act
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-14
+
+## Revisions
+
+- 2026-10-14: reset returns a reporting `Result<Unit>` after durable replacement. A cache failure retains the last valid document, and cannot be acknowledged as successful invalidation. `restore` rejects any store already owned by a runtime reset, including a read begun after reset with a reused epoch; process-restored records start in generation zero. The supplied remote accessor is additive and host checked, with an offline store fallback; no existing signatures or callers are migrated.
