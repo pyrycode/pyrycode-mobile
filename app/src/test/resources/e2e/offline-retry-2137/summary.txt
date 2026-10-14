@@ -1,0 +1,78 @@
+Controller diagnosis and reviewed evidence for #2137
+
+The recorded base controller skips registration verification on an already living child.
+Owned synthetic child without a readiness token: stop 200, first start 503, second start 200.
+This establishes the controller defect. It does not attribute the historical live failures.
+Repaired controller regressions: 18 executed/passed, 0 failed/skipped.
+Private capture regressions: 3 executed/passed, 0 failed/skipped.
+Focused JVM: DaemonFaultEvidenceTest 5/5, OfflineRetryWindowTest 3/3,
+RelayConnectionSupervisorTest 37/37; each 0 failed/errors/skipped.
+
+Original dispatcher reports are now recovered and privately hash-verified on HP:
+full live 65 executed / 61 passed / 4 failed; rerun 4 / 3 / 1; base 1 / 0 / 1.
+The branch/rerun repository recovery windows were 11867/13430 ms.
+The original base failed at start. These distinct phases remain unattributed.
+
+Fresh historical focused live comparisons:
+base Mobile 427640d577b3aec8a15bd5f44ae22c881f194da2: 1 executed/passed, 0 failed/skipped.
+branch Mobile d4015481c26ff8ea9b3613aba927facd5033186c: 1 executed/passed, 0 failed/skipped.
+Each retained daemon log has initial and restarted registration events, and each
+phone log has one host_retry_requested event. No original live failure reproduced.
+The first base pass lost raw daemon captures to successful cleanup; a second fresh
+base run retained complete logs before disposal. Both counted results passed 1/1.
+
+Interrupted worker tested Mobile code 72311218f35c62db6037a7539d61db431cd89049:
+scripted offline-retry: 1 executed/passed, 0 failed/errors/skipped, gate exit 0.
+named live offlineRetry: 1 executed/passed, 0 failed/errors/skipped, gate exit 0.
+Both original scenario assertions ran unchanged, including outage, null repository,
+visible pill, same host/conversation, original recovery deadline and a new reply.
+Scripted capped attempt 6: observed lag 0 ms, remaining recovery budget 19777 ms.
+Live capped attempt 6: observed lag 2 ms, remaining recovery budget 19773 ms.
+Each retains the original 20000 ms proof budget against minimum 24000 ms passive redial.
+Controller/client restart readiness is generation 2 and phase ready in both runs.
+
+All comparisons use daemon source e810c8a85064d2cd290285095fc16cd8941f3236.
+Daemon SHA-256 4f2a987f312fa7379ee1ca9d4f1dc774f60341d68ac4eb7b98092d506c9de1f3.
+The gate binary omits embedded VCS metadata; source revision and binary hash are
+recorded separately. Real-Claude comparisons used Claude Code 2.1.280.
+One candidate live pre-device build failed from overlapping builds in this checkout;
+zero tests executed. The subsequent serial live run above passed.
+
+Private verified artifacts: $AGENTS_REPO_PATH/logs/evidence/2137/recovered-mac-20261013/
+historical-base/, historical-branch/, final-scripted/, candidate-live/,
+unit-and-controller/, each with XML/logs as applicable and SHA256SUMS.
+Raw captures, response text, credentials and pairing material are not published here.
+
+Pending dispatcher acceptance: configured scripted-all and full live gate on the
+final main integration, explicitly executing the named live offlineRetry method.
+PR #2107 remains open and its scenario diagnostics/restoration helper are absent
+from current main b107f97a7; preserve them when it lands. No causal blocker found.
+
+Operator handoff recovery on HP: archive SHA-256
+b6e982b491be8ccb5e2ca098bc4fafcfddb43fa089b608b7f973a2647ff6a173.
+All 56 private raw files and existing manifests verified after recovery.
+Fresh portable regressions on HP: controller 18/18 and retention 3/3.
+Fresh focused JVM regressions on HP: 45/45, zero failed/errors/skipped.
+
+Resumed HP candidate 97e51941c44af3a2d364075d0bbca853fc94ae5a:
+fresh scripted offline-retry: 1 executed/passed, zero failures/errors/skips, exit 0.
+Daemon revision/source eb3c757cac48a65f536bdc0dfdc92f0adbd82c3f,
+binary SHA-256 8e94ff43007ee7637ba04730f350bf9ec014b0525605fc800cbe1f21be1542e0.
+Actual attempt 6, observer lag 1 ms, remaining producer budget 19417 ms.
+Restart generation 2 registered in 50 ms; one host_retry_requested observed.
+Private XML/logcat, boundary captures and manifests:
+$AGENTS_REPO_PATH/logs/evidence/2137/resumed-hp-20261013/scripted/.
+Fresh historical controller reproduction independently reconfirms 200/503/200;
+private static result/controller logs: resumed-hp-20261013/controller-red/.
+Original 6 dispatcher reports retained under resumed-hp-20261013/original-reports/.
+Original full gate daemon revision 126d7ca662a38fdd399cacd2ea09bcb12304c892;
+original rerun/base daemon revision e810c8a85064d2cd290285095fc16cd8941f3236.
+Their missing original daemon/controller captures still prevent causal attribution.
+
+Fresh focused live on the same resumed HP Mobile/daemon/binary revisions:
+interactiveTurn_offlineRetry_reconnectsSameHostAndReplies: 1 executed/passed,
+zero failures/errors/skips, gate exit 0. Attempt 6 observed with 2 ms lag;
+19824 ms remained in the original budget. Generation 2 registered in 107 ms;
+one host_retry_requested observed. Private captures: resumed-hp-20261013/live/.
+scripted-hp.xml and live-hp.xml contain reviewed counted HP outcomes.
+Both normal gate cleanups completed successfully. Final full suites remain pending.

@@ -1,0 +1,25 @@
+{
+  "revision": "b107f97a743a508fb9182fdc165b3e084180e250",
+  "uncommitted_diff_sha256": null,
+  "command": "UI_GATE_FULL=1 UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui",
+  "exit_code": 0,
+  "raw_evidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2143/baseline",
+  "counts": {
+    "recorded": 1610,
+    "executed": 1608,
+    "passed": 1608,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 2
+  },
+  "methods": {
+    "slowRestore_negativeControlRejectsTheSameFirstDrawBound": "passed",
+    "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen": "passed",
+    "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen": "passed"
+  },
+  "sources": {
+    "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "6f7bc345c8036f807d553bf0bc37b1949a3c8f71f385fe2f35e292bef8b437d2",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b18d35734b7e4fb5c0cb40d12e4e574a66fdbcc3dfb72784b1d9a618f92c9173",
+    "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "c00fc0f34858eaf4ed0a3cd44aea2ae4594afaa206901bd3933c99a2d35a7f06"
+  }
+}

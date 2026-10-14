@@ -9,7 +9,10 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeMark
 
 internal object OfflineRetryWindow {
-    suspend fun awaitDeadline(supervisor: RelayConnectionSupervisor): TimeMark {
+    suspend fun awaitDeadline(
+        supervisor: RelayConnectionSupervisor,
+        onObserved: (RelayBackoff) -> Unit = {},
+    ): TimeMark {
         val backoff =
             withTimeoutOrNull(90_000) {
                 supervisor.backoffState.filterNotNull().first { it.attempt >= 6 }
@@ -18,6 +21,7 @@ internal object OfflineRetryWindow {
             "Offline Retry backoff observation timed out: attempt=${supervisor.backoffState.value?.attempt}, " +
                 "status=${supervisor.relayStatus.value::class.simpleName}"
         }
+        onObserved(backoff)
         return deadlineFor(backoff)
     }
 

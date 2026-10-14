@@ -299,12 +299,14 @@ in-memory `AuthoritativeThreadStore`; existing `ThreadSnapshotSource` and
 `observeMessages` consumers still read `ThreadProjection`. Authoritative items
 never become raw history events. `observe(host, conversation)` selects one atomic
 snapshot containing complete `ThreadItemDto` items, epoch, `completedVersion`,
-resumable `checkpoint`, `repairNeeded`, `resetNeeded` and a local `generation`.
+resumable `checkpoint`, certified `coverage`, `repairNeeded`, `resetNeeded` and a
+local `generation`.
 Synchronous synchronized mutations publish a single StateFlow map; recollection
 reads held facts, and process death loses them. The daemon's
 [supplied delivery contract](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#daemon-thread-updates-v2-supplied-delivery-contract)
 and [ADR 042](https://github.com/pyrycode/pyrycode/blob/main/docs/knowledge/decisions/042-daemon-built-thread.md)
-remain the authority for wire facts.
+remain the authority for wire facts; query shapes and ordering belong to the
+daemon’s [Thread query messages](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#thread-query-messages).
 
 ### Supplied route and connection ownership
 
@@ -315,15 +317,47 @@ interception precedes legacy unread, replay-cursor and projection side effects;
 without the gate those verbs are ignored. Production hello still omits `thread`,
 so normal connections retain their raw-event behavior.
 
-The route reuses the [bounded thread decoder](mobile-protocol-v2-wire-layer.md#supplied-thread-updates-and-continuation-admission)
-and serializes decode, expiry, reset and certification. Only `Complete` applies
-items. `Pending` captures the conversation's generation without publishing partial
-facts; `Repair` marks its owner, or conservatively all known snapshots for that
-host when no owner can be recovered. A connection-scope child ticks expiry every
-second even without inbound traffic. Collector termination cancels it and abandons
-assembly, including cancellation before collection starts. Reconnect uses a fresh
-route/decoder, so fragments cannot combine across connections. Route reset discards
-that conversation's pending assembly; successful complete certification does too.
+The route reuses the [bounded thread decoder](mobile-protocol-v2-wire-layer.md#supplied-thread-updates-and-continuation-admission).
+Only complete live updates apply; pending assembly captures the conversation's
+generation without publishing fragments. Repair marks its owner, or all known
+snapshots for that host when no owner can be recovered. `AuthoritativeThreadQueries`
+uses the existing `ThreadQueryDecoder` through the same inbound collector.
+
+The internal repository seams are `openAuthoritativeThread` (open or synchronize),
+`requestOlderAuthoritativeThread`, `cancelAuthoritativeThread`,
+`resetAuthoritativeThread` and `observeAuthoritativeThread`. Open, older and reset
+return admission booleans, not completion evidence. Observation is a cold projection
+of held host/conversation snapshots and sends no request; collecting it again does
+not replay raw history. Older admission requires an opened conversation with
+certified coverage whose `olderExists` is true. Catch-up reads the latest certified
+epoch/checkpoint at dispatch; without a checkpoint it requests version zero.
+
+One connection owns a deduplicated FIFO of conversation/query intents and one
+remotely occupied query slot. Every attempt allocates a fresh identity through
+`RelayRequests.nextRequestId`. Local cancellation, repair, reset, expiry or rejected
+application abandons assembly but cannot release the daemon's slot. Pending intents
+wait while discarded replies drain without mutation or certification. Only a
+validated correlated terminal success, reset or error proves remote completion;
+send refusal never occupies the remote slot. Request ownership lasts for the
+connection, so late authoritative errors are consumed before legacy read evidence,
+while unrelated errors retain their legacy route.
+
+Connection-scoped expiry children tick every second without inbound traffic. A
+query has a 30-second overall deadline as well as bounded fragment assembly; after
+local abandonment, a further 30-second drain deadline closes admission, discards
+pending intents and retires the connection. The default retirement callback closes
+a managed pump and cancels its scope; supplied non-managed pumps must provide a
+callback that retires their connection. Collector termination cancels expiry and
+abandons both decoders, including cancellation before collection starts.
+
+The internal constructor accepts a defaulted shared `AuthoritativeThreadStore` for
+future connection owners. Reconnect creates fresh route/query decoders and reopens
+desired conversations using held certified checkpoints and coverage; neither queued
+intents nor fragment assembly crosses connections. Held upserts may include newer
+live facts from an interrupted query, but they do not authorize a newer resume
+version. Atomic save/restore belongs to #2149; queue reconciliation (#1986) and
+production activation (#1988) consume these additive seams. Production negotiation
+and the raw-row/UI route switch remain with #1988.
 
 ### Item application and explicit clears
 
@@ -351,30 +385,70 @@ version is at least revision, and history numbers stay below 2^53.
 
 ### Repair, checkpoints and reset generations
 
-A full batch or newer live version raises completed progress but never certifies
-covered history or advances the resumable checkpoint. `requestRepair` is sticky:
-later valid live updates can improve held facts without clearing repair or moving
-that checkpoint. Only `establishComplete` merges supplied full items and explicitly
-certifies a version at least all held completed progress in the current generation,
-then advances the checkpoint and clears repair. A supplied batch alone cannot prove
-catch-up completeness; callers must establish that separately.
+A complete query batch or newer live version raises applied `completedVersion`
+but never certifies covered history or advances the resumable checkpoint. Complete
+batches expose their items immediately; ignored older upserts also count as
+successfully applied. `requestRepair` stays sticky across later valid live updates.
+The direct `establishComplete` seam requires a version at least held progress;
+query `certifyQuery` instead uses only the request's captured terminal checkpoint,
+after every batch applied successfully. If live progress has overtaken that
+captured version, catch-up retains its prior checkpoint and leaves repair needed.
+Substituting the newer live number would certify history the query never supplied.
 
-An unexpected epoch clears only the affected host/conversation's items and progress,
-increments generation and enters reset-needed state. Further application is blocked
-until explicit `reset` installs an epoch. Reset clears items/checkpoint and leaves
-repair needed until complete certification. Every application/certification carries
-a captured generation; stale work cannot repopulate reset state even if an epoch is
-reused. Outcomes distinguish `Applied`, `Ignored`, `RepairNeeded`, `ResetNeeded` and
-`StaleGeneration`. Snapshot strings redact contents and diagnostics use static codes.
+`AuthoritativeThreadCoverage` independently exposes a continuous certified
+`[lowerOrder, upperOrder)` range, numeric `continuation` and explicit `olderExists`.
+Only validated successful terminal markers publish coverage. Newest windows merge
+with held coverage only when ranges overlap or touch; a disjoint window replaces
+it rather than filling an unproved gap. An older page uses the certified continuation
+as exclusive `before_order` and must end exactly there to extend the held lower
+boundary. Captured versions and every coverage number must fit the inclusive
+safe-integer domain, zero through 9007199254740991. Rejection preserves previous
+certified facts, even for a marker-only reply with no items to validate.
 
-`AuthoritativeThreadStoreTest` probes overlap/replay convergence, host/conversation
-isolation, exact-base patches, optional clears, unknown facts, sticky repair and
-reset fencing. `RemoteConversationRepositoryAuthoritativeTest` exercises supplied
-capability gates, legacy isolation, partial completion/failure, idle expiry,
-abandonment and reused-epoch pending work. These are supplied-input contract probes.
-Catch-up/page wire DTOs belong to #2040, scheduling/cache writes to #1984, rendering
-to #1985, and production negotiation/activation plus combined live proof to #1988.
-See the [architecture plan](../../specs/architecture/2043-authoritative-thread-store.md).
+Active items and required parent extras outside a page remain held upserts; they
+never expand the certified range or determine its continuation. Lower-bound ties
+stay supplied by the daemon. Short and empty successful pages use the explicit
+marker and `olderExists`, never item count, to determine completeness. A page can
+certify older coverage while leaving the catch-up checkpoint and repair state
+untouched, even if its items reveal newer history. Cache and queue consumers must
+read coverage independently of returned extras and applied progress.
+
+Malformed/failed batches, incomplete assembly, missing terminal markers, expiry,
+send refusal and disconnect preserve prior checkpoint and page boundary. Retries
+use fresh request identities and those certified facts, retaining newer held live
+revisions absent from retried batches. Provider errors require an explicit retry
+rather than an automatic loop. Live repair of an opened conversation queues
+catch-up and retires its active query: a missing-base patch can discover a gap
+without raising progress, so its older marker must not clear the new repair.
+
+An unexpected epoch clears only the affected host/conversation's items, progress
+and coverage, increments generation and enters reset-needed state. Application is
+blocked until explicit reset installs an epoch. Reset discards that conversation's
+live assembly, clears items/checkpoint/coverage and leaves repair needed; the query
+coordinator follows with a zero-version window in the reported epoch. Every
+application/certification carries a captured generation, so delayed replies cannot
+repopulate reset state even when the epoch string is reused.
+
+Live repair notifications capture affected generations while holding the route
+lock, then call the coordinator after releasing it. This preserves coordinator →
+route/store lock order and lets the coordinator ignore a notification delayed
+across reset. Capturing only an epoch, or looking up generation after unlocking,
+would let a reused-epoch notification retire replacement work. Outcomes distinguish
+`Applied`, `Ignored`, `RepairNeeded`, `ResetNeeded` and `StaleGeneration`. Snapshot
+strings redact contents and diagnostics use static codes.
+
+`AuthoritativeThreadStoreTest` probes identity/revision convergence, isolation,
+exact-base patches, optional clears, unknown facts, sticky repair and reset fencing.
+`RemoteConversationRepositoryAuthoritativeTest` covers supplied capability gates,
+legacy isolation and live assembly. `AuthoritativeThreadQueriesTest` drives the real
+repository/decoder/store with interrupted queries overlapping newer live revisions,
+out-of-range parents, numeric ties, empty completion, unsupported coverage, retired
+errors and reset/reconnect. Lifecycle fakes must hold the provider slot until
+terminal delivery: a pump that always accepts sends cannot prove remote release.
+Existing legacy repository tests stay enabled. These are deterministic supplied-input
+probes; production activation and combined live proof belong to #1988, not this seam.
+See the [query architecture plan](../../specs/architecture/2148-authoritative-thread-queries.md)
+and [item-store plan](../../specs/architecture/2043-authoritative-thread-store.md).
 
 ## The unified thread store and the `session_transition` fold (#336)
 
