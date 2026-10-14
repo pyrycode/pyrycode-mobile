@@ -176,6 +176,117 @@ class FaultEvidenceTest(unittest.TestCase):
             self.assertEqual("failed", metadata["availability"]["daemon.log"])
             self.assertEqual("retained", metadata["availability"]["relay.log"])
 
+    def assert_manifest_failure_is_incomplete(self, verification):
+        spec = importlib.util.spec_from_file_location("evidence", Path(__file__).with_name("e2e_fault_evidence.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            (root / "daemon.log").write_text("private-synthetic")
+            real_write = module.write_private
+
+            def fail_manifest(directory, name, content):
+                if name == "SHA256SUMS":
+                    with os.fdopen(os.open("inputs.json", module.FILE_FLAGS, dir_fd=directory), "rb") as reader:
+                        self.assertEqual("retained", json.load(reader)["availability"]["daemon.log"])
+                    if not verification:
+                        raise OSError("private-write-failure")
+                    content += b"corrupt-manifest\n"
+                return real_write(directory, name, content)
+
+            with patch.object(module, "write_private", side_effect=fail_manifest):
+                with self.assertRaises(module.RetentionError) as caught:
+                    module.retain(root, root / "private", "", "", "")
+            saved = caught.exception.saved
+            metadata = json.loads((saved / "inputs.json").read_text())
+            self.assertEqual("partial", metadata["retention_status"])
+            self.assertEqual("retained", metadata["availability"]["daemon.log"])
+            self.assertEqual("private-synthetic", (saved / "daemon.log").read_text())
+            self.assertNotIn("private-write-failure", str(caught.exception))
+
+    def test_manifest_write_failure_after_metadata_never_claims_complete(self):
+        self.assert_manifest_failure_is_incomplete(verification=False)
+
+    def test_manifest_verification_failure_after_metadata_never_claims_complete(self):
+        self.assert_manifest_failure_is_incomplete(verification=True)
+
+    def test_completion_is_published_only_after_verified_manifest_and_metadata(self):
+        spec = importlib.util.spec_from_file_location("evidence", Path(__file__).with_name("e2e_fault_evidence.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            (root / "daemon.log").write_text("private-synthetic")
+            real_replace = module.os.replace
+
+            def publish(source, destination, **kwargs):
+                directory = kwargs["src_dir_fd"]
+                self.assertEqual(directory, kwargs["dst_dir_fd"])
+                with os.fdopen(os.open("inputs.json", module.FILE_FLAGS, dir_fd=directory), "rb") as reader:
+                    self.assertEqual("partial", json.load(reader)["retention_status"])
+                with os.fdopen(os.open(source, module.FILE_FLAGS, dir_fd=directory), "rb") as reader:
+                    self.assertEqual("complete", json.load(reader)["retention_status"])
+                with os.fdopen(os.open("SHA256SUMS", module.FILE_FLAGS, dir_fd=directory), "r") as reader:
+                    manifest = reader.read()
+                for line in manifest.splitlines():
+                    expected, name = line.split("  ")
+                    with os.fdopen(os.open(source if name == "inputs.json" else name, module.FILE_FLAGS, dir_fd=directory), "rb") as reader:
+                        self.assertEqual(expected, module.hashlib.file_digest(reader, "sha256").hexdigest())
+                return real_replace(source, destination, **kwargs)
+
+            with patch.object(module.os, "replace", side_effect=publish) as replacement:
+                saved = module.retain(root, root / "private", "", "", "")
+            self.assertEqual(1, replacement.call_count)
+            self.assertEqual("complete", json.loads((saved / "inputs.json").read_text())["retention_status"])
+            self.assertEqual({"daemon.log", "inputs.json", "SHA256SUMS"}, {p.name for p in saved.iterdir()})
+
+    def test_completion_publication_failure_leaves_partial_metadata(self):
+        spec = importlib.util.spec_from_file_location("evidence", Path(__file__).with_name("e2e_fault_evidence.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            with patch.object(module.os, "replace", side_effect=OSError("private-rename-failure")):
+                with self.assertRaises(module.RetentionError) as caught:
+                    module.retain(root, root / "private", "", "", "")
+            metadata = json.loads((caught.exception.saved / "inputs.json").read_text())
+            self.assertEqual("partial", metadata["retention_status"])
+
+    def test_completed_metadata_write_and_verification_failures_leave_partial_status(self):
+        spec = importlib.util.spec_from_file_location("evidence", Path(__file__).with_name("e2e_fault_evidence.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        real_write = module.write_private
+        for verification in (False, True):
+            with self.subTest(verification=verification), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+
+                def fail_completion(directory, name, content):
+                    if name == "inputs.pending.json":
+                        if not verification:
+                            raise OSError("private-metadata-failure")
+                        content += b"corrupt-metadata\n"
+                    return real_write(directory, name, content)
+
+                with patch.object(module, "write_private", side_effect=fail_completion):
+                    with self.assertRaises(module.RetentionError) as caught:
+                        module.retain(root, root / "private", "", "", "")
+                saved = caught.exception.saved
+                self.assertTrue((saved / "SHA256SUMS").is_file())
+                self.assertEqual("partial", json.loads((saved / "inputs.json").read_text())["retention_status"])
+
+    def test_interruption_before_publication_leaves_partial_status(self):
+        spec = importlib.util.spec_from_file_location("evidence", Path(__file__).with_name("e2e_fault_evidence.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            with patch.object(module.os, "replace", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    module.retain(root, root / "private", "", "", "")
+            saved, = (root / "private").glob("fault-*")
+            self.assertEqual("partial", json.loads((saved / "inputs.json").read_text())["retention_status"])
+
     def test_cli_partial_failure_has_only_fixed_summary_and_escaped_destination(self):
         spec = importlib.util.spec_from_file_location("evidence", Path(__file__).with_name("e2e_fault_evidence.py"))
         module = importlib.util.module_from_spec(spec)

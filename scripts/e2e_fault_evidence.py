@@ -87,6 +87,8 @@ def write_private(directory, name, content):
                            0o600, dir_fd=directory), "wb") as writer:
         os.fchmod(writer.fileno(), 0o600)
         writer.write(content)
+        writer.flush()
+        os.fsync(writer.fileno())
 
 
 class RetentionError(Exception):
@@ -141,6 +143,8 @@ def retain(source, destination, mobile_revision, daemon_revision, binary, daemon
                                 while chunk := reader.read(65536):
                                     expected.update(chunk)
                                     writer.write(chunk)
+                                writer.flush()
+                                os.fsync(writer.fileno())
                             with os.fdopen(os.open(name, FILE_FLAGS, dir_fd=run_fd), "rb") as copied:
                                 actual = hashlib.file_digest(copied, "sha256").hexdigest()
                             if expected.hexdigest() != actual:
@@ -159,13 +163,19 @@ def retain(source, destination, mobile_revision, daemon_revision, binary, daemon
             metadata = {"mobile_revision": revision(mobile_revision), "daemon_revision": revision(daemon_revision),
                         "daemon_sha256": binary_digest(binary), "daemon_source_revision": source_revision(daemon_source),
                         "harness_exit_code": harness_exit_code, "availability": availability,
-                        "retention_status": "partial" if failed else "complete"}
+                        "retention_status": "partial"}
             content = (json.dumps(metadata, sort_keys=True) + "\n").encode()
             write_private(run_fd, "inputs.json", content)
             hashes["inputs.json"] = hashlib.sha256(content).hexdigest()
             with os.fdopen(os.open("inputs.json", FILE_FLAGS, dir_fd=run_fd), "rb") as copied:
                 if hashlib.file_digest(copied, "sha256").hexdigest() != hashes["inputs.json"]:
                     raise RetentionError(saved)
+            # Persist the incomplete claim before any completion artifacts are attempted.
+            os.fsync(run_fd)
+            if not failed:
+                metadata["retention_status"] = "complete"
+                content = (json.dumps(metadata, sort_keys=True) + "\n").encode()
+                hashes["inputs.json"] = hashlib.sha256(content).hexdigest()
             manifest = "".join(f"{value}  {name}\n" for name, value in sorted(hashes.items())).encode()
             write_private(run_fd, "SHA256SUMS", manifest)
             with os.fdopen(os.open("SHA256SUMS", FILE_FLAGS, dir_fd=run_fd), "rb") as copied:
@@ -173,6 +183,14 @@ def retain(source, destination, mobile_revision, daemon_revision, binary, daemon
                     raise RetentionError(saved)
             if failed:
                 raise RetentionError(saved)
+            # Only inputs.json is authoritative; the staged inode is verified before publication.
+            write_private(run_fd, "inputs.pending.json", content)
+            with os.fdopen(os.open("inputs.pending.json", FILE_FLAGS, dir_fd=run_fd), "rb") as copied:
+                if hashlib.file_digest(copied, "sha256").hexdigest() != hashes["inputs.json"]:
+                    raise RetentionError(saved)
+            os.fsync(run_fd)
+            # The atomic rename commits completion, with no fallible verification afterwards.
+            os.replace("inputs.pending.json", "inputs.json", src_dir_fd=run_fd, dst_dir_fd=run_fd)
         finally:
             os.close(run_fd)
         return saved
