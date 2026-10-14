@@ -13,14 +13,14 @@ ALLOWLIST = ("daemon.log", "daemon-fault.log", "daemon-b.log", "daemon-answer.lo
 
 
 class EmulatorCleanupTest(unittest.TestCase):
-    def run_cleanup(self, root, code=0, managed=True, destination="", body="", repo=REPO):
+    def run_cleanup(self, root, code=0, managed=True, destination="", body="", repo=REPO, gate_dir=""):
         script = (REPO / "scripts/e2e-emulator.sh").read_text()
         cleanup = script[script.index("cleanup() {"):script.index("trap cleanup EXIT")]
         env = dict(os.environ, WORK_DIR=str(root / "work"), ISO_HOME=str(root / "home"),
                    WATCHER_PID="", DAEMON_PID="", RELAY_PID="", REPO_ROOT=str(repo),
                    AGENTS_REPO_PATH=str(root / "agents") if managed else "", E2E_FAULT_EVIDENCE_DIR=destination,
                    MOBILE_REVISION="a" * 40, DAEMON_REVISION="b" * 40, PYRY_BIN=str(root / "binary"), PYRYCODE_SRC="",
-                   BYPASS_HOME="", ANSWER_HOME="")
+                   BYPASS_HOME="", ANSWER_HOME="", PYRY_GATE_EVIDENCE_DIR=gate_dir)
         return subprocess.run(["/bin/bash", "-c", 'set -euo pipefail\nlog() { printf "%s\\n" "$*"; }\n'
                                + cleanup + '\n' + body + '\ntrap cleanup EXIT\nexit ' + str(code)],
                               env=env, capture_output=True, text=True, timeout=15)
@@ -153,6 +153,44 @@ class EmulatorCleanupTest(unittest.TestCase):
             self.assertEqual(2, len(evidence))
             self.assertNotEqual(evidence[0].parent, evidence[1].parent)
             self.assertTrue(all(p.parent.parent == root / "agents/logs/evidence/harness" for p in evidence))
+
+    def test_dispatcher_gate_folder_receives_detached_run_evidence(self):
+        # Mobile #2137 and #1977: the dispatcher's live gate runs detached in a worktree it then removes,
+        # so the evidence must go to the folder it names, not to the shared harness folder.
+        for code in (0, 5):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                self.prepare(root)
+                gate = root / "agents/logs/evidence/1977/gate-runs/2026-10-14T08-12-13-141Z/main"
+                result = self.run_cleanup(root, code, gate_dir=str(gate), body='git() { :; }')
+                self.assertEqual(code, result.returncode, result.stderr)
+                evidence = self.evidence(root)
+                self.assertEqual(1, len(evidence))
+                self.assertEqual(gate / "harness", evidence[0].parent.parent)
+                self.assertFalse((root / "agents/logs/evidence/harness").exists())
+
+    def test_explicit_destination_still_wins_over_the_gate_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            self.prepare(root)
+            explicit = root / "agents/logs/evidence/2137/chosen"
+            gate = root / "agents/logs/evidence/2137/gate-runs/2026-10-14T08-12-13-141Z/main"
+            result = self.run_cleanup(root, destination=str(explicit), gate_dir=str(gate))
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(explicit, self.evidence(root)[0].parent.parent)
+            self.assertFalse(gate.exists())
+
+    def test_session_error_captures_follow_the_gate_folder(self):
+        script = (REPO / "scripts/e2e-emulator.sh").read_text()
+        line = next(l.strip() for l in script.splitlines() if l.strip().startswith("SESSION_ERROR_EVIDENCE="))
+        for gate, expected in (("/agents/logs/evidence/1977/gate-runs/s/main", "/agents/logs/evidence/1977/gate-runs/s/main"),
+                               ("", "/repo/build")):
+            with self.subTest(gate=gate):
+                result = subprocess.run(["/bin/bash", "-c", line + '\nprintf %s "$SESSION_ERROR_EVIDENCE"'],
+                                        env=dict(os.environ, PYRY_GATE_EVIDENCE_DIR=gate, REPO_ROOT="/repo",
+                                                 WORK_DIR="/tmp/pyry-e2e.abc123"),
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(expected + "/session-error-evidence/pyry-e2e.abc123", result.stdout, result.stderr)
 
     def test_children_are_reaped_before_capture_on_every_outcome(self):
         for code in (0, 9):
