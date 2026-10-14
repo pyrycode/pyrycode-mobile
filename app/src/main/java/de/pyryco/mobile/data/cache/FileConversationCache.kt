@@ -125,6 +125,40 @@ class FileConversationCache(
             }
         }
 
+    override suspend fun readAuthoritativeThread(
+        serverId: String,
+        conversationId: String,
+    ): SavedAuthoritativeThread? =
+        withContext(ioDispatcher) {
+            mutex.withLock {
+                try {
+                    val document = authoritativeDocumentFor(serverId, conversationId)
+                    if (!document.isFile) return@withLock null
+                    val record = MobileJson.decodeFromString<CachedAuthoritativeThread>(document.readText())
+                    require(record.version == VERSION && record.serverId == serverId && record.conversationId == conversationId)
+                    record.saved.toSnapshot()
+                    RelayLog.d { "conversation_cache operation=read_authoritative status=ok" }
+                    record.saved
+                } catch (error: Exception) {
+                    val code = failureCode(error) ?: throw error
+                    RelayLog.d { "conversation_cache operation=read_authoritative status=failed code=$code" }
+                    null
+                }
+            }
+        }
+
+    override suspend fun writeAuthoritativeThread(
+        serverId: String,
+        conversationId: String,
+        saved: SavedAuthoritativeThread,
+    ): Result<Unit> =
+        mutate("write_authoritative") {
+            writeAtomically(
+                authoritativeDocumentFor(serverId, conversationId),
+                MobileJson.encodeToString(CachedAuthoritativeThread(VERSION, serverId, conversationId, saved.retained())),
+            )
+        }
+
     override suspend fun writeThread(
         serverId: String,
         conversationId: String,
@@ -230,6 +264,8 @@ class FileConversationCache(
             if (!thread.delete() && thread.exists()) {
                 throw IOException("conversation cache thread not removed")
             }
+            val authoritative = authoritativeDocumentFor(serverId, conversationId)
+            if (!authoritative.delete() && authoritative.exists()) throw IOException("authoritative cache not removed")
             // #877: the same read-modify-write rule as the metadata document above.
             if (positionsDocumentFor(serverId).isFile) {
                 storePositions(serverId, readPositionsOrEmpty(serverId, "remove_conversation") - conversationId)
@@ -548,6 +584,11 @@ class FileConversationCache(
         serverId: String,
         conversationId: String,
     ) = File(File(hostDirectory(serverId), THREADS_DIRECTORY), "${sha256Hex(conversationId)}.json")
+
+    private fun authoritativeDocumentFor(
+        serverId: String,
+        conversationId: String,
+    ) = File(File(hostDirectory(serverId), "authoritative-threads"), "${sha256Hex(conversationId)}.json")
 
     private fun sha256Hex(value: String): String =
         MessageDigest
@@ -956,4 +997,15 @@ private fun CachedSegment.toDomain(content: String): AssistantSegment? {
     if (seqs.zipWithNext().any { (a, b) -> b <= a } || lengths.any { it < 0 }) return null
     if (lengths.sumOf { it.toLong() } != content.length.toLong()) return null
     return AssistantSegment(turnId, seqs.zip(lengths) { seq, length -> SegmentDelta(seq, length) })
+}
+
+/** Separate from CachedThread: legacy rows cannot establish authoritative certification. */
+@Serializable
+private data class CachedAuthoritativeThread(
+    val version: Int,
+    val serverId: String,
+    val conversationId: String,
+    val saved: SavedAuthoritativeThread,
+) {
+    override fun toString(): String = "CachedAuthoritativeThread(content=***)"
 }

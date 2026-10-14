@@ -11,6 +11,9 @@ interface ConversationCache {
     suspend fun readThread(serverId: String, conversationId: String): List<ThreadItem> = emptyList()
     suspend fun writeThread(serverId: String, conversationId: String, rows: List<ThreadItem>): Result<Unit> =
         Result.success(Unit)
+    suspend fun readAuthoritativeThread(serverId: String, conversationId: String): SavedAuthoritativeThread? = null
+    suspend fun writeAuthoritativeThread(serverId: String, conversationId: String, saved: SavedAuthoritativeThread): Result<Unit> =
+        Result.success(Unit)
     suspend fun readHistoryPosition(serverId: String, conversationId: String): HistoryPosition? = null
     suspend fun writeHistoryPosition(serverId: String, conversationId: String, position: HistoryPosition?): Result<Unit> =
         Result.success(Unit)
@@ -43,6 +46,32 @@ threads (`InertConversationCache`, and the fakes in `HostConversationSourceTest`
 replace**, like `writeConversations` is a whole-host replace, and it always stores
 `cacheableThreadRows(rows)` — never the caller's raw list — so no caller can persist an
 unrecognized, streaming or in-flight-tool row by constructing a `ThreadItem` list itself.
+
+**The authoritative thread family (#2149).** `readAuthoritativeThread`/`writeAuthoritativeThread`
+are additive, default-bodied methods over `SavedAuthoritativeThread(epoch, items, appliedVersion,
+checkpoint, coverage)`. One atomic replacement binds full raw item objects and their epoch to the
+certified reconnect checkpoint and optional continuous history coverage. `SavedThreadCoverage`
+holds `lowerOrder`, `upperOrder`, `continuation` and `olderExists`; parent or active facts outside
+that range do not enlarge it. Applied progress may exceed the checkpoint after an interrupted
+multi-batch reply: saving newer complete items does not certify the unfinished reply.
+
+The store retains one item per identity at its newest accepted revision in daemon order.
+Raw objects preserve identity, revision, order, parents, explicit-null clears and inert unknown
+fields/kinds. Full active facts are retained as saved facts; connection capabilities, runtime
+generation, query assembly and transient live progress are excluded. Unlike the legacy row
+family, this family does not apply settled-row or unknown-kind exclusions. Its 100000-item cap
+keeps the ordered tail; any trimming sets `checkpoint` to zero and `coverage` to null while
+retaining applied progress. Omitted facts must never remain certified.
+
+The [separate envelope](conversation-cache-layout.md#layout) validates version and exact host/
+conversation ownership. Invalid full items, duplicate identities, numeric/revision bounds or
+coverage invalidate the whole record. Reads return null without repairing disk; failed writes
+preserve the last successful document. Records redact `toString`, and diagnostics contain only
+static operation/failure codes. Legacy rows remain readable through `readThread` and cannot be
+converted into authoritative items or certify this checkpoint. Both thread families are removed
+with the conversation or host. The sole save/restore consumer is the
+[supplied caching seam](caching-conversation-repository.md#what-is-written-and-when);
+production route activation remains with #1988, Room with #2067 and bounded reading with #2068.
 
 **The saved history position (#1354, extended by #1832 and #1910).** `HistoryPosition(cursor, atStart,
 coverage = null)` lives inside the thread document beside its rows, under the same host and

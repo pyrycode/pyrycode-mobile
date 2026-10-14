@@ -320,8 +320,27 @@ silently disappearing; this cannot produce a duplicate key or a crash. Deferred,
 
 ## What is written, and when
 
-The write is the thread **as drawn** — restored-plus-live with exclusions applied — never the
-live projection alone: right after a reconnect the live side holds only the newest page, and
+**Supplied authoritative persistence (#2149).** Internal `observeAuthoritativeThread`,
+`openAuthoritativeThread` and `resetAuthoritativeThread` seams share the existing `ThreadWriter`.
+With a supplied `RemoteConversationRepository` whose store accessor matches this host, the
+wrapper uses that remote's authoritative store; otherwise it owns an offline store.
+Production route activation and combined live proof remain with #1988; the stable-delegate
+legacy route described below is unchanged.
+
+Observation restores the [separate atomic record](conversation-cache-contract.md#the-contract)
+and accepts full items plus epoch, applied progress, checkpoint and continuous coverage as one
+candidate. Metadata-only certification changes also persist. The same 100 ms quiet period,
+replaceable pending slot and serialized writer serve these candidates; reset generations bypass
+the delay. Ordinary delivery remains independent of held disk I/O. Failed saves keep the document
+and successful baseline intact, enabling next-emission or final-flush retry.
+
+Open restores before asking the remote query dispatcher. Reconnect resumes only the certified
+checkpoint, so an interrupted reply may leave newer full items saved alongside the prior
+checkpoint/coverage. Offline restore establishes neither connected-daemon capability nor current
+transient progress; protocol selection still requires current connection negotiation.
+
+**Legacy row persistence.** The write is the thread **as drawn** — restored-plus-live with
+exclusions applied — never the live projection alone: right after a reconnect the live side holds only the newest page, and
 writing it alone would shrink the cache. [`cacheableThreadRows`](conversation-cache-contract.md#the-contract)
 is the single definition of what may reach disk, shared with `ConversationCache`'s own write path
 so the two can never disagree; the wrapper only decides *when* to call it, and, since #1354,
@@ -363,6 +382,49 @@ It does not retry autonomously while idle. No rows, ids, cursors or exception de
 event. Successful storage alone advances the comparison baseline shared by both row writers.
 
 ## State and concurrency
+
+**Authoritative restore and retirement (#2149).** Restore captures the store generation before
+disk I/O. The file cache validates its envelope and saved record on its I/O dispatcher.
+Conversion of raw saved items into the store snapshot, merging and ordering then run on
+`processingDispatcher` under `historyWrites`, rechecking deletion and the captured generation
+before application.
+The store rejects mismatched epochs, reset-needed state and any runtime reset generation,
+including reads begun after a reset that reused the epoch. A pristine store adopts saved
+certification; merging keeps newer live revisions and absent live facts, and an existing live
+checkpoint/coverage wins. Repair derives from merged applied progress and retained checkpoint,
+plus current repair requests: stale partial disk progress cannot reopen repair after newer live
+certification. Disk does not supply runtime generation or repair flags.
+
+Authoritative candidates carry store generation and wrapper capture sequence. Inside the same
+`historyWrites` lock used by legacy row/position writes and deletion, persistence rejects deleted
+destinations, retired generations and captures older than the successful authoritative baseline.
+Started atomic mutation and baseline publication finish together in `NonCancellable`; failure
+advances no baseline. Older observers and final flushes cannot overwrite a newer committed record.
+
+Reset retirement is accepted non-cancellably on the worker **before downstream delivery**.
+Ordinary candidates retain acceptance after delivery. Cleanup joins started work, then refreshes
+retirement after suspended delivery and again inside the write lock. After each successful final
+mutation/bookkeeping it rechecks generation and commits a newer retirement before returning.
+Checking only before lock acquisition or mutation misses resets arriving during lock waits or
+final I/O after collection has ended. Cleanup stops on mutation failure with static reporting;
+it does not loop on failed storage or promise persistence through force-stop.
+
+`resetAuthoritativeThread` returns `Result<Unit>` after durable replacement. Supersession alone
+cannot acknowledge reset: a rejected candidate succeeds only when the committed baseline proves
+that generation or a later one reached disk. A superseded reset whose replacement is still held
+or failed reports a content-free failure (`event=authoritative_cache_reset_failed`);
+a failed mutation preserves the last successful saved record.
+Confirmed deletion marks the destination tombstone before waiting for started work, clears both
+families and baselines, and fences captured restores plus pending/in-flight/final writes. Refused
+daemon deletion preserves saved facts; the same conversation id under another host is unaffected.
+
+Real-file probes in `AuthoritativeThreadCacheTest` check exact fresh-instance items, epoch,
+checkpoint and coverage. In particular, `remoteResetDuringFinalFlushIoPersistsRetirementBeforeCleanupCompletes`
+holds final I/O and its retirement replacement, while
+`restoreDecodingAndMergeWaitForProcessingDispatcherWhileMainProgresses` controls worker traversal
+and caller progress. Count or successful-return assertions alone miss these boundaries.
+
+**Legacy snapshot processing.**
 
 Each cold snapshot flow owns its merge base, ordering, last drawn rows and a structured
 `coroutineScope` with a writer child on `processingDispatcher`. Sequential worker hops finish
