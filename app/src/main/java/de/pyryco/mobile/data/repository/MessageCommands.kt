@@ -58,6 +58,7 @@ internal class MessageCommands(
     private val queueProjection: QueueProjection,
     private val trail: MessageTrail,
     private val connToken: () -> String?,
+    private val registerAuthoritativeSend: suspend (String, Message) -> Boolean = { _, _ -> false },
 ) {
     private var debugBundle: DebugBundleTransfer? = null
     private var bundleInboundEnded = false
@@ -197,10 +198,11 @@ internal class MessageCommands(
                     },
             )
         conversationList.recordLastMessage(conversationId, message)
-        threadProjection.appendMessages(listOf(conversationId to message))
+        val authoritative = registerAuthoritativeSend(conversationId, message)
+        if (!authoritative) threadProjection.appendMessages(listOf(conversationId to message))
         // Record the echo as ours (#781) — only an id in this ledger may later be correlated with a
         // queued item and removed. A failed send's id stays: no queued item will ever carry it.
-        threadProjection.recordMinted(conversationId, messageId)
+        if (!authoritative) threadProjection.recordMinted(conversationId, messageId)
         // Throws on a server `error` / not-Open session, leaving the echo drawn. The empty `{}` ack
         // payload carries nothing to map.
         // The trail (#1564) records the reply where it lands, in order with the queue frames around it.
@@ -356,6 +358,24 @@ internal class MessageCommands(
             throw IllegalStateException("send_queued_now not sent: session not connected")
         }
     }
+
+    fun actOnAuthoritativeQueue(
+        target: AuthoritativeQueueTarget,
+        sendNow: Boolean,
+    ): Boolean =
+        send(
+            Envelope(
+                id = requests.nextRequestId(),
+                type = if (sendNow) "send_queued_now" else TYPE_DEQUEUE_MESSAGE,
+                ts = Clock.System.now().toString(),
+                payload =
+                    kotlinx.serialization.json.buildJsonObject {
+                        put("conversation_id", kotlinx.serialization.json.JsonPrimitive(target.conversation))
+                        put("queued_msg_id", MobileJson.parseToJsonElement(target.queuedMessageId.toString()))
+                        put("accepted_item_id", kotlinx.serialization.json.JsonPrimitive(target.acceptedItemId))
+                    },
+            ),
+        )
 
     /**
      * Drop a not-yet-drained message from [conversationId]'s queued backlog over v2 `dequeue_message`

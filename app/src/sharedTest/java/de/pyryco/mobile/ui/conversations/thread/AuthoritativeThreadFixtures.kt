@@ -1,7 +1,11 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.repository.AuthoritativePendingSend
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -72,6 +76,31 @@ internal fun authoritativeSnapshot(
     vararg items: ThreadItemDto,
     epoch: String = "epoch",
 ) = AuthoritativeThreadSnapshot(epoch = epoch, items = items.toList(), completedVersion = 100, checkpoint = 90)
+
+/** An unread delivered row followed by feedback that carries no ordered read evidence. */
+internal fun authoritativeSendTail(status: String): AuthoritativeThreadSnapshot {
+    val history = authoritativeItem(1, rev = 4)
+    val snapshot = authoritativeSnapshot(history).copy(checkpoint = 4)
+    return if (status == "sending") {
+        snapshot.copy(
+            pendingSends =
+                listOf(
+                    AuthoritativePendingSend(
+                        deviceId = "device",
+                        message = Message("local", "old-session", Role.User, "pending text", Instant.fromEpochMilliseconds(0), false),
+                    ),
+                ),
+        )
+    } else {
+        snapshot.copy(
+            items =
+                listOf(
+                    history,
+                    authoritativeItem(2, kind = "user_message", order = null, active = status == "queued", status = status, rev = 3),
+                ),
+        )
+    }
+}
 
 /** Daemon prompt_answered notice facts, never an outstanding live request. */
 internal fun authoritativeAnsweredPrompt(
