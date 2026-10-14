@@ -60,6 +60,17 @@ fresh worktree, Gradle may need `ANDROID_HOME` set because `local.properties` is
 ignored. Preserve the command's exit status when inspecting output; piping Gradle
 through `tail` can hide a failure.
 
+For filesystem tests that assert permission preservation, set the fixture's
+starting mode explicitly before exercising the code. `mkdir(mode=0o755)` is
+filtered by the inherited umask: under `077` it creates a `0700` directory, so a
+later `0755` assertion can fail even when the code leaves it untouched. Use
+`chmod(0o755)` on the fixture before installing a symlink. Keep the refusal,
+empty-target and unchanged-mode assertions for both a symlink destination and
+a child beneath it, as in `FaultEvidenceTest.test_destination_symlinks_are_rejected_without_writing_or_chmod`
+([#2158](https://github.com/pyrycode/pyrycode-mobile/pull/2159#issuecomment-6166360997)).
+Check permission fixtures under both `077` and `022`; retain nonzero executed
+counts for focused checks and complete scripts discovery.
+
 `scripts/docs-guard.sh` is the only gate that ever sees the documentation stage's
 own output before it lands on `main`. That stage writes `docs/knowledge/features/`
 *after* the verifier gate and after merge, so no Gradle task — including
