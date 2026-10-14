@@ -181,7 +181,9 @@ class CodexHomeLeaseTest(unittest.TestCase):
         daemon = self.root / 'daemon.py'
         daemon.write_text("import os, signal, time\nfrom pathlib import Path\n"
                           "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-                          "Path(os.environ['DAEMON_READY']).write_text(str(os.getpid()))\n"
+                          "ready = Path(os.environ['DAEMON_READY'])\n"
+                          "temporary = ready.with_suffix('.tmp')\n"
+                          "temporary.write_text(str(os.getpid()))\ntemporary.replace(ready)\n"
                           "while True: time.sleep(0.05)\n")
         for failure in ('shell', 'controller', 'termination'):
             ready = self.root / ('ready-' + failure)

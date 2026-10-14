@@ -216,15 +216,22 @@ class EmulatorCleanupTest(unittest.TestCase):
 
 
     def test_owned_controller_cleanup_failure_fails_green_and_preserves_red(self):
-        script = Path(__file__).with_name("e2e-emulator.sh").read_text()
-        cleanup = script[script.index("cleanup() {"):script.index("trap cleanup EXIT")]
         for code in (0, 7):
-            with tempfile.TemporaryDirectory() as tmp:
-                env = dict(os.environ, WORK_DIR=tmp, ISO_HOME="", WATCHER_PID="", DAEMON_PID="", RELAY_PID="")
-                result = subprocess.run(["/bin/bash", "-c", "set -euo pipefail\nlog() { :; }\n" + cleanup
-                    + "\n(exit 9) &\nDAEMON_PID=$!\ntrap cleanup EXIT\nexit " + str(code)],
-                    env=env, capture_output=True, text=True, timeout=5)
-                self.assertEqual(code or 1, result.returncode, result.stderr)
+            for managed in (False, True):
+                with self.subTest(code=code, managed=managed), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp).resolve()
+                    self.prepare(root)
+                    # run_cleanup overrides ambient agents/evidence settings with private fixture paths.
+                    result = self.run_cleanup(root, code, managed=managed, body="(exit 9) &\nDAEMON_PID=$!")
+                    self.assertIn("event=owned_daemon_cleanup outcome=failed", result.stdout)
+                    self.assertNotIn("retention=failed", result.stdout)
+                    if managed:
+                        self.assertIn("retention=complete", result.stdout)
+                        self.assertEqual(code or 1, json.loads(self.evidence(root)[0].read_text())["harness_exit_code"])
+                    else:
+                        self.assertEqual([], self.evidence(root))
+                    self.assertTrue((root / "work").exists())
+                    self.assertEqual(code or 1, result.returncode, result.stderr)
 
 
 if __name__ == "__main__":

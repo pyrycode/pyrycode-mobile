@@ -670,6 +670,7 @@ cleanup() {
     if ! wait "${DAEMON_PID}" 2>/dev/null; then
       log "event=owned_daemon_cleanup outcome=failed"
       [ "${code}" -ne 0 ] || code=1
+      result="${code}"
     fi
   fi
   wait 2>/dev/null || true
