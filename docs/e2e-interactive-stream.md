@@ -311,6 +311,8 @@ Attributed background-agent prose (#1827) is covered at rung 3 by
    Both use separate private tagged daemons for retained and dropped backlog, the phone's send flow
    and shipped Error pills. The [daemon-owned control contract](https://github.com/pyrycode/pyrycode/blob/main/docs/knowledge/features/e2e-realclaude.md#test-infrastructure)
    shipped in pyrycode#2859 / PR #2863. See [recovery evidence and boundaries](#session-error-recovery-1731).
+   The shared scenario retains safe arm/phase/fixture-readiness diagnostics (#1977);
+   this adds no scenario or Claude turn and does not establish a historical pairing repair.
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
@@ -7927,6 +7929,140 @@ give-up setting; retained uses the default. Give-up can publish blocked before c
 so assert its pill and empty backlog immediately after blocked, then require the crash notice
 before release. A settled optimistic user row can remain after give-up: absence of its queued
 state, delivery IDs and completed child inputs prove non-delivery, not disappearance of text.
+
+#### Arm, phase and readiness diagnostics (#1977)
+
+Both harnesses retain the same recovery assertions and timeouts. Each arm resets
+`fixture_ready=false` at `fixture_start`; phone readiness becomes true only after the
+controller's start response. The controller separately observes closed-stdin and relay
+readiness before returning that response. Static phases distinguish fixture start, code
+entry, confirmation, post-confirmation list arrival (`pair_return`), observer/channel
+opening, held/fresh send, status checks, reply completion/rendering, recovery assertions
+and `list_return`. Controller records contain only the arm, allowlisted action, static
+phase and observed readiness; unavailable stdout cannot fail an action or teardown.
+These observations diagnose a stage; they do not drive readiness or replay a failed turn.
+
+A failure snapshots the exact owned host before removing its pairing. The safe snapshot
+contains saved-record presence, connection existence, selection equality, relay/encrypted
+session status class names and known confirmation/error UI booleans. A saved credential
+alone does not prove [host authentication](knowledge/features/pairing-confirm-gate.md),
+and compatibility selection does not identify the pairing verifier's target. The list
+arrival marker is unconditional; neither cached rows nor passing repetitions establish
+why a historical post-confirmation wait failed.
+
+Read saved presence through the authoritative
+[`readSnapshot` Result](knowledge/features/paired-server-store.md#failure-model--graceful-reads-strict-mutations)
+within one second: exact-id presence is `saved=true`, readable absence is `saved=false`,
+and a failed Result is `saved=unknown`. `loadById` conflates absence and unreadable storage.
+A thrown or timed-out diagnostic read yields only `snapshot=unavailable`. The diagnostic
+assertion retains the original timeout/exception as its cause without formatting its
+details. Secondary removal/close failures remain suppressed on that failure and leave
+its operation phase intact; primary cleanup failures identify `pairing_teardown` or
+`fixture_close`. Owned pairings and daemons are cleaned up, while preceding pairings,
+selection and connection identity must be restored for the next method.
+
+`SessionErrorDiagnosticsTest` covers both arms, authoritative presence/absence/unknown,
+the one-second read deadline, safe snapshot fallback and primary/secondary cleanup causes.
+The controller checks cover the publication boundary and unavailable host-log output.
+Diagnostic records and committed extracts exclude pairing tokens, authorization values,
+keys, prompts, private frames and exception details; raw fixture captures stay private.
+
+This is a diagnostics-only checkpoint. The historical #1948 failure was a 40-second
+post-Confirm wait in a suite with **65 executed, 3 failed, 0 skipped**. Its per-arm
+artifacts are unavailable and its controller log is empty, so the failing arm and cause
+remain unknown. The original cause-and-repair contract was preserved in #2048, then
+[retired by the maintainer on 2026-10-12](https://github.com/pyrycode/pyrycode-mobile/issues/2048#issuecomment-6131409877)
+as no longer reproducing, explicitly superseding the historical cause-proof requirement.
+Closing #1977 does not claim that intermittent failure was repaired.
+
+#### Diagnostic checkpoint evidence (2026-10-12 to 2026-10-14)
+
+The [2026-10-12 verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1980#issuecomment-6132589762)
+reviews `d4015481c26ff8ea9b3613aba927facd5033186c`. These are full dispatcher results,
+separate from focused builder results and earlier failed suites:
+
+| Gate | Executed | Passed | Failed | Errors | Skipped | Recovery method |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| UI, 2026-10-12 | 260 | 260 | 0 | 0 | 1 | Not run |
+| Scripted-all, 2026-10-12 | 22 | 22 | 0 | 0 | 0 | Deterministic twin passed once |
+| Live, 2026-10-14 | 65 | 65 | 0 | 0 | 0 | Live method passed once |
+
+Commands were `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py`
+with `ui`, `scripted-all` and `live`, respectively; each exited 0. Fresh scripted
+`dispatcher.xml` and `session-error-0-TEST-installed.xml` explicitly pass the named
+`DeterministicInteractiveStreamE2ETest` recovery method. Fresh UI XML passes
+`ScannerFrameTest.compactEnlargedTextFrames`; the configured gate proves completion
+despite the older `UI_GATE_FULL=1` spelling. The existing rename-capture skip provides
+no capture proof. The full unit/shared result passed **5519/5519**, including all nine
+diagnostic regressions.
+
+Persistent private verifier evidence is under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/1977/verifier-d4015481c-20261012/`:
+`scripted-all-754ho384/` retains XML/logcat, `ui-py9rrcik/` retains UI XML/logcat, and
+`pyry-e2e.u0NWMb/` retains context and both arms' daemon/control/completed-child evidence.
+The verifier confirms stable daemon/Runner/session identities and held/fresh inputs
+**1/0 retained, 0/1 dropped**. All 38 phone phase records reset readiness per arm and
+end at `list_return`. Scripted daemon revision was `07d81f77e7f93c22d6c69f77432ef52de1b4c01c`.
+Successful cleanup removed controller stdout; source and controlled tests establish
+that publication boundary, rather than retained full-gate stdout.
+
+The [2026-10-14 verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1980#issuecomment-6164733697)
+reviews documentation head `e3158e723c984bbc0209aff4738e62862c2070b5`. Its fresh
+deterministic gates are separate from the earlier results above and the accepted live run:
+
+| Gate | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Unit/shared | 5564 | 5564 | 0 | 0 | 0 |
+| UI | 261 | 261 | 0 | 0 | 1 |
+| Scripted-all | 22 | 22 | 0 | 0 | 0 |
+
+`./gradlew check` and the configured `ui` and `scripted-all` commands each exited 0.
+Both fresh scripted XML reports explicitly pass
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog`;
+its device report records **1 executed/passed, 0 failed/errors/skipped**. UI again passes
+`ScannerFrameTest.compactEnlargedTextFrames`; all nine diagnostic unit regressions pass.
+The verifier confirms stable daemon/Runner/session identities, completed held/fresh inputs
+**1/0 retained, 0/1 dropped**, and 38 safe phone phases resetting readiness per arm and
+ending at `list_return`.
+
+Persistent private evidence is under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/1977/verifier-e3158e723-20261014/`:
+`ui-fh3zarj7/` and `scripted-all-w56eiwbt/` retain XML/logcat, and `pyry-e2e.Sn7s1f/`
+retains both scripted arms. Diagnostic unit XML, gate command/exit metadata and the
+surviving full-live counted report/stderr are retained alongside them. The verifier
+checked 322 file hashes and owner-only permissions; this copy preserves surviving
+evidence without restoring the lost raw live captures.
+
+The [fresh full live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1977#issuecomment-6164246033)
+tested `feature/1977` at `d4015481c26f` merged with `origin/main` at `f737d786fcc1`,
+exit 0 in 18m 29s, with no flaky results. Retained normalized JUnit XML in dispatcher
+`logs/2026-10-14T08-12-13-141Z_real-claude-gate_#1977.log` explicitly passes
+`InteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog`:
+**1 executed/passed, 0 failed/errors/skipped**, within the full 65-method suite.
+No separate focused dispatcher recovery run is claimed. The XML has no daemon annotation;
+matching `.stderr.log` records merged mobile `388e2d5a1a052279627732bb939029954518e73b`,
+daemon `eb3c757cac48a65f536bdc0dfdc92f0adbd82c3f` and Claude Code 2.1.280.
+
+That diagnostic log names raw live XML/logcat at `build/dispatcher-tests/live-ddqxz3ff/`
+and per-arm captures at `build/session-error-evidence/pyry-e2e.xZv9aP/` in
+`/work/Projects/.pyrycode-worktrees/pyrycode-mobile/real-claude-gate-1977/`.
+The raw live XML, per-test phone logcat and per-arm captures were lost with the detached
+gate worktree. The [operator decision on 2026-10-14](https://github.com/pyrycode/pyrycode-mobile/issues/1977#issuecomment-6164585817)
+accepts the surviving counted reports as sufficient evidence for #1977 and assigns
+retention repair separately. This resolves the documentation retention handoff; the
+loss remains an evidence limitation. Scripted and focused captures cannot be attributed
+to this live run. It is the accepted run on the merged `d4015481c26f` candidate, not a new
+live execution at `e3158e723`; the diagnostic/scenario/controller sources are unchanged.
+
+Focused builder evidence remains separate under dispatcher
+`logs/evidence/1977/rework-20261012/`: scripted recovery **1/1**, background-agent live
+**1/1**, focused Kotlin **27/27** and controller **11/11**, all with zero failed/errors/skips.
+The focused live method was background-agent, not recovery. Safe extracts are committed
+under `app/src/androidTest/assets/session-error-1977/`. Earlier full live **65 executed,
+56 passed, 9 failed** included a recovery pass and remains historical failed-suite evidence.
+No documentation-stage unit, device or live tests were run. The pre-ship command remains
+`python3 scripts/android-test-gate.py live`; the dispatcher removed `needs-real-claude`
+after its counted full-live pass.
 
 #### Counted evidence (2026-10-07)
 

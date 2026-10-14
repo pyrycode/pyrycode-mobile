@@ -1,5 +1,6 @@
 package de.pyryco.mobile.e2e
 
+import android.util.Log
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
@@ -52,6 +53,10 @@ internal class SessionErrorRecoveryScenario(
     private val port = requireNotNull(arguments.getString("sessionErrorPort")) { "session-error fixture missing (#1731)" }.toInt()
     private val authorization = requireNotNull(arguments.getString("sessionErrorAuthorization")) { "session-error authorization missing" }
 
+    private var phase = "fixture_start"
+    private var fixtureReady = false
+    private var diagnosticServerId: String? = null
+
     fun run() {
         val store = GlobalContext.get().get<PairedServerCollectionStore>()
         val registry = GlobalContext.get().get<RelayConnectionRegistry>()
@@ -68,17 +73,37 @@ internal class SessionErrorRecoveryScenario(
             android.Manifest.permission.CAMERA,
         )
         for (arm in listOf("retained", "dropped")) {
+            phase = "fixture_start"
+            fixtureReady = false
+            diagnosticServerId = null
+            var diagnosed: AssertionError? = null
             try {
-                val fixture = request(arm, "start")
-                val serverId = fixture.value("serverId")
-                try {
-                    runCase(arm, fixture)
-                } finally {
-                    // Pairing can save before its UI wait fails; ownership starts before pair().
-                    runBlocking { store.remove(serverId) }
+                sessionErrorCleanup(
+                    cleanup = { request(arm, "close") },
+                    onPrimaryFailure = { stage(arm, "fixture_close") },
+                ) {
+                    val fixture = request(arm, "start")
+                    fixtureReady = true
+                    val serverId = fixture.value("serverId")
+                    diagnosticServerId = serverId
+                    sessionErrorCleanup(
+                        cleanup = { runBlocking { store.remove(serverId) } },
+                        onPrimaryFailure = { stage(arm, "pairing_teardown") },
+                    ) {
+                        // Pairing can save before its UI wait fails; ownership starts before pair().
+                        try {
+                            runCase(arm, fixture)
+                        } catch (failure: Throwable) {
+                            // Observe the owned host before finally removes its pairing/connection.
+                            val diagnostic = sessionErrorDiagnosticFailure(arm, phase, fixtureReady, failure, ::diagnosticSnapshot)
+                            diagnosed = diagnostic
+                            throw diagnostic
+                        }
+                    }
                 }
-            } finally {
-                request(arm, "close")
+            } catch (failure: Throwable) {
+                if (failure === diagnosed) throw failure
+                throw sessionErrorDiagnosticFailure(arm, phase, fixtureReady, failure, ::diagnosticSnapshot)
             }
         }
         // Regression: this Application/Koin graph is reused by subsequent instrumentation methods.
@@ -105,7 +130,7 @@ internal class SessionErrorRecoveryScenario(
         val fresh = fixture.value("freshMarker")
         val heldPrompt = sessionErrorRecoveryPrompt(held)
         val freshPrompt = sessionErrorRecoveryPrompt(fresh)
-        pair(fixture.value("pairCode"), fixture.value("channel"))
+        pair(arm, fixture.value("pairCode"), fixture.value("channel"))
         SecondClientPeer(
             PairedServer(
                 serverId = fixture.value("serverId"),
@@ -114,12 +139,15 @@ internal class SessionErrorRecoveryScenario(
                 serverStaticPublicKey = fixture.value("serverStaticPublicKey"),
             ),
         ).use { peer ->
+            stage(arm, "observer_open")
             runBlocking { peer.open(30_000) }
+            stage(arm, "channel_open")
             val channel = hasText(fixture.value("channel")) and hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)
             await(channel)
             compose.onNode(channel).performScrollTo().performClick()
             await(hasSetTextAction())
             request(arm, "ready") // The child has closed stdin; its first exit remains gated.
+            stage(arm, "held_send")
             send(heldPrompt)
             val queued = runBlocking { peer.awaitQueue(conversation, 20_000) { it.size == 1 && it.single().text == heldPrompt } }.single()
             assertTrue("phone send has no correlation identity", queued.messageId.isNotBlank())
@@ -134,6 +162,7 @@ internal class SessionErrorRecoveryScenario(
             request(arm, "exit")
             val expectedId: String
             if (arm == "retained") {
+                stage(arm, "retained_status")
                 awaitError(peer, conversation, "session.child_crashing")
                 assertPill(CRASHING)
                 compose.onNode(queuedRow).assertIsDisplayed()
@@ -145,6 +174,7 @@ internal class SessionErrorRecoveryScenario(
                 expectedId = queued.messageId
                 request(arm, "release")
             } else {
+                stage(arm, "dropped_status")
                 awaitError(peer, conversation, "session.blocked")
                 runBlocking { peer.awaitQueue(conversation, 10_000) { it.isEmpty() } }
                 assertPill(BLOCKED)
@@ -155,6 +185,7 @@ internal class SessionErrorRecoveryScenario(
                 awaitError(peer, conversation, "session.child_crashing")
                 request(arm, "release")
                 request(arm, "recovered") // Automatic respawn, before a fresh phone send.
+                stage(arm, "fresh_send")
                 send(freshPrompt)
                 runBlocking {
                     peer.awaiting("fresh phone delivery", 120_000) {
@@ -167,17 +198,20 @@ internal class SessionErrorRecoveryScenario(
                 expectedId = freshDelivery.messageId
             }
 
+            stage(arm, "reply_complete")
             runBlocking {
                 peer.awaiting("assistant reply followed by idle", 120_000) {
                     while (!completed(peer, conversation)) delay(25)
                 }
                 peer.awaitQueue(conversation, 10_000) { it.isEmpty() }
             }
+            stage(arm, "reply_render")
             val reply = sessionErrorReplyMatcher()
             await(reply, unmerged = true)
             compose.onAllNodes(reply, useUnmergedTree = true).onFirst().assertIsDisplayed()
             compose.waitUntil(20_000) { nodes(hasText(CRASHING)).isEmpty() && nodes(hasText(BLOCKED)).isEmpty() }
             request(arm, "complete") // Independently counts actual prompts read by the completed child.
+            stage(arm, "recovery_assertions")
             val delivered = deliveries(peer, conversation)
             assertEquals("one recovery must deliver exactly one user message", 1, delivered.size)
             assertEquals(expectedId, delivered.single().messageId)
@@ -189,26 +223,61 @@ internal class SessionErrorRecoveryScenario(
             }
             assertLocalStatusAbsent()
         }
+        stage(arm, "list_return")
         Espresso.pressBack()
         await(hasTestTag(CHANNEL_LIST_TEST_TAG))
     }
 
     private fun pair(
+        arm: String,
         code: String,
         name: String,
     ) {
+        stage(arm, "pair_entry")
         await(hasTestTag(CHANNEL_LIST_TEST_TAG))
         compose.onNode(hasContentDescription(context.getString(R.string.cd_pair_another_host))).performClick()
         val paste = hasText("code instead", substring = true) and hasClickAction()
         await(paste)
         compose.onAllNodes(paste).onFirst().performClick()
+        stage(arm, "pair_code")
         await(hasSetTextAction() and hasText("Pairing code"))
         compose.onNode(hasSetTextAction() and hasText("Host name")).performTextInput(name)
         compose.onNode(hasSetTextAction() and hasText("Pairing code")).performTextInput(code)
         compose.onNode(hasText("Pair") and hasClickAction()).performClick()
+        stage(arm, "pair_confirm")
         await(hasText("Confirm pairing"))
+        stage(arm, "confirm_ready")
         compose.onNodeWithText("Confirm pairing").performClick()
+        stage(arm, "pair_return")
         await(hasTestTag(CHANNEL_LIST_TEST_TAG))
+    }
+
+    private fun stage(
+        arm: String,
+        value: String,
+    ) {
+        phase = value
+        Log.i("SessionErrorRecovery", "arm=$arm phase=$phase fixture_ready=$fixtureReady")
+    }
+
+    private fun diagnosticSnapshot(): String {
+        val serverId = diagnosticServerId ?: return "snapshot=not_paired"
+        val store = GlobalContext.get().get<PairedServerCollectionStore>()
+        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+        val connection = registry.connectionFor(serverId)
+        val saved = runBlocking { sessionErrorSavedPairing(store, serverId) }
+        val status = connection?.coordinator?.connectionStatus?.value
+        val selected = connection != null && registry.selected.value === connection
+        val unavailable = nodes(hasText("temporarily unavailable", substring = true)).isNotEmpty()
+        val rejected = nodes(hasText("Pairing rejected", substring = true)).isNotEmpty()
+        val saveFailed = nodes(hasText("Could not save pairing", substring = true)).isNotEmpty()
+        val nameFailed = nodes(hasText("host name could not be saved", substring = true)).isNotEmpty()
+        val updateRequired = nodes(hasText("This app is too old", substring = true)).isNotEmpty()
+        val confirm = nodes(hasText("Confirm pairing")).isNotEmpty()
+        return "saved=$saved connection=${connection != null} selected=$selected " +
+            "relay=${status?.relay?.javaClass?.simpleName} session=${status?.pyrycode?.javaClass?.simpleName} " +
+            "unavailable=$unavailable rejected=$rejected save_failed=$saveFailed name_failed=$nameFailed " +
+            "update_required=$updateRequired confirm=$confirm"
     }
 
     private fun send(prompt: String) {
@@ -282,6 +351,7 @@ internal class SessionErrorRecoveryScenario(
         arm: String,
         action: String,
     ): JsonObject {
+        if (action != "close") stage(arm, "fixture_$action")
         val connection = URL("http://10.0.2.2:$port/$arm/$action").openConnection() as HttpURLConnection
         try {
             connection.requestMethod = "POST"

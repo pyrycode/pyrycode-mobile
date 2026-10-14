@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="de.pyryco.mobile.ui.onboarding.ScannerFrameTest" tests="3" failures="0" errors="0" skipped="0" timestamp="2026-10-11T11:32:34">
+  <testcase classname="de.pyryco.mobile.ui.onboarding.ScannerFrameTest" name="fullSizeDarkFrames" time="1.591" />
+  <testcase classname="de.pyryco.mobile.ui.onboarding.ScannerFrameTest" name="compactEnlargedTextFrames" time="1.059" />
+  <testcase classname="de.pyryco.mobile.ui.onboarding.ScannerFrameTest" name="compactDarkFrames" time="1.056" />
+</testsuite>
