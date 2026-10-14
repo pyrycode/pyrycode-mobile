@@ -93,7 +93,8 @@ bound, single-flight and failure handling; this file only covers the wiring.
 
 ## How the restore merges with live rows
 
-`observeThreadSnapshot` (also used by `observeMessages`) merges through
+For snapshots requiring reconciliation, `observeThreadSnapshot` (also used by
+`observeMessages`) merges through
 [`mergeUnsignedCachedRows`](remote-conversation-repository-reads-and-thread-store-history-paging.md)
 (`HistoryPageReducer.kt`), a sibling of the history walk's `mergeUnsignedHistoryRows` built for this
 wrapper's own direction: paging normally prepends an *older* page onto what is on screen; here the
@@ -111,6 +112,17 @@ regressions: holding only the newest response cannot expose an indirect order-se
 wait. Repeated rows-only opens retain suppression and cancel pending ordering with
 the observer; no early subscription or independent background scope is added.
 See [cache snapshot ownership](conversation-cache-layout.md#thread-document-readers-1949).
+
+Since #2153, the first empty, unsuppressed delegate snapshot of each collection
+publishes the validated cache list directly through the existing processing boundary.
+`readThread` already guarantees settled rows and unique renderer keys; repeating
+atomization and key reconciliation before delivery added measurable cold-open cost.
+The guard is collection-local so recollection reuses that collection's restored list,
+with exact row objects/keys and the delegate snapshot's receipt/order metadata.
+Generation allocation and deferred writer traversal stay in place. Initial nonempty
+or suppressed snapshots and every later snapshot still take the reconciliation path;
+an empty disconnect after live content must retain the last-drawn rebase.
+See [first-draw comparisons and traversal controls](thread-screen-testing-saved-first-draw.md#initial-snapshot-reconciliation-and-the-later-draw-miss-2153).
 
 `mergeUnsignedCachedRows` shares `mergeUnsignedHistoryRows`'s join (ordinary logical id for a message, covering a
 `tool_use_id` and a `turn_id`; the `(previousSessionId, newSessionId, occurredAt)` triple for a

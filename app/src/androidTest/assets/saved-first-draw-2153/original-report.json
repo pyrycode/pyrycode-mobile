@@ -1,0 +1,32 @@
+{
+  "source": "https://github.com/pyrycode/pyrycode-mobile/issues/2153",
+  "revision": "1fb92599b2df99b0380f48c1be8156bf0ffdfc75",
+  "command": "UI_GATE_FULL=1 UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui",
+  "reported_counts": {
+    "executed": 1609,
+    "passed": 1608,
+    "failed": 1
+  },
+  "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+  "case_order": [
+    "ordinary offline first",
+    "ordinary offline reopen",
+    "ordinary connected first",
+    "ordinary connected reopen",
+    "fragmented offline first",
+    "fragmented offline reopen",
+    "fragmented connected first",
+    "fragmented connected reopen"
+  ],
+  "reported_committed_draw_ms": [
+    140,
+    180,
+    167,
+    175,
+    1048,
+    475,
+    998,
+    320
+  ],
+  "original_phase_logs": "Unavailable on this builder host; the reported timings alone do not establish a bottleneck."
+}
