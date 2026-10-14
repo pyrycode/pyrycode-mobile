@@ -171,7 +171,11 @@ class CachingConversationRepository(
             if (snapshot.epoch == null) return
             val saved = snapshot.toSavedAuthoritativeThread()
             val previous = latest.get()
-            if (saved == (previous?.authoritative ?: initialAuthoritative) && !retry.getAndSet(false)) return
+            if (saved == (previous?.authoritative ?: initialAuthoritative) &&
+                snapshot.generation == (previous?.storeGeneration ?: 0) && !retry.getAndSet(false)
+            ) {
+                return
+            }
             retry.set(false)
             val candidate =
                 CacheCandidate(DrawnThread(emptyList(), capture), emptyList(), authoritative = saved, storeGeneration = snapshot.generation)
@@ -193,11 +197,14 @@ class CachingConversationRepository(
                 }
         }
 
-        private suspend fun persist(candidate: CacheCandidate) {
-            if (candidate === completed) return
+        private suspend fun persist(
+            candidate: CacheCandidate,
+            refreshReset: Boolean = false,
+        ) {
+            if (candidate === completed && !refreshReset) return
             val result =
                 historyWrites.withLock {
-                    if (candidate.authoritative != null) return@withLock persistAuthoritative(conversationId, candidate)
+                    if (candidate.authoritative != null) return@withLock persistAuthoritative(conversationId, candidate, refreshReset)
                     val persisted = persistedThreads[conversationId]
                     if (conversationId in deleted ||
                         candidate.drawn.generation <= (persisted?.coverageGeneration ?: 0)
@@ -225,12 +232,26 @@ class CachingConversationRepository(
             }
         }
 
-        suspend fun finish() {
+        suspend fun finish(authoritative: Boolean = false) {
             withContext(NonCancellable + processingDispatcher) {
                 timer?.cancelAndJoin()
                 writer.cancelAndJoin()
                 signals.close()
-                latest.get()?.let { persist(it) }
+                if (authoritative) {
+                    // Delivery can hold an earlier snapshot while the remote retires its generation.
+                    val snapshot = authoritativeThreads.current(serverId, conversationId)
+                    if (snapshot.epoch != null && snapshot.generation > (latest.get()?.storeGeneration ?: 0)) {
+                        latest.set(
+                            CacheCandidate(
+                                DrawnThread(emptyList(), generations.incrementAndGet()),
+                                emptyList(),
+                                authoritative = snapshot.toSavedAuthoritativeThread(),
+                                storeGeneration = snapshot.generation,
+                            ),
+                        )
+                    }
+                }
+                latest.get()?.let { persist(it, refreshReset = authoritative) }
             }
         }
     }
@@ -239,22 +260,35 @@ class CachingConversationRepository(
     private suspend fun persistAuthoritative(
         conversationId: String,
         candidate: CacheCandidate,
+        refreshReset: Boolean = false,
     ): Result<Unit>? {
-        val saved = candidate.authoritative ?: return null
         val current = authoritativeThreads.current(serverId, conversationId)
+        // A further reset can supersede final cleanup while it waits for historyWrites.
+        val selected =
+            if (refreshReset && current.epoch != null && current.generation > candidate.storeGeneration) {
+                CacheCandidate(
+                    DrawnThread(emptyList(), generations.incrementAndGet()),
+                    emptyList(),
+                    authoritative = current.toSavedAuthoritativeThread(),
+                    storeGeneration = current.generation,
+                )
+            } else {
+                candidate
+            }
+        val saved = selected.authoritative ?: return null
         val persisted = persistedAuthoritative[conversationId]
-        if (conversationId in deleted || candidate.storeGeneration != current.generation ||
-            candidate.drawn.generation <= (persisted?.drawn?.generation ?: 0)
+        if (conversationId in deleted || selected.storeGeneration != current.generation ||
+            selected.drawn.generation <= (persisted?.drawn?.generation ?: 0)
         ) {
             return null
         }
         if (saved == persisted?.authoritative) {
-            persistedAuthoritative[conversationId] = candidate
+            persistedAuthoritative[conversationId] = selected
             return Result.success(Unit)
         }
         return withContext(NonCancellable) {
             val result = cache.writeAuthoritativeThread(serverId, conversationId, saved)
-            if (result.isSuccess) persistedAuthoritative[conversationId] = candidate
+            if (result.isSuccess) persistedAuthoritative[conversationId] = selected
             result
         }
     }
@@ -275,14 +309,21 @@ class CachingConversationRepository(
             val restored = restoreAuthoritative(conversationId)
             coroutineScope {
                 val writer = ThreadWriter(conversationId, this, emptyList(), 0, restored)
+                var observedGeneration = 0L
                 try {
                     authoritativeThreads.observe(serverId, conversationId).collect { snapshot ->
                         val capture = generations.incrementAndGet()
+                        val reset = snapshot.generation > observedGeneration
+                        if (reset) {
+                            // Accept retirement before delivery can suspend or cancel; the writer owns its flush.
+                            withContext(NonCancellable + processingDispatcher) { writer.accept(snapshot, capture) }
+                        }
+                        observedGeneration = snapshot.generation
                         emit(if (conversationId in deleted) AuthoritativeThreadSnapshot() else snapshot)
-                        withContext(processingDispatcher) { writer.accept(snapshot, capture) }
+                        if (!reset) withContext(processingDispatcher) { writer.accept(snapshot, capture) }
                     }
                 } finally {
-                    writer.finish()
+                    writer.finish(authoritative = true)
                 }
             }
         }
@@ -314,7 +355,11 @@ class CachingConversationRepository(
         return withContext(NonCancellable) {
             historyWrites.withLock {
                 persistAuthoritative(conversationId, candidate)
-                    ?: Result.success(Unit)
+                    ?: if ((persistedAuthoritative[conversationId]?.storeGeneration ?: 0) >= snapshot.generation) {
+                        Result.success(Unit)
+                    } else {
+                        Result.failure(IllegalStateException("authoritative reset not persisted"))
+                    }
             }
         }.onFailure { RelayLog.d { "event=authoritative_cache_reset_failed" } }
     }

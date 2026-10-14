@@ -69,16 +69,18 @@ internal class AuthoritativeThreadStore {
         if (host.isEmpty() || conversation.isEmpty() || saved.epoch.isNullOrEmpty()) return AuthoritativeThreadOutcome.Ignored
         val merged = merge(current.items, saved.items, saved.completedVersion) ?: return AuthoritativeThreadOutcome.Ignored
         val adoptCertification = current.checkpoint == 0L
+        val completedVersion = maxOf(current.completedVersion, saved.completedVersion)
+        val checkpoint = if (adoptCertification) saved.checkpoint else current.checkpoint
         publish(
             host,
             conversation,
             current.copy(
                 epoch = saved.epoch,
                 items = ordered(merged),
-                completedVersion = maxOf(current.completedVersion, saved.completedVersion),
-                checkpoint = if (adoptCertification) saved.checkpoint else current.checkpoint,
+                completedVersion = completedVersion,
+                checkpoint = checkpoint,
                 coverage = if (adoptCertification && current.coverage == null) saved.coverage else current.coverage,
-                repairNeeded = current.repairNeeded || saved.completedVersion > saved.checkpoint,
+                repairNeeded = current.repairNeeded || completedVersion > checkpoint,
             ),
         )
         RelayLog.i { "event=thread_store code=restored" }

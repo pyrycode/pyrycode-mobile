@@ -270,7 +270,7 @@ class AuthoritativeThreadCacheTest {
                 AuthoritativeThreadSnapshot(
                     "e",
                     listOf(item(1, 2, 5), item(2, 3, 6)),
-                    10,
+                    20,
                     10,
                     coverage = AuthoritativeThreadCoverage(5u, 11u, 5u, true),
                 )
@@ -296,6 +296,7 @@ class AuthoritativeThreadCacheTest {
             assertEquals(30L, current.items.first().rev)
             assertEquals(30L, current.checkpoint)
             assertNull(current.coverage)
+            assertFalse(current.repairNeeded)
         }
 
     @Test fun failedSavePreservesAtomicRecordAndBaseline() =
@@ -582,6 +583,197 @@ class AuthoritativeThreadCacheTest {
             assertNull(offline.coverage)
             assertEquals(listOf(10L, 0L), held.writes.map { it.appliedVersion })
         }
+
+    @Test fun remoteResetSurvivesCancellationDuringDelivery() = runTest { cancelledRemoteReset(holdEarlierSnapshot = false) }
+
+    @Test fun remoteResetDuringEarlierDeliverySurvivesCancellation() = runTest { cancelledRemoteReset(holdEarlierSnapshot = true) }
+
+    private suspend fun TestScope.cancelledRemoteReset(holdEarlierSnapshot: Boolean) {
+        val saved =
+            AuthoritativeThreadSnapshot(
+                "e",
+                listOf(item(1, 10, 5)),
+                10,
+                10,
+                coverage = AuthoritativeThreadCoverage(5u, 11u, 5u, true),
+            )
+        fileCache().writeAuthoritativeThread("host", "c", saved.toSavedAuthoritativeThread()).getOrThrow()
+        val (pump, remote) = remote()
+        val repo = wrapper(delegate = remote)
+        val deliveringReset = CompletableDeferred<Unit>()
+        val holdDelivery = CompletableDeferred<Unit>()
+        val observer =
+            backgroundScope.launch {
+                repo.observeAuthoritativeThread("c").collect {
+                    if (holdEarlierSnapshot || it.generation > 0) {
+                        deliveringReset.complete(Unit)
+                        holdDelivery.await()
+                    }
+                }
+            }
+        runCurrent()
+        assertTrue(repo.openAuthoritativeThread("c"))
+        val request = pump.sent.last()
+        assertEquals("10", (request.payload as JsonObject).getValue("version").toString())
+        pump.push(
+            Envelope(
+                101,
+                "thread_reset",
+                "2026-10-14T00:00:00Z",
+                MobileJson.parseToJsonElement("""{"conversation_id":"c","epoch":"e","version":20}"""),
+                inReplyTo = request.id,
+            ),
+        )
+        runCurrent()
+        assertTrue(deliveringReset.isCompleted)
+        assertEquals("0", (pump.sent.last().payload as JsonObject).getValue("version").toString())
+        observer.cancelAndJoin()
+        val reset = remote.authoritativeThreads.current("host", "c")
+        assertFacts(fileCache(), "host", reset)
+        val restored = wrapper().observeAuthoritativeThread("c").first()
+        assertEquals("e", restored.epoch)
+        assertTrue(restored.items.isEmpty())
+        assertEquals(0L, restored.completedVersion)
+        assertEquals(0L, restored.checkpoint)
+        assertNull(restored.coverage)
+    }
+
+    @Test fun overlappingResetCannotAcknowledgeHeldReplacement() = runTest { overlappingResets(failReplacement = false) }
+
+    @Test fun overlappingResetCannotAcknowledgeFailedReplacement() = runTest { overlappingResets(failReplacement = true) }
+
+    @Test fun finalFlushWaitingForWriteLockPersistsLatestReset() =
+        runTest {
+            val held = HeldCache(fileCache())
+            val repo = wrapper(held)
+            val observer = backgroundScope.launch { repo.observeAuthoritativeThread("c").collect {} }
+            runCurrent()
+            apply(repo, 10)
+            repo.authoritativeThreads.establishComplete("host", "c", "e", 10, emptyList(), 0)
+            runCurrent()
+            advanceTimeBy(101)
+            runCurrent()
+            val firstWrite = CompletableDeferred<Unit>()
+            val releaseFirst = CompletableDeferred<Unit>()
+            val latestWrite = CompletableDeferred<Unit>()
+            val releaseLatest = CompletableDeferred<Unit>()
+            held.beforeWrite = {
+                if (held.writes.last().epoch == "reset-a") {
+                    firstWrite.complete(Unit)
+                    releaseFirst.await()
+                } else {
+                    latestWrite.complete(Unit)
+                    releaseLatest.await()
+                }
+            }
+            val resultA = CompletableDeferred<Result<Unit>>()
+            val resetA = backgroundScope.launch { resultA.complete(repo.resetAuthoritativeThread("c", "reset-a")) }
+            runCurrent()
+            assertTrue(firstWrite.isCompleted)
+            observer.cancel()
+            runCurrent()
+            assertFalse(observer.isCompleted)
+            val resultB = CompletableDeferred<Result<Unit>>()
+            val resetB = backgroundScope.launch { resultB.complete(repo.resetAuthoritativeThread("c", "reset-b")) }
+            runCurrent()
+            releaseFirst.complete(Unit)
+            runCurrent()
+            assertTrue(latestWrite.isCompleted)
+            val finishedBeforeInvalidation = observer.isCompleted
+            assertFalse(resultB.isCompleted)
+            releaseLatest.complete(Unit)
+            runCurrent()
+            observer.join()
+            resetA.join()
+            resetB.join()
+            assertFalse(finishedBeforeInvalidation)
+            assertTrue(resultA.await().isSuccess)
+            // B is satisfied by cleanup's newer committed capture, without a duplicate write.
+            assertTrue(resultB.await().isSuccess)
+            assertEquals(listOf("e", "reset-a", "reset-b"), held.writes.map { it.epoch })
+            assertFacts(fileCache(), "host", repo.authoritativeThreads.current("host", "c"))
+            val restored = wrapper().observeAuthoritativeThread("c").first()
+            assertEquals("reset-b", restored.epoch)
+            assertTrue(restored.items.isEmpty())
+            assertEquals(0L, restored.completedVersion)
+            assertEquals(0L, restored.checkpoint)
+            assertNull(restored.coverage)
+        }
+
+    private suspend fun TestScope.overlappingResets(failReplacement: Boolean) {
+        val held = HeldCache(fileCache())
+        val repo = wrapper(held)
+        val observer = backgroundScope.launch { repo.observeAuthoritativeThread("c").collect {} }
+        runCurrent()
+        apply(repo, 10)
+        repo.authoritativeThreads.establishComplete("host", "c", "e", 10, emptyList(), 0)
+        runCurrent()
+        advanceTimeBy(101)
+        runCurrent()
+        val oldWrite = CompletableDeferred<Unit>()
+        val releaseOldWrite = CompletableDeferred<Unit>()
+        val replacementWrite = CompletableDeferred<Unit>()
+        val releaseReplacement = CompletableDeferred<Unit>()
+        held.beforeWrite = {
+            if (held.writes.last().epoch == "reset-b") {
+                replacementWrite.complete(Unit)
+                releaseReplacement.await()
+            } else {
+                oldWrite.complete(Unit)
+                releaseOldWrite.await()
+            }
+        }
+        apply(repo, 20)
+        val retired = repo.authoritativeThreads.current("host", "c")
+        runCurrent()
+        advanceTimeBy(101)
+        runCurrent()
+        assertTrue(oldWrite.isCompleted)
+        // Stop collection while the started write finishes, so only the explicit resets compete.
+        observer.cancel()
+        runCurrent()
+        val resultA = CompletableDeferred<Result<Unit>>()
+        val resetA = backgroundScope.launch { resultA.complete(repo.resetAuthoritativeThread("c", "reset-a")) }
+        runCurrent()
+        assertEquals(1L, repo.authoritativeThreads.current("host", "c").generation)
+        assertFalse(resultA.isCompleted)
+        val resultB = CompletableDeferred<Result<Unit>>()
+        val resetB = backgroundScope.launch { resultB.complete(repo.resetAuthoritativeThread("c", "reset-b")) }
+        runCurrent()
+        assertEquals(2L, repo.authoritativeThreads.current("host", "c").generation)
+        assertFalse(resultB.isCompleted)
+        releaseOldWrite.complete(Unit)
+        runCurrent()
+        assertTrue(replacementWrite.isCompleted)
+        assertTrue(resultA.isCompleted)
+        assertFalse(resultB.isCompleted)
+        assertFacts(fileCache(), "host", retired)
+        val beforeCommit = wrapper().observeAuthoritativeThread("c").first()
+        assertEquals(retired.items.map { it.raw }, beforeCommit.items.map { it.raw })
+        assertEquals(retired.completedVersion, beforeCommit.completedVersion)
+        assertEquals(retired.checkpoint, beforeCommit.checkpoint)
+        assertEquals(retired.coverage, beforeCommit.coverage)
+        // Release every owned operation before asserting the acknowledgement under test.
+        held.fail = failReplacement
+        releaseReplacement.complete(Unit)
+        runCurrent()
+        resetA.join()
+        resetB.join()
+        observer.join()
+        assertTrue(resultA.await().isFailure)
+        assertEquals(failReplacement, resultB.await().isFailure)
+        if (failReplacement) {
+            assertFacts(fileCache(), "host", retired)
+        } else {
+            assertFacts(fileCache(), "host", repo.authoritativeThreads.current("host", "c"))
+        }
+        val restored = wrapper().observeAuthoritativeThread("c").first()
+        assertEquals(if (failReplacement) "e" else "reset-b", restored.epoch)
+        assertEquals(if (failReplacement) retired.items.map { it.raw } else emptyList<JsonObject>(), restored.items.map { it.raw })
+        assertEquals(if (failReplacement) retired.completedVersion else 0L, restored.completedVersion)
+        assertEquals(if (failReplacement) retired.checkpoint else 0L, restored.checkpoint)
+        assertEquals(if (failReplacement) retired.coverage else null, restored.coverage)
+    }
 
     @Test fun certificationOnlyChangesPersistAtomically() =
         runTest {
