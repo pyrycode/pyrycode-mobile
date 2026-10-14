@@ -51,6 +51,48 @@ mirroring `StoredPairings`. The cache-local record type — not `@Serializable` 
 is stored as `Instant.toString()` / parsed back with `Instant.parse(...)`, not epoch millis, so
 the round-trip is exact to the nanosecond rather than truncated to millisecond precision.
 
+### Indexed legacy Room layout (#2162)
+
+[ADR 0009](../decisions/0009-room-for-indexed-conversation-cache.md) records the approved
+SQLite/Room choice. `ConversationCacheDatabase` starts at schema version 1, using Room 2.8.4
+and KSP 2.3.6; the exported schema lives under `app/src/main/roomSchemas/`.
+`openConversationCacheDatabase(Context)` in `di/ConversationCacheDatabaseFactory.kt` opens
+`<noBackupFilesDir>/conversation-cache.db`. Its journal, WAL and SHM sidecars share that
+backup-excluded directory. There is no destructive migration fallback. Owner strings are
+bound SQL values, never filenames, with SQLite's default binary, case-sensitive equality.
+The existing plaintext app-private cache threat model remains unchanged.
+
+The schema separates three explicitly legacy tables:
+
+- `legacy_headers`: exact host/conversation owner, committed generation, saved cursor/`atStart`
+  and a scalar coverage header, including unknown/incomplete flags and saved unsigned edges.
+- `legacy_rows`: one canonical row payload per owner and held ordinal. Ordinals preserve arrival
+  order and multiplicity independently of timestamps; no whole-thread JSON cell is stored.
+- `legacy_evidence`: individually indexed spans, gaps, row order, each producing-entry claim,
+  proofs, fragment aliases/offsets/lengths/hashes and cursor/walk anchors. Owner/kind/interval
+  and owner/ordinal indexes support bounded selection. Unsigned interval columns are zero-padded
+  20-digit decimal text, retaining numeric ordering through `ULong.MAX_VALUE`. The header never
+  contains all proofs. Full metadata reads reconstruct evidence without decoding row payloads.
+
+The narrow internal row/history codec seam in `FileConversationCache.kt` preserves `MobileJson`
+canonical encoding and `cachedThreadRowProof` inputs. Room and file storage retain the same six
+row kinds, uniqueness rules, settled-row exclusions and 100000-row tail cap. File readers and
+proof compatibility remain available; indexed storage introduces no new row format.
+
+`LegacyRoomStorage` runs caller-owned suspend work on its injected IO dispatcher. Room
+transactions give reads a coherent snapshot and commit row/evidence replacement, history
+replacement/clear and scoped removal atomically across instances. Cancellation rolls back
+unfinished mutations. Removal deletes all three legacy tables for the exact conversation or
+host, preserving sibling owners, including another host with identical ids. No new job, scope,
+save coordinator or background history download is introduced. See
+[the bounded contract](conversation-cache-contract.md#indexed-legacy-operations-and-pages-2162)
+for continuation and optional-evidence rules.
+
+This backend is independently callable and unbound: #2161 owns file import/application binding,
+\#2163 owns authoritative Room storage, and #2068 owns reader activation/owned partial writes.
+Legacy evidence cannot certify authoritative facts. Conversation lists, read positions, settings
+and attachment bytes retain their existing storage.
+
 ### The cache-local record must mirror every `Conversation` field (#999)
 
 Being cache-local cuts both ways: nothing forces `CachedConversation` to track a field added to
@@ -79,11 +121,12 @@ here or gate on the live list before trusting a cold-started value.
 The thread document is the same shape, file-private to `FileConversationCache.kt`:
 `CachedThread(version: Int, rows: List<CachedThreadRow>, history: CachedHistoryPosition? = null)`,
 `CachedThreadRow(message: CachedMessage? = null, boundary: CachedBoundary? = null, banner:
-CachedBanner? = null, compaction: CachedCompaction? = null, refusal: CachedRefusal? = null)` —
-exactly one of the five is set, mapping
+CachedBanner? = null, compaction: CachedCompaction? = null, refusal: CachedRefusal? = null,
+stopped: CachedStoppedTurn? = null)` — exactly one of the six is set, mapping
 `ThreadItem.MessageItem` / `ThreadItem.SessionBoundary` / [`Banner`](banner-notice-row.md) /
 [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874-1358) /
-[`ModelRefusal`](model-refusal-row.md) (never `UnrecognizedMessage`, which `cacheableThreadRows`
+[`ModelRefusal`](model-refusal-row.md) / [`StoppedTurn`](stopped-turn-row.md)
+(never `UnrecognizedMessage`, which `cacheableThreadRows`
 drops before a `CachedThreadRow` is ever built; `ThreadItem.toRecord()` throws if it ever reaches
 it). The three newer fields (#1353) default to `null`, so a document written before this ticket —
 holding only `message`/`boundary` rows — still decodes, and the stored `version` stays 1.
