@@ -1,0 +1,32 @@
+#1977 diagnostics-only live-gate rework, 2026-10-12
+Harness-reported Mobile revision: 4fd4b39cf9b7b268cdcc6cabb2afab57453ad692
+Daemon revision: 8d1281c3b56954bf070db8cff1e9abbbd1686dc1
+Live Claude version: 2.1.280
+No scenario, diagnostic, production or assertion changes in this rework.
+
+Focused live: 1 executed/passed, 0 failed/errors/skipped, exit 0.
+Named pass: de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_backgroundAgent_followsBottomUntilFinished
+Original XML/logcat: build/dispatcher-tests/live-roq3jrok/
+Focused scripted: 1 executed/passed, 0 failed/errors/skipped, exit 0.
+Named pass: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog
+Original XML/logcat: build/dispatcher-tests/scripted-ntnx2ak8/
+Original private per-arm evidence: build/session-error-evidence/pyry-e2e.tvXp7X/
+Retained: completed=true identity_stable=true held_inputs=1 fresh_inputs=0
+Dropped: completed=true identity_stable=true held_inputs=0 fresh_inputs=1
+Phone phase records: 38; each arm resets fixture_ready=false and finishes at list_return.
+Controller records: 37; every record matches the closed arm/action/phase/boolean vocabulary.
+All existing delivery, queue/message identity, error/status and preceding-host restoration assertions passed.
+
+Focused Kotlin: 27 executed/passed, 0 failed/errors/skipped (9 diagnostics, 1 reply matcher, 6 verification, 11 ViewModel).
+Controller Python: 11 executed/passed, exit 0.
+Lint, debug assembly, instrumentation compilation and formatting passed.
+The first focused build executed zero tests due to a concurrent Gradle artifact-transform cache lock timeout; it is not counted as a pass.
+
+Persistent private XML/logcat, per-arm evidence and pre-teardown daemon/controller snapshots:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/1977/rework-20261012/
+Manifest: manifest.json; SHA256=284660ea74c40395c686780c85814ce63109556c198c85ea628414c68a7f14eb
+Raw files are owner-only; committed XML excludes properties/system output and controller output contains only static fields.
+Earlier dispatcher scripted-all passed 22/22; the subsequent full live run failed (65 executed, 56 passed, 9 failed), with recovery passing.
+Fresh full dispatcher scripted-all/live acceptance on this candidate remains pending, separately from focused builder evidence.
+Preserve needs-real-claude and PR Live tests all. Documentation remains a later-stage handoff.
+Historical cause remains unknown. #2048 was retired by the maintainer on 2026-10-12 as no longer reproducing, without proving that cause.
