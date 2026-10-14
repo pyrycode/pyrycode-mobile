@@ -86,6 +86,13 @@ class RelayConnectionBundle internal constructor(
             deviceName = clientInfo.deviceName,
             pushTokens = pushTokens,
             messageTrail = messageTrail,
+            authoritativeDeviceId = { host ->
+                deviceStaticKeyStore.publicKey(host)?.takeIf { it.size == 32 }?.joinToString("") { byte ->
+                    "%02x".format(
+                        byte.toInt() and 0xff,
+                    )
+                }
+            },
         )
     private val disposed = AtomicBoolean(false)
 

@@ -107,9 +107,12 @@ class RelayRepositoryCoordinator(
     private val pushTokens: Flow<String?> = flowOf(null),
     now: () -> Instant = Clock.System::now,
     private val messageTrail: MessageTrail = MessageTrail(),
+    private val authoritativeDeviceId: suspend (String) -> String? = { null },
+    private val authoritativeHostId: String = "",
 ) {
     private val job = SupervisorJob()
     private val scope = CoroutineScope(job + dispatcher)
+    internal val authoritativeThreads = AuthoritativeThreadStore()
 
     /**
      * The reconnect-spanning replay cursor (#412): the latest interactive structured-stream
@@ -395,6 +398,9 @@ class RelayRepositoryCoordinator(
                 hostReadings = hostReadings,
                 messageTrail = messageTrail,
                 connToken = { (pump.state.value as? PumpState.Open)?.connId?.let(RelayLog::redactConnId) },
+                authoritativeThreads = authoritativeThreads,
+                authoritativeHostId = authoritativeHostId,
+                authoritativeDeviceId = authoritativeDeviceId,
             )
         // Publish the whole connection as ONE object: currentRepository now derives repo and pump-state
         // from this single switched value, closing the #493 cross-StateFlow race (see [currentRepository]).

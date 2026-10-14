@@ -16,6 +16,11 @@ import de.pyryco.mobile.ui.conversations.list.ChannelEditorState
 import kotlinx.datetime.Instant
 
 sealed interface ThreadEvent {
+    data class AuthoritativeQueueAction(
+        val target: de.pyryco.mobile.data.repository.AuthoritativeQueueTarget,
+        val sendNow: Boolean,
+    ) : ThreadEvent
+
     data class NewestContentPresented(
         val row: ThreadItem,
         val checkpoint: ULong,

@@ -18,6 +18,7 @@ import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
+import de.pyryco.mobile.data.repository.authoritativeQueueTarget
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -38,6 +39,9 @@ class AuthoritativeThreadPresentation internal constructor(
     internal val certifiedCheckpoint: Long?,
     internal val shownRowRevisions: Map<String, Long>,
 ) {
+    /** Waiting feedback carries no ordered read revision; anchor sight to admitted history. */
+    internal val newestReadKey = rows.lastOrNull { it is ThreadRow.Delivered && it.listKey(0) in shownRowRevisions }?.listKey(0)
+
     /** Revisions impose conservative sight requirements; only the certified boundary supplies coverage. */
     internal fun readCheckpoint(
         newestKey: String?,
@@ -50,7 +54,7 @@ class AuthoritativeThreadPresentation internal constructor(
         val coverage = certifiedCheckpoint?.toULong() ?: return null
         if (shown == 0uL || shown <= confirmed || coverage < shown || newestKey == null) return null
         val newestRevision = shownRowRevisions[newestKey] ?: return null
-        if (rows.lastOrNull()?.listKey(0) != newestKey || seen[newestKey] != newestRevision) return null
+        if (newestReadKey != newestKey || seen[newestKey] != newestRevision) return null
         if (shownRowRevisions.values.any { it.toULong() > coverage }) return null
         // The summary can be newer than every supplied shown row: complete sight is then unproven.
         if (shownRowRevisions.values.none { it.toULong() >= shown }) return null
@@ -205,6 +209,32 @@ internal fun projectAuthoritativeThread(
                 .filter { it.active }
                 .sortedBy { it.order }
                 .flatMap { backgroundContents.getValue(it.id) }
+    val waiting =
+        held.values
+            .filter { it.shown && it.kind == "user_message" && (it.order ?: 0) <= 0 && it.status in setOf("queued", "lost") }
+            .sortedBy { it.id }
+            .map { item ->
+                val fields = item.content as? JsonObject
+                ThreadRow.Queued(
+                    queuedMessageId = 0,
+                    text = (fields?.text("text") ?: item.summary).displayText(),
+                    echoId = null,
+                    identityKey = "msg:${identity(item.id)}",
+                    target = authoritativeQueueTarget(host, conversation, snapshot.epoch.orEmpty(), snapshot.generation, item),
+                    status = item.status,
+                    authoritative = true,
+                )
+            } +
+            snapshot.pendingSends.map { send ->
+                ThreadRow.Queued(
+                    0,
+                    send.message.content.displayText(),
+                    null,
+                    identityKey = "pending:${host.length}:$host${conversation.length}:$conversation:${send.message.id}",
+                    status = "sending",
+                    authoritative = true,
+                )
+            }
     val tasks =
         held.values
             .sortedBy { it.order ?: Long.MAX_VALUE }
@@ -230,7 +260,7 @@ internal fun projectAuthoritativeThread(
         scope,
         host,
         conversation,
-        rows,
+        rows + waiting,
         rows.filterIsInstance<ThreadRow.Delivered>().map { it.item },
         depths,
         BackgroundTaskRoster(tasks, 0),
