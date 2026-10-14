@@ -2566,7 +2566,7 @@ names a folder outside it in `PYRY_GATE_EVIDENCE_DIR`, one per part of the run:
 `android-test-gate.py` puts its run folder there (counted `dispatcher.xml`, per-test JUnit XML,
 phone logcat, `emulator.log`), `e2e-emulator.sh` retains its harness logs under `harness/`, and the
 session-error arms write under `session-error-evidence/`. An explicit `E2E_FAULT_EVIDENCE_DIR` still
-wins. The gate's evidence comment and the documentation gate report name the folder. The dispatcher
+wins for the harness logs; the session-error captures do not read it. The gate's evidence comment and the documentation gate report name the folder. The dispatcher
 prunes old folders by age, count per ticket and total size.
 
 Full live runs and subsets selecting the host-prompt method require a daemon containing merged
