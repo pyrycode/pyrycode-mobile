@@ -645,7 +645,13 @@ cleanup() {
   [ -n "${RELAY_PID}" ] && kill "${RELAY_PID}" 2>/dev/null || true
   wait 2>/dev/null || true
   # Every managed run retains diagnostics, including detached/main comparisons.
-  # Keep the explicit destination override introduced by #2137.
+  # Keep the explicit destination override introduced by #2137. Next comes the
+  # dispatcher's own folder for this gate run: its live gate runs on a detached
+  # worktree that is removed afterwards, so the branch name below cannot name
+  # the ticket there.
+  if [ -z "${E2E_FAULT_EVIDENCE_DIR:-}" ] && [ -n "${PYRY_GATE_EVIDENCE_DIR:-}" ]; then
+    E2E_FAULT_EVIDENCE_DIR="${PYRY_GATE_EVIDENCE_DIR}/harness"
+  fi
   if [ -z "${E2E_FAULT_EVIDENCE_DIR:-}" ] && [ -n "${AGENTS_REPO_PATH:-}" ]; then
     local evidence_branch
     evidence_branch="$(git -C "${REPO_ROOT:-.}" branch --show-current 2>/dev/null || true)"
@@ -1148,7 +1154,8 @@ if { [ -n "${DETERMINISTIC}" ] && [ "${SCENARIO}" = "session-error" ]; } ||
   else
     SESSION_ERROR_RECOVERY="$(command -v claude)" || die "session-error recovery requires Claude on PATH"
   fi
-  SESSION_ERROR_EVIDENCE="${REPO_ROOT}/build/session-error-evidence/$(basename "${WORK_DIR}")"
+  # The per-arm captures outlive a dispatcher gate's removed worktree only in its evidence folder.
+  SESSION_ERROR_EVIDENCE="${PYRY_GATE_EVIDENCE_DIR:-${REPO_ROOT}/build}/session-error-evidence/$(basename "${WORK_DIR}")"
   SESSION_ERROR_PORT_FILE="${WORK_DIR}/session-error-control.json"
   python3 "${REPO_ROOT}/scripts/e2e-session-error.py" \
     --recovery "${SESSION_ERROR_RECOVERY}" \
