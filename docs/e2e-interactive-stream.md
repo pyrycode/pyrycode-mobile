@@ -3745,12 +3745,20 @@ Retained evidence on the persistent agents volume:
   in the matching `.stderr.log`.
 
 The final worktree directories `build/dispatcher-tests/scripted-all-nurawsly/`
-and `build/dispatcher-tests/live-cwjrhlga/` are gone. No persistent final full-live
-phone logcat, controller/daemon boundary capture, binary-hash input or verified
-raw manifest was found. Stderr's worktree-local session-error evidence path is
-also gone. Counted acceptance passed, but required final artifact retention is
-unfinished and routed back to verification; builder captures do not substitute
-for the full-gate boundary evidence. Historical uncertainty remains explicit.
+and `build/dispatcher-tests/live-cwjrhlga/` were disposed of, losing the final
+scripted phone logs and full-live phone logcat, controller/daemon boundary
+captures, binary-hash inputs and raw manifest. Stderr's worktree-local
+session-error evidence path is also gone. Builder captures do not substitute
+for these full-gate artifacts.
+
+By [Juhana's operator decision on 2026-10-14](https://github.com/pyrycode/pyrycode-mobile/issues/2137#issuecomment-6161477157),
+acceptance rests on the surviving final scripted/live reports above and the
+[verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2147#issuecomment-6153698637),
+despite the lost raw captures. Final raw retention is no longer an open
+verification handoff for this ticket; no new live run is required. The dispatcher
+evidence-custody repair proceeds separately and does not gate this acceptance.
+This decision does not establish historical failure causation or restore the
+missing artifacts.
 
 ### Permission-isolation diagnostics (#1896)
 
