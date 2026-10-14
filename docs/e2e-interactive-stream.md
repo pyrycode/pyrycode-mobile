@@ -2559,6 +2559,16 @@ mobile parallel of the daemon's `make e2e-realclaude`. The dispatcher command is
 python3 scripts/android-test-gate.py live
 ```
 
+**Where a dispatcher gate run keeps its raw evidence.** The gate runs in a detached worktree that the
+dispatcher removes afterwards, so nothing under that worktree's `build/` survives. The dispatcher
+names a folder outside it in `PYRY_GATE_EVIDENCE_DIR`, one per part of the run:
+`$AGENTS_REPO_PATH/logs/evidence/<issue>/gate-runs/<stamp>/{main,rerun,base,infra-check}/`.
+`android-test-gate.py` puts its run folder there (counted `dispatcher.xml`, per-test JUnit XML,
+phone logcat, `emulator.log`), `e2e-emulator.sh` retains its harness logs under `harness/`, and the
+session-error arms write under `session-error-evidence/`. An explicit `E2E_FAULT_EVIDENCE_DIR` still
+wins for the harness logs; the session-error captures do not read it. The gate's evidence comment and the documentation gate report name the folder. The dispatcher
+prunes old folders by age, count per ticket and total size.
+
 Full live runs and subsets selecting the host-prompt method require a daemon containing merged
 pyrycode#2768 handler commit `b3daa0432528188f2829b235877c60627afb8e43` or a descendant.
 `require_host_prompt_daemon` checks the binary's recorded revision against Git ancestry before startup;
