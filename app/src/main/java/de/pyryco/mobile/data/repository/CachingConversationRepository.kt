@@ -263,35 +263,44 @@ class CachingConversationRepository(
         candidate: CacheCandidate,
         refreshReset: Boolean = false,
     ): Result<Unit>? {
-        val current = authoritativeThreads.current(serverId, conversationId)
-        // A further reset can supersede final cleanup while it waits for historyWrites.
-        val selected =
-            if (refreshReset && current.epoch != null && current.generation > candidate.storeGeneration) {
-                CacheCandidate(
-                    DrawnThread(emptyList(), generations.incrementAndGet()),
-                    emptyList(),
-                    authoritative = current.toSavedAuthoritativeThread(),
-                    storeGeneration = current.generation,
-                )
-            } else {
-                candidate
+        var selected = candidate
+        while (true) {
+            val current = authoritativeThreads.current(serverId, conversationId)
+            // Retirement can arrive while cleanup waits for the lock or a final mutation.
+            if (refreshReset && current.epoch != null && current.generation > selected.storeGeneration) {
+                selected =
+                    CacheCandidate(
+                        DrawnThread(emptyList(), generations.incrementAndGet()),
+                        emptyList(),
+                        authoritative = current.toSavedAuthoritativeThread(),
+                        storeGeneration = current.generation,
+                    )
             }
-        val saved = selected.authoritative ?: return null
-        val persisted = persistedAuthoritative[conversationId]
-        if (conversationId in deleted ||
-            selected.storeGeneration != current.generation ||
-            selected.drawn.generation <= (persisted?.drawn?.generation ?: 0)
-        ) {
-            return null
-        }
-        if (saved == persisted?.authoritative) {
-            persistedAuthoritative[conversationId] = selected
-            return Result.success(Unit)
-        }
-        return withContext(NonCancellable) {
-            val result = cache.writeAuthoritativeThread(serverId, conversationId, saved)
-            if (result.isSuccess) persistedAuthoritative[conversationId] = selected
-            result
+            val saved = selected.authoritative ?: return null
+            val persisted = persistedAuthoritative[conversationId]
+            if (conversationId in deleted ||
+                selected.storeGeneration != current.generation ||
+                selected.drawn.generation <= (persisted?.drawn?.generation ?: 0)
+            ) {
+                return null
+            }
+            val result =
+                withContext(NonCancellable) {
+                    val result =
+                        if (saved == persisted?.authoritative) {
+                            Result.success(Unit)
+                        } else {
+                            cache.writeAuthoritativeThread(serverId, conversationId, saved)
+                        }
+                    if (result.isSuccess) persistedAuthoritative[conversationId] = selected
+                    result
+                }
+            if (result.isFailure ||
+                !refreshReset ||
+                authoritativeThreads.current(serverId, conversationId).generation <= selected.storeGeneration
+            ) {
+                return result
+            }
         }
     }
 
@@ -299,8 +308,10 @@ class CachingConversationRepository(
         if (conversationId in deleted) return null
         val generation = authoritativeThreads.current(serverId, conversationId).generation
         val saved = cache.readAuthoritativeThread(serverId, conversationId) ?: return null
-        historyWrites.withLock {
-            if (conversationId !in deleted) authoritativeThreads.restore(serverId, conversationId, saved.toSnapshot(), generation)
+        withContext(processingDispatcher) {
+            historyWrites.withLock {
+                if (conversationId !in deleted) authoritativeThreads.restore(serverId, conversationId, saved.toSnapshot(), generation)
+            }
         }
         return saved
     }

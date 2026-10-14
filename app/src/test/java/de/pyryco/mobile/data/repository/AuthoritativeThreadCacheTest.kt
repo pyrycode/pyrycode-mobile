@@ -16,6 +16,7 @@ import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.a
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.item
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -39,6 +40,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.util.concurrent.Executor
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class AuthoritativeThreadCacheTest {
@@ -587,6 +589,104 @@ class AuthoritativeThreadCacheTest {
     @Test fun remoteResetSurvivesCancellationDuringDelivery() = runTest { cancelledRemoteReset(holdEarlierSnapshot = false) }
 
     @Test fun remoteResetDuringEarlierDeliverySurvivesCancellation() = runTest { cancelledRemoteReset(holdEarlierSnapshot = true) }
+
+    @Test fun remoteResetDuringFinalFlushIoPersistsRetirementBeforeCleanupCompletes() =
+        runTest {
+            val held = HeldCache(fileCache())
+            val (pump, remote) = remote()
+            val repo = wrapper(held, delegate = remote)
+            val observer = backgroundScope.launch { repo.observeAuthoritativeThread("c").collect {} }
+            seed(pump, remote)
+            advanceTimeBy(101)
+            runCurrent()
+            assertTrue(repo.openAuthoritativeThread("c"))
+            val request = pump.sent.last()
+            val releaseFinal = CompletableDeferred<Unit>()
+            val releaseRetirement = CompletableDeferred<Unit>()
+            held.beforeWrite = {
+                if (held.writes.last().appliedVersion == 20L) {
+                    releaseFinal.await()
+                } else {
+                    releaseRetirement.await()
+                }
+            }
+            apply(repo, 20)
+            runCurrent()
+            observer.cancel() // Accepted change, but its quiet-period timer has not fired.
+            runCurrent()
+            assertEquals(20L, held.writes.last().appliedVersion)
+            pump.push(
+                Envelope(
+                    101,
+                    "thread_reset",
+                    "2026-10-14T00:00:00Z",
+                    MobileJson.parseToJsonElement("""{"conversation_id":"c","epoch":"e","version":30}"""),
+                    inReplyTo = request.id,
+                ),
+            )
+            runCurrent()
+            val reset = remote.authoritativeThreads.current("host", "c")
+            assertTrue(reset.items.isEmpty())
+            assertEquals(0L, reset.checkpoint)
+            assertNull(reset.coverage)
+            releaseFinal.complete(Unit)
+            runCurrent()
+            val waitingForRetirement = !observer.isCompleted && held.writes.last().appliedVersion == 0L
+            releaseRetirement.complete(Unit)
+            observer.join()
+            assertTrue("cleanup must wait for retirement after final I/O", waitingForRetirement)
+            assertFacts(fileCache(), "host", reset)
+            assertEquals(reset.toSavedAuthoritativeThread(), wrapper().observeAuthoritativeThread("c").first().toSavedAuthoritativeThread())
+        }
+
+    @Test fun restoreDecodingAndMergeWaitForProcessingDispatcherWhileMainProgresses() =
+        runTest {
+            val saved = SavedAuthoritativeThread("e", listOf(item(1, 10, 5).raw), 10, 10)
+            fileCache().writeAuthoritativeThread("host", "c", saved).getOrThrow()
+            val pending = ArrayDeque<Runnable>()
+            val worker = Executor { pending.addLast(it) }.asCoroutineDispatcher()
+            var onWorker = false
+            val guarded =
+                object : AbstractList<JsonObject>() {
+                    override val size get() = saved.items.size
+
+                    override fun get(index: Int): JsonObject {
+                        assertTrue("saved items must be decoded on the worker", onWorker)
+                        return saved.items[index]
+                    }
+                }
+            val cache =
+                object : ConversationCache by fileCache() {
+                    override suspend fun readAuthoritativeThread(
+                        serverId: String,
+                        conversationId: String,
+                    ) = requireNotNull(fileCache().readAuthoritativeThread(serverId, conversationId)).copy(items = guarded)
+                }
+            RelayLog.sink = { _, _, message ->
+                if (message == "event=thread_store code=restored") assertTrue("store merge must run on the worker", onWorker)
+            }
+            val repo =
+                CachingConversationRepository(
+                    FakeConversationRepository(),
+                    cache,
+                    "host",
+                    processingDispatcher = worker,
+                )
+            val restore = backgroundScope.launch { assertFalse(repo.openAuthoritativeThread("c")) }
+            var mainProgress = false
+            launch { mainProgress = true }
+            runCurrent()
+            assertTrue(mainProgress)
+            assertNull(repo.authoritativeThreads.current("host", "c").epoch)
+            onWorker = true
+            try {
+                while (pending.isNotEmpty()) pending.removeFirst().run()
+            } finally {
+                onWorker = false
+            }
+            restore.join()
+            assertEquals(saved, repo.authoritativeThreads.current("host", "c").toSavedAuthoritativeThread())
+        }
 
     private suspend fun TestScope.cancelledRemoteReset(holdEarlierSnapshot: Boolean) {
         val saved =
