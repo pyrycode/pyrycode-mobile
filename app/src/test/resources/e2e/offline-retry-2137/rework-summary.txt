@@ -1,0 +1,45 @@
+Rework of verifier findings at 1b353f48665e563759850ba0f27b252ae2740d99.
+Tested repair: 2c249ab1cea9321d7bc0543a1a24f3867a0f7843.
+Merged main: dc3ac93ab2f42dce9056b328ce05e39b935b6202.
+Daemon source/reported revision: eb3c757cac48a65f536bdc0dfdc92f0adbd82c3f.
+Daemon binary SHA-256: 8e94ff43007ee7637ba04730f350bf9ec014b0525605fc800cbe1f21be1542e0.
+
+All four findings fixed in 2c249ab1c:
+1. Extracted cleanup tolerates inherited managed environment without REPO_ROOT;
+   the three named fixtures retain their original status/ownership assertions.
+   Explicit and managed retention execute with nounset and managed environment.
+2. Failed spawn owns no predecessor; HTTP and transition records keep spawn_failed,
+   generation 2, running=false, ready=false. JVM parsing preserves this safe phase.
+3. PATH-selected executable is frozen before launch; capture retains its digest even
+   when PATH later points to a different executable. Direct PATH retention also passes.
+4. The real synthetic child is observed ready/alive, then terminated/joined before
+   the final snapshot. HTTP 503 and the matching transition report exited/unready.
+   Removing only the final-snapshot guard in a disposable copy yields 200 and one
+   expected assertion failure: 1 executed, 1 failed, 0 errors/skips.
+
+python3 -m unittest discover -s scripts: 111 executed/passed, 0 failures/errors/skips.
+Focused Python selection: 26 executed/passed, including 19 controller, 4 retention,
+and the three named cleanup methods (exit 0/7 and isolated-home subcases preserved).
+Focused JVM selection: 46 executed/passed, 0 failures/errors/skips:
+DaemonFaultEvidenceTest 6; OfflineRetryWindowTest 3; RelayConnectionSupervisorTest 37.
+The new JVM phase regression first failed with phase=unknown (6 executed, 1 failed).
+Lint, assembleDebug, compileDebugAndroidTestKotlin and forced Spotless check passed.
+
+scripted offline-retry: exit 0; 1 executed/passed, 0 failures/errors/skips.
+Method: DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply.
+Actual capped attempt 6; observer lag 13 ms; original remaining budget 19403 ms.
+Generation 2 registered in 77 ms; one exact-host Retry dispatch.
+
+Focused live: exit 0; 1 executed/passed, 0 failures/errors/skips.
+Method: InteractiveStreamE2ETest.interactiveTurn_offlineRetry_reconnectsSameHostAndReplies.
+Actual capped attempt 6; observer lag 10 ms; original remaining budget 19435 ms.
+Generation 2 registered in 101 ms; one exact-host Retry dispatch.
+Both scenarios preserve outage, visible Offline pill/null repository before tap,
+same-host/conversation recovery, pill clearing and a newly sent prompt's reply.
+
+Private raw XML/logcat, controller/daemon/relay logs, inputs and verified manifest:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2137/rework-1b353f-hp-20261013/.
+No credentials, pairing material or arbitrary daemon/error text is published here.
+Historical failures remain unattributed; these fresh passes do not establish causation.
+PR #2107 is still open and its diagnostics/restoration work must survive integration.
+Final dispatcher scripted-all/full-live acceptance and documentation remain pending.

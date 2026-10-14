@@ -631,6 +631,7 @@ keep_bypass_transcripts() {
 
 cleanup() {
   local code=$?
+  local result="${code}"
   log "tearing down…"
   [ -n "${SESSION_ERROR_PID:-}" ] && kill "${SESSION_ERROR_PID}" 2>/dev/null || true
   [ -n "${BACKGROUND_AGENT_FIXTURE_PID:-}" ] && kill "${BACKGROUND_AGENT_FIXTURE_PID}" 2>/dev/null || true
@@ -643,33 +644,54 @@ cleanup() {
   [ -n "${ANSWER_PID:-}" ] && kill "${ANSWER_PID}" 2>/dev/null || true
   [ -n "${RELAY_PID}" ] && kill "${RELAY_PID}" 2>/dev/null || true
   wait 2>/dev/null || true
+  # Every managed run retains diagnostics, including detached/main comparisons.
+  # Keep the explicit destination override introduced by #2137.
+  if [ -z "${E2E_FAULT_EVIDENCE_DIR:-}" ] && [ -n "${AGENTS_REPO_PATH:-}" ]; then
+    local evidence_branch
+    evidence_branch="$(git -C "${REPO_ROOT:-.}" branch --show-current 2>/dev/null || true)"
+    E2E_FAULT_EVIDENCE_DIR="${AGENTS_REPO_PATH}/logs/evidence/harness"
+    if [[ "${evidence_branch}" =~ ^feature/[0-9]+$ ]]; then
+      E2E_FAULT_EVIDENCE_DIR="${AGENTS_REPO_PATH}/logs/evidence/${evidence_branch#feature/}/harness"
+    fi
+  fi
+  if [ -n "${E2E_FAULT_EVIDENCE_DIR:-}" ]; then
+    if ! python3 "${REPO_ROOT:-}/scripts/e2e_fault_evidence.py" --source "${WORK_DIR}" \
+      --destination "${E2E_FAULT_EVIDENCE_DIR}" --mobile-revision "${MOBILE_REVISION:-}" \
+      --daemon-revision "${DAEMON_REVISION:-}" --binary "${PYRY_BIN:-}" --daemon-source "${PYRYCODE_SRC:-}" \
+      --harness-exit-code "${code}" --agents-root "${AGENTS_REPO_PATH:-}" 2>/dev/null; then
+      log "retention=failed availability=incomplete"
+      [ "${result}" -ne 0 ] || result=1
+    fi
+  fi
   # The operator-bypass HOME (#687) goes whatever the exit code: it holds a copy of ~/.claude.json and the
   # witness file. Only a path this script minted is removed. Its daemon log stays in WORK_DIR as the rest do.
   # A failed run first keeps claude's session transcripts (#977): regular *.jsonl files under
   # .claude/projects only, so no credential file and no symlink out of the HOME is ever copied.
   if [[ "${BYPASS_HOME:-}" == /tmp/pyry-e2e-byp.* ]]; then
-    if [ "${code}" -ne 0 ]; then
+    if [ "${code}" -ne 0 ] && [ -z "${AGENTS_REPO_PATH:-}" ]; then
       keep_bypass_transcripts || true
     fi
-    [ -z "${BYPASS_TOKEN_FILE}" ] || rm -f "${BYPASS_TOKEN_FILE}"
-    rm -rf "${BYPASS_HOME}"
+    if [ -n "${BYPASS_TOKEN_FILE:-}" ]; then
+      rm -f "${BYPASS_TOKEN_FILE}" || { [ "${result}" -ne 0 ] || result=1; }
+    fi
+    rm -rf "${BYPASS_HOME}" || { [ "${result}" -ne 0 ] || result=1; }
   fi
   # The answer daemon's HOME (#966) goes too, whatever the exit code: it holds a copy of ~/.claude.json.
   if [[ "${ANSWER_HOME:-}" == /tmp/pyry-e2e-ans.* ]]; then
-    rm -rf "${ANSWER_HOME}"
+    rm -rf "${ANSWER_HOME}" || { [ "${result}" -ne 0 ] || result=1; }
   fi
   if [ "${code}" -ne 0 ]; then
     log "logs kept at ${WORK_DIR} (relay.log, daemon.log, pair.out)"
-    if [ -n "${ISO_HOME}" ]; then
+    if [ -n "${ISO_HOME}" ] && [ -z "${AGENTS_REPO_PATH:-}" ]; then
       log "isolated HOME kept at ${ISO_HOME}"
     fi
   else
-    rm -rf "${WORK_DIR}"
-    if [ -n "${ISO_HOME}" ]; then
-      rm -rf "${ISO_HOME}"
-    fi
+    rm -rf "${WORK_DIR}" || { [ "${result}" -ne 0 ] || result=1; }
   fi
-  return "${code}"
+  if [ -n "${ISO_HOME}" ] && { [ "${code}" -eq 0 ] || [ -n "${AGENTS_REPO_PATH:-}" ]; }; then
+    rm -rf "${ISO_HOME}" || { [ "${result}" -ne 0 ] || result=1; }
+  fi
+  return "${result}"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -722,6 +744,7 @@ fi
 # LIVE spawns no local relay (it dials the production relay), so the relay binary is not required there.
 [ -n "${LIVE}" ] || command -v "${RELAY_BIN}" >/dev/null 2>&1 || die "relay binary '${RELAY_BIN}' not found (set RELAY_BIN)"
 command -v "${PYRY_BIN}"  >/dev/null 2>&1 || die "pyry binary '${PYRY_BIN}' not found (set PYRY_BIN)"
+PYRY_BIN="$(command -v "${PYRY_BIN}")" # Freeze the PATH selection used by launch and evidence retention.
 command -v python3        >/dev/null 2>&1 || die "python3 not found (needed to decode the pairing payload)"
 [ -x "${GRADLEW}" ] || die "gradlew not found/executable at ${GRADLEW}"
 

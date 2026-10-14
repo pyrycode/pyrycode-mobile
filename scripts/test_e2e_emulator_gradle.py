@@ -188,7 +188,10 @@ END
         cleanup = self.function("cleanup")
         body = "set -euo pipefail\nlog() { :; }\n" + cleanup + "\ncleanup\n"
         env = dict(os.environ, BYPASS_FIXTURE_PID=config['BYPASS_FIXTURE_PID'], WORK_DIR=config['work'],
-                   WATCHER_PID="", DAEMON_PID="", RELAY_PID="", ISO_HOME="", BYPASS_HOME="", ANSWER_HOME="")
+                   WATCHER_PID="", DAEMON_PID="", RELAY_PID="", ISO_HOME="", BYPASS_HOME="", ANSWER_HOME="",
+                   AGENTS_REPO_PATH="", E2E_FAULT_EVIDENCE_DIR="")
+        # This fixture tests process disposal; managed retention has dedicated cleanup coverage.
+        env.pop("REPO_ROOT", None)
         result = subprocess.run(["bash", "-c", body], env=env, capture_output=True, text=True, timeout=5)
         self.assertEqual(0, result.returncode, "harness cleanup failed")
         self.assertFalse(Path(config['work']).exists())
