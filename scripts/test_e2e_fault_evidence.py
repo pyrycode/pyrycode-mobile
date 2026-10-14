@@ -327,6 +327,7 @@ class FaultEvidenceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             (root / "outside").mkdir(mode=0o755)
+            (root / "outside").chmod(0o755)  # Establish the fixture mode independently of umask.
             (root / "link").symlink_to(root / "outside")
             for destination in (root / "link", root / "link/child"):
                 with self.subTest(destination=destination), self.assertRaises(module.RetentionError):
