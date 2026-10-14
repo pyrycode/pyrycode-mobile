@@ -119,3 +119,14 @@ five acceptance criteria, fewer than ten classified reject branches.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-14
+
+## Revisions
+
+- 2026-10-14: expose page evidence through redacted `LegacyPageEvidence` with typed unsigned
+  fields and explicit saved high-water/unknown-edge values. A raw JSON result could expose opaque
+  cursors through its string representation; the wrapper keeps partial evidence distinct from
+  full HistoryCoverage and retains global incomplete flags when a page holds only signed-range rows.
+- 2026-10-14: interval queries seek the indexed predecessor before their bounded range, and
+  cursor queries select nearest candidates for intersecting gaps even outside that range. Invalid
+  optional evidence also clears the page's saved cursor/completeness fields. Focused probes cover
+  these refinements and both legacy and coverage-bearing 100000-row trims.

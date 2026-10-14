@@ -410,36 +410,7 @@ class FileConversationCache(
      */
     private fun validatedRows(stored: CachedThread): List<ThreadItem> {
         val rows = stored.rows.map { it.toDomain() }
-        val messages = HashSet<String>()
-        val boundaries = HashSet<Triple<String, String, Instant>>()
-        val banners = HashSet<Instant>()
-        val compactions = HashSet<Instant>()
-        val refusals = HashSet<Pair<Boolean, Instant>>()
-        val stopped = HashSet<String>()
-        rows.forEach { row ->
-            when (row) {
-                is ThreadItem.MessageItem -> {
-                    require(row.message.toolCall?.status != ToolCallStatus.Running) { "running tool in thread cache" }
-                    require(messages.add(row.message.id)) { "duplicate thread cache message identity" }
-                }
-                is ThreadItem.SessionBoundary ->
-                    require(boundaries.add(Triple(row.previousSessionId, row.newSessionId, row.occurredAt))) {
-                        "duplicate thread cache boundary identity"
-                    }
-                is ThreadItem.Banner -> require(banners.add(row.occurredAt)) { "duplicate thread cache banner identity" }
-                is ThreadItem.CompactionBoundary ->
-                    require(
-                        compactions.add(row.occurredAt),
-                    ) { "duplicate thread cache compaction identity" }
-                is ThreadItem.ModelRefusal ->
-                    require(refusals.add((row.fallbackModel != null) to row.occurredAt)) {
-                        "duplicate thread cache refusal identity"
-                    }
-                is ThreadItem.StoppedTurn -> require(stopped.add(row.turnId)) { "duplicate thread cache stopped turn identity" }
-                else -> Unit
-            }
-        }
-        return rows
+        return validateLegacyRows(rows)
     }
 
     /**
@@ -853,6 +824,41 @@ private data class CachedStoppedTurn(
 )
 
 // Only settled rows reach here: `cacheableThreadRows` has already dropped in-flight and unrecognized ones.
+internal fun encodeLegacyRow(row: ThreadItem): String = MobileJson.encodeToString(row.toRecord())
+
+internal fun decodeLegacyRows(payloads: List<String>): List<ThreadItem> =
+    validateLegacyRows(payloads.map { threadReadJson.decodeFromString<CachedThreadRow>(it).toDomain() })
+
+private fun validateLegacyRows(rows: List<ThreadItem>): List<ThreadItem> {
+    val messages = HashSet<String>()
+    val boundaries = HashSet<Triple<String, String, Instant>>()
+    val banners = HashSet<Instant>()
+    val compactions = HashSet<Instant>()
+    val refusals = HashSet<Pair<Boolean, Instant>>()
+    val stopped = HashSet<String>()
+    rows.forEach { row ->
+        when (row) {
+            is ThreadItem.MessageItem -> {
+                require(row.message.toolCall?.status != ToolCallStatus.Running) { "running tool in thread cache" }
+                require(messages.add(row.message.id)) { "duplicate thread cache message identity" }
+            }
+            is ThreadItem.SessionBoundary ->
+                require(
+                    boundaries.add(Triple(row.previousSessionId, row.newSessionId, row.occurredAt)),
+                ) { "duplicate thread cache boundary identity" }
+            is ThreadItem.Banner -> require(banners.add(row.occurredAt)) { "duplicate thread cache banner identity" }
+            is ThreadItem.CompactionBoundary -> require(compactions.add(row.occurredAt)) { "duplicate thread cache compaction identity" }
+            is ThreadItem.ModelRefusal ->
+                require(refusals.add((row.fallbackModel != null) to row.occurredAt)) {
+                    "duplicate thread cache refusal identity"
+                }
+            is ThreadItem.StoppedTurn -> require(stopped.add(row.turnId)) { "duplicate thread cache stopped turn identity" }
+            else -> Unit
+        }
+    }
+    return rows
+}
+
 internal fun cachedThreadRowProof(row: ThreadItem): String = cachedThreadRowProof(row, MessageDigest.getInstance("SHA-256"))
 
 /** The caller owns this digest for one synchronous batch; digest() resets it between rows. */
