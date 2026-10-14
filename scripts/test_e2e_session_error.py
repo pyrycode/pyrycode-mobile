@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,40 @@ SPEC.loader.exec_module(fixture)
 
 
 class SessionErrorControlTest(unittest.TestCase):
+    def test_control_log_identifies_each_arm_without_private_status_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = SimpleNamespace(evidence=directory, scripted=True, daemon_relay="ws://127.0.0.1:1")
+            for arm in ("retained", "dropped"):
+                case = fixture.Case(args, arm)
+                case.before = {"ready": True}
+                try:
+                    case.env.update(CLAUDE_CODE_OAUTH_TOKEN="private-credential")
+                    status = {"daemon_pid": 123, "started_at": "private-start", "session_id": "private-session"}
+                    output = io.StringIO()
+                    with patch("sys.stdout", output):
+                        case.record("start", status)
+                        case.record("complete", status)
+                    self.assertEqual(output.getvalue().splitlines(), [
+                        f"session_error arm={arm} action=start phase=observed fixture_ready=True",
+                        f"session_error arm={arm} action=complete phase=observed fixture_ready=True",
+                    ])
+                    records = [json.loads(line) for line in (case.evidence / "control.jsonl").read_text().splitlines()]
+                    self.assertEqual(records, [{"event": event, **status} for event in ("start", "complete")])
+                finally:
+                    case.close()
+
+    def test_unavailable_host_log_does_not_fail_recording_or_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = SimpleNamespace(evidence=directory, scripted=True, daemon_relay="ws://127.0.0.1:1")
+            case = fixture.Case(args, "retained")
+            try:
+                with patch("builtins.print", side_effect=BrokenPipeError("private-error")):
+                    case.record("start", {"phase": "running"})
+                self.assertTrue((case.evidence / "control.jsonl").is_file())
+            finally:
+                case.close()
+            self.assertFalse(case.home.exists())
+
     def test_controller_launch_supports_live_and_scripted_with_bash_nounset(self):
         script = Path(__file__).with_name("e2e-emulator.sh").read_text()
         launch = script[script.index("  SESSION_ERROR_ARGS=("):script.index("  SESSION_ERROR_PID=$!")]
@@ -160,7 +195,7 @@ PHONE_RELAY_URL="wss://phone.invalid"
                 "--daemon", "/bin/sh", "--recovery", "/bin/cat", "--scripted",
                 "--daemon-relay", "ws://127.0.0.1:1", "--phone-relay", "ws://10.0.2.2:1",
                 "--port-file", str(port_file), "--evidence", str(evidence),
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             try:
                 fixture.wait_state(lambda: port_file.exists() and port_file.stat().st_size, 5, "control_start")
                 config = json.loads(port_file.read_text())
@@ -176,9 +211,24 @@ PHONE_RELAY_URL="wss://phone.invalid"
                     self.assertEqual(failure.exception.code, status)
                     failure.exception.close()
                 self.assertFalse((evidence / "retained").exists())
+                # An owned daemon that exits must name the arm/action, without echoing the
+                # authenticated request or subprocess exception in the surviving host log.
+                for arm in ("retained", "dropped"):
+                    request = Request(f'http://127.0.0.1:{config["port"]}/{arm}/start', data=b"",
+                                      headers={"Authorization": "Bearer " + config["authorization"]})
+                    with self.subTest(arm=arm), self.assertRaises(HTTPError) as failure:
+                        urlopen(request, timeout=3)
+                    self.assertEqual(failure.exception.code, 503)
+                    failure.exception.close()
             finally:
                 controller.terminate()
-                controller.wait(timeout=5)
+                output, _ = controller.communicate(timeout=5)
+            self.assertEqual(output.splitlines(), [
+                "session_error arm=retained action=start phase=started fixture_ready=False",
+                "session_error arm=retained action=start phase=failed fixture_ready=False",
+                "session_error arm=dropped action=start phase=started fixture_ready=False",
+                "session_error arm=dropped action=start phase=failed fixture_ready=False",
+            ])
 
 
 if __name__ == "__main__":

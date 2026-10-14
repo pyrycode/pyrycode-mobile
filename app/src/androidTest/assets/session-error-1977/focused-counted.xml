@@ -1,0 +1,38 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.e2e.SessionErrorDiagnosticsTest" tests="9" failures="0" errors="0" skipped="0" timestamp="2026-10-11T11:16:17.884Z">
+    <testcase classname="de.pyryco.mobile.e2e.SessionErrorDiagnosticsTest" name="readableSnapshotIdentifiesExactPresenceAndAbsence" time="3.567" />
+    <testcase classname="de.pyryco.mobile.e2e.SessionErrorDiagnosticsTest" name="unavailableSnapshotCannotReplaceOriginalTimeoutOrPublishItsOwnDetails" time="0.056" />
+    <testcase classname="de.pyryco.mobile.e2e.SessionErrorDiagnosticsTest" name="cleanupFailureWithoutPrimaryFailureRemainsAFailure" time="0.045" />
+    <testcase classname="de.pyryco.mobile.e2e.SessionErrorDiagnosticsTest" name="authoritativeSnapshotReadHasOneSecondDeadline" time="0.043" />
+    <testcase classname="de.pyryco.mobile.e2e.SessionErrorDiagnosticsTest" name="cleanupRetainsPrimaryFailureAndStillRuns" time="0.036" />
+    <testcase classname="de.pyryco.mobile.e2e.SessionErrorDiagnosticsTest" name="primaryCleanupFailureIdentifiesRemovalOrCloseAndRetainsCause" time="0.03" />
+    <testcase classname="de.pyryco.mobile.e2e.SessionErrorDiagnosticsTest" name="secondaryCleanupFailuresPreserveOperationPhaseAndAllCauses" time="0.034" />
+    <testcase classname="de.pyryco.mobile.e2e.SessionErrorDiagnosticsTest" name="bothArmsRetainPhaseReadinessAndOriginalTimeoutWithoutFormattingIt" time="0.03" />
+    <testcase classname="de.pyryco.mobile.e2e.SessionErrorDiagnosticsTest" name="failedSnapshotResultIsUnknownAndRetainsOriginalTimeout" time="0.024" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.e2e.SessionErrorReplyMatcherTest" tests="1" failures="0" errors="0" skipped="0" timestamp="2026-10-11T11:16:22.326Z">
+    <testcase classname="de.pyryco.mobile.e2e.SessionErrorReplyMatcherTest" name="sentPromptsAloneCannotProveAssistantRendering_thenReplyDoes" time="1.955" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.onboarding.PairCodeViewModelTest" tests="11" failures="0" errors="0" skipped="0" timestamp="2026-10-11T11:16:24.289Z">
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairCodeViewModelTest" name="deadlineAndCancellationCannotNavigateLater" time="0.098" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairCodeViewModelTest" name="targetModeReplacesOnlyThatHostAndKeepsItsName" time="0.004" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairCodeViewModelTest" name="offlineDuringTheWaitKeepsWaitingUntilConnected" time="0.002" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairCodeViewModelTest" name="updateRequiredEndsTheConnectionWaitImmediately" time="0.002" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairCodeViewModelTest" name="failuresRetainDraftAndRetrySameHostWithoutLosingName" time="0.004" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairCodeViewModelTest" name="targetModeCancelAndFailedSaveLeaveEveryPairingUnchanged" time="0.003" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairCodeViewModelTest" name="targetModeRefusesACodeForAnotherHostBeforeConfirmation" time="0.002" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairCodeViewModelTest" name="validationDeclineAndConfirmBindExactRecordAndLockPersistence" time="0.006" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairCodeViewModelTest" name="rejectedPairingEndsTheConnectionWaitImmediately" time="0.002" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairCodeViewModelTest" name="targetModeRejectedWhileConnectingFailsBeforeTheDeadline" time="0.003" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairCodeViewModelTest" name="retryWaitsAgainForTheSavedHostWithoutConfirmingOrSaving" time="0.003" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.onboarding.PairingVerificationTest" tests="6" failures="0" errors="0" skipped="0" timestamp="2026-10-11T11:16:24.421Z">
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairingVerificationTest" name="thirtySecondsWithoutSuccessFailsRetryably" time="0.003" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairingVerificationTest" name="offlineThenConnectedSucceeds" time="0.002" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairingVerificationTest" name="terminalStatusesEndTheWaitWithTheirTexts" time="0.002" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairingVerificationTest" name="waitingStatusesKeepWaitingUntilBothLegsConnect" time="0.003" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairingVerificationTest" name="retryIgnoresAHeldAbsenceUntilTheStatusChanges" time="0.001" />
+    <testcase classname="de.pyryco.mobile.ui.onboarding.PairingVerificationTest" name="aCompletedStatusFlowFailsRetryablyInsteadOfThrowing" time="0.002" />
+  </testsuite>
+</testsuites>
