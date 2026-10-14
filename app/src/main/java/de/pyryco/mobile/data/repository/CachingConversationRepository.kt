@@ -172,7 +172,8 @@ class CachingConversationRepository(
             val saved = snapshot.toSavedAuthoritativeThread()
             val previous = latest.get()
             if (saved == (previous?.authoritative ?: initialAuthoritative) &&
-                snapshot.generation == (previous?.storeGeneration ?: 0) && !retry.getAndSet(false)
+                snapshot.generation == (previous?.storeGeneration ?: 0) &&
+                !retry.getAndSet(false)
             ) {
                 return
             }
@@ -277,7 +278,8 @@ class CachingConversationRepository(
             }
         val saved = selected.authoritative ?: return null
         val persisted = persistedAuthoritative[conversationId]
-        if (conversationId in deleted || selected.storeGeneration != current.generation ||
+        if (conversationId in deleted ||
+            selected.storeGeneration != current.generation ||
             selected.drawn.generation <= (persisted?.drawn?.generation ?: 0)
         ) {
             return null
