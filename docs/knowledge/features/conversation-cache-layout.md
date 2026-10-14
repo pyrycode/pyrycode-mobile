@@ -8,6 +8,7 @@ Split from [Conversation cache](conversation-cache.md); this topic retains the s
 <root>/<sha256hex(serverId)>/conversations.json
 <root>/<sha256hex(serverId)>/threads/<sha256hex(conversationId)>.json   (#797)
 <root>/<sha256hex(serverId)>/read-positions.json                       (#877)
+<root>/<sha256hex(serverId)>/authoritative-threads/<sha256hex(conversationId)>.json   (#2149)
 ```
 
 A server id is daemon-supplied and opaque, so it is never pasted into a path: the host
@@ -19,6 +20,29 @@ the same way** and filed under its host's directory rather than in a flat namesp
 `removeHost`'s existing recursive delete of the host directory covers `threads/` for free with
 no separate removal step. The hash is namespace derivation, not a security boundary — the
 property relied on is collision resistance, not secrecy.
+
+The authoritative family uses the same app-private `noBackupFilesDir` cache root and
+hashed host/conversation namespaces. Its separate `CachedAuthoritativeThread(version,
+serverId, conversationId, saved)` envelope currently has version 1 and verifies both owner
+values on read. Sharing a numeric version with the legacy format does not make the documents
+interchangeable: legacy row readers/writers never touch `authoritative-threads/`. Wrong owner,
+version or invalid saved facts withhold the entire authoritative restore without rewriting it.
+
+Under the file-cache mutex, one temporary-file/atomic-move replacement saves epoch, raw full
+items, applied version, certified checkpoint and continuous coverage/page continuation together.
+Unknown fields/kinds and explicit-null clears remain inert raw facts. Retention keeps at most
+100000 full items in daemon order, including active and unknown kinds; trimming clears the
+checkpoint and coverage, preserving only applied progress alongside retained items. See
+[the authoritative contract](conversation-cache-contract.md#the-contract) for validation and
+certification rules. Exported saved records and the envelope redact their string representations;
+no cached content or owner values enter diagnostics. This remains the existing plaintext,
+app-private, backup-excluded storage model.
+
+`removeConversation` removes both thread documents for that host/conversation;
+`removeHost` removes both directories with the host namespace. Same-id conversations under
+another host are unaffected. Ordering of removal against pending, in-flight and final writes
+belongs to the [wrapper's fences](caching-conversation-repository.md#state-and-concurrency),
+not to path hashing or the file mutex alone.
 
 The stored document is a versioned envelope (`version: Int`, `conversations: List<...>`),
 mirroring `StoredPairings`. The cache-local record type — not `@Serializable` annotations on
