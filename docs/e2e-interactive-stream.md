@@ -7977,7 +7977,7 @@ Closing #1977 does not claim that intermittent failure was repaired.
 
 #### Diagnostic checkpoint evidence (2026-10-12 to 2026-10-14)
 
-The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1980#issuecomment-6132589762)
+The [2026-10-12 verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1980#issuecomment-6132589762)
 reviews `d4015481c26ff8ea9b3613aba927facd5033186c`. These are full dispatcher results,
 separate from focused builder results and earlier failed suites:
 
@@ -8006,6 +8006,33 @@ end at `list_return`. Scripted daemon revision was `07d81f77e7f93c22d6c69f77432e
 Successful cleanup removed controller stdout; source and controlled tests establish
 that publication boundary, rather than retained full-gate stdout.
 
+The [2026-10-14 verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1980#issuecomment-6164733697)
+reviews documentation head `e3158e723c984bbc0209aff4738e62862c2070b5`. Its fresh
+deterministic gates are separate from the earlier results above and the accepted live run:
+
+| Gate | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Unit/shared | 5564 | 5564 | 0 | 0 | 0 |
+| UI | 261 | 261 | 0 | 0 | 1 |
+| Scripted-all | 22 | 22 | 0 | 0 | 0 |
+
+`./gradlew check` and the configured `ui` and `scripted-all` commands each exited 0.
+Both fresh scripted XML reports explicitly pass
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog`;
+its device report records **1 executed/passed, 0 failed/errors/skipped**. UI again passes
+`ScannerFrameTest.compactEnlargedTextFrames`; all nine diagnostic unit regressions pass.
+The verifier confirms stable daemon/Runner/session identities, completed held/fresh inputs
+**1/0 retained, 0/1 dropped**, and 38 safe phone phases resetting readiness per arm and
+ending at `list_return`.
+
+Persistent private evidence is under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/1977/verifier-e3158e723-20261014/`:
+`ui-fh3zarj7/` and `scripted-all-w56eiwbt/` retain XML/logcat, and `pyry-e2e.Sn7s1f/`
+retains both scripted arms. Diagnostic unit XML, gate command/exit metadata and the
+surviving full-live counted report/stderr are retained alongside them. The verifier
+checked 322 file hashes and owner-only permissions; this copy preserves surviving
+evidence without restoring the lost raw live captures.
+
 The [fresh full live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1977#issuecomment-6164246033)
 tested `feature/1977` at `d4015481c26f` merged with `origin/main` at `f737d786fcc1`,
 exit 0 in 18m 29s, with no flaky results. Retained normalized JUnit XML in dispatcher
@@ -8019,10 +8046,13 @@ daemon `eb3c757cac48a65f536bdc0dfdc92f0adbd82c3f` and Claude Code 2.1.280.
 That diagnostic log names raw live XML/logcat at `build/dispatcher-tests/live-ddqxz3ff/`
 and per-arm captures at `build/session-error-evidence/pyry-e2e.xZv9aP/` in
 `/work/Projects/.pyrycode-worktrees/pyrycode-mobile/real-claude-gate-1977/`.
-The worktree is absent at documentation time, and these captures were not found in the
-persistent ticket evidence. The normalized XML proves the named pass, but required
-full-live raw XML/logcat/per-arm retention remains an evidence handoff to verification;
-scripted and focused artifacts cannot substitute for it.
+The raw live XML, per-test phone logcat and per-arm captures were lost with the detached
+gate worktree. The [operator decision on 2026-10-14](https://github.com/pyrycode/pyrycode-mobile/issues/1977#issuecomment-6164585817)
+accepts the surviving counted reports as sufficient evidence for #1977 and assigns
+retention repair separately. This resolves the documentation retention handoff; the
+loss remains an evidence limitation. Scripted and focused captures cannot be attributed
+to this live run. It is the accepted run on the merged `d4015481c26f` candidate, not a new
+live execution at `e3158e723`; the diagnostic/scenario/controller sources are unchanged.
 
 Focused builder evidence remains separate under dispatcher
 `logs/evidence/1977/rework-20261012/`: scripted recovery **1/1**, background-agent live
