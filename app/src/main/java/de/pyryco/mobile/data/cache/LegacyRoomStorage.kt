@@ -72,6 +72,37 @@ class LegacyPageEvidence internal constructor(
     val savedUnknownEdge = encoded["savedUnknownEdge"]?.jsonPrimitive?.content?.toULong()
     val unsignedIncomplete get() = projected.unsignedIncomplete || savedHighWater > Long.MAX_VALUE.toULong()
 
+    /** Validate held claims without requiring or certifying gaps omitted by this projection. */
+    internal fun validated(rows: List<ThreadItem>): LegacyPageEvidence {
+        val spans = unsignedSpans
+        spans.forEachIndexed { index, span ->
+            require(span.first > 0u && span.first <= span.last)
+            if (index > 0) require(span.first > spans[index - 1].last && span.first - 1u != spans[index - 1].last)
+        }
+        require(unsignedGaps.map { it.edge }.distinct().size == unsignedGaps.size)
+        unsignedGaps.forEach { gap ->
+            val newer = spans.binarySearch { it.first.compareTo(gap.edge) }
+            require(newer > 0 && gap.anchor in spans[newer - 1].first..spans[newer - 1].last)
+        }
+
+        fun covered(id: ULong): Boolean {
+            val found = spans.binarySearch { it.first.compareTo(id) }
+            val index = if (found >= 0) found else -found - 2
+            return index >= 0 && id <= spans[index].last
+        }
+        require(unsignedRowOrder.keys == unsignedRowEntries.keys && proofs.keys == unsignedRowOrder.keys)
+        require(unsignedRowOrder.all { (key, id) -> covered(id) && id in unsignedRowEntries.getValue(key) })
+        require(unsignedRowEntries.values.all { ids -> ids.isNotEmpty() && ids.all(::covered) })
+        require(unsignedCursors.keys.all { it > 0u } && legacyOffsets.values.all { it >= 0 } && deltaLengths.values.all { it >= 0 })
+        val direct = rows.flatMap { it.historyKeys() }.toSet()
+        require(legacyKeys.keys.all { it in direct || it in proofs })
+        // Reuse exact row/delta hashes and legacy fragment checks; never expose a repaired claim.
+        require(projected.retainedBy(rows) === projected)
+        require(savedHighWater >= (spans.lastOrNull()?.last ?: 0uL))
+        savedUnknownEdge?.let { require(unsignedUnknown && it > 0u && it <= savedHighWater) }
+        return this
+    }
+
     override fun toString(): String = "LegacyPageEvidence(redacted)"
 
     override fun equals(other: Any?): Boolean = other is LegacyPageEvidence && encoded == other.encoded
@@ -224,8 +255,6 @@ class LegacyRoomStorage internal constructor(
                                 val edges =
                                     readEvidence(dao.olderSpan(host, conversation, low)) +
                                         readEvidence(dao.newerSpan(host, conversation, high))
-                                val edgeLow = (intervals + edges).minOfOrNull { it.low } ?: low
-                                val edgeHigh = (intervals + edges).maxOfOrNull { it.high } ?: high
                                 val unknownEdge =
                                     scalars["savedUnknownEdge"]
                                         ?.jsonPrimitive
@@ -233,8 +262,9 @@ class LegacyRoomStorage internal constructor(
                                         ?.toULong()
                                         ?.position()
                                 val cursors =
-                                    readEvidence(dao.cursors(host, conversation, edgeLow, edgeHigh)) +
+                                    readEvidence(dao.cursors(host, conversation, low, high)) +
                                         readEvidence(dao.gapCursors(host, conversation, low, high)) +
+                                        readEvidence(dao.gapWalks(host, conversation, low, high)) +
                                         readEvidence(dao.edgeCursor(host, conversation, low)) +
                                         if (unknownEdge ==
                                             null
@@ -245,7 +275,10 @@ class LegacyRoomStorage internal constructor(
                                         }
                                 intervals + edges + cursors
                             }
-                        LegacyPageEvidence(assemble(scalars, selected + adjacent))
+                        val projection = LegacyPageEvidence(assemble(scalars, selected + adjacent)).validated(rows)
+                        val ordinals = records.zip(rows).flatMap { (record, row) -> row.historyKeys().map { it to record.ordinal } }.toMap()
+                        require(selected.all { it.ordinal == (ordinals[it.key] ?: ordinals[projection.legacyKeys[it.key]]) })
+                        projection
                     }
                 }
             val validHistory = header?.coverageHeader == null || evidence != null
@@ -409,7 +442,18 @@ class LegacyRoomStorage internal constructor(
 
     private fun decodeEvidence(cell: Evidence): JsonElement {
         lastReadCounts = lastReadCounts.copy(evidenceDecodes = lastReadCounts.evidenceDecodes + 1)
-        return MobileJson.parseToJsonElement(cell.payload)
+        val payload = MobileJson.parseToJsonElement(cell.payload)
+        when (cell.kind) {
+            "spans", "gaps" -> {
+                val fields = payload.jsonObject
+                val low = fields[if (cell.kind == "spans") "first" else "anchor"].unsigned().position()
+                val high = fields[if (cell.kind == "spans") "last" else "edge"].unsigned().position()
+                require(cell.low == low && cell.high == high && cell.key == low)
+            }
+            "rowOrder", "rowEntries" -> require(cell.low == payload.unsigned().position() && cell.high == cell.low)
+            "cursors", "walks" -> require(cell.low == cell.key.toULong().position() && cell.high == cell.low)
+        }
+        return payload
     }
 
     private fun decodeRows(rows: List<Row>): List<ThreadItem> {

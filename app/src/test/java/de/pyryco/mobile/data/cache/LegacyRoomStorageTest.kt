@@ -301,6 +301,142 @@ class LegacyRoomStorageTest {
             assertEquals("malformed", database?.legacy()?.header("Host", "thread")?.coverageHeader)
         }
 
+    @Test fun boundedEvidenceInvariant_olderCursorsAndWalksDoNotGrowContinuousSpanPages() =
+        runTest {
+            val rows = (99800..100000).map { row(it) }
+            val order = rows.zip(99800..100000).associate { (row, id) -> row.historyKeys().first() to id.toULong() }
+            val base =
+                HistoryCoverage(
+                    unsignedSpans = listOf(UnsignedHistorySpan(1u, 100000u)),
+                    unsignedRowOrder = order,
+                    unsignedRowEntries = order.mapValues { (_, id) -> setOf(id) },
+                    proofs = historyRowProofs(rows),
+                    unsignedUnknown = true,
+                    unsignedCursors = listOf(1uL, 99801uL, 99900uL, 100000uL).associateWith { "cursor-$it" },
+                    unsignedWalks = listOf(0uL, 99801uL).associateWith { "walk-$it" },
+                ).validated(rows)
+            seed(open(), rows, HistoryPosition("saved", false, base))
+            var store = open()
+            val small = requireNotNull(store.newestPage("Host", "thread", 200))
+            val counts = store.lastReadCounts
+            val older = (2..18001).map { it.toULong() }
+            store
+                .writeHistoryPosition(
+                    "Host",
+                    "thread",
+                    HistoryPosition(
+                        "saved",
+                        false,
+                        base.copy(
+                            unsignedCursors = base.unsignedCursors + older.associateWith { "old-cursor-$it" },
+                            unsignedWalks = base.unsignedWalks + older.associateWith { "old-walk-$it" },
+                        ),
+                    ),
+                ).getOrThrow()
+            store = open()
+            val large = requireNotNull(store.newestPage("Host", "thread", 200))
+            assertEquals(rows.takeLast(200), large.rows)
+            assertEquals(small.evidence, large.evidence)
+            assertEquals(counts, store.lastReadCounts)
+            assertEquals(200, counts.rowReads)
+            assertEquals(200, counts.rowDecodes)
+            assertEquals(1, counts.ordinalReads)
+            assertTrue(counts.evidenceReads < 620)
+            assertTrue(counts.evidenceDecodes < 620)
+            assertEquals(base.unsignedCursors, large.evidence?.unsignedCursors)
+            assertEquals(base.unsignedWalks, large.evidence?.unsignedWalks)
+            println("legacy_room_continuous_probe small=$counts large=${store.lastReadCounts} older_anchors=${older.size * 2}")
+        }
+
+    private suspend fun assertInvalidProjection(
+        rows: List<ThreadItem>,
+        coverage: HistoryCoverage,
+        kind: String,
+        payload: String,
+        reindex: Boolean = false,
+    ) {
+        seed(open(), rows, HistoryPosition("saved", true, coverage))
+        val dao = requireNotNull(database).legacy()
+        val original = dao.allEvidence("Host", "thread")
+        val cell = original.first { it.kind == kind }
+        val replacement =
+            cell.copy(payload = payload).let {
+                if (reindex) it.copy(low = payload.padStart(20, '0'), high = payload.padStart(20, '0')) else it
+            }
+        val corrupt = original.map { if (it == cell) replacement else it }
+        dao.deleteEvidence("Host", "thread")
+        dao.insertEvidence(corrupt)
+        val store = open()
+        val page = requireNotNull(store.newestPage("Host", "thread", 200))
+        assertEquals(kind, rows, page.rows)
+        assertNull(kind, page.evidence)
+        assertNull(kind, page.savedCursor)
+        assertFalse(kind, page.savedAtStart)
+        assertEquals(rows.size, store.lastReadCounts.rowDecodes)
+        assertEquals(rows, store.readThread("Host", "thread"))
+        assertEquals(corrupt, requireNotNull(database).legacy().allEvidence("Host", "thread"))
+    }
+
+    @Test fun boundedEvidenceInvariant_overlappingGapKeepsItsOutsideWindowWalkAndNearestCursor() =
+        runTest {
+            val rows = listOf(row(1), row(2))
+            val claims =
+                coverage(rows, listOf(100u, 1000u))
+                    .copy(
+                        unsignedSpans = listOf(UnsignedHistorySpan(1u, 100u), UnsignedHistorySpan(1000u, 2000u)),
+                        unsignedGaps = listOf(UnsignedHistoryGap(50u, 1000u)),
+                        unsignedCursors = mapOf(1100uL to "gap-cursor", 2200uL to "later"),
+                        unsignedWalks = mapOf(50uL to "gap-walk", 10uL to "unrelated"),
+                    ).validated(rows)
+            seed(open(), rows, HistoryPosition("saved", false, claims))
+            val evidence = requireNotNull(open().newestPage("Host", "thread", 1)?.evidence)
+            assertEquals(claims.unsignedGaps, evidence.unsignedGaps)
+            assertEquals(mapOf(1100uL to "gap-cursor"), evidence.unsignedCursors)
+            assertEquals(mapOf(50uL to "gap-walk"), evidence.unsignedWalks)
+        }
+
+    @Test fun committedEvidenceInvariant_parseableInvalidSpansAndClaimsAreIsolated() =
+        runTest {
+            val rows = listOf(row(1), row(2))
+            val claims = coverage(rows, listOf(1u, 3u))
+            for ((kind, payload) in listOf(
+                "spans" to "{\"first\":0,\"last\":1}",
+                "spans" to "{\"first\":1,\"last\":2}",
+                "gaps" to "{\"anchor\":0,\"edge\":3}",
+                "rowOrder" to "2",
+                "rowEntries" to "2",
+                "proofs" to "\"wrong-proof\"",
+            )) {
+                assertInvalidProjection(rows, claims, kind, payload)
+            }
+            for (kind in listOf("rowOrder", "rowEntries")) assertInvalidProjection(rows, claims, kind, "3", reindex = true)
+        }
+
+    @Test fun committedEvidenceInvariant_parseableInvalidFragmentBindingsAreIsolated() =
+        runTest {
+            val row = row(1).copy(message = row(1).message.copy(role = Role.Assistant, content = "ab"))
+            val key = historyIdentity(listOf("delta", "id-1", 0))
+            val claims =
+                HistoryCoverage(
+                    unsignedSpans = listOf(UnsignedHistorySpan(1u, 1u)),
+                    unsignedRowOrder = mapOf(key to 1uL),
+                    unsignedRowEntries = mapOf(key to setOf(1uL)),
+                    proofs = mapOf(key to cachedThreadRowProof(row)),
+                    legacyKeys = mapOf(key to row.historyKeys().first()),
+                    legacyOffsets = mapOf(key to 0),
+                    deltaLengths = mapOf(key to 2),
+                    deltaHashes = mapOf(key to MessageDigest.getInstance("SHA-256").digest("ab".toByteArray()).toHexString()),
+                ).validated(listOf(row))
+            for ((kind, payload) in listOf(
+                "legacyKeys" to "\"missing-alias\"",
+                "legacyOffsets" to "1",
+                "deltaLengths" to "3",
+                "deltaHashes" to "\"wrong-hash\"",
+            )) {
+                assertInvalidProjection(listOf(row), claims, kind, payload)
+            }
+        }
+
     @Test fun atomicityInvariant_failureAndCancellationKeepCommittedSnapshot() =
         runTest {
             val store = open()
@@ -362,6 +498,7 @@ class LegacyRoomStorageTest {
             var page = requireNotNull(store.newestPage("Host", "thread", 200))
             val largeCounts = store.lastReadCounts
             assertEquals(smallRows, page.rows)
+            assertEquals(page.rows.flatMap { it.historyKeys() }.toSet(), requireNotNull(page.evidence).unsignedRowOrder.keys)
             assertEquals(small.evidence, page.evidence)
             assertEquals(200, largeCounts.rowDecodes)
             assertEquals(200, largeCounts.rowReads)
@@ -373,6 +510,7 @@ class LegacyRoomStorageTest {
             var pages = 1
             while (page.continuation != null) {
                 page = requireNotNull(store.beforePage("Host", "thread", requireNotNull(page.continuation), 200))
+                assertEquals(page.rows.flatMap { it.historyKeys() }.toSet(), requireNotNull(page.evidence).unsignedRowOrder.keys)
                 assertTrue(store.lastReadCounts.rowDecodes <= 200)
                 assertTrue(store.lastReadCounts.evidenceReads < 2500)
                 visited = page.rows + visited

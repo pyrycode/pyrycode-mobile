@@ -70,6 +70,8 @@ materialize the full bounded snapshot; page reads must never do so.
 | Invalid optional evidence | `committedEvidenceInvariant_invalidHistoryLeavesRowsReadable` |
 | Failed mutation or cancelled transaction | `atomicityInvariant_failureAndCancellationKeepCommittedSnapshot` |
 | Sparse spans and unknown cursor walk, fragmented 18000-row fixture | `boundedEvidenceInvariant_fragmentedFixtureDoesNotDecodeOutsideWindow` |
+| Older cursor/walk growth inside one continuous span | `boundedEvidenceInvariant_olderCursorsAndWalksDoNotGrowContinuousSpanPages` |
+| Parseable corrupt selected evidence and fragment bindings | `committedEvidenceInvariant_parseableInvalidSpansAndClaimsAreIsolated`, `committedEvidenceInvariant_parseableInvalidFragmentBindingsAreIsolated` |
 | Unsigned extremes and aliased fragments | `unsignedAndFragmentInvariant_exactEvidenceSurvivesRestart` |
 
 ## Error handling
@@ -101,7 +103,10 @@ five acceptance criteria, fewer than ten classified reject branches.
 **Verdict:** PASS
 
 - Trust boundaries: MUST FIX addressed by canonical row validation and content-bound history
-  validation before transaction commit; malformed optional metadata is independently isolated.
+  validation before transaction commit. Page projections additionally validate decoded interval
+  indexes, selected claims/proofs and retained fragment bindings against selected rows before
+  exposing evidence. Invalid optional evidence clears evidence, saved cursor and completeness;
+  omitted history is never loaded or certified and reads never repair storage.
 - Tokens/secrets: no credentials are stored or generated. Local tokens are not bearer credentials.
 - Files/storage: fixed app-private no-backup location, including sidecars; owner strings are bound
   SQL values, never paths. Plain SQLite retains the approved existing plaintext-cache threat model;
@@ -109,6 +114,8 @@ five acceptance criteria, fewer than ten classified reject branches.
 - Android attack surface: factory adds no exported component, provider, intent or WebView.
 - Cryptography: reuse MobileJson proof inputs and existing SHA-256; no Noise/key changes.
 - Network/IO: no network work; row cap and bounded query/decode contract limit page materialization.
+  Cursor/walk selection uses the selected claim window and nearest gap/unknown/edge candidates,
+  never the full endpoints of a continuous received span.
 - Errors/logs: SHOULD FIX implemented with redacted result strings, static diagnostics and
   causeless classified mutation exceptions; test hostile content/owner/cursor values.
 - Concurrency: one database transaction per snapshot/mutation; cancellation propagates; fresh
@@ -120,6 +127,15 @@ five acceptance criteria, fewer than ten classified reject branches.
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-14
 
+## Documentation handoff
+
+Pending for the documentation stage: a Room decision record under `docs/knowledge/decisions/`;
+`conversation-cache-layout.md` (Layout) and `conversation-cache-contract.md` (The contract)
+covering indexed legacy evidence, no-backup sidecars, atomic operations, graceful failures and
+distinct bounded projections/continuations; `conversation-cache-testing.md` (Testing) covering
+the corrected disk read/decode probes and retained file-codec regressions. Keep #2161 import/binding,
+#2163 authoritative storage and #2068 reader activation/partial writes explicit in these sections.
+
 ## Revisions
 
 - 2026-10-14: expose page evidence through redacted `LegacyPageEvidence` with typed unsigned
@@ -130,3 +146,13 @@ five acceptance criteria, fewer than ten classified reject branches.
   cursor queries select nearest candidates for intersecting gaps even outside that range. Invalid
   optional evidence also clears the page's saved cursor/completeness fields. Focused probes cover
   these refinements and both legacy and coverage-bearing 100000-row trims.
+- 2026-10-14 (verifier findings 1–2): restrict cursor/walk queries to the selected claim window,
+  retaining only necessary nearest page-edge/gap/unknown candidates outside it. Validate selected
+  evidence payloads against their SQL indexes and check projected span/gap structure, covered
+  producing claims, exact selected-row proofs and fragment bindings without demanding omitted
+  gaps or inferring completeness. Parseable invalid metadata discards the entire optional page
+  history while preserving rows and storage. The new disk probes grow older anchors inside a
+  continuous span and corrupt parseable span/claim/fragment cells; both retain read/decode bounds.
+  Use separate indexed cursor/walk anchor lookups: a broad evidence join exceeded the unchanged
+  fragmented traversal timeout. Claims with matching SQL indexes also undergo semantic checks.
+  Query the unknown walk separately from the page range so both branches can seek the low index.
