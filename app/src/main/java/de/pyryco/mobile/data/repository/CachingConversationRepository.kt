@@ -225,6 +225,7 @@ class CachingConversationRepository(
             var restoredOrder = false
             var lastOrder = emptyMap<Any, ULong>()
             var lastDrawn = base
+            var firstSnapshot = true
             coroutineScope {
                 val writer = ThreadWriter(conversationId, this, base, collectionCoverageRevision)
                 try {
@@ -241,6 +242,15 @@ class CachingConversationRepository(
                         val drawn =
                             withContext(processingDispatcher) {
                                 val live = snapshot.rows
+                                if (firstSnapshot) {
+                                    firstSnapshot = false
+                                    if (live.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
+                                        // Cache reads already guarantee settled rows and unique renderer keys.
+                                        lastOrder = snapshot.unsignedHistoryOrder
+                                        RelayLog.d { "event=thread_cache_initial_rows_published rows=${base.size}" }
+                                        return@withContext base
+                                    }
+                                }
                                 // Awaiting delivery can hide the only live row; that is not a connection boundary.
                                 if (live.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
                                     base = settledThreadRows(lastDrawn)

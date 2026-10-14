@@ -1,0 +1,20 @@
+{
+  "revision": "d7f0ee0a3",
+  "test_diff_sha256": "6bf69af9d34625eeb640c3c4428822929fc9957d9e9737e7564537238e189b80",
+  "counts": {
+    "tests": 2,
+    "failures": 2,
+    "errors": 0,
+    "skipped": 0
+  },
+  "methods": [
+    {
+      "name": "processingInvariant_100000RowsRunOnHeldWorker_mainAndDeliveryProgress",
+      "failed": true
+    },
+    {
+      "name": "initialRowsOnlySnapshotReusesValidatedRowsAndKeepsReceiptMetadataOnRecollection",
+      "failed": true
+    }
+  ]
+}
