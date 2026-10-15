@@ -136,7 +136,9 @@ class AuthoritativeRoomStorage internal constructor(
             val header = header(host, conversation) ?: return@read null
             if (token != null &&
                 (
-                    token.host != host || token.conversation != conversation || token.epoch != header.epoch ||
+                    token.host != host ||
+                        token.conversation != conversation ||
+                        token.epoch != header.epoch ||
                         token.generation != header.generation
                 )
             ) {
