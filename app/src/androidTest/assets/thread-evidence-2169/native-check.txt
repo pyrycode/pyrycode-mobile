@@ -1,0 +1,17 @@
+Ticket: pyrycode/pyrycode-mobile#2169
+Task: ffa7e4529efbdc290d7728ab17d66643a868f51431b55679926dd690aa21cc45
+Recipe: android-tool-then-text
+Capability: android-emulator
+Candidate: 33c652a9413fe13c63ea0b36314f243645ba4e96
+Native run: ae41026cf49c3dae79d157920a9043fa4720c6ee0f235a68618da00579be64eb
+Computer: build-fractal-2
+State: failed
+Result: Native execution failed: RuntimeError. Private logs retained.
+Returned artifact files: 0
+Returned artifact bytes: 0
+Executed/passed/failed/skipped test counts: not reported
+Assessment: native validation is unverified; this result is not a passing check.
+Retrieved on 2026-10-15 with fleet-task.py read; earlier ticket evidence bundles
+were also retrieved and contained no results or artifacts for this native run.
+The local container has no /dev/kvm. No replacement task was requested for the
+unchanged test implementation. Dispatcher UI/scripted acceptance remains pending.
