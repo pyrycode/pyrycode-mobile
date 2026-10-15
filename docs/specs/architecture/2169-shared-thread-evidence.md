@@ -12,7 +12,7 @@
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadRow.kt`: `foldToolRuns` supplies run identity.
 - `docs/knowledge/features/thread-screen.md`, `remote-conversation-repository-assistant-reply-segments.md`: receipt is not delivery; rendered aliases are not wire identities.
 - `docs/specs/architecture/1029-reconnect-slash-commands-follow-live-connection.md`: replacing a connection must cancel its observation.
-- `/work/Projects/pyrycode/docs/protocol-mobile.md`: Daemon thread updates, Thread query messages, Session-scoped live state and Queue (v2) remain the wire contract.
+- `docs/protocol-mobile.md` in the sibling pyrycode repository: Daemon thread updates, Thread query messages, Session-scoped live state and Queue (v2) remain the wire contract.
 
 ## Context
 
@@ -56,3 +56,8 @@ Write JVM `ThreadEvidenceTest` first, observe compilation failure for missing ad
 ## Open Questions
 
 None.
+
+## Revisions
+
+- 2026-10-15: `authoritativeSettlementUsesTheAssistantItemsOwnCompletion` exposed that an orphan child can retain a projected row without an agent block. A positive parent now requires a resolved block before settlement; it cannot qualify as main-thread evidence.
+- 2026-10-15: `fullReplyTextSurvivesDisplayBounding` exposed a complete item whose bounded presentation is blank. Loaded selection now requires nonblank rendered text as well as full text, while strict item settlement retains the complete daemon text.

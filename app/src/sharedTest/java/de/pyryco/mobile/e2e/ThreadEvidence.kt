@@ -1,0 +1,196 @@
+package de.pyryco.mobile.e2e
+
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
+import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.thread.ThreadRow
+import de.pyryco.mobile.ui.conversations.thread.foldToolRuns
+import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+
+internal enum class ThreadEvidenceKind { Legacy, Authoritative }
+
+/** A repository-only legacy caller cannot report its host; never invent that attribution. */
+internal data class ThreadEvidenceOwner(
+    val host: String?,
+    val conversation: String,
+    val connection: Any,
+    val kind: ThreadEvidenceKind,
+    val epoch: String? = null,
+    val generation: Long? = null,
+) {
+    fun matches(current: ThreadEvidenceOwner): Boolean =
+        connection === current.connection &&
+            host == current.host &&
+            conversation == current.conversation &&
+            kind == current.kind &&
+            epoch == current.epoch &&
+            generation == current.generation
+
+    override fun toString(): String = "ThreadEvidenceOwner(redacted)"
+}
+
+/** Full facts travel with rendered identities; authoritative tool_use_id/task_id are not row selectors. */
+internal class ThreadEvidenceRecord(
+    val message: Message,
+    val fullText: String,
+    val session: String?,
+    val turn: String?,
+    val agentId: String?,
+    val toolRunId: String?,
+    val fact: ThreadItemDto? = null,
+) {
+    override fun toString(): String = "ThreadEvidenceRecord(redacted)"
+}
+
+internal class ThreadEvidence(
+    val owner: ThreadEvidenceOwner,
+    val records: List<ThreadEvidenceRecord>,
+    private val admitted: Boolean = true,
+) {
+    /** Ordinary loaded history remains usable for selection; it does not acquire delta evidence. */
+    fun loadedMainReply(): Message? =
+        if (!admitted) {
+            null
+        } else {
+            records
+                .lastOrNull {
+                    it.message.role == Role.Assistant &&
+                        it.agentId == null &&
+                        (it.fact?.parent ?: 0) == 0L &&
+                        !it.message.isStreaming &&
+                        it.message.content.isNotBlank() &&
+                        it.fullText.isNotBlank() &&
+                        (it.fact == null || it.fact.status in setOf("done", "finished") && !it.fact.active)
+                }?.message
+        }
+
+    /** Call with current ownership when retaining evidence across a source or document replacement. */
+    fun settledReply(
+        current: ThreadEvidenceOwner,
+        session: String,
+        turn: String,
+        agentId: String = "",
+    ): List<ThreadEvidenceRecord>? {
+        if (!admitted || !owner.matches(current)) return null
+        val family =
+            records.filter {
+                it.message.role == Role.Assistant &&
+                    it.session == session &&
+                    it.turn == turn &&
+                    it.agentId.orEmpty() == agentId
+            }
+        if (family.isEmpty()) return null
+        val settled =
+            when (owner.kind) {
+                ThreadEvidenceKind.Legacy -> holdsSettledAssistantReply(family.map { ThreadItem.MessageItem(it.message) }, turn, agentId)
+                ThreadEvidenceKind.Authoritative ->
+                    family.all {
+                        val item = it.fact
+                        item != null &&
+                            ((item.parent ?: 0) == 0L || it.agentId != null) &&
+                            !item.active &&
+                            item.status in setOf("done", "finished") &&
+                            it.fullText.isNotBlank()
+                    }
+            }
+        return family.takeIf { settled }
+    }
+
+    fun userEchoCount(text: String): Int =
+        if (!admitted) {
+            0
+        } else {
+            records.count {
+                it.message.role == Role.User &&
+                    it.fullText == text &&
+                    (it.fact == null || it.fact.status == "delivered")
+            }
+        }
+
+    override fun toString(): String = "ThreadEvidence(redacted)"
+}
+
+/** Observation only. Construction never opens a query or enables an application route. */
+internal class ThreadEvidenceSource private constructor(
+    val observe: (String) -> Flow<ThreadEvidence>,
+) {
+    companion object {
+        fun legacy(
+            host: String?,
+            connection: Any,
+            observe: (String) -> Flow<List<ThreadItem>>,
+        ) = ThreadEvidenceSource { conversation -> observe(conversation).map { legacyThreadEvidence(host, conversation, connection, it) } }
+
+        fun authoritative(
+            host: String,
+            connection: Any,
+            observe: (String) -> Flow<AuthoritativeThreadSnapshot>,
+        ) = ThreadEvidenceSource { conversation ->
+            observe(conversation).map { authoritativeThreadEvidence(host, conversation, connection, it) }
+        }
+    }
+}
+
+/** Single future negotiation seam. Legacy stays explicit until production activation. */
+internal fun harnessThreadEvidence(repository: ConversationRepository): ThreadEvidenceSource =
+    ThreadEvidenceSource.legacy(null, repository, repository::observeMessages)
+
+internal fun legacyThreadEvidence(
+    host: String?,
+    conversation: String,
+    connection: Any,
+    items: List<ThreadItem>,
+): ThreadEvidence {
+    val runs = toolRunIds(foldToolRuns(items.map { ThreadRow.Delivered(it) }, emptySet()))
+    return ThreadEvidence(
+        ThreadEvidenceOwner(host, conversation, connection, ThreadEvidenceKind.Legacy),
+        items.filterIsInstance<ThreadItem.MessageItem>().map { row ->
+            val message = row.message
+            ThreadEvidenceRecord(
+                message,
+                message.content,
+                message.sessionId,
+                message.segment?.turnId,
+                (message.toolCall?.parentToolUseId ?: message.parentToolUseId).takeIf { it.isNotEmpty() },
+                runs[message.id],
+            )
+        },
+    )
+}
+
+internal fun authoritativeThreadEvidence(
+    host: String,
+    conversation: String,
+    connection: Any,
+    snapshot: AuthoritativeThreadSnapshot,
+): ThreadEvidence {
+    val projection = projectAuthoritativeThread(host, conversation, snapshot)
+    val facts =
+        snapshot.items
+            .groupBy { it.id }
+            .mapValues { (_, versions) -> versions.maxBy { it.rev } }
+            .mapKeys { (id, _) -> "${projection.scope}:$id" }
+    val runs = toolRunIds(foldToolRuns(projection.rows, emptySet()))
+    val records =
+        projection.rows.filterIsInstance<ThreadRow.Delivered>().mapNotNull { row ->
+            val message = (row.item as? ThreadItem.MessageItem)?.message ?: return@mapNotNull null
+            val fact = facts[message.id] ?: return@mapNotNull null
+            val text = ((fact.content as? JsonObject)?.get("text") as? JsonPrimitive)?.takeIf { it.isString }?.content ?: message.content
+            ThreadEvidenceRecord(message, text, fact.session, fact.turn, row.agentBlockId, runs[message.id], fact)
+        }
+    return ThreadEvidence(
+        ThreadEvidenceOwner(host, conversation, connection, ThreadEvidenceKind.Authoritative, snapshot.epoch, snapshot.generation),
+        records,
+        admitted = snapshot.epoch != null && !snapshot.repairNeeded && !snapshot.resetNeeded,
+    )
+}
+
+private fun toolRunIds(rows: List<ThreadRow>): Map<String, String> =
+    rows.filterIsInstance<ThreadRow.ToolRun>().flatMap { run -> run.tools.map { it.id to run.runId } }.toMap()
