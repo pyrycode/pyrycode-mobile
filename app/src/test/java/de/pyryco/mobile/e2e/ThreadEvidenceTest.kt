@@ -4,10 +4,13 @@ import de.pyryco.mobile.data.model.AssistantSegment
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.SegmentDelta
+import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.thread.ThreadRow
+import de.pyryco.mobile.ui.conversations.thread.foldBackgroundAgentBlocks
+import de.pyryco.mobile.ui.conversations.thread.foldQueuedRows
 import de.pyryco.mobile.ui.conversations.thread.foldToolRuns
 import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -170,6 +173,111 @@ class ThreadEvidenceTest {
         )) {
             val held = evidence(unadmitted)
             assertNull(held.settledReply(held.owner, "session", "turn"))
+        }
+    }
+
+    @Test fun unsupportedAuthoritativeKindsCannotSettleReplies() {
+        for (kind in listOf("future_kind", "turn_end")) {
+            val held = evidence(snapshot(item(kind = kind)))
+            assertNull(kind, held.settledReply(held.owner, "session", "turn"))
+        }
+    }
+
+    @Test fun turnEndAndUnknownItemsDoNotJoinAnAuthoritativeAssistantFamily() {
+        for (parent in listOf(null, 1L)) {
+            val snap =
+                snapshot(
+                    item(1, "agent", active = true, status = "running"),
+                    item(parent = parent),
+                    item(3, "turn_end", text = "", parent = parent),
+                    item(4, "future_kind", parent = parent, active = true, status = "running"),
+                )
+            val held = evidence(snap)
+            val agent =
+                if (parent == null) {
+                    ""
+                } else {
+                    held.records
+                        .single { it.fact?.id == 1L }
+                        .message.id
+                }
+            val settled = requireNotNull(held.settledReply(held.owner, "session", "turn", agent))
+            assertEquals(listOf(2L), settled.map { it.fact?.id })
+            assertEquals("Complete reply", settled.single().fullText)
+        }
+    }
+
+    private fun legacyBackgroundItems(aliased: Boolean): List<ThreadItem> {
+        fun tool(
+            rawId: String,
+            parent: String = "",
+            agent: Boolean = false,
+        ): ThreadItem.MessageItem =
+            ThreadItem.MessageItem(
+                legacyMessage().copy(
+                    id = if (aliased) "$rawId#0" else rawId,
+                    reconciliationId = rawId.takeIf { aliased },
+                    role = Role.Tool,
+                    segment = null,
+                    toolCall =
+                        ToolCall(
+                            if (agent) "Agent" else "Bash",
+                            "",
+                            "",
+                            inputFields = if (agent) mapOf("run_in_background" to "true") else emptyMap(),
+                            parentToolUseId = parent,
+                        ),
+                ),
+            )
+        return listOf(
+            tool("A", agent = true),
+            ThreadItem.BackgroundTaskLifecycle("task", Instant.fromEpochMilliseconds(0), "A", "Agent", "local_agent"),
+            tool("B", parent = "A"),
+            ThreadItem.MessageItem(legacyMessage().copy(parentToolUseId = "B")),
+            tool("C", parent = "A"),
+        )
+    }
+
+    @Test fun legacyBackgroundIdentitiesFollowPresentationAcrossProseAndAliases() {
+        for (aliased in listOf(false, true)) {
+            val items = legacyBackgroundItems(aliased)
+            val rows = foldBackgroundAgentBlocks(foldQueuedRows(items, emptyList()), items, null)
+            val projected = rows.filterIsInstance<ThreadRow.Delivered>()
+            val run = foldToolRuns(rows, emptySet()).filterIsInstance<ThreadRow.ToolRun>().single()
+            val held = legacyThreadEvidence("host", "chat", connection, items)
+            val originals = items.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
+            assertEquals(listOf(if (aliased) "B#0" else "B", if (aliased) "C#0" else "C"), run.tools.map { it.id })
+            for (record in held.records) {
+                val row = projected.single { (it.item as ThreadItem.MessageItem).message.id == record.message.id }
+                assertEquals(row.agentBlockId, record.agentId)
+                assertSame(originals.single { it.id == record.message.id }, record.message)
+            }
+            for (tool in run.tools) {
+                assertEquals(run.runId, held.records.single { it.message.id == tool.id }.toolRunId)
+            }
+        }
+    }
+
+    @Test fun legacySettlementKeepsRawParentAttributionForRenderedAliases() {
+        val items = legacyBackgroundItems(aliased = true)
+        val held = legacyThreadEvidence("host", "chat", connection, items)
+        val reply = requireNotNull(held.settledReply(held.owner, "session", "turn", "B")).single()
+        assertEquals("A#0", reply.agentId)
+        assertEquals("B", reply.message.parentToolUseId)
+        assertEquals("turn", reply.message.segment?.turnId)
+        assertNull(held.settledReply(held.owner, "session", "turn", "A#0"))
+        assertNull(held.settledReply(held.owner, "session", "turn"))
+        assertNull(held.loadedMainReply())
+        val childOnly = legacyThreadEvidence("host", "chat", connection, listOf(ThreadItem.MessageItem(reply.message)))
+        assertNull(childOnly.records.single().agentId)
+        assertNull(childOnly.loadedMainReply())
+        for (bad in listOf(
+            reply.message.copy(segment = AssistantSegment("turn", listOf(SegmentDelta(1, reply.fullText.length)))),
+            reply.message.copy(content = "truncated"),
+            reply.message.copy(isStreaming = true),
+        )) {
+            val incomplete = legacyThreadEvidence("host", "chat", connection, listOf(ThreadItem.MessageItem(bad)))
+            assertNull(incomplete.settledReply(incomplete.owner, "session", "turn", "B"))
         }
     }
 

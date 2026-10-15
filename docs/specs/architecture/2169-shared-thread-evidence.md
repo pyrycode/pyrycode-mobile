@@ -10,6 +10,7 @@
 - `app/src/main/java/de/pyryco/mobile/data/repository/AuthoritativeThreadStore.kt`: `AuthoritativeThreadSnapshot` carries admitted items and epoch/generation.
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/AuthoritativeThreadPresentation.kt`: `projectAuthoritativeThread` supplies rendered identities and agent blocks.
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadRow.kt`: `foldToolRuns` supplies run identity.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/BackgroundAgentBlocks.kt`: `foldBackgroundAgentBlocks` supplies legacy rendered Agent ownership before tool-run folding, including aliased roots and attributed prose.
 - `docs/knowledge/features/thread-screen.md`, `remote-conversation-repository-assistant-reply-segments.md`: receipt is not delivery; rendered aliases are not wire identities.
 - `docs/specs/architecture/1029-reconnect-slash-commands-follow-live-connection.md`: replacing a connection must cancel its observation.
 - `docs/protocol-mobile.md` in the sibling pyrycode repository: Daemon thread updates, Thread query messages, Session-scoped live state and Queue (v2) remain the wire contract.
@@ -44,6 +45,8 @@ Cold mapping flows run in the caller's scope, with no jobs, dispatchers or globa
 | Partial to terminal assistant revision with parent still running | `authoritativeSettlementUsesTheAssistantItemsOwnCompletion` |
 | Tool IDs collide across hosts or within an agent family | `authoritativeIdentitiesMatchProjectionAndToolRuns` |
 | Repeated exact user echo | `userEchoCountRequiresExactlyOneDeliveredUser` |
+| Unsupported item or `turn_end` alongside a complete assistant item | `unsupportedAuthoritativeKindsCannotSettleReplies`, `turnEndAndUnknownItemsDoNotJoinAnAuthoritativeAssistantFamily` |
+| Legacy background block with intervening prose and collision aliases | `legacyBackgroundIdentitiesFollowPresentationAcrossProseAndAliases`, `legacySettlementKeepsRawParentAttributionForRenderedAliases` |
 
 ## Error handling
 
@@ -57,7 +60,13 @@ Write JVM `ThreadEvidenceTest` first, observe compilation failure for missing ad
 
 None.
 
+## Documentation handoff
+
+- Pending for the documentation stage: `docs/knowledge/features/development-verification-gates.md`, “Live Claude reply assertions”: document evidence factories, ownership checks, loaded selection versus strict settlement, rendered identities versus raw attribution, and the legacy-only harness binding/future activation seam. Carry forward the orphan-parent and bounded-rendered-text lessons.
+
 ## Revisions
 
 - 2026-10-15: `authoritativeSettlementUsesTheAssistantItemsOwnCompletion` exposed that an orphan child can retain a projected row without an agent block. A positive parent now requires a resolved block before settlement; it cannot qualify as main-thread evidence.
 - 2026-10-15: `fullReplyTextSurvivesDisplayBounding` exposed a complete item whose bounded presentation is blank. Loaded selection now requires nonblank rendered text as well as full text, while strict item settlement retains the complete daemon text.
+- 2026-10-15 (verifier finding 1): Only daemon `assistant_message` facts join authoritative settlement families. Unknown-kind fallback rows cannot settle replies, and `turn_end` facts cannot prevent an admitted assistant item from settling.
+- 2026-10-15 (verifier finding 2): Legacy rendered Agent and tool-run identities come from `foldQueuedRows`, `foldBackgroundAgentBlocks` and `foldToolRuns`, with loaded lifecycle evidence. Original messages retain raw parent/segment attribution; legacy strict settlement continues to select by raw parent and delegate to `holdsSettledAssistantReply`. A missing rendered block never establishes main-thread attribution for loaded selection. Four regression probes add about 120 lines; the complete ticket remains below 850 written lines, five shared types and two observation consumers. No in-flight branch overlaps either evidence file.

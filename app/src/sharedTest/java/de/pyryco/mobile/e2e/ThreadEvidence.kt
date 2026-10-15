@@ -7,6 +7,8 @@ import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.thread.ThreadRow
+import de.pyryco.mobile.ui.conversations.thread.foldBackgroundAgentBlocks
+import de.pyryco.mobile.ui.conversations.thread.foldQueuedRows
 import de.pyryco.mobile.ui.conversations.thread.foldToolRuns
 import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.flow.Flow
@@ -36,7 +38,7 @@ internal data class ThreadEvidenceOwner(
     override fun toString(): String = "ThreadEvidenceOwner(redacted)"
 }
 
-/** Full facts travel with rendered identities; authoritative tool_use_id/task_id are not row selectors. */
+/** Rendered block/run identities accompany original messages and facts, which retain raw parent attribution. */
 internal class ThreadEvidenceRecord(
     val message: Message,
     val fullText: String,
@@ -63,6 +65,7 @@ internal class ThreadEvidence(
                 .lastOrNull {
                     it.message.role == Role.Assistant &&
                         it.agentId == null &&
+                        it.message.parentToolUseId.isEmpty() &&
                         (it.fact?.parent ?: 0) == 0L &&
                         !it.message.isStreaming &&
                         it.message.content.isNotBlank() &&
@@ -71,7 +74,10 @@ internal class ThreadEvidence(
                 }?.message
         }
 
-    /** Call with current ownership when retaining evidence across a source or document replacement. */
+    /**
+     * Call with current ownership when retaining evidence across a source or document replacement.
+     * Legacy families use raw parent attribution; authoritative families use projected Agent block IDs.
+     */
     fun settledReply(
         current: ThreadEvidenceOwner,
         session: String,
@@ -84,7 +90,10 @@ internal class ThreadEvidence(
                 it.message.role == Role.Assistant &&
                     it.session == session &&
                     it.turn == turn &&
-                    it.agentId.orEmpty() == agentId
+                    when (owner.kind) {
+                        ThreadEvidenceKind.Legacy -> it.message.parentToolUseId == agentId
+                        ThreadEvidenceKind.Authoritative -> it.fact?.kind == "assistant_message" && it.agentId.orEmpty() == agentId
+                    }
             }
         if (family.isEmpty()) return null
         val settled =
@@ -148,7 +157,9 @@ internal fun legacyThreadEvidence(
     connection: Any,
     items: List<ThreadItem>,
 ): ThreadEvidence {
-    val runs = toolRunIds(foldToolRuns(items.map { ThreadRow.Delivered(it) }, emptySet()))
+    val rows = foldBackgroundAgentBlocks(foldQueuedRows(items, emptyList()), items, null)
+    val delivered = rows.filterIsInstance<ThreadRow.Delivered>().associateBy { (it.item as? ThreadItem.MessageItem)?.message?.id }
+    val runs = toolRunIds(foldToolRuns(rows, emptySet()))
     return ThreadEvidence(
         ThreadEvidenceOwner(host, conversation, connection, ThreadEvidenceKind.Legacy),
         items.filterIsInstance<ThreadItem.MessageItem>().map { row ->
@@ -158,7 +169,7 @@ internal fun legacyThreadEvidence(
                 message.content,
                 message.sessionId,
                 message.segment?.turnId,
-                (message.toolCall?.parentToolUseId ?: message.parentToolUseId).takeIf { it.isNotEmpty() },
+                delivered[message.id]?.agentBlockId,
                 runs[message.id],
             )
         },
