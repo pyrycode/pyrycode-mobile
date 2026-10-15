@@ -53,3 +53,17 @@ Run the unchanged focused `SavedThreadFirstDrawDeviceTest` class, then the repai
 ## Documentation handoff
 
 Pending for documentation: update `docs/knowledge/features/thread-screen-testing-saved-first-draw.md`, section "Readiness and sampling cancellation (#2143)", with the diagnosed cause, repair, valid comparison, and disposition of the earlier misses. Preserve historical failures and the distinction between readiness and elapsed-draw evidence. Record actual dispatcher UI/scripted-all counts when those later gates finish.
+
+## Revisions
+
+### 2026-10-15: demonstrated external host pressure; wait on #2178
+
+The unchanged focused class executed four tests: one passed, three failed, none skipped (exit 1). Both draw methods and the slow-restore control failed readiness before installing an opening; the held-pipe control passed. The three failed methods sampled 102/102/99 responsive windows, with idle ranges 1–55% / 1–40% / 0–36% and zero windows at >=80% idle. No draw phases were measured.
+
+Thirty-six contemporaneous host samples show approximately 95.7% busy CPU, 0.1% I/O wait, and one-minute load 12.34–19.34 on eight logical CPUs. Subsequent one-second deltas isolate an existing Kotlin compiler daemon at 587–661% CPU while this baseline's Gradle daemon was idle. Two read-only JVM thread dumps show its eight GC threads consuming 163263.68 CPU-ms over 28.67 seconds; its old generation is 99% occupied. A guest snapshot shows 79 percentage points of host/steal time out of two cores, alongside Google Play Services work. This establishes an external resource problem in the fresh run, without establishing the initiating compiler defect or attributing the historical #2163 measurements.
+
+The documented direct focused Gradle invocation also bypasses the agents runner's shared device hold, allowing this baseline's emulator to overlap the #2169 dispatcher UI gate. A second unchanged comparison used the existing `device_hold` and `run_on_device` helpers, queued behind that gate, then was cancelled cleanly before device acquisition or Gradle launch after the external blocker was confirmed. It executed zero tests and supplies no result. No warming, retry acceptance, measurement threshold, fixture, or production/test source change was made.
+
+Filed and verified open blocker [#2178](https://github.com/pyrycode/pyrycode-mobile/issues/2178), in Backlog at low priority, for agents/runner ownership and remediation of the compiler/GC resource problem and focused device custody. The mobile runner entry point delegates to the agents repository; changing host process lifecycle or its admission policy is outside this builder's allowed files. Preserve the current test contracts and resume the planned baseline/repaired comparison after that repair. A controlled regression for the demonstrated external repair belongs in its owning repository.
+
+Checked content-free evidence is committed in `app/src/androidTest/assets/readiness-2177/unchanged-baseline.json`; raw XML, four phone logs, host/device snapshots, JVM diagnostics, comparison scripts, and verified manifests are retained under `/work/Projects/pyrycode-mobile-agents/logs/evidence/2177/unchanged-concurrent-baseline/`. The earlier 1434/1436 ms fragmented first-open misses remain unresolved: current readiness exhaustion supplies no latency comparison. Their disposition and any required separate latency ticket remain work for #2177 after unblocking. Complete UI/scripted-all gates and documentation remain pending.
