@@ -400,6 +400,8 @@ class AuthoritativeRoomStorageTest {
         runTest {
             val messages = mutableListOf<String>()
             val oldSink = RelayLog.sink
+            val oldEnabled = RelayLog.enabled
+            RelayLog.enabled = true
             RelayLog.sink = { _, _, message -> messages.add(message) }
             try {
                 seed(open(), saved(listOf(raw(1), raw(2))))
@@ -420,6 +422,7 @@ class AuthoritativeRoomStorageTest {
                 for (text in messages) listOf("Host", "private-content", "secret-cursor").forEach { assertFalse(text.contains(it)) }
             } finally {
                 RelayLog.sink = oldSink
+                RelayLog.enabled = oldEnabled
             }
         }
 }

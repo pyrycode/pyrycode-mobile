@@ -73,3 +73,12 @@ None. Forecast: approximately 1450 written lines including generated schema, tes
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-15
+
+## Revisions
+
+- 2026-10-15, verifier finding 2: the diagnostics test explicitly enables `RelayLog` and restores its previous enabled value alongside its sink in `finally`. Diagnostic assertions no longer depend on the process's initial logger state; storage contracts are unchanged.
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/knowledge/features/conversation-cache-contract.md`, “The contract”: authoritative Room replacements and newest/before pages, exact ownership, epoch/generation-bound local tokens, committed certification and bounded payload/evidence reads.
+- Pending documentation stage: `docs/knowledge/features/conversation-cache-layout.md`, “Layout”: additive version 1 → 2 migration and atomic scoped removal of both families, with family-local replacement writes. Preserve #2161's import/binding and #2068's reader/partial-write ownership.
