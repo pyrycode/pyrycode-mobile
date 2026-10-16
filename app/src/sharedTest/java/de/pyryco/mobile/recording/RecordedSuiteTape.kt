@@ -75,8 +75,17 @@ internal class RecordedSuiteTape(
             require(step.delayMs in 0..3600000) { "Invalid suite event timing" }
             require(step.owner.matches(Regex("[A-Za-z0-9_./:-]{1,160}"))) { "Invalid suite owner" }
             require(
-                step.direction in setOf("client", "daemon", "connect", "open", "down", "close", "transport_down", "minimum", "inbound_end"),
+                step.direction in
+                    setOf("client", "daemon", "connect", "open", "down", "close", "transport_down", "minimum", "inbound_end", "external"),
             ) { "Invalid suite event" }
+            if (step.direction == "external") {
+                require(step.owner == "android" && step.detail.keys == setOf("event"))
+                require(
+                    step.detail
+                        .getValue("event")
+                        .jsonPrimitive.content in setOf("push-token", "push-wake"),
+                )
+            }
             val message = step.message
             if (step.direction in setOf("client", "daemon")) {
                 require(message != null && message.payload is JsonObject && message.type.isNotBlank() && message.ts.isNotBlank())
@@ -155,7 +164,8 @@ internal class RecordedSuiteTape(
     ): SuiteOutcome {
         failure?.let { fail(it) }
         if (actual.id in actualIds[owner].orEmpty()) fail("Recorded suite duplicate request ID")
-        val mismatch = "Recorded suite request mismatch at step ${matched + 1}"
+        val expectedKinds = eligible().joinToString { "${steps[it].owner}:${steps[it].message?.type ?: steps[it].direction}" }
+        val mismatch = "Recorded suite request mismatch at step ${matched + 1}: $owner:${actual.type}, expected $expectedKinds"
         val candidate =
             eligible().firstOrNull { i ->
                 val expected = steps[i]

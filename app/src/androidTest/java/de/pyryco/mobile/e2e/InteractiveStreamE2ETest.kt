@@ -5558,7 +5558,11 @@ class InteractiveStreamE2ETest {
     }
 
     /** Test-owned numeric path, never daemon text; the emulator reaches the host through its loopback bridge. */
-    private fun stopTaskFixtureGet(url: String): String {
+    private fun stopTaskFixtureGet(url: String): String =
+        de.pyryco.mobile.recording.SuiteHostFixtures
+            .text(url) { stopTaskFixtureGetLive(url) }
+
+    private fun stopTaskFixtureGetLive(url: String): String {
         val connection =
             java.net
                 .URI(url)

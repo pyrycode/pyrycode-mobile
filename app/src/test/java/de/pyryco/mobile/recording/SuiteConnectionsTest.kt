@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -102,4 +103,20 @@ class SuiteConnectionsTest {
             assertThrows(IllegalStateException::class.java) { hub.assertComplete() }
             hub.close()
         }
+
+    @Test fun controlResponsesReplayWithoutCallingTheHostAndStillRequireTheExactRequest() {
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        val body = kotlinx.serialization.json.JsonObject(emptyMap())
+        val response = MobileJson.parseToJsonElement("""{"state":"held"}""").jsonObject
+        val recording = SuiteConnections.recording(scope)
+        assertEquals(response, recording.exchangeControl("task/status", body) { response })
+        val steps = recording.completedCapture(true)
+        recording.close()
+        val replay = SuiteConnections.replaying(scope, RecordedSuiteTape(steps))
+        assertEquals(response, replay.exchangeControl("task/status", body) { error("Real host invoked during replay") })
+        kotlinx.coroutines.runBlocking { replay.awaitIdle() }
+        replay.assertComplete()
+        replay.close()
+        scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+    }
 }

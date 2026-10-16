@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
@@ -116,6 +117,7 @@ internal object RecordedSuiteNative {
             )
         }
         args.putString("recordedSuite", "replay")
+        InstrumentationRegistry.registerInstance(instrumentation, args)
         runBlocking {
             withTimeout(5000) {
                 ProcessLifecycleOwner
@@ -142,10 +144,17 @@ internal object RecordedSuiteNative {
             if (session.document != null) {
                 single<de.pyryco.mobile.push.PushTokenSource> {
                     object : de.pyryco.mobile.push.PushTokenSource {
-                        override fun isAvailable() = session.document.steps.any { it.message?.type == "register_push_token" }
+                        override fun isAvailable() = false
 
-                        override suspend fun currentToken() = RECORDED_PUSH_ADDRESS
+                        override suspend fun currentToken(): String = error("FCM requested during suite replay")
                     }
+                }
+            }
+            single<de.pyryco.mobile.push.PushWakeHandler> {
+                de.pyryco.mobile.push.PushWakeHandler {
+                    check(session.document == null) { "Real push received during offline suite replay" }
+                    session.hub.observeExternal("push-wake")
+                    get<de.pyryco.mobile.lifecycle.LifecycleConnectionDriver>().onPushWake()
                 }
             }
             single<RelayConnectionFactory> {
@@ -157,7 +166,10 @@ internal object RecordedSuiteNative {
                         session.hub.transport(session.owner("phone", pairing.serverId)) { original.create(pairing) }
                     },
                     get(),
-                    pushTokens = get<AppPreferences>().pushToken,
+                    pushTokens =
+                        get<AppPreferences>().pushToken.onEach { value ->
+                            if (session.document == null && !value.isNullOrEmpty()) session.pushAddress(value)
+                        },
                     messageTrail = get(),
                     pumpFactory =
                         RelaySessionPumpFactory { transport, factory, dispatcher, minimum ->
@@ -191,6 +203,26 @@ internal object RecordedSuiteNative {
     ) {
         current?.hub?.control(action, body, live) ?: live()
     }
+
+    val replaying get() = current?.document != null
+
+    fun exchange(
+        action: String,
+        body: JsonObject,
+        live: () -> JsonObject,
+    ): JsonObject = current?.hub?.exchangeControl(action, body, live) ?: live()
+
+    fun rememberCredential(value: String) {
+        current?.credentials?.add(value)
+    }
+
+    fun syntheticCredentials(server: String): Map<String, JsonPrimitive> =
+        mapOf(
+            "pairCode" to JsonPrimitive(pairCode(server)),
+            "peerToken" to JsonPrimitive(FAKE_TOKEN),
+            "serverStaticPublicKey" to JsonPrimitive(FAKE_KEY),
+            "relayUrl" to JsonPrimitive("wss://recorded.invalid"),
+        )
 
     @Synchronized fun uniqueStamp(): Long {
         val session = current ?: return System.currentTimeMillis()
@@ -271,7 +303,21 @@ internal object RecordedSuiteNative {
     ) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val tape = document?.tape()
-        val hub = if (tape == null) SuiteConnections.recording(scope) else SuiteConnections.replaying(scope, tape)
+        val hub =
+            if (tape == null) {
+                SuiteConnections.recording(scope)
+            } else {
+                SuiteConnections.replaying(scope, tape) { event ->
+                    when (
+                        event.detail
+                            .getValue("event")
+                            .jsonPrimitive.content
+                    ) {
+                        "push-token" -> runBlocking { GlobalContext.get().get<AppPreferences>().setPushToken(RECORDED_PUSH_ADDRESS) }
+                        "push-wake" -> GlobalContext.get().get<de.pyryco.mobile.lifecycle.LifecycleConnectionDriver>().onPushWake()
+                    }
+                }
+            }
         var scenario = document?.scenario.orEmpty()
         val arguments =
             JsonObject(
@@ -306,6 +352,15 @@ internal object RecordedSuiteNative {
                         "host-${hosts.size}"
                 }
             }
+        }
+
+        private var lastPushAddress: String? = null
+
+        @Synchronized fun pushAddress(value: String) {
+            credentials += value
+            if (lastPushAddress == value) return
+            lastPushAddress = value
+            hub.observeExternal("push-token")
         }
 
         fun remember(pairing: PairedServer) {

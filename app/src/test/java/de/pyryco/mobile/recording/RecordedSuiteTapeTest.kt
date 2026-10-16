@@ -105,7 +105,7 @@ class RecordedSuiteTapeTest {
             assertThrows(IllegalStateException::class.java) {
                 tape.request("phone", frame(2, "send_message", """{"text":"private changed value"}"""))
             }
-        assertEquals("Recorded suite request mismatch at step 1", failure.message)
+        assertEquals("Recorded suite request mismatch at step 1: phone:send_message, expected phone:send_message", failure.message)
         assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
         val complete = RecordedSuiteTape(listOf(client("phone", frame(1, "list_conversations"))))
         complete.request("phone", frame(20, "list_conversations"))

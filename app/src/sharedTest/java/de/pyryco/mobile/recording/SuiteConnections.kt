@@ -23,9 +23,13 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.util.concurrent.CopyOnWriteArrayList
@@ -39,6 +43,7 @@ internal class SuiteConnections private constructor(
     parent: CoroutineScope,
     private val tape: RecordedSuiteTape?,
     private val capture: SuiteCapture?,
+    private val onExternal: (SuiteStep) -> Unit = { error("Unexpected recorded external event") },
 ) : AutoCloseable {
     private val scope = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
     private val transports = mutableMapOf<String, RecordedTransport>()
@@ -47,6 +52,7 @@ internal class SuiteConnections private constructor(
     private val pending = AtomicInteger()
     private val failure = AtomicReference<Throwable?>()
     private val controls = AtomicLong()
+    private val controlReplies = java.util.concurrent.ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
     private val deliveries = Channel<Delivery>(Channel.UNLIMITED)
     private val readers = CopyOnWriteArrayList<Job>()
 
@@ -122,6 +128,17 @@ internal class SuiteConnections private constructor(
     }
 
     @Synchronized private fun route(step: SuiteStep) {
+        if (step.direction == "external") {
+            onExternal(step)
+            pending.decrementAndGet()
+            return
+        }
+        if (step.direction == "daemon" && step.owner == "control") {
+            val frame = checkNotNull(step.message)
+            checkNotNull(controlReplies.remove(frame.inReplyTo)).complete(frame.payload.jsonObject)
+            pending.decrementAndGet()
+            return
+        }
         if (step.direction == "transport_down") {
             val code = step.detail["code"]?.jsonPrimitive?.intOrNull
             val reason = step.detail["reason"]?.jsonPrimitive?.contentOrNull
@@ -165,6 +182,42 @@ internal class SuiteConnections private constructor(
             live()
         } else {
             check(request("control", frame)) { "Recorded suite control rejected" }
+        }
+    }
+
+    fun observeExternal(event: String) {
+        checkNotNull(capture).observe(SuiteStep("external", "android", detail = buildJsonObject { put("event", event) }))
+    }
+
+    fun exchangeControl(
+        action: String,
+        body: JsonObject,
+        live: () -> JsonObject,
+    ): JsonObject {
+        val frame =
+            Envelope(
+                controls.incrementAndGet(),
+                "test-control:$action",
+                java.time.Instant
+                    .now()
+                    .toString(),
+                body,
+            )
+        if (capture != null) {
+            capture.observe(SuiteStep("client", "control", frame))
+            val result = live()
+            capture.observe(
+                SuiteStep("daemon", "control", frame.copy(type = "test-control-result", payload = result, inReplyTo = frame.id)),
+            )
+            return result
+        }
+        val reply = CompletableDeferred<JsonObject>()
+        controlReplies[frame.id] = reply
+        try {
+            check(request("control", frame)) { "Recorded suite control rejected" }
+            return runBlocking { withTimeout(65000) { reply.await() } }
+        } finally {
+            controlReplies.remove(frame.id)
         }
     }
 
@@ -335,7 +388,8 @@ internal class SuiteConnections private constructor(
         fun replaying(
             scope: CoroutineScope,
             tape: RecordedSuiteTape,
-        ) = SuiteConnections(scope, tape, null)
+            onExternal: (SuiteStep) -> Unit = { error("Unexpected recorded external event") },
+        ) = SuiteConnections(scope, tape, null, onExternal)
 
         fun recording(
             scope: CoroutineScope,
