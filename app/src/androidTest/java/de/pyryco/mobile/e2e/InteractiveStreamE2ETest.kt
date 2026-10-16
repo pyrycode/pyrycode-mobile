@@ -3721,11 +3721,21 @@ class InteractiveStreamE2ETest {
                 val turnId = checkNotNull(peer.field(turnEnd, "turn_id")) { "A's turn_end has no turn_id" }
                 assertTrue("the phone counted a different off-screen completion", completed.await().key == turnId)
                 val entryId = checkNotNull(turnEnd.historyEntryId) { "A's turn_end has no durable identity" }
+                val replyEntry =
+                    checkNotNull(
+                        peer
+                            .recorded(chatA)
+                            .filter {
+                                it.type == "assistant_delta" && peer.field(it, "turn_id") == turnId
+                            }.mapNotNull { it.historyEntryId }
+                            .maxOrNull(),
+                    ) { "A's completed reply has no durable identity" }
+                assertTrue("A's reply precedes its completion", replyEntry < entryId)
                 withTimeout(THREAD_TIMEOUT_MS) {
                     repository.observeReadMarks(chatA).filterNotNull().first {
                         val latest = it.latestEntryId
                         val read = it.readUpTo
-                        latest != null && latest >= entryId && read != null && latest > read
+                        latest != null && latest >= replyEntry && read != null && latest > read
                     }
                     source.attention.first { it[serverId]?.get(chatA) == ConversationAttention.Unread }
                 }
