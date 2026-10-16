@@ -74,66 +74,339 @@
     {
       "method": "interactiveTurn_archiveRestore_roundTripsListMembership",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_archiveRestore_roundTripsListMembership.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "55afa2d45a6701093327c15bf4f170840d844e33ecfd8ace17dd48b9e3f45e24",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 10.209,
+          "fixtureSha256": "55afa2d45a6701093327c15bf4f170840d844e33ecfd8ace17dd48b9e3f45e24",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:32:15Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 3.01,
+          "fixtureSha256": "55afa2d45a6701093327c15bf4f170840d844e33ecfd8ace17dd48b9e3f45e24"
+        }
+      }
     },
     {
       "method": "interactiveTurn_archiveTwoChats_listsSecondArchivedFirst",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_archiveTwoChats_listsSecondArchivedFirst.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "d93e35aff38e50058ea308c0b8501366a8d2019fcc1faf46e7b9887ca8f11b8d",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 7.25,
+          "fixtureSha256": "d93e35aff38e50058ea308c0b8501366a8d2019fcc1faf46e7b9887ca8f11b8d",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:32:25Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 3.881,
+          "fixtureSha256": "d93e35aff38e50058ea308c0b8501366a8d2019fcc1faf46e7b9887ca8f11b8d"
+        }
+      }
     },
     {
       "method": "interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes",
       "ticket": 2188,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "eaa52ae09cd0a7491314806c2e6182e3b332e271ec2f84eb8881f8392f381af3",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 10.292,
+          "fixtureSha256": "eaa52ae09cd0a7491314806c2e6182e3b332e271ec2f84eb8881f8392f381af3",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:32:39Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 5.814,
+          "fixtureSha256": "eaa52ae09cd0a7491314806c2e6182e3b332e271ec2f84eb8881f8392f381af3"
+        }
+      }
     },
     {
       "method": "interactiveTurn_attentionDot_followsARealTurn",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_attentionDot_followsARealTurn.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "1c7dcd40329855ab4408890cffc15699e1d582b391171576bf0a293d5f928119",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 19.257,
+          "fixtureSha256": "1c7dcd40329855ab4408890cffc15699e1d582b391171576bf0a293d5f928119",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:33:04Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 14.929,
+          "fixtureSha256": "1c7dcd40329855ab4408890cffc15699e1d582b391171576bf0a293d5f928119"
+        }
+      }
     },
     {
       "method": "interactiveTurn_backgroundAgentProgress_showsOnRunningCard",
       "ticket": 2187,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_backgroundAgentProgress_showsOnRunningCard.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "3180eba5c8d762001d49e73e7d629c5278bb75a5f7de2f34399896c410ea85d9",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 16.107,
+          "fixtureSha256": "3180eba5c8d762001d49e73e7d629c5278bb75a5f7de2f34399896c410ea85d9",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:33:36Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 11.997,
+          "fixtureSha256": "3180eba5c8d762001d49e73e7d629c5278bb75a5f7de2f34399896c410ea85d9"
+        }
+      }
     },
     {
       "method": "interactiveTurn_backgroundAgent_followsBottomUntilFinished",
       "ticket": 2187,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_backgroundAgent_followsBottomUntilFinished.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "eb5a322dbeb1eddf75b6f37aaa53f6f2f41177ce66d997496a32a767eb141465",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 35.92,
+          "fixtureSha256": "eb5a322dbeb1eddf75b6f37aaa53f6f2f41177ce66d997496a32a767eb141465",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:34:24Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 32.513,
+          "fixtureSha256": "eb5a322dbeb1eddf75b6f37aaa53f6f2f41177ce66d997496a32a767eb141465"
+        }
+      }
     },
     {
       "method": "interactiveTurn_backgroundAgent_replyStaysUnderAgent",
       "ticket": 2187,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_backgroundAgent_replyStaysUnderAgent.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "6e2ee3d693e22ccec4262eef6e5b9389be28b00ab57e2da1f139bf9c6cdf47ea",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 31.565,
+          "fixtureSha256": "6e2ee3d693e22ccec4262eef6e5b9389be28b00ab57e2da1f139bf9c6cdf47ea",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:35:28Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 27.429,
+          "fixtureSha256": "6e2ee3d693e22ccec4262eef6e5b9389be28b00ab57e2da1f139bf9c6cdf47ea"
+        }
+      }
     },
     {
       "method": "interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect",
       "ticket": 2189,
-      "fixture": null,
+      "fixture": "suite/interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect.json",
       "retainedLive": [
         "FCM delivery"
-      ]
+      ],
+      "evidence": {
+        "fixtureSha256": "70008f984d50f9e2525b0cca27a06be42eae16544114cdfb89a13b29fc1319ef",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 50.729,
+          "nativeSeconds": 43.089,
+          "fixtureSha256": "70008f984d50f9e2525b0cca27a06be42eae16544114cdfb89a13b29fc1319ef",
+          "source": {
+            "mobileRevision": "94924b65c62660973f3566d545a2747f414f1a37",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "ae9301b5885b6da7a8beea8e36f9baac98f768e2c07cd45c0ad64e97a9b8e7fb",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T09:23:35Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 43.415,
+          "nativeSeconds": 42.668,
+          "fixtureSha256": "70008f984d50f9e2525b0cca27a06be42eae16544114cdfb89a13b29fc1319ef"
+        }
+      }
     },
     {
       "method": "interactiveTurn_backgroundTask_countsInActionsMenuAndPanel",
       "ticket": 2187,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_backgroundTask_countsInActionsMenuAndPanel.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "d2f0a7defacee6682b68c607a0f99421df76afe776e2707159430c39c4aafc28",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 50.149,
+          "fixtureSha256": "d2f0a7defacee6682b68c607a0f99421df76afe776e2707159430c39c4aafc28",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:38:18Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 46.894,
+          "fixtureSha256": "d2f0a7defacee6682b68c607a0f99421df76afe776e2707159430c39c4aafc28"
+        }
+      }
     },
     {
       "method": "interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread",
       "ticket": 2189,
-      "fixture": null,
+      "fixture": "suite/interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread.json",
       "retainedLive": [
         "FCM delivery"
-      ]
+      ],
+      "evidence": {
+        "fixtureSha256": "f7afc8eb17c3d0bab9741e71267f26eaadbedf4c90b939a26d543c0ab68e15a1",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 39.533,
+          "fixtureSha256": "f7afc8eb17c3d0bab9741e71267f26eaadbedf4c90b939a26d543c0ab68e15a1",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:39:45Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 36.03,
+          "fixtureSha256": "f7afc8eb17c3d0bab9741e71267f26eaadbedf4c90b939a26d543c0ab68e15a1"
+        }
+      }
     },
     {
       "method": "interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace",
@@ -145,38 +418,203 @@
     {
       "method": "interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "0204e17966cd149bbb0d422e4265295ce7788d992a1ea8553232f4fbe12e30b7",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 9.759,
+          "fixtureSha256": "0204e17966cd149bbb0d422e4265295ce7788d992a1ea8553232f4fbe12e30b7",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:40:31Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 5.511,
+          "fixtureSha256": "0204e17966cd149bbb0d422e4265295ce7788d992a1ea8553232f4fbe12e30b7"
+        }
+      }
     },
     {
       "method": "interactiveTurn_chosenEffort_appliesFromTheFirstTurn",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_chosenEffort_appliesFromTheFirstTurn.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "774ef543f292459dfc4882bd41d57c1f0154c0baaa8523f37163e29bb5db49f9",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 10.847,
+          "fixtureSha256": "774ef543f292459dfc4882bd41d57c1f0154c0baaa8523f37163e29bb5db49f9",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:40:47Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 6.918,
+          "fixtureSha256": "774ef543f292459dfc4882bd41d57c1f0154c0baaa8523f37163e29bb5db49f9"
+        }
+      }
     },
     {
       "method": "interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart",
       "ticket": 2188,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "69f720e468e838bd0151a5653a17104fd0a5f060c21d1a65c085bc8bb28e73bd",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 16.199,
+          "fixtureSha256": "69f720e468e838bd0151a5653a17104fd0a5f060c21d1a65c085bc8bb28e73bd",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:41:10Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 12.224,
+          "fixtureSha256": "69f720e468e838bd0151a5653a17104fd0a5f060c21d1a65c085bc8bb28e73bd"
+        }
+      }
     },
     {
       "method": "interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "8f4595ff4db44f1d3e8a5f5c6aa9730d16156ca031f3db76f7e68ff73fbeee31",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 13.103,
+          "nativeSeconds": 8.013,
+          "fixtureSha256": "8f4595ff4db44f1d3e8a5f5c6aa9730d16156ca031f3db76f7e68ff73fbeee31",
+          "source": {
+            "mobileRevision": "94924b65c62660973f3566d545a2747f414f1a37",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "ae9301b5885b6da7a8beea8e36f9baac98f768e2c07cd45c0ad64e97a9b8e7fb",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T09:23:51Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 7.657,
+          "nativeSeconds": 7.089,
+          "fixtureSha256": "8f4595ff4db44f1d3e8a5f5c6aa9730d16156ca031f3db76f7e68ff73fbeee31"
+        }
+      }
     },
     {
       "method": "interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip",
       "ticket": 2188,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "c68c103fa8bf2c4320413b3a9343403d719c5d6d52b686c7539d7488b6823ae8",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 31.179,
+          "fixtureSha256": "c68c103fa8bf2c4320413b3a9343403d719c5d6d52b686c7539d7488b6823ae8",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:46:10Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 27.058,
+          "fixtureSha256": "c68c103fa8bf2c4320413b3a9343403d719c5d6d52b686c7539d7488b6823ae8"
+        }
+      }
     },
     {
       "method": "interactiveTurn_createEditArchiveChannel_readsPromptBack",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_createEditArchiveChannel_readsPromptBack.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "fbf81ef3123fba66d23fae612a1a7c26341698d7deb7fdbd787dfe3ce7593d8c",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 23.465,
+          "fixtureSha256": "fbf81ef3123fba66d23fae612a1a7c26341698d7deb7fdbd787dfe3ce7593d8c",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:47:01Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 19.621,
+          "fixtureSha256": "fbf81ef3123fba66d23fae612a1a7c26341698d7deb7fdbd787dfe3ce7593d8c"
+        }
+      }
     },
     {
       "method": "interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace",
@@ -188,332 +626,2008 @@
     {
       "method": "interactiveTurn_deleteConversation_removesFromListAndClosesThread",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_deleteConversation_removesFromListAndClosesThread.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "4476ff6f099ce919c815007bcb25df0798cc8ac7a8a1b4c7a3488ce322e8b736",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 6.245,
+          "fixtureSha256": "4476ff6f099ce919c815007bcb25df0798cc8ac7a8a1b4c7a3488ce322e8b736",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:47:27Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 2.648,
+          "fixtureSha256": "4476ff6f099ce919c815007bcb25df0798cc8ac7a8a1b4c7a3488ce322e8b736"
+        }
+      }
     },
     {
       "method": "interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "891ba66ed05e18849aa196912f280db7b966b133d0b071a3c894f720e0c585e5",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 5.856,
+          "nativeSeconds": 1.661,
+          "fixtureSha256": "891ba66ed05e18849aa196912f280db7b966b133d0b071a3c894f720e0c585e5",
+          "source": {
+            "mobileRevision": "94924b65c62660973f3566d545a2747f414f1a37",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "ae9301b5885b6da7a8beea8e36f9baac98f768e2c07cd45c0ad64e97a9b8e7fb",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T09:24:05Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 2.246,
+          "nativeSeconds": 1.651,
+          "fixtureSha256": "891ba66ed05e18849aa196912f280db7b966b133d0b071a3c894f720e0c585e5"
+        }
+      }
     },
     {
       "method": "interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes",
       "ticket": 2188,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "0e9cd070ef530fa32595387c2174df49782a1dbd224eebf9d5034b52a77f0626",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 10.849,
+          "nativeSeconds": 6.074,
+          "fixtureSha256": "0e9cd070ef530fa32595387c2174df49782a1dbd224eebf9d5034b52a77f0626",
+          "source": {
+            "mobileRevision": "94924b65c62660973f3566d545a2747f414f1a37",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "ae9301b5885b6da7a8beea8e36f9baac98f768e2c07cd45c0ad64e97a9b8e7fb",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T09:24:18Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 5.83,
+          "nativeSeconds": 5.168,
+          "fixtureSha256": "0e9cd070ef530fa32595387c2174df49782a1dbd224eebf9d5034b52a77f0626"
+        }
+      }
     },
     {
       "method": "interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "9b324b86c36fcd48c4d697f4b9685c605b9a1e0a27927e35044efc5432505be9",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 4.495,
+          "fixtureSha256": "9b324b86c36fcd48c4d697f4b9685c605b9a1e0a27927e35044efc5432505be9",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:47:50Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 1.413,
+          "fixtureSha256": "9b324b86c36fcd48c4d697f4b9685c605b9a1e0a27927e35044efc5432505be9"
+        }
+      }
     },
     {
       "method": "interactiveTurn_finishedReply_systemCopyCopiesSelectedWord",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_finishedReply_systemCopyCopiesSelectedWord.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "9ec320087e3a89ee44850bf6c68fe59d389d329656fdd2a908ae7ef5200e71d6",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 10.699,
+          "fixtureSha256": "9ec320087e3a89ee44850bf6c68fe59d389d329656fdd2a908ae7ef5200e71d6",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:48:02Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 7.047,
+          "fixtureSha256": "9ec320087e3a89ee44850bf6c68fe59d389d329656fdd2a908ae7ef5200e71d6"
+        }
+      }
     },
     {
       "method": "interactiveTurn_hostSystemPrompt_editsResetsAndCancels",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_hostSystemPrompt_editsResetsAndCancels.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "22742b20b783ffb2c94d05d3f86ac7725412270332daf42712bc544686501ac9",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 6.363,
+          "fixtureSha256": "22742b20b783ffb2c94d05d3f86ac7725412270332daf42712bc544686501ac9",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:48:16Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 2.809,
+          "fixtureSha256": "22742b20b783ffb2c94d05d3f86ac7725412270332daf42712bc544686501ac9"
+        }
+      }
     },
     {
       "method": "interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "28dbecfc844bd327af3ab7a790b6fa1ba3b0cfba3907ce6c54f40394ad5ebdbd",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 9.577,
+          "fixtureSha256": "28dbecfc844bd327af3ab7a790b6fa1ba3b0cfba3907ce6c54f40394ad5ebdbd",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:48:28Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 5.469,
+          "fixtureSha256": "28dbecfc844bd327af3ab7a790b6fa1ba3b0cfba3907ce6c54f40394ad5ebdbd"
+        }
+      }
     },
     {
       "method": "interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "0fc09130a15835e91056606429b8d0c3f6e33365ddd07620ac338f6f06ddb61e",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 25.397,
+          "nativeSeconds": 9.443,
+          "fixtureSha256": "0fc09130a15835e91056606429b8d0c3f6e33365ddd07620ac338f6f06ddb61e",
+          "source": {
+            "mobileRevision": "b66c1a84ce5a5aed0b0b3efdc5842be1f8fefba0",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "c31d01d1d4e8da452ff45554d802a4eeb57c613444b0438d236752636f6ef92d",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T09:56:56Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 10.389,
+          "nativeSeconds": 8.745,
+          "fixtureSha256": "0fc09130a15835e91056606429b8d0c3f6e33365ddd07620ac338f6f06ddb61e"
+        }
+      }
     },
     {
       "method": "interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "f5c81dae1db20f9a4845b01d3f305eb97a48b18b9cc6560b9feb9f509fd87e36",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 10.671,
+          "nativeSeconds": 6.156,
+          "fixtureSha256": "f5c81dae1db20f9a4845b01d3f305eb97a48b18b9cc6560b9feb9f509fd87e36",
+          "source": {
+            "mobileRevision": "94924b65c62660973f3566d545a2747f414f1a37",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "ae9301b5885b6da7a8beea8e36f9baac98f768e2c07cd45c0ad64e97a9b8e7fb",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T09:26:52Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 6.229,
+          "nativeSeconds": 5.641,
+          "fixtureSha256": "f5c81dae1db20f9a4845b01d3f305eb97a48b18b9cc6560b9feb9f509fd87e36"
+        }
+      }
     },
     {
       "method": "interactiveTurn_listArchiveEntry_opensArchived",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_listArchiveEntry_opensArchived.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "90f6ff16e69f5f8f8b472e99175a2d7e5d7ac744c38765fb1789a7443a2bc66f",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 4.369,
+          "fixtureSha256": "90f6ff16e69f5f8f8b472e99175a2d7e5d7ac744c38765fb1789a7443a2bc66f",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:49:00Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 1.251,
+          "fixtureSha256": "90f6ff16e69f5f8f8b472e99175a2d7e5d7ac744c38765fb1789a7443a2bc66f"
+        }
+      }
     },
     {
       "method": "interactiveTurn_longRunningTool_statusAreaShowsElapsed",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_longRunningTool_statusAreaShowsElapsed.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "124e1476be425d197bc6ab508dd564b344b2d40af43ec3751b7d0f8583b79c18",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 57.711,
+          "fixtureSha256": "124e1476be425d197bc6ab508dd564b344b2d40af43ec3751b7d0f8583b79c18",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:50:00Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 54.303,
+          "fixtureSha256": "124e1476be425d197bc6ab508dd564b344b2d40af43ec3751b7d0f8583b79c18"
+        }
+      }
     },
     {
       "method": "interactiveTurn_markdownLink_opensLiveNoteInReader",
       "ticket": 2188,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_markdownLink_opensLiveNoteInReader.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "779bb33a67d7f2b08c1fd9dfd1b7906ffa2e86b9613fd6162b447b77a55e53f1",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 19.265,
+          "nativeSeconds": 15.097,
+          "fixtureSha256": "779bb33a67d7f2b08c1fd9dfd1b7906ffa2e86b9613fd6162b447b77a55e53f1",
+          "source": {
+            "mobileRevision": "94924b65c62660973f3566d545a2747f414f1a37",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "ae9301b5885b6da7a8beea8e36f9baac98f768e2c07cd45c0ad64e97a9b8e7fb",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T09:27:17Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 15.118,
+          "nativeSeconds": 14.526,
+          "fixtureSha256": "779bb33a67d7f2b08c1fd9dfd1b7906ffa2e86b9613fd6162b447b77a55e53f1"
+        }
+      }
     },
     {
       "method": "interactiveTurn_markdownReply_rendersFormattedBody",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_markdownReply_rendersFormattedBody.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "ed3a79eead77c2938498991a952cc04dfaed0eb0bab34e36efe1bed4dc8ddfd2",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 11.895,
+          "nativeSeconds": 7.175,
+          "fixtureSha256": "ed3a79eead77c2938498991a952cc04dfaed0eb0bab34e36efe1bed4dc8ddfd2",
+          "source": {
+            "mobileRevision": "94924b65c62660973f3566d545a2747f414f1a37",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "ae9301b5885b6da7a8beea8e36f9baac98f768e2c07cd45c0ad64e97a9b8e7fb",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T09:27:45Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 7.026,
+          "nativeSeconds": 6.469,
+          "fixtureSha256": "ed3a79eead77c2938498991a952cc04dfaed0eb0bab34e36efe1bed4dc8ddfd2"
+        }
+      }
     },
     {
       "method": "interactiveTurn_modelChange_roundTripsAndStaysPerConversation",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_modelChange_roundTripsAndStaysPerConversation.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "bf5616a359b1154e8bde338f969ad31a7507044a02da7e1dd8102445ea4681c9",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 11.87,
+          "fixtureSha256": "bf5616a359b1154e8bde338f969ad31a7507044a02da7e1dd8102445ea4681c9",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:51:37Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 8.45,
+          "fixtureSha256": "bf5616a359b1154e8bde338f969ad31a7507044a02da7e1dd8102445ea4681c9"
+        }
+      }
     },
     {
       "method": "interactiveTurn_muteChannel_roundTripsThroughTheHost",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_muteChannel_roundTripsThroughTheHost.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "3f1e6d0cca4e49870e47adaabce913b0dadf330004fe9076febb409cb22b6366",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 6.085,
+          "fixtureSha256": "3f1e6d0cca4e49870e47adaabce913b0dadf330004fe9076febb409cb22b6366",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:51:51Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 2.894,
+          "fixtureSha256": "3f1e6d0cca4e49870e47adaabce913b0dadf330004fe9076febb409cb22b6366"
+        }
+      }
     },
     {
       "method": "interactiveTurn_newSession_rendersSessionBoundaryDelimiter",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_newSession_rendersSessionBoundaryDelimiter.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "b6dea49da2c858cb0d69dcb69614a51a4e060bf9c57edc3c4fb2b9cb6e80e04e",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 11.812,
+          "fixtureSha256": "b6dea49da2c858cb0d69dcb69614a51a4e060bf9c57edc3c4fb2b9cb6e80e04e",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:52:06Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 8.579,
+          "fixtureSha256": "b6dea49da2c858cb0d69dcb69614a51a4e060bf9c57edc3c4fb2b9cb6e80e04e"
+        }
+      }
     },
     {
       "method": "interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "48dc7216ea2926a8b6d787c92ce9ba48658be65791f055178390bc654fb08e91",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 35.859,
+          "nativeSeconds": 26.908,
+          "fixtureSha256": "48dc7216ea2926a8b6d787c92ce9ba48658be65791f055178390bc654fb08e91",
+          "source": {
+            "mobileRevision": "b66c1a84ce5a5aed0b0b3efdc5842be1f8fefba0",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "c31d01d1d4e8da452ff45554d802a4eeb57c613444b0438d236752636f6ef92d",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T09:57:42Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 28.222,
+          "nativeSeconds": 27.159,
+          "fixtureSha256": "48dc7216ea2926a8b6d787c92ce9ba48658be65791f055178390bc654fb08e91",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "d02991291391993e14911da6240205aad40190f8548ae67ba6379f45d3d9f64f"
+        }
+      }
     },
     {
       "method": "interactiveTurn_offlineRetry_reconnectsSameHostAndReplies",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_offlineRetry_reconnectsSameHostAndReplies.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "997c684c58b5cf558bd24c1c089afaf710dd2bca9f12e687b19cc31eb204dd72",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 43.077,
+          "nativeSeconds": 37.759,
+          "fixtureSha256": "997c684c58b5cf558bd24c1c089afaf710dd2bca9f12e687b19cc31eb204dd72",
+          "source": {
+            "mobileRevision": "e8c6d6858eb0db9bd91301abd365a9471259a964",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "c0ce9cfd8896143c6e7bc7ea3b1205246ac3b48178610fd63ea08399f39f156b",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T09:43:19Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 41.562,
+          "nativeSeconds": 40.277,
+          "fixtureSha256": "997c684c58b5cf558bd24c1c089afaf710dd2bca9f12e687b19cc31eb204dd72"
+        }
+      }
     },
     {
       "method": "interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "1ad3f3ca89cb6676afd32c5b690158400947067e458ce6246c94a5d015d37ca3",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 34.513,
+          "nativeSeconds": 12.886,
+          "fixtureSha256": "1ad3f3ca89cb6676afd32c5b690158400947067e458ce6246c94a5d015d37ca3",
+          "source": {
+            "mobileRevision": "2218340c32210eaa1a19b1bbb21ae8b592a48e45",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "d02991291391993e14911da6240205aad40190f8548ae67ba6379f45d3d9f64f",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:24:08Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 10.474,
+          "nativeSeconds": 9.784,
+          "fixtureSha256": "1ad3f3ca89cb6676afd32c5b690158400947067e458ce6246c94a5d015d37ca3",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "1eac077ec444d692c97d60552730c2ae39be8d6a60a79c20f8ea751a69fa0e95",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 34.045,
+          "nativeSeconds": 28.88,
+          "fixtureSha256": "1eac077ec444d692c97d60552730c2ae39be8d6a60a79c20f8ea751a69fa0e95",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:26:59Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 29.968,
+          "nativeSeconds": 29.354,
+          "fixtureSha256": "1eac077ec444d692c97d60552730c2ae39be8d6a60a79c20f8ea751a69fa0e95",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_otherConversationAttentionPills_waitingAndFinished",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_otherConversationAttentionPills_waitingAndFinished.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "f32fbaecabc4cd4b108b7ceef0a46f85cba14c92f8f326f528443cf0af571d35",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 13.773,
+          "fixtureSha256": "f32fbaecabc4cd4b108b7ceef0a46f85cba14c92f8f326f528443cf0af571d35",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:57:39Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 9.246,
+          "fixtureSha256": "f32fbaecabc4cd4b108b7ceef0a46f85cba14c92f8f326f528443cf0af571d35"
+        }
+      }
     },
     {
       "method": "interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload",
       "ticket": 2188,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "58a76d05e7b0585410e5dbcb3fce99ae8b81373cbb4334e613e6d7885c853429",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 22.472,
+          "nativeSeconds": 9.774,
+          "fixtureSha256": "58a76d05e7b0585410e5dbcb3fce99ae8b81373cbb4334e613e6d7885c853429",
+          "source": {
+            "mobileRevision": "b66c1a84ce5a5aed0b0b3efdc5842be1f8fefba0",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "c31d01d1d4e8da452ff45554d802a4eeb57c613444b0438d236752636f6ef92d",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T10:00:49Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 6.861,
+          "nativeSeconds": 6.221,
+          "fixtureSha256": "58a76d05e7b0585410e5dbcb3fce99ae8b81373cbb4334e613e6d7885c853429"
+        }
+      }
     },
     {
       "method": "interactiveTurn_peerQueue_staysConsistentAcrossClients",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_peerQueue_staysConsistentAcrossClients.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "1f5fe9e11691f89d21b14f9b89ce03878a4e5cf0d57cb9acea9d63ecf4bf536a",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 18.241,
+          "nativeSeconds": 11.403,
+          "fixtureSha256": "1f5fe9e11691f89d21b14f9b89ce03878a4e5cf0d57cb9acea9d63ecf4bf536a",
+          "source": {
+            "mobileRevision": "0d6a8494dc2b44f3adca055bc527b4876c93cc8a",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "398ad45bb9de89d2795f79fdf36b7011d51c3fcaddbeae21cbb37b0511375fcf",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:03:38Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 11.253,
+          "nativeSeconds": 10.679,
+          "fixtureSha256": "1f5fe9e11691f89d21b14f9b89ce03878a4e5cf0d57cb9acea9d63ecf4bf536a"
+        }
+      }
     },
     {
       "method": "interactiveTurn_peerStartedTurn_continuesOnPhone",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_peerStartedTurn_continuesOnPhone.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "6d94e92ed62c02958b4592ffc63492c2153f092831b2f1f657d993ab27535275",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 10.857,
+          "fixtureSha256": "6d94e92ed62c02958b4592ffc63492c2153f092831b2f1f657d993ab27535275",
+          "source": {
+            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T08:58:50Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 7.007,
+          "fixtureSha256": "6d94e92ed62c02958b4592ffc63492c2153f092831b2f1f657d993ab27535275"
+        }
+      }
     },
     {
       "method": "interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "3e2f3fa35b660918682057286a192ebc886526d82f7b617dcf98325ce3bf2119",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 46.387,
+          "nativeSeconds": 33.168,
+          "fixtureSha256": "3e2f3fa35b660918682057286a192ebc886526d82f7b617dcf98325ce3bf2119",
+          "source": {
+            "mobileRevision": "b66c1a84ce5a5aed0b0b3efdc5842be1f8fefba0",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "c31d01d1d4e8da452ff45554d802a4eeb57c613444b0438d236752636f6ef92d",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T10:02:34Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 34.194,
+          "nativeSeconds": 31.666,
+          "fixtureSha256": "3e2f3fa35b660918682057286a192ebc886526d82f7b617dcf98325ce3bf2119"
+        }
+      }
     },
     {
       "method": "interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "15731e906942faefdedfc93cd2bd9d9fadb557a3337395119673332fd23ca8e1",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 36.735,
+          "nativeSeconds": 22.329,
+          "fixtureSha256": "15731e906942faefdedfc93cd2bd9d9fadb557a3337395119673332fd23ca8e1",
+          "source": {
+            "mobileRevision": "b66c1a84ce5a5aed0b0b3efdc5842be1f8fefba0",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "c31d01d1d4e8da452ff45554d802a4eeb57c613444b0438d236752636f6ef92d",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T10:03:45Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 25.448,
+          "nativeSeconds": 22.994,
+          "fixtureSha256": "15731e906942faefdedfc93cd2bd9d9fadb557a3337395119673332fd23ca8e1"
+        }
+      }
     },
     {
       "method": "interactiveTurn_permissionPrompts_heldPerConversation",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_permissionPrompts_heldPerConversation.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "428fca59061d740b1cd67adf8442b76adcc4ac2bf5add565b06cd7e251447ee0",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 47.163,
+          "nativeSeconds": 34.088,
+          "fixtureSha256": "428fca59061d740b1cd67adf8442b76adcc4ac2bf5add565b06cd7e251447ee0",
+          "source": {
+            "mobileRevision": "b66c1a84ce5a5aed0b0b3efdc5842be1f8fefba0",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "testApkSha256": "c31d01d1d4e8da452ff45554d802a4eeb57c613444b0438d236752636f6ef92d",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T10:04:58Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 25.395,
+          "nativeSeconds": 24.739,
+          "fixtureSha256": "428fca59061d740b1cd67adf8442b76adcc4ac2bf5add565b06cd7e251447ee0"
+        }
+      }
     },
     {
       "method": "interactiveTurn_pingPrompt_footerShowsContextUsage",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_pingPrompt_footerShowsContextUsage.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "29eb1a7287631c60817a91c908f43fbc3430a243da6f08ef1d27853bfb8d3837",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 12.49,
+          "nativeSeconds": 6.227,
+          "fixtureSha256": "29eb1a7287631c60817a91c908f43fbc3430a243da6f08ef1d27853bfb8d3837",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:27:42Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 6.167,
+          "nativeSeconds": 4.999,
+          "fixtureSha256": "29eb1a7287631c60817a91c908f43fbc3430a243da6f08ef1d27853bfb8d3837",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_pingPrompt_statusSheetShowsRunningModel",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_pingPrompt_statusSheetShowsRunningModel.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "160eea26aab2ae7b00449dd180d11b995afc8a746b307c49852a4f2ef540bbea",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 11.954,
+          "nativeSeconds": 5.909,
+          "fixtureSha256": "160eea26aab2ae7b00449dd180d11b995afc8a746b307c49852a4f2ef540bbea",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:28:02Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 7.133,
+          "nativeSeconds": 6.027,
+          "fixtureSha256": "160eea26aab2ae7b00449dd180d11b995afc8a746b307c49852a4f2ef540bbea",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_pingPrompt_streamsPingReplyIntoThread",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_pingPrompt_streamsPingReplyIntoThread.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "88a5c09cecb819bb29de0ef89b280ea229beee7cad8b25a4520998d0c542f4a4",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 15.316,
+          "nativeSeconds": 8.743,
+          "fixtureSha256": "88a5c09cecb819bb29de0ef89b280ea229beee7cad8b25a4520998d0c542f4a4",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:28:25Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 9.119,
+          "nativeSeconds": 7.424,
+          "fixtureSha256": "88a5c09cecb819bb29de0ef89b280ea229beee7cad8b25a4520998d0c542f4a4",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_questionAnswer_reachesTheAskingConversation",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_questionAnswer_reachesTheAskingConversation.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "c6200a5eb9ea99dc1c8fbc60ab603581f5eb57399966641b47e941b45bdd8dbe",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 23.528,
+          "nativeSeconds": 17.174,
+          "fixtureSha256": "c6200a5eb9ea99dc1c8fbc60ab603581f5eb57399966641b47e941b45bdd8dbe",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:29:00Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 17.013,
+          "nativeSeconds": 15.945,
+          "fixtureSha256": "c6200a5eb9ea99dc1c8fbc60ab603581f5eb57399966641b47e941b45bdd8dbe",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "9fda2cf3e53cc3a0f3bbd8f4a7474acfd98f65a1da5cea6d756678bee3bd9218",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 43.094,
+          "nativeSeconds": 40.01,
+          "fixtureSha256": "9fda2cf3e53cc3a0f3bbd8f4a7474acfd98f65a1da5cea6d756678bee3bd9218",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:30:01Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 42.428,
+          "nativeSeconds": 41.532,
+          "fixtureSha256": "9fda2cf3e53cc3a0f3bbd8f4a7474acfd98f65a1da5cea6d756678bee3bd9218",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_reconnect_slashCommandsAndCompactStillWork",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_reconnect_slashCommandsAndCompactStillWork.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "d5436a321436b0770d79047178fd4d192c1630b8cc89a79f6e5ef234912e37f6",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 15.823,
+          "nativeSeconds": 12.776,
+          "fixtureSha256": "d5436a321436b0770d79047178fd4d192c1630b8cc89a79f6e5ef234912e37f6",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:31:00Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 12.633,
+          "nativeSeconds": 12.022,
+          "fixtureSha256": "d5436a321436b0770d79047178fd4d192c1630b8cc89a79f6e5ef234912e37f6",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "586716bae36967c659550bff8b0c268cfa8060c17cd3bbed44de1ff9364f83e9",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 17.596,
+          "nativeSeconds": 13.836,
+          "fixtureSha256": "586716bae36967c659550bff8b0c268cfa8060c17cd3bbed44de1ff9364f83e9",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:31:31Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 12.176,
+          "nativeSeconds": 11.509,
+          "fixtureSha256": "586716bae36967c659550bff8b0c268cfa8060c17cd3bbed44de1ff9364f83e9",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "154ee707d88a5137a518077a506011f9110cb580703af5d942d67f30ea76e5de"
+        }
+      }
     },
     {
       "method": "interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "c581ee0167f918230c6b4f0850f32f1d7f40e05e03bf7e15115e2db25d217a52",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 9.424,
+          "nativeSeconds": 6.367,
+          "fixtureSha256": "c581ee0167f918230c6b4f0850f32f1d7f40e05e03bf7e15115e2db25d217a52",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:33:15Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 6.248,
+          "nativeSeconds": 5.678,
+          "fixtureSha256": "c581ee0167f918230c6b4f0850f32f1d7f40e05e03bf7e15115e2db25d217a52",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_renameConversation_relabelsTopBarAndListRow",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_renameConversation_relabelsTopBarAndListRow.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "edc04b4b31f740d34b4b667085bddf30be0ecfe0b411e51d5e21a695f86a1e03",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 4.441,
+          "nativeSeconds": 1.501,
+          "fixtureSha256": "edc04b4b31f740d34b4b667085bddf30be0ecfe0b411e51d5e21a695f86a1e03",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:33:26Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 2.11,
+          "nativeSeconds": 1.533,
+          "fixtureSha256": "edc04b4b31f740d34b4b667085bddf30be0ecfe0b411e51d5e21a695f86a1e03",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "ffcf4ff8f8b364b53a031456af3bd21428b32bfcd6ddedb9c8c7161a61b8f5a3",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 9.815,
+          "nativeSeconds": 6.837,
+          "fixtureSha256": "ffcf4ff8f8b364b53a031456af3bd21428b32bfcd6ddedb9c8c7161a61b8f5a3",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:33:39Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 7.072,
+          "nativeSeconds": 6.387,
+          "fixtureSha256": "ffcf4ff8f8b364b53a031456af3bd21428b32bfcd6ddedb9c8c7161a61b8f5a3",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46"
+        }
+      }
     },
     {
       "method": "interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "6463edd52d0f9f1b1ea15771ed7d89ca9b4aeaf0cb8367e7dc89ea7e6ebbd2d0",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 11.009,
+          "nativeSeconds": 7.991,
+          "fixtureSha256": "6463edd52d0f9f1b1ea15771ed7d89ca9b4aeaf0cb8367e7dc89ea7e6ebbd2d0",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:33:57Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 8.285,
+          "nativeSeconds": 7.68,
+          "fixtureSha256": "6463edd52d0f9f1b1ea15771ed7d89ca9b4aeaf0cb8367e7dc89ea7e6ebbd2d0",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_replySuggestion_longPressSends",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_replySuggestion_longPressSends.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "586722a80db5391a15cec76740245764aaf9c1d204fef10078c80ab2f187b289",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 11.983,
+          "nativeSeconds": 8.995,
+          "fixtureSha256": "586722a80db5391a15cec76740245764aaf9c1d204fef10078c80ab2f187b289",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:34:18Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 8.883,
+          "nativeSeconds": 8.28,
+          "fixtureSha256": "586722a80db5391a15cec76740245764aaf9c1d204fef10078c80ab2f187b289",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_saveAsChannel_promotesToChannelTier",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_saveAsChannel_promotesToChannelTier.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "0c26854db0fad51f419cd06f7c0ab82ee345926f95906e87d957ad217f1bc5c1",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 4.602,
+          "nativeSeconds": 1.763,
+          "fixtureSha256": "0c26854db0fad51f419cd06f7c0ab82ee345926f95906e87d957ad217f1bc5c1",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:34:32Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 2.359,
+          "nativeSeconds": 1.736,
+          "fixtureSha256": "0c26854db0fad51f419cd06f7c0ab82ee345926f95906e87d957ad217f1bc5c1",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_scannerConfirm_waitsForHostThenOpensList",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_scannerConfirm_waitsForHostThenOpensList.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "f73fc6f93d480025f3a2d318898efcad7b83b6edec16e03353bdb55537802354",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 4.56,
+          "nativeSeconds": 1.691,
+          "fixtureSha256": "f73fc6f93d480025f3a2d318898efcad7b83b6edec16e03353bdb55537802354",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:34:40Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 2.339,
+          "nativeSeconds": 1.741,
+          "fixtureSha256": "f73fc6f93d480025f3a2d318898efcad7b83b6edec16e03353bdb55537802354",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "659c8b0ad906e3b4f906bb3b6435efc67f38ac50fed8342cca10fa75d3a11176",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 6.761,
+          "nativeSeconds": 3.677,
+          "fixtureSha256": "659c8b0ad906e3b4f906bb3b6435efc67f38ac50fed8342cca10fa75d3a11176",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:34:50Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 4.053,
+          "nativeSeconds": 3.431,
+          "fixtureSha256": "659c8b0ad906e3b4f906bb3b6435efc67f38ac50fed8342cca10fa75d3a11176",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_sendQueuedNow_reachesRunningTurn",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_sendQueuedNow_reachesRunningTurn.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "546cdb9a97acc43f96b187706e15d25c9aa434eff7e8c07f7113ed91725d282c",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 43.627,
+          "nativeSeconds": 40.725,
+          "fixtureSha256": "546cdb9a97acc43f96b187706e15d25c9aa434eff7e8c07f7113ed91725d282c",
+          "source": {
+            "mobileRevision": "8b3ee0a3ccfa1b1f8b64e23370b691077681a7e2",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:35:38Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 40.843,
+          "nativeSeconds": 40.221,
+          "fixtureSha256": "546cdb9a97acc43f96b187706e15d25c9aa434eff7e8c07f7113ed91725d282c",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "11832e0262ec1cfcfeb5951341afc69a8b1a6b707d982d301d51296ab01365fc"
+        }
+      }
     },
     {
       "method": "interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "4e416970dce2e893c23900da4ca23a3cc0f147f821f377febb015fb064974856",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 47.841,
+          "nativeSeconds": 30.938,
+          "fixtureSha256": "4e416970dce2e893c23900da4ca23a3cc0f147f821f377febb015fb064974856",
+          "source": {
+            "mobileRevision": "7bb37e259242003590a97971442c159b4a95231b",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:43:11Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 31.305,
+          "nativeSeconds": 30.665,
+          "fixtureSha256": "4e416970dce2e893c23900da4ca23a3cc0f147f821f377febb015fb064974856",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46"
+        }
+      }
     },
     {
       "method": "interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes",
       "ticket": 2188,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "c583cff0254daf596bd9b2b847a685f51ffb4b982bb43330fb77a79354f1ed5b",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 9.248,
+          "nativeSeconds": 5.753,
+          "fixtureSha256": "c583cff0254daf596bd9b2b847a685f51ffb4b982bb43330fb77a79354f1ed5b",
+          "source": {
+            "mobileRevision": "7bb37e259242003590a97971442c159b4a95231b",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:43:53Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 4.951,
+          "nativeSeconds": 4.248,
+          "fixtureSha256": "c583cff0254daf596bd9b2b847a685f51ffb4b982bb43330fb77a79354f1ed5b",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46"
+        }
+      }
     },
     {
       "method": "interactiveTurn_stopBackgroundTask_completesThenRepliesAgain",
       "ticket": 2187,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_stopBackgroundTask_completesThenRepliesAgain.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "8e4e31c0944476c410f416d9cc92d01a777db00c15aadf005ed8996566e9b08b",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 16.074,
+          "nativeSeconds": 13.109,
+          "fixtureSha256": "8e4e31c0944476c410f416d9cc92d01a777db00c15aadf005ed8996566e9b08b",
+          "source": {
+            "mobileRevision": "7bb37e259242003590a97971442c159b4a95231b",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:44:15Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 13.213,
+          "nativeSeconds": 12.607,
+          "fixtureSha256": "8e4e31c0944476c410f416d9cc92d01a777db00c15aadf005ed8996566e9b08b",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46"
+        }
+      }
     },
     {
       "method": "interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain",
       "ticket": 2186,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "9dc60d4a27e6cc198ce1073a49c1e18b1f448b102298e1a7a8c92cffdd7fe8b9",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 15.017,
+          "nativeSeconds": 11.968,
+          "fixtureSha256": "9dc60d4a27e6cc198ce1073a49c1e18b1f448b102298e1a7a8c92cffdd7fe8b9",
+          "source": {
+            "mobileRevision": "7bb37e259242003590a97971442c159b4a95231b",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:44:44Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 12.298,
+          "nativeSeconds": 11.562,
+          "fixtureSha256": "9dc60d4a27e6cc198ce1073a49c1e18b1f448b102298e1a7a8c92cffdd7fe8b9",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46"
+        }
+      }
     },
     {
       "method": "interactiveTurn_thinkPrompt_showsThinkingSpinnerDuringTurn",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_thinkPrompt_showsThinkingSpinnerDuringTurn.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "7a7c62cbd3f0ce05f7c0c75f5c0925dc9f39ed536a151316e1c1c3d4f1889f3c",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 7.514,
+          "nativeSeconds": 4.224,
+          "fixtureSha256": "7a7c62cbd3f0ce05f7c0c75f5c0925dc9f39ed536a151316e1c1c3d4f1889f3c",
+          "source": {
+            "mobileRevision": "0eef0c650c07236efd53708c0049242168f319bd",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "ba0334c42a2885c8cd85cbb6025c952c0b46fe7167f3b8bf0c93a7698379b52e",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:56:09Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 4.021,
+          "nativeSeconds": 3.321,
+          "fixtureSha256": "7a7c62cbd3f0ce05f7c0c75f5c0925dc9f39ed536a151316e1c1c3d4f1889f3c",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "ba0334c42a2885c8cd85cbb6025c952c0b46fe7167f3b8bf0c93a7698379b52e"
+        }
+      }
     },
     {
       "method": "interactiveTurn_toolPrompt_rendersToolStepInThread",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_toolPrompt_rendersToolStepInThread.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "39beff7c144702396f5369b6d9998b8a1c7ebd7c3f3a9f7d38ea418b1c2ef57f",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 12.837,
+          "nativeSeconds": 6.648,
+          "fixtureSha256": "39beff7c144702396f5369b6d9998b8a1c7ebd7c3f3a9f7d38ea418b1c2ef57f",
+          "source": {
+            "mobileRevision": "7bb37e259242003590a97971442c159b4a95231b",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:46:52Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 6.978,
+          "nativeSeconds": 5.658,
+          "fixtureSha256": "39beff7c144702396f5369b6d9998b8a1c7ebd7c3f3a9f7d38ea418b1c2ef57f",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46"
+        }
+      }
     },
     {
       "method": "interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "0a2ce4dc72ea5bdff5a3435223e9f2bb8f9f5a3db20a88f821a870d51947d7ff",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 11.361,
+          "nativeSeconds": 5.769,
+          "fixtureSha256": "0a2ce4dc72ea5bdff5a3435223e9f2bb8f9f5a3db20a88f821a870d51947d7ff",
+          "source": {
+            "mobileRevision": "7bb37e259242003590a97971442c159b4a95231b",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:47:12Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 5.159,
+          "nativeSeconds": 4.584,
+          "fixtureSha256": "0a2ce4dc72ea5bdff5a3435223e9f2bb8f9f5a3db20a88f821a870d51947d7ff",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46"
+        }
+      }
     },
     {
       "method": "interactiveTurn_twoHostsArchive_staysPerHost",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_twoHostsArchive_staysPerHost.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "5dd23c1de7cfbfdde8c7cd8748251333780d1e61f744df7d2da9c97e6eedb191",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 8.082,
+          "nativeSeconds": 4.431,
+          "fixtureSha256": "5dd23c1de7cfbfdde8c7cd8748251333780d1e61f744df7d2da9c97e6eedb191",
+          "source": {
+            "mobileRevision": "7bb37e259242003590a97971442c159b4a95231b",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:47:26Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 4.499,
+          "nativeSeconds": 3.943,
+          "fixtureSha256": "5dd23c1de7cfbfdde8c7cd8748251333780d1e61f744df7d2da9c97e6eedb191",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46"
+        }
+      }
     },
     {
       "method": "interactiveTurn_twoHostsCollidingConversationId_stayPerHost",
       "ticket": 2185,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_twoHostsCollidingConversationId_stayPerHost.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "710ca04774f05fd0a9f6aa49852b07e22a3fd7e8c6fbcf8a1953949b5cc7c4a8",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 13.549,
+          "nativeSeconds": 9.108,
+          "fixtureSha256": "710ca04774f05fd0a9f6aa49852b07e22a3fd7e8c6fbcf8a1953949b5cc7c4a8",
+          "source": {
+            "mobileRevision": "7bb37e259242003590a97971442c159b4a95231b",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:47:45Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 9.872,
+          "nativeSeconds": 9.26,
+          "fixtureSha256": "710ca04774f05fd0a9f6aa49852b07e22a3fd7e8c6fbcf8a1953949b5cc7c4a8",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46"
+        }
+      }
     },
     {
       "method": "interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "54f2ee8453159166274e21a0b72e663e6f26be16318047b019cfa661f48a5f60",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 15.225,
+          "nativeSeconds": 10.569,
+          "fixtureSha256": "54f2ee8453159166274e21a0b72e663e6f26be16318047b019cfa661f48a5f60",
+          "source": {
+            "mobileRevision": "7bb37e259242003590a97971442c159b4a95231b",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:48:11Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 9.888,
+          "nativeSeconds": 9.318,
+          "fixtureSha256": "54f2ee8453159166274e21a0b72e663e6f26be16318047b019cfa661f48a5f60",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46"
+        }
+      }
     },
     {
       "method": "negativeControl_toolClaudeNeverUses_isNeverDisplayed",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/negativeControl_toolClaudeNeverUses_isNeverDisplayed.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "b71efed39b441106da49ae6886e925fbcbceb3c65a15ebd8a7cc16a51f5ede71",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 94.858,
+          "nativeSeconds": 91.725,
+          "fixtureSha256": "b71efed39b441106da49ae6886e925fbcbceb3c65a15ebd8a7cc16a51f5ede71",
+          "source": {
+            "mobileRevision": "7bb37e259242003590a97971442c159b4a95231b",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:49:56Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 92.632,
+          "nativeSeconds": 91.575,
+          "fixtureSha256": "b71efed39b441106da49ae6886e925fbcbceb3c65a15ebd8a7cc16a51f5ede71",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "4191296f1997edcdf75a0b68137d995b5bd85122b62cb64b65ae81d85f9eed46"
+        }
+      }
     },
     {
       "method": "negativeControl_wordClaudeNeverSays_isNeverDisplayed",
       "ticket": 2184,
-      "fixture": null,
-      "retainedLive": []
+      "fixture": "suite/negativeControl_wordClaudeNeverSays_isNeverDisplayed.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "ca238ae313e6c68476ec90c8ae584826319120d630705d6c73c58f0cd50f6468",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 94.754,
+          "nativeSeconds": 91.752,
+          "fixtureSha256": "ca238ae313e6c68476ec90c8ae584826319120d630705d6c73c58f0cd50f6468",
+          "source": {
+            "mobileRevision": "0eef0c650c07236efd53708c0049242168f319bd",
+            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
+            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "ba0334c42a2885c8cd85cbb6025c952c0b46fe7167f3b8bf0c93a7698379b52e",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-16T11:57:49Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 91.652,
+          "nativeSeconds": 91.038,
+          "fixtureSha256": "ca238ae313e6c68476ec90c8ae584826319120d630705d6c73c58f0cd50f6468",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "ba0334c42a2885c8cd85cbb6025c952c0b46fe7167f3b8bf0c93a7698379b52e"
+        }
+      }
     }
   ]
 }

@@ -113,6 +113,7 @@ annotated real-Claude method in `scripts/recorded-suite-inventory.py`. Its nativ
 calls each original scenario body through the real repository and Compose interface.
 Two workspace scenarios remain explicitly retired because their controls were removed.
 Missing recordings fail the inventory. They never count as converted scenarios.
+The normal Gradle `check` task enforces this inventory, including capture and replay hashes.
 
 ```sh
 python3 scripts/recorded-suite-inventory.py
@@ -129,7 +130,8 @@ installed app and test package hashes against the local build outputs. Evidence 
 those verified hashes. Fresh compatibility evidence lives outside Android assets so its
 own package hashes cannot change the test package they describe. The complete gate
 requires one common client build and producer, one successful real capture and two counted
-replays per scenario, matching contracts and no skipped methods.
+replays per scenario, matching contracts and no skipped methods. Older recordings retain
+strict query counts unless both recordings declare the same polling model.
 
 The full suite preserves all mutating commands in recorded order. Independent connections
 may progress separately. Background queries match their complete owner, payload and count.
