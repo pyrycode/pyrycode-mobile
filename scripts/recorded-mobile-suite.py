@@ -57,6 +57,9 @@ def validate(document):
         for key in ['daemonBinarySha256', 'testApkSha256'] + (['appApkSha256'] if 'appApkSha256' in source else []):
             require(re.fullmatch('[a-f0-9]{64}', source[key]), 'Invalid producer checksum')
         require(source['claudeVersion'].strip(), 'Missing producer version')
+        if document['scenario'] == 'interactiveTurn_switchAgentFromModelPick_confirmsAndReplies':
+            require(re.fullmatch(r'[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}', source.get('codexVersion') or ''),
+                    'Missing Codex producer version')
         datetime.datetime.strptime(source['capturedAt'], '%Y-%m-%dT%H:%M:%SZ')
         require(isinstance(document['inputs']['arguments'], dict), 'Invalid arguments')
         require(isinstance(document['inputs']['clockReads'], list) and isinstance(document['inputs']['hosts'], list), 'Invalid inputs')
@@ -227,6 +230,7 @@ def capture(serial, method, destination, pyry, daemon_source):
         legacy.private_write(home / '.claude.json', json.dumps(onboarding).encode())
         child = {key: value for key, value in os.environ.items() if not key.startswith('OP_')}
         child.update(HOME=str(home), TMPDIR='/tmp/', ANDROID_SERIAL=serial, LIVE='1', E2E_INSTALLED='1', E2E_APKS_BUILT='1', DEVICE='connected',
+                     E2E_CODEX_OPERATOR_HOME=str(Path.home()),
                      E2E_DISABLE_ANIMATIONS='1', PYRY_BIN=str(pyry), PYRY_NAME='e2e-recorded-mobile', PYRYCODE_SRC=str(daemon_source),
                      LIVE_TESTS=CLASS + '#' + method, RECORDED_SUITE_MODE='capture', RECORDED_SUITE_FILE=name,
                      E2E_FAULT_EVIDENCE_DIR=str(evidence / 'private'))
@@ -265,6 +269,11 @@ def capture(serial, method, destination, pyry, daemon_source):
                               'capturedAt': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
                               'presentation': 'current-production',
                               'androidApi': legacy.adb(serial, 'shell', 'getprop', 'ro.build.version.sdk').decode().strip()}
+        if method == 'interactiveTurn_switchAgentFromModelPick_confirmsAndReplies':
+            versions = re.findall(rb'(?m)^codex revision: ([0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6})\r?$',
+                                  (evidence / 'host-private.log').read_bytes())
+            require(len(versions) == 1, 'Missing Codex producer version')
+            document['source']['codexVersion'] = versions[0].decode('ascii')
         document = normalize_capture(document, home)
         validate(document)
         inspect_diagnostic_bytes(document, capture_credentials(home))

@@ -29,6 +29,7 @@ import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.RelayConnectionRegistry
+import de.pyryco.mobile.recording.RecordedSuiteNative
 import de.pyryco.mobile.ui.conversations.thread.dropdownLabel
 import de.pyryco.mobile.ui.conversations.thread.inert
 import kotlinx.coroutines.TimeoutCancellationException
@@ -76,7 +77,7 @@ internal fun runAgentSwitchScenario(
     var failure: Throwable? = null
     try {
         val repo = repository()
-        val name = "e2e2052-${System.currentTimeMillis()}"
+        val name = "e2e2052-${RecordedSuiteNative.uniqueStamp()}"
         val channel = runBlocking { withTimeout(30_000) { repo.createChannel(name, null) } }
         created = channel.id
         check(channel.agent == ConversationAgent.Claude) { "agent_switch_prerequisite=baseline_agent" }
@@ -294,32 +295,31 @@ private fun matchesSwitchTurnSession(
     session: String,
     agent: ConversationAgent,
 ): Boolean {
-    val number = requireNotNull(port?.toIntOrNull()).also { require(it in 1..65535) }
-    val connection = URI("http://10.0.2.2:$number/turn-provenance").toURL().openConnection() as HttpURLConnection
-    try {
-        connection.connectTimeout = 5000
-        connection.readTimeout = 5000
-        connection.requestMethod = "POST"
-        connection.doOutput = true
-        connection.setRequestProperty("Content-Type", "application/json")
-        val body =
-            JsonObject(
-                mapOf(
-                    "conversation" to JsonPrimitive(channel),
-                    "turn" to JsonPrimitive(turn),
-                    "session" to JsonPrimitive(session),
-                    "agent" to JsonPrimitive(agent.name.lowercase()),
-                ),
-            )
-        connection.outputStream.use { it.write(body.toString().toByteArray()) }
-        check(connection.responseCode == 200) { "agent_switch_turn_provenance_unavailable" }
-        val response = connection.inputStream.bufferedReader().use { it.readText() }
-        return MobileJson
-            .parseToJsonElement(response)
-            .jsonObject["matches"]
-            ?.jsonPrimitive
-            ?.booleanOrNull == true
-    } finally {
-        connection.disconnect()
-    }
+    val body =
+        JsonObject(
+            mapOf(
+                "conversation" to JsonPrimitive(channel),
+                "turn" to JsonPrimitive(turn),
+                "session" to JsonPrimitive(session),
+                "agent" to JsonPrimitive(agent.name.lowercase()),
+            ),
+        )
+    val result =
+        RecordedSuiteNative.exchange("agent-switch-provenance", body) {
+            val number = requireNotNull(port?.toIntOrNull()).also { require(it in 1..65535) }
+            val connection = URI("http://10.0.2.2:$number/turn-provenance").toURL().openConnection() as HttpURLConnection
+            try {
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+                connection.requestMethod = "POST"
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.outputStream.use { it.write(body.toString().toByteArray()) }
+                check(connection.responseCode == 200) { "agent_switch_turn_provenance_unavailable" }
+                MobileJson.parseToJsonElement(connection.inputStream.bufferedReader().use { it.readText() }).jsonObject
+            } finally {
+                connection.disconnect()
+            }
+        }
+    return result["matches"]?.jsonPrimitive?.booleanOrNull == true
 }

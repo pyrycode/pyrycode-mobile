@@ -139,6 +139,8 @@ if [ -z "${DETERMINISTIC}" ]; then
   case ",${REAL_TEST_TARGET}," in
     *,${TEST_CLASS},*|*,${TEST_CLASS}'#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies',*)
       E2E_AGENT_SWITCH_SELECTED=1 ;;
+    *,de.pyryco.mobile.recording.RecordedMobileSuiteTest,*|*,de.pyryco.mobile.recording.RecordedMobileSuiteTest'#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies',*)
+      E2E_AGENT_SWITCH_SELECTED=1 ;;
   esac
 fi
 if [ -n "${E2E_AGENT_SWITCH_SELECTED}" ] && [ -z "${E2E_CODEX_LEASE:-}" ]; then

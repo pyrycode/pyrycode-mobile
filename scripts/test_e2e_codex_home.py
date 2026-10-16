@@ -250,7 +250,8 @@ class CodexHomeLeaseTest(unittest.TestCase):
         agent.write_text("import os, signal, time\nfrom pathlib import Path\n"
                          "for key in ('E2E_CODEX_LEASE_FD', 'E2E_CODEX_LIFETIME_FD'):\n if key in os.environ: os.close(int(os.environ[key]))\n"
                          "def stop(*_):\n Path(os.environ['TERMINATING']).touch()\n"
-                         "signal.signal(signal.SIGTERM, stop)\nPath(os.environ['READY']).write_text(str(os.getpid()))\n"
+                         "signal.signal(signal.SIGTERM, stop)\nready = Path(os.environ['READY'])\n"
+                         "ready.with_suffix('.tmp').write_text(str(os.getpid()))\nready.with_suffix('.tmp').replace(ready)\n"
                          + ("while True: time.sleep(0.02)\n" if mode == "kill" else "while not Path(os.environ['RELEASE']).exists(): time.sleep(0.02)\n"))
         shell = self.root / 'shell.py'
         shell.write_text("import os, signal, subprocess, sys, time\nfrom pathlib import Path\n"
@@ -375,8 +376,11 @@ class CodexHomeLeaseTest(unittest.TestCase):
         import json
         cls = 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest'
         switch = cls + '#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies'
+        recorded = 'de.pyryco.mobile.recording.RecordedMobileSuiteTest'
         for live, deterministic, tests, selected in [('', '', '', True), ('1', '', '', True),
                 ('', '', switch, True), ('1', '', switch, True), ('1', '', cls, True),
+                ('1', '', recorded + '#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies', True),
+                ('1', '', recorded, True), ('1', '', recorded + '#other', False),
                 ('', '', cls+'#other', False), ('1', '', cls+'#other', False), ('1', '', switch+'Extra', False), ('', '1', '', False)]:
             with self.subTest(live=live, deterministic=deterministic, tests=tests):
                 env = dict(self.env)
@@ -394,6 +398,21 @@ class CodexHomeLeaseTest(unittest.TestCase):
                     self.assertIn('-pyry-name=' + ('e2e-live' if live else 'e2e-emulator'), daemon)
                 self.assertEqual(selected, '-Pandroid.testInstrumentationRunnerArguments.codexPrerequisite=' in args)
                 if tests: self.assertIn('class='+tests, args)
+
+    def test_capture_isolation_still_refuses_original_personal_and_production_homes(self):
+        isolated = self.root / 'capture-home'
+        isolated.mkdir(mode=0o700)
+        for home in (self.operator / '.codex', self.operator / '.pyry/prod/codex-home',
+                     self.operator / '.pyrycode/prod/codex-home'):
+            home.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with self.subTest(home=home), self.lease(dict(self.env, HOME=str(isolated),
+                    E2E_CODEX_OPERATOR_HOME=str(self.operator), PYRY_CODEX_CAPTURE_HOME=str(home))) as lease:
+                self.assertEqual('unsafe_home', lease.reason)
+            self.assertFalse((isolated / '.pyry/e2e-fixture/codex-home').exists())
+        with self.lease(dict(self.env, HOME=str(isolated), E2E_CODEX_OPERATOR_HOME=str(self.operator))) as lease:
+            self.assertEqual('', lease.reason)
+            self.assertEqual(self.home, (isolated / '.pyry/e2e-fixture/codex-home').resolve())
+        self.assertEqual('fixture-secret-do-not-copy', self.login.read_text())
 
 
 

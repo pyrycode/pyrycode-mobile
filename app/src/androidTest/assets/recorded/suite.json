@@ -72,12 +72,17 @@
     "interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes",
     "interactiveTurn_stopBackgroundTask_completesThenRepliesAgain",
     "interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain",
+    "interactiveTurn_switchAgentFromModelPick_confirmsAndReplies",
     "interactiveTurn_toolPrompt_rendersToolStepInThread",
     "interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy",
     "interactiveTurn_twoHostsArchive_staysPerHost",
     "interactiveTurn_twoHostsCollidingConversationId_stayPerHost"
   ],
   "scenarios": [
+    {
+      "method": "interactiveTurn_switchAgentFromModelPick_confirmsAndReplies",
+      "fixture": null
+    },
     {
       "method": "interactiveTurn_archiveRestore_roundTripsListMembership",
       "ticket": 2185,

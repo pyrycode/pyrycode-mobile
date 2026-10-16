@@ -52,13 +52,14 @@ class CodexHomeLease:
             self.reason = 'configuration_missing'
             return
         operator = Path(self.env['HOME']).resolve(strict=True)
+        source_operator = Path(self.env.get('E2E_CODEX_OPERATOR_HOME', self.env['HOME'])).resolve(strict=True)
         home = Path(configured).resolve(strict=True)
-        forbidden = [operator / '.codex', operator / '.pyry', operator / '.pyrycode']
+        forbidden = [root / child for root in (operator, source_operator) for child in ('.codex', '.pyry', '.pyrycode')]
         if self.env.get('CODEX_HOME'):
             forbidden.append(Path(self.env['CODEX_HOME']).resolve())
         name = self.env.get('PYRY_NAME', '')
         info = home.stat()
-        if (home == operator or any(home == root.resolve() or home.is_relative_to(root.resolve()) for root in forbidden)
+        if (home in (operator, source_operator) or any(home == root.resolve() or home.is_relative_to(root.resolve()) for root in forbidden)
                 or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
                 or info.st_mode & 0o077 or not re.fullmatch(r'e2e-[A-Za-z0-9_.-]+', name)):
             self.reason = 'unsafe_home'
