@@ -1,0 +1,517 @@
+{
+  "format": "pyrycode.mobile-suite-index",
+  "version": 1,
+  "foundationTicket": 2183,
+  "gateTicket": 2190,
+  "liveSelection": [
+    "interactiveTurn_archiveRestore_roundTripsListMembership",
+    "interactiveTurn_archiveTwoChats_listsSecondArchivedFirst",
+    "interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes",
+    "interactiveTurn_attentionDot_followsARealTurn",
+    "interactiveTurn_backgroundAgentProgress_showsOnRunningCard",
+    "interactiveTurn_backgroundAgent_followsBottomUntilFinished",
+    "interactiveTurn_backgroundAgent_replyStaysUnderAgent",
+    "interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect",
+    "interactiveTurn_backgroundTask_countsInActionsMenuAndPanel",
+    "interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread",
+    "interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn",
+    "interactiveTurn_chosenEffort_appliesFromTheFirstTurn",
+    "interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart",
+    "interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost",
+    "interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip",
+    "interactiveTurn_createEditArchiveChannel_readsPromptBack",
+    "interactiveTurn_deleteConversation_removesFromListAndClosesThread",
+    "interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts",
+    "interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes",
+    "interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend",
+    "interactiveTurn_finishedReply_systemCopyCopiesSelectedWord",
+    "interactiveTurn_hostSystemPrompt_editsResetsAndCancels",
+    "interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn",
+    "interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile",
+    "interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes",
+    "interactiveTurn_listArchiveEntry_opensArchived",
+    "interactiveTurn_markdownLink_opensLiveNoteInReader",
+    "interactiveTurn_markdownReply_rendersFormattedBody",
+    "interactiveTurn_modelChange_roundTripsAndStaysPerConversation",
+    "interactiveTurn_muteChannel_roundTripsThroughTheHost",
+    "interactiveTurn_newSession_rendersSessionBoundaryDelimiter",
+    "interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect",
+    "interactiveTurn_offlineRetry_reconnectsSameHostAndReplies",
+    "interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk",
+    "interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild",
+    "interactiveTurn_otherConversationAttentionPills_waitingAndFinished",
+    "interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload",
+    "interactiveTurn_peerQueue_staysConsistentAcrossClients",
+    "interactiveTurn_peerStartedTurn_continuesOnPhone",
+    "interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation",
+    "interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool",
+    "interactiveTurn_permissionPrompts_heldPerConversation",
+    "interactiveTurn_pingPrompt_footerShowsContextUsage",
+    "interactiveTurn_pingPrompt_statusSheetShowsRunningModel",
+    "interactiveTurn_pingPrompt_streamsPingReplyIntoThread",
+    "interactiveTurn_questionAnswer_reachesTheAskingConversation",
+    "interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive",
+    "interactiveTurn_reconnect_slashCommandsAndCompactStillWork",
+    "interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel",
+    "interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage",
+    "interactiveTurn_renameConversation_relabelsTopBarAndListRow",
+    "interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn",
+    "interactiveTurn_replySuggestion_longPressSends",
+    "interactiveTurn_saveAsChannel_promotesToChannelTier",
+    "interactiveTurn_scannerConfirm_waitsForHostThenOpensList",
+    "interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched",
+    "interactiveTurn_sendQueuedNow_reachesRunningTurn",
+    "interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog",
+    "interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes",
+    "interactiveTurn_stopBackgroundTask_completesThenRepliesAgain",
+    "interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain",
+    "interactiveTurn_toolPrompt_rendersToolStepInThread",
+    "interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy",
+    "interactiveTurn_twoHostsArchive_staysPerHost",
+    "interactiveTurn_twoHostsCollidingConversationId_stayPerHost"
+  ],
+  "scenarios": [
+    {
+      "method": "interactiveTurn_archiveRestore_roundTripsListMembership",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_archiveTwoChats_listsSecondArchivedFirst",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes",
+      "ticket": 2188,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_attentionDot_followsARealTurn",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_backgroundAgentProgress_showsOnRunningCard",
+      "ticket": 2187,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_backgroundAgent_followsBottomUntilFinished",
+      "ticket": 2187,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_backgroundAgent_replyStaysUnderAgent",
+      "ticket": 2187,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect",
+      "ticket": 2189,
+      "fixture": null,
+      "retainedLive": [
+        "FCM delivery"
+      ]
+    },
+    {
+      "method": "interactiveTurn_backgroundTask_countsInActionsMenuAndPanel",
+      "ticket": 2187,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread",
+      "ticket": 2189,
+      "fixture": null,
+      "retainedLive": [
+        "FCM delivery"
+      ]
+    },
+    {
+      "method": "interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_chosenEffort_appliesFromTheFirstTurn",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart",
+      "ticket": 2188,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip",
+      "ticket": 2188,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_createEditArchiveChannel_readsPromptBack",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_deleteConversation_removesFromListAndClosesThread",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes",
+      "ticket": 2188,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_finishedReply_systemCopyCopiesSelectedWord",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_hostSystemPrompt_editsResetsAndCancels",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_listArchiveEntry_opensArchived",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_longRunningTool_statusAreaShowsElapsed",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_markdownLink_opensLiveNoteInReader",
+      "ticket": 2188,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_markdownReply_rendersFormattedBody",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_modelChange_roundTripsAndStaysPerConversation",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_muteChannel_roundTripsThroughTheHost",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_newSession_rendersSessionBoundaryDelimiter",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_offlineRetry_reconnectsSameHostAndReplies",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_otherConversationAttentionPills_waitingAndFinished",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload",
+      "ticket": 2188,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_peerQueue_staysConsistentAcrossClients",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_peerStartedTurn_continuesOnPhone",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_permissionPrompts_heldPerConversation",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_pingPrompt_footerShowsContextUsage",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_pingPrompt_statusSheetShowsRunningModel",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_pingPrompt_streamsPingReplyIntoThread",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_questionAnswer_reachesTheAskingConversation",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_reconnect_slashCommandsAndCompactStillWork",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_renameConversation_relabelsTopBarAndListRow",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_replySuggestion_longPressSends",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_saveAsChannel_promotesToChannelTier",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_scannerConfirm_waitsForHostThenOpensList",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_sendQueuedNow_reachesRunningTurn",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes",
+      "ticket": 2188,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_stopBackgroundTask_completesThenRepliesAgain",
+      "ticket": 2187,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain",
+      "ticket": 2186,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_thinkPrompt_showsThinkingSpinnerDuringTurn",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_toolPrompt_rendersToolStepInThread",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_twoHostsArchive_staysPerHost",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_twoHostsCollidingConversationId_stayPerHost",
+      "ticket": 2185,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "negativeControl_toolClaudeNeverUses_isNeverDisplayed",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    },
+    {
+      "method": "negativeControl_wordClaudeNeverSays_isNeverDisplayed",
+      "ticket": 2184,
+      "fixture": null,
+      "retainedLive": []
+    }
+  ]
+}
