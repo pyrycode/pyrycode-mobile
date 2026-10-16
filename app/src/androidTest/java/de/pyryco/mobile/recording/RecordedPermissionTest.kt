@@ -160,14 +160,17 @@ class RecordedPermissionTest {
                         onRetry = {},
                         modalState = modal,
                         armedOptionId = armed,
-                        onModalOption = vm::onModalOption,
+                        onModalOption = { modalId, optionId -> vm.onModalOption(optionId, modalId) },
                         onModalCancel = vm::onModalCancel,
                     )
                 }
             }
             rule.waitForIdle()
             rule.onNode(hasSetTextAction()).performTextInput(prompt)
-            rule.onNodeWithContentDescription(instrumentation.targetContext.getString(de.pyryco.mobile.R.string.cd_send_message)).performClick()
+            rule
+                .onNodeWithContentDescription(
+                    instrumentation.targetContext.getString(de.pyryco.mobile.R.string.cd_send_message),
+                ).performClick()
             android.util.Log.i("RecordedExchange", "stage=prompt-sent")
             rule.waitUntil(120000) { vm.currentModal.value is ModalUiState.Open }
             android.util.Log.i("RecordedExchange", "stage=permission-shown")
