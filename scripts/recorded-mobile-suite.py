@@ -163,7 +163,7 @@ def capture(serial, method, destination, pyry, daemon_source):
         legacy.private_write(home / '.claude.json', json.dumps(onboarding).encode())
         child = {key: value for key, value in os.environ.items() if not key.startswith('OP_')}
         child.update(HOME=str(home), TMPDIR='/tmp/', ANDROID_SERIAL=serial, LIVE='1', E2E_INSTALLED='1', DEVICE='connected',
-                     E2E_DISABLE_ANIMATIONS='1', PYRY_BIN=str(pyry), PYRY_NAME='recorded-mobile', PYRYCODE_SRC=str(daemon_source),
+                     E2E_DISABLE_ANIMATIONS='1', PYRY_BIN=str(pyry), PYRY_NAME='e2e-recorded-mobile', PYRYCODE_SRC=str(daemon_source),
                      LIVE_TESTS=CLASS + '#' + method, RECORDED_SUITE_MODE='capture', RECORDED_SUITE_FILE=name,
                      E2E_FAULT_EVIDENCE_DIR=str(evidence / 'private'))
         # Gradle, if a fixture needs it, must use the configured cache rather than the isolated Claude home.
