@@ -464,8 +464,24 @@ def contract(document):
             'lifecycle': lifecycle}
 
 
-def comparison_contracts(reviewed, fresh):
-    # Older assets keep their stricter request counts when they did not declare a model.
+QUERY_POLICY = {'version': 1, 'modelQueryNormalization': 'reconnect-catalog-race-v1',
+                'settingsReadNormalization': 'recorded-snapshots-v1',
+                'backfillProbeNormalization': 'unsupported-legacy-probe-v1'}
+
+
+def suite_query_policy():
+    policy = json.loads(MANIFEST.read_text()).get('queryPolicy')
+    if policy is not None:
+        require(policy == QUERY_POLICY and type(policy.get('version')) is int, 'Unsupported suite query policy')
+    return policy
+
+
+def comparison_contracts(reviewed, fresh, suite_policy=None):
+    if suite_policy is not None:
+        require(suite_policy == QUERY_POLICY and type(suite_policy.get('version')) is int, 'Unsupported suite query policy')
+        fields = {key: value for key, value in suite_policy.items() if key != 'version'}
+        reviewed, fresh = {**reviewed, **fields}, {**fresh, **fields}
+    # Standalone assets keep strict counts unless both declare the same model.
     fields = ['modelQueryNormalization', 'settingsReadNormalization', 'backfillProbeNormalization']
     policy = {key: reviewed[key] for key in fields if reviewed.get(key) and reviewed.get(key) == fresh.get(key)}
     def document(value):
@@ -484,7 +500,7 @@ def verify(args):
     captured = capture(args.serial, original['scenario'], candidate, args.pyry, args.daemon_source)
     reviewed_replay = replay(args.serial, args.fixture)
     fresh_replay = replay(args.serial, candidate)
-    reviewed_contract, fresh_contract, policy = comparison_contracts(original, json.loads(candidate.read_text()))
+    reviewed_contract, fresh_contract, policy = comparison_contracts(original, json.loads(candidate.read_text()), suite_query_policy())
     require(reviewed_contract == fresh_contract, 'Fresh Claude request contract changed; review candidate without replacing the recording')
     result = {'scenario': original['scenario'], 'capture': captured, 'reviewedReplay': reviewed_replay,
               'freshReplay': fresh_replay, 'contractMatched': True, 'comparisonNormalizations': policy}

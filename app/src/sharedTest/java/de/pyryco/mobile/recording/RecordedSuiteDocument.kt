@@ -27,6 +27,18 @@ internal class RecordedSuiteDocument private constructor(
             .map { it.jsonPrimitive.content }
             .toSet()
 
+    /** A reviewed suite can declare the existing query models for historical raw captures. */
+    fun withQueryPolicy(policy: JsonObject): RecordedSuiteDocument {
+        val fields =
+            mapOf(
+                "modelQueryNormalization" to JsonPrimitive("reconnect-catalog-race-v1"),
+                "settingsReadNormalization" to JsonPrimitive("recorded-snapshots-v1"),
+                "backfillProbeNormalization" to JsonPrimitive("unsupported-legacy-probe-v1"),
+            )
+        require(policy == JsonObject(fields + ("version" to JsonPrimitive(1)))) { "Unsupported suite query policy" }
+        return RecordedSuiteDocument(JsonObject(document + fields), steps)
+    }
+
     fun tape() =
         RecordedSuiteTape(
             steps,

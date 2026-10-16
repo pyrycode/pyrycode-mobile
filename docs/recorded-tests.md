@@ -130,8 +130,11 @@ installed app and test package hashes against the local build outputs. Evidence 
 those verified hashes. Fresh compatibility evidence lives outside Android assets so its
 own package hashes cannot change the test package they describe. The complete gate
 requires one common client build and producer, one successful real capture and two counted
-replays per scenario, matching contracts and no skipped methods. Older recordings retain
-strict query counts unless both recordings declare the same polling model.
+replays per scenario, matching contracts and no skipped methods. The suite index declares
+version 1 of its query policy for all recordings, including historical captures. It enables
+only the three bounded models below. Raw captured messages and their capture hashes remain
+verifiable. Standalone recordings without this suite policy retain strict query counts
+unless both recordings declare the same model. Unknown policy keys or versions fail.
 
 The full suite preserves all mutating commands in recorded order. Independent connections
 may progress separately. Background queries match their complete owner, payload and count.

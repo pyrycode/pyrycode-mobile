@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.network.MobileJson
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -33,6 +34,34 @@ class RecordedSuiteDocumentTest {
         val actual = Envelope(20, "list_conversations", "2026-10-17T00:00:00Z", JsonObject(emptyMap()))
         tape.request("phone", actual)
         tape.assertComplete()
+    }
+
+    @Test fun aVersionedSuitePolicyAppliesOnlyKnownQueryRulesWithoutChangingCapturedEvidence() {
+        val fields = setOf("modelQueryNormalization", "settingsReadNormalization", "backfillProbeNormalization")
+        val original = JsonObject(candidate() - fields)
+        val parsed = RecordedSuiteDocument.parse(original.toString())
+        val policy =
+            MobileJson
+                .parseToJsonElement(
+                    """{"version":1,"modelQueryNormalization":"reconnect-catalog-race-v1","settingsReadNormalization":"recorded-snapshots-v1","backfillProbeNormalization":"unsupported-legacy-probe-v1"}""",
+                ).jsonObject
+        val resolved = parsed.withQueryPolicy(policy)
+        assertEquals(parsed.steps, resolved.steps)
+        assertEquals(original.getValue("source"), resolved.document.getValue("source"))
+        fields.forEach { key ->
+            assertEquals(null, parsed.document[key])
+            assertEquals(policy[key], resolved.document[key])
+        }
+        for (invalid in listOf(
+            JsonObject(policy + ("version" to JsonPrimitive(2))),
+            JsonObject(policy + ("settingsReadNormalization" to JsonPrimitive("accept-anything"))),
+            JsonObject(policy + ("ignoreCommands" to JsonPrimitive(true))),
+        )) {
+            assertThrows(IllegalArgumentException::class.java) { parsed.withQueryPolicy(invalid) }
+        }
+        assertThrows(IllegalStateException::class.java) {
+            resolved.tape().send("phone", Envelope(20, "list_conversations", "time", MobileJson.parseToJsonElement("""{"changed":true}""")))
+        }
     }
 
     @Test fun missingProvenanceWrongVersionAndCredentialsFailWithFixedDiagnostics() {

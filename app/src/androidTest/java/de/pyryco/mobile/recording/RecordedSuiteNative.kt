@@ -9,6 +9,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.NoiseSessionPump
 import de.pyryco.mobile.data.network.OkHttpRelayTransport
@@ -91,7 +92,14 @@ internal object RecordedSuiteNative {
                     .bufferedReader()
                     .use { it.readText() }
             }
-        val document = RecordedSuiteDocument.parse(text)
+        val index =
+            instrumentation.context.assets
+                .open("recorded/suite.json")
+                .bufferedReader()
+                .use { it.readText() }
+        val policy = MobileJson.parseToJsonElement(index).jsonObject["queryPolicy"]?.jsonObject
+        val parsed = RecordedSuiteDocument.parse(text)
+        val document = policy?.let(parsed::withQueryPolicy) ?: parsed
         check(document.scenario == description.methodName) { "Recording belongs to another method" }
         val session = Session(document, args)
         current = session

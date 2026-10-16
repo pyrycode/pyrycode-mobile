@@ -3,6 +3,12 @@
   "version": 1,
   "foundationTicket": 2183,
   "gateTicket": 2190,
+  "queryPolicy": {
+    "version": 1,
+    "modelQueryNormalization": "reconnect-catalog-race-v1",
+    "settingsReadNormalization": "recorded-snapshots-v1",
+    "backfillProbeNormalization": "unsupported-legacy-probe-v1"
+  },
   "liveSelection": [
     "interactiveTurn_archiveRestore_roundTripsListMembership",
     "interactiveTurn_archiveTwoChats_listsSecondArchivedFirst",

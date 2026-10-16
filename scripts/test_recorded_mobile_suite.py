@@ -224,6 +224,31 @@ class SuiteDriverTest(unittest.TestCase):
         self.assertNotEqual(left, right)
         self.assertNotIn('settingsReadNormalization', original)
 
+    def test_explicit_suite_policy_can_qualify_older_captures_without_rewriting_them(self):
+        original = self.fixture()
+        original['steps'][0]['owner'] = 'phone/host/0'
+        original['steps'][0]['message'].update(type='request_session_settings', payload={'conversation_id':'chat'})
+        reply = copy.deepcopy(original['steps'][0]);reply['direction']='daemon'
+        reply['message'].update(id=2,type='session_settings',payload={'effort':'high'},in_reply_to=1)
+        original['steps'].append(reply)
+        fresh=copy.deepcopy(original)
+        for step in copy.deepcopy(original['steps']):
+            step['message']['id'] += 2
+            if 'in_reply_to' in step['message']:step['message']['in_reply_to'] += 2
+            fresh['steps'].append(step)
+        before=copy.deepcopy(original)
+        policy={'version':1,'modelQueryNormalization':'reconnect-catalog-race-v1',
+                'settingsReadNormalization':'recorded-snapshots-v1','backfillProbeNormalization':'unsupported-legacy-probe-v1'}
+        left,right,declared=suite.comparison_contracts(original,fresh,policy)
+        self.assertEqual(left,right)
+        self.assertEqual(original,before)
+        self.assertEqual(declared['settingsReadNormalization'],'recorded-snapshots-v1')
+        changed=copy.deepcopy(fresh);changed['steps'][0]['message']['payload']['conversation_id']='other'
+        self.assertNotEqual(*suite.comparison_contracts(original,changed,policy)[:2])
+        for invalid in [{**policy,'version':2},{**policy,'ignoreCommands':True},
+                        {**policy,'settingsReadNormalization':'accept-anything'}]:
+            with self.assertRaises(ValueError):suite.comparison_contracts(original,fresh,invalid)
+
 
 if __name__ == '__main__':
     unittest.main()

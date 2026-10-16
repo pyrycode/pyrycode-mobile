@@ -41,6 +41,12 @@ def counted(receipt, checksum):
 
 
 def audit(manifest, actual, selected, directory):
+    policy = manifest.get('queryPolicy')
+    if policy is not None and (policy != {
+            'version': 1, 'modelQueryNormalization': 'reconnect-catalog-race-v1',
+            'settingsReadNormalization': 'recorded-snapshots-v1',
+            'backfillProbeNormalization': 'unsupported-legacy-probe-v1'} or type(policy.get('version')) is not int):
+        raise ValueError('Unsupported suite query policy')
     rows = manifest['scenarios']
     named = [row['method'] for row in rows]
     if len(named) != len(set(named)) or set(named) != actual:
