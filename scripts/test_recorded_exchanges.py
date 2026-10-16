@@ -1,9 +1,11 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location('recorded_exchanges', Path(__file__).with_name('recorded-exchanges.py'))
 recorded = importlib.util.module_from_spec(spec)
@@ -54,6 +56,13 @@ class RecordingContractTest(unittest.TestCase):
             if change == 'handshake': invalid['wire'][0]['message']['type'] = 'hello'
             if change == 'duplicate': invalid['wire'].append(invalid['wire'][0])
             with self.assertRaises(ValueError): recorded.validate_recording(invalid)
+
+    def test_unauthenticated_capture_fails_without_writing_a_candidate(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {}, clear=True):
+            candidate = Path(directory) / 'candidate.json'
+            with self.assertRaisesRegex(RuntimeError, 'configured Claude test login'):
+                recorded.capture('unused-device', candidate, 'unused-daemon')
+            self.assertFalse(candidate.exists())
 
     def test_private_candidates_never_overwrite(self):
         with tempfile.TemporaryDirectory() as directory:

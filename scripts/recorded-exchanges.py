@@ -2,6 +2,7 @@
 """Capture one controlled real permission flow, or replay without Claude or a real daemon."""
 import argparse
 import base64
+import datetime
 import hashlib
 import json
 import os
@@ -66,7 +67,7 @@ def require_safe(value):
 def validate_recording(document):
     """Reject malformed candidates before they can be written or sent to Android."""
     require_safe(document)
-    if document.get('format') != 'pyrycode.mobile-exchange' or document.get('version') != 1:
+    if document.get('format') != 'pyrycode.mobile-exchange' or type(document.get('version')) is not int or document.get('version') != 1:
         raise ValueError('Unsupported recording format')
     source = document['source']
     for key in ['mobileRevision', 'daemonRevision']:
@@ -75,7 +76,8 @@ def validate_recording(document):
         if not re.fullmatch('[a-f0-9]{64}', source[key]): raise ValueError('Invalid producer checksum')
     if not source['claudeVersion'] or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ', source['capturedAt']):
         raise ValueError('Invalid producer metadata')
-    if 'interactive' not in document['capabilities']:
+    datetime.datetime.strptime(source['capturedAt'], '%Y-%m-%dT%H:%M:%SZ')
+    if not isinstance(document['capabilities'], list) or 'interactive' not in document['capabilities']:
         raise ValueError('Missing permission capability')
     for key in ['prompt', 'expectedReply', 'allowLabel']:
         if not isinstance(document['scenario'][key], str) or not document['scenario'][key].strip():
