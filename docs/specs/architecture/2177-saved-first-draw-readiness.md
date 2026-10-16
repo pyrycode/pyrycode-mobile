@@ -56,6 +56,23 @@ Pending for documentation: update `docs/knowledge/features/thread-screen-testing
 
 ## Revisions
 
+### 2026-10-16: resume after the external runner repair
+
+#2178 is closed after agents PR #186 (`800e719`) deployed shared admission for APK
+preparation and device execution, owned preparation cleanup, validated focused UI
+selectors and in-process Kotlin compilation. Its controlled runner regressions
+reported 83 passing checks. The original compiler's initiating ownership remains
+unproved; safe remediation and the runner repair do not attribute historical draws.
+
+Compare the exact unchanged `4b21cef23ef9d395f667694ab2a6df97c380deaf` in a temporary
+detached baseline worktree against this branch, using the deployed supported focused
+gate for all four methods. Retain numeric host/guest CPU counters every five seconds,
+gate admission/preparation phases, original per-opening readiness/draw logs and XML.
+No Mobile measurement logic repair is evidenced or planned. The current branch has
+unrelated main changes since the baseline; record both revisions and test/helper
+hashes rather than treating these trees as identical. Independent remaining latency
+misses require a separate follow-up, without weakening any assertion.
+
 ### 2026-10-15: demonstrated external host pressure; wait on #2178
 
 The unchanged focused class executed four tests: one passed, three failed, none skipped (exit 1). Both draw methods and the slow-restore control failed readiness before installing an opening; the held-pipe control passed. The three failed methods sampled 102/102/99 responsive windows, with idle ranges 1–55% / 1–40% / 0–36% and zero windows at >=80% idle. No draw phases were measured.
