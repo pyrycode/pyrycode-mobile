@@ -131,7 +131,31 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ -n "${LIVE}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${E2E_LOGIN_TRIED:-}" ]; then
   E2E_LOGIN_TRIED=1 exec "${REPO_ROOT}/scripts/with-claude-login.sh" bash "${BASH_SOURCE[0]}" "$@"
 fi
+# #2052: normalize real selection before startup. Both the default class and the
+# curated full LIVE suite include switching; focused selections use exact entries.
+REAL_TEST_TARGET="${LIVE_TESTS:-${TEST_CLASS}}"
+E2E_AGENT_SWITCH_SELECTED=""
+if [ -z "${DETERMINISTIC}" ]; then
+  case ",${REAL_TEST_TARGET}," in
+    *,${TEST_CLASS},*|*,${TEST_CLASS}'#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies',*)
+      E2E_AGENT_SWITCH_SELECTED=1 ;;
+    *,de.pyryco.mobile.recording.RecordedMobileSuiteTest,*|*,de.pyryco.mobile.recording.RecordedMobileSuiteTest'#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies',*)
+      E2E_AGENT_SWITCH_SELECTED=1 ;;
+  esac
+fi
+if [ -n "${E2E_AGENT_SWITCH_SELECTED}" ] && [ -z "${E2E_CODEX_LEASE:-}" ]; then
+  PYRY_NAME="${PYRY_NAME}" exec python3 "${REPO_ROOT}/scripts/e2e-codex-home.py" bash "${BASH_SOURCE[0]}" "$@"
+fi
 GRADLEW="${REPO_ROOT}/gradlew"
+# A refused home must never reach daemon startup: even an unavailable Codex binary
+# lets the daemon prepare its home first. Count the named failure without pairing.
+if [ -n "${E2E_AGENT_SWITCH_SELECTED}" ] && [ -n "${E2E_CODEX_UNMET:-}" ]; then
+  exec "${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" --rerun \
+    -PuseRelayRepository=true \
+    -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies \
+    -Pandroid.testInstrumentationRunnerArguments.codexPrerequisiteOnly=true \
+    -Pandroid.testInstrumentationRunnerArguments.codexPrerequisite="${E2E_CODEX_UNMET}" --console=plain
+fi
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pyry-e2e.XXXXXX")"
 RELAY_LOG="${WORK_DIR}/relay.log"
 DAEMON_LOG="${WORK_DIR}/daemon.log"
@@ -643,6 +667,14 @@ cleanup() {
   [ -n "${BYPASS_PID:-}" ] && kill "${BYPASS_PID}" 2>/dev/null || true
   [ -n "${ANSWER_PID:-}" ] && kill "${ANSWER_PID}" 2>/dev/null || true
   [ -n "${RELAY_PID}" ] && kill "${RELAY_PID}" 2>/dev/null || true
+  # Joining the controller proves the primary daemon was joined, including forced teardown.
+  if [ -n "${DAEMON_PID}" ]; then
+    if ! wait "${DAEMON_PID}" 2>/dev/null; then
+      log "event=owned_daemon_cleanup outcome=failed"
+      [ "${code}" -ne 0 ] || code=1
+      result="${code}"
+    fi
+  fi
   wait 2>/dev/null || true
   # Every managed run retains diagnostics, including detached/main comparisons.
   # Keep the explicit destination override introduced by #2137. Next comes the
@@ -1077,11 +1109,18 @@ elif [ -n "${LIVE}" ]; then
   # LIVE (rung 3): dial the PRODUCTION relay over wss:// (TLS). PYRY_ALLOW_INSECURE_RELAY is NEVER set on
   # this path — TLS-only transport is enforced by omitting the flag here, not by a runtime toggle. Runs
   # under the real HOME (real claude needs ~/.claude auth); isolation is by -pyry-name (~/.pyry/e2e-live/).
-  DAEMON_COMMAND+=(PYRY_MOBILE_V2=1 "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}"
-    "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}" -- --model sonnet)
+  # Codex flags precede Claude passthrough, which must remain last.
+  if [ -n "${E2E_CODEX_BIN:-}" ]; then
+    DAEMON_COMMAND+=(PYRY_MOBILE_V2=1 "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" "-pyry-codex=${E2E_CODEX_BIN}")
+  else
+    DAEMON_COMMAND+=(PYRY_MOBILE_V2=1 "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}")
+  fi
+  DAEMON_COMMAND+=("-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}" -- --model sonnet)
 else
   DAEMON_COMMAND+=(PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1
-    "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}" -- --model sonnet)
+    "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}")
+  if [ -n "${E2E_CODEX_BIN:-}" ]; then DAEMON_COMMAND+=("-pyry-codex=${E2E_CODEX_BIN}"); fi
+  DAEMON_COMMAND+=("-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}" -- --model sonnet)
 fi
 # #2095: the remembered-effort scenario keeps saved model empty and uses the default menu's levels.
 # An operator Haiku default reports no applied effort. Pin the real test launch to Sonnet; per-session
@@ -1656,9 +1695,10 @@ elif [ -n "${LIVE}" ]; then
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_switchAgentFromModelPick_confirmsAndReplies"
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
 else
-  TEST_TARGET="${TEST_CLASS}"
+  TEST_TARGET="${REAL_TEST_TARGET}"
 fi
 log "running ${DEVICE}DebugAndroidTest (headless emulator: boot → install → ${TEST_TARGET} → teardown)…"
 log "  phone relayUrl = ${PHONE_RELAY_URL}"
@@ -1673,6 +1713,9 @@ Path(sys.argv[1]).write_text(json.dumps([path for path in sys.argv[2:] if path])
 PY_SESSION_SOCKETS
 
 GRADLE_TEST_ARGS=(-PuseRelayRepository=true)
+if [ -n "${E2E_AGENT_SWITCH_SELECTED:-}" ]; then
+  GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.codexPrerequisite="${E2E_CODEX_UNMET-not_provisioned}")
+fi
 if [ -n "${STOP_TASK_URL:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.stopTaskFixtureUrl="${STOP_TASK_URL}")
 fi

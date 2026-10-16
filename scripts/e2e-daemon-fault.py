@@ -10,6 +10,7 @@ from e2e_session_cleanup import TestSessions
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import math
+import os
 from pathlib import Path
 import re
 import socket
@@ -35,6 +36,34 @@ def post_batch(socket_path, body):
             reply = json.loads(client.makefile("rb").readline(4096))
             if reply.get("ok") is not True or reply.get("error"):
                 raise RuntimeError("owned daemon post refused")
+
+
+def turn_matches_session(socket_path, body):
+    # Test-only provenance from this isolated daemon's log, never agent sign-in files.
+    socket_path = Path(socket_path)
+    if not re.fullmatch(r"e2e-[A-Za-z0-9_.-]+\.sock", socket_path.name) or not isinstance(body, dict):
+        raise ValueError("invalid turn proof")
+    for key in ("conversation", "turn", "session"):
+        if not isinstance(body.get(key), str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", body[key]):
+            raise ValueError("invalid turn proof")
+    if body.get("agent") not in ("claude", "codex"):
+        raise ValueError("invalid turn proof")
+    root = socket_path.with_suffix("")
+    directory = root / "conversations" / body["conversation"] / "history"
+    if directory.resolve() != directory.absolute():
+        raise ValueError("invalid turn proof")
+    matches = []
+    segments = sorted(directory.glob("segment-*.jsonl"))
+    if len(segments) > 4:
+        raise ValueError("turn proof too large")
+    for segment in segments:
+        if segment.is_symlink() or segment.stat().st_size > 2 * 1024 * 1024:
+            raise ValueError("invalid turn proof")
+        for line in segment.read_text().splitlines():
+            entry = json.loads(line)
+            if entry.get("type") == "turn_end" and entry.get("payload", {}).get("turn_id") == body["turn"]:
+                matches.append(entry.get("session"))
+    return matches == [{"kind": body["agent"], "session_id": body["session"]}]
 
 
 def main():
@@ -94,8 +123,11 @@ def main():
             ready = False
             phase = "spawning"
             child = None  # The exited predecessor does not belong to the new generation.
+            # Keep the wrapper's lease and lifetime witness through the actual daemon.
+            descriptors = tuple(int(os.environ[key]) for key in ("E2E_CODEX_LEASE_FD", "E2E_CODEX_LIFETIME_FD")
+                                if os.environ.get(key))
             try:
-                child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+                child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, pass_fds=descriptors)
             except OSError:
                 phase = "spawn_failed"
                 record("spawn", 503, started)
@@ -146,7 +178,8 @@ def main():
                 child.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 phase = "stop_timeout"
-                raise
+                child.kill()
+                child.wait(timeout=5)
 
     def cleanup_sockets():
         if not args.cleanup_sockets_file:
@@ -179,6 +212,19 @@ def main():
                     if not 0 < size <= 1024:
                         raise ValueError("invalid synthetic post control")
                     post_batch(args.control_socket, json.loads(self.rfile.read(size)))
+                elif self.path == "/turn-provenance":
+                    self.connection.settimeout(5)
+                    size = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < size <= 1024:
+                        raise ValueError("invalid turn proof")
+                    matched = turn_matches_session(args.control_socket, json.loads(self.rfile.read(size)))
+                    payload = json.dumps({"matches": matched}).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
                 elif self.path == "/stop":
                     stop()
                 elif self.path == "/start":
@@ -213,6 +259,9 @@ def main():
     server = HTTPServer(("127.0.0.1", 0), Handler)
 
     def shutdown(_signum, _frame):
+        # A repeated shutdown must not interrupt the daemon join in finally.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, shutdown)

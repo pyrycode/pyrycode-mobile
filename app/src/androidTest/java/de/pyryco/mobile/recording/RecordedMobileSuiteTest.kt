@@ -120,6 +120,9 @@ class RecordedMobileSuiteTest {
     @Test fun interactiveTurn_modelChange_roundTripsAndStaysPerConversation() =
         original.interactiveTurn_modelChange_roundTripsAndStaysPerConversation()
 
+    @Test fun interactiveTurn_switchAgentFromModelPick_confirmsAndReplies() =
+        original.interactiveTurn_switchAgentFromModelPick_confirmsAndReplies()
+
     @Test
     fun interactiveTurn_muteChannel_roundTripsThroughTheHost() = original.interactiveTurn_muteChannel_roundTripsThroughTheHost()
 

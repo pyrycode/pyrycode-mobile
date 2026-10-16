@@ -215,5 +215,24 @@ class EmulatorCleanupTest(unittest.TestCase):
                         self.assertEqual("final-child-write", (self.evidence(root)[0].parent / "daemon.log").read_text())
 
 
+    def test_owned_controller_cleanup_failure_fails_green_and_preserves_red(self):
+        for code in (0, 7):
+            for managed in (False, True):
+                with self.subTest(code=code, managed=managed), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp).resolve()
+                    self.prepare(root)
+                    # run_cleanup overrides ambient agents/evidence settings with private fixture paths.
+                    result = self.run_cleanup(root, code, managed=managed, body="(exit 9) &\nDAEMON_PID=$!")
+                    self.assertIn("event=owned_daemon_cleanup outcome=failed", result.stdout)
+                    self.assertNotIn("retention=failed", result.stdout)
+                    if managed:
+                        self.assertIn("retention=complete", result.stdout)
+                        self.assertEqual(code or 1, json.loads(self.evidence(root)[0].read_text())["harness_exit_code"])
+                    else:
+                        self.assertEqual([], self.evidence(root))
+                    self.assertTrue((root / "work").exists())
+                    self.assertEqual(code or 1, result.returncode, result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

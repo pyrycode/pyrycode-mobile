@@ -1,7 +1,9 @@
 """Process ownership proof for the e2e Offline Retry fault controller."""
 
 import json
+import importlib.util
 import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
@@ -85,9 +87,81 @@ die() { printf '%s\\n' "$1" >&2; exit 1; }
 
 
 class DaemonFaultTest(unittest.TestCase):
-    def test_stop_then_start_replaces_only_the_owned_child(self):
+    def test_authored_completion_requires_daemon_recorded_successor_and_agent(self):
+        spec = importlib.util.spec_from_file_location('fault', ROOT / 'e2e-daemon-fault.py')
+        module = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(ROOT))
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            sys.path.pop(0)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            socket = root / 'e2e-fixture.sock'
+            history = root / 'e2e-fixture/conversations/channel/history'
+            history.mkdir(parents=True)
+            entry = {'type': 'turn_end', 'payload': {'turn_id': 'authored'},
+                     'session': {'kind': 'codex', 'session_id': 'successor'}}
+            (history / 'segment-00000000000000000001.jsonl').write_text(json.dumps(entry) + '\n')
+            body = {'conversation': 'channel', 'turn': 'authored', 'session': 'successor', 'agent': 'codex'}
+            self.assertTrue(module.turn_matches_session(socket, body))
+            for key, value in [('session', 'predecessor'), ('agent', 'claude'), ('turn', 'handover')]:
+                self.assertFalse(module.turn_matches_session(socket, dict(body, **{key: value})))
+            for value in ('../production', '', 'x' * 129):
+                with self.assertRaises(ValueError):
+                    module.turn_matches_session(socket, dict(body, conversation=value))
+            segment = history / 'segment-00000000000000000001.jsonl'
+            segment.write_text(json.dumps(entry) + '\n' + json.dumps(entry) + '\n')
+            self.assertFalse(module.turn_matches_session(socket, body))
+            segment.unlink()
+            victim = root / 'private-login'
+            victim.write_text('fixture-secret')
+            segment.symlink_to(victim)
+            with self.assertRaises(ValueError):
+                module.turn_matches_session(socket, body)
+            self.assertEqual('fixture-secret', victim.read_text())
+            segment.unlink()
+            entry.pop('session')
+            (history / 'segment-00000000000000000001.jsonl').write_text(json.dumps(entry) + '\n')
+            self.assertFalse(module.turn_matches_session(socket, body))
+
+
+    def test_termination_kills_and_joins_daemon_that_ignores_term(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)
+            ready = path / "daemon-pid"
+            controller = subprocess.Popen([
+                sys.executable, str(ROOT / "e2e-daemon-fault.py"),
+                "--port-file", str(path / "port"), "--log", str(path / "log"),
+                "--control-socket", str(path / "socket"), "--", sys.executable, "-c",
+                "import os,signal,time; from pathlib import Path; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "Path(os.environ['READY']).write_text(str(os.getpid())); time.sleep(120)",
+            ], env=dict(os.environ, READY=str(ready)), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            try:
+                deadline = time.monotonic() + 5
+                while not ready.exists() and controller.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(ready.exists())
+                pid = int(ready.read_text())
+                controller.terminate()
+                controller.wait(timeout=15)
+                self.assertEqual(0, controller.returncode)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+            finally:
+                if ready.exists():
+                    try:
+                        os.kill(int(ready.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                if controller.poll() is None:
+                    controller.kill()
+                controller.communicate(timeout=5)
+
+    def test_stop_then_start_replaces_only_the_owned_child(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp).resolve()
             controller = subprocess.Popen(
                 [
                     sys.executable,
@@ -97,7 +171,7 @@ class DaemonFaultTest(unittest.TestCase):
                     "--log",
                     str(path / "child.log"),
                     "--control-socket",
-                    str(path / "control.sock"),
+                    str(path / "e2e-fixture.sock"),
                     "--ready-token",
                     "relay: conn established",
                     "--stream-release-file",
@@ -129,6 +203,16 @@ class DaemonFaultTest(unittest.TestCase):
 
                 first = request("status")
                 self.assertTrue(first["running"])
+                history = path / "e2e-fixture/conversations/channel/history"
+                history.mkdir(parents=True)
+                entry = {"type": "turn_end", "payload": {"turn_id": "authored"},
+                         "session": {"kind": "codex", "session_id": "successor"}}
+                (history / "segment-00000000000000000001.jsonl").write_text(json.dumps(entry) + "\n")
+                for session, matched in (("successor", True), ("predecessor", False)):
+                    body = {"conversation": "channel", "turn": "authored", "session": session, "agent": "codex"}
+                    with urlopen(Request(f"http://127.0.0.1:{port}/turn-provenance", data=json.dumps(body).encode()), timeout=5) as response:
+                        self.assertEqual(200, response.status)
+                        self.assertEqual({"matches": matched}, json.load(response))
                 self.assertFalse((path / "suffix-release").exists())
                 self.assertFalse((path / "result-release").exists())
                 self.assertEqual(first["pid"], request("stream-release")["pid"])

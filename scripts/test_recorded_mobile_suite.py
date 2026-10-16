@@ -13,6 +13,16 @@ spec.loader.exec_module(suite)
 
 
 class SuiteDriverTest(unittest.TestCase):
+    def test_agent_switch_recording_requires_counted_codex_producer_version(self):
+        document = self.fixture()
+        document['scenario'] = 'interactiveTurn_switchAgentFromModelPick_confirmsAndReplies'
+        for version in [None, '', 'unbounded diagnostic text', '0.156.1\nprivate']:
+            document['source']['codexVersion'] = version
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                suite.validate(document)
+        document['source']['codexVersion'] = '0.156.1'
+        suite.validate(document)
+
     def test_stopping_full_verification_preserves_completed_cases_and_counts_the_rest_unrun(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

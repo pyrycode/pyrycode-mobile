@@ -8,6 +8,31 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class RecordedSuiteTapeTest {
+    @Test fun agentSwitchProvenanceRequiresTheExactRecordedTurnSessionAndAgent() {
+        val request =
+            frame(
+                1,
+                "test-control:agent-switch-provenance",
+                """{"conversation":"chat","turn":"reply","session":"successor","agent":"codex"}""",
+            )
+        val rows = listOf(client("control", request), daemon("control", frame(2, "test-control-result", """{"matches":true}""", reply = 1)))
+        for (field in listOf("conversation", "turn", "session", "agent")) {
+            val tape = RecordedSuiteTape(rows, literalProducerIdentities = true)
+            val changed =
+                kotlinx.serialization.json.JsonObject(
+                    request.payload.jsonObject + (field to kotlinx.serialization.json.JsonPrimitive("predecessor")),
+                )
+            assertThrows(IllegalStateException::class.java) { tape.request("control", request.copy(id = 90, payload = changed)) }
+            assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
+        }
+        val tape = RecordedSuiteTape(rows, literalProducerIdentities = true)
+        assertEquals(emptyList<SuiteStep>(), tape.initial())
+        val reply = tape.request("control", request.copy(id = 90)).single().message
+        assertEquals(90L, reply?.inReplyTo)
+        assertEquals(MobileJson.parseToJsonElement("""{"matches":true}"""), reply?.payload)
+        tape.assertComplete()
+    }
+
     @Test fun androidInputsCannotArriveBeforeTheirRecordedConnectionRestartAndRequests() {
         for (event in listOf("push-token", "push-wake")) {
             val old = "phone/host/0"

@@ -8,7 +8,7 @@ import unittest
 class EffortDefaultLaunchTest(unittest.TestCase):
     """Execute the primary launch construction without a daemon, login or model turn."""
 
-    def launch(self, *, live="", deterministic=""):
+    def launch(self, *, live="", deterministic="", codex=""):
         script = Path(__file__).with_name("e2e-emulator.sh").read_text()
         start = script.index("DAEMON_COMMAND=(env)")
         construction = script[start:script.index('\nFAULT_PORT_FILE=', start)]
@@ -35,6 +35,7 @@ class EffortDefaultLaunchTest(unittest.TestCase):
                 "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
                 "HOME": str(operator),
                 "LIVE": live,
+                "E2E_CODEX_BIN": codex,
                 "DETERMINISTIC": deterministic,
                 "PYRY_BIN": str(capture),
                 "PYRY_NAME": "e2e-fixture",
@@ -69,6 +70,16 @@ class EffortDefaultLaunchTest(unittest.TestCase):
 
     def test_local_real_primary_uses_the_same_default(self):
         self.assert_effort_capable_default(self.launch())
+
+    def test_live_codex_flag_precedes_claude_passthrough_and_scripted_ignores_it(self):
+        binary = "/fixture/dedicated codex"
+        for live in ("", "1"):
+            launch = self.launch(live=live, codex=binary)
+            self.assert_effort_capable_default(launch)
+            self.assertLess(launch["args"].index("-pyry-codex=" + binary), launch["args"].index("--"))
+        scripted = self.launch(deterministic="1", codex=binary)
+        self.assertNotIn("-pyry-codex=" + binary, scripted["args"])
+
 
     def test_scripted_primary_keeps_its_isolated_fake_and_default(self):
         launch = self.launch(deterministic="1")
