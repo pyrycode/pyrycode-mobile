@@ -381,20 +381,22 @@
         "FCM delivery"
       ],
       "evidence": {
-        "fixtureSha256": "f7afc8eb17c3d0bab9741e71267f26eaadbedf4c90b939a26d543c0ab68e15a1",
+        "fixtureSha256": "1d5558f0b6c0b879b2490f902fdde202d6f545ea0646b4d5d57e8e46ec9dfd41",
         "capture": {
           "executed": 1,
           "failed": 0,
           "skipped": 0,
-          "seconds": 39.533,
-          "fixtureSha256": "f7afc8eb17c3d0bab9741e71267f26eaadbedf4c90b939a26d543c0ab68e15a1",
+          "seconds": 57.268,
+          "nativeSeconds": 42.767,
+          "fixtureSha256": "1d5558f0b6c0b879b2490f902fdde202d6f545ea0646b4d5d57e8e46ec9dfd41",
           "source": {
-            "mobileRevision": "ee4690e2ecdfab4619e4c8b29bd06dc8c60829c1",
-            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
-            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
-            "testApkSha256": "0b20cf5334946d5f009b7032b14319e68a04ac55a121e5073421c924d82e3492",
+            "mobileRevision": "d22285452ee5ff71156d87284792ea80fd55960e",
+            "daemonRevision": "c2e7bec7a434014dfc2089f64d507898c79f8e89",
+            "daemonBinarySha256": "b34fcad79d7235d1d13ad2763859da92218b63ef33775e17c5300813d6bae9a0",
+            "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "ee87936a6a6d5a505bff8e4f399c74ca913a1fc03fc16c269623c3a79cc11728",
             "claudeVersion": "2.1.280 (Claude Code)",
-            "capturedAt": "2026-10-16T08:39:45Z",
+            "capturedAt": "2026-10-16T12:51:55Z",
             "presentation": "current-production",
             "androidApi": "33"
           }
@@ -403,8 +405,11 @@
           "executed": 1,
           "failed": 0,
           "skipped": 0,
-          "seconds": 36.03,
-          "fixtureSha256": "f7afc8eb17c3d0bab9741e71267f26eaadbedf4c90b939a26d543c0ab68e15a1"
+          "seconds": 45.465,
+          "nativeSeconds": 40.998,
+          "fixtureSha256": "1d5558f0b6c0b879b2490f902fdde202d6f545ea0646b4d5d57e8e46ec9dfd41",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "ee87936a6a6d5a505bff8e4f399c74ca913a1fc03fc16c269623c3a79cc11728"
         }
       }
     },
