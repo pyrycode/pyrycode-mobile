@@ -293,4 +293,45 @@ class RecordedSuiteTapeTest {
         assertEquals(90L, released.single().message!!.inReplyTo)
         tape.assertComplete()
     }
+
+    @Test fun anIdenticalAutomaticCatalogMakesOneRacingModelQueryOptional() {
+        val owner = "phone/host-0/1"
+        val query = frame(1, "request_model_list", """{"conversation_id":"chat"}""")
+        val catalog = frame(2, "model_list", """{"conversation_id":"chat","models":[]}""")
+        val rows = listOf(client(owner, query), daemon(owner, catalog), daemon(owner, catalog.copy(id = 3, inReplyTo = 1)))
+        val omitted = RecordedSuiteTape(rows, redundantModelQueries = true)
+        assertEquals(listOf("model_list"), omitted.initial().map { it.message!!.type })
+        omitted.assertComplete()
+        val actual = query.copy(id = 90, payload = omitted.arguments(query.payload.jsonObject))
+        assertEquals(
+            90L,
+            omitted
+                .request(owner, actual)
+                .single()
+                .message!!
+                .inReplyTo,
+        )
+        omitted.assertComplete()
+        assertThrows(IllegalStateException::class.java) { omitted.request(owner, actual.copy(id = 91)) }
+        val required =
+            RecordedSuiteTape(
+                rows.drop(1).dropLast(1) + rows.first() +
+                    rows.last().copy(
+                        message =
+                            catalog.copy(
+                                id = 3,
+                                inReplyTo = 1,
+                                payload = MobileJson.parseToJsonElement("""{"conversation_id":"chat","models":["different"]}"""),
+                            ),
+                    ),
+                redundantModelQueries = true,
+            )
+        required.initial()
+        assertThrows(IllegalStateException::class.java) { required.assertComplete() }
+        val future =
+            RecordedSuiteTape(listOf(rows.first(), client(owner, frame(4, "send_message")), rows[1], rows[2]), redundantModelQueries = true)
+        future.initial()
+        future.request(owner, frame(90, "send_message"))
+        assertThrows(IllegalStateException::class.java) { future.assertComplete() }
+    }
 }

@@ -32,6 +32,7 @@ internal class RecordedSuiteTape(
     private val redundantModelQueries: Boolean = false,
     retainedPhoneHistory: Boolean = false,
 ) {
+    private var optionalModelReplies = emptyMap<Int, Int>()
     private val redundantModels = mutableSetOf<Pair<String, String>>()
     private val consumed = mutableSetOf<Int>()
     private val requests = mutableMapOf<Pair<String, Long>, Long>()
@@ -125,6 +126,55 @@ internal class RecordedSuiteTape(
         if (coalescedReadReceipts) {
             readReceipts = SuiteReadReceipts(steps, queryTypes, ::mapped, retainedPhoneHistory)
             steps = readReceipts!!.steps
+        }
+        if (redundantModelQueries) {
+            optionalModelReplies =
+                steps.indices
+                    .mapNotNull { index ->
+                        val query = steps[index]
+                        val frame = query.message
+                        if (query.direction != "client" ||
+                            !query.owner.startsWith("phone/") ||
+                            frame?.type != "request_model_list" ||
+                            !query.accepted ||
+                            (frame.payload as? JsonObject)?.keys != setOf("conversation_id") ||
+                            steps.count {
+                                it.owner == query.owner &&
+                                    it.direction == "client" &&
+                                    it.message?.type == frame.type &&
+                                    it.message.payload == frame.payload
+                            } != 1
+                        ) {
+                            return@mapNotNull null
+                        }
+                        val start =
+                            (0 until index)
+                                .lastOrNull {
+                                    steps[it].direction == "client" && steps[it].message!!.type !in queryTypes
+                                }?.plus(1) ?: 0
+                        val end =
+                            (index + 1 until steps.size).firstOrNull {
+                                steps[it].direction == "client" && steps[it].message!!.type !in queryTypes
+                            } ?: steps.size
+                        val response =
+                            (index + 1 until end).singleOrNull {
+                                val candidate = steps[it]
+                                candidate.owner == query.owner && candidate.message?.inReplyTo == frame.id
+                            }
+                                ?: return@mapNotNull null
+                        val reply = steps[response].message!!
+                        if (reply.type != "model_list" || reply.historyEntryId != null || reply.eventId != null) return@mapNotNull null
+                        val independent =
+                            (start until end).any {
+                                val other = steps[it]
+                                other.owner == query.owner &&
+                                    other.direction == "daemon" &&
+                                    other.message?.type == "model_list" &&
+                                    other.message.inReplyTo == null &&
+                                    other.message.payload == reply.payload
+                            }
+                        if (independent) index to response else null
+                    }.toMap()
         }
         val lifecycle = mutableMapOf<String, Int>()
         val ownerCommands = mutableMapOf<String, Int>()
@@ -281,6 +331,7 @@ internal class RecordedSuiteTape(
         }
         actualIds.getOrPut(owner) { mutableSetOf() } += actual.id
         requests[owner to expected.id] = actual.id
+        optionalModelReplies[candidate]?.let { released.remove(it) }
         consumed += candidate
         matched++
         readReceipts?.requested(owner, actual)
@@ -354,7 +405,7 @@ internal class RecordedSuiteTape(
             if (index in released) continue
             val step = steps[index]
             if (step.direction in setOf("client", "connect", "close")) {
-                if (index in consumed) released += index
+                if (index in consumed || index in optionalModelReplies) released += index
                 continue
             }
             if (lifecycleBefore[index]?.let { it !in consumed } == true || step.owner in blockedOwners) continue
@@ -363,6 +414,10 @@ internal class RecordedSuiteTape(
                 continue
             }
             val frame = step.message
+            if (index in optionalModelReplies.values && optionalModelReplies.entries.single { it.value == index }.key !in consumed) {
+                released += index
+                continue
+            }
             if (step.direction == "daemon" && frame!!.inReplyTo?.let { step.owner to it !in requests } == true) continue
             if (step.direction == "daemon") {
                 val encoded = mapped(MobileJson.encodeToJsonElement(Envelope.serializer(), frame!!)).jsonObject.toMutableMap()
