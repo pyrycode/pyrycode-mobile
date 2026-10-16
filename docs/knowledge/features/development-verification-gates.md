@@ -82,14 +82,16 @@ these named comparisons in the same worktree and on the main commit merged
 into it. A confirmed inherited failure still requires its tracking ticket.
 
 Direct Gradle checks acquire the same host hold through
-`python3 scripts/test-admission.py -- ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process <tasks>`.
+`python3 scripts/gradle-gate.py <tasks>`.
 Android and JVM gate entry points acquire it automatically, before the Android
 device hold. Nested calls reuse the validated inherited descriptor. The pinned
 Android cleanup owner retains both descriptors, including after parent loss.
 Use `PYRY_TEST_ADMISSION_LOCK` for a common host-bound path when project containers
 have separate home directories. Forward that variable into builder shells.
-The documented single-use Gradle worker keeps compiler work within the owned
-command lifetime while preserving build-cache reuse.
+The managed launcher runs the pinned Gradle build inside its admitted JDK 21
+client process. Matching client/build JVM options avoid the detached single-use
+worker that --no-daemon alone can create. Kotlin compilation stays in that JVM.
+Build-cache reuse remains enabled.
 
 For filesystem tests that assert permission preservation, set the fixture's
 starting mode explicitly before exercising the code. `mkdir(mode=0o755)` is

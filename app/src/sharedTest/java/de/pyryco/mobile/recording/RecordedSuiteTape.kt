@@ -286,6 +286,18 @@ internal class RecordedSuiteTape(
         return precedingWorkReleased(boundary, name != "scenario-complete" || !requireRecordedReadProgress)
     }
 
+    /** Negative assertions observe every earlier released message before their short replay wait. */
+    @Synchronized fun negativeObservationReady(name: String): Boolean {
+        failure?.let { fail(it) }
+        val boundary = steps.indices.firstOrNull {
+            it !in consumed && steps[it].owner == "control" && steps[it].message?.type == "test-control:negative-absence"
+        } ?: fail("Recorded negative observation is missing")
+        if (steps[boundary].message!!.payload != JsonObject(mapOf("body" to JsonPrimitive(name)))) {
+            fail("Recorded negative observation mismatch")
+        }
+        return precedingWorkReleased(boundary, allowDeferredReads = true)
+    }
+
     private fun eligible(): List<Int> {
         val boundary = commandBoundary()
         val checkpoint = checkpointBoundary()

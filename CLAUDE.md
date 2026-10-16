@@ -33,13 +33,13 @@ helpers acquire it automatically. Single-use Gradle and in-process Kotlin keep
 compiler work within the owned command lifetime. Build-cache reuse stays on.
 
 ```bash
-python3 scripts/test-admission.py -- ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process assembleDebug              # build debug APK
-python3 scripts/test-admission.py -- ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process installDebug               # optional local install; dispatcher owns routine device execution
-python3 scripts/test-admission.py -- ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process test                       # unit tests, including the Robolectric screen tests in app/src/sharedTest
-python3 scripts/test-admission.py -- ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process connectedAndroidTest       # optional local run; dispatcher owns managed-device UI execution
+python3 scripts/gradle-gate.py assembleDebug              # build debug APK
+python3 scripts/gradle-gate.py installDebug               # optional local install; dispatcher owns routine device execution
+python3 scripts/gradle-gate.py test                       # unit tests, including the Robolectric screen tests in app/src/sharedTest
+python3 scripts/gradle-gate.py connectedAndroidTest       # optional local run; dispatcher owns managed-device UI execution
 UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui   # in-depth run: every screen test on the emulator
-python3 scripts/test-admission.py -- ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process lint                       # Android Lint
-python3 scripts/test-admission.py -- ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process clean                      # clean build outputs
+python3 scripts/gradle-gate.py lint                       # Android Lint
+python3 scripts/gradle-gate.py clean                      # clean build outputs
 ```
 
 New Compose screen tests go in `app/src/sharedTest`, not `app/src/androidTest`. See
