@@ -387,12 +387,17 @@ internal class RecordedSuiteTape(
         val index = commandBoundary()
         val next = steps.getOrNull(index)
         val type = next?.message?.type?.takeIf { it.matches(Regex("[A-Za-z0-9_:-]{1,100}")) } ?: "none"
-        return "Recorded suite progress: matched=$matched remaining=${steps.size - released.size} next=${next?.owner}:$type index=$index"
+        val pending =
+            steps.indices.filter { it !in released }.take(8).joinToString {
+                "${steps[it].owner}:${steps[it].message?.type ?: steps[it].direction}"
+            }
+        return "Recorded suite progress: matched=$matched remaining=${steps.size - released.size} " +
+            "next=${next?.owner}:$type index=$index pending=$pending"
     }
 
     @Synchronized fun assertComplete() {
         failure?.let { fail(it) }
-        check(released.size == steps.size) { "Recorded suite incomplete" }
+        check(released.size == steps.size) { progress() }
         readReceipts?.assertComplete()
     }
 }
