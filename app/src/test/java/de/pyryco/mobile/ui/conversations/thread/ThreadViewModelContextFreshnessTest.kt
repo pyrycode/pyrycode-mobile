@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
+import de.pyryco.mobile.data.repository.HostReadings
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
 import kotlinx.coroutines.Dispatchers
@@ -84,6 +85,114 @@ class ThreadViewModelContextFreshnessTest {
         }
 
     @Test
+    fun rememberedOldReply_afterReplacement_neverRestoresOldContext() =
+        runTest {
+            val rig = rig()
+            rig.settings("s1", used = 100_000)
+            rig.context("c1", used = 150_000)
+            rig.context("c2", used = 80_000, asOf = TS)
+            runCurrent()
+            assertEquals(75, rig.vm.state.value.runConfig.contextPercent)
+
+            rig.resetting(true)
+            rig.transition("c1", "s1", "s2", at = LATER)
+            rig.resetting(false)
+            runCurrent()
+            rig.context("c1", used = 150_000, asOf = TS)
+            runCurrent()
+            assertNull("a remembered reply must not restore the replaced context", rig.repo.observeContextUsage("c1").first())
+            assertNull("old settings cannot fill in for the rejected reply", rig.vm.state.value.runConfig.contextPercent)
+            assertEquals(
+                80_000L,
+                rig.repo
+                    .observeContextUsage("c2")
+                    .first()
+                    ?.totalTokens,
+            )
+
+            rig.settings("s2", used = 0)
+            runCurrent()
+            rig.context("c1", used = 150_000, asOf = TS)
+            rig.context("c2", used = 60_000, asOf = TS)
+            runCurrent()
+            assertNull(rig.repo.observeContextUsage("c1").first())
+            assertEquals("current settings remain the fallback", 0, rig.vm.state.value.runConfig.contextPercent)
+            assertEquals(
+                "the cutoff belongs only to c1",
+                60_000L,
+                rig.repo
+                    .observeContextUsage("c2")
+                    .first()
+                    ?.totalTokens,
+            )
+
+            rig.context("c1", used = 2_000)
+            runCurrent()
+            rig.context("c1", used = 150_000, asOf = TS)
+            runCurrent()
+            assertEquals(
+                "late old replies cannot overwrite fresh context",
+                2_000L,
+                rig.repo
+                    .observeContextUsage("c1")
+                    .first()
+                    ?.totalTokens,
+            )
+            assertEquals(1, rig.vm.state.value.runConfig.contextPercent)
+        }
+
+    @Test
+    fun rememberedReplies_useTheLatestConversationBoundary() =
+        runTest {
+            val rig = rig()
+            rig.transition("c1", "s1", "s2", at = TS)
+            rig.transition("c1", "s2", "s3", at = LATER)
+            // A replayed older boundary must not reopen admission for old readings.
+            rig.transition("c1", "s1", "s2", at = TS)
+            runCurrent()
+            rig.context("c1", used = 150_000, asOf = TS)
+            runCurrent()
+            assertNull(rig.repo.observeContextUsage("c1").first())
+            assertNull(rig.vm.state.value.runConfig.contextPercent)
+
+            rig.context("c1", used = 2_000, asOf = LATER)
+            runCurrent()
+            assertEquals("a reading at the boundary is current", 1, rig.vm.state.value.runConfig.contextPercent)
+            rig.context("c1", used = 4_000, asOf = "2026-10-12T00:02:00Z")
+            runCurrent()
+            assertEquals("a newer remembered reading is current", 2, rig.vm.state.value.runConfig.contextPercent)
+        }
+
+    @Test
+    fun reconnect_keepsTheReplacementBoundary() =
+        runTest {
+            val readings = HostReadings()
+            val rig = rig(readings)
+            rig.transition("c1", "s1", "s2", at = LATER)
+            runCurrent()
+            val reconnectedPump = Pump()
+            val reconnectedRepo =
+                RemoteConversationRepository(
+                    reconnectedPump,
+                    backgroundScope,
+                    negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE, CAPABILITY_THREAD) },
+                    hostReadings = readings,
+                )
+            reconnectedPump.push(
+                "context_usage",
+                """{"conversation_id":"c1","total_tokens":150000,"max_tokens":200000,"percentage":75,"as_of":"$TS"}""",
+            )
+            runCurrent()
+            assertNull("reconnect must not forget the source boundary", reconnectedRepo.observeContextUsage("c1").first())
+            reconnectedPump.push(
+                "context_usage",
+                """{"conversation_id":"c1","total_tokens":2000,"max_tokens":200000,"percentage":1}""",
+            )
+            runCurrent()
+            assertEquals(2_000L, reconnectedRepo.observeContextUsage("c1").first()?.totalTokens)
+        }
+
+    @Test
     fun currentSessionSettings_areTheOnlyFallback() =
         runTest {
             val rig = rig()
@@ -153,13 +262,14 @@ class ThreadViewModelContextFreshnessTest {
             )
         }
 
-    private fun TestScope.rig(): Rig {
+    private fun TestScope.rig(hostReadings: HostReadings = HostReadings()): Rig {
         val pump = Pump()
         val repo =
             RemoteConversationRepository(
                 pump,
                 backgroundScope,
                 negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE, CAPABILITY_THREAD) },
+                hostReadings = hostReadings,
             )
         pump.push(
             "conversations",
@@ -198,18 +308,22 @@ class ThreadViewModelContextFreshnessTest {
         fun context(
             conversation: String,
             used: Long,
+            asOf: String? = null,
         ) = pump.push(
             "context_usage",
-            """{"conversation_id":"$conversation","total_tokens":$used,"max_tokens":200000,"percentage":99,"categories":[],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0,"memory_files":[],"dropped_memory_files":0}""",
+            """{"conversation_id":"$conversation","total_tokens":$used,"max_tokens":200000,"percentage":99,"categories":[],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0,"memory_files":[],"dropped_memory_files":0${asOf?.let {
+                ""","as_of":"$it""""
+            } ?: ""}}""",
         )
 
         fun transition(
             conversation: String,
             old: String,
             new: String,
+            at: String = TS,
         ) = pump.push(
             "session_transition",
-            """{"conversation_id":"$conversation","previous_session_id":"$old","new_session_id":"$new","reason":"clear","occurred_at":"$TS","workspace_cwd":null}""",
+            """{"conversation_id":"$conversation","previous_session_id":"$old","new_session_id":"$new","reason":"clear","occurred_at":"$at","workspace_cwd":null}""",
         )
 
         fun resetting(active: Boolean) =
@@ -237,6 +351,8 @@ class ThreadViewModelContextFreshnessTest {
     }
 
     private companion object {
-        const val TS = "2026-10-12T00:00:00Z"
+        // The recorded defect crossed a boundary within one second; retain subsecond precision.
+        const val TS = "2026-10-12T00:00:00.712427Z"
+        const val LATER = "2026-10-12T00:00:00.717282Z"
     }
 }

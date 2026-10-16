@@ -1390,8 +1390,9 @@ class InteractiveStreamE2ETest {
             .assertCountEquals(0)
 
         runBlocking {
-            // Observe before tapping: session_transition clears the old reading, and only a later
-            // context_usage reply can fill it. Settings fallback cannot satisfy this wait (#1761).
+            // Observe before tapping: require invalidation followed by a reply, then check its source
+            // timestamp against the replacement boundary. Arrival alone cannot prove freshness (#1947).
+            // Settings fallback cannot satisfy this wait (#1761).
             val freshReading =
                 async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
                     withTimeout(REPLY_TIMEOUT_MS) {
@@ -1440,7 +1441,18 @@ class InteractiveStreamE2ETest {
             //    explanation line under it (#1578).
             composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
 
+            val boundary =
+                repository
+                    .observeMessages(conversationId)
+                    .first()
+                    .filterIsInstance<ThreadItem.SessionBoundary>()
+                    .single()
+            assertTrue("reset must replace the conversation's session", boundary.newSessionId != boundary.previousSessionId)
             val usage = freshReading.await()
+            assertTrue(
+                "a remembered pre-replacement reading is not fresh even if it arrived after invalidation",
+                usage.asOf?.let { it >= boundary.occurredAt } ?: true,
+            )
             assertTrue("post-reset context reading must have a usable token window", usage.maxTokens > 0)
             val percent =
                 kotlin.math

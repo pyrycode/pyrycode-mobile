@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.decodeFromJsonElement
 
 /**
@@ -31,6 +32,9 @@ internal class ContextUsageProjection {
      */
     private val readingByConversation = MutableStateFlow<Map<String, ContextUsage>>(emptyMap())
 
+    // Host-held across reconnects, like the readings. Only the serialized inbound fold accesses it.
+    private val latestTransitionByConversation = mutableMapOf<String, Instant>()
+
     /**
      * Apply one `context_usage` envelope. Called only from the repository's `interactive`-gated arm. Routing is the
      * payload's own daemon-authored `conversation_id`, never `in_reply_to`, so a frame naming another conversation
@@ -41,12 +45,26 @@ internal class ContextUsageProjection {
      */
     fun apply(envelope: Envelope) {
         decodeContextUsage(envelope)?.let { (conversationId, reading) ->
+            val boundary = latestTransitionByConversation[conversationId]
+            // The daemon can answer from memory after reset. Its source time, not reply arrival,
+            // determines whether it belongs to the replaced context. Fresh replies omit asOf.
+            if (boundary != null && reading.asOf?.let { it < boundary } == true) return
             readingByConversation.update { it + (conversationId to reading) }
         }
     }
 
     /** The conversation's session was replaced, so its reading describes a gone context: drop it. */
-    fun onSessionTransition(conversationId: String) {
+    fun onSessionTransition(
+        conversationId: String,
+        occurredAt: Instant,
+    ) {
+        val previous = latestTransitionByConversation[conversationId]
+        latestTransitionByConversation[conversationId] = previous?.let { maxOf(it, occurredAt) } ?: occurredAt
+        clear(conversationId)
+    }
+
+    /** Authoritative family invalidation clears the value while retaining its source-time boundary. */
+    fun clear(conversationId: String) {
         readingByConversation.update { it - conversationId }
     }
 

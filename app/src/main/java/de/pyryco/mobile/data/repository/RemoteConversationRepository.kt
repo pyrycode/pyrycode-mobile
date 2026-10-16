@@ -607,7 +607,7 @@ class RemoteConversationRepository internal constructor(
             TYPE_RESETTING -> resettingProjection.clear(conversation)
             TYPE_MODEL_ANNOUNCED -> announcedModelProjection.clear(conversation)
             TYPE_SESSION_FACTS -> sessionFactsProjection.clear(conversation)
-            TYPE_CONTEXT_USAGE -> contextUsageProjection.onSessionTransition(conversation)
+            TYPE_CONTEXT_USAGE -> contextUsageProjection.clear(conversation)
             TYPE_SESSION_ERROR -> sessionErrorProjection.clear(conversation)
             TYPE_MCP_STATUS -> mcpStatusProjection.clear(conversation)
             TYPE_MODEL_LIST -> modelMenuProjection.clear(conversation)
@@ -1152,9 +1152,9 @@ class RemoteConversationRepository internal constructor(
                         // an absent key.
                         announcedModelProjection.clear(conversationId)
                         sessionFactsProjection.clear(conversationId)
-                        // Eighth write since #945: the context reading described the replaced session, so it is
-                        // dropped until the new session's first turn ends. Same routing.
-                        contextUsageProjection.onSessionTransition(conversationId)
+                        // Drop the replaced context and reject remembered replies measured before this
+                        // boundary. A fresh reply can fill it without another message (#1947).
+                        contextUsageProjection.onSessionTransition(conversationId, boundary.occurredAt)
                         // Ninth since #1360: the replaced session's switch-back offer is over. Emitted on the same
                         // flow as the refusals, so the two keep their wire order.
                         liveRefusalEvents.tryEmit(conversationId to LiveRefusalEvent.SessionReplaced)
