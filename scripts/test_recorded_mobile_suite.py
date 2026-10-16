@@ -183,6 +183,28 @@ class SuiteDriverTest(unittest.TestCase):
         with patch.object(suite.legacy, 'adb', side_effect=[b'package:/data/app/test/base.apk\n', b'0' * 64 + b'  /data/app/test/base.apk\n']):
             with self.assertRaises(ValueError): suite.installed_apks('emulator-5582')
 
+    def test_old_recordings_compare_only_mutually_declared_polling_models(self):
+        original = self.fixture()
+        original['steps'][0]['owner'] = 'phone/host/0'
+        original['steps'][0]['message'].update(type='request_session_settings', payload={'conversation_id': 'chat'})
+        first = copy.deepcopy(original['steps'][0])
+        first.update(direction='daemon')
+        first['message'].update(id=2, type='session_settings', in_reply_to=1, payload={'effort': ''})
+        repeated = copy.deepcopy(original['steps'][0])
+        repeated['message']['id'] = 3
+        second = copy.deepcopy(first)
+        second['message'].update(id=4, in_reply_to=3)
+        original['steps'].extend([first, repeated, second])
+        fresh = copy.deepcopy(original)
+        fresh['settingsReadNormalization'] = 'recorded-snapshots-v1'
+        left, right, policy = suite.comparison_contracts(original, fresh)
+        self.assertEqual(left, right)
+        self.assertNotIn('settingsReadNormalization', policy)
+        fresh['steps'] = fresh['steps'][:2]
+        left, right, policy = suite.comparison_contracts(original, fresh)
+        self.assertNotEqual(left, right)
+        self.assertNotIn('settingsReadNormalization', original)
+
 
 if __name__ == '__main__':
     unittest.main()

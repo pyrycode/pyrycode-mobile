@@ -458,6 +458,18 @@ def contract(document):
             'lifecycle': lifecycle}
 
 
+def comparison_contracts(reviewed, fresh):
+    # Older assets keep their stricter request counts when they did not declare a model.
+    fields = ['modelQueryNormalization', 'settingsReadNormalization', 'backfillProbeNormalization']
+    policy = {key: reviewed[key] for key in fields if reviewed.get(key) and reviewed.get(key) == fresh.get(key)}
+    def document(value):
+        result = dict(value)
+        for key in fields:
+            if key not in policy: result.pop(key, None)
+        return result
+    return contract(document(reviewed)), contract(document(fresh)), policy
+
+
 def verify(args):
     original = json.loads(args.fixture.read_text())
     validate(original)
@@ -466,9 +478,10 @@ def verify(args):
     captured = capture(args.serial, original['scenario'], candidate, args.pyry, args.daemon_source)
     reviewed_replay = replay(args.serial, args.fixture)
     fresh_replay = replay(args.serial, candidate)
-    require(contract(original) == contract(json.loads(candidate.read_text())), 'Fresh Claude request contract changed; review candidate without replacing the recording')
+    reviewed_contract, fresh_contract, policy = comparison_contracts(original, json.loads(candidate.read_text()))
+    require(reviewed_contract == fresh_contract, 'Fresh Claude request contract changed; review candidate without replacing the recording')
     result = {'scenario': original['scenario'], 'capture': captured, 'reviewedReplay': reviewed_replay,
-              'freshReplay': fresh_replay, 'contractMatched': True}
+              'freshReplay': fresh_replay, 'contractMatched': True, 'comparisonNormalizations': policy}
     legacy.private_write(args.output / 'receipt.json', (json.dumps(result, indent=2) + '\n').encode())
     return result
 
