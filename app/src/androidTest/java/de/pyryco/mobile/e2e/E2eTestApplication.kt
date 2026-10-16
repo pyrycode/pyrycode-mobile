@@ -46,7 +46,9 @@ class E2eTestApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         val args = InstrumentationRegistry.getArguments()
-        val relayUrl = args.getString(ARG_RELAY_URL)
+        // The recorded scenario owns its real coordinator and test pairing. Do not open a second
+        // app-wide connection that would redeem the same one-device pairing with another key.
+        val relayUrl = args.getString(ARG_RELAY_URL).takeUnless { args.getString("recordExchange") == "true" }
         if (relayUrl == null) {
             // Ordinary instrumented runs stay fake-backed in both real and demo builds.
             Log.i("E2E", "app.onCreate: no relayUrl arg → FAKE repository mode")
