@@ -226,6 +226,12 @@ bounded model above. The shared guarantees are exact actions, request correlatio
 connection termination after required work, observation boundaries and complete consumption.
 Do not interpret copying Desktop's checkpoints as copying its entire scheduler.
 
+Replay restores the instrumentation arguments, prior pairings and preferences, and the
+ordinary application graph after each case, including failures. Recorded mode must not
+leak into another device test or make its ordinary-mode check silently skip. A device
+regression enters an incomplete replay, requires that replay to fail, then checks that
+the arguments and ordinary repository binding are restored.
+
 Failed runs can export separately named private application traces. Their format cannot
 be loaded as a successful recording. Compressed diagnostic archives are excluded from
 failed exports. Successful archive captures undergo bounded decompression and credential

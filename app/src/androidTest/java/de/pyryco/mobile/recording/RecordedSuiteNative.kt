@@ -137,9 +137,13 @@ internal object RecordedSuiteNative {
                     .first { !it.isAtLeast(Lifecycle.State.STARTED) }
             }
             val koin = GlobalContext.get()
-            koin.get<DataStore<Preferences>>().updateData { emptyPreferences() }
             val store = koin.get<ObservablePairedServerStore>()
-            store.readSnapshot().getOrThrow().forEach { store.remove(it.record.serverId) }
+            session.originalPairings = store.readSnapshot().getOrThrow().map { it.record }
+            koin.get<DataStore<Preferences>>().updateData {
+                session.originalPreferences = it
+                emptyPreferences()
+            }
+            session.originalPairings!!.forEach { store.remove(it.serverId) }
         }
         instrumentation.runOnMainSync { (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph() }
         runBlocking {
@@ -311,7 +315,25 @@ internal object RecordedSuiteNative {
             session.hub.close()
             session.scope.cancel()
             current = null
+            if (session.document != null) restoreOrdinaryTestEnvironment(session)
         }
+    }
+
+    private fun restoreOrdinaryTestEnvironment(session: Session) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        InstrumentationRegistry.registerInstance(instrumentation, Bundle(session.originalArguments))
+        runBlocking {
+            val koin = GlobalContext.get()
+            session.originalPairings?.let { originals ->
+                val store = koin.get<ObservablePairedServerStore>()
+                store.readSnapshot().getOrThrow().forEach { store.remove(it.record.serverId) }
+                originals.forEach { store.save(it) }
+            }
+            session.originalPreferences?.let { original ->
+                koin.get<DataStore<Preferences>>().updateData { original }
+            }
+        }
+        instrumentation.runOnMainSync { (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph() }
     }
 
     private fun exportCapture(
@@ -366,6 +388,9 @@ internal object RecordedSuiteNative {
         val document: RecordedSuiteDocument?,
         args: Bundle,
     ) {
+        val originalArguments = Bundle(args)
+        var originalPreferences: Preferences? = null
+        var originalPairings: List<PairedServer>? = null
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val tape = document?.tape()
         val pushTokens = MutableStateFlow<String?>(null)
