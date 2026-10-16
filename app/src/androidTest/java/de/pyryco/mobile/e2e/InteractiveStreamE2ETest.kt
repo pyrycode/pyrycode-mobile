@@ -134,6 +134,7 @@ import de.pyryco.mobile.notifications.nameOf
 import de.pyryco.mobile.notifications.notificationPreview
 import de.pyryco.mobile.notifications.notificationTitle
 import de.pyryco.mobile.push.PushTokenSource
+import de.pyryco.mobile.recording.RecordedSuiteNative
 import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
@@ -635,7 +636,7 @@ class InteractiveStreamE2ETest {
             val (chat, name) = answerChat(twoHostArg(ARG_SERVER_ID), "markdown-reveal-")
             assertPeerAnswers(peer, chat)
             openChatRow(name)
-            val stamp = System.currentTimeMillis()
+            val stamp = RecordedSuiteNative.uniqueStamp()
             val bold = "bold$stamp"
             val inline = "inline$stamp"
             val code = "code$stamp"
@@ -848,7 +849,7 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
             val conversationId = newHostConversationId(serverId, before)
-            val chatName = CONTEXT_ASK_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            val chatName = CONTEXT_ASK_CHAT_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
             renameOpenThread(chatName)
             leaveThread()
 
@@ -1274,7 +1275,7 @@ class InteractiveStreamE2ETest {
         // 3. Open the create dialog, type a collision-resistant folder name, and confirm. The name is a
         //    clean single path element (the daemon rejects empty / absolute / separator-bearing / ".."),
         //    unique per run so a substring match on it is a genuine presence check.
-        val folderName = FOLDER_NAME_PREFIX + System.currentTimeMillis()
+        val folderName = FOLDER_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
         composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).onFirst().performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
@@ -1480,7 +1481,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
 
-        val uniqueName = CONVERSATION_NAME_PREFIX + System.currentTimeMillis()
+        val uniqueName = CONVERSATION_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1609,7 +1610,7 @@ class InteractiveStreamE2ETest {
             //    RenameDialog opens OVER the thread, whose composer is also an editable field, so hasSetTextAction()
             //    alone is ambiguous — target the dialog's field by its focus (RenameDialog auto-focuses on open),
             //    REPLACE the pre-filled+selected auto-name (performTextReplacement, not performTextInput), then Save.
-            val uniqueName = ARCHIVE_NAME_PREFIX + System.currentTimeMillis()
+            val uniqueName = ARCHIVE_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
             composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1725,7 +1726,7 @@ class InteractiveStreamE2ETest {
         awaitChannelList()
         awaitConnected()
         val serverId = twoHostArg(ARG_SERVER_ID)
-        val stamp = System.currentTimeMillis()
+        val stamp = RecordedSuiteNative.uniqueStamp()
         val nameA = "${ARCHIVE_ORDER_PREFIX}a-$stamp"
         val nameB = "${ARCHIVE_ORDER_PREFIX}b-$stamp"
         var beforeA: Set<String>? = null
@@ -1862,7 +1863,7 @@ class InteractiveStreamE2ETest {
         // 3. Absence guard (the before-state, deterministic — no claude turn): the runtime-unique target
         //    name is not on screen yet (the chip shows the discussion's scratch workspace), so its later
         //    appearance in the chip is attributable to the change_workspace round-trip.
-        val newWorkspace = WORKSPACE_FOLDER_PREFIX + System.currentTimeMillis()
+        val newWorkspace = WORKSPACE_FOLDER_PREFIX + RecordedSuiteNative.uniqueStamp()
         composeTestRule.onAllNodesWithText(newWorkspace, substring = true).assertCountEquals(0)
 
         // 4. Drive the REAL overflow: open "More actions", wait for the "Change workspace…" item (matched as
@@ -1965,7 +1966,7 @@ class InteractiveStreamE2ETest {
         // 4. Absence guard (the before-state, deterministic — no claude turn): the runtime-unique target title
         //    is not on screen yet (the top bar shows the server auto-name), so its later appearance is
         //    attributable to the rename round-trip. Same guard as #562 step 3 / #554 step 9's inversion.
-        val uniqueName = RENAME_NAME_PREFIX + System.currentTimeMillis()
+        val uniqueName = RENAME_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
 
         // 5. Rename to the unique title (identical drive to #554 step 4). Open the overflow, tap "Rename". The
@@ -2109,7 +2110,7 @@ class InteractiveStreamE2ETest {
         //    pre-fills), so its later appearance is attributable to the promote
         //    round-trip. And the WorkspaceChip IS mounted — the discussion tier — the before-state of step 6's
         //    tier-flip inversion (it stays mounted because no message is sent: !isPromoted && !hasMessages).
-        val uniqueName = PROMOTE_NAME_PREFIX + System.currentTimeMillis()
+        val uniqueName = PROMOTE_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
         composeTestRule.onAllNodesWithText(WORKSPACE_CHIP_PREFIX, substring = true).assertCountEquals(0)
 
@@ -2192,7 +2193,7 @@ class InteractiveStreamE2ETest {
         awaitChannelList()
         awaitConnected()
         val repository = hostRepository()
-        val name = MUTE_NAME_PREFIX + System.currentTimeMillis()
+        val name = MUTE_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
         val channel =
             runBlocking {
                 withTimeout(THREAD_TIMEOUT_MS) { repository.promote(repository.createDiscussion().id, name) }
@@ -2308,7 +2309,7 @@ class InteractiveStreamE2ETest {
 
             // 4. AC-2: rename host A's conversation from its thread (#537's drive). The new name shows on
             //    A's thread and A's row only; B's row and thread keep B's name.
-            val renamedA = RENAMED_NAME_PREFIX + System.currentTimeMillis()
+            val renamedA = RENAMED_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
             openRow(nameA)
             val beforeRename =
                 runCatching { collisionRenameEvidence(serverIdA) }
@@ -2414,7 +2415,7 @@ class InteractiveStreamE2ETest {
             assertFirstHostUntouched(firstHost)
 
             // 3. AC-1: rename B from its host row's Edit host modal.
-            val renamedB = HOST_RENAME_PREFIX + System.currentTimeMillis()
+            val renamedB = HOST_RENAME_PREFIX + RecordedSuiteNative.uniqueStamp()
             openHostEditor(serverIdB)
             composeTestRule.onNode(hasTestTag(EDIT_HOST_NAME_FIELD_TAG)).performTextReplacement(renamedB)
             composeTestRule.onNode(hasText(EDIT_HOST_OK) and hasClickAction()).performClick()
@@ -2474,7 +2475,7 @@ class InteractiveStreamE2ETest {
 
         fun fresh() = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).requestHostSystemPrompt().getOrThrow() } }
         val original = fresh().systemPrompt
-        val custom = "Host prompt e2e1775 " + System.currentTimeMillis() + "\nPreserve this second line."
+        val custom = "Host prompt e2e1775 " + RecordedSuiteNative.uniqueStamp() + "\nPreserve this second line."
 
         fun openPrompt() {
             composeTestRule.onNode(hasText(context.getString(R.string.host_prompt_title)) and hasClickAction()).performClick()
@@ -2723,7 +2724,7 @@ class InteractiveStreamE2ETest {
             pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
 
             // 2. Create a uniquely named chat on A and a second chat on B.
-            val chatName = TWO_HOST_ARCHIVE_CHAT_PREFIX + System.currentTimeMillis()
+            val chatName = TWO_HOST_ARCHIVE_CHAT_PREFIX + RecordedSuiteNative.uniqueStamp()
             beforeByHost[serverIdA] = hostConversationIds(serverIdA)
             val chatA = createChatOn(serverIdA)
             createdByHost[serverIdA] = chatA
@@ -2868,7 +2869,7 @@ class InteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_createEditArchiveChannel_readsPromptBack() {
         val serverId = twoHostArg(ARG_SERVER_ID)
-        val stamp = System.currentTimeMillis()
+        val stamp = RecordedSuiteNative.uniqueStamp()
         val firstName = "${CHANNEL_E2E_PREFIX}$stamp-a"
         val newName = "${CHANNEL_E2E_PREFIX}$stamp-b"
         val nextSessionLine = string(R.string.edit_channel_prompt_next_session)
@@ -3116,7 +3117,7 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
             val conversationId = newHostConversationId(serverId, before)
-            val chatName = PEER_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            val chatName = PEER_CHAT_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
             renameOpenThread(chatName)
 
             // 2. AC-1: the peer, as its own device, sends into that conversation and observes its frames.
@@ -3207,7 +3208,7 @@ class InteractiveStreamE2ETest {
             step(SendNowStage.AwaitWarmup) { composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS) }
             val settings = step(SendNowStage.ReadCapabilities) { freshSettings(conversationId) }
             assertTrue("session must report mid-turn support", settings.capabilities?.midTurnInput == true)
-            val marker = "sendnow1642_" + System.currentTimeMillis()
+            val marker = "sendnow1642_" + RecordedSuiteNative.uniqueStamp()
             val queuedPrompt = "In your final reply to this running turn include exactly this marker: $marker"
             val command = "while [ ! -e '$release' ]; do sleep 0.1; done; printf hold_done"
             val prompt =
@@ -3330,7 +3331,7 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
             val conversationId = newHostConversationId(serverId, before)
-            renameOpenThread(QUEUE_CHAT_NAME_PREFIX + System.currentTimeMillis())
+            renameOpenThread(QUEUE_CHAT_NAME_PREFIX + RecordedSuiteNative.uniqueStamp())
 
             // 2. The peer starts the conversation with a turn that stops on a permission prompt. The prompt
             //    stays outstanding until step 6, so every queue step runs while that turn is still open.
@@ -3570,7 +3571,7 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
             val conversationId = newHostConversationId(serverId, before)
-            val chatName = "e2e-gap-" + System.currentTimeMillis()
+            val chatName = "e2e-gap-" + RecordedSuiteNative.uniqueStamp()
             runBlocking { hostRepository(serverId).promote(conversationId, chatName) }
             val gap = DurableGapProof(composeTestRule, serverId, conversationId)
 
@@ -3823,7 +3824,7 @@ class InteractiveStreamE2ETest {
             awaitChannelList()
             awaitConnected()
             clearRememberedEffort()
-            val stamp = System.currentTimeMillis()
+            val stamp = RecordedSuiteNative.uniqueStamp()
             val nameX = MODEL_X_NAME_PREFIX + stamp
             val chatX = prepareChat(nameX, originals)
             val chatY = prepareChat(MODEL_Y_NAME_PREFIX + stamp, originals)
@@ -3881,7 +3882,7 @@ class InteractiveStreamE2ETest {
         try {
             awaitChannelList()
             awaitConnected()
-            val originalName = "e2e1223-source-${System.currentTimeMillis()}"
+            val originalName = "e2e1223-source-${RecordedSuiteNative.uniqueStamp()}"
             val original = prepareChat(originalName, originals)
             val initial = originals.getValue(original.id).model
             val target =
@@ -3952,7 +3953,7 @@ class InteractiveStreamE2ETest {
             awaitConnected()
             clearRememberedEffort()
             assertNull("a remembered level survived the clear", rememberedEffort())
-            val name = INHERITED_EFFORT_NAME_PREFIX + System.currentTimeMillis()
+            val name = INHERITED_EFFORT_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
             val chat = prepareChat(name, originals)
             assertEquals("the fresh chat already has a saved effort", "", freshSettings(chat.id).effort)
 
@@ -3987,7 +3988,7 @@ class InteractiveStreamE2ETest {
             awaitChannelList()
             awaitConnected()
             clearRememberedEffort()
-            val name = CHOSEN_EFFORT_NAME_PREFIX + System.currentTimeMillis()
+            val name = CHOSEN_EFFORT_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
             val chat = prepareChat(name, originals)
             val current = originals.getValue(chat.id).model
             val row =
@@ -4055,7 +4056,7 @@ class InteractiveStreamE2ETest {
                 awaitConnected()
                 clearRememberedEffort()
             }
-            val stamp = System.currentTimeMillis()
+            val stamp = RecordedSuiteNative.uniqueStamp()
 
             // 1. A sheet-open reading can settle the UI before persistence; require both before restart.
             val primingName = RECALL_PRIMING_NAME_PREFIX + stamp
@@ -4190,7 +4191,7 @@ class InteractiveStreamE2ETest {
         try {
             // 1. Pair the freshly minted dedicated host by code, create a chat, and run one tool-free turn.
             pairHostByCode(fixture.pairCode, BYPASS_HOST_NAME)
-            val name = BYPASS_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            val name = BYPASS_CHAT_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
             val repository = hostRepository(serverId)
             val chat = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.rename(repository.createDiscussion().id, name) } }
             openChatRow(name)
@@ -4871,7 +4872,7 @@ class InteractiveStreamE2ETest {
             awaitChannelList()
             awaitConnected()
             clearRememberedEffort()
-            val name = RECONNECT_FOOTER_NAME_PREFIX + System.currentTimeMillis()
+            val name = RECONNECT_FOOTER_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
             val chat = prepareChat(name, originals)
             openChatRow(name)
             sendFromPhone(PING_PROMPT)
@@ -5104,7 +5105,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
 
             // 2. One small file waits in the strip.
-            val fileName = ATTACH_FILE_PREFIX + "compact-${System.currentTimeMillis()}.txt"
+            val fileName = ATTACH_FILE_PREFIX + "compact-${RecordedSuiteNative.uniqueStamp()}.txt"
             attachDocument(stub, fileName, "e2e1460 compact fixture\n".toByteArray(), inserted)
 
             // 3. Compact session shows the compacting indicator, then a compaction divider.
@@ -5436,7 +5437,7 @@ class InteractiveStreamE2ETest {
         val serverId = twoHostArg(ARG_SERVER_ID)
         val fixture = twoHostArg("stopTaskFixtureUrl")
         require(fixture.matches(Regex("http://127\\.0\\.0\\.1:[0-9]+"))) { "invalid Stop task fixture" }
-        val key = System.currentTimeMillis().toString()
+        val key = RecordedSuiteNative.uniqueStamp().toString()
         val deviceFixture = fixture.replace("127.0.0.1", "10.0.2.2") + "/" + key
         val command = "curl --silent --show-error $fixture/$key/hold"
         val peer = runningToolPeer()
@@ -5853,7 +5854,7 @@ class InteractiveStreamE2ETest {
                 },
             )
             val runId = ownedMessages.first { it.role == Role.Tool }.id
-            val proofRun = System.currentTimeMillis()
+            val proofRun = RecordedSuiteNative.uniqueStamp()
             Log.i("AgentRunProof", "event=late_agent_tools after_main_end=true late_tools=${lateTools.distinct().size}")
             composeTestRule.verifyAgentRunNavigation(
                 agentId = agentId,
@@ -6380,7 +6381,7 @@ class InteractiveStreamE2ETest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.addMonitor(stub)
         try {
-            val stamp = System.currentTimeMillis()
+            val stamp = RecordedSuiteNative.uniqueStamp()
             val png = pngFixture()
             val document = documentFixture("phone-$stamp")
             val pngName = ATTACH_FILE_PREFIX + "phone-$stamp.png"
@@ -6445,7 +6446,7 @@ class InteractiveStreamE2ETest {
         val inserted = mutableListOf<Uri>()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         try {
-            val stamp = System.currentTimeMillis()
+            val stamp = RecordedSuiteNative.uniqueStamp()
             val png = pngFixture()
             val document = documentFixture("shared-$stamp")
             val pngName = ATTACH_FILE_PREFIX + "shared-$stamp.png"
@@ -6523,7 +6524,7 @@ class InteractiveStreamE2ETest {
         val inserted = mutableListOf<Uri>()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         try {
-            val stamp = System.currentTimeMillis()
+            val stamp = RecordedSuiteNative.uniqueStamp()
             val png = pngFixture()
             val document = documentFixture("shared-$stamp")
             val pngName = ATTACH_FILE_PREFIX + "shared-$stamp.png"
@@ -6664,7 +6665,7 @@ class InteractiveStreamE2ETest {
         instrumentation.addMonitor(stub)
         var relaunched: ActivityScenario<MainActivity>? = null
         try {
-            val stamp = System.currentTimeMillis()
+            val stamp = RecordedSuiteNative.uniqueStamp()
             val document = documentFixture("peer-$stamp")
             val documentName = ATTACH_FILE_PREFIX + "peer-$stamp.txt"
 
@@ -6746,7 +6747,7 @@ class InteractiveStreamE2ETest {
         instrumentation.addMonitor(stub)
         var relaunched: ActivityScenario<MainActivity>? = null
         try {
-            val stamp = System.currentTimeMillis()
+            val stamp = RecordedSuiteNative.uniqueStamp()
             val content = OFFER_CONTENT_PREFIX + stamp
             val fileName = ATTACH_FILE_PREFIX + "offer-$stamp.txt"
 
@@ -6810,7 +6811,7 @@ class InteractiveStreamE2ETest {
         instrumentation.addMonitor(stub)
         var cut: LinkCut? = null
         try {
-            val stamp = System.currentTimeMillis()
+            val stamp = RecordedSuiteNative.uniqueStamp()
             val document = documentFixture("upload-$stamp")
             val documentName = INTERRUPT_FILE_PREFIX + "upload-$stamp.txt"
             val totalChunks = (document.size + ATTACHMENT_CHUNK_BYTES - 1) / ATTACHMENT_CHUNK_BYTES
@@ -6890,7 +6891,7 @@ class InteractiveStreamE2ETest {
         var relaunched: ActivityScenario<MainActivity>? = null
         var cut: LinkCut? = null
         try {
-            val stamp = System.currentTimeMillis()
+            val stamp = RecordedSuiteNative.uniqueStamp()
             val document = documentFixture("retrieval-$stamp")
             val documentName = INTERRUPT_FILE_PREFIX + "retrieval-$stamp.txt"
 
@@ -7001,7 +7002,7 @@ class InteractiveStreamE2ETest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.addMonitor(stub)
         try {
-            val stamp = System.currentTimeMillis()
+            val stamp = RecordedSuiteNative.uniqueStamp()
             val document = documentFixture("collision-$stamp")
             val documentName = INTERRUPT_FILE_PREFIX + "collision-$stamp.txt"
 
@@ -7082,7 +7083,7 @@ class InteractiveStreamE2ETest {
         val serverId = twoHostArg(ARG_SERVER_ID)
         val peer = runningToolPeer()
         try {
-            val stamp = System.currentTimeMillis()
+            val stamp = RecordedSuiteNative.uniqueStamp()
             val fileName = NOTE_FILE_PREFIX + "$stamp.md"
             val linkText = NOTE_LINK_PREFIX + stamp
             val first = NOTE_MARKER_PREFIX + "$stamp-first"
@@ -7768,7 +7769,7 @@ class InteractiveStreamE2ETest {
         serverId: String,
         prefix: String,
     ): Pair<String, String> {
-        val name = prefix + System.currentTimeMillis()
+        val name = prefix + RecordedSuiteNative.uniqueStamp()
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
         val chat =
             runBlocking {

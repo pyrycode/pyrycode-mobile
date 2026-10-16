@@ -29,6 +29,19 @@ class SuiteCaptureTest {
         assertEquals(false, steps.last().accepted)
     }
 
+    @Test fun aSynchronousReplyCannotPrecedeItsClientRequestInTheCapture() {
+        val capture = SuiteCapture()
+        val accepted =
+            capture.send("phone", message()) {
+                capture.observe(SuiteStep("daemon", "phone", message().copy(id = 2, type = "ack", inReplyTo = 1)))
+                false
+            }
+        assertEquals(false, accepted)
+        val steps = capture.completed(true)
+        assertEquals(listOf("client", "daemon"), steps.map { it.direction })
+        assertEquals(false, steps.first().accepted)
+    }
+
     @Test fun boundsInvalidateTheWholeCandidate() {
         val capture = SuiteCapture(maxBytes = 1)
         capture.observe(SuiteStep("client", "phone", message()))

@@ -16,6 +16,7 @@ import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
 import de.pyryco.mobile.di.hostConversationModule
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
+import de.pyryco.mobile.recording.RecordedSuiteNative
 import kotlinx.coroutines.runBlocking
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.GlobalContext
@@ -46,6 +47,7 @@ class E2eTestApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         val args = InstrumentationRegistry.getArguments()
+        RecordedSuiteNative.applicationStarting(args)
         // The recorded scenario owns its real coordinator and test pairing. Do not open a second
         // app-wide connection that would redeem the same one-device pairing with another key.
         val relayUrl = args.getString(ARG_RELAY_URL).takeUnless { args.getString("recordExchange") == "true" }
@@ -69,8 +71,9 @@ class E2eTestApplication : Application() {
             )
         val koin =
             startKoin {
+                if (RecordedSuiteNative.active) allowOverride(true)
                 androidContext(this@E2eTestApplication)
-                modules(appModule, tappedRelayRepositoryModule())
+                modules(appModule, tappedRelayRepositoryModule(), RecordedSuiteNative.bindings())
             }.koin
         // Persist into the SAME store singleton MainActivity reads, so load() != null → channel list.
         runBlocking {
@@ -112,7 +115,7 @@ class E2eTestApplication : Application() {
         startKoin {
             allowOverride(true)
             androidContext(this@E2eTestApplication)
-            modules(appModule, repositoryModule, module { single<DataStore<Preferences>> { preferences } })
+            modules(appModule, repositoryModule, module { single<DataStore<Preferences>> { preferences } }, RecordedSuiteNative.bindings())
         }
         Log.i("E2E", "app.rebuildGraph: object graph rebuilt over the same on-device state")
     }

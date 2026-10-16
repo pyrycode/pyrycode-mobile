@@ -36,6 +36,7 @@ internal class RecordedSuiteDocument private constructor(
                 put("direction", step.direction)
                 put("delayMs", step.delayMs)
                 put("accepted", step.accepted)
+                put("detail", step.detail)
                 if (step.direction == "open") {
                     put("capabilities", JsonArray(step.capabilities.sorted().map(::JsonPrimitive)))
                 }
@@ -109,6 +110,7 @@ internal class RecordedSuiteDocument private constructor(
                                     .orEmpty(),
                             delayMs = row.getValue("delayMs").jsonPrimitive.long,
                             accepted = requireNotNull(row.getValue("accepted").jsonPrimitive.booleanOrNull),
+                            detail = row.getValue("detail").jsonObject,
                         )
                     }
                 val result = RecordedSuiteDocument(document, steps)

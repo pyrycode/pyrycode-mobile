@@ -19,6 +19,7 @@ internal data class SuiteStep(
     val capabilities: Set<String> = emptySet(),
     val delayMs: Long = 0,
     val accepted: Boolean = true,
+    val detail: JsonObject = JsonObject(emptyMap()),
 )
 
 /** A single causal tape spans every client, so a peer action can release a phone notification. */
@@ -70,9 +71,12 @@ internal class RecordedSuiteTape(
         val ids = mutableMapOf<Pair<String, String>, MutableSet<Long>>()
         var bytes = 0
         steps.forEach { step ->
+            requireSafe(step.detail)
             require(step.delayMs in 0..3600000) { "Invalid suite event timing" }
             require(step.owner.matches(Regex("[A-Za-z0-9_./:-]{1,160}"))) { "Invalid suite owner" }
-            require(step.direction in setOf("client", "daemon", "connect", "open", "down", "close")) { "Invalid suite event" }
+            require(
+                step.direction in setOf("client", "daemon", "connect", "open", "down", "close", "transport_down", "minimum", "inbound_end"),
+            ) { "Invalid suite event" }
             val message = step.message
             if (step.direction in setOf("client", "daemon")) {
                 require(message != null && message.payload is JsonObject && message.type.isNotBlank() && message.ts.isNotBlank())

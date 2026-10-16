@@ -1,0 +1,333 @@
+package de.pyryco.mobile.recording
+
+import android.os.Bundle
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.data.crypto.PairedServer
+import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.network.NoiseClientInfo
+import de.pyryco.mobile.data.network.NoiseSessionPump
+import de.pyryco.mobile.data.network.OkHttpRelayTransport
+import de.pyryco.mobile.data.network.RelayTransport
+import de.pyryco.mobile.data.network.RelayTransportFactory
+import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.repository.ManagedSessionPump
+import de.pyryco.mobile.di.ObservablePairedServerStore
+import de.pyryco.mobile.di.RelayConnectionFactory
+import de.pyryco.mobile.di.RelayConnectionRegistry
+import de.pyryco.mobile.di.RelaySessionPumpFactory
+import de.pyryco.mobile.e2e.E2eTestApplication
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
+import org.junit.runner.Description
+import org.koin.core.context.GlobalContext
+import org.koin.core.module.Module
+import org.koin.dsl.module
+import java.io.File
+import java.nio.ByteBuffer
+import java.nio.file.Files
+import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.PosixFilePermissions
+import java.util.Base64
+
+/** Test-only composition root. The normal application has no reference to this class. */
+internal object RecordedSuiteNative {
+    private val credentialFields =
+        setOf(
+            "token",
+            "peerToken",
+            "serverStaticPublicKey",
+            "pairCodeB",
+            "answerPairCode",
+            "answerPeerToken",
+            "answerServerStaticPublicKey",
+            "bypassFixtureAuthorization",
+            "sessionErrorAuthorization",
+        )
+    private val localFields = setOf("class", "recordedSuite", "suiteFile", "stream", "debug", "listener")
+    private var current: Session? = null
+    val active get() = current != null
+
+    fun applicationStarting(args: Bundle) {
+        if (args.getString("recordedSuite") == "capture") current = Session(null, args)
+    }
+
+    fun begin(description: Description) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val args = InstrumentationRegistry.getArguments()
+        if (args.getString("recordedSuite") == "capture") {
+            checkNotNull(current).scenario = description.methodName
+            return
+        }
+        if (description.className != RecordedMobileSuiteTest::class.java.name) return
+        val fileName = args.getString("suiteFile")
+        val text =
+            if (fileName != null) {
+                require(Regex("recorded-[a-f0-9]+\\.json").matches(fileName))
+                File(instrumentation.targetContext.filesDir, fileName).readText()
+            } else {
+                instrumentation.context.assets
+                    .open("recorded/suite/${description.methodName}.json")
+                    .bufferedReader()
+                    .use { it.readText() }
+            }
+        val document = RecordedSuiteDocument.parse(text)
+        check(document.scenario == description.methodName) { "Recording belongs to another method" }
+        val session = Session(document, args)
+        current = session
+        val resolved = checkNotNull(session.tape).arguments(document.inputs)
+        val arguments = resolved.getValue("arguments").jsonObject
+        arguments.forEach { (key, value) -> args.putString(key, value.jsonPrimitive.content) }
+        args.putString("relayUrl", "wss://recorded.invalid")
+        args.putString("daemonFaultPort", "1")
+        credentialFields.forEach { key ->
+            val host =
+                when (key) {
+                    "pairCodeB" -> args.getString("serverIdB")
+                    "answerPairCode" -> args.getString("answerServerId")
+                    else -> args.getString("serverId")
+                }
+            args.putString(
+                key,
+                when {
+                    key.contains("PairCode") || key == "pairCodeB" -> pairCode(checkNotNull(host))
+                    key.contains("PublicKey") -> FAKE_KEY
+                    key.endsWith("Authorization") -> "A".repeat(43)
+                    else -> FAKE_TOKEN
+                },
+            )
+        }
+        args.putString("recordedSuite", "replay")
+        runBlocking {
+            withTimeout(5000) {
+                ProcessLifecycleOwner
+                    .get()
+                    .lifecycle.currentStateFlow
+                    .first { !it.isAtLeast(Lifecycle.State.STARTED) }
+            }
+            val koin = GlobalContext.get()
+            koin.get<DataStore<Preferences>>().updateData { emptyPreferences() }
+            val store = koin.get<ObservablePairedServerStore>()
+            store.readSnapshot().getOrThrow().forEach { store.remove(it.record.serverId) }
+        }
+        instrumentation.runOnMainSync { (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph() }
+        runBlocking {
+            GlobalContext.get().get<PairedServerStore>().save(
+                PairedServer(checkNotNull(args.getString("serverId")), FAKE_TOKEN, "wss://recorded.invalid", FAKE_KEY),
+            )
+        }
+    }
+
+    fun bindings(): Module {
+        val session = current ?: return module { }
+        return module {
+            single<RelayConnectionFactory> {
+                val original = get<RelayTransportFactory>()
+                RelayConnectionFactory(
+                    get(),
+                    RelayTransportFactory { pairing ->
+                        session.remember(pairing)
+                        session.hub.transport(session.owner("phone", pairing.serverId)) { original.create(pairing) }
+                    },
+                    get(),
+                    pushTokens = get<AppPreferences>().pushToken,
+                    messageTrail = get(),
+                    pumpFactory =
+                        RelaySessionPumpFactory { transport, factory, dispatcher, minimum ->
+                            session.hub.pump(transport) { NoiseSessionPump(transport, factory, dispatcher, onClientMinimum = minimum) }
+                        },
+                )
+            }
+        }
+    }
+
+    fun peerTransport(
+        pairing: PairedServer,
+        info: NoiseClientInfo,
+    ): RelayTransport? =
+        current?.let { session ->
+            session.remember(pairing)
+            session.hub.transport(session.owner("peer", pairing.serverId)) {
+                OkHttpRelayTransport(pairing, info, OkHttpRelayTransport.defaultClient())
+            }
+        }
+
+    fun pump(
+        transport: RelayTransport,
+        live: () -> ManagedSessionPump,
+    ): ManagedSessionPump = current?.hub?.pump(transport, live) ?: live()
+
+    fun control(
+        action: String,
+        body: String,
+        live: () -> Unit,
+    ) {
+        current?.hub?.control(action, body, live) ?: live()
+    }
+
+    @Synchronized fun uniqueStamp(): Long {
+        val session = current ?: return System.currentTimeMillis()
+        return if (session.document == null) {
+            System.currentTimeMillis().also { session.clockReads += it }
+        } else {
+            check(session.clockIndex < session.clockReads.size) { "Unexpected generated suite input" }
+            session.clockReads[session.clockIndex++]
+        }
+    }
+
+    fun finish(success: Boolean) {
+        val session = current ?: return
+        try {
+            GlobalContext.get().get<RelayConnectionRegistry>().dispose()
+            runBlocking {
+                withTimeout(10000) {
+                    session.hub.awaitReaders()
+                    session.hub.awaitIdle()
+                }
+            }
+            if (!success) return
+            if (session.document != null) {
+                check(session.clockIndex == session.clockReads.size) { "Unconsumed generated suite inputs" }
+                session.hub.assertComplete()
+            } else {
+                val inputs =
+                    buildJsonObject {
+                        put("arguments", session.arguments)
+                        put("clockReads", JsonArray(session.clockReads.map(::JsonPrimitive)))
+                        put(
+                            "hosts",
+                            JsonArray(
+                                session.hosts.map { (id, label) ->
+                                    buildJsonObject {
+                                        put("id", id)
+                                        put("label", label)
+                                    }
+                                },
+                            ),
+                        )
+                    }
+                val declared =
+                    session.hosts.keys +
+                        session.arguments
+                            .filterKeys { it.endsWith("Id") || it == "serverIdB" }
+                            .values
+                            .map { it.jsonPrimitive.content }
+                val body = RecordedSuiteDocument.body(session.scenario, inputs, declared.toSet(), session.hub.completedCapture(true))
+                requireSafe(body)
+                val serialized = body.toString()
+                check(session.credentials.none { it.isNotEmpty() && serialized.contains(it) }) { "Credential rejected from suite capture" }
+                val args = InstrumentationRegistry.getArguments()
+                val fileName = requireNotNull(args.getString("suiteFile"))
+                require(Regex("recorded-[a-f0-9]+\\.json").matches(fileName))
+                val file = File(InstrumentationRegistry.getInstrumentation().targetContext.filesDir, fileName)
+                val options = setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+                Files
+                    .newByteChannel(
+                        file.toPath(),
+                        options,
+                        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")),
+                    ).use {
+                        val bytes = ByteBuffer.wrap(serialized.toByteArray())
+                        while (bytes.hasRemaining()) it.write(bytes)
+                    }
+            }
+        } finally {
+            session.hub.close()
+            session.scope.cancel()
+            current = null
+        }
+    }
+
+    private class Session(
+        val document: RecordedSuiteDocument?,
+        args: Bundle,
+    ) {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val tape = document?.tape()
+        val hub = if (tape == null) SuiteConnections.recording(scope) else SuiteConnections.replaying(scope, tape)
+        var scenario = document?.scenario.orEmpty()
+        val arguments =
+            JsonObject(
+                args
+                    .keySet()
+                    .filter {
+                        it !in credentialFields && it !in localFields
+                    }.associateWith { JsonPrimitive(args.getString(it).orEmpty()) },
+            )
+        val clockReads =
+            document
+                ?.inputs
+                ?.getValue("clockReads")
+                ?.jsonArray
+                ?.map { it.jsonPrimitive.long }
+                ?.toMutableList() ?: mutableListOf()
+        var clockIndex = 0
+        val credentials = java.util.concurrent.CopyOnWriteArraySet<String>()
+        val hosts = linkedMapOf<String, String>()
+        private val generations = mutableMapOf<String, Int>()
+
+        init {
+            credentialFields.mapNotNull(args::getString).filter { it.isNotEmpty() }.forEach(credentials::add)
+            if (document != null) {
+                tape!!.arguments(document.inputs).getValue("hosts").jsonArray.forEach { value ->
+                    val host = value.jsonObject
+                    hosts[host.getValue("id").jsonPrimitive.content] = host.getValue("label").jsonPrimitive.content
+                }
+            } else {
+                listOf("serverId", "serverIdB", "answerServerId").mapNotNull(args::getString).distinct().forEach {
+                    hosts[it] =
+                        "host-${hosts.size}"
+                }
+            }
+        }
+
+        fun remember(pairing: PairedServer) {
+            credentials += pairing.token
+            credentials += pairing.serverStaticPublicKey
+        }
+
+        @Synchronized fun owner(
+            role: String,
+            host: String,
+        ): String {
+            if (document != null) check(host in hosts) { "Unexpected suite host" }
+            val label = hosts.getOrPut(host) { "host-${hosts.size}" }
+            val key = "$role/$label"
+            val generation = generations[key] ?: 0
+            generations[key] = generation + 1
+            return "$key/$generation"
+        }
+    }
+
+    private val FAKE_TOKEN = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32) { 1 })
+    private val FAKE_KEY = Base64.getEncoder().encodeToString(ByteArray(32) { 2 })
+
+    private fun pairCode(server: String): String {
+        val payload =
+            buildJsonObject {
+                put("server", server)
+                put("relay", "wss://recorded.invalid")
+                put("token", FAKE_TOKEN)
+                put("server_static_pubkey", FAKE_KEY)
+            }
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(payload.toString().toByteArray())
+    }
+}

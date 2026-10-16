@@ -28,6 +28,24 @@ internal class SuiteCapture(
         }
     }
 
+    @Synchronized fun send(
+        owner: String,
+        frame: de.pyryco.mobile.data.network.Envelope,
+        operation: () -> Boolean,
+    ): Boolean {
+        val index = steps.size
+        observe(SuiteStep("client", owner, frame))
+        return try {
+            val accepted = operation()
+            if (!rejected) steps[index] = steps[index].copy(accepted = accepted)
+            accepted
+        } catch (error: Throwable) {
+            rejected = true
+            steps.clear()
+            throw error
+        }
+    }
+
     @Synchronized fun completed(success: Boolean): List<SuiteStep> {
         check(success && !rejected) { "Recorded suite capture rejected or incomplete" }
         val snapshot = steps.toList()

@@ -27,6 +27,8 @@ import de.pyryco.mobile.data.network.RequestAttachmentPayloadDto
 import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.TransportEvent
+import de.pyryco.mobile.data.repository.ManagedSessionPump
+import de.pyryco.mobile.recording.RecordedSuiteNative
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -549,8 +551,13 @@ class SecondClientPeer(
      * the attempt torn down, when any step fails or [ATTEMPT_TIMEOUT_MS] runs out.
      */
     private suspend fun dialLink(): Link? {
-        val transport = OkHttpRelayTransport(pairing, CLIENT_INFO, OkHttpRelayTransport.defaultClient())
-        val pump = NoiseSessionPump(transport, NoiseSessionFactory(keyStore, SinglePairingStore(pairing), CLIENT_INFO))
+        val transport =
+            RecordedSuiteNative.peerTransport(pairing, CLIENT_INFO)
+                ?: OkHttpRelayTransport(pairing, CLIENT_INFO, OkHttpRelayTransport.defaultClient())
+        val pump =
+            RecordedSuiteNative.pump(transport) {
+                NoiseSessionPump(transport, NoiseSessionFactory(keyStore, SinglePairingStore(pairing), CLIENT_INFO))
+            }
         var settled: Link? = null
         try {
             settled =
@@ -660,7 +667,7 @@ class SecondClientPeer(
 
     /** One dialed connection: its pump (which owns the transport) and the job recording what it receives. */
     private class Link(
-        val pump: NoiseSessionPump,
+        val pump: ManagedSessionPump,
         val recorder: Job,
     )
 
