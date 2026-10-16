@@ -17,6 +17,7 @@ internal class SuiteReadReceipts(
     private val resolve: (JsonElement) -> JsonElement,
     private val retainedPhoneHistory: Boolean = false,
     private val allocateId: ((String) -> Long)? = null,
+    private val requireRecordedProgress: Boolean = true,
 ) {
     private data class Key(
         val owner: String,
@@ -212,6 +213,9 @@ internal class SuiteReadReceipts(
         return (confirmed[host(step.owner) to conversation] ?: 0u) >= guard.third
     }
 
+    /** An unsent automatic read notification can disappear only when its connection terminates. */
+    fun mayCancel(step: SuiteStep) = !requireRecordedProgress && !permits(step)
+
     fun accepts(
         owner: String,
         frame: Envelope,
@@ -304,10 +308,11 @@ internal class SuiteReadReceipts(
             }.joinToString(",")
 
     fun isComplete() =
-        groups.all { (key, group) ->
-            val conversation = resolve(JsonPrimitive(key.conversation)).jsonPrimitive.content
-            (confirmed[host(key.owner) to conversation] ?: 0u) >= group.required
-        }
+        !requireRecordedProgress ||
+            groups.all { (key, group) ->
+                val conversation = resolve(JsonPrimitive(key.conversation)).jsonPrimitive.content
+                (confirmed[host(key.owner) to conversation] ?: 0u) >= group.required
+            }
 
     fun assertComplete() {
         check(isComplete()) { "Recorded final read progress is incomplete" }

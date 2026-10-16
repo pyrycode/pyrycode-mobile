@@ -47,6 +47,8 @@ def audit(manifest, actual, selected, directory):
             'settingsReadNormalization': 'recorded-snapshots-v1',
             'backfillProbeNormalization': 'unsupported-legacy-probe-v1'} or type(policy.get('version')) is not int):
         raise ValueError('Unsupported suite query policy')
+    if manifest.get('readReceiptPolicy') not in {None, 'presented-visible-history-v4'}:
+        raise ValueError('Unsupported suite read policy')
     rows = manifest['scenarios']
     named = [row['method'] for row in rows]
     if len(named) != len(set(named)) or set(named) != actual:

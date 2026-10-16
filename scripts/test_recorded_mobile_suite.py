@@ -13,6 +13,39 @@ spec.loader.exec_module(suite)
 
 
 class SuiteDriverTest(unittest.TestCase):
+    def test_stopping_full_verification_preserves_completed_cases_and_counts_the_rest_unrun(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / 'suite.json'
+            manifest.write_text('{}')
+            stop = root / 'STOP'
+            args = argparse.Namespace(output=root / 'evidence', stop_file=stop, methods_file=None)
+            rows = [{'method': name, 'fixture': name + '.json'} for name in ['first', 'second']]
+            def verify(case):
+                case.output.mkdir(parents=True)
+                report = {'scenario': case.output.name, 'capture': suite.COUNTS,
+                          'reviewedReplay': suite.COUNTS, 'freshReplay': suite.COUNTS,
+                          'contractMatched': True, 'failureStages': []}
+                (case.output / 'verification.json').write_text(json.dumps(report))
+                stop.write_text('stop at completed boundary')
+                return report
+            with mock.patch.object(suite, 'MANIFEST', manifest), mock.patch.object(suite, 'all_ready_rows'), \
+                 mock.patch.object(suite, 'selected_rows', return_value=rows), mock.patch.object(suite, 'verify', side_effect=verify) as call:
+                with self.assertRaises(ValueError): suite.verify_all(args)
+            summary = json.loads((args.output / 'summary.json').read_text())
+            self.assertEqual(1, call.call_count)
+            self.assertTrue(summary['stopped'])
+            self.assertEqual(2, summary['required'])
+            for stage in summary['stageCounts'].values():
+                self.assertEqual({'passed': 1, 'failed': 0, 'notRun': 1}, stage)
+
+    def test_presentation_read_model_is_explicit_and_unknown_models_fail(self):
+        fixture = self.fixture()
+        fixture['readReceiptNormalization'] = 'presented-visible-history-v4'
+        suite.validate(fixture)
+        fixture['readReceiptNormalization'] = 'accept-any-read'
+        with self.assertRaises(ValueError): suite.validate(fixture)
+
     def test_download_queries_can_reorder_but_keep_the_complete_file_identity(self):
         import base64
         original = self.fixture()

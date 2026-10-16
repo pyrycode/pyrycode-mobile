@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -56,6 +57,20 @@ class SuiteInventoryTest(unittest.TestCase):
         inventory.audit_runner('@Test fun a() {}', {'a', 'old'}, {'old'})
         for source in ['@Test fun a() {}\n@Ignore @Test fun b() {}', '@Test fun old() {}', '@Test fun a() {}\n@Test fun b() {}']:
             with self.assertRaises(ValueError): inventory.audit_runner(source, {'a', 'old'}, {'old'})
+
+    def test_unknown_read_policy_cannot_disable_read_checks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = {'format': 'pyrycode.mobile-suite', 'scenario': 'a', 'source': {}}
+            data = json.dumps(fixture).encode()
+            Path(directory, 'a.json').write_bytes(data)
+            checksum = hashlib.sha256(data).hexdigest()
+            counts = {'executed': 1, 'failed': 0, 'skipped': 0, 'fixtureSha256': checksum}
+            row = {'method': 'a', 'fixture': 'a.json', 'evidence': {'fixtureSha256': checksum,
+                   'capture': {**counts, 'source': {}}, 'replay': counts}}
+            manifest = {'scenarios': [row], 'liveSelection': ['a'], 'readReceiptPolicy': 'presented-visible-history-v4'}
+            inventory.audit(manifest, {'a'}, {'a'}, Path(directory))
+            manifest['readReceiptPolicy'] = 'ignore-everything'
+            with self.assertRaises(ValueError): inventory.audit(manifest, {'a'}, {'a'}, Path(directory))
 
     def test_fresh_evidence_is_external_hash_bound_complete_and_uses_the_same_installed_packages(self):
         import copy

@@ -3,6 +3,7 @@
   "version": 1,
   "foundationTicket": 2183,
   "gateTicket": 2190,
+  "readReceiptPolicy": "presented-visible-history-v4",
   "queryPolicy": {
     "version": 1,
     "modelQueryNormalization": "reconnect-catalog-race-v1",

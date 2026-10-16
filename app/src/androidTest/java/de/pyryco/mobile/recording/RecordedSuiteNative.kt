@@ -99,7 +99,9 @@ internal object RecordedSuiteNative {
                 .use { it.readText() }
         val policy = MobileJson.parseToJsonElement(index).jsonObject["queryPolicy"]?.jsonObject
         val parsed = RecordedSuiteDocument.parse(text)
-        val document = policy?.let(parsed::withQueryPolicy) ?: parsed
+        val queryDocument = policy?.let(parsed::withQueryPolicy) ?: parsed
+        val readPolicy = MobileJson.parseToJsonElement(index).jsonObject["readReceiptPolicy"]?.jsonPrimitive
+        val document = readPolicy?.let(queryDocument::withReadPolicy) ?: queryDocument
         check(document.scenario == description.methodName) { "Recording belongs to another method" }
         val session = Session(document, args)
         current = session
@@ -266,8 +268,6 @@ internal object RecordedSuiteNative {
             session.clockReads[session.clockIndex++]
         }
     }
-
-    fun readsSettled() = current?.tape?.readsSettled() ?: true
 
     /** Older captures retain their original checks; only actual new captures acquire observation checkpoints. */
     fun checkpoint(name: String) {

@@ -39,6 +39,12 @@ internal class RecordedSuiteDocument private constructor(
         return RecordedSuiteDocument(JsonObject(document + fields), steps)
     }
 
+    /** The suite declares the read model without rewriting historical capture bytes or provenance. */
+    fun withReadPolicy(policy: JsonPrimitive): RecordedSuiteDocument {
+        require(policy == JsonPrimitive("presented-visible-history-v4")) { "Unsupported suite read policy" }
+        return RecordedSuiteDocument(JsonObject(document + ("readReceiptNormalization" to policy)), steps)
+    }
+
     fun tape() =
         RecordedSuiteTape(
             steps,
@@ -48,8 +54,12 @@ internal class RecordedSuiteDocument private constructor(
                     setOf(
                         JsonPrimitive("coalesced-visible-history-v2"),
                         JsonPrimitive("coalesced-visible-history-v3"),
+                        JsonPrimitive("presented-visible-history-v4"),
                     ),
-            retainedPhoneHistory = document["readReceiptNormalization"] == JsonPrimitive("coalesced-visible-history-v3"),
+            retainedPhoneHistory =
+                document["readReceiptNormalization"] in
+                    setOf(JsonPrimitive("coalesced-visible-history-v3"), JsonPrimitive("presented-visible-history-v4")),
+            requireRecordedReadProgress = document["readReceiptNormalization"] != JsonPrimitive("presented-visible-history-v4"),
             literalProducerIdentities = document["producerIdentityMode"] == JsonPrimitive("literal"),
             redundantModelQueries = document["modelQueryNormalization"] == JsonPrimitive("reconnect-catalog-race-v1"),
             recordedSettingsReads = document["settingsReadNormalization"] == JsonPrimitive("recorded-snapshots-v1"),
@@ -82,7 +92,7 @@ internal class RecordedSuiteDocument private constructor(
                 if (steps.any { it.owner == "control" && it.message?.type == "test-control:checkpoint" }) {
                     put("checkpointPolicy", "test-observations-v1")
                 }
-                put("readReceiptNormalization", "coalesced-visible-history-v3")
+                put("readReceiptNormalization", "presented-visible-history-v4")
                 put("modelQueryNormalization", "reconnect-catalog-race-v1")
                 put("settingsReadNormalization", "recorded-snapshots-v1")
                 put("backfillProbeNormalization", "unsupported-legacy-probe-v1")
@@ -107,6 +117,7 @@ internal class RecordedSuiteDocument private constructor(
                             null,
                             JsonPrimitive("coalesced-visible-history-v2"),
                             JsonPrimitive("coalesced-visible-history-v3"),
+                            JsonPrimitive("presented-visible-history-v4"),
                         ),
                 )
                 require(document["modelQueryNormalization"] in setOf(null, JsonPrimitive("reconnect-catalog-race-v1")))

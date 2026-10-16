@@ -33,6 +33,7 @@ internal class RecordedSuiteTape(
     retainedPhoneHistory: Boolean = false,
     recordedSettingsReads: Boolean = false,
     refusedBackfillProbes: Boolean = false,
+    private val requireRecordedReadProgress: Boolean = true,
 ) {
     private var optionalModelReplies = emptyMap<Int, Int>()
     private val redundantModels = mutableSetOf<Pair<String, String>>()
@@ -141,7 +142,7 @@ internal class RecordedSuiteTape(
             }
         }
         if (coalescedReadReceipts) {
-            readReceipts = SuiteReadReceipts(steps, queryTypes, ::mapped, retainedPhoneHistory, ::nextDaemonId)
+            readReceipts = SuiteReadReceipts(steps, queryTypes, ::mapped, retainedPhoneHistory, ::nextDaemonId, requireRecordedReadProgress)
             steps = readReceipts!!.steps
         }
         if (recordedSettingsReads || refusedBackfillProbes) {
@@ -267,7 +268,7 @@ internal class RecordedSuiteTape(
             it !in consumed && steps[it].owner == "control" && steps[it].message?.type == "test-control:checkpoint"
         } ?: steps.size
 
-    /** A test observation cannot borrow a later response or leave earlier recorded work behind. */
+    /** Observations fence ordinary wire work; completion also waits for modeled read notifications. */
     @Synchronized fun checkpointReady(name: String): Boolean {
         failure?.let { fail(it) }
         val boundary = checkpointBoundary()
@@ -275,7 +276,13 @@ internal class RecordedSuiteTape(
         if (expected != JsonObject(mapOf("body" to JsonPrimitive(name)))) {
             fail("Recorded suite test checkpoint mismatch")
         }
-        return (0 until boundary).all { it in released }
+        return (0 until boundary).all {
+            it in released ||
+                // Automatic read notifications already follow actual phone acknowledgement, not UI action timing.
+                // Keep them deferred across intermediate observations, then require delivery at completion.
+                (name != "scenario-complete" || !requireRecordedReadProgress) &&
+                readReceipts?.permits(steps[it]) == false
+        }
     }
 
     private fun eligible(): List<Int> {
@@ -462,8 +469,18 @@ internal class RecordedSuiteTape(
                 )
         check(direction in setOf("connect", "close")) { "Invalid lifecycle request" }
         consumed += candidate
+        if (direction == "close") cancelUnsentReadNotifications(candidate, owner)
         matched++
         return drain()
+    }
+
+    private fun cancelUnsentReadNotifications(
+        before: Int,
+        owner: String,
+    ) {
+        for (index in 0 until before) {
+            if (steps[index].owner == owner && readReceipts?.mayCancel(steps[index]) == true) released += index
+        }
     }
 
     private fun drain(): List<SuiteStep> {
@@ -482,7 +499,7 @@ internal class RecordedSuiteTape(
             // Keep connection termination behind it, while independent messages retain their source order.
             if (step.owner in blockedOwners && step.direction !in setOf("daemon", "settings_snapshot")) continue
             if (readReceipts?.permits(step) == false) {
-                blockedOwners += step.owner
+                if (readReceipts?.mayCancel(step) != true) blockedOwners += step.owner
                 continue
             }
             val frame = step.message
@@ -491,6 +508,7 @@ internal class RecordedSuiteTape(
                 continue
             }
             if (step.direction == "daemon" && frame!!.inReplyTo?.let { step.owner to it !in requests } == true) continue
+            if (step.direction in setOf("inbound_end", "down", "transport_down")) cancelUnsentReadNotifications(index, step.owner)
             if (step.direction in setOf("daemon", "settings_snapshot")) {
                 val encoded = mapped(MobileJson.encodeToJsonElement(Envelope.serializer(), frame!!)).jsonObject.toMutableMap()
                 if (step.direction == "settings_snapshot") {
@@ -527,8 +545,6 @@ internal class RecordedSuiteTape(
         return "Recorded suite progress: matched=$matched remaining=${steps.size - released.size} " +
             "next=${next?.owner}:$type index=$index pending=$pending reads=${readReceipts?.progress()}"
     }
-
-    @Synchronized fun readsSettled() = readReceipts?.isComplete() ?: true
 
     @Synchronized fun assertComplete() {
         failure?.let { fail(it) }

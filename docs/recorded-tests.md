@@ -149,11 +149,16 @@ connection. Read-only requests still count. Another connection can finish indepe
 
 The suite declares three limited scheduling models separately from Claude content:
 
-- Automatic phone read acknowledgements can coalesce. They must advance through history
-  actually delivered to that phone on the same host and reach recorded final progress.
-  Explicit peer reads stay exact. Peer read notifications wait for the actual phone read.
-  Independent permission prompts and turn events continue while that notification waits.
-  The replay rule keeps the screen alive until its required automatic reads settle.
+- Automatic phone read acknowledgements follow content actually presented by the real UI.
+  They may coalesce or omit an incidental visibility window. The suite explicitly declares
+  `readReceiptPolicy: presented-visible-history-v4`; historical capture bytes stay unchanged.
+  Every actual read must increase and refer to history delivered to that phone on that host.
+  A peer's captured read notification waits for the actual phone acknowledgement. If its
+  connection ends first, only that unsent notification is cancelled. Ordinary frames,
+  required queries, user commands and explicit peer reads remain exact. Original read-specific
+  UI assertions still require actual confirmation. The migration adds no blanket final-read
+  assertion to unrelated feature tests. Standalone v2/v3 recordings retain their stricter
+  recorded-final-progress requirement unless the suite explicitly applies its newer policy.
 - A single model lookup can race an unsolicited catalogue on the same connection and
   conversation. Omitting a recorded lookup requires an identical independent catalogue in
   the same command interval. On-demand lookups without that evidence stay mandatory.
@@ -180,8 +185,13 @@ and timing obligations retain their external checks.
 
 New captures record explicit checkpoints before a phone send and after the original
 scenario succeeds. A checkpoint waits for earlier recorded requests and scheduled
-deliveries. Later queries cannot borrow replies across it. Complete request payloads,
-permission choices and uploaded bytes retain their existing checks. Captures declare
+deliveries. Intermediate observations allow only the declared automatic read notifications
+to remain deferred until the phone actually acknowledges their content. They never invent
+an acknowledgement or release a peer read notification early. Under the declared v4 policy,
+connection termination cancels only a still-unsent automatic read notification. Strict older
+models continue to require recorded final read progress. Ordinary requests, daemon frames and
+connection events remain required. Later queries cannot borrow replies across a checkpoint.
+Complete request payloads, permission choices and uploaded bytes retain their existing checks. Captures declare
 `checkpointPolicy: test-observations-v1`; older captures keep their original checks and
 are not rewritten to invent observations that were never captured.
 
@@ -195,8 +205,31 @@ differences explicitly, as Desktop does; do not call them passing compatibility.
 `verify-all` retains each attempt and groups failures by stage. `--methods-file`
 selects a diagnostic subset; such a subset cannot satisfy the full live inventory gate.
 Real push failures belong to the live capture result. Replay cannot overrule them.
+`verify-all --stop-file /absolute/path/STOP` finishes its current scenario, preserves the
+completed reports and marks the remaining stages unexecuted. A stopped batch fails acceptance.
+
+Desktop uses one continuous recorded prefix. Mobile deliberately differs: independent
+query replies and connections may advance separately, and automatic phone reads use the
+bounded model above. The shared guarantees are exact actions, request correlation,
+connection termination after required work, observation boundaries and complete consumption.
+Do not interpret copying Desktop's checkpoints as copying its entire scheduler.
 
 Failed runs can export separately named private application traces. Their format cannot
 be loaded as a successful recording. Compressed diagnostic archives are excluded from
 failed exports. Successful archive captures undergo bounded decompression and credential
 inspection before promotion. Private host logs and failed traces are never fixtures.
+
+### Read acknowledgements and temporary prompts
+
+The migration exposed valid temporary permission and question controls being retained as
+unidentified durable content. That permanently prevented later read checkpoints after a prompt.
+The production projection now recognizes these two strictly decoded controls only when they
+have no durable history identity. It creates no history fact and grants no visibility.
+The real viewport still refuses read qualification while a prompt obscures the thread.
+Unknown classes, malformed controls and unexpected durable entries retain their barriers.
+
+A blanket final-read assertion was also adding a timing requirement to unrelated scenarios.
+A successful live run can acknowledge a row in the short interval before a prompt covers it;
+replay can render the same required screens without that interval. The v4 model follows actual
+presentation and actual acknowledgements. It preserves original feature assertions and the
+explicit read/attention tests instead of forcing that incidental interval to repeat.

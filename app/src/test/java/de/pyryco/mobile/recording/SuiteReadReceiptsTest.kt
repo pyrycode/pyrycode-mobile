@@ -150,6 +150,88 @@ class SuiteReadReceiptsTest {
         tape.assertComplete()
     }
 
+    @Test fun intermediateObservationCannotMakeAnAutomaticReadARequiredPreconditionForTheNextAction() {
+        val message = frame(1, "assistant_delta", """{"conversation_id":"chat","text":"captured"}""").copy(historyEntryId = 10u)
+        val read = frame(1, "mark_conversation_read", """{"conversation_id":"chat","up_to":10}""")
+        val update = frame(2, "conversation_updated", """{"id":"chat","read_up_to":10}""")
+        val checkpoint = frame(1, "test-control:checkpoint", """{"body":"phone-send"}""")
+        val complete = frame(2, "test-control:checkpoint", """{"body":"scenario-complete"}""")
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    SuiteStep("daemon", "phone", message),
+                    SuiteStep("client", "phone", read),
+                    SuiteStep("daemon", "peer", update),
+                    SuiteStep("daemon", "phone", update.copy(inReplyTo = 1)),
+                    SuiteStep("client", "phone", frame(2, "request_model_list", "{}")),
+                    SuiteStep("daemon", "phone", frame(3, "model_list", "{}", 2)),
+                    SuiteStep("client", "control", checkpoint),
+                    SuiteStep("client", "phone", frame(3, "send_message", """{"text":"next action"}""")),
+                    SuiteStep("client", "control", complete),
+                ),
+                coalescedReadReceipts = true,
+            )
+        val initial = tape.initial()
+        assertEquals(listOf("assistant_delta"), initial.map { it.message!!.type })
+        initial.forEach { tape.delivered(it.owner, it.message!!) }
+        // Ordinary preceding requests stay required despite the deferred background notification.
+        assertEquals(false, tape.checkpointReady("phone-send"))
+        assertEquals(listOf("model_list"), tape.request("phone", frame(90, "request_model_list", "{}")).map { it.message!!.type })
+        assertEquals(true, tape.checkpointReady("phone-send"))
+        assertEquals(emptyList<SuiteStep>(), tape.request("control", checkpoint.copy(id = 90)))
+        assertEquals(emptyList<SuiteStep>(), tape.request("phone", frame(91, "send_message", """{"text":"next action"}""")))
+        // Passing an observation does not forge the phone read or release its notification.
+        assertEquals(false, tape.checkpointReady("scenario-complete"))
+        assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
+        val id = (initial.single().message!!.payload as kotlinx.serialization.json.JsonObject).getValue("conversation_id")
+        assertEquals(
+            listOf("phone", "peer"),
+            tape.send("phone", frame(92, "mark_conversation_read", """{"conversation_id":$id,"up_to":10}""")).deliveries.map { it.owner },
+        )
+        assertEquals(true, tape.checkpointReady("scenario-complete"))
+        tape.request("control", complete.copy(id = 91))
+        tape.assertComplete()
+    }
+
+    @Test fun presentationDrivenReadsCancelOnlyAnUnsentReadNotificationWhenItsConnectionEnds() {
+        val message = frame(1, "assistant_delta", """{"conversation_id":"chat","text":"captured"}""").copy(historyEntryId = 10u)
+        val read = frame(1, "mark_conversation_read", """{"conversation_id":"chat","up_to":10}""")
+        val update = frame(2, "conversation_updated", """{"id":"chat","read_up_to":10}""")
+        val complete = frame(1, "test-control:checkpoint", """{"body":"scenario-complete"}""")
+        val entries =
+            listOf(
+                SuiteStep("daemon", "phone", message),
+                SuiteStep("client", "phone", read),
+                SuiteStep("daemon", "peer", update),
+                SuiteStep("daemon", "phone", update.copy(inReplyTo = 1)),
+                SuiteStep("client", "phone", frame(2, "send_message", """{"text":"actual next action"}""")),
+                SuiteStep("inbound_end", "peer"),
+                SuiteStep("close", "peer"),
+                SuiteStep("client", "control", complete),
+            )
+        for (required in listOf(false, true)) {
+            val tape = RecordedSuiteTape(entries, coalescedReadReceipts = true, requireRecordedReadProgress = required)
+            val initial = tape.initial()
+            assertEquals(listOf("assistant_delta"), initial.map { it.message!!.type })
+            initial.forEach { tape.delivered(it.owner, it.message!!) }
+            assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
+            // No read notification may be invented while the phone has not acknowledged anything.
+            val result = tape.send("phone", frame(90, "send_message", """{"text":"actual next action"}"""))
+            assertEquals(if (required) emptyList<String>() else listOf("inbound_end"), result.deliveries.map { it.direction })
+            tape.lifecycle("close", "peer")
+            assertEquals(!required, tape.checkpointReady("scenario-complete"))
+            if (required) {
+                assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
+            } else {
+                tape.request("control", complete.copy(id = 91))
+                tape.assertComplete()
+                assertThrows(IllegalStateException::class.java) {
+                    tape.send("peer", frame(92, "mark_conversation_read", """{"conversation_id":"chat","up_to":10}"""))
+                }
+            }
+        }
+    }
+
     @Test fun explicitPeerReadActionsNeverUseAutomaticPhoneReadNormalization() {
         val read = frame(1, "mark_conversation_read", """{"conversation_id":"chat","up_to":10}""")
         val tape = RecordedSuiteTape(listOf(SuiteStep("client", "peer", read)), coalescedReadReceipts = true)

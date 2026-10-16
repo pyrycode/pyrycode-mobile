@@ -34,6 +34,17 @@ class RecordedSuiteDocumentTest {
         }
     }
 
+    @Test fun theReadPolicyIsExplicitAndDoesNotRewriteHistoricalCaptureProvenance() {
+        val raw = JsonObject(candidate() + ("readReceiptNormalization" to JsonPrimitive("coalesced-visible-history-v3")))
+        val parsed = RecordedSuiteDocument.parse(raw.toString())
+        val resolved = parsed.withReadPolicy(JsonPrimitive("presented-visible-history-v4"))
+        assertEquals(JsonPrimitive("coalesced-visible-history-v3"), parsed.document["readReceiptNormalization"])
+        assertEquals(JsonPrimitive("presented-visible-history-v4"), resolved.document["readReceiptNormalization"])
+        assertEquals(parsed.steps, resolved.steps)
+        assertEquals(parsed.document["source"], resolved.document["source"])
+        assertThrows(IllegalArgumentException::class.java) { parsed.withReadPolicy(JsonPrimitive("ignore-all-reads")) }
+    }
+
     private fun candidate(): JsonObject {
         val request = Envelope(1, "list_conversations", "2026-10-16T00:00:00Z", JsonObject(emptyMap()))
         val body = RecordedSuiteDocument.body("scenario", JsonObject(emptyMap()), emptySet(), listOf(SuiteStep("client", "phone", request)))

@@ -46,7 +46,7 @@ def validate(document):
                 'Unsupported suite format')
         require(document.get('checkpointPolicy') in {None, 'test-observations-v1'}, 'Unsupported test checkpoint policy')
         require(re.fullmatch(r'[A-Za-z0-9_]{1,180}', document['scenario']), 'Invalid scenario')
-        require(document.get('readReceiptNormalization') in {None, 'coalesced-visible-history-v2', 'coalesced-visible-history-v3'}, 'Unsupported receipt normalization')
+        require(document.get('readReceiptNormalization') in {None, 'coalesced-visible-history-v2', 'coalesced-visible-history-v3', 'presented-visible-history-v4'}, 'Unsupported receipt normalization')
         require(document.get('producerIdentityMode') in {None, 'literal', 'rebind'}, 'Unsupported producer identity mode')
         require(document.get('modelQueryNormalization') in {None, 'reconnect-catalog-race-v1'}, 'Unsupported model lookup normalization')
         require(document.get('settingsReadNormalization') in {None, 'recorded-snapshots-v1'}, 'Unsupported settings read normalization')
@@ -576,7 +576,11 @@ def verify_all(args):
     require(not args.output.exists(), 'Use a new verification directory; existing candidates are preserved')
     results, failures, attempts = [], [], []
     args.output.mkdir(parents=True)
+    stopped = False
     for row in rows:
+        if getattr(args, 'stop_file', None) and args.stop_file.exists():
+            stopped = True
+            break
         scenario_args = argparse.Namespace(**vars(args))
         scenario_args.fixture = MANIFEST.parent / row['fixture']
         scenario_args.output = args.output / row['method']
@@ -589,7 +593,7 @@ def verify_all(args):
             print(json.dumps({'scenario': row['method'], 'result': 'failed', 'category': type(error).__name__}), flush=True)
         report = scenario_args.output / 'verification.json'
         if report.is_file(): attempts.append(json.loads(report.read_text()))
-    summary = {'required': len(rows), 'verified': len(results), 'failures': failures, 'results': results,
+    summary = {'required': len(rows), 'verified': len(results), 'stopped': stopped, 'failures': failures, 'results': results,
                'attempts': attempts,
                'stageFailures': {stage: [attempt['scenario'] for attempt in attempts if stage in attempt['failureStages']]
                                  for stage in ['capture', 'reviewedReplay', 'freshReplay', 'comparison']}}
@@ -621,7 +625,9 @@ def main():
         if name == 'capture-all':
             command.add_argument('--stop-file', type=Path)
             command.add_argument('--methods-file', type=Path)
-        if name == 'verify-all': command.add_argument('--methods-file', type=Path)
+        if name == 'verify-all':
+            command.add_argument('--methods-file', type=Path)
+            command.add_argument('--stop-file', type=Path)
     args = parser.parse_args()
     if args.mode in {'capture', 'capture-all', 'verify', 'verify-all'}:
         require(os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') or os.environ.get('ANTHROPIC_API_KEY'), 'Configured Claude login required')
