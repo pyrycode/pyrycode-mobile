@@ -14,11 +14,13 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.printToLog
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -196,7 +198,14 @@ class RecordedPermissionTest {
                     .performScrollTo()
                     .assertIsDisplayed()
                     .assertIsEnabled()
-                    .performTouchInput { click(center) }
+                rule.onRoot().printToLog("RecordedTree")
+                android.util.Log.i("RecordedExchange", "choiceBounds=${rule.onNode(choice).fetchSemanticsNode().boundsInRoot}")
+                instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+                    File(instrumentation.targetContext.filesDir, "recorded-screen.png").outputStream().use {
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                    }
+                }
+                rule.onNode(choice).performTouchInput { click(center) }
             }
             tapAllow()
             rule.waitUntil(10000) { vm.armedOptionId.value == "allow_once" }
