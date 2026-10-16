@@ -910,8 +910,8 @@ class InteractiveStreamE2ETest {
         val impossibleReply =
             hasText("pong", substring = true, ignoreCase = true) and
                 hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
-        RecordedSuiteNative.negativeObservation("never-word") {
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+        RecordedSuiteNative.negativeObservation("never-word", REPLY_TIMEOUT_MS) { timeoutMs ->
+            composeTestRule.waitUntil(timeoutMs) {
                 composeTestRule.onAllNodes(impossibleReply, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
         }
@@ -979,8 +979,8 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
         // The prompt asks only for a read-only shell command, never a file edit, so "Edit" must never
         // render a tool row → this wait must time out (→ fail).
-        RecordedSuiteNative.negativeObservation("never-tool") {
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+        RecordedSuiteNative.negativeObservation("never-tool", REPLY_TIMEOUT_MS) { timeoutMs ->
+            composeTestRule.waitUntil(timeoutMs) {
                 composeTestRule.onAllNodesWithText(TOOL_NEVER_USED, substring = true).fetchSemanticsNodes().isNotEmpty()
             }
         }
