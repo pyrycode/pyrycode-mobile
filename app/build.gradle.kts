@@ -11,6 +11,11 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/src/main/roomSchemas")
 }
 
 // Firebase client configuration (#579). Applied only when the file is present, so builds
@@ -245,6 +250,8 @@ afterEvaluate {
 }
 
 dependencies {
+    implementation(libs.androidx.room.runtime)
+    ksp(libs.androidx.room.compiler)
     implementation(platform(libs.androidx.compose.bom))
     implementation(platform(libs.koin.bom))
     // #361: push only. No firebase-analytics; builds without google-services.json run with push off.
@@ -301,3 +308,12 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
+
+// A new live method needs a reviewed recording before the normal verification gate can pass.
+val verifyRecordedSuiteInventory by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Verify complete, counted recorded-Claude coverage against the native source inventory"
+    workingDir(rootProject.projectDir)
+    commandLine("python3", rootProject.file("scripts/recorded-suite-inventory.py"))
+}
+tasks.named("check") { dependsOn(verifyRecordedSuiteInventory) }

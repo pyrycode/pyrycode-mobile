@@ -50,7 +50,9 @@ import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toHistoryPage
 import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toSessionSettings
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -95,7 +97,7 @@ import kotlinx.serialization.json.encodeToJsonElement
  * `changeWorkspace`). [delete] and [createWorkspaceFolder] keep their interface
  * defaults — intentionally outside this slice's surface.
  */
-class RemoteConversationRepository(
+class RemoteConversationRepository internal constructor(
     private val pump: SessionPump,
     scope: CoroutineScope,
     /**
@@ -178,10 +180,20 @@ class RemoteConversationRepository(
     connToken: () -> String? = { null },
     /** Supplied authoritative route only; production activation supplies the source in #1988. */
     private val authoritativeHostId: String = "",
+    internal val authoritativeThreads: AuthoritativeThreadStore = AuthoritativeThreadStore(),
+    private val authoritativeNowMillis: () -> Long = { System.nanoTime() / 1000000 },
+    private val authoritativeDeviceId: suspend (String) -> String? = { null },
+    /** A supplied non-managed pump provides its connection owner's retirement here. */
+    private val retireAuthoritativeConnection: () -> Unit = {
+        (pump as? ManagedSessionPump)?.close()
+        scope.cancel()
+    },
 ) : ConversationRepository,
     ThreadSnapshotSource {
-    internal val authoritativeThreads = AuthoritativeThreadStore()
-    internal val authoritativeRoute = AuthoritativeThreadRoute(authoritativeHostId, authoritativeThreads)
+    internal val authoritativeRoute: AuthoritativeThreadRoute =
+        AuthoritativeThreadRoute(authoritativeHostId, authoritativeThreads, onRepair = { authoritativeQueries.repair(it) })
+
+    @Volatile private var authoritativeCommandsEnded = false
 
     /**
      * The conversation list and the last-message previews (#913): the list projection, the most-recent
@@ -280,6 +292,35 @@ class RemoteConversationRepository(
      * fails waiters through it, and the [init] collector's `finally` sweeps it last.
      */
     private val relayRequests = RelayRequests(send = pump::send)
+    private val authoritativeQueries: AuthoritativeThreadQueries =
+        AuthoritativeThreadQueries(
+            authoritativeHostId,
+            authoritativeThreads,
+            authoritativeRoute,
+            ::authoritativeLiveEnabled,
+            relayRequests::nextRequestId,
+            pump::send,
+            authoritativeNowMillis,
+            retireAuthoritativeConnection,
+        )
+
+    /** The cache may borrow this supplied store only for its exact host namespace. */
+    internal fun authoritativeStoreFor(host: String): AuthoritativeThreadStore? =
+        authoritativeThreads.takeIf { host == authoritativeHostId }
+
+    internal fun openAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.open(conversationId)
+
+    internal fun requestOlderAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.older(conversationId)
+
+    internal fun cancelAuthoritativeThread(conversationId: String) = authoritativeQueries.cancel(conversationId)
+
+    internal fun resetAuthoritativeThread(
+        conversationId: String,
+        epoch: String,
+    ): Boolean = authoritativeQueries.reset(conversationId, epoch)
+
+    internal fun observeAuthoritativeThread(conversationId: String): Flow<AuthoritativeThreadSnapshot> =
+        authoritativeThreads.observe(authoritativeHostId, conversationId)
 
     /**
      * The conversation commands (#914): create, promote, rename, archive, unarchive, delete, new session,
@@ -311,6 +352,23 @@ class RemoteConversationRepository(
             queueProjection = queueProjection,
             trail = messageTrail,
             connToken = connToken,
+            registerAuthoritativeSend = { conversation, message ->
+                if (authoritativeHostId.isNotEmpty() && authoritativeCommandsEnded) {
+                    RelayLog.i { "event=thread_send code=source_retired" }
+                    throw IllegalStateException("send source unavailable")
+                }
+                val enabled = authoritativeHostId.isNotEmpty() && authoritativeLiveEnabled()
+                if (enabled) {
+                    authoritativeThreads.registerPending(authoritativeHostId, conversation, null, message)
+                    authoritativeThreads.identifyPending(
+                        authoritativeHostId,
+                        conversation,
+                        message.id,
+                        authoritativeDeviceId(authoritativeHostId),
+                    )
+                }
+                enabled
+            },
         )
 
     /**
@@ -486,12 +544,18 @@ class RemoteConversationRepository(
             scope.launch {
                 if (authoritativeHostId.isNotEmpty()) authoritativeRoute.runExpiry()
             }
+        val queryExpiry =
+            scope.launch {
+                if (authoritativeHostId.isNotEmpty()) authoritativeQueries.runExpiry()
+            }
         scope
             .launch {
                 try {
                     pump.inbound.collect { envelope -> onInbound(envelope) }
                 } finally {
                     expiry.cancel()
+                    queryExpiry.cancel()
+                    authoritativeQueries.abandon()
                     authoritativeRoute.abandon()
                     endSwitchAgentRequests()
                     endBackgroundTaskStops()
@@ -503,7 +567,10 @@ class RemoteConversationRepository(
                     relayRequests.failAllPending()
                 }
             }.invokeOnCompletion {
+                authoritativeCommandsEnded = true
                 expiry.cancel()
+                queryExpiry.cancel()
+                authoritativeQueries.abandon()
                 authoritativeRoute.abandon()
                 // Completion also runs if cancellation prevents the collector body from starting.
                 endSwitchAgentRequests()
@@ -652,6 +719,12 @@ class RemoteConversationRepository(
     }
 
     private fun onInbound(envelope: Envelope) {
+        if (authoritativeLiveEnabled() &&
+            envelope.type in setOf("thread_items", "thread_reset", TYPE_ERROR) &&
+            authoritativeQueries.accept(envelope)
+        ) {
+            return
+        }
         if (authoritativeLiveEnabled() && SessionLiveAdmission.family(envelope.type) != null) {
             sessionLiveAdmission.admit(envelope)?.let(::applyAuthoritativeLive)
             return
@@ -695,7 +768,7 @@ class RemoteConversationRepository(
         envelope: Envelope,
         conversation: String,
     ) {
-        if (!contributesToUnreadWatermark(envelope.type)) return
+        if (!contributesToUnreadWatermark(envelope.type, envelope.payload)) return
         envelope.historyEntryId
             ?.takeIf { it > 0u && conversation.isNotEmpty() }
             ?.let { conversationListProjection.recordLatestEntry(conversation, it) }
@@ -1396,7 +1469,7 @@ class RemoteConversationRepository(
         val page = readHistoryPage(conversationId, cursor, limit)
         page.entries
             .asSequence()
-            .filter { contributesToUnreadWatermark(it.type) }
+            .filter { contributesToUnreadWatermark(it.type, it.payload) }
             .maxOfOrNull { it.unsignedId }
             ?.let { conversationListProjection.recordLatestEntry(conversationId, it) }
         threadProjection.mergeHistoryPage(conversationId, page, CAPABILITY_INTERACTIVE in negotiatedCapabilities())
@@ -1659,6 +1732,33 @@ class RemoteConversationRepository(
         conversationId: String,
         queuedMessageId: Long,
     ): Unit = messageCommands.sendQueuedNow(conversationId, queuedMessageId)
+
+    override suspend fun actOnAuthoritativeQueue(
+        target: AuthoritativeQueueTarget,
+        sendNow: Boolean,
+    ): Result<Unit> {
+        if (authoritativeCommandsEnded ||
+            target.host != authoritativeHostId ||
+            !authoritativeLiveEnabled()
+        ) {
+            RelayLog.i { "event=thread_queue_action code=source_unavailable" }
+            return Result.failure(IllegalStateException("queue source unavailable"))
+        }
+        return try {
+            if (authoritativeThreads.withCurrentQueueTarget(target) { messageCommands.actOnAuthoritativeQueue(target, sendNow) }) {
+                RelayLog.i { "event=thread_queue_action code=sent" }
+                Result.success(Unit)
+            } else {
+                RelayLog.i { "event=thread_queue_action code=unavailable" }
+                Result.failure(IllegalStateException("queue item unavailable"))
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            RelayLog.i { "event=thread_queue_action code=failed" }
+            Result.failure(IllegalStateException("queue action failed"))
+        }
+    }
 
     /** Drop a queued message over fire-and-forget `dequeue_message` (#466); see [MessageCommands.dropQueuedMessage]. */
     override suspend fun dropQueuedMessage(

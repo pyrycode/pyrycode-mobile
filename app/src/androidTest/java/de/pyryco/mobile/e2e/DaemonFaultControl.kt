@@ -1,15 +1,15 @@
 package de.pyryco.mobile.e2e
 
+import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
+import de.pyryco.mobile.recording.RecordedSuiteNative
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import java.net.InetSocketAddress
-import java.net.Socket
 import kotlin.time.TimeMark
 
 /** Controls only the first daemon process owned by this e2e harness invocation. */
@@ -52,7 +52,14 @@ internal class DaemonFaultControl {
         runBlocking {
             val failures =
                 async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
-                    OfflineRetryWindow.awaitDeadline(supervisor)
+                    OfflineRetryWindow.awaitDeadline(supervisor) { backoff ->
+                        Log.i(
+                            "DaemonFaultControl",
+                            "event=offline_retry_capped_backoff attempt=${backoff.attempt} " +
+                                "observed_lag_ms=${backoff.startedAt.elapsedNow().inWholeMilliseconds} " +
+                                "proof_budget_ms=20000 passive_min_ms=24000",
+                        )
+                    }
                 }
             try {
                 stop()
@@ -63,19 +70,19 @@ internal class DaemonFaultControl {
             }
         }
 
-    fun recoveryTimeRemaining(deadline: TimeMark): Long = OfflineRetryWindow.remainingMs(deadline)
+    fun recoveryTimeRemaining(deadline: TimeMark): Long =
+        OfflineRetryWindow.remainingMs(deadline).also {
+            Log.i("DaemonFaultControl", "event=offline_retry_recovery_budget remaining_ms=$it")
+        }
 
     private fun request(
         action: String,
         body: String = "",
     ) {
-        Socket().use { socket ->
-            socket.connect(InetSocketAddress("10.0.2.2", port), 5_000)
-            socket.soTimeout = if (action == "posts" || action == "test-end") 120_000 else 15_000
-            val bytes = body.toByteArray()
-            socket.getOutputStream().write("POST /$action HTTP/1.0\r\nContent-Length: ${bytes.size}\r\n\r\n".toByteArray() + bytes)
-            val status = socket.getInputStream().bufferedReader().readLine()
-            check(status?.startsWith("HTTP/1.0 200") == true) { "owned test daemon control failed" }
+        RecordedSuiteNative.control(action, body) {
+            checkedDaemonFaultRequest(action, { Log.i("DaemonFaultControl", "event=daemon_fault_request $it") }) {
+                exchangeDaemonFaultRequest("10.0.2.2", port, action, body)
+            }
         }
     }
 }

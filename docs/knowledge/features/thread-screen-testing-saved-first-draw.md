@@ -91,6 +91,113 @@ executed and passed (**1/0/0**) in that full suite. This retained rung-3 operato
 proves offline/reconnect integration; the controlled device fixtures establish the
 latency bound. No separate focused live run or new ladder scenario is claimed.
 
+### Initial snapshot reconciliation and the later draw miss (#2153)
+
+The [reported main sweep](https://github.com/pyrycode/pyrycode-mobile/issues/2153#issuecomment-6162189052)
+at `1fb92599b2df99b0380f48c1be8156bf0ffdfc75` exited **1** after **1074 seconds**:
+**1609 executed, 1608 passed, 1 failed**. The delayed-projection method completed
+all eight openings, drawing at **140/180/167/175/1048/475/998/320 ms** in ordinary
+offline first/reopen, ordinary connected first/reopen, fragmented offline
+first/reopen and fragmented connected first/reopen order. Fragmented offline first
+open missed the **1000 ms** committed-frame bound; connected first open was **998 ms**.
+This is distinct from the earlier readiness timeout. Original raw phase logs are
+unavailable: the **historical production-versus-environment cause remains unresolved**.
+An activity-destroyed focus snapshot after execution and later passing comparisons
+cannot establish that cause. No known-good post-merge main sweep is claimed.
+
+Fresh unchanged phase evidence independently demonstrates a material preparation
+cost: the fragmented projection twin spent **69–157 ms** between restored rows and
+repository snapshot. Its first offline worker used **161 wall / 103 CPU / 0 queue ms**;
+connected reopen used **155/59/0 ms**. The two targeted `CachedThreadWorkerTest`
+probes executed **2**, passed **0**, failed **2**, with **0 errors/skips** against
+unchanged production: the guarded 100000-row cache recorded **200000 accesses before
+delivery**, and recollection returned a reconstructed list. Passing isolated draws
+alone would not expose that redundant traversal.
+
+The [repair and verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2155#issuecomment-6163707449)
+remove reconstruction only for each collection's first empty, unsuppressed delegate
+snapshot. `CachingConversationRepository.observeThreadSnapshot` publishes the
+already validated cache list through the existing processing dispatcher, preserving
+exact row objects/keys, order and receipt metadata, generation allocation and deferred
+writer traversal. A repository-wide or conversation-wide flag would break repeated
+collections. Initial nonempty/suppressed snapshots and every subsequent snapshot
+retain reconciliation, including disconnect/reconnect; cancellation still prevents
+held preparation from publishing after exit. See the
+[restore contract](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+
+The repaired twin's fragmented row-to-snapshot intervals are **1–16 ms**; direct initial
+publication takes **0 ms** at worker-log resolution. Both in-depth twins retain
+**40 readiness samples**, maximum acquire/read **7/11 ms**, with idle windows
+**92–100%** before and **86–100%** after. No readiness or timing-harness defect is
+demonstrated. These measurements establish the removed cost, without attributing the
+historical 1048 ms sample to it.
+
+Both builder comparisons used the original
+`UI_GATE_FULL=1 UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui` selection:
+two Pixel 2 API 33 ATD shards, non-e2e device/shared tests and disabled animations;
+the unchanged revision ran in an isolated worktree. Inspected retained XML counts
+below are **executed/passed/failed/errors/skipped**.
+
+| Run | Source revision | Counts |
+| --- | --- | --- |
+| Unchanged in-depth | `1fb92599b2df99b0380f48c1be8156bf0ffdfc75` | 1609/1609/0/0/2 |
+| Repaired in-depth | `6eb138928073c30ef41c5a064854bef7776b5dd5` | 1609/1609/0/0/2 |
+| Focused complete device class | candidate source hashes in `verified-source.json` | 4/4/0/0/0 |
+| Configured dispatcher UI | `ec8cd113aecd839fac925b92a152c681e31c64ee` | 261/261/0/0/1 |
+
+Each run executed and passed all four methods once: the original first-draw method,
+`delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen`,
+`slowRestore_negativeControlRejectsTheSameFirstDrawBound` and
+`heldCpuPipeCancelsAndClosesItsDescriptor`. Fresh XML timestamps are baseline shards
+**2026-10-14T06:35:21 / 06:36:00**, repaired shards **06:57:59 / 06:58:38**,
+focused class **06:39:06** and dispatcher UI **07:49:10**.
+
+All eight cases for both draw methods are retained below. Tuples are cumulative
+**restore/snapshot/complete-content/committed-draw** monotonic milliseconds;
+“twin” is the delayed-projection method.
+
+| Case | Unchanged original | Unchanged twin | Repaired original | Repaired twin |
+| --- | --- | --- | --- | --- |
+| Ordinary offline first | 6/31/47/105 | 22/29/45/85 | 19/24/29/82 | 34/43/57/121 |
+| Ordinary offline reopen | 21/38/57/126 | 2/29/44/104 | 16/21/26/75 | 20/26/43/108 |
+| Ordinary held newest first | 17/23/40/99 | 23/30/46/105 | 37/40/57/97 | 7/34/50/116 |
+| Ordinary held newest reopen | 28/33/38/87 | 22/28/44/92 | 18/24/41/87 | 15/21/26/74 |
+| Fragmented offline first | 310/402/414/494 | 369/522/538/641 | 311/312/324/406 | 419/420/444/538 |
+| Fragmented offline reopen | 61/107/129/191 | 51/126/145/222 | 39/63/80/171 | 44/60/73/154 |
+| Fragmented held newest first | 358/512/523/586 | 316/385/409/487 | 305/306/320/403 | 294/295/309/399 |
+| Fragmented held newest reopen | 43/112/133/208 | 44/201/228/318 | 58/73/86/155 | 46/56/86/158 |
+
+Focused original/twin maxima were **430/578 ms**. Dispatcher UI original draws were
+**104/93/100/95/437/166/402/137 ms**, twin draws **89/88/90/81/469/120/421/144 ms**
+in the same case order. The **3000 ms** slow-restore control rejected the identical
+**1000 ms** assertion at **3063/3080/3480/3116 ms** in unchanged/repaired/focused/
+dispatcher runs. Passing that control proves rejection of the slow draw.
+
+The device-test source is unchanged: the cancellable **1100 ms** optional-projection
+hold, eight cases, fixture sizes, real persisted bytes, cold timed construction,
+fresh ViewModel/composition on reopen, exact rows/marker anchors, zero offline
+requests and one held newest request per connected opening all remain asserted.
+Validation is not deferred and measured work is not warmed or moved outside the timer.
+Affected nine-class units passed **148/148/0/0/0**; final worker controls passed
+**10/10/0/0/0**, including empty/nonempty cancellation and recollection order metadata.
+The intermediate candidate's **148/145/3/0/0** logger-stub fixture failures remain
+retained; the JVM fixture now installs/restores the existing logger sink.
+
+The configured regular dispatcher UI gate completed with
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`; its only
+skip was `RenameDialogCaptureTest.renameAtFigmaViewport`. Scripted-all separately
+passed **22/22/0/0/0**, selecting none of the four saved-thread methods. The subsequent
+post-merge main sweep remains **dispatcher-owned and pending**, outside branch
+acceptance. No new real-Claude scenario or ladder change is required.
+
+[Checked evidence summaries](../../../app/src/androidTest/assets/saved-first-draw-2153/)
+retain the original miss, failed unit comparisons, configurations, source hashes and
+all phase measurements. Raw XML, readiness/worker/phone logs and manifests survive
+under `/work/Projects/pyrycode-mobile-agents/logs/evidence/2153/`; reviewed dispatcher
+XML and four phone logs are under
+`/Users/juhanailmoniemi/.codex/publish/pyrycode-mobile/verifier-2153/evidence/`.
+Documentation inspected retained reports and ran no comparisons.
+
 ## Readiness and sampling cancellation (#2143)
 
 Before each Probe, including the slow-restore control, `awaitDeviceReadiness`

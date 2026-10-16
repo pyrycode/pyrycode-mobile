@@ -5,6 +5,8 @@ import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_ADDED
 import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_CHANGED
 import de.pyryco.mobile.data.network.TYPE_THREAD_TEXT_APPEND
 import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.network.ThreadQueryReply
+import de.pyryco.mobile.data.network.ThreadQueryRequest
 import de.pyryco.mobile.data.network.ThreadUpdateDto
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,7 +15,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/** Complete daemon facts only. Generation belongs to asynchronous sync work, not wire identity. */
+/** Admitted daemon facts and provisional feedback. Certification excludes local sends. */
 internal data class AuthoritativeThreadSnapshot(
     val epoch: String? = null,
     val items: List<ThreadItemDto> = emptyList(),
@@ -22,15 +24,72 @@ internal data class AuthoritativeThreadSnapshot(
     val repairNeeded: Boolean = false,
     val resetNeeded: Boolean = false,
     val generation: Long = 0,
+    val coverage: AuthoritativeThreadCoverage? = null,
+    val pendingSends: List<AuthoritativePendingSend> = emptyList(),
 ) {
     override fun toString(): String = "AuthoritativeThreadSnapshot(content=***)"
 }
+
+/** Certified continuous ordered history; parent/active extras do not contribute to this range. */
+internal data class AuthoritativeThreadCoverage(
+    val lowerOrder: ULong,
+    val upperOrder: ULong,
+    val continuation: ULong,
+    val olderExists: Boolean,
+)
 
 internal enum class AuthoritativeThreadOutcome { Applied, Ignored, RepairNeeded, ResetNeeded, StaleGeneration }
 
 /** In-memory facts keyed by source and conversation, independent of legacy projection/cache. */
 internal class AuthoritativeThreadStore {
     private val snapshots = MutableStateFlow<Map<Pair<String, String>, AuthoritativeThreadSnapshot>>(emptyMap())
+
+    @Synchronized
+    fun registerPending(
+        host: String,
+        conversation: String,
+        deviceId: String?,
+        message: de.pyryco.mobile.data.model.Message,
+    ) {
+        val current = current(host, conversation)
+        publish(host, conversation, current.copy(pendingSends = current.pendingSends + AuthoritativePendingSend(deviceId, message)))
+        RelayLog.i { "event=thread_send code=provisional" }
+    }
+
+    @Synchronized
+    fun identifyPending(
+        host: String,
+        conversation: String,
+        messageId: String,
+        deviceId: String?,
+    ) {
+        val current = current(host, conversation)
+        publish(
+            host,
+            conversation,
+            current.copy(
+                pendingSends =
+                    current.pendingSends.map {
+                        if (it.message.id == messageId) it.copy(deviceId = deviceId) else it
+                    },
+            ),
+        )
+    }
+
+    @Synchronized
+    fun isCurrentQueueTarget(target: AuthoritativeQueueTarget): Boolean {
+        val current = current(target.host, target.conversation)
+        if (current.resetNeeded || current.epoch != target.epoch || current.generation != target.generation) return false
+        val item = current.items.firstOrNull { it.id == target.acceptedItemId } ?: return false
+        return authoritativeQueueTarget(target.host, target.conversation, target.epoch, target.generation, item) == target
+    }
+
+    /** Keep validation and fire-and-forget send inside the same admission lock. */
+    @Synchronized
+    fun withCurrentQueueTarget(
+        target: AuthoritativeQueueTarget,
+        send: () -> Boolean,
+    ): Boolean = isCurrentQueueTarget(target) && send()
 
     fun current(
         host: String,
@@ -42,6 +101,48 @@ internal class AuthoritativeThreadStore {
         conversation: String,
     ): Flow<AuthoritativeThreadSnapshot> =
         snapshots.map { it[host to conversation] ?: AuthoritativeThreadSnapshot() }.distinctUntilChanged()
+
+    /** Disk facts do not own a runtime generation, connection capabilities or transient state. */
+    @Synchronized
+    fun restore(
+        host: String,
+        conversation: String,
+        saved: AuthoritativeThreadSnapshot,
+        generation: Long,
+    ): AuthoritativeThreadOutcome {
+        val current = current(host, conversation)
+        // A reset already owns this store, even if its epoch string was reused before this read began.
+        if (generation != current.generation || current.generation != 0L) return AuthoritativeThreadOutcome.StaleGeneration
+        if (current.resetNeeded || (current.epoch != null && current.epoch != saved.epoch)) return AuthoritativeThreadOutcome.Ignored
+        if (host.isEmpty() || conversation.isEmpty() || saved.epoch.isNullOrEmpty()) return AuthoritativeThreadOutcome.Ignored
+        val merged = merge(current.items, saved.items, saved.completedVersion) ?: return AuthoritativeThreadOutcome.Ignored
+        val adoptCertification = current.checkpoint == 0L
+        val completedVersion = maxOf(current.completedVersion, saved.completedVersion)
+        val checkpoint = if (adoptCertification) saved.checkpoint else current.checkpoint
+        publish(
+            host,
+            conversation,
+            current.copy(
+                epoch = saved.epoch,
+                items = ordered(merged),
+                completedVersion = completedVersion,
+                checkpoint = checkpoint,
+                coverage = if (adoptCertification && current.coverage == null) saved.coverage else current.coverage,
+                repairNeeded = current.repairNeeded || completedVersion > checkpoint,
+            ),
+        )
+        RelayLog.i { "event=thread_store code=restored" }
+        return AuthoritativeThreadOutcome.Applied
+    }
+
+    /** Capture notification ownership while the live route still holds its reset lock. */
+    fun repairGenerations(
+        host: String,
+        conversation: String?,
+    ): Map<String, Long> =
+        snapshots.value.entries
+            .filter { it.key.first == host && (conversation == null || it.key.second == conversation) && it.value.repairNeeded }
+            .associate { it.key.second to it.value.generation }
 
     @Synchronized
     fun apply(
@@ -154,6 +255,73 @@ internal class AuthoritativeThreadStore {
         return AuthoritativeThreadOutcome.Applied
     }
 
+    /** All batches have applied; only this request's separate marker can certify its captured facts. */
+    @Synchronized
+    fun certifyQuery(
+        host: String,
+        request: ThreadQueryRequest,
+        success: ThreadQueryReply.Success,
+        generation: Long,
+    ): AuthoritativeThreadOutcome {
+        val conversation = request.conversationId
+        val checkpoint = success.checkpoint
+        guard(host, conversation, checkpoint.epoch, generation)?.let { return it }
+        val current = current(host, conversation)
+        if (checkpoint.version > 9007199254740991uL) return requestRepair(host, conversation)
+        var coverage = current.coverage
+        when (val certified = success.coverage) {
+            is ThreadQueryReply.Coverage.CatchUp -> {
+                if (request !is ThreadQueryRequest.CatchUp || certified.fromVersion != current.checkpoint.toULong()) {
+                    return requestRepair(host, conversation)
+                }
+            }
+            is ThreadQueryReply.Coverage.Window -> {
+                if (certified.lowerOrder > 9007199254740991uL ||
+                    certified.upperOrder > 9007199254740991uL ||
+                    certified.continuation > 9007199254740991uL
+                ) {
+                    return requestRepair(host, conversation)
+                }
+                val range =
+                    AuthoritativeThreadCoverage(certified.lowerOrder, certified.upperOrder, certified.continuation, certified.olderExists)
+                if (request is ThreadQueryRequest.Page) {
+                    if (coverage == null || request.beforeOrder != coverage.continuation || certified.upperOrder != request.beforeOrder) {
+                        return requestRepair(host, conversation)
+                    }
+                    coverage = range.copy(upperOrder = coverage.upperOrder)
+                } else {
+                    coverage =
+                        if (coverage != null && range.lowerOrder <= coverage.upperOrder && range.upperOrder >= coverage.lowerOrder) {
+                            val lower = minOf(coverage.lowerOrder, range.lowerOrder)
+                            range.copy(
+                                lowerOrder = lower,
+                                upperOrder = maxOf(coverage.upperOrder, range.upperOrder),
+                                continuation = lower,
+                                olderExists = if (lower == range.lowerOrder) range.olderExists else coverage.olderExists,
+                            )
+                        } else {
+                            range
+                        }
+                }
+            }
+        }
+        val version = checkpoint.version.toLong()
+        val catchesUp = request is ThreadQueryRequest.CatchUp && version >= current.completedVersion
+        publish(
+            host,
+            conversation,
+            current.copy(
+                epoch = checkpoint.epoch,
+                coverage = coverage,
+                checkpoint = if (catchesUp) version else current.checkpoint,
+                completedVersion = if (catchesUp) version else current.completedVersion,
+                repairNeeded = if (request is ThreadQueryRequest.CatchUp) !catchesUp else current.repairNeeded,
+            ),
+        )
+        RelayLog.i { "event=thread_store code=certified" }
+        return AuthoritativeThreadOutcome.Applied
+    }
+
     @Synchronized
     fun requestRepair(
         host: String,
@@ -181,7 +349,16 @@ internal class AuthoritativeThreadStore {
     ): AuthoritativeThreadOutcome {
         if (host.isEmpty() || conversation.isEmpty() || epoch.isEmpty()) return requestRepair(host, conversation)
         val generation = current(host, conversation).generation + 1
-        publish(host, conversation, AuthoritativeThreadSnapshot(epoch = epoch, generation = generation, repairNeeded = true))
+        publish(
+            host,
+            conversation,
+            AuthoritativeThreadSnapshot(
+                epoch = epoch,
+                generation = generation,
+                repairNeeded = true,
+                pendingSends = current(host, conversation).pendingSends,
+            ),
+        )
         RelayLog.i { "event=thread_store code=reset" }
         return AuthoritativeThreadOutcome.Applied
     }
@@ -205,6 +382,7 @@ internal class AuthoritativeThreadStore {
                     generation = current.generation + 1,
                     repairNeeded = true,
                     resetNeeded = true,
+                    pendingSends = current.pendingSends,
                 ),
             )
             RelayLog.i { "event=thread_store code=epoch" }
@@ -251,6 +429,8 @@ internal class AuthoritativeThreadStore {
         conversation: String,
         snapshot: AuthoritativeThreadSnapshot,
     ) {
-        snapshots.value = snapshots.value + ((host to conversation) to snapshot)
+        val unresolved = snapshot.pendingSends.filterNot { pending -> snapshot.items.any { it.matchesPending(pending) } }
+        if (unresolved.size != snapshot.pendingSends.size) RelayLog.i { "event=thread_send code=settled" }
+        snapshots.value = snapshots.value + ((host to conversation) to snapshot.copy(pendingSends = unresolved))
     }
 }

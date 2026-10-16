@@ -3520,6 +3520,13 @@ class ThreadViewModel(
             is ThreadEvent.BackgroundTaskToggle -> toggleBackgroundTask(event.taskId)
             is ThreadEvent.BackgroundTaskStop -> sendBackgroundTaskStop(event)
             is ThreadEvent.AuthoritativeThreadPresented -> presentAuthoritativeThread(event)
+            is ThreadEvent.AuthoritativeQueueAction -> {
+                val presentation = taskControls.value.authoritative
+                if (presentation?.host != serverId || presentation.conversation != conversationId) return
+                if (presentation.rows.filterIsInstance<ThreadRow.Queued>().none { it.target == event.target }) return
+                if (event.sendNow && !state.value.runConfig.midTurnInputSupported) return
+                viewModelScope.launch { repository.actOnAuthoritativeQueue(event.target, event.sendNow) }
+            }
             is ThreadEvent.AuthoritativeThreadRetired -> retireAuthoritativeThread(event.binding)
             ThreadEvent.Archive -> {
                 // Close the Channel Info Sheet if Archive was tapped from it (a harmless no-op from the

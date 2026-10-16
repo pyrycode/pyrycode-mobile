@@ -466,6 +466,13 @@ history across <60-second connections and both ordinary/daemon-absent failures: 
 cannot beat 20 seconds, but Retry collapses the wait. Clock-controlled lag/expiry tests prevent
 a false pass from restarting the deadline. See [Offline Retry proof](../../e2e-interactive-stream.md#offline-retry-proof).
 
+The device harness records attempt/observer lag from the producer snapshot and
+remaining original budget (#2137). Restart registration belongs to the living
+owned daemon generation. Its 15-second wait and 17-second response read still
+consume the original deadline. Equal waits hide safe HTTP failure evidence as a
+socket timeout; exercise the real exchange, since canned parser responses miss
+this boundary. See [registration evidence](../../e2e-interactive-stream.md#offline-retry-registration-evidence-2137).
+
 Coverage: single-drop per-second countdown + recover on a fresh transport; backoff bases 1/2/4/8/16
 (jitter band); `Offline` at the cap + continued retry; `retry()` collapse + no-throw; ≥60 s stability
 reset vs <60 s escalation; benign-unpaired (no dial, tap-to-retry stays idle); `close()` teardown.

@@ -49,6 +49,19 @@ interface ConversationCache {
         conversations: List<Conversation>,
     ): Result<Unit>
 
+    /** Graceful read of full saved daemon facts; never converts legacy rows. */
+    suspend fun readAuthoritativeThread(
+        serverId: String,
+        conversationId: String,
+    ): SavedAuthoritativeThread? = null
+
+    /** Atomic full facts and certification; legacy row writers never touch this family. */
+    suspend fun writeAuthoritativeThread(
+        serverId: String,
+        conversationId: String,
+        saved: SavedAuthoritativeThread,
+    ): Result<Unit> = Result.success(Unit)
+
     /**
      * The thread rows last written for [conversationId] under [serverId] (#797), in arrival order.
      *

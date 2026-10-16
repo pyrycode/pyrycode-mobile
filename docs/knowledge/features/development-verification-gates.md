@@ -60,6 +60,17 @@ fresh worktree, Gradle may need `ANDROID_HOME` set because `local.properties` is
 ignored. Preserve the command's exit status when inspecting output; piping Gradle
 through `tail` can hide a failure.
 
+For filesystem tests that assert permission preservation, set the fixture's
+starting mode explicitly before exercising the code. `mkdir(mode=0o755)` is
+filtered by the inherited umask: under `077` it creates a `0700` directory, so a
+later `0755` assertion can fail even when the code leaves it untouched. Use
+`chmod(0o755)` on the fixture before installing a symlink. Keep the refusal,
+empty-target and unchanged-mode assertions for both a symlink destination and
+a child beneath it, as in `FaultEvidenceTest.test_destination_symlinks_are_rejected_without_writing_or_chmod`
+([#2158](https://github.com/pyrycode/pyrycode-mobile/pull/2159#issuecomment-6166360997)).
+Check permission fixtures under both `077` and `022`; retain nonzero executed
+counts for focused checks and complete scripts discovery.
+
 `scripts/docs-guard.sh` is the only gate that ever sees the documentation stage's
 own output before it lands on `main`. That stage writes `docs/knowledge/features/`
 *after* the verifier gate and after merge, so no Gradle task — including
@@ -231,6 +242,17 @@ tests already ran in `./gradlew check`. `UI_DEVICE_ALL=1` runs every screen test
 on two emulators, the in-depth run to use every now and then or before a release. Report the command, XML evidence and executed count. A missing,
 zero-count or failed run is not device evidence. Agents author the tests and
 triage the supplied failure; a local `connectedAndroidTest` run is optional.
+
+The default device selection also includes the captured Claude client scenarios in
+`de.pyryco.mobile.recording`. These exercise the original native UI assertions using
+application messages recorded from successful real Claude runs. They start no Claude
+process or real daemon. `./gradlew check` requires complete recording inventory and
+counted capture/replay evidence. Use the explicit full-suite live compatibility command
+when checking a new daemon or refreshing a recording. It requires a fresh real capture,
+replays the reviewed and fresh recordings and compares their request contracts.
+Real FCM delivery, encrypted transport and timing obligations keep their live checks.
+See [recorded client tests](../../recorded-tests.md#complete-native-suite) for commands,
+recording review rules and the limits of replay evidence.
 
 The `ui` gate skips itself, exiting 0 with `Android gate: ui skipped` on stderr and
 no XML, when every path the branch changes since it left `main` is under `docs/` or

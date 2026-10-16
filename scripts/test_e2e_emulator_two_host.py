@@ -184,9 +184,13 @@ class EmulatorTwoHostTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = {k: v for k, v in os.environ.items() if k != "DAEMON_B_PID"}
             env.update(WORK_DIR=tmp, ISO_HOME="", WATCHER_PID="", DAEMON_PID="", RELAY_PID="")
+            # Select unmanaged cleanup for this nounset/process-disposal assertion.
+            env.update(AGENTS_REPO_PATH="", E2E_FAULT_EVIDENCE_DIR="")
+            env.pop("REPO_ROOT", None)
             result = subprocess.run(["bash", "-c", "set -euo pipefail\nlog() { :; }\n" + cleanup + "\ncleanup\n"],
                                     env=env, capture_output=True, text=True)
             self.assertEqual(0, result.returncode, result.stderr)
+            self.assertFalse(Path(tmp).exists())
 
 
 if __name__ == "__main__":

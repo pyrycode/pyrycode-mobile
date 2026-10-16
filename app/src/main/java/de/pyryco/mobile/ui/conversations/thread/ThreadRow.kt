@@ -53,6 +53,10 @@ sealed interface ThreadRow {
         val text: String,
         val echoId: String?,
         val occurrence: Int = 0,
+        val identityKey: String? = null,
+        val target: de.pyryco.mobile.data.repository.AuthoritativeQueueTarget? = null,
+        val status: String = "queued",
+        val authoritative: Boolean = false,
     ) : ThreadRow
 
     /**
@@ -245,7 +249,7 @@ internal fun ThreadRow?.isToolRow(): Boolean {
 internal fun ThreadRow.listKey(chronologicalIndex: Int): String =
     when (this) {
         is ThreadRow.Delivered -> identityKey ?: item.listKey()
-        is ThreadRow.Queued -> echoId?.let { "msg:$it" } ?: "queued-row:$queuedMessageId:$occurrence"
+        is ThreadRow.Queued -> identityKey ?: echoId?.let { "msg:$it" } ?: "queued-row:$queuedMessageId:$occurrence"
         is ThreadRow.ToolRun -> if (expanded) "tool-run:$runId" else "msg:$runId"
         is ThreadRow.AgentStartMarker -> "agent-start:$agentId"
     }
