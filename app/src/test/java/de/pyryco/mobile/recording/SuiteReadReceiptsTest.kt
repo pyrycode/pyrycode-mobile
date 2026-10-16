@@ -128,4 +128,32 @@ class SuiteReadReceiptsTest {
         val changed = frame(90, "mark_conversation_read", """{"conversation_id":"chat","up_to":14}""")
         assertThrows(IllegalStateException::class.java) { tape.send("peer", changed) }
     }
+
+    @Test fun reconnectCanAcknowledgeRetainedPhoneHistoryButNeverAnotherClientsOrHostsHistory() {
+        val old = frame(1, "assistant_delta", """{"conversation_id":"chat","text":"captured"}""").copy(historyEntryId = 14u)
+        val read = frame(1, "mark_conversation_read", """{"conversation_id":"chat","up_to":14}""")
+        val confirmed = frame(2, "conversation_updated", """{"id":"chat","read_up_to":14}""", 1)
+        for (prior in listOf("phone/host0/0", "peer/host0/0", "phone/host1/0")) {
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("daemon", prior, old),
+                        SuiteStep("client", "phone/host0/1", read),
+                        SuiteStep("daemon", "phone/host0/1", confirmed),
+                    ),
+                    coalescedReadReceipts = true,
+                    retainedPhoneHistory = true,
+                )
+            val initial = tape.initial().single()
+            tape.delivered(prior, initial.message!!)
+            val id = (initial.message.payload as kotlinx.serialization.json.JsonObject).getValue("conversation_id")
+            val actual = frame(90, "mark_conversation_read", """{"conversation_id":$id,"up_to":14}""")
+            if (prior == "phone/host0/0") {
+                assertEquals(true, tape.send("phone/host0/1", actual).accepted)
+                tape.assertComplete()
+            } else {
+                assertThrows(IllegalStateException::class.java) { tape.send("phone/host0/1", actual) }
+            }
+        }
+    }
 }

@@ -30,6 +30,7 @@ internal class RecordedSuiteTape(
     coalescedReadReceipts: Boolean = false,
     private val literalProducerIdentities: Boolean = false,
     private val redundantModelQueries: Boolean = false,
+    retainedPhoneHistory: Boolean = false,
 ) {
     private val redundantModels = mutableSetOf<Pair<String, String>>()
     private val consumed = mutableSetOf<Int>()
@@ -120,7 +121,7 @@ internal class RecordedSuiteTape(
             }
         }
         if (coalescedReadReceipts) {
-            readReceipts = SuiteReadReceipts(steps, queryTypes, ::mapped)
+            readReceipts = SuiteReadReceipts(steps, queryTypes, ::mapped, retainedPhoneHistory)
             steps = readReceipts!!.steps
         }
     }
@@ -192,8 +193,9 @@ internal class RecordedSuiteTape(
                 val response = readReceipts!!.send(owner, actual)
                 actualIds.getOrPut(owner) { mutableSetOf() } += actual.id
                 SuiteOutcome(listOf(response) + drain(), true)
-            } catch (_: Exception) {
-                fail("Recorded read receipt rejected")
+            } catch (error: Exception) {
+                val detail = error.message?.takeIf { it.startsWith("Read receipt checkpoint rejected:") }.orEmpty()
+                fail("Recorded read receipt rejected $detail")
             }
         }
         val expectedKinds = eligible().joinToString { "${steps[it].owner}:${steps[it].message?.type ?: steps[it].direction}" }

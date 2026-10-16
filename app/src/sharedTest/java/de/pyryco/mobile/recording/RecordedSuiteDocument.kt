@@ -31,7 +31,13 @@ internal class RecordedSuiteDocument private constructor(
         RecordedSuiteTape(
             steps,
             declaredIdentities,
-            coalescedReadReceipts = document["readReceiptNormalization"] == JsonPrimitive("coalesced-visible-history-v2"),
+            coalescedReadReceipts =
+                document["readReceiptNormalization"] in
+                    setOf(
+                        JsonPrimitive("coalesced-visible-history-v2"),
+                        JsonPrimitive("coalesced-visible-history-v3"),
+                    ),
+            retainedPhoneHistory = document["readReceiptNormalization"] == JsonPrimitive("coalesced-visible-history-v3"),
             literalProducerIdentities = document["producerIdentityMode"] == JsonPrimitive("literal"),
             redundantModelQueries = document["modelQueryNormalization"] == JsonPrimitive("reconnect-catalog-race-v1"),
         )
@@ -59,7 +65,7 @@ internal class RecordedSuiteDocument private constructor(
             buildJsonObject {
                 put("format", "pyrycode.mobile-suite")
                 put("version", 1)
-                put("readReceiptNormalization", "coalesced-visible-history-v2")
+                put("readReceiptNormalization", "coalesced-visible-history-v3")
                 put("modelQueryNormalization", "reconnect-catalog-race-v1")
                 put("producerIdentityMode", if (steps.any { it.message?.type == "debug_bundle_chunk" }) "literal" else "rebind")
                 put("scenario", scenario)
@@ -75,7 +81,14 @@ internal class RecordedSuiteDocument private constructor(
                 requireSafeSuiteDocument(document)
                 require(document.getValue("format").jsonPrimitive.content == "pyrycode.mobile-suite")
                 require(document.getValue("version").jsonPrimitive.long == 1L)
-                require(document["readReceiptNormalization"] in setOf(null, JsonPrimitive("coalesced-visible-history-v2")))
+                require(
+                    document["readReceiptNormalization"] in
+                        setOf(
+                            null,
+                            JsonPrimitive("coalesced-visible-history-v2"),
+                            JsonPrimitive("coalesced-visible-history-v3"),
+                        ),
+                )
                 require(document["modelQueryNormalization"] in setOf(null, JsonPrimitive("reconnect-catalog-race-v1")))
                 require(document["producerIdentityMode"] in setOf(null, JsonPrimitive("literal"), JsonPrimitive("rebind")))
                 require(

@@ -15,6 +15,7 @@ internal class SuiteReadReceipts(
     source: List<SuiteStep>,
     private val queries: Set<String>,
     private val resolve: (JsonElement) -> JsonElement,
+    private val retainedPhoneHistory: Boolean = false,
 ) {
     private data class Key(
         val owner: String,
@@ -44,6 +45,7 @@ internal class SuiteReadReceipts(
 
     private val historyRequests = mutableMapOf<Pair<String, Long>, String>()
     private val delivered = mutableMapOf<Pair<String, String>, MutableSet<ULong>>()
+    private val phoneHistory = mutableMapOf<Pair<String, String>, MutableSet<ULong>>()
     private val normalizedRequests = mutableSetOf<Pair<String, Long>>()
     private val snapshots = mutableMapOf<String, MutableSet<JsonElement>>()
     private val nextIds = mutableMapOf<String, Long>()
@@ -143,6 +145,14 @@ internal class SuiteReadReceipts(
     ) {
         val payload = frame.payload.jsonObject
 
+        fun rememberHistory(
+            conversation: String,
+            id: ULong,
+        ) {
+            delivered.getOrPut(owner to conversation) { mutableSetOf() } += id
+            if (phone(owner)) phoneHistory.getOrPut(host(owner) to conversation) { mutableSetOf() } += id
+        }
+
         fun remember(row: JsonObject) {
             val id = row["id"]?.jsonPrimitive?.content ?: return
             val key = host(owner) to id
@@ -168,7 +178,7 @@ internal class SuiteReadReceipts(
                         .getValue("id")
                         .jsonPrimitive.content
                         .toULong()
-                delivered.getOrPut(owner to conversation) { mutableSetOf() } += id
+                rememberHistory(conversation, id)
                 val type = entry.getValue("type").jsonPrimitive.content
                 val body = entry.getValue("payload")
                 if (de.pyryco.mobile.data.repository
@@ -181,7 +191,7 @@ internal class SuiteReadReceipts(
         }
         val checkpoint = frame.historyEntryId ?: return
         val conversation = payload["conversation_id"]?.jsonPrimitive?.content ?: return
-        delivered.getOrPut(owner to conversation) { mutableSetOf() } += checkpoint
+        rememberHistory(conversation, checkpoint)
         if (de.pyryco.mobile.data.repository
                 .contributesToUnreadWatermark(frame.type, frame.payload)
         ) {
@@ -234,8 +244,13 @@ internal class SuiteReadReceipts(
             }
         val group = key?.let(groups::getValue)
         val last = lastRequests[owner to conversation] ?: 0u
-        check(target > last && target in delivered[owner to conversation].orEmpty() && (group == null || target <= group.maxRequested)) {
-            "Read receipt is duplicate, regressive or acknowledges undelivered history"
+        val wasDelivered =
+            target in delivered[owner to conversation].orEmpty() ||
+                retainedPhoneHistory &&
+                target in phoneHistory[host(owner) to conversation].orEmpty()
+        check(target > last && wasDelivered && (group == null || target <= group.maxRequested)) {
+            "Read receipt checkpoint rejected: target=$target previous=$last delivered=$wasDelivered " +
+                "maximum=${group?.maxRequested} action=$action"
         }
         lastRequests[owner to conversation] = target
         val server = host(owner) to conversation

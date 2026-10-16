@@ -45,7 +45,7 @@ def validate(document):
         require(document['format'] == 'pyrycode.mobile-suite' and type(document['version']) is int and document['version'] == 1,
                 'Unsupported suite format')
         require(re.fullmatch(r'[A-Za-z0-9_]{1,180}', document['scenario']), 'Invalid scenario')
-        require(document.get('readReceiptNormalization') in {None, 'coalesced-visible-history-v2'}, 'Unsupported receipt normalization')
+        require(document.get('readReceiptNormalization') in {None, 'coalesced-visible-history-v2', 'coalesced-visible-history-v3'}, 'Unsupported receipt normalization')
         require(document.get('producerIdentityMode') in {None, 'literal', 'rebind'}, 'Unsupported producer identity mode')
         require(document.get('modelQueryNormalization') in {None, 'reconnect-catalog-race-v1'}, 'Unsupported model lookup normalization')
         source = document['source']
