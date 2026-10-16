@@ -167,7 +167,7 @@ class RecordedPermissionTest {
             }
             rule.waitForIdle()
             rule.onNode(hasSetTextAction()).performTextInput(prompt)
-            rule.onNodeWithContentDescription("Send").performClick()
+            rule.onNodeWithContentDescription(instrumentation.targetContext.getString(de.pyryco.mobile.R.string.cd_send_message)).performClick()
             rule.waitUntil(120000) { vm.currentModal.value is ModalUiState.Open }
             val shown = vm.currentModal.value as ModalUiState.Open
             val allow = shown.options.single { it.id == "allow_once" }.label
