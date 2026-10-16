@@ -3360,6 +3360,17 @@ class InteractiveStreamE2ETest {
             val dropControl = hasContentDescription(queuedDropDescription) and hasAnyAncestor(queuedRow(DROP_PROMPT))
             scrollListTo(dropControl)
             composeTestRule.onNode(dropControl).performClick()
+            // Temporary controlled-fixture view capture. The secure window flag stays set.
+            if (RecordedSuiteNative.active) {
+                composeTestRule.runOnIdle {
+                    val root = composeTestRule.activity.window.decorView
+                    val image = android.graphics.Bitmap.createBitmap(root.width, root.height, android.graphics.Bitmap.Config.ARGB_8888)
+                    root.draw(android.graphics.Canvas(image))
+                    java.io.File(composeTestRule.activity.filesDir, "queue-drop.png").outputStream().use {
+                        image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                    }
+                }
+            }
             awaitGoneFromThread(DROP_PROMPT)
             runBlocking {
                 peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue ->
