@@ -8,6 +8,7 @@
 - `app/src/main/java/de/pyryco/mobile/data/repository/ConversationRepository.kt`: `SessionSettings`, `ModelMenuRow`, channel creation and deletion contracts.
 - `/Users/juhanailmoniemi/Workspace/Projects/pyrycode/internal/history/log.go`: `SessionProvenance` and the isolated conversation history provide daemon-authored turn/session/agent attribution that legacy wire history omits.
 - `scripts/e2e-emulator.sh`: primary launch, curated selector, instrumentation arguments and EXIT cleanup.
+- `scripts/recorded-mobile-suite.py`, `RecordedMobileSuiteTest` and `RecordedSuiteNative.exchange`: genuine capture, exact provenance control replay and counted inventory.
 - `scripts/test_e2e_emulator_effort_default.py`: extracted launch probes cover the live and deterministic command construction.
 - `docs/e2e-interactive-stream.md`: The ladder, credential seam and Live mode define rung 3 and counted evidence.
 - `docs/knowledge/features/development-verification-test-scheduling.md`: shell changes require executable probes; teardown must preserve the original result.
@@ -50,6 +51,7 @@ Existing app ViewModels and relay lifetimes remain unchanged. Test observations 
 | Authored completion comes from predecessor or wrong agent | `DaemonFaultTest.test_authored_completion_requires_daemon_recorded_successor_and_agent`: exact stored turn provenance, missing/duplicate rejection |
 | Authentication cancellation, probe timeout or descriptor-closing probe descendants | Real-process `CodexHomeLeaseTest` probes: lock contention through teardown, bounded TERM/KILL, untouched login and confirmed reuse |
 | Default, full LIVE or focused switch selection | Executable real-wrapper/shell launch probes: provisioning, binary flag and prerequisite instrumentation agree; unrelated/deterministic selection does not probe |
+| Capture changes the child's HOME, then replays offline | `CodexHomeLeaseTest.test_capture_isolation_still_refuses_original_personal_and_production_homes`, executable recording selections and `RecordedSuiteTapeTest.agentSwitchProvenanceRequiresTheExactRecordedTurnSessionAndAgent`; genuine capture/replay pending configured dedicated login |
 | Exit cannot be confirmed | `CodexHomeLeaseTest.test_unconfirmed_exit_retains_link_and_refuses_reuse`: keep owned link and lock quarantine, reject reuse without touching login |
 | Prerequisite refusal, shell failure or termination | Python lease tests: static failure reason, source login unchanged, link removed and lease reacquirable |
 
@@ -85,9 +87,13 @@ Pending documentation stage: `docs/e2e-interactive-stream.md`, The ladder, Live 
 - Threat model: malicious relay delays fail bounded waits under existing Noise; disk credential theft is outside this test-only change and remains governed by app Keystore storage; hostile frame rendering uses existing bounded decoders; screenshots/accessibility see only authored fixtures and existing UI, never sign-in data.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
-**Date:** 2026-10-14
+**Date:** 2026-10-16
 
 ## Revisions
+
+- 2026-10-16 (capture trust boundary): MUST FIX found in self-review: capture isolates `HOME`, which would otherwise hide the original operator's personal and production Codex roots from lease validation. `recorded-mobile-suite.capture` must pass the original operator home through `E2E_CODEX_OPERATOR_HOME`; the lease rejects both homes and their personal/production roots while linking only the isolated instance. A credential-free refusal test covers each forbidden original root. No sign-in file is read or copied; this finding is resolved by the amended design (security verdict PASS).
+
+- 2026-10-16 (focused fixture repair): The fresh script run exposed another non-atomic readiness record in `assert_owned_teardown`: the auth-cancellation parent observed the file before its PID write completed. Publish this shared fixture record by atomic rename, as the existing controller fixture already does. Keep all cancellation, contention, descendant-exit, source-login and reuse assertions. Recording source metadata also requires the bounded numeric Codex version from the lease's static host-log line; no login/home contents enter the asset.
 
 - 2026-10-16 (recorded migration): The retained live failure was the daemon warning translator repaired by merged pyrycode #3354 (v0.40.2); preserve the parser-gap sentinel and require that repair in producer provenance. Integrate this scenario with `RecordedMobileSuiteTest` and its inventory. Capture selection must acquire the same Codex lease as the original method, generated names use `RecordedSuiteNative.uniqueStamp`, and the existing recorded control exchange records the exact turn/session/agent provenance request and boolean response without invoking a host during replay. Add executable capture-selection probes before changing launch selection. No automatic full live routing returns; acceptance is one genuine authenticated named capture and producer-free native replay, with counted receipts and revisions. Security review PASS: the new seam retains bounded live provenance I/O, exact recorded request matching, credential exclusion and exclusive login ownership; replay grants no claim of current transport or agent execution. Expected written work is about 1650 lines plus the generated recording: the recording slice has only this scenario as consumer, so the single-consumer floor in `builder/handoffs.md` keeps it in this ticket despite the 1600-line ceiling. Pending evidence remains explicit until capture and replay pass.
 
