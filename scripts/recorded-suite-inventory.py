@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Account for every native real-Claude method before claiming complete recorded coverage."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -27,6 +28,16 @@ def methods(source):
 def curated(source):
     section = source.split('elif [ -n "${LIVE}" ]; then\n  # LIVE curates', 1)[1].split('\nelse\n', 1)[0]
     return set(re.findall(r'\$\{TEST_CLASS\}#(\w+)', section))
+
+
+def audit_runner(source, actual, retired):
+    if '@Ignore' in source or '@org.junit.Ignore' in source or methods(source) != actual - retired:
+        raise ValueError('Recorded runner must execute every current scenario without skips')
+
+
+def counted(receipt, checksum):
+    return isinstance(receipt, dict) and all(receipt.get(key) == value and type(receipt.get(key)) is int
+                                           for key, value in {'executed': 1, 'failed': 0, 'skipped': 0}.items()) and receipt.get('fixtureSha256') == checksum
 
 
 def audit(manifest, actual, selected, directory):
@@ -61,7 +72,9 @@ def audit(manifest, actual, selected, directory):
         if document.get('format') != 'pyrycode.mobile-suite' or document.get('scenario') != row['method']:
             raise ValueError('Recorded suite fixture belongs to another scenario')
         evidence = row.get('evidence', {})
-        if evidence.get('replay') != {'executed': 1, 'failed': 0, 'skipped': 0} or not evidence.get('liveVerified'):
+        checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+        if (evidence.get('fixtureSha256') != checksum or not counted(evidence.get('capture'), checksum) or
+                not counted(evidence.get('replay'), checksum) or evidence['capture'].get('source') != document.get('source')):
             raise ValueError('Recorded suite counted evidence is incomplete')
         completed.append(row['method'])
     return {'total': len(actual), 'liveSelected': len(selected), 'recorded': len(completed), 'retired': retired, 'pending': pending}
@@ -70,6 +83,7 @@ def audit(manifest, actual, selected, directory):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path, default=MANIFEST)
+    parser.add_argument('--require-live', action='store_true', help='Require fresh counted compatibility for every recording')
     parser.add_argument('--report-only', action='store_true', help='Show pending work without claiming completion')
     args = parser.parse_args()
     manifest = json.loads(args.manifest.read_text())
@@ -79,6 +93,18 @@ def main():
             raise ValueError('Retired test is no longer explicitly obsolete in its original source')
     report = audit(manifest, methods(SOURCE.read_text()),
                    curated((ROOT / 'scripts/e2e-emulator.sh').read_text()), args.manifest.parent)
+    audit_runner((ROOT / 'app/src/androidTest/java/de/pyryco/mobile/recording/RecordedMobileSuiteTest.kt').read_text(),
+                 methods(SOURCE.read_text()), set(report['retired']))
+    if args.require_live:
+        for row in manifest['scenarios']:
+            if row.get('retired'): continue
+            evidence = row.get('evidence', {})
+            receipt = evidence.get('liveVerification', {})
+            checksum = evidence.get('fixtureSha256')
+            fresh = receipt.get('capture', {}).get('fixtureSha256')
+            if not (fresh and counted(receipt.get('capture'), fresh) and counted(receipt.get('freshReplay'), fresh) and
+                    counted(receipt.get('reviewedReplay'), checksum) and receipt.get('contractMatched') is True):
+                raise ValueError('Fresh suite compatibility evidence is incomplete')
     print(json.dumps(report))
     if report['pending'] and not args.report_only:
         raise SystemExit(1)

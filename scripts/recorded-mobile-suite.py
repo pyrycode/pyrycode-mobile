@@ -47,6 +47,7 @@ def validate(document):
         require(re.fullmatch(r'[A-Za-z0-9_]{1,180}', document['scenario']), 'Invalid scenario')
         require(document.get('readReceiptNormalization') in {None, 'coalesced-visible-history-v2'}, 'Unsupported receipt normalization')
         require(document.get('producerIdentityMode') in {None, 'literal', 'rebind'}, 'Unsupported producer identity mode')
+        require(document.get('modelQueryNormalization') in {None, 'reconnect-catalog-race-v1'}, 'Unsupported model lookup normalization')
         source = document['source']
         for key in ['mobileRevision', 'daemonRevision']:
             require(re.fullmatch('[a-f0-9]{40}', source[key]), 'Invalid source revision')
@@ -256,6 +257,29 @@ def capture(serial, method, destination, pyry, daemon_source):
             'fixtureSha256': digest(data), 'source': document['source']}
 
 
+def redundant_catalog_query(document, index):
+    step = document['steps'][index]
+    frame = step.get('message') or {}
+    if document.get('modelQueryNormalization') != 'reconnect-catalog-race-v1' or not step['owner'].startswith('phone'):
+        return False
+    if step['direction'] != 'client' or frame.get('type') != 'request_model_list' or not step['accepted']:
+        return False
+    payload = frame.get('payload')
+    if not isinstance(payload, dict) or set(payload) != {'conversation_id'}: return False
+    boundary = len(document['steps'])
+    for position in range(index + 1, len(document['steps'])):
+        row = document['steps'][position]
+        if row['direction'] == 'close' or row['direction'] == 'client' and row['message']['type'] not in QUERIES:
+            boundary = position
+            break
+    for row in document['steps'][:boundary]:
+        message = row.get('message') or {}
+        if (row['direction'] == 'daemon' and row['owner'] == step['owner'] and message.get('type') == 'model_list' and
+                message.get('in_reply_to') is None and message.get('payload', {}).get('conversation_id') == payload['conversation_id']):
+            return True
+    return False
+
+
 def contract(document):
     """Logical full requests. Recorded clocks, producer identities and opaque cursors may rebind."""
     replacements = {str(value): str(index).zfill(len(str(value)))
@@ -348,9 +372,10 @@ def contract(document):
         if pending:
             result.append(sorted(pending, key=lambda value: json.dumps(value, sort_keys=True)))
             pending.clear()
-    for step in document['steps']:
+    for index, step in enumerate(document['steps']):
         frame = step.get('message', {})
         if step['direction'] == 'client':
+            if redundant_catalog_query(document, index): continue
             if frame['type'] == 'mark_conversation_read' and step['owner'].startswith('phone') and document.get('readReceiptNormalization'):
                 continue
             payload = frame.get('payload')

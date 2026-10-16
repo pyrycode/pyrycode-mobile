@@ -33,6 +33,30 @@ class SuiteInventoryTest(unittest.TestCase):
                 fixture.write_text(json.dumps({'format': 'pyrycode.mobile-suite', 'scenario': scenario}))
                 with self.assertRaises(ValueError): inventory.audit(manifest, {'a'}, {'a'}, root)
 
+    def test_recording_count_requires_hash_bound_capture_and_replay(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'scenario.json'
+            document = {'format': 'pyrycode.mobile-suite', 'scenario': 'a', 'source': {'mobileRevision': 'a' * 40}}
+            path.write_text(json.dumps(document))
+            checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+            count = {'executed': 1, 'failed': 0, 'skipped': 0, 'fixtureSha256': checksum}
+            evidence = {'fixtureSha256': checksum, 'capture': {**count, 'source': document['source']}, 'replay': count.copy()}
+            row = {'method': 'a', 'fixture': path.name, 'evidence': evidence}
+            manifest = {'scenarios': [row], 'liveSelection': ['a']}
+            self.assertEqual(1, inventory.audit(manifest, {'a'}, {'a'}, root)['recorded'])
+            evidence['replay']['skipped'] = 1
+            with self.assertRaises(ValueError): inventory.audit(manifest, {'a'}, {'a'}, root)
+            evidence['replay']['skipped'] = 0
+            path.write_text(json.dumps({**document, 'changed': True}))
+            with self.assertRaises(ValueError): inventory.audit(manifest, {'a'}, {'a'}, root)
+
+    def test_runner_must_cover_every_nonretired_method_without_ignores(self):
+        inventory.audit_runner('@Test fun a() {}', {'a', 'old'}, {'old'})
+        for source in ['@Test fun a() {}\n@Ignore @Test fun b() {}', '@Test fun old() {}', '@Test fun a() {}\n@Test fun b() {}']:
+            with self.assertRaises(ValueError): inventory.audit_runner(source, {'a', 'old'}, {'old'})
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -111,6 +111,22 @@ class SuiteDriverTest(unittest.TestCase):
             document['steps'][0] = archive(data)
             with self.assertRaises(ValueError): suite.inspect_diagnostic_bytes(document, [b'controlled-private-value'])
 
+    def test_only_a_redundant_reconnect_catalog_lookup_can_vary_in_fresh_contract(self):
+        document = self.fixture()
+        document['modelQueryNormalization'] = 'reconnect-catalog-race-v1'
+        query = document['steps'][0]['message']
+        query.update(type='request_history', payload={'conversation_id': 'chat'})
+        catalog = {'direction': 'daemon', 'owner': 'phone', 'message': {'id': 2, 'type': 'model_list',
+                   'ts': query['ts'], 'payload': {'conversation_id': 'chat', 'models': []}}, 'delayMs': 0, 'accepted': True, 'detail': {}}
+        document['steps'].insert(0, catalog)
+        changed = copy.deepcopy(document)
+        lookup = copy.deepcopy(document['steps'][1])
+        lookup['message'].update(id=3, type='request_model_list')
+        changed['steps'].append(lookup)
+        self.assertEqual(suite.contract(document), suite.contract(changed))
+        changed['steps'][-1]['message']['payload']['conversation_id'] = 'other'
+        self.assertNotEqual(suite.contract(document), suite.contract(changed))
+
 
 if __name__ == '__main__':
     unittest.main()
