@@ -175,7 +175,7 @@ internal class RecordedSuiteTape(
             return try {
                 val response = readReceipts!!.send(owner, actual)
                 actualIds.getOrPut(owner) { mutableSetOf() } += actual.id
-                SuiteOutcome(listOf(response), true)
+                SuiteOutcome(listOf(response) + drain(), true)
             } catch (_: Exception) {
                 fail("Recorded read receipt rejected")
             }
@@ -233,6 +233,7 @@ internal class RecordedSuiteTape(
         requests[owner to expected.id] = actual.id
         consumed += candidate
         matched++
+        readReceipts?.requested(owner, actual)
         if (actual.type !in queryTypes) readReceipts?.command()
         return SuiteOutcome(drain(), steps[candidate].accepted)
     }
@@ -264,6 +265,7 @@ internal class RecordedSuiteTape(
         val result = mutableListOf<SuiteStep>()
         while (cursor < steps.size) {
             val step = steps[cursor]
+            if (readReceipts?.permits(step) == false) break
             if (step.direction in setOf("client", "connect", "close")) {
                 if (cursor !in consumed) break
             } else if (step.direction == "daemon") {

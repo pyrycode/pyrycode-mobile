@@ -31,6 +31,18 @@ internal class SuiteReadReceipts(
     )
 
     private val groups = linkedMapOf<Key, Group>()
+    private val strictReads = mutableSetOf<Key>()
+    private val metadata = mutableMapOf<Pair<String, String>, JsonObject>()
+    private val shown = mutableMapOf<Pair<String, String>, ULong>()
+    private val confirmed = mutableMapOf<Pair<String, String>, ULong>()
+    private val lastRequests = mutableMapOf<Pair<String, String>, ULong>()
+    private val guardedSnapshots = mutableListOf<Triple<String, JsonElement, ULong>>()
+
+    private fun host(owner: String) = owner.split('/').getOrNull(1) ?: "default"
+
+    private fun phone(owner: String) = owner == "phone" || owner.startsWith("phone/")
+
+    private val historyRequests = mutableMapOf<Pair<String, Long>, String>()
     private val delivered = mutableMapOf<Pair<String, String>, MutableSet<ULong>>()
     private val normalizedRequests = mutableSetOf<Pair<String, Long>>()
     private val snapshots = mutableMapOf<String, MutableSet<JsonElement>>()
@@ -48,9 +60,21 @@ internal class SuiteReadReceipts(
             val frame = step.message ?: return@forEach
             if (step.direction == "daemon") nextIds.merge(step.owner, frame.id + 1, ::maxOf)
             if (step.direction != "client") return@forEach
-            if (frame.type == "mark_conversation_read") {
-                val response = replies[step.owner to frame.id]?.message ?: return@forEach
-                if (response.type != "conversation_updated" || response.eventId != null || response.historyEntryId != null) return@forEach
+            if (frame.type == "mark_conversation_read" && phone(step.owner)) {
+                val response = replies[step.owner to frame.id]?.message
+                if (response == null ||
+                    response.type != "conversation_updated" ||
+                    response.eventId != null ||
+                    response.historyEntryId != null
+                ) {
+                    val id =
+                        frame.payload.jsonObject
+                            .getValue("conversation_id")
+                            .jsonPrimitive.content
+                    strictReads += Key(step.owner, id, epoch)
+                    epoch++
+                    return@forEach
+                }
                 val request = frame.payload.jsonObject
                 require(request.keys == setOf("conversation_id", "up_to")) { "Unexpected read receipt shape" }
                 val conversation = request.getValue("conversation_id").jsonPrimitive.content
@@ -78,6 +102,7 @@ internal class SuiteReadReceipts(
                 groups[key] = Group(stored, target, response)
                 normalizedRequests += step.owner to frame.id
                 snapshots.getOrPut(step.owner) { mutableSetOf() } += response.payload
+                guardedSnapshots += Triple(host(step.owner), response.payload, stored)
             } else if (frame.type !in queries) {
                 epoch++
             }
@@ -99,30 +124,96 @@ internal class SuiteReadReceipts(
         action++
     }
 
+    fun requested(
+        owner: String,
+        frame: Envelope,
+    ) {
+        if (frame.type == "request_history") {
+            val conversation =
+                frame.payload.jsonObject
+                    .getValue("conversation_id")
+                    .jsonPrimitive.content
+            historyRequests[owner to frame.id] = conversation
+        }
+    }
+
     fun delivered(
         owner: String,
         frame: Envelope,
     ) {
-        val checkpoint = frame.historyEntryId ?: return
-        val conversation =
-            frame.payload.jsonObject["conversation_id"]
+        val payload = frame.payload.jsonObject
+
+        fun remember(row: JsonObject) {
+            val id = row["id"]?.jsonPrimitive?.content ?: return
+            val key = host(owner) to id
+            metadata[key] = row
+            row["read_up_to"]
                 ?.jsonPrimitive
-                ?.content ?: return
+                ?.content
+                ?.toULongOrNull()
+                ?.let { confirmed.merge(key, it, ::maxOf) }
+        }
+        when (frame.type) {
+            "conversation_created", "conversation_updated" -> remember(payload)
+            "conversations" ->
+                (payload["conversations"] as? kotlinx.serialization.json.JsonArray)
+                    ?.forEach { remember(it.jsonObject) }
+        }
+        if (frame.type == "history_page") {
+            val conversation = historyRequests.remove(owner to frame.inReplyTo) ?: return
+            (payload["entries"] as? kotlinx.serialization.json.JsonArray)?.forEach { element ->
+                val entry = element.jsonObject
+                val id =
+                    entry
+                        .getValue("id")
+                        .jsonPrimitive.content
+                        .toULong()
+                delivered.getOrPut(owner to conversation) { mutableSetOf() } += id
+                val type = entry.getValue("type").jsonPrimitive.content
+                val body = entry.getValue("payload")
+                if (de.pyryco.mobile.data.repository
+                        .contributesToUnreadWatermark(type, body)
+                ) {
+                    shown.merge(host(owner) to conversation, id, ::maxOf)
+                }
+            }
+            return
+        }
+        val checkpoint = frame.historyEntryId ?: return
+        val conversation = payload["conversation_id"]?.jsonPrimitive?.content ?: return
         delivered.getOrPut(owner to conversation) { mutableSetOf() } += checkpoint
+        if (de.pyryco.mobile.data.repository
+                .contributesToUnreadWatermark(frame.type, frame.payload)
+        ) {
+            shown.merge(host(owner) to conversation, checkpoint, ::maxOf)
+        }
+    }
+
+    fun permits(step: SuiteStep): Boolean {
+        val frame = step.message ?: return true
+        if (step.direction != "daemon" || frame.type != "conversation_updated" || frame.inReplyTo != null) return true
+        val guard = guardedSnapshots.firstOrNull { it.first == host(step.owner) && it.second == frame.payload } ?: return true
+        val conversation =
+            resolve(frame.payload)
+                .jsonObject
+                .getValue("id")
+                .jsonPrimitive.content
+        return (confirmed[host(step.owner) to conversation] ?: 0u) >= guard.third
     }
 
     fun accepts(
         owner: String,
         frame: Envelope,
     ): Boolean {
-        if (frame.type != "mark_conversation_read") return false
-        val payload = frame.payload.jsonObject
-        val conversation = payload["conversation_id"]?.jsonPrimitive?.content ?: return false
-        return groups.keys.any {
-            it.owner == owner &&
-                resolve(JsonPrimitive(it.conversation)).jsonPrimitive.content == conversation &&
-                it.action == action
-        }
+        if (!phone(owner) || frame.type != "mark_conversation_read") return false
+        val conversation =
+            frame.payload.jsonObject["conversation_id"]
+                ?.jsonPrimitive
+                ?.content ?: return false
+        return metadata.containsKey(host(owner) to conversation) ||
+            groups.keys.any {
+                it.owner == owner && resolve(JsonPrimitive(it.conversation)).jsonPrimitive.content == conversation
+            }
     }
 
     fun send(
@@ -138,20 +229,32 @@ internal class SuiteReadReceipts(
                 .jsonPrimitive.content
                 .toULong()
         val key =
-            groups.keys.single {
-                it.owner == owner &&
-                    resolve(JsonPrimitive(it.conversation)).jsonPrimitive.content == conversation &&
-                    it.action == action
+            groups.keys.singleOrNull {
+                it.owner == owner && resolve(JsonPrimitive(it.conversation)).jsonPrimitive.content == conversation && it.action == action
             }
-        val group = groups.getValue(key)
-        check(target > group.lastRequested && target <= group.maxRequested && target in delivered[owner to conversation].orEmpty()) {
+        val group = key?.let(groups::getValue)
+        val last = lastRequests[owner to conversation] ?: 0u
+        check(target > last && target in delivered[owner to conversation].orEmpty() && (group == null || target <= group.maxRequested)) {
             "Read receipt is duplicate, regressive or acknowledges undelivered history"
         }
-        group.lastRequested = target
-        group.confirmed = minOf(target, group.required)
-        val original = group.snapshot
-        val response = resolve(original.payload).jsonObject
-        val id = nextIds.getValue(owner)
+        lastRequests[owner to conversation] = target
+        val server = host(owner) to conversation
+        val ceiling = group?.required ?: checkNotNull(shown[server]) { "Read receipt has no delivered content" }
+        val stored = maxOf(confirmed[server] ?: 0u, minOf(target, ceiling))
+        confirmed[server] = stored
+        group?.confirmed = stored
+        val original = group?.snapshot ?: Envelope(0, "conversation_updated", frame.ts, JsonObject(emptyMap()))
+        val allowed =
+            setOf("id", "is_promoted", "is_archived", "is_muted", "read_up_to", "name", "cwd", "workspace_label", "last_used_at", "agent")
+        val snapshot = metadata[server]?.filterKeys { it in allowed }.orEmpty()
+        val defaults =
+            mapOf(
+                "is_promoted" to JsonPrimitive(false),
+                "is_archived" to JsonPrimitive(false),
+                "is_muted" to JsonPrimitive(false),
+            )
+        val response = if (group != null) resolve(original.payload).jsonObject else JsonObject(defaults + snapshot)
+        val id = nextIds[owner] ?: 1L
         nextIds[owner] = id + 1
         return SuiteStep(
             "daemon",
@@ -164,7 +267,7 @@ internal class SuiteReadReceipts(
                         response + (
                             "read_up_to" to
                                 de.pyryco.mobile.data.network.MobileJson
-                                    .parseToJsonElement(group.confirmed.toString())
+                                    .parseToJsonElement(stored.toString())
                         ),
                     ),
             ),
@@ -172,6 +275,11 @@ internal class SuiteReadReceipts(
     }
 
     fun assertComplete() {
-        check(groups.values.all { it.confirmed == it.required }) { "Recorded final read progress is incomplete" }
+        check(
+            groups.all { (key, group) ->
+                val conversation = resolve(JsonPrimitive(key.conversation)).jsonPrimitive.content
+                (confirmed[host(key.owner) to conversation] ?: 0u) >= group.required
+            },
+        ) { "Recorded final read progress is incomplete" }
     }
 }

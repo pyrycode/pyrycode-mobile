@@ -72,4 +72,60 @@ class SuiteReadReceiptsTest {
         tape.initial().forEach { tape.delivered(it.owner, it.message!!) }
         assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
     }
+
+    @Test fun anAutomaticReadAfterTheCapturedLastUiFrameUsesOnlyKnownDeliveredContent() {
+        val created = frame(1, "conversation_created", """{"id":"chat","is_promoted":false,"cwd":"/test","name":"Chat"}""")
+        val reply =
+            frame(2, "assistant_delta", """{"conversation_id":"chat","text":"captured reply"}""")
+                .copy(historyEntryId = 7u)
+        val tape =
+            RecordedSuiteTape(
+                listOf(SuiteStep("daemon", "phone", created), SuiteStep("daemon", "phone", reply), SuiteStep("close", "peer")),
+                coalescedReadReceipts = true,
+            )
+        val initial = tape.initial()
+        initial.forEach { tape.delivered(it.owner, it.message!!) }
+        val id = (initial.last().message!!.payload as kotlinx.serialization.json.JsonObject).getValue("conversation_id")
+        val request = frame(90, "mark_conversation_read", """{"conversation_id":$id,"up_to":7}""")
+        val response =
+            tape
+                .send("phone", request)
+                .deliveries
+                .single()
+                .message!!
+        assertEquals(90L, response.inReplyTo)
+        assertEquals(MobileJson.parseToJsonElement("7"), (response.payload as kotlinx.serialization.json.JsonObject)["read_up_to"])
+        tape.lifecycle("close", "peer")
+        tape.assertComplete()
+    }
+
+    @Test fun peerCannotObserveThePhonesRecordedReadBeforeThePhoneActuallyAcknowledgesIt() {
+        val message = frame(1, "assistant_delta", """{"conversation_id":"chat","text":"captured"}""").copy(historyEntryId = 10u)
+        val read = frame(1, "mark_conversation_read", """{"conversation_id":"chat","up_to":10}""")
+        val update = frame(2, "conversation_updated", """{"id":"chat","read_up_to":10}""")
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    SuiteStep("daemon", "phone", message),
+                    SuiteStep("client", "phone", read),
+                    SuiteStep("daemon", "peer", update),
+                    SuiteStep("daemon", "phone", update.copy(inReplyTo = 1)),
+                ),
+                coalescedReadReceipts = true,
+            )
+        val initial = tape.initial()
+        assertEquals(listOf("phone"), initial.map { it.owner })
+        initial.forEach { tape.delivered(it.owner, it.message!!) }
+        val id = (initial.single().message!!.payload as kotlinx.serialization.json.JsonObject).getValue("conversation_id")
+        val actual = frame(90, "mark_conversation_read", """{"conversation_id":$id,"up_to":10}""")
+        assertEquals(listOf("phone", "peer"), tape.send("phone", actual).deliveries.map { it.owner })
+        tape.assertComplete()
+    }
+
+    @Test fun explicitPeerReadActionsNeverUseAutomaticPhoneReadNormalization() {
+        val read = frame(1, "mark_conversation_read", """{"conversation_id":"chat","up_to":10}""")
+        val tape = RecordedSuiteTape(listOf(SuiteStep("client", "peer", read)), coalescedReadReceipts = true)
+        val changed = frame(90, "mark_conversation_read", """{"conversation_id":"chat","up_to":14}""")
+        assertThrows(IllegalStateException::class.java) { tape.send("peer", changed) }
+    }
 }
