@@ -462,6 +462,7 @@ class DeterministicInteractiveStreamE2ETest {
                     }
                 val checkpoint =
                     withTimeoutOrNull(REPLY_TIMEOUT_MS) {
+                        val history = repository.requestHistory(conversationId)
                         repository
                             .threadSnapshots(conversationId)
                             .mapNotNull { snapshot ->
@@ -471,7 +472,7 @@ class DeterministicInteractiveStreamE2ETest {
                                         .lastOrNull { it.message.role == Role.Assistant && it.message.content == PING }
                                 reply?.let {
                                     val evidence = snapshot.readEvidence
-                                    val checkpoint = scriptedReplyReadCheckpoint(snapshot, it)
+                                    val checkpoint = scriptedReplyReadCheckpoint(snapshot, it, history.entries)
                                     val receipts = evidence.facts.keys.sorted()
                                     android.util.Log.i(
                                         "ScriptedReadProof",
