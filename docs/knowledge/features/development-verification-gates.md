@@ -63,13 +63,14 @@ through `tail` can hide a failure.
 The verifier keeps static checks, JVM execution, APK assembly, UI execution and
 scripted execution as independently retained gates. The static invocation is
 `./gradlew check -x :app:testDebugUnitTest`. Its excluded task runs immediately
-afterwards through `python3 scripts/jvm-test-gate.py`, which forces fresh test
-execution and emits only joined JUnit XML on standard output. Build logs go to
+afterwards through `python3 scripts/jvm-test-gate.py`, which emits joined JUnit XML on standard output. A successful full invocation may
+retain Gradle-verified cached results. Exact named comparisons force fresh execution. Build logs go to
 standard error. The complete recorded-suite inventory remains a dependency of
 the static `check` invocation. APK assembly and instrumented Kotlin compilation
 share one Gradle invocation.
 
-Named failures use `jvm-test-gate.py --tests package.Class#method` or
+Named JVM failures use `jvm-test-gate.py --tests-json '["package.Class#method"]'`.
+JSON preserves Kotlin names with spaces, commas and apostrophes. UI failures use
 `android-test-gate.py ui --tests package.Class#method`. Scripted failures use
 `android-test-gate.py scripted-all --tests package.Class#method`. The last command
 resolves the original scenario from the harness and runs only that scenario,
