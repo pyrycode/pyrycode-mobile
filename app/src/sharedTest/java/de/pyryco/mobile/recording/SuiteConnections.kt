@@ -409,12 +409,18 @@ internal class SuiteConnections private constructor(
             if (started.compareAndSet(false, true)) register(this)
         }
 
-        override fun send(envelope: Envelope): Boolean {
-            // NoiseSessionPump refuses locally once closed; a late upload chunk never reaches the wire.
-            // Explicitly captured refused calls still match their full payload and recorded result.
-            if (state.value !is PumpState.Open && !checkNotNull(tape).hasEligibleRefusal(connection.owner)) return false
-            return request(connection.owner, envelope)
-        }
+        override fun send(envelope: Envelope): Boolean =
+            synchronized(this@SuiteConnections) {
+                // NoiseSessionPump refuses locally once closed; a late upload chunk never reaches the wire.
+                // Explicitly captured refused calls still match their full payload and recorded result.
+                if ((connection.localClose.get() || state.value !is PumpState.Open) &&
+                    !checkNotNull(tape).hasEligibleRefusal(connection.owner)
+                ) {
+                    false
+                } else {
+                    request(connection.owner, envelope)
+                }
+            }
 
         override fun close() = connection.close()
 

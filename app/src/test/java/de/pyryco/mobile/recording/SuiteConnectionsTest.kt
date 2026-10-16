@@ -15,9 +15,53 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteConnectionsTest {
+    @Test fun aSendWaitingBehindCloseCannotUseAnEarlierOpenState() =
+        runTest {
+            val hub =
+                SuiteConnections.replaying(
+                    backgroundScope,
+                    RecordedSuiteTape(listOf(SuiteStep("connect", "phone"), SuiteStep("open", "phone"), SuiteStep("close", "phone"))),
+                )
+            val transport = hub.transport("phone") { error("Live transport started") }
+            transport.connect()
+            val pump = hub.pump(transport) { error("Live pump started") }
+            pump.start()
+            runCurrent()
+            val started = CountDownLatch(1)
+            val result = AtomicReference<Boolean?>()
+            val failure = AtomicReference<Throwable?>()
+            val sender: Thread
+            synchronized(hub) {
+                sender =
+                    thread {
+                        started.countDown()
+                        try {
+                            result.set(pump.send(frame(90, "attachment_chunk")))
+                        } catch (error: Throwable) {
+                            failure.set(error)
+                        }
+                    }
+                check(started.await(1, TimeUnit.SECONDS))
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1)
+                while (sender.state != Thread.State.BLOCKED && System.nanoTime() < deadline) Thread.yield()
+                assertEquals(Thread.State.BLOCKED, sender.state)
+                pump.close()
+            }
+            sender.join(1000)
+            assertFalse(sender.isAlive)
+            assertEquals(null, failure.get())
+            assertEquals(false, result.get())
+            hub.assertComplete()
+            hub.close()
+        }
+
     @Test fun aTestDrivenCloseWaitsForRecordedRequestsAndTheirDeliveryBeforeCancellingThePump() =
         runTest {
             val registration =

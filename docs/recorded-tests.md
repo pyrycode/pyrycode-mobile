@@ -188,6 +188,8 @@ Duplicate request IDs fail. Synthetic response IDs share an allocator above reco
 A closed replay pump refuses further local sends, matching the normal pump's Boolean
 contract. These cannot emit daemon messages. Any explicitly captured refused call still
 requires its complete request payload and must be consumed.
+Checking the pump's close state and accepting a send share one lock. A sender queued
+before teardown cannot reuse an earlier open-state check after that connection closes.
 Recorded stream events retain cadence. Real push delivery, encryption, transport recovery
 and timing obligations retain their external checks.
 
