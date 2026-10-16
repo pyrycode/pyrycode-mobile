@@ -471,7 +471,7 @@ class DeterministicInteractiveStreamE2ETest {
                                         .lastOrNull { it.message.role == Role.Assistant && it.message.content == PING }
                                 reply?.let {
                                     val evidence = snapshot.readEvidence
-                                    val checkpoint = evidence.checkpoint(it, 0uL)
+                                    val checkpoint = scriptedReplyReadCheckpoint(snapshot, it)
                                     val receipts = evidence.facts.keys.sorted()
                                     android.util.Log.i(
                                         "ScriptedReadProof",
