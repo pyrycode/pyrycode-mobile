@@ -1,3 +1,4 @@
+Historical failed attempt (2026-10-15)
 Ticket: pyrycode/pyrycode-mobile#2169
 Task: ffa7e4529efbdc290d7728ab17d66643a868f51431b55679926dd690aa21cc45
 Recipe: android-tool-then-text
@@ -15,3 +16,35 @@ Retrieved on 2026-10-15 with fleet-task.py read; earlier ticket evidence bundles
 were also retrieved and contained no results or artifacts for this native run.
 The local container has no /dev/kvm. No replacement task was requested for the
 unchanged test implementation. Dispatcher UI/scripted acceptance remains pending.
+
+Completed focused native check (retrieved 2026-10-16)
+Task: 0f91c9feeeb8f212148c7cb305c261925eb4cb8396827bdab255b630bbbcb6f1
+Recipe: mobile-scripted-evidence
+Capability: mobile-android
+Candidate: 09e1a604f61ad2b5c4eebadbfb8104e78fecbbd9
+Native run: 4d945a84a86159f6c0e7df3606596a0735d6470461aeb3afbec37de6979e6ced
+Computer: build-hp-1 (Linux, pixel2Api33Atd Android emulator)
+State: complete
+Result: Mobile mobile-scripted-evidence: complete counted checks
+Command: python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py scripted reply-suggestion
+Method: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_replySuggestionLongPressSends
+Counts: 1 executed, 1 passed, 0 failed, 0 skipped; exit 0
+Command: python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py scripted selection-copy
+Method: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_systemCopyCopiesSelectedWord
+Counts: 1 executed, 1 passed, 0 failed, 0 skipped; exit 0
+Mobile revision: 09e1a604f61ad2b5c4eebadbfb8104e78fecbbd9
+Runner revision: 800e719515a91bf2040d9d26b0e0a802e931bca3
+Daemon revision: 0917625fc6e91eeb2a16556f09e5ba0bbf62aabf
+Relay revision: 9939bc1ff8afec5021c09862e6f14dadba33ad42
+Assessment: both focused scripted checks passed; no real Claude turns were run.
+The historical failed attempt remains failed. Full dispatcher acceptance remains pending.
+No recordings were changed. The tested evidence adapter implementation is unchanged.
+Private raw artifacts and verified SHA256SUMS:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2169/builder-native-0f91c9-20261016/
+Returned artifact hashes (SHA-256):
+3fd7dc7da2519e3942d4e4222f6f9f7fdd3dd7ba3193bf8205f1d39313a59457  mobile/capture.json
+f57b7601805ee986f4420ed0da18204d21af812af10841ac900a7c82b57e470f  mobile/execution.log
+3d2b38833837b1fd850251f8217739f1da7fbccd3afaec074eff957484cda97d  mobile/gate-0.xml
+5839ed80cfa059f005f088c15c5572922d1f957956ba97f27d8282ec9d138b75  mobile/gate-1.xml
+b7ef3f7c035bd9baa87b35a5b005bc817b9b7cd11e88b2c13c179a4df110eba1  mobile/phases-0.jsonl
+9961d537cc963cba5a7af8457120c4beac1efc2a4cc29f81c1fd9aa9979735fe  mobile/phases-1.jsonl
