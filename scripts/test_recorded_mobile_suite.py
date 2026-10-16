@@ -50,6 +50,67 @@ class SuiteDriverTest(unittest.TestCase):
         changed['steps'][0]['delayMs'] = 123
         self.assertEqual(suite.contract(original), suite.contract(changed))
 
+    def test_controlled_file_clocks_rebind_even_when_they_cross_upload_chunks(self):
+        import base64
+        import hashlib
+        def document(stamp, suffix=b'z'):
+            result = self.fixture()
+            result['inputs']['clockReads'] = [stamp]
+            data = b'aaaaaaa' + str(stamp).encode() + suffix
+            parts = [data[:10], data[10:]]
+            result['steps'] = []
+            for index, part in enumerate(parts):
+                payload = {'conversation_id': 'chat', 'attachment_id': 'upload', 'index': index, 'total_chunks': 2,
+                           'filename': 'file-' + str(stamp), 'mime_type': 'text/plain', 'size': len(data),
+                           'sha256': hashlib.sha256(data).hexdigest(), 'data': base64.b64encode(part).decode()}
+                result['steps'].append({'direction': 'client', 'owner': 'phone', 'delayMs': 0, 'accepted': True,
+                                        'detail': {}, 'message': {'id': index + 1, 'ts': 'time', 'type': 'attachment_chunk', 'payload': payload}})
+            return result
+        first, second = document(1760611309123), document(1760611409456)
+        self.assertEqual(suite.contract(first), suite.contract(second))
+        self.assertNotEqual(suite.contract(first), suite.contract(document(1760611409456, b'x')))
+
+    def test_payloadless_debug_requests_remain_distinct_from_empty_objects(self):
+        document = self.fixture()
+        frame = document['steps'][0]['message']
+        frame['type'] = 'request_debug_bundle'
+        frame.pop('payload')
+        suite.validate(document)
+        absent = suite.contract(document)
+        frame['payload'] = None
+        suite.validate(document)
+        self.assertEqual(absent, suite.contract(document))
+        frame['payload'] = {}
+        self.assertNotEqual(absent, suite.contract(document))
+        document['producerIdentityMode'] = 'wildcard'
+        with self.assertRaises(ValueError): suite.validate(document)
+
+    def test_independent_connection_and_setup_query_order_can_commute(self):
+        original = self.fixture()
+        connect = {'direction': 'connect', 'owner': 'peer/host0/1', 'delayMs': 0, 'accepted': True, 'detail': {}}
+        original['steps'].append(connect)
+        changed = copy.deepcopy(original)
+        changed['steps'].reverse()
+        self.assertEqual(suite.contract(original), suite.contract(changed))
+        original['steps'][0]['message']['type'] = 'send_message'
+        changed = copy.deepcopy(original)
+        changed['steps'].reverse()
+        self.assertNotEqual(suite.contract(original), suite.contract(changed))
+
+    def test_compressed_diagnostic_members_cannot_hide_a_credential(self):
+        import base64
+        import gzip
+        document = self.fixture()
+        document['steps'] = []
+        def archive(data):
+            payload = {'seq': 0, 'data': base64.b64encode(gzip.compress(data)).decode()}
+            return {'direction': 'daemon', 'owner': 'phone', 'message': {'type': 'debug_bundle_chunk', 'payload': payload}}
+        document['steps'].append(archive(b'controlled diagnostic'))
+        suite.inspect_diagnostic_bytes(document, [b'controlled-private-value'])
+        for data in [b'log controlled-private-value', b'log sk-ant-controlled-test-value']:
+            document['steps'][0] = archive(data)
+            with self.assertRaises(ValueError): suite.inspect_diagnostic_bytes(document, [b'controlled-private-value'])
+
 
 if __name__ == '__main__':
     unittest.main()

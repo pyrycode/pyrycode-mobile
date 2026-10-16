@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Capture original native scenarios, replay offline, or explicitly check fresh Claude compatibility."""
 import argparse
+import base64
 import datetime
 import hashlib
+import gzip
+import io
 import importlib.util
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -23,7 +27,7 @@ PACKAGE = legacy.PACKAGE
 MANIFEST = ROOT / 'app/src/androidTest/assets/recorded/suite.json'
 COUNTS = {'executed': 1, 'failed': 0, 'skipped': 0}
 PUSH_ADDRESS = 'recorded-push-device-address'
-QUERIES = legacy.QUERIES | {'backfill_since'}
+QUERIES = legacy.QUERIES | {'backfill_since', 'register_push_token'}
 
 
 def require(condition, message):
@@ -42,10 +46,11 @@ def validate(document):
                 'Unsupported suite format')
         require(re.fullmatch(r'[A-Za-z0-9_]{1,180}', document['scenario']), 'Invalid scenario')
         require(document.get('readReceiptNormalization') in {None, 'coalesced-visible-history-v2'}, 'Unsupported receipt normalization')
+        require(document.get('producerIdentityMode') in {None, 'literal', 'rebind'}, 'Unsupported producer identity mode')
         source = document['source']
         for key in ['mobileRevision', 'daemonRevision']:
             require(re.fullmatch('[a-f0-9]{40}', source[key]), 'Invalid source revision')
-        for key in ['daemonBinarySha256', 'testApkSha256']:
+        for key in ['daemonBinarySha256', 'testApkSha256'] + (['appApkSha256'] if 'appApkSha256' in source else []):
             require(re.fullmatch('[a-f0-9]{64}', source[key]), 'Invalid producer checksum')
         require(source['claudeVersion'].strip(), 'Missing producer version')
         datetime.datetime.strptime(source['capturedAt'], '%Y-%m-%dT%H:%M:%SZ')
@@ -71,7 +76,7 @@ def validate(document):
             if direction not in {'client', 'daemon'}:
                 require(frame is None, 'Unexpected lifecycle payload')
                 continue
-            require(isinstance(frame, dict) and isinstance(frame['payload'], dict) and frame['type'] and frame['ts'], 'Invalid frame')
+            require(isinstance(frame, dict) and (frame.get('payload') is None or isinstance(frame['payload'], dict)) and frame['type'] and frame['ts'], 'Invalid frame')
             require(frame['type'] not in {'hello', 'hello_ack', 'rekey_request', 'multipart', 'fragment'}, 'Handshake rejected')
             bucket = ids.setdefault((owner, direction), set())
             require(type(frame['id']) is int and frame['id'] >= 0 and frame['id'] not in bucket, 'Invalid frame identity')
@@ -80,7 +85,7 @@ def validate(document):
             if reply is not None:
                 require(direction == 'daemon' and reply in ids.get((owner, 'client'), set()), 'Invalid reply correlation')
             if direction == 'client' and frame['type'] == 'register_push_token':
-                require(frame['payload'].get('token') == PUSH_ADDRESS, 'Invalid test push address')
+                require(isinstance(frame.get('payload'), dict) and frame['payload'].get('token') == PUSH_ADDRESS, 'Invalid test push address')
                 legacy.require_safe({**frame, 'payload': {k: v for k, v in frame['payload'].items() if k != 'token'}})
             else:
                 legacy.require_safe(frame)
@@ -109,7 +114,9 @@ def instrument(serial, method, arguments):
         diagnostic.chmod(0o600)
     executed_one(result.stdout)
     require(result.returncode == 0, 'Instrumentation process failed')
-    return round(time.monotonic() - started, 3)
+    timing = re.search(rb'(?m)^Time: (\d+(?:\.\d+)?)\r?$', result.stdout)
+    require(timing is not None, 'Native timing report missing')
+    return {'seconds': round(time.monotonic() - started, 3), 'nativeSeconds': float(timing.group(1))}
 
 
 def replay(serial, path):
@@ -121,7 +128,45 @@ def replay(serial, path):
     legacy.adb(serial, 'shell', 'run-as', PACKAGE, 'sh', '-c',
                "'umask 077; mkdir -p files; cat > files/" + name + "'", data=data)
     elapsed = instrument(serial, document['scenario'], {'suiteFile': name, 'disableAnimations': 'true'})
-    return {**COUNTS, 'seconds': elapsed, 'fixtureSha256': digest(data)}
+    return {**COUNTS, **elapsed, 'fixtureSha256': digest(data)}
+
+
+def inspect_diagnostic_bytes(document, credentials):
+    """Inspect opaque diagnostics after bounded decompression; never alter archive evidence."""
+    archives = {}
+    for step in document['steps']:
+        frame = step.get('message') or {}
+        if frame.get('type') == 'debug_bundle_chunk' and step['direction'] == 'daemon':
+            payload = frame['payload']
+            parts = archives.setdefault(step['owner'], {})
+            seq = payload['seq']
+            require(type(seq) is int and seq >= 0 and seq not in parts, 'Invalid diagnostic sequence')
+            parts[seq] = base64.b64decode(payload['data'], validate=True)
+            require(sum(map(len, parts.values())) <= 20_000_000, 'Diagnostic archive exceeds recording bound')
+    for parts in archives.values():
+        require(set(parts) == set(range(len(parts))), 'Incomplete diagnostic sequence')
+        compressed = b''.join(parts[index] for index in range(len(parts)))
+        with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as stream:
+            data = stream.read(20_000_001)
+        require(len(data) <= 20_000_000, 'Decoded diagnostic exceeds recording bound')
+        require(not any(value and value in data for value in credentials), 'Credential rejected from diagnostic archive')
+        legacy.require_safe(data.decode('utf-8', errors='replace'))
+
+
+def capture_credentials(home):
+    values = [os.environ.get(key, '').encode() for key in ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']]
+    def walk(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if isinstance(child, str) and re.search(r'token|private.?key|public.?key|pair.?code', key, re.I):
+                    values.append(child.encode())
+                else: walk(child)
+        elif isinstance(value, list):
+            for child in value: walk(child)
+    for path in (home / '.pyry').glob('*.json'):
+        try: walk(json.loads(path.read_text()))
+        except (UnicodeError, json.JSONDecodeError): continue
+    return values
 
 
 def normalize_capture(document, home):
@@ -145,9 +190,9 @@ def capture(serial, method, destination, pyry, daemon_source):
     match = re.search(r'vcs.revision=([a-f0-9]{40})', metadata)
     require(match and 'vcs.modified=true' not in metadata, 'Clean daemon producer metadata required')
     started = time.time_ns()
-    evidence = ROOT / 'build/recorded-suite' / method
-    evidence.mkdir(parents=True, exist_ok=True)
     name = 'recorded-' + uuid.uuid4().hex + '.json'
+    evidence = ROOT / 'build/recorded-suite' / method / name.removesuffix('.json')
+    evidence.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='mobile-suite-', dir='/tmp') as directory:
         home = Path(directory) / 'home'
         home.mkdir(mode=0o700)
@@ -174,8 +219,13 @@ def capture(serial, method, destination, pyry, daemon_source):
         with (evidence / 'host-private.log').open('wb') as log:
             result = subprocess.run(['bash', str(ROOT / 'scripts/e2e-emulator.sh')], cwd=ROOT, env=child,
                                     stdout=log, stderr=subprocess.STDOUT, timeout=1200)
+        report_dir = ROOT / 'app/build/outputs/androidTest-results/connected/debug'
+        for filename in ['TEST-installed.xml', 'instrument-raw.txt']:
+            artifact = report_dir / filename
+            if artifact.is_file() and artifact.stat().st_mtime_ns >= started:
+                (evidence / filename).write_bytes(artifact.read_bytes())
         require(result.returncode == 0, 'Native capture failed; inspect private host evidence')
-        report = ROOT / 'app/build/outputs/androidTest-results/connected/debug/TEST-installed.xml'
+        report = report_dir / 'TEST-installed.xml'
         require(report.stat().st_mtime_ns >= started, 'Stale native report')
         tests = list(ET.parse(report).getroot().iter('testcase'))
         require(len(tests) == 1 and method in tests[0].get('name', '') and
@@ -185,49 +235,144 @@ def capture(serial, method, destination, pyry, daemon_source):
         document['source'] = {'mobileRevision': revision, 'daemonRevision': match.group(1),
                               'daemonBinarySha256': digest(pyry.read_bytes()),
                               'testApkSha256': digest((ROOT / 'app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk').read_bytes()),
+                              'appApkSha256': digest((ROOT / 'app/build/outputs/apk/debug/app-debug.apk').read_bytes()),
                               'claudeVersion': legacy.run(['claude', '--version']).decode().strip(),
                               'capturedAt': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
                               'presentation': 'current-production',
                               'androidApi': legacy.adb(serial, 'shell', 'getprop', 'ro.build.version.sdk').decode().strip()}
         document = normalize_capture(document, home)
         validate(document)
+        inspect_diagnostic_bytes(document, capture_credentials(home))
         data = (json.dumps(document, separators=(',', ':'), ensure_ascii=False) + '\n').encode()
         for key in ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']:
             value = os.environ.get(key, '').encode()
             require(not value or value not in data, 'Credential rejected')
         destination.parent.mkdir(parents=True, exist_ok=True)
         legacy.private_write(destination, data)
-    return {**COUNTS, 'seconds': round((time.time_ns() - started) / 1e9, 3), 'fixtureSha256': digest(data), 'source': document['source']}
+    raw = (evidence / 'instrument-raw.txt').read_bytes()
+    timing = re.search(rb'(?m)^Time: (\d+(?:\.\d+)?)\r?$', raw)
+    require(timing is not None, 'Native timing report missing')
+    return {**COUNTS, 'seconds': round((time.time_ns() - started) / 1e9, 3), 'nativeSeconds': float(timing.group(1)),
+            'fixtureSha256': digest(data), 'source': document['source']}
 
 
 def contract(document):
-    """Compare complete logical requests; only declared generated inputs receive aliases."""
-    replacements = {str(value): 'clock-' + str(index) for index, value in enumerate(document['inputs']['clockReads'])}
-    def clocks(value):
-        if isinstance(value, dict): return {key: clocks(child) for key, child in value.items()}
-        if isinstance(value, list): return [clocks(child) for child in value]
-        if isinstance(value, str):
-            for old, new in replacements.items(): value = value.replace(old, new)
-        return value
-    for key in ['backgroundAgentFixtureUrl', 'stopTaskFixtureUrl']:
+    """Logical full requests. Recorded clocks, producer identities and opaque cursors may rebind."""
+    replacements = {str(value): str(index).zfill(len(str(value)))
+                    for index, value in enumerate(document['inputs']['clockReads'])}
+    for key in ['backgroundAgentFixtureUrl', 'stopTaskFixtureUrl', 'sendNowReleasePath', 'bypassTokenFile', 'bypassToken']:
         value = document['inputs']['arguments'].get(key)
         if value:
             replacements[value] = 'controlled-' + key
             replacements[value.replace('127.0.0.1', '10.0.2.2')] = 'controlled-' + key
-    wire = []
+    aliases, counters = {}, {}
+    identity_keys = legacy.IDENTITIES | {'attachment_id', 'question_batch_id', 'question_id'}
+    def bind(value, kind):
+        if not isinstance(value, str) or not value or value in aliases: return
+        if kind in {'conversation_id', 'current_conversation_id', 'id'}: kind = 'conversation'
+        if kind in {'session_id', 'current_session_id'}: kind = 'session'
+        index = counters.get(kind, 0)
+        counters[kind] = index + 1
+        aliases[value] = kind + '-' + str(index)
+    for key, value in sorted(document['inputs']['arguments'].items()):
+        if key.endswith('Id') or key == 'serverIdB': bind(value, key)
     for step in document['steps']:
+        message = step.get('message', {})
+        if step['direction'] == 'daemon' and message.get('type') == 'conversation_created':
+            bind(message['payload'].get('id'), 'conversation')
+    def prime(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in identity_keys: bind(child, key)
+                prime(child)
+        elif isinstance(value, list):
+            for child in value: prime(child)
+    # Query timing cannot choose aliases: bind action-owned identifiers before sorting query groups.
+    for step in document['steps']:
+        message = step.get('message', {})
+        if step['direction'] == 'client' and message.get('type') not in QUERIES:
+            prime(message.get('payload', {}))
+    times, cursors = set(), set()
+    def producer_values(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in {'ts', 'timestamp'} and isinstance(child, str): times.add(child)
+                if key == 'cursor' and isinstance(child, str) and child: cursors.add(child)
+                producer_values(child)
+        elif isinstance(value, list):
+            for child in value: producer_values(child)
+    for step in document['steps']:
+        if step['direction'] == 'daemon': producer_values(step.get('message', {}))
+    def clocks_bytes(data):
+        for old, new in replacements.items():
+            # Generated file labels contain clock reads. Resource addresses stay text-only.
+            if old.isdigit(): data = data.replace(old.encode(), new.encode())
+        return data
+    chunks, hashes, canonical_parts = {}, {}, {}
+    for step in document['steps']:
+        message = step.get('message', {})
+        if step['direction'] == 'client' and message.get('type') == 'attachment_chunk':
+            payload = message['payload']
+            key = (step['owner'], payload['attachment_id'])
+            part = base64.b64decode(payload['data'], validate=True)
+            row = chunks.setdefault(key, {'parts': {}, 'total': payload['total_chunks'], 'sha256': payload['sha256']})
+            require(row['parts'].get(payload['index'], part) == part, 'Conflicting captured upload chunk')
+            row['parts'][payload['index']] = part
+    for row in chunks.values():
+        if set(row['parts']) == set(range(row['total'])):
+            data = b''.join(row['parts'][index] for index in range(row['total']))
+            require(digest(data) == row['sha256'], 'Captured upload checksum differs from its bytes')
+            canonical = clocks_bytes(data)
+            hashes[row['sha256']] = digest(canonical)
+            offset = 0
+            for index in range(row['total']):
+                length = len(row['parts'][index])
+                canonical_parts[row['sha256'], index] = canonical[offset:offset + length]
+                offset += length
+    def normalized(value, key='', attachment=False):
+        if isinstance(value, dict):
+            prime(value)
+            return {aliases.get(name, name): normalized(child, name, attachment) for name, child in value.items()}
+        if isinstance(value, list): return [normalized(child, key, attachment) for child in value]
+        if not isinstance(value, str): return value
+        if attachment and key == 'data':
+            return base64.b64encode(clocks_bytes(base64.b64decode(value, validate=True))).decode()
+        if key == 'since_ts' and value in times: bind(value, 'timestamp')
+        if key == 'cursor' and value in cursors: bind(value, 'cursor')
+        if value in hashes: return hashes[value]
+        for old, new in sorted(replacements.items(), key=lambda item: -len(item[0])): value = value.replace(old, new)
+        for old, new in sorted(aliases.items(), key=lambda item: -len(item[0])): value = value.replace(old, new)
+        return value
+    result, pending = [], []
+    def flush():
+        if pending:
+            result.append(sorted(pending, key=lambda value: json.dumps(value, sort_keys=True)))
+            pending.clear()
+    for step in document['steps']:
+        frame = step.get('message', {})
         if step['direction'] == 'client':
-            frame = step['message']
-            wire.append({'direction': 'client', 'message': {**frame, 'payload': {'owner': step['owner'], 'payload': clocks(frame['payload'])}}})
-        elif step['direction'] in {'connect', 'close', 'external'}:
-            wire.append({'direction': 'client', 'message': {'type': step['direction'] + ':' + step['owner'], 'payload': step['detail']}})
-    # Legacy contract normalization preserves all values other than named generated identities.
-    prior_queries = legacy.QUERIES
-    try:
-        legacy.QUERIES = QUERIES
-        return legacy.normalized_contract({'wire': wire})
-    finally:
-        legacy.QUERIES = prior_queries
+            if frame['type'] == 'mark_conversation_read' and step['owner'].startswith('phone') and document.get('readReceiptNormalization'):
+                continue
+            payload = frame.get('payload')
+            if frame['type'] == 'attachment_chunk':
+                canonical = canonical_parts.get((payload['sha256'], payload['index']))
+                if canonical is not None: payload = {**payload, 'data': base64.b64encode(canonical).decode()}
+            value = {'owner': step['owner'], 'type': frame['type'], 'accepted': step['accepted'],
+                     'payload': normalized(payload, attachment=frame['type'] == 'attachment_chunk')}
+            if frame['type'] in QUERIES: pending.append(value)
+            else:
+                flush()
+                result.append(value)
+        elif step['direction'] == 'connect':
+            pending.append({'lifecycle': 'connect', 'owner': step['owner']})
+        elif step['direction'] == 'close':
+            flush()
+            result.append({'lifecycle': 'close', 'owner': step['owner']})
+        elif step['direction'] == 'external' and step['detail']['event'] != 'push-token':
+            flush()
+            result.append({'external': step['detail']['event'], 'owner': step['owner']})
+    flush()
+    return result
 
 
 def verify(args):
@@ -239,32 +384,95 @@ def verify(args):
     reviewed_replay = replay(args.serial, args.fixture)
     fresh_replay = replay(args.serial, candidate)
     require(contract(original) == contract(json.loads(candidate.read_text())), 'Fresh Claude request contract changed; review candidate without replacing the recording')
-    return {'scenario': original['scenario'], 'capture': captured, 'reviewedReplay': reviewed_replay, 'freshReplay': fresh_replay}
+    result = {'scenario': original['scenario'], 'capture': captured, 'reviewedReplay': reviewed_replay, 'freshReplay': fresh_replay}
+    legacy.private_write(args.output / 'receipt.json', (json.dumps(result, indent=2) + '\n').encode())
+    return result
+
+
+def selected_rows(manifest, methods_file=None, ready=False):
+    rows = [row for row in manifest['scenarios'] if not row.get('retired')]
+    if methods_file is not None:
+        chosen = json.loads(methods_file.read_text())
+        require(isinstance(chosen, list) and chosen and len(chosen) == len(set(chosen)), 'Invalid selected method list')
+        known = {row['method'] for row in rows}
+        require(set(chosen) <= known, 'Selected method is absent or retired')
+        rows = [row for row in rows if row['method'] in chosen]
+    require(rows, 'Suite selected no methods')
+    if ready: require(all(row.get('fixture') for row in rows), 'Complete suite contains missing recordings')
+    return rows
+
+
+def all_ready_rows():
+    legacy.run([sys.executable, str(ROOT / 'scripts/recorded-suite-inventory.py')])
+    return selected_rows(json.loads(MANIFEST.read_text()), ready=True)
+
+
+def replay_all(args):
+    rows = all_ready_rows()
+    results, failures = [], []
+    for row in rows:
+        try:
+            result = replay(args.serial, MANIFEST.parent / row['fixture'])
+            results.append({'scenario': row['method'], **result})
+            print(json.dumps({'scenario': row['method'], 'result': 'passed', **result}), flush=True)
+        except Exception as error:
+            failures.append(row['method'])
+            print(json.dumps({'scenario': row['method'], 'result': 'failed', 'category': type(error).__name__}), flush=True)
+    require(not failures and len(results) == len(rows), 'Complete offline suite failed; inspect private scenario reports')
+    return {'required': len(rows), 'executed': len(results), 'failed': 0, 'skipped': 0, 'results': results}
+
+
+def verify_all(args):
+    rows = all_ready_rows()
+    require(not args.output.exists(), 'Use a new verification directory; existing candidates are preserved')
+    results, failures = [], []
+    args.output.mkdir(parents=True)
+    for row in rows:
+        scenario_args = argparse.Namespace(**vars(args))
+        scenario_args.fixture = MANIFEST.parent / row['fixture']
+        scenario_args.output = args.output / row['method']
+        try:
+            result = verify(scenario_args)
+            results.append(result)
+            print(json.dumps({'scenario': row['method'], 'result': 'passed'}), flush=True)
+        except Exception as error:
+            failures.append(row['method'])
+            print(json.dumps({'scenario': row['method'], 'result': 'failed', 'category': type(error).__name__}), flush=True)
+    summary = {'required': len(rows), 'verified': len(results), 'failures': failures, 'results': results}
+    legacy.private_write(args.output / 'summary.json', (json.dumps(summary, indent=2) + '\n').encode())
+    require(not failures and len(results) == len(rows), 'Complete fresh compatibility gate failed; candidates were preserved')
+    return summary
 
 
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='mode', required=True)
-    for name in ['capture', 'replay', 'verify', 'capture-all']:
+    for name in ['capture', 'replay', 'verify', 'capture-all', 'replay-all', 'verify-all']:
         command = sub.add_parser(name)
         command.add_argument('--serial', required=True)
-        if name != 'replay':
+        if name not in {'replay', 'replay-all'}:
             command.add_argument('--pyry', type=Path, required=True)
             command.add_argument('--daemon-source', type=Path, required=True)
             command.add_argument('--output', type=Path, required=True)
         if name in {'replay', 'verify'}: command.add_argument('--fixture', type=Path, required=True)
         if name == 'capture': command.add_argument('--method', required=True)
-        if name == 'capture-all': command.add_argument('--stop-file', type=Path)
+        if name == 'capture-all':
+            command.add_argument('--stop-file', type=Path)
+            command.add_argument('--methods-file', type=Path)
     args = parser.parse_args()
-    if args.mode == 'replay': result = replay(args.serial, args.fixture)
+    if args.mode in {'capture', 'capture-all', 'verify', 'verify-all'}:
+        require(os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') or os.environ.get('ANTHROPIC_API_KEY'), 'Configured Claude login required')
+    if args.mode == 'replay-all': result = replay_all(args)
+    elif args.mode == 'verify-all': result = verify_all(args)
+    elif args.mode == 'replay': result = replay(args.serial, args.fixture)
     elif args.mode == 'capture': result = capture(args.serial, args.method, args.output, args.pyry, args.daemon_source)
     elif args.mode == 'verify': result = verify(args)
     else:
         result = {'passed': [], 'failed': []}
         args.output.mkdir(parents=True, exist_ok=True)
         stopped = False
-        for row in json.loads(MANIFEST.read_text())['scenarios']:
+        for row in selected_rows(json.loads(MANIFEST.read_text()), args.methods_file):
             if args.stop_file and args.stop_file.exists():
                 stopped = True
                 break
