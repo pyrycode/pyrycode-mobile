@@ -166,12 +166,13 @@ def capture(serial, destination, pyry):
         (home / '.claude/settings.json').write_text(json.dumps({'skipDangerousModePermissionPrompt': True}))
         configured = json.loads((Path.home() / '.claude.json').read_text())
         onboarding = {key: configured[key] for key in ['oauthAccount', 'hasCompletedOnboarding', 'lastOnboardingVersion', 'installMethod', 'userID'] if key in configured}
+        onboarding['projects'] = {str(work.resolve()): {'hasTrustDialogAccepted': True}}
         private_write(home / '.claude.json', json.dumps(onboarding).encode())
         child_env = {key: value for key, value in os.environ.items() if not key.startswith('OP_')}
         child_env.update(HOME=str(home), PYRY_MOBILE_V2='1')
         relay = 'wss://' + os.environ.get('LIVE_RELAY_HOST', 'pyrycode-relay.pyryco.de')
         command = [pyry, '-pyry-name=recorded', '-pyry-claude=' + claude, '-pyry-idle-timeout=0', '-pyry-workdir=' + str(work),
-                   '-pyry-relay=' + relay + '/v1/server', '--', '--model', 'haiku', '--dangerously-skip-permissions', '--permission-prompt-tool', 'stdio']
+                   '-pyry-relay=' + relay + '/v1/server', '--', '--model', 'haiku']
         with (private / 'daemon.log').open('wb') as log:
             daemon = subprocess.Popen(command, env=child_env, stdout=log, stderr=log, start_new_session=True)
             try:
