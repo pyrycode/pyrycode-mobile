@@ -15,6 +15,7 @@ import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
@@ -180,6 +181,9 @@ class RecordedPermissionTest {
                 ).performClick()
             android.util.Log.i("RecordedExchange", "stage=prompt-sent")
             rule.waitUntil(120000) { vm.currentModal.value is ModalUiState.Open }
+            androidx.test.espresso.Espresso
+                .closeSoftKeyboard()
+            rule.waitForIdle()
             android.util.Log.i("RecordedExchange", "stage=permission-shown")
             val shown = vm.currentModal.value as ModalUiState.Open
             val allow = shown.options.single { it.id == "allow_once" }.label
@@ -187,7 +191,12 @@ class RecordedPermissionTest {
 
             fun tapAllow() {
                 rule.onNode(hasScrollToNodeAction()).performScrollToNode(choice)
-                rule.onNode(choice).assertIsEnabled().performTouchInput { click(center) }
+                rule
+                    .onNode(choice)
+                    .performScrollTo()
+                    .assertIsDisplayed()
+                    .assertIsEnabled()
+                    .performTouchInput { click(center) }
             }
             tapAllow()
             rule.waitUntil(10000) { vm.armedOptionId.value == "allow_once" }
