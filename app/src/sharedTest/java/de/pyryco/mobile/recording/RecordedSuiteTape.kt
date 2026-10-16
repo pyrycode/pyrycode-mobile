@@ -29,7 +29,9 @@ internal class RecordedSuiteTape(
     declaredIdentities: Set<String> = emptySet(),
     coalescedReadReceipts: Boolean = false,
     private val literalProducerIdentities: Boolean = false,
+    private val redundantModelQueries: Boolean = false,
 ) {
+    private val redundantModels = mutableSetOf<Pair<String, String>>()
     private val consumed = mutableSetOf<Int>()
     private val requests = mutableMapOf<Pair<String, Long>, Long>()
     private val actualIds = mutableMapOf<String, MutableSet<Long>>()
@@ -203,7 +205,14 @@ internal class RecordedSuiteTape(
                     expected.direction == "client" &&
                     expected.message!!.type == actual.type &&
                     (actual.type !in queryTypes || mapped(expected.message.payload) == actual.payload)
-            } ?: fail(mismatch)
+            }
+        if (candidate == null) {
+            if (acceptRedundantModelQuery(owner, actual)) {
+                actualIds.getOrPut(owner) { mutableSetOf() } += actual.id
+                return SuiteOutcome(drain(), true)
+            }
+            fail(mismatch)
+        }
         val expected = steps[candidate].message!!
         val bindings =
             when (actual.type) {
@@ -261,6 +270,43 @@ internal class RecordedSuiteTape(
 
     private val uploadBindings = mutableSetOf<String>()
 
+    /** The production model projection permits one ask racing an unsolicited reconnect catalog. */
+    private fun acceptRedundantModelQuery(
+        owner: String,
+        actual: Envelope,
+    ): Boolean {
+        if (!redundantModelQueries ||
+            !owner.startsWith("phone/") ||
+            actual.type != "request_model_list" ||
+            actual.inReplyTo != null
+        ) {
+            return false
+        }
+        val payload = actual.payload as? JsonObject ?: return false
+        if (payload.keys != setOf("conversation_id")) return false
+        val conversation = payload["conversation_id"]?.jsonPrimitive?.contentOrNull ?: return false
+        if (eligible().none {
+                steps[it].owner == owner && steps[it].direction == "client" && steps[it].message?.type in queryTypes
+            }
+        ) {
+            return false
+        }
+        val boundary =
+            (cursor until steps.size).firstOrNull {
+                it !in consumed &&
+                    (steps[it].direction == "close" || steps[it].direction == "client" && steps[it].message?.type !in queryTypes)
+            } ?: steps.size
+        val observed =
+            steps.take(boundary).any {
+                it.owner == owner &&
+                    it.direction == "daemon" &&
+                    it.message?.type == "model_list" &&
+                    it.message.inReplyTo == null &&
+                    (mapped(it.message.payload) as? JsonObject)?.get("conversation_id") == payload["conversation_id"]
+            }
+        return observed && redundantModels.add(owner to conversation)
+    }
+
     @Synchronized fun lifecycle(
         direction: String,
         owner: String,
@@ -268,7 +314,10 @@ internal class RecordedSuiteTape(
         failure?.let { fail(it) }
         val candidate =
             eligible().firstOrNull { steps[it].direction == direction && steps[it].owner == owner }
-                ?: fail("Recorded suite lifecycle mismatch at step ${matched + 1}")
+                ?: fail(
+                    "Recorded suite lifecycle mismatch at step ${matched + 1}: $owner:$direction, expected " +
+                        eligible().joinToString { "${steps[it].owner}:${steps[it].message?.type ?: steps[it].direction}" },
+                )
         check(direction in setOf("connect", "close")) { "Invalid lifecycle request" }
         consumed += candidate
         matched++

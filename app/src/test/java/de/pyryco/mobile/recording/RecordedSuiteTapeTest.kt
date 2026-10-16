@@ -2,6 +2,7 @@ package de.pyryco.mobile.recording
 
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -188,5 +189,37 @@ class RecordedSuiteTapeTest {
         val early = RecordedSuiteTape(rows)
         early.lifecycle("connect", "phone")
         assertThrows(IllegalStateException::class.java) { early.send("phone", frame(90, "create_conversation")) }
+    }
+
+    @Test fun redundantModelLookupRequiresAnObservedCatalogAndCannotRepeatOrCrossAnAction() {
+        val owner = "phone/host-0/0"
+        val catalog = frame(1, "model_list", """{"conversation_id":"chat","models":[],"dropped_models":0}""")
+        val query = frame(1, "request_history", """{"conversation_id":"chat"}""")
+        val extra = frame(90, "request_model_list", """{"conversation_id":"chat"}""")
+
+        fun tape(entries: List<SuiteStep>) = RecordedSuiteTape(entries, redundantModelQueries = true)
+        val entries = listOf(SuiteStep("daemon", owner, catalog), SuiteStep("client", owner, query))
+        val replay = tape(entries)
+        val mapped =
+            replay
+                .initial()
+                .single()
+                .message!!
+                .payload.jsonObject
+                .getValue("conversation_id")
+        val payload = kotlinx.serialization.json.buildJsonObject { put("conversation_id", mapped) }
+        assertEquals(true, replay.send(owner, extra.copy(payload = payload)).accepted)
+        assertThrows(IllegalStateException::class.java) { replay.send(owner, extra.copy(id = 91, payload = payload)) }
+        val wrong = tape(entries)
+        wrong.initial()
+        assertThrows(IllegalStateException::class.java) { wrong.send(owner, extra) }
+        val peer = tape(entries)
+        peer.initial()
+        assertThrows(IllegalStateException::class.java) { peer.send("peer/host-0/0", extra.copy(payload = payload)) }
+        val late = tape(listOf(SuiteStep("daemon", owner, catalog), SuiteStep("client", owner, frame(1, "send_message"))))
+        late.initial()
+        assertThrows(IllegalStateException::class.java) { late.send(owner, extra.copy(payload = payload)) }
+        val missing = tape(listOf(SuiteStep("client", owner, query)))
+        assertThrows(IllegalStateException::class.java) { missing.send(owner, extra) }
     }
 }
