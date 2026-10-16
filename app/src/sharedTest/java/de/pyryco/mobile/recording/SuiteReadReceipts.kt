@@ -32,7 +32,6 @@ internal class SuiteReadReceipts(
     )
 
     private val groups = linkedMapOf<Key, Group>()
-    private val strictReads = mutableSetOf<Key>()
     private val metadata = mutableMapOf<Pair<String, String>, JsonObject>()
     private val shown = mutableMapOf<Pair<String, String>, ULong>()
     private val confirmed = mutableMapOf<Pair<String, String>, ULong>()
@@ -58,10 +57,10 @@ internal class SuiteReadReceipts(
                 .filter { it.direction == "daemon" && it.message?.inReplyTo != null }
                 .associateBy { it.owner to it.message!!.inReplyTo!! }
         var epoch = 0
-        source.forEach { step ->
-            val frame = step.message ?: return@forEach
+        source.forEachIndexed { index, step ->
+            val frame = step.message ?: return@forEachIndexed
             if (step.direction == "daemon") nextIds.merge(step.owner, frame.id + 1, ::maxOf)
-            if (step.direction != "client") return@forEach
+            if (step.direction != "client") return@forEachIndexed
             if (frame.type == "mark_conversation_read" && phone(step.owner)) {
                 val response = replies[step.owner to frame.id]?.message
                 if (response == null ||
@@ -69,13 +68,14 @@ internal class SuiteReadReceipts(
                     response.eventId != null ||
                     response.historyEntryId != null
                 ) {
-                    val id =
-                        frame.payload.jsonObject
-                            .getValue("conversation_id")
-                            .jsonPrimitive.content
-                    strictReads += Key(step.owner, id, epoch)
-                    epoch++
-                    return@forEach
+                    val cancelled =
+                        response == null &&
+                            step.accepted &&
+                            source.drop(index + 1).any {
+                                it.owner == step.owner && it.direction in setOf("close", "down", "inbound_end")
+                            }
+                    if (cancelled) normalizedRequests += step.owner to frame.id else epoch++
+                    return@forEachIndexed
                 }
                 val request = frame.payload.jsonObject
                 require(request.keys == setOf("conversation_id", "up_to")) { "Unexpected read receipt shape" }
@@ -248,13 +248,19 @@ internal class SuiteReadReceipts(
             target in delivered[owner to conversation].orEmpty() ||
                 retainedPhoneHistory &&
                 target in phoneHistory[host(owner) to conversation].orEmpty()
-        check(target > last && wasDelivered && (group == null || target <= group.maxRequested)) {
+        check(target > last && wasDelivered && (retainedPhoneHistory || group == null || target <= group.maxRequested)) {
             "Read receipt checkpoint rejected: target=$target previous=$last delivered=$wasDelivered " +
                 "maximum=${group?.maxRequested} action=$action"
         }
         lastRequests[owner to conversation] = target
         val server = host(owner) to conversation
-        val ceiling = group?.required ?: checkNotNull(shown[server]) { "Read receipt has no delivered content" }
+        val ceiling =
+            if (retainedPhoneHistory) {
+                group?.required?.let { maxOf(it, shown[server] ?: it) }
+                    ?: checkNotNull(shown[server]) { "Read receipt has no delivered content" }
+            } else {
+                group?.required ?: checkNotNull(shown[server]) { "Read receipt has no delivered content" }
+            }
         val stored = maxOf(confirmed[server] ?: 0u, minOf(target, ceiling))
         confirmed[server] = stored
         group?.confirmed = stored

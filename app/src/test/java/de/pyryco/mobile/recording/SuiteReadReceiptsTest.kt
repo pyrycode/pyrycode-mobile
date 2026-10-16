@@ -156,4 +156,68 @@ class SuiteReadReceiptsTest {
             }
         }
     }
+
+    @Test fun retainedHistoryReadMayFinishEarlierThanTheCapturedAutomaticAcknowledgement() {
+        val shown = frame(1, "assistant_delta", """{"conversation_id":"chat","text":"captured"}""").copy(historyEntryId = 11u)
+        val metadata =
+            frame(
+                2,
+                "turn_end",
+                """{"conversation_id":"chat","stop_reason":"end_turn","outcome":"success"}""",
+            ).copy(historyEntryId = 12u)
+        val read = frame(1, "mark_conversation_read", """{"conversation_id":"chat","up_to":10}""")
+        val confirmed = frame(3, "conversation_updated", """{"id":"chat","read_up_to":10}""", 1)
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    SuiteStep("daemon", "phone/host0/0", shown),
+                    SuiteStep("daemon", "phone/host0/0", metadata),
+                    SuiteStep("client", "phone/host0/1", read),
+                    SuiteStep("daemon", "phone/host0/1", confirmed),
+                ),
+                coalescedReadReceipts = true,
+                retainedPhoneHistory = true,
+            )
+        val initial = tape.initial()
+        initial.forEach { tape.delivered(it.owner, it.message!!) }
+        val id = (initial.first().message!!.payload as kotlinx.serialization.json.JsonObject).getValue("conversation_id")
+        val actual = frame(90, "mark_conversation_read", """{"conversation_id":$id,"up_to":12}""")
+        val reply =
+            tape
+                .send("phone/host0/1", actual)
+                .deliveries
+                .single()
+                .message!!
+        assertEquals(MobileJson.parseToJsonElement("11"), (reply.payload as kotlinx.serialization.json.JsonObject)["read_up_to"])
+        tape.assertComplete()
+    }
+
+    @Test fun anUnconfirmedAutomaticReadCancelledByConnectionCloseIsNotARequiredUserAction() {
+        val message = frame(1, "assistant_delta", """{"conversation_id":"chat","text":"captured"}""").copy(historyEntryId = 11u)
+        val pending = frame(1, "mark_conversation_read", """{"conversation_id":"chat","up_to":11}""")
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    SuiteStep("daemon", "phone/host0/0", message),
+                    SuiteStep("client", "phone/host0/0", pending),
+                    SuiteStep("close", "phone/host0/0"),
+                ),
+                coalescedReadReceipts = true,
+                retainedPhoneHistory = true,
+            )
+        tape.initial().forEach { tape.delivered(it.owner, it.message!!) }
+        tape.lifecycle("close", "phone/host0/0")
+        tape.assertComplete()
+        val strict =
+            RecordedSuiteTape(
+                listOf(
+                    SuiteStep("daemon", "phone/host0/0", message),
+                    SuiteStep("client", "phone/host0/0", pending),
+                ),
+                coalescedReadReceipts = true,
+                retainedPhoneHistory = true,
+            )
+        strict.initial()
+        assertThrows(IllegalStateException::class.java) { strict.assertComplete() }
+    }
 }
