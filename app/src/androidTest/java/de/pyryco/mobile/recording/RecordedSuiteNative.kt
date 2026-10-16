@@ -269,9 +269,17 @@ internal object RecordedSuiteNative {
 
     fun readsSettled() = current?.tape?.readsSettled() ?: true
 
+    /** Older captures retain their original checks; only actual new captures acquire observation checkpoints. */
+    fun checkpoint(name: String) {
+        val session = current ?: return
+        if (session.document != null && session.document.document["checkpointPolicy"] != JsonPrimitive("test-observations-v1")) return
+        runBlocking { session.hub.checkpoint(name) }
+    }
+
     fun finish(success: Boolean) {
         val session = current ?: return
         try {
+            if (success) checkpoint("scenario-complete")
             GlobalContext.get().get<RelayConnectionRegistry>().dispose()
             runBlocking {
                 withTimeout(10000) {

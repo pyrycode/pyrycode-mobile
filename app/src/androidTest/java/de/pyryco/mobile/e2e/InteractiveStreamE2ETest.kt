@@ -8640,6 +8640,7 @@ class InteractiveStreamE2ETest {
      * holds text, so the tap waits for Send rather than interrupting the turn.
      */
     private fun sendFromPhone(text: String) {
+        RecordedSuiteNative.checkpoint("phone-send")
         composeTestRule.onNode(hasSetTextAction()).performTextInput(text)
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()

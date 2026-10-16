@@ -194,6 +194,17 @@ internal class SuiteConnections private constructor(
         }
     }
 
+    suspend fun checkpoint(name: String) {
+        require(name.matches(Regex("[a-z][a-z0-9-]{0,79}"))) { "Invalid test checkpoint name" }
+        if (tape != null) {
+            withTimeout(30000) {
+                while (!tape.checkpointReady(name)) delay(10)
+                awaitIdle()
+            }
+        }
+        control("checkpoint", name) { }
+    }
+
     fun observeExternal(event: String) {
         checkNotNull(capture).observe(SuiteStep("external", "android", detail = buildJsonObject { put("event", event) }))
     }

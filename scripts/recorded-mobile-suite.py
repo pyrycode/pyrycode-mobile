@@ -44,6 +44,7 @@ def validate(document):
     try:
         require(document['format'] == 'pyrycode.mobile-suite' and type(document['version']) is int and document['version'] == 1,
                 'Unsupported suite format')
+        require(document.get('checkpointPolicy') in {None, 'test-observations-v1'}, 'Unsupported test checkpoint policy')
         require(re.fullmatch(r'[A-Za-z0-9_]{1,180}', document['scenario']), 'Invalid scenario')
         require(document.get('readReceiptNormalization') in {None, 'coalesced-visible-history-v2', 'coalesced-visible-history-v3'}, 'Unsupported receipt normalization')
         require(document.get('producerIdentityMode') in {None, 'literal', 'rebind'}, 'Unsupported producer identity mode')
@@ -431,12 +432,16 @@ def contract(document):
         for old, new in sorted(replacements.items(), key=lambda item: -len(item[0])): value = value.replace(old, new)
         for old, new in sorted(aliases.items(), key=lambda item: -len(item[0])): value = value.replace(old, new)
         return value
-    result, pending = [], []
+    result, pending, query_checkpoints = [], [], []
     lifecycle, modeled = {}, set()
     polling = polling_groups(document)
     for index, step in enumerate(document['steps']):
         frame = step.get('message', {})
         if step['direction'] == 'client':
+            if step['owner'] == 'control' and frame['type'] == 'test-control:checkpoint':
+                query_checkpoints.append({'checkpoint': frame['payload']['body'],
+                                          'queries': sorted(pending, key=lambda value: json.dumps(value, sort_keys=True))})
+                pending = []
             if redundant_catalog_query(document, index): continue
             if frame['type'] == 'mark_conversation_read' and step['owner'].startswith('phone') and document.get('readReceiptNormalization'):
                 continue
@@ -460,8 +465,10 @@ def contract(document):
             lifecycle.setdefault(family, []).append({'lifecycle': step['direction'], 'owner': step['owner']})
         elif step['direction'] == 'external' and step['detail']['event'] != 'push-token':
             result.append({'external': step['detail']['event'], 'owner': step['owner']})
-    return {'commands': result, 'queries': sorted(pending, key=lambda value: json.dumps(value, sort_keys=True)),
-            'lifecycle': lifecycle}
+    result = {'commands': result, 'queries': sorted(pending, key=lambda value: json.dumps(value, sort_keys=True)),
+              'lifecycle': lifecycle}
+    if query_checkpoints: result['queryCheckpoints'] = query_checkpoints
+    return result
 
 
 QUERY_POLICY = {'version': 1, 'modelQueryNormalization': 'reconnect-catalog-race-v1',
@@ -497,13 +504,35 @@ def verify(args):
     validate(original)
     args.output.mkdir(parents=True, exist_ok=True)
     candidate = args.output / (original['scenario'] + '-fresh.json')
-    captured = capture(args.serial, original['scenario'], candidate, args.pyry, args.daemon_source)
-    reviewed_replay = replay(args.serial, args.fixture)
-    fresh_replay = replay(args.serial, candidate)
-    reviewed_contract, fresh_contract, policy = comparison_contracts(original, json.loads(candidate.read_text()), suite_query_policy())
-    require(reviewed_contract == fresh_contract, 'Fresh Claude request contract changed; review candidate without replacing the recording')
-    result = {'scenario': original['scenario'], 'capture': captured, 'reviewedReplay': reviewed_replay,
-              'freshReplay': fresh_replay, 'contractMatched': True, 'comparisonNormalizations': policy}
+    result = {'scenario': original['scenario'], 'verified': False, 'failureStages': []}
+
+    def stage(name, run):
+        try:
+            result[name] = run()
+            return True
+        except Exception as error:
+            # Raw instrumentation and producer logs remain private. Reports contain no payloads.
+            result[name] = {'status': 'failed', 'category': type(error).__name__}
+            result['failureStages'].append(name)
+            return False
+
+    if stage('capture', lambda: capture(args.serial, original['scenario'], candidate, args.pyry, args.daemon_source)):
+        stage('reviewedReplay', lambda: replay(args.serial, args.fixture))
+        stage('freshReplay', lambda: replay(args.serial, candidate))
+        try:
+            reviewed_contract, fresh_contract, policy = comparison_contracts(original, json.loads(candidate.read_text()), suite_query_policy())
+            result['contractMatched'] = reviewed_contract == fresh_contract
+            result['comparisonNormalizations'] = policy
+            if not result['contractMatched']:
+                result['failureStages'].append('comparison')
+                legacy.private_write(args.output / 'comparison-private.json',
+                                     (json.dumps({'reviewed': reviewed_contract, 'fresh': fresh_contract}, indent=2) + '\n').encode())
+        except Exception as error:
+            result['comparison'] = {'status': 'failed', 'category': type(error).__name__}
+            result['failureStages'].append('comparison')
+    result['verified'] = not result['failureStages']
+    legacy.private_write(args.output / 'verification.json', (json.dumps(result, indent=2) + '\n').encode())
+    require(result['verified'], 'Verification failed; inspect the separately reported live, replay and comparison stages')
     legacy.private_write(args.output / 'receipt.json', (json.dumps(result, indent=2) + '\n').encode())
     return result
 
@@ -542,9 +571,10 @@ def replay_all(args):
 
 
 def verify_all(args):
-    rows = all_ready_rows()
+    all_ready_rows()
+    rows = selected_rows(json.loads(MANIFEST.read_text()), getattr(args, 'methods_file', None), ready=True)
     require(not args.output.exists(), 'Use a new verification directory; existing candidates are preserved')
-    results, failures = [], []
+    results, failures, attempts = [], [], []
     args.output.mkdir(parents=True)
     for row in rows:
         scenario_args = argparse.Namespace(**vars(args))
@@ -557,7 +587,19 @@ def verify_all(args):
         except Exception as error:
             failures.append(row['method'])
             print(json.dumps({'scenario': row['method'], 'result': 'failed', 'category': type(error).__name__}), flush=True)
-    summary = {'required': len(rows), 'verified': len(results), 'failures': failures, 'results': results}
+        report = scenario_args.output / 'verification.json'
+        if report.is_file(): attempts.append(json.loads(report.read_text()))
+    summary = {'required': len(rows), 'verified': len(results), 'failures': failures, 'results': results,
+               'attempts': attempts,
+               'stageFailures': {stage: [attempt['scenario'] for attempt in attempts if stage in attempt['failureStages']]
+                                 for stage in ['capture', 'reviewedReplay', 'freshReplay', 'comparison']}}
+    summary['stageCounts'] = {}
+    for stage in ['capture', 'reviewedReplay', 'freshReplay', 'comparison']:
+        passed = sum(attempt.get('contractMatched') is True if stage == 'comparison'
+                     else all(attempt.get(stage, {}).get(key) == value for key, value in COUNTS.items())
+                     for attempt in attempts)
+        failed = len(summary['stageFailures'][stage])
+        summary['stageCounts'][stage] = {'passed': passed, 'failed': failed, 'notRun': len(rows) - passed - failed}
     legacy.private_write(args.output / 'summary.json', (json.dumps(summary, indent=2) + '\n').encode())
     require(not failures and len(results) == len(rows), 'Complete fresh compatibility gate failed; candidates were preserved')
     return summary
@@ -579,6 +621,7 @@ def main():
         if name == 'capture-all':
             command.add_argument('--stop-file', type=Path)
             command.add_argument('--methods-file', type=Path)
+        if name == 'verify-all': command.add_argument('--methods-file', type=Path)
     args = parser.parse_args()
     if args.mode in {'capture', 'capture-all', 'verify', 'verify-all'}:
         require(os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') or os.environ.get('ANTHROPIC_API_KEY'), 'Configured Claude login required')

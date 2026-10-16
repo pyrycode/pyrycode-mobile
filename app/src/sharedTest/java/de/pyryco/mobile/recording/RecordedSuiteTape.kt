@@ -261,13 +261,30 @@ internal class RecordedSuiteTape(
             it !in consumed && steps[it].direction == "client" && steps[it].message!!.type !in queryTypes
         } ?: steps.size
 
+    private fun checkpointBoundary(): Int =
+        steps.indices.firstOrNull {
+            it !in consumed && steps[it].owner == "control" && steps[it].message?.type == "test-control:checkpoint"
+        } ?: steps.size
+
+    /** A test observation cannot borrow a later response or leave earlier recorded work behind. */
+    @Synchronized fun checkpointReady(name: String): Boolean {
+        failure?.let { fail(it) }
+        val boundary = checkpointBoundary()
+        val expected = steps.getOrNull(boundary)?.message?.payload as? JsonObject
+        if (expected != JsonObject(mapOf("body" to JsonPrimitive(name)))) {
+            fail("Recorded suite test checkpoint mismatch")
+        }
+        return (0 until boundary).all { it in released }
+    }
+
     private fun eligible(): List<Int> {
         val boundary = commandBoundary()
+        val checkpoint = checkpointBoundary()
         return steps.indices.filter { index ->
             val step = steps[index]
             val connected = lifecycleBefore[index]?.let { it in consumed } ?: true
             when {
-                index in consumed || !connected -> false
+                index in consumed || !connected || index > checkpoint -> false
                 step.direction == "connect" -> true
                 step.direction == "close" -> ownerCommandBefore[index]?.let { it in consumed } ?: true
                 step.direction == "client" -> step.message!!.type in queryTypes || index == boundary
@@ -288,6 +305,15 @@ internal class RecordedSuiteTape(
         actual: Envelope,
     ): SuiteOutcome {
         failure?.let { fail(it) }
+        if (owner == "control" && actual.type == "test-control:checkpoint") {
+            val name =
+                (actual.payload as? JsonObject)
+                    ?.get("body")
+                    ?.jsonPrimitive
+                    ?.contentOrNull
+                    .orEmpty()
+            if (!checkpointReady(name)) fail("Recorded suite test checkpoint prefix incomplete")
+        }
         if (actual.id in actualIds[owner].orEmpty()) fail("Recorded suite duplicate request ID")
         if (polledReads?.accepts(owner, actual) == true) {
             val connection = steps.indices.lastOrNull { steps[it].owner == owner && steps[it].direction == "connect" }

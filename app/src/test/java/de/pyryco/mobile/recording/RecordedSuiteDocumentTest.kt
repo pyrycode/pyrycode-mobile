@@ -12,6 +12,28 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class RecordedSuiteDocumentTest {
+    @Test fun observedCheckpointsAreDeclaredWithoutAddingThemToOlderCaptures() {
+        assertEquals(null, candidate()["checkpointPolicy"])
+        val request = Envelope(1, "test-control:checkpoint", "time", MobileJson.parseToJsonElement("""{"body":"reply-visible"}"""))
+        val original = candidate()
+        val body =
+            RecordedSuiteDocument.body(
+                "scenario",
+                original.getValue("inputs").jsonObject,
+                emptySet(),
+                listOf(SuiteStep("client", "control", request)),
+            )
+        val document = RecordedSuiteDocument.parse(JsonObject(body + ("source" to original.getValue("source"))).toString())
+        assertEquals(JsonPrimitive("test-observations-v1"), document.document["checkpointPolicy"])
+        val tape = document.tape()
+        assertEquals(true, tape.checkpointReady("reply-visible"))
+        tape.send("control", request.copy(id = 20))
+        tape.assertComplete()
+        assertThrows(IllegalArgumentException::class.java) {
+            RecordedSuiteDocument.parse(JsonObject(original + ("checkpointPolicy" to JsonPrimitive("ignore-all"))).toString())
+        }
+    }
+
     private fun candidate(): JsonObject {
         val request = Envelope(1, "list_conversations", "2026-10-16T00:00:00Z", JsonObject(emptyMap()))
         val body = RecordedSuiteDocument.body("scenario", JsonObject(emptyMap()), emptySet(), listOf(SuiteStep("client", "phone", request)))

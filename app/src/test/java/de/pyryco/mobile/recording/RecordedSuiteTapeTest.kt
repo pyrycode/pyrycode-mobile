@@ -8,6 +8,48 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class RecordedSuiteTapeTest {
+    @Test fun anObservationCheckpointHoldsFutureQueriesAndRepliesUntilTheTestReachesIt() {
+        val checkpoint = client("control", frame(1, "test-control:checkpoint", """{"body":"reply-visible"}"""))
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client("phone", frame(1, "request_model_list")),
+                    daemon("phone", frame(2, "model_list", reply = 1)),
+                    checkpoint,
+                    client("phone", frame(3, "request_context_usage")),
+                    daemon("phone", frame(4, "context_usage", reply = 3)),
+                ),
+            )
+        assertEquals(false, tape.checkpointReady("reply-visible"))
+        assertEquals(listOf("model_list"), tape.request("phone", frame(90, "request_model_list")).map { it.message!!.type })
+        assertEquals(true, tape.checkpointReady("reply-visible"))
+        assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
+        assertEquals(emptyList<SuiteStep>(), tape.request("control", checkpoint.message!!.copy(id = 80)))
+        assertEquals(listOf("context_usage"), tape.request("phone", frame(91, "request_context_usage")).map { it.message!!.type })
+        tape.assertComplete()
+    }
+
+    @Test fun aQueryCannotBorrowAnAnswerAcrossATestCheckpoint() {
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client("control", frame(1, "test-control:checkpoint", """{"body":"permission-observed"}""")),
+                    client("phone", frame(1, "request_model_list")),
+                    daemon("phone", frame(2, "model_list", reply = 1)),
+                ),
+            )
+        assertThrows(IllegalStateException::class.java) { tape.request("phone", frame(20, "request_model_list")) }
+        assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
+    }
+
+    @Test fun aChangedOrOmittedTestCheckpointCannotCompleteReplay() {
+        for (name in listOf("wrong-step", "")) {
+            val tape = RecordedSuiteTape(listOf(client("control", frame(1, "test-control:checkpoint", """{"body":"reply-visible"}"""))))
+            assertThrows(IllegalStateException::class.java) { tape.checkpointReady(name) }
+            assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
+        }
+    }
+
     private fun frame(
         id: Long,
         type: String,

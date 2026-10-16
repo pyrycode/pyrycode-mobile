@@ -2,6 +2,10 @@ import copy
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest import mock
+import argparse
+import json
+import tempfile
 
 spec = importlib.util.spec_from_file_location('suite', Path(__file__).with_name('recorded-mobile-suite.py'))
 suite = importlib.util.module_from_spec(spec)
@@ -9,6 +13,67 @@ spec.loader.exec_module(suite)
 
 
 class SuiteDriverTest(unittest.TestCase):
+    def test_query_order_may_vary_inside_but_never_across_observation_checkpoints(self):
+        original = self.fixture()
+        first = original['steps'][0]
+        first['message']['type'] = 'request_model_list'
+        first['message']['payload'] = {'conversation_id': 'chat'}
+        checkpoint = {'direction': 'client', 'owner': 'control', 'delayMs': 0, 'accepted': True,
+                      'detail': {}, 'message': {'id': 1, 'type': 'test-control:checkpoint', 'ts': 'time',
+                                               'payload': {'body': 'reply-visible'}}}
+        later = copy.deepcopy(first)
+        later['message']['type'] = 'request_context_usage'
+        original['steps'] = [first, checkpoint, later]
+        moved = copy.deepcopy(original)
+        moved['steps'] = [moved['steps'][0], moved['steps'][2], moved['steps'][1]]
+        self.assertNotEqual(suite.contract(original), suite.contract(moved))
+
+    def test_verification_preserves_successful_replays_when_fresh_contract_drifts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            original = root / 'reviewed.json'
+            original.write_text(json.dumps(self.fixture()))
+            fresh = self.fixture()
+            fresh['steps'][0]['message']['payload']['device_name'] = 'changed phone'
+            def capture(serial, method, candidate, pyry, source):
+                candidate.write_text(json.dumps(fresh))
+                return {**suite.COUNTS, 'fixtureSha256': suite.digest(candidate.read_bytes())}
+            args = argparse.Namespace(serial='owned-device', fixture=original, output=root / 'verification', pyry=root / 'pyry', daemon_source=root)
+            with mock.patch.object(suite, 'capture', side_effect=capture), mock.patch.object(suite, 'replay', return_value=suite.COUNTS), mock.patch.object(suite, 'suite_query_policy', return_value=None):
+                with self.assertRaises(ValueError): suite.verify(args)
+            report = json.loads((args.output / 'verification.json').read_text())
+            self.assertEqual(report['capture']['failed'], 0)
+            self.assertEqual(report['reviewedReplay']['failed'], 0)
+            self.assertEqual(report['freshReplay']['failed'], 0)
+            self.assertEqual(report['failureStages'], ['comparison'])
+            self.assertFalse(report['contractMatched'])
+            self.assertFalse(report['verified'])
+            self.assertFalse((args.output / 'receipt.json').exists())
+
+    def test_live_and_replay_failures_are_reported_as_different_stages(self):
+        for failing in ['capture', 'reviewedReplay', 'freshReplay']:
+            with self.subTest(stage=failing), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                original = root / 'reviewed.json'
+                original.write_text(json.dumps(self.fixture()))
+                def capture(serial, method, candidate, pyry, source):
+                    if failing == 'capture': raise ValueError('private live diagnostic')
+                    candidate.write_bytes(original.read_bytes())
+                    return suite.COUNTS
+                def replay(serial, path):
+                    if (path == original) == (failing == 'reviewedReplay'):
+                        raise ValueError('private replay diagnostic')
+                    return suite.COUNTS
+                args = argparse.Namespace(serial='owned-device', fixture=original, output=root / 'verification', pyry=root / 'pyry', daemon_source=root)
+                with mock.patch.object(suite, 'capture', side_effect=capture), mock.patch.object(suite, 'replay', side_effect=replay), mock.patch.object(suite, 'suite_query_policy', return_value=None):
+                    with self.assertRaises(ValueError): suite.verify(args)
+                text = (args.output / 'verification.json').read_text()
+                report = json.loads(text)
+                self.assertEqual(report['failureStages'], [failing])
+                self.assertNotIn('private', text)
+                self.assertFalse(report['verified'])
+                if failing != 'capture': self.assertTrue(report['contractMatched'])
+
     def fixture(self):
         frame = {'id': 1, 'type': 'register_push_token', 'ts': '2026-10-16T00:00:00Z',
                  'payload': {'platform': 'fcm', 'token': 'recorded-push-device-address', 'device_name': 'phone'}}

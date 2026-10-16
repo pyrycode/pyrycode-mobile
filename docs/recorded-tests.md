@@ -170,6 +170,26 @@ requires its complete request payload and must be consumed.
 Recorded stream events retain cadence. Real push delivery, encryption, transport recovery
 and timing obligations retain their external checks.
 
+### Observation checkpoints and separate verification results
+
+New captures record explicit checkpoints before a phone send and after the original
+scenario succeeds. A checkpoint waits for earlier recorded requests and scheduled
+deliveries. Later queries cannot borrow replies across it. Complete request payloads,
+permission choices and uploaded bytes retain their existing checks. Captures declare
+`checkpointPolicy: test-observations-v1`; older captures keep their original checks and
+are not rewritten to invent observations that were never captured.
+
+Every verification attempt writes `verification.json`, including failed attempts.
+It reports the real capture, committed replay, fresh replay and strict comparison
+separately. A failed real capture leaves the later stages unexecuted. Both replays are
+attempted after successful capture, even if one replay fails. A comparison difference
+retains the successful stage counts and writes private comparison details. It still
+fails verification and never produces a successful compatibility receipt. Review
+differences explicitly, as Desktop does; do not call them passing compatibility.
+`verify-all` retains each attempt and groups failures by stage. `--methods-file`
+selects a diagnostic subset; such a subset cannot satisfy the full live inventory gate.
+Real push failures belong to the live capture result. Replay cannot overrule them.
+
 Failed runs can export separately named private application traces. Their format cannot
 be loaded as a successful recording. Compressed diagnostic archives are excluded from
 failed exports. Successful archive captures undergo bounded decompression and credential

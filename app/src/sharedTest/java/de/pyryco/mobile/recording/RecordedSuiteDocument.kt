@@ -79,6 +79,9 @@ internal class RecordedSuiteDocument private constructor(
             buildJsonObject {
                 put("format", "pyrycode.mobile-suite")
                 put("version", 1)
+                if (steps.any { it.owner == "control" && it.message?.type == "test-control:checkpoint" }) {
+                    put("checkpointPolicy", "test-observations-v1")
+                }
                 put("readReceiptNormalization", "coalesced-visible-history-v3")
                 put("modelQueryNormalization", "reconnect-catalog-race-v1")
                 put("settingsReadNormalization", "recorded-snapshots-v1")
@@ -97,6 +100,7 @@ internal class RecordedSuiteDocument private constructor(
                 requireSafeSuiteDocument(document)
                 require(document.getValue("format").jsonPrimitive.content == "pyrycode.mobile-suite")
                 require(document.getValue("version").jsonPrimitive.long == 1L)
+                require(document["checkpointPolicy"] in setOf(null, JsonPrimitive("test-observations-v1")))
                 require(
                     document["readReceiptNormalization"] in
                         setOf(

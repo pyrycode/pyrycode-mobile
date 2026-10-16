@@ -18,6 +18,38 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteConnectionsTest {
+    @Test fun observationCheckpointWaitsForEarlierRequestsAndTheirScheduledDelivery() =
+        runTest {
+            val entries =
+                listOf(
+                    SuiteStep("connect", "phone"),
+                    SuiteStep("open", "phone"),
+                    SuiteStep("client", "phone", frame(1, "request_model_list")),
+                    SuiteStep("daemon", "phone", frame(2, "model_list", reply = 1), delayMs = 100),
+                    SuiteStep("client", "control", frame(1, "test-control:checkpoint", """{"body":"reply-visible"}""")),
+                    SuiteStep("close", "phone"),
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, RecordedSuiteTape(entries))
+            val transport = hub.transport("phone") { error("Live transport started") }
+            transport.connect()
+            val pump = hub.pump(transport) { error("Live pump started") }
+            pump.start()
+            runCurrent()
+            val checkpoint = async { hub.checkpoint("reply-visible") }
+            runCurrent()
+            assertFalse(checkpoint.isCompleted)
+            pump.send(frame(90, "request_model_list"))
+            runCurrent()
+            assertFalse(checkpoint.isCompleted)
+            advanceTimeBy(120)
+            runCurrent()
+            checkpoint.await()
+            assertEquals("model_list", pump.inbound.first().type)
+            pump.close()
+            hub.assertComplete()
+            hub.close()
+        }
+
     private fun frame(
         id: Long,
         type: String,
