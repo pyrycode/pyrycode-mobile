@@ -63,6 +63,40 @@ def require_safe(value):
         raise ValueError('Sensitive recording content')
 
 
+def validate_recording(document):
+    """Reject malformed candidates before they can be written or sent to Android."""
+    require_safe(document)
+    if document.get('format') != 'pyrycode.mobile-exchange' or document.get('version') != 1:
+        raise ValueError('Unsupported recording format')
+    source = document['source']
+    for key in ['mobileRevision', 'daemonRevision']:
+        if not re.fullmatch('[a-f0-9]{40}', source[key]): raise ValueError('Invalid source revision')
+    for key in ['daemonBinarySha256', 'testApkSha256']:
+        if not re.fullmatch('[a-f0-9]{64}', source[key]): raise ValueError('Invalid producer checksum')
+    if not source['claudeVersion'] or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ', source['capturedAt']):
+        raise ValueError('Invalid producer metadata')
+    if 'interactive' not in document['capabilities']:
+        raise ValueError('Missing permission capability')
+    for key in ['prompt', 'expectedReply', 'allowLabel']:
+        if not isinstance(document['scenario'][key], str) or not document['scenario'][key].strip():
+            raise ValueError('Invalid scenario input')
+    wire = document['wire']
+    if not isinstance(wire, list) or not 1 <= len(wire) <= 5000:
+        raise ValueError('Invalid recording bound')
+    ids = {'client': set(), 'daemon': set()}
+    for entry in wire:
+        direction, frame = entry['direction'], entry['message']
+        if direction not in ids or type(frame['id']) is not int or frame['id'] < 0 or frame['id'] in ids[direction]:
+            raise ValueError('Invalid recording identity')
+        ids[direction].add(frame['id'])
+        if not frame['ts'] or not frame['type'] or frame['type'] in {'hello', 'hello_ack', 'rekey_request', 'multipart', 'fragment'} or not isinstance(frame['payload'], dict):
+            raise ValueError('Invalid application frame')
+        if frame.get('in_reply_to') is not None and (direction != 'daemon' or frame['in_reply_to'] not in ids['client']):
+            raise ValueError('Invalid request correlation')
+    if len(json.dumps(document, ensure_ascii=False).encode()) > 2_000_000:
+        raise ValueError('Recording exceeds its bound')
+
+
 def normalized_contract(recording):
     """Canonical request groups. Queries may permute inside a group, commands may not."""
     aliases = {}
@@ -102,7 +136,9 @@ def execute(serial, arguments, progress=None):
     started = time.monotonic()
     test_env = {key: value for key, value in os.environ.items()
                 if not key.startswith('OP_') and key not in {'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'PYRY_LIVE_CLAUDE_TOKEN', 'PYRY_DEV_AGENTS_TOKEN'}}
-    process = subprocess.Popen(command, env=test_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # A private file avoids blocking the child when a failure prints more than a pipe can hold.
+    diagnostic_output = tempfile.TemporaryFile()
+    process = subprocess.Popen(command, env=test_env, stdout=diagnostic_output, stderr=subprocess.STDOUT)
     try:
         until = started + 240
         while process.poll() is None:
@@ -111,13 +147,14 @@ def execute(serial, arguments, progress=None):
             if progress:
                 progress()
             time.sleep(.1)
-        stdout, stderr = process.communicate()
+        diagnostic_output.seek(0)
+        stdout = diagnostic_output.read()
         # A shell exit of zero alone does not establish any test execution.
         if process.returncode or b'OK (1 test)' not in stdout or b'FAILURES!!!' in stdout:
             # Keep the private Android diagnostic on the host, without printing pairing args or raw frames.
             log = ROOT / 'build/recorded-test-failure.log'
             log.parent.mkdir(parents=True, exist_ok=True)
-            log.write_bytes(stdout + stderr)
+            log.write_bytes(stdout)
             log.chmod(0o600)
             raise RuntimeError('Android recorded scenario did not execute and pass its one required test')
         return time.monotonic() - started
@@ -126,12 +163,13 @@ def execute(serial, arguments, progress=None):
             process.terminate()
             process.wait(timeout=10)
             adb(serial, 'shell', 'am', 'force-stop', PACKAGE)
+        diagnostic_output.close()
 
 
 def replay(serial, fixture):
     name = 'recorded-' + uuid.uuid4().hex + '.json'
     data = fixture.read_bytes()
-    require_safe(json.loads(data))
+    validate_recording(json.loads(data))
     adb(serial, 'shell', 'run-as', PACKAGE, 'sh', '-c', f"'umask 077; cat > files/{name}'", data=data)
     # Instrumentation gets no test credentials. This mode does not resolve daemon or Claude programs.
     elapsed = execute(serial, {'replayName': name})
@@ -207,13 +245,16 @@ def capture(serial, destination, pyry):
                     'daemonBinarySha256': hashlib.sha256(Path(pyry).read_bytes()).hexdigest(),
                     'testApkSha256': hashlib.sha256((ROOT / 'app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk').read_bytes()).hexdigest(),
                     'claudeVersion': run([claude, '--version']).decode().strip(), 'capturedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-                    'presentation': 'current-production'})
+                    'presentation': 'current-production',
+                    'androidRelease': adb(serial, 'shell', 'getprop', 'ro.build.version.release').decode().strip(),
+                    'androidApi': adb(serial, 'shell', 'getprop', 'ro.build.version.sdk').decode().strip(),
+                    'deviceModel': adb(serial, 'shell', 'getprop', 'ro.product.model').decode().strip()})
                 def clean(value):
                     if isinstance(value, dict): return {key: 'recorded-answer-token' if key == 'answer_token' else clean(child) for key, child in value.items()}
                     if isinstance(value, list): return [clean(child) for child in value]
                     return value.replace(str(work.resolve()), '/controlled/mobile-recording').replace(str(work), '/controlled/mobile-recording') if isinstance(value, str) else value
                 document = clean(document)
-                require_safe(document)
+                validate_recording(document)
                 output = json.dumps(document, ensure_ascii=False, separators=(',', ':')).encode()
                 for key in ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']:
                     secret = os.environ.get(key, '').encode()
@@ -244,7 +285,10 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--pyry', default=os.environ.get('PYRY_BIN', 'pyry'))
     args = parser.parse_args()
-    adb(args.serial, 'shell', 'getprop', 'sys.boot_completed')
+    if adb(args.serial, 'shell', 'getprop', 'sys.boot_completed').strip() != b'1':
+        raise RuntimeError('Owned Android device is not booted')
+    adb(args.serial, 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP')
+    adb(args.serial, 'shell', 'wm', 'dismiss-keyguard')
     if args.mode == 'replay':
         print(json.dumps(replay(args.serial, args.fixture)))
     elif args.mode == 'capture':

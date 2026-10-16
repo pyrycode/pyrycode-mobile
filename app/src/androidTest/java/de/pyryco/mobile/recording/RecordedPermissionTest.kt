@@ -3,17 +3,21 @@ package de.pyryco.mobile.recording
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -160,7 +164,10 @@ class RecordedPermissionTest {
                         onRetry = {},
                         modalState = modal,
                         armedOptionId = armed,
-                        onModalOption = { modalId, optionId -> vm.onModalOption(optionId, modalId) },
+                        onModalOption = { modalId, optionId ->
+                            android.util.Log.i("RecordedExchange", "stage=permission-tapped")
+                            vm.onModalOption(optionId, modalId)
+                        },
                         onModalCancel = vm::onModalCancel,
                     )
                 }
@@ -176,7 +183,13 @@ class RecordedPermissionTest {
             android.util.Log.i("RecordedExchange", "stage=permission-shown")
             val shown = vm.currentModal.value as ModalUiState.Open
             val allow = shown.options.single { it.id == "allow_once" }.label
-            rule.onNodeWithText(allow).performScrollTo().performClick()
+            val choice = hasText(allow) and hasClickAction() and hasAnyAncestor(hasTestTag("permission-request-card"))
+
+            fun tapAllow() {
+                rule.onNode(hasScrollToNodeAction()).performScrollToNode(choice)
+                rule.onNode(choice).assertIsEnabled().performTouchInput { click(center) }
+            }
+            tapAllow()
             rule.waitUntil(10000) { vm.armedOptionId.value == "allow_once" }
             android.util.Log.i("RecordedExchange", "stage=allow-armed")
             val replyNode = hasText(reply) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
@@ -185,7 +198,7 @@ class RecordedPermissionTest {
                 rule.onAllNodes(replyNode, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty(),
             )
             if (live) stage(instrumentation.targetContext.filesDir, "armed")
-            rule.onNodeWithText(allow).performScrollTo().performClick()
+            tapAllow()
             rule.waitUntil(10000) { vm.currentModal.value !is ModalUiState.Open }
             rule.waitUntil(120000) { rule.onNode(replyNode, useUnmergedTree = true).isDisplayed() }
             rule.onNode(replyNode, useUnmergedTree = true).assertIsDisplayed()

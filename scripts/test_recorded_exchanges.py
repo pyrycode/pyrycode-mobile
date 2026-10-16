@@ -1,3 +1,4 @@
+import copy
 import importlib.util
 import json
 from pathlib import Path
@@ -34,6 +35,25 @@ class RecordingContractTest(unittest.TestCase):
         first = exchange(('request_model_list', {}), ('send_message', {}))
         second = exchange(('send_message', {}), ('request_model_list', {}))
         self.assertNotEqual(recorded.normalized_contract(first), recorded.normalized_contract(second))
+
+    def test_candidate_validation_rejects_bad_correlation_and_handshake(self):
+        document = {
+            'format': 'pyrycode.mobile-exchange', 'version': 1,
+            'source': {'mobileRevision': 'a' * 40, 'daemonRevision': 'b' * 40,
+                       'daemonBinarySha256': 'c' * 64, 'testApkSha256': 'd' * 64,
+                       'claudeVersion': 'test', 'capturedAt': '2026-10-16T00:00:00Z'},
+            'capabilities': ['interactive'],
+            'scenario': {'prompt': 'controlled', 'expectedReply': 'complete', 'allowLabel': 'Allow once'},
+            'wire': [{'direction': 'client', 'message': {'id': 1, 'ts': 'timestamp', 'type': 'list_conversations', 'payload': {}}},
+                     {'direction': 'daemon', 'message': {'id': 2, 'ts': 'timestamp', 'type': 'conversations', 'payload': {}, 'in_reply_to': 1}}],
+        }
+        recorded.validate_recording(document)
+        for change in ['correlation', 'handshake', 'duplicate']:
+            invalid = copy.deepcopy(document)
+            if change == 'correlation': invalid['wire'][1]['message']['in_reply_to'] = 99
+            if change == 'handshake': invalid['wire'][0]['message']['type'] = 'hello'
+            if change == 'duplicate': invalid['wire'].append(invalid['wire'][0])
+            with self.assertRaises(ValueError): recorded.validate_recording(invalid)
 
     def test_private_candidates_never_overwrite(self):
         with tempfile.TemporaryDirectory() as directory:
