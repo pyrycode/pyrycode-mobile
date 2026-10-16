@@ -333,7 +333,13 @@ def polling_groups(document):
             if key[1] == 'request_session_settings':
                 return set(requests[0]['message'].get('payload') or {}) == {'conversation_id'} and frame['type'] == 'session_settings'
             return frame['type'] == 'error' and frame.get('payload', {}).get('code') == 'protocol.unknown_type'
-        if all(step['accepted'] for step in requests) and all(qualifies(rows) for rows in responses):
+        def cancelled(step, rows):
+            if rows or key[1] != 'request_session_settings': return False
+            following = next((row for row in document['steps'][document['steps'].index(step) + 1:]
+                              if row['owner'] == key[0] and row['direction'] in {'client', 'close', 'down', 'inbound_end'}), None)
+            return following is not None and following['direction'] in {'close', 'down', 'inbound_end'}
+        if any(responses) and all(step['accepted'] for step in requests) and all(
+                qualifies(rows) or cancelled(step, rows) for step, rows in zip(requests, responses)):
             for step in requests: normalized[key[0], step['message']['id']] = key[1]
     return normalized
 

@@ -152,7 +152,10 @@ The suite declares three limited scheduling models separately from Claude conten
   A settings write invalidates earlier snapshots for that session, including replies
   already queued for delivery. The next fresh read waits for a post-write snapshot.
   Poll counts can vary. Changed owners or complete query payloads fail. Refused or errored
-  settings requests remain exact. A legacy backfill probe can vary only when that exact
+  settings requests remain exact. A final unanswered settings poll cancelled by closing
+  that connection may be omitted only when earlier successful settings snapshots exist.
+  It cannot supply a new state or hide a missing response before another client action.
+  A legacy backfill probe can vary only when that exact
   probe was captured as unsupported. Other history requests and error types stay exact.
 
 All generated replies retain recorded payloads and correlate to the actual request.

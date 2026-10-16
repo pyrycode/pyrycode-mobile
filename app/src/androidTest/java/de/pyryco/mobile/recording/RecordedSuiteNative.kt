@@ -282,6 +282,9 @@ internal object RecordedSuiteNative {
             } else {
                 exportCapture(session, failed = false)
             }
+        } catch (error: Throwable) {
+            session.tape?.let { error.addSuppressed(IllegalStateException(it.progress())) }
+            throw error
         } finally {
             session.hub.close()
             session.scope.cancel()

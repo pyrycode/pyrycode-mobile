@@ -189,4 +189,26 @@ class SuiteConnectionsTest {
             hub.assertComplete()
             hub.close()
         }
+
+    @Test fun aRejectedCloseStillClosesThePumpAndCannotMaskTheScenarioFailure() =
+        runTest {
+            val owner = "phone/host/0"
+            val rows =
+                listOf(
+                    SuiteStep("connect", owner),
+                    SuiteStep("open", owner),
+                    SuiteStep("client", owner, frame(1, "send_message")),
+                    SuiteStep("close", owner),
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, RecordedSuiteTape(rows))
+            val transport = hub.transport(owner) { error("Live transport started") }
+            transport.connect()
+            val pump = hub.pump(transport) { error("Live pump started") }
+            pump.start()
+            runCurrent()
+            pump.close()
+            assertEquals(PumpState.Closed(null), pump.state.value)
+            assertThrows(IllegalStateException::class.java) { hub.assertComplete() }
+            hub.close()
+        }
 }

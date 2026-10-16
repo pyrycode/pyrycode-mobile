@@ -98,6 +98,42 @@ class SuitePolledReadsTest {
         assertEquals(changed, SuitePolledReads(changed, { it }, { 100 }, settings = true, refusedBackfill = true).steps)
     }
 
+    @Test fun aFinalSettingsReadCancelledByCloseDoesNotDisableObservedSnapshots() {
+        val source =
+            rows() +
+                listOf(
+                    SuiteStep("client", owner, frame(6, "request_session_settings")),
+                    SuiteStep("close", owner),
+                )
+        val model = SuitePolledReads(source, { it }, { 100 }, settings = true, refusedBackfill = false)
+        assertTrue(model.steps.none { it.direction == "client" && it.message?.type == "request_session_settings" })
+        val snapshots = model.steps.filter { it.direction == "settings_snapshot" }
+        assertEquals(2, snapshots.size)
+        snapshots.forEach { model.delivered(it) }
+        model.assertComplete()
+        assertEquals(
+            snapshots.last().message!!.payload,
+            model
+                .send(owner, frame(80, "request_session_settings"))
+                .single()
+                .message!!
+                .payload,
+        )
+    }
+
+    @Test fun anUnansweredReadBeforeAnotherActionOrWithoutAnySnapshotStaysStrict() {
+        val missing = SuiteStep("client", owner, frame(6, "request_session_settings"))
+        for (source in listOf(
+            rows() + missing + SuiteStep("client", owner, frame(7, "send_message")) + SuiteStep("close", owner),
+            listOf(missing, SuiteStep("close", owner)),
+            rows() + missing + SuiteStep("close", "phone/other/0"),
+        )) {
+            val model = SuitePolledReads(source, { it }, { 100 }, settings = true, refusedBackfill = false)
+            assertEquals(source, model.steps)
+            assertFalse(model.accepts(owner, frame(80, "request_session_settings")))
+        }
+    }
+
     @Test fun aWriteInvalidatesEarlierSnapshotsIncludingAlreadyQueuedReplies() {
         val before = MobileJson.parseToJsonElement("""{"session_id":"session","effort":""}""")
         val after = MobileJson.parseToJsonElement("""{"session_id":"session","effort":"max"}""")

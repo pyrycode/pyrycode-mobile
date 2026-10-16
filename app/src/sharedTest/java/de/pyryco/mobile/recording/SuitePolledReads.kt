@@ -45,10 +45,23 @@ internal class SuitePolledReads(
             .forEach { (key, requests) ->
                 val settingsShape = (key.payload as? JsonObject)?.keys == setOf("conversation_id")
                 val responses = requests.map { replies[key.owner to it.message!!.id].orEmpty() }
+                val cancelled =
+                    requests.map { request ->
+                        key.type == "request_session_settings" &&
+                            replies[key.owner to request.message!!.id].isNullOrEmpty() &&
+                            source
+                                .drop(source.indexOf(request) + 1)
+                                .firstOrNull {
+                                    it.owner == key.owner && it.direction in setOf("client", "close", "down", "inbound_end")
+                                }?.direction in setOf("close", "down", "inbound_end")
+                    }
                 val eligible =
-                    requests.all { it.accepted } &&
-                        responses.all { rows ->
-                            if (rows.size != 1) {
+                    responses.any { it.isNotEmpty() } &&
+                        requests.all { it.accepted } &&
+                        responses.withIndex().all { (index, rows) ->
+                            if (rows.isEmpty() && cancelled[index]) {
+                                true
+                            } else if (rows.size != 1) {
                                 false
                             } else {
                                 val frame = rows.single().message!!
@@ -69,8 +82,9 @@ internal class SuitePolledReads(
                     if (key.type == "backfill_since") {
                         current[key] = responses.first().single().message!!
                     } else {
-                        responses.forEach { snapshots[key.owner to it.single().message!!.id] = key }
-                        sessions[key] = responses.mapNotNull { (it.single().message!!.payload as? JsonObject)?.get("session_id") }.toSet()
+                        responses.filter { it.isNotEmpty() }.forEach { snapshots[key.owner to it.single().message!!.id] = key }
+                        sessions[key] =
+                            responses.mapNotNull { (it.singleOrNull()?.message?.payload as? JsonObject)?.get("session_id") }.toSet()
                         requests.forEach { settingsRequests[key.owner to it.message!!.id] = key }
                     }
                 }

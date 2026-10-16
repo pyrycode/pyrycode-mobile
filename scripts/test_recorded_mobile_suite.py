@@ -162,6 +162,25 @@ class SuiteDriverTest(unittest.TestCase):
             changed['steps'][-1]['message'].update(type='error', payload={'code': 'changed'})
             self.assertNotEqual(suite.contract(original), suite.contract(changed))
 
+    def test_a_final_cancelled_settings_read_keeps_only_previously_observed_snapshots(self):
+        document = self.fixture()
+        document['settingsReadNormalization'] = 'recorded-snapshots-v1'
+        request = document['steps'][0]
+        request['owner'] = 'phone/host/0'
+        request['message'].update(type='request_session_settings', payload={'conversation_id': 'chat'})
+        response = copy.deepcopy(request)
+        response['direction'] = 'daemon'
+        response['message'].update(id=2, type='session_settings', payload={'effort': 'high'}, in_reply_to=1)
+        document['steps'].append(response)
+        cancelled = copy.deepcopy(request)
+        cancelled['message']['id'] = 3
+        document['steps'].extend([cancelled, {'direction': 'close', 'owner': request['owner']}])
+        expected = copy.deepcopy(document)
+        expected['steps'].remove(cancelled)
+        self.assertEqual(suite.contract(expected), suite.contract(document))
+        document['steps'].insert(-1, {**copy.deepcopy(cancelled), 'message': {**cancelled['message'], 'id': 4, 'type': 'send_message'}})
+        self.assertTrue(suite.polling_groups(document) == {})
+
     def test_queries_may_cross_actions_but_full_query_counts_payloads_and_command_order_remain(self):
         original = self.fixture()
         command = copy.deepcopy(original['steps'][0])

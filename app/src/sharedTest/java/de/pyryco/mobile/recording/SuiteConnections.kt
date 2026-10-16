@@ -298,11 +298,14 @@ internal class SuiteConnections private constructor(
             if (localClose.get()) return
             observePumpState()
             if (!localClose.compareAndSet(false, true)) return
-            lifecycle("close", owner)
-            if (live != null) {
-                live.close()
-            } else {
-                pumps[owner]?.localClosed()
+            try {
+                lifecycle("close", owner)
+            } catch (error: Throwable) {
+                if (capture != null) throw error
+                // Report at the outer rule, after the scenario's own assertion and physical teardown.
+                failure.compareAndSet(null, error)
+            } finally {
+                if (live != null) live.close() else pumps[owner]?.localClosed()
             }
         }
 
