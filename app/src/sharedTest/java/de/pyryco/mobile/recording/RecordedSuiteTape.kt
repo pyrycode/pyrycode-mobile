@@ -24,8 +24,9 @@ internal data class SuiteStep(
 
 /** A single causal tape spans every client, so a peer action can release a phone notification. */
 internal class RecordedSuiteTape(
-    private val steps: List<SuiteStep>,
+    private var steps: List<SuiteStep>,
     declaredIdentities: Set<String> = emptySet(),
+    coalescedReadReceipts: Boolean = false,
 ) {
     private val consumed = mutableSetOf<Int>()
     private val requests = mutableMapOf<Pair<String, Long>, Long>()
@@ -34,6 +35,7 @@ internal class RecordedSuiteTape(
     private var cursor = 0
     private var matched = 0
     private var failure: String? = null
+    private var readReceipts: SuiteReadReceipts? = null
     private val queryTypes =
         setOf(
             "list_conversations",
@@ -45,6 +47,7 @@ internal class RecordedSuiteTape(
             "mcp_status_request",
             "thread_catch_up",
             "thread_page",
+            "backfill_since",
         )
     private val identityKeys =
         setOf(
@@ -106,6 +109,10 @@ internal class RecordedSuiteTape(
                 require(message == null) { "Invalid suite lifecycle event" }
             }
         }
+        if (coalescedReadReceipts) {
+            readReceipts = SuiteReadReceipts(steps, queryTypes, ::mapped)
+            steps = readReceipts!!.steps
+        }
     }
 
     private fun collect(
@@ -164,6 +171,15 @@ internal class RecordedSuiteTape(
     ): SuiteOutcome {
         failure?.let { fail(it) }
         if (actual.id in actualIds[owner].orEmpty()) fail("Recorded suite duplicate request ID")
+        if (readReceipts?.accepts(owner, actual) == true) {
+            return try {
+                val response = readReceipts!!.send(owner, actual)
+                actualIds.getOrPut(owner) { mutableSetOf() } += actual.id
+                SuiteOutcome(listOf(response), true)
+            } catch (_: Exception) {
+                fail("Recorded read receipt rejected")
+            }
+        }
         val expectedKinds = eligible().joinToString { "${steps[it].owner}:${steps[it].message?.type ?: steps[it].direction}" }
         val mismatch = "Recorded suite request mismatch at step ${matched + 1}: $owner:${actual.type}, expected $expectedKinds"
         val candidate =
@@ -199,11 +215,25 @@ internal class RecordedSuiteTape(
                 if (actual.type == "attachment_chunk") uploadBindings += from
             }
         }
-        if (mapped(expected.payload) != actual.payload || actual.inReplyTo != null) fail(mismatch)
+        if (mapped(expected.payload) != actual.payload || actual.inReplyTo != null) {
+            val checkpoint =
+                if (actual.type == "mark_conversation_read") {
+                    val value =
+                        actual.payload.jsonObject["up_to"]
+                            ?.jsonPrimitive
+                            ?.content
+                            ?.toULongOrNull()
+                    "; observed checkpoint=$value"
+                } else {
+                    ""
+                }
+            fail(mismatch + checkpoint)
+        }
         actualIds.getOrPut(owner) { mutableSetOf() } += actual.id
         requests[owner to expected.id] = actual.id
         consumed += candidate
         matched++
+        if (actual.type !in queryTypes) readReceipts?.command()
         return SuiteOutcome(drain(), steps[candidate].accepted)
     }
 
@@ -249,9 +279,17 @@ internal class RecordedSuiteTape(
         return result
     }
 
+    @Synchronized fun delivered(
+        owner: String,
+        frame: Envelope,
+    ) {
+        readReceipts?.delivered(owner, frame)
+    }
+
     @Synchronized fun assertComplete() {
         failure?.let { fail(it) }
         check(cursor == steps.size) { "Recorded suite incomplete" }
+        readReceipts?.assertComplete()
     }
 }
 

@@ -27,7 +27,12 @@ internal class RecordedSuiteDocument private constructor(
             .map { it.jsonPrimitive.content }
             .toSet()
 
-    fun tape() = RecordedSuiteTape(steps, declaredIdentities)
+    fun tape() =
+        RecordedSuiteTape(
+            steps,
+            declaredIdentities,
+            coalescedReadReceipts = document["readReceiptNormalization"] == JsonPrimitive("coalesced-visible-history-v1"),
+        )
 
     companion object {
         private fun stepJson(step: SuiteStep): JsonObject =
@@ -52,6 +57,7 @@ internal class RecordedSuiteDocument private constructor(
             buildJsonObject {
                 put("format", "pyrycode.mobile-suite")
                 put("version", 1)
+                put("readReceiptNormalization", "coalesced-visible-history-v1")
                 put("scenario", scenario)
                 put("inputs", inputs)
                 put("identities", JsonArray(identities.sorted().map(::JsonPrimitive)))

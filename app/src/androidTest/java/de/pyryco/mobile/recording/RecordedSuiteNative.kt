@@ -25,6 +25,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
@@ -167,8 +168,12 @@ internal object RecordedSuiteNative {
                     },
                     get(),
                     pushTokens =
-                        get<AppPreferences>().pushToken.onEach { value ->
-                            if (session.document == null && !value.isNullOrEmpty()) session.pushAddress(value)
+                        if (session.document != null) {
+                            session.pushTokens
+                        } else {
+                            get<AppPreferences>().pushToken.onEach { value ->
+                                if (!value.isNullOrEmpty()) session.pushAddress(value)
+                            }
                         },
                     messageTrail = get(),
                     pumpFactory =
@@ -202,6 +207,21 @@ internal object RecordedSuiteNative {
         live: () -> Unit,
     ) {
         current?.hub?.control(action, body, live) ?: live()
+    }
+
+    /** The original sentinel must time out at its deliberately impossible final observation. */
+    fun negativeObservation(
+        name: String,
+        originalWait: () -> Unit,
+    ) {
+        if (!active) return originalWait()
+        try {
+            originalWait()
+        } catch (_: androidx.compose.ui.test.ComposeTimeoutException) {
+            control("negative-absence", name) { }
+            return
+        }
+        error("Negative control unexpectedly matched its impossible observation")
     }
 
     val replaying get() = current?.document != null
@@ -303,6 +323,7 @@ internal object RecordedSuiteNative {
     ) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val tape = document?.tape()
+        val pushTokens = MutableStateFlow<String?>(null)
         val hub =
             if (tape == null) {
                 SuiteConnections.recording(scope)
@@ -313,7 +334,10 @@ internal object RecordedSuiteNative {
                             .getValue("event")
                             .jsonPrimitive.content
                     ) {
-                        "push-token" -> runBlocking { GlobalContext.get().get<AppPreferences>().setPushToken(RECORDED_PUSH_ADDRESS) }
+                        "push-token" -> {
+                            runBlocking { GlobalContext.get().get<AppPreferences>().setPushToken(RECORDED_PUSH_ADDRESS) }
+                            pushTokens.value = RECORDED_PUSH_ADDRESS
+                        }
                         "push-wake" -> GlobalContext.get().get<de.pyryco.mobile.lifecycle.LifecycleConnectionDriver>().onPushWake()
                     }
                 }

@@ -139,7 +139,8 @@
       "method": "interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace",
       "ticket": 2185,
       "fixture": null,
-      "retainedLive": []
+      "retainedLive": [],
+      "retired": "Workspace switching is no longer exposed in the mobile chat UI"
     },
     {
       "method": "interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn",
@@ -181,7 +182,8 @@
       "method": "interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace",
       "ticket": 2185,
       "fixture": null,
-      "retainedLive": []
+      "retainedLive": [],
+      "retired": "Workspace switching is no longer exposed in the mobile chat UI"
     },
     {
       "method": "interactiveTurn_deleteConversation_removesFromListAndClosesThread",

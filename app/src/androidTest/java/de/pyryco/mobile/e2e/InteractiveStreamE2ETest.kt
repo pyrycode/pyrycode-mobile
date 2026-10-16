@@ -907,8 +907,10 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
         // "pong" is in neither the prompt nor the expected reply, so this must time out (→ fail).
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText("pong", substring = true, ignoreCase = true).fetchSemanticsNodes().isNotEmpty()
+        RecordedSuiteNative.negativeObservation("never-word") {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText("pong", substring = true, ignoreCase = true).fetchSemanticsNodes().isNotEmpty()
+            }
         }
     }
 
@@ -974,8 +976,10 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
         // The prompt asks only for a read-only shell command, never a file edit, so "Edit" must never
         // render a tool row → this wait must time out (→ fail).
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(TOOL_NEVER_USED, substring = true).fetchSemanticsNodes().isNotEmpty()
+        RecordedSuiteNative.negativeObservation("never-tool") {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(TOOL_NEVER_USED, substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
         }
     }
 

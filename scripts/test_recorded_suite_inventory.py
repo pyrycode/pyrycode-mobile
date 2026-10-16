@@ -21,7 +21,7 @@ class SuiteInventoryTest(unittest.TestCase):
 
     def test_pending_work_is_reported_and_never_counted_as_converted(self):
         report = inventory.audit({'scenarios': [{'method': 'a', 'fixture': None}], 'liveSelection': ['a']}, {'a'}, {'a'}, Path('/unused'))
-        self.assertEqual({'total': 1, 'liveSelected': 1, 'recorded': 0, 'pending': ['a']}, report)
+        self.assertEqual({'total': 1, 'liveSelected': 1, 'recorded': 0, 'retired': [], 'pending': ['a']}, report)
 
     def test_wrong_scenario_or_skipped_replay_cannot_count(self):
         with tempfile.TemporaryDirectory() as directory:

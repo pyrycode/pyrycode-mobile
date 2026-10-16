@@ -38,8 +38,15 @@ def audit(manifest, actual, selected, directory):
         raise ValueError('Live selection contains unknown methods')
     if set(manifest['liveSelection']) != selected:
         raise ValueError('Recorded suite live selection changed')
-    completed, pending = [], []
+    completed, pending, retired = [], [], []
     for row in rows:
+        if row.get('retired'):
+            if row['method'] not in {
+                    'interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace',
+                    'interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace'} or row.get('fixture'):
+                raise ValueError('Unexpected retired scenario')
+            retired.append(row['method'])
+            continue
         fixture = row.get('fixture')
         if not fixture:
             pending.append(row['method'])
@@ -57,7 +64,7 @@ def audit(manifest, actual, selected, directory):
         if evidence.get('replay') != {'executed': 1, 'failed': 0, 'skipped': 0} or not evidence.get('liveVerified'):
             raise ValueError('Recorded suite counted evidence is incomplete')
         completed.append(row['method'])
-    return {'total': len(actual), 'liveSelected': len(selected), 'recorded': len(completed), 'pending': pending}
+    return {'total': len(actual), 'liveSelected': len(selected), 'recorded': len(completed), 'retired': retired, 'pending': pending}
 
 
 def main():
@@ -65,7 +72,12 @@ def main():
     parser.add_argument('--manifest', type=Path, default=MANIFEST)
     parser.add_argument('--report-only', action='store_true', help='Show pending work without claiming completion')
     args = parser.parse_args()
-    report = audit(json.loads(args.manifest.read_text()), methods(SOURCE.read_text()),
+    manifest = json.loads(args.manifest.read_text())
+    obsolete = {method: reason for reason, method in re.findall(r'@Test\s*@Ignore\("([^"\n]+)"\)\s*fun\s+(\w+)', SOURCE.read_text())}
+    for row in manifest['scenarios']:
+        if row.get('retired') and obsolete.get(row['method']) != row['retired']:
+            raise ValueError('Retired test is no longer explicitly obsolete in its original source')
+    report = audit(manifest, methods(SOURCE.read_text()),
                    curated((ROOT / 'scripts/e2e-emulator.sh').read_text()), args.manifest.parent)
     print(json.dumps(report))
     if report['pending'] and not args.report_only:

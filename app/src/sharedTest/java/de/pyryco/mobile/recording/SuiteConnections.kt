@@ -377,7 +377,11 @@ internal class SuiteConnections private constructor(
             when (step.direction) {
                 "open" -> state.value = PumpState.Open(connection.owner, step.capabilities)
                 "down" -> state.value = PumpState.Closed(null)
-                "daemon" -> check(frames.trySend(checkNotNull(step.message)).isSuccess)
+                "daemon" -> {
+                    val frame = checkNotNull(step.message)
+                    tape!!.delivered(connection.owner, frame)
+                    check(frames.trySend(frame).isSuccess)
+                }
                 "inbound_end" -> frames.close()
                 else -> error("Unsupported recorded suite delivery")
             }
