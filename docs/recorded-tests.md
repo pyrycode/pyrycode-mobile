@@ -141,11 +141,14 @@ The suite declares three limited scheduling models separately from Claude conten
 - Automatic phone read acknowledgements can coalesce. They must advance through history
   actually delivered to that phone on the same host and reach recorded final progress.
   Explicit peer reads stay exact. Peer observations wait for the actual phone read.
+  The replay rule keeps the screen alive until its required automatic reads settle.
 - A single model lookup can race an unsolicited catalogue on the same connection and
   conversation. Omitting a recorded lookup requires an identical independent catalogue in
   the same command interval. On-demand lookups without that evidence stay mandatory.
 - Successful settings polling reads the most recently delivered captured settings state.
   Snapshot updates remain in producer order and behind their original user commands.
+  A settings write invalidates earlier snapshots for that session, including replies
+  already queued for delivery. The next fresh read waits for a post-write snapshot.
   Poll counts can vary. Changed owners or complete query payloads fail. Refused or errored
   settings requests remain exact. A legacy backfill probe can vary only when that exact
   probe was captured as unsupported. Other history requests and error types stay exact.

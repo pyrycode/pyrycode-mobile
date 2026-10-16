@@ -23,6 +23,18 @@ class RecordedMobileSuiteTest {
 
     @get:Rule val unrecognized = original.unrecognizedRowSentinel
 
+    /** Keep the actual screen alive until its recorded automatic read has reached the producer. */
+    @get:Rule(order = Int.MAX_VALUE)
+    val settledReads =
+        org.junit.rules.TestRule { base, _ ->
+            object : org.junit.runners.model.Statement() {
+                override fun evaluate() {
+                    base.evaluate()
+                    compose.waitUntil(10000) { RecordedSuiteNative.readsSettled() }
+                }
+            }
+        }
+
     @Test
     fun interactiveTurn_archiveRestore_roundTripsListMembership() = original.interactiveTurn_archiveRestore_roundTripsListMembership()
 

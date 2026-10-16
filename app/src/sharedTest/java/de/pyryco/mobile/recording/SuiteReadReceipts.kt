@@ -296,12 +296,20 @@ internal class SuiteReadReceipts(
         )
     }
 
-    fun assertComplete() {
-        check(
-            groups.all { (key, group) ->
+    fun progress() =
+        groups
+            .map { (key, group) ->
                 val conversation = resolve(JsonPrimitive(key.conversation)).jsonPrimitive.content
-                (confirmed[host(key.owner) to conversation] ?: 0u) >= group.required
-            },
-        ) { "Recorded final read progress is incomplete" }
+                "${key.owner}:${key.action}:${confirmed[host(key.owner) to conversation] ?: 0u}/${group.required}"
+            }.joinToString(",")
+
+    fun isComplete() =
+        groups.all { (key, group) ->
+            val conversation = resolve(JsonPrimitive(key.conversation)).jsonPrimitive.content
+            (confirmed[host(key.owner) to conversation] ?: 0u) >= group.required
+        }
+
+    fun assertComplete() {
+        check(isComplete()) { "Recorded final read progress is incomplete" }
     }
 }

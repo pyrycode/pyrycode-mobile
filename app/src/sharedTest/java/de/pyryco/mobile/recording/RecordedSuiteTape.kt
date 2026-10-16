@@ -368,7 +368,10 @@ internal class RecordedSuiteTape(
         consumed += candidate
         matched++
         readReceipts?.requested(owner, actual)
-        if (actual.type !in queryTypes) readReceipts?.command()
+        if (actual.type !in queryTypes) {
+            readReceipts?.command()
+            polledReads?.command(owner, actual)
+        }
         return SuiteOutcome(drain(), steps[candidate].accepted)
     }
 
@@ -486,8 +489,10 @@ internal class RecordedSuiteTape(
                 "${steps[it].owner}:${steps[it].message?.type ?: steps[it].direction}"
             }
         return "Recorded suite progress: matched=$matched remaining=${steps.size - released.size} " +
-            "next=${next?.owner}:$type index=$index pending=$pending"
+            "next=${next?.owner}:$type index=$index pending=$pending reads=${readReceipts?.progress()}"
     }
+
+    @Synchronized fun readsSettled() = readReceipts?.isComplete() ?: true
 
     @Synchronized fun assertComplete() {
         failure?.let { fail(it) }

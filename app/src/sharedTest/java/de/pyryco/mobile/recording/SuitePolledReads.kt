@@ -20,6 +20,9 @@ internal class SuitePolledReads(
     )
 
     private val snapshots = mutableMapOf<Pair<String, Long>, Key>()
+    private val sessions = mutableMapOf<Key, Set<JsonElement>>()
+    private val snapshotVersions = mutableMapOf<Pair<String, Long>, Int>()
+    private val versions = mutableMapOf<Key, Int>()
     private val current = mutableMapOf<Key, Envelope>()
     private val pending = mutableMapOf<Key, MutableList<Envelope>>()
     private val known = mutableSetOf<Key>()
@@ -32,6 +35,7 @@ internal class SuitePolledReads(
                 .filter { it.direction == "daemon" && it.message?.inReplyTo != null }
                 .groupBy { it.owner to it.message!!.inReplyTo!! }
         val removed = mutableSetOf<Pair<String, Long>>()
+        val settingsRequests = mutableMapOf<Pair<String, Long>, Key>()
         source
             .filter {
                 val type = it.message?.type
@@ -66,9 +70,26 @@ internal class SuitePolledReads(
                         current[key] = responses.first().single().message!!
                     } else {
                         responses.forEach { snapshots[key.owner to it.single().message!!.id] = key }
+                        sessions[key] = responses.mapNotNull { (it.single().message!!.payload as? JsonObject)?.get("session_id") }.toSet()
+                        requests.forEach { settingsRequests[key.owner to it.message!!.id] = key }
                     }
                 }
             }
+        val sourceVersions = mutableMapOf<Key, Int>()
+        val requestVersions = mutableMapOf<Pair<String, Long>, Int>()
+        source.forEach { step ->
+            val frame = step.message ?: return@forEach
+            if (step.direction == "client") {
+                writeKeys(step.owner, frame, rebind = false).forEach { key ->
+                    sourceVersions[key] = (sourceVersions[key] ?: 0) + 1
+                }
+                settingsRequests[step.owner to frame.id]?.let { key ->
+                    requestVersions[step.owner to frame.id] = sourceVersions[key] ?: 0
+                }
+            } else if (step.direction == "daemon" && step.owner to frame.id in snapshots) {
+                snapshotVersions[step.owner to frame.id] = checkNotNull(requestVersions[step.owner to frame.inReplyTo])
+            }
+        }
         steps =
             source.mapNotNull { step ->
                 val frame = step.message
@@ -125,8 +146,36 @@ internal class SuitePolledReads(
     fun delivered(step: SuiteStep): List<SuiteStep> {
         val snapshot = checkNotNull(step.message)
         val key = checkNotNull(snapshots[step.owner to snapshot.id])
+        val version = checkNotNull(snapshotVersions[step.owner to snapshot.id])
+        val active = versions[key] ?: 0
+        check(version <= active) { "Recorded settings snapshot preceded its write" }
+        if (version < active) return emptyList()
         current[key] = snapshot
         return pending.remove(key).orEmpty().map { reply(key, snapshot, it) }
+    }
+
+    private fun writeKeys(
+        owner: String,
+        frame: Envelope,
+        rebind: Boolean,
+    ): List<Key> {
+        if (frame.type != "set_session_settings") return emptyList()
+        val session = (frame.payload as? JsonObject)?.get("session_id") ?: return emptyList()
+        return sessions
+            .filter { (key, values) ->
+                key.owner == owner && values.any { (if (rebind) resolve(it) else it) == session }
+            }.keys
+            .toList()
+    }
+
+    fun command(
+        owner: String,
+        frame: Envelope,
+    ) {
+        writeKeys(owner, frame, rebind = true).forEach { key ->
+            versions[key] = (versions[key] ?: 0) + 1
+            current.remove(key)
+        }
     }
 
     fun assertComplete() {

@@ -259,6 +259,8 @@ internal object RecordedSuiteNative {
         }
     }
 
+    fun readsSettled() = current?.tape?.readsSettled() ?: true
+
     fun finish(success: Boolean) {
         val session = current ?: return
         try {

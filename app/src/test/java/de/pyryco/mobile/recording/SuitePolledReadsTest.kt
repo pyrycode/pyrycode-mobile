@@ -97,4 +97,30 @@ class SuitePolledReadsTest {
                 source.last().copy(message = refusal.copy(payload = MobileJson.parseToJsonElement("""{"code":"different"}""")))
         assertEquals(changed, SuitePolledReads(changed, { it }, { 100 }, settings = true, refusedBackfill = true).steps)
     }
+
+    @Test fun aWriteInvalidatesEarlierSnapshotsIncludingAlreadyQueuedReplies() {
+        val before = MobileJson.parseToJsonElement("""{"session_id":"session","effort":""}""")
+        val after = MobileJson.parseToJsonElement("""{"session_id":"session","effort":"max"}""")
+        val write = frame(5, "set_session_settings", MobileJson.parseToJsonElement("""{"session_id":"session","effort":"max"}"""))
+        val source =
+            listOf(
+                SuiteStep("client", owner, frame(1, "request_session_settings")),
+                SuiteStep("daemon", owner, frame(2, "session_settings", before, 1)),
+                SuiteStep("client", owner, frame(3, "request_session_settings")),
+                SuiteStep("daemon", owner, frame(4, "session_settings", before, 3)),
+                SuiteStep("client", owner, write),
+                SuiteStep("client", owner, frame(6, "request_session_settings")),
+                SuiteStep("daemon", owner, frame(7, "session_settings", after, 6)),
+            )
+        val model = SuitePolledReads(source, { it }, { 100 }, settings = true, refusedBackfill = false)
+        val snapshots = model.steps.filter { it.direction == "settings_snapshot" }
+        model.delivered(snapshots[0])
+        model.command(owner, write)
+        model.delivered(snapshots[1])
+        assertTrue(model.send(owner, frame(80, "request_session_settings")).isEmpty())
+        val response = model.delivered(snapshots[2]).single().message!!
+        assertEquals(after, response.payload)
+        assertEquals(80L, response.inReplyTo)
+        model.assertComplete()
+    }
 }
