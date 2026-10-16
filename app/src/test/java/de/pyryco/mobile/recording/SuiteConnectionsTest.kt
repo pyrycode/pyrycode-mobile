@@ -127,6 +127,40 @@ class SuiteConnectionsTest {
             hub.close()
         }
 
+    @Test fun negativeObservationWaitsForRequestsAndDeliveryButNotTheCapturedTimeout() =
+        runTest {
+            val entries =
+                listOf(
+                    SuiteStep("connect", "phone"),
+                    SuiteStep("open", "phone"),
+                    SuiteStep("client", "phone", frame(1, "request_model_list")),
+                    SuiteStep("daemon", "phone", frame(2, "model_list", reply = 1), delayMs = 100),
+                    SuiteStep("client", "control", frame(1, "test-control:negative-absence", """{"body":"never-word"}"""), delayMs = 83417),
+                    SuiteStep("close", "phone"),
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, RecordedSuiteTape(entries))
+            val transport = hub.transport("phone") { error("Live transport started") }
+            transport.connect()
+            val pump = hub.pump(transport) { error("Live pump started") }
+            pump.start()
+            runCurrent()
+            val observation = async { hub.beforeNegativeObservation("never-word") }
+            runCurrent()
+            assertFalse(observation.isCompleted)
+            pump.send(frame(90, "request_model_list"))
+            runCurrent()
+            assertFalse(observation.isCompleted)
+            advanceTimeBy(120)
+            runCurrent()
+            observation.await()
+            assertEquals("model_list", pump.inbound.first().type)
+            assertEquals(120L, testScheduler.currentTime)
+            hub.control("negative-absence", "never-word") { error("Live control started") }
+            pump.close()
+            hub.assertComplete()
+            hub.close()
+        }
+
     private fun frame(
         id: Long,
         type: String,
