@@ -19,7 +19,7 @@ CLASS = 'de.pyryco.mobile.recording.RecordedPermissionTest'
 PACKAGE = 'de.pyryco.mobile'
 ASSET = ROOT / 'app/src/androidTest/assets/recorded/permission-allow.json'
 QUERIES = {'list_conversations', 'request_history', 'thread_catch_up', 'thread_page', 'request_session_settings',
-           'request_context_usage', 'request_model_list', 'request_system_prompt', 'request_mcp_status'}
+           'request_context_usage', 'request_model_list', 'request_system_prompt', 'mcp_status_request'}
 IDENTITIES = {'conversation_id', 'current_session_id', 'session_id', 'modal_id', 'message_id', 'device_id',
               'tool_use_id', 'parent_tool_use_id', 'turn_id', 'task_id', 'parent', 'epoch', 'answer_token'}
 
@@ -252,7 +252,7 @@ def capture(serial, destination, pyry):
                 def clean(value):
                     if isinstance(value, dict): return {key: 'recorded-answer-token' if key == 'answer_token' else clean(child) for key, child in value.items()}
                     if isinstance(value, list): return [clean(child) for child in value]
-                    return value.replace(str(work.resolve()), '/controlled/mobile-recording').replace(str(work), '/controlled/mobile-recording') if isinstance(value, str) else value
+                    return value.replace(str(work.resolve()), '/controlled/mobile-recording').replace(str(work), '/controlled/mobile-recording').replace(str(home.resolve()), '/controlled/mobile-home').replace(str(home), '/controlled/mobile-home') if isinstance(value, str) else value
                 document = clean(document)
                 validate_recording(document)
                 output = json.dumps(document, ensure_ascii=False, separators=(',', ':')).encode()
@@ -305,7 +305,7 @@ def main():
 
 if __name__ == '__main__':
     try: main()
-    except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as error:
+    except (RuntimeError, ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as error:
         # Error text from subprocesses can contain pairing material; only our fixed messages are safe.
         print(str(error) if type(error) in {RuntimeError, ValueError} else 'Recorded test setup failed', file=__import__('sys').stderr)
         raise SystemExit(1)

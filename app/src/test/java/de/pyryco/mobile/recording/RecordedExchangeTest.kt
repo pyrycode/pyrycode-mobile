@@ -112,6 +112,21 @@ class RecordedExchangeTest {
         }
     }
 
+    @Test fun aRequestCannotUseAnUnrelatedConversationIdentity() {
+        val exchange =
+            RecordedExchange(
+                recording(
+                    "client" to frame(1, "create_conversation"),
+                    "daemon" to frame(2, "conversation_created", """{"id":"recorded-chat"}""", reply = 1),
+                    "client" to frame(3, "request_history", """{"conversation_id":"recorded-chat"}"""),
+                ),
+            )
+        exchange.reply(frame(10, "create_conversation"))
+        assertThrows(IllegalStateException::class.java) {
+            exchange.reply(frame(20, "request_history", """{"conversation_id":"unrelated-chat"}"""))
+        }
+    }
+
     @Test fun duplicateAndLateRequestsFailEvenAfterCompletion() {
         val exchange = RecordedExchange(recording("client" to frame(1, "list_conversations")))
         exchange.reply(frame(20, "list_conversations"))

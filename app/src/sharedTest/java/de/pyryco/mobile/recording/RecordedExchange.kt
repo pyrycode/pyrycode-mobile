@@ -110,7 +110,7 @@ internal class RecordedExchange(
             "request_context_usage",
             "request_model_list",
             "request_system_prompt",
-            "request_mcp_status",
+            "mcp_status_request",
         )
     private val identityKeys =
         setOf(
