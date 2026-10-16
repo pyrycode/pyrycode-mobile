@@ -2662,6 +2662,7 @@ class InteractiveStreamE2ETest {
      */
     private fun completeBundleLogs(archive: ByteArray): String {
         val members = bundleMembers(archive)
+        members.values.forEach(RecordedSuiteNative::inspectArtifactMember)
         assertTrue("the archive has a member it should not", members.keys.all { it in BUNDLE_MEMBERS })
         val manifestBytes = checkNotNull(members[BUNDLE_MANIFEST]) { "the archive has no manifest.json" }
         val logs = checkNotNull(members[BUNDLE_LOGS]) { "the archive has no logs.txt" }

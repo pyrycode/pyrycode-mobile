@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -27,6 +28,7 @@ internal class RecordedSuiteTape(
     private var steps: List<SuiteStep>,
     declaredIdentities: Set<String> = emptySet(),
     coalescedReadReceipts: Boolean = false,
+    private val literalProducerIdentities: Boolean = false,
 ) {
     private val consumed = mutableSetOf<Int>()
     private val requests = mutableMapOf<Pair<String, Long>, Long>()
@@ -48,6 +50,7 @@ internal class RecordedSuiteTape(
             "thread_catch_up",
             "thread_page",
             "backfill_since",
+            "register_push_token",
         )
     private val identityKeys =
         setOf(
@@ -91,7 +94,12 @@ internal class RecordedSuiteTape(
             }
             val message = step.message
             if (step.direction in setOf("client", "daemon")) {
-                require(message != null && message.payload is JsonObject && message.type.isNotBlank() && message.ts.isNotBlank())
+                require(
+                    message != null &&
+                        (message.payload is JsonObject || message.payload == JsonNull) &&
+                        message.type.isNotBlank() &&
+                        message.ts.isNotBlank(),
+                )
                 require(message.type !in setOf("hello", "hello_ack", "rekey_request", "multipart", "fragment"))
                 require(message.id >= 0 && ids.getOrPut(step.owner to step.direction) { mutableSetOf() }.add(message.id))
                 message.inReplyTo?.let {
@@ -128,7 +136,9 @@ internal class RecordedSuiteTape(
                         child.content.isNotEmpty() &&
                         (key in identityKeys || key == "id" && (root || parent in setOf("conversations", "items", "messages", "item")))
                     ) {
-                        identities.getOrPut(child.content) { UUID.randomUUID().toString() }
+                        identities.getOrPut(child.content) {
+                            if (literalProducerIdentities) child.content else UUID.randomUUID().toString()
+                        }
                     }
                     collect(child, key)
                 }
@@ -154,6 +164,10 @@ internal class RecordedSuiteTape(
         for (i in cursor until steps.size) {
             val step = steps[i]
             if (i in consumed || step.direction !in setOf("client", "connect", "close")) continue
+            if (step.direction == "connect") {
+                result += i
+                continue
+            }
             if (step.direction != "client" || step.message!!.type !in queryTypes) {
                 if (result.isEmpty()) result += i
                 break

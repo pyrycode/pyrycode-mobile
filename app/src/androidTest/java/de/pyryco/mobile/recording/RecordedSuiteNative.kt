@@ -236,6 +236,11 @@ internal object RecordedSuiteNative {
         current?.credentials?.add(value)
     }
 
+    fun inspectArtifactMember(bytes: ByteArray) {
+        val session = current ?: return
+        if (session.document == null) requireSafeCapturedBytes(bytes, session.credentials)
+    }
+
     fun syntheticCredentials(server: String): Map<String, JsonPrimitive> =
         mapOf(
             "pairCode" to JsonPrimitive(pairCode(server)),

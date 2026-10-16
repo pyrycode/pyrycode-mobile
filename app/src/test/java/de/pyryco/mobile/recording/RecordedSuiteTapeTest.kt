@@ -160,4 +160,33 @@ class RecordedSuiteTapeTest {
         tape.request("peer", frame(30, "send_message", actualMessage))
         tape.assertComplete()
     }
+
+    @Test fun independentConnectionSetupCanCommuteButCannotCrossAnActionOrClose() {
+        val register =
+            frame(1, "register_push_token", """{"platform":"fcm","token":"recorded-push-device-address","device_name":"phone"}""")
+        val rows =
+            listOf(
+                SuiteStep("connect", "phone"),
+                SuiteStep("open", "phone"),
+                client("phone", register),
+                client("phone", frame(2, "list_conversations")),
+                SuiteStep("connect", "peer"),
+                SuiteStep("open", "peer"),
+                client("peer", frame(1, "list_conversations")),
+                client("phone", frame(3, "create_conversation")),
+                SuiteStep("close", "phone"),
+            )
+        val tape = RecordedSuiteTape(rows)
+        tape.lifecycle("connect", "phone")
+        assertEquals(emptyList<SuiteStep>(), tape.lifecycle("connect", "peer"))
+        tape.send("phone", frame(80, "list_conversations"))
+        tape.send("peer", frame(80, "list_conversations"))
+        tape.send("phone", register.copy(id = 81))
+        tape.send("phone", frame(82, "create_conversation"))
+        tape.lifecycle("close", "phone")
+        tape.assertComplete()
+        val early = RecordedSuiteTape(rows)
+        early.lifecycle("connect", "phone")
+        assertThrows(IllegalStateException::class.java) { early.send("phone", frame(90, "create_conversation")) }
+    }
 }

@@ -119,4 +119,40 @@ class SuiteConnectionsTest {
         replay.close()
         scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
     }
+
+    @Test fun observingALivePumpCannotDelayItsPublishedConnectionState() =
+        runTest {
+            val published = kotlinx.coroutines.flow.MutableStateFlow<PumpState>(PumpState.Handshaking)
+            val delegate =
+                object : de.pyryco.mobile.data.repository.ManagedSessionPump {
+                    override val state = published
+                    override val inbound = kotlinx.coroutines.flow.emptyFlow<Envelope>()
+
+                    override fun start() { }
+
+                    override fun send(envelope: Envelope) = true
+
+                    override fun close() {
+                        published.value = PumpState.Closed(null)
+                    }
+                }
+            val transport =
+                object : de.pyryco.mobile.data.network.RelayTransport {
+                    override val inbound = kotlinx.coroutines.flow.emptyFlow<de.pyryco.mobile.data.network.InnerFrameV2>()
+                    override val events = kotlinx.coroutines.flow.emptyFlow<de.pyryco.mobile.data.network.TransportEvent>()
+
+                    override fun connect() { }
+
+                    override fun close() { }
+
+                    override fun send(frame: de.pyryco.mobile.data.network.InnerFrameV2) = true
+                }
+            val hub = SuiteConnections.recording(backgroundScope)
+            val observed = hub.pump(hub.transport("phone") { transport }) { delegate }
+            val opened = PumpState.Open("connection", setOf("interactive"))
+            published.value = opened
+            assertEquals(opened, observed.state.value) // No scheduler turn may be required by the observation tap.
+            observed.close()
+            hub.close()
+        }
 }

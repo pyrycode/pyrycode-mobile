@@ -32,6 +32,7 @@ internal class RecordedSuiteDocument private constructor(
             steps,
             declaredIdentities,
             coalescedReadReceipts = document["readReceiptNormalization"] == JsonPrimitive("coalesced-visible-history-v2"),
+            literalProducerIdentities = document["producerIdentityMode"] == JsonPrimitive("literal"),
         )
 
     companion object {
@@ -58,6 +59,7 @@ internal class RecordedSuiteDocument private constructor(
                 put("format", "pyrycode.mobile-suite")
                 put("version", 1)
                 put("readReceiptNormalization", "coalesced-visible-history-v2")
+                put("producerIdentityMode", if (steps.any { it.message?.type == "debug_bundle_chunk" }) "literal" else "rebind")
                 put("scenario", scenario)
                 put("inputs", inputs)
                 put("identities", JsonArray(identities.sorted().map(::JsonPrimitive)))
@@ -71,6 +73,8 @@ internal class RecordedSuiteDocument private constructor(
                 requireSafeSuiteDocument(document)
                 require(document.getValue("format").jsonPrimitive.content == "pyrycode.mobile-suite")
                 require(document.getValue("version").jsonPrimitive.long == 1L)
+                require(document["readReceiptNormalization"] in setOf(null, JsonPrimitive("coalesced-visible-history-v2")))
+                require(document["producerIdentityMode"] in setOf(null, JsonPrimitive("literal"), JsonPrimitive("rebind")))
                 require(
                     document
                         .getValue("scenario")

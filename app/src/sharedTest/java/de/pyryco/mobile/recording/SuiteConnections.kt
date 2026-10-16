@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.network.TransportEvent
 import de.pyryco.mobile.data.repository.ManagedSessionPump
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -15,13 +16,13 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -316,7 +317,16 @@ internal class SuiteConnections private constructor(
             connection.observePumpState = { observeState(delegate.state.value) }
         }
 
-        override val state = delegate.state.onEach(::observeState).stateIn(scope, SharingStarted.Eagerly, delegate.state.value)
+        override val state = delegate.state
+        private val stateObserver =
+            scope
+                .launch(start = CoroutineStart.UNDISPATCHED) {
+                    delegate.state
+                        .takeWhile { value ->
+                            observeState(value)
+                            value !is PumpState.Closed
+                        }.collect()
+                }.also(readers::add)
         override val inbound =
             delegate.inbound
                 .onStart { currentCoroutineContext()[Job]?.let(readers::add) }
@@ -349,6 +359,7 @@ internal class SuiteConnections private constructor(
 
         override fun close() {
             explicitClose.set(true)
+            stateObserver.cancel()
             delegate.close()
         }
     }

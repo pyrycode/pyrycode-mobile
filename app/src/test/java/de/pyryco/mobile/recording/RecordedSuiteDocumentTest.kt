@@ -48,4 +48,49 @@ class RecordedSuiteDocumentTest {
             assertEquals("Invalid recorded suite document", error.message)
         }
     }
+
+    @Test fun opaqueDiagnosticBytesKeepTheSameProducerIdentityThatTheClientObserved() {
+        val id = "captured-diagnostic-marker"
+        val marker = Envelope(1, "conversation_created", "2026-10-16T00:00:00Z", MobileJson.parseToJsonElement("""{"id":"$id"}"""))
+        val request = Envelope(1, "request_debug_bundle", marker.ts)
+        val payload =
+            buildJsonObject {
+                put("seq", 0)
+                put(
+                    "data",
+                    java.util.Base64
+                        .getEncoder()
+                        .encodeToString(id.toByteArray()),
+                )
+            }
+        val chunk = Envelope(2, "debug_bundle_chunk", marker.ts, payload, inReplyTo = 1)
+        val steps = listOf(SuiteStep("daemon", "phone", marker), SuiteStep("client", "phone", request), SuiteStep("daemon", "phone", chunk))
+        val body = RecordedSuiteDocument.body("opaque", JsonObject(emptyMap()), emptySet(), steps)
+        val parsed = RecordedSuiteDocument.parse(JsonObject(body + ("source" to candidate().getValue("source"))).toString())
+        val tape = parsed.tape()
+        val observed =
+            tape
+                .initial()
+                .single()
+                .message!!
+                .payload as JsonObject
+        assertEquals(JsonPrimitive(id), observed["id"])
+        val bytes =
+            tape
+                .send("phone", request.copy(id = 90))
+                .deliveries
+                .single()
+                .message!!
+                .payload as JsonObject
+        val encoded = (bytes.getValue("data") as JsonPrimitive).content
+        assertEquals(
+            id,
+            String(
+                java.util.Base64
+                    .getDecoder()
+                    .decode(encoded),
+            ),
+        )
+        tape.assertComplete()
+    }
 }

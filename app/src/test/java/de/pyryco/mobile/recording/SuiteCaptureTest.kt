@@ -78,4 +78,17 @@ class SuiteCaptureTest {
             assertThrows(IllegalStateException::class.java) { capture.completed(true) }
         }
     }
+
+    @Test fun aRealPayloadlessRequestKeepsItsAbsentPayloadRatherThanBecomingAnEmptyObject() {
+        val request = Envelope(1, "request_debug_bundle", "2026-10-16T00:00:00Z")
+        val capture = SuiteCapture()
+        capture.send("phone", request) { true }
+        val steps = capture.completed(true)
+        assertEquals(kotlinx.serialization.json.JsonNull, steps.single().message!!.payload)
+        val tape = RecordedSuiteTape(steps)
+        tape.send("phone", request.copy(id = 90))
+        tape.assertComplete()
+        val changed = request.copy(id = 90, payload = MobileJson.parseToJsonElement("{}"))
+        assertThrows(IllegalStateException::class.java) { RecordedSuiteTape(steps).send("phone", changed) }
+    }
 }

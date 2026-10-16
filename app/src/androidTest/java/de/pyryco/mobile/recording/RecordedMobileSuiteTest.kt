@@ -57,12 +57,6 @@ class RecordedMobileSuiteTest {
     @Test fun interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread() =
         original.interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread()
 
-    @org.junit.Ignore("Retired: workspace switching is no longer exposed")
-    @Test
-    fun interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace() =
-        original
-            .interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace()
-
     @Test fun interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn() =
         original.interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn()
 
@@ -81,11 +75,6 @@ class RecordedMobileSuiteTest {
     @Test fun interactiveTurn_createEditArchiveChannel_readsPromptBack() =
         original
             .interactiveTurn_createEditArchiveChannel_readsPromptBack()
-
-    @org.junit.Ignore("Retired: workspace switching is no longer exposed")
-    @Test
-    fun interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace() =
-        original.interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace()
 
     @Test fun interactiveTurn_deleteConversation_removesFromListAndClosesThread() =
         original.interactiveTurn_deleteConversation_removesFromListAndClosesThread()
