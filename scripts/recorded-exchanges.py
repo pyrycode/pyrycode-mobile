@@ -154,7 +154,8 @@ def capture(serial, destination, pyry):
     if not claude:
         raise RuntimeError('Claude executable unavailable')
     name = 'recorded-' + uuid.uuid4().hex + '.json'
-    with tempfile.TemporaryDirectory(prefix='mobile-exchange-') as directory:
+    # Keep the daemon's Unix control socket below macOS's path-length limit.
+    with tempfile.TemporaryDirectory(prefix='mobile-exchange-', dir='/tmp') as directory:
         private = Path(directory)
         home, work = private / 'home', private / 'work'
         home.mkdir(mode=0o700); work.mkdir(mode=0o700)
@@ -216,6 +217,13 @@ def capture(serial, destination, pyry):
                 if len(output) > 2_000_000: raise RuntimeError('Capture exceeds its bound')
                 private_write(destination, output + b'\n')
                 return {'executed': 1, 'failed': 0, 'skipped': 0, 'seconds': round(elapsed, 3), 'frames': len(document['wire']), 'source': document['source']}
+            except Exception:
+                log.flush()
+                diagnostic = ROOT / 'build/recorded-daemon-failure.log'
+                diagnostic.parent.mkdir(parents=True, exist_ok=True)
+                diagnostic.write_bytes((private / 'daemon.log').read_bytes())
+                diagnostic.chmod(0o600)
+                raise
             finally:
                 if daemon.poll() is None:
                     os.killpg(daemon.pid, signal.SIGTERM)
