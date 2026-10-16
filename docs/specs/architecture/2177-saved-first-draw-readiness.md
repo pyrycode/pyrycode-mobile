@@ -56,6 +56,63 @@ Pending for documentation: update `docs/knowledge/features/thread-screen-testing
 
 ## Revisions
 
+### 2026-10-16: separate inherited scripted failure blocks green validation
+
+Final focused scripted `ping` executed 2, passed 1, failed 1, skipped 0, exit 1.
+`interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` rendered the
+finished reply and obtained checkpoint 12 with complete receipt facts, then failed
+its unchanged 90000 ms `observeReadMarks` wait; the durable-gap method passed.
+The final destroyed-activity focus record follows teardown and is not a crash
+diagnosis. No Mobile production, deterministic-test or harness logic changed here.
+
+Reused open [#2198](https://github.com/pyrycode/pyrycode-mobile/issues/2198), whose
+clean-main reproduction names the same assertion and 2/1/1/0 counts. Its repair is
+in flight and outside #2177. Added and read back the native blocked-by link from
+#2177 to #2198. Preserve the failing assertion without retry or skip; resume green
+scripted verification after that repair. Readiness unit controls passed 12/12 with
+no errors/skips, alongside lint, debug assembly and instrumentation compilation.
+The 4+4 focused first-draw passes remain valid. Final formatting/compilation can
+proceed, but complete dispatcher UI/scripted-all results remain pending.
+
+### 2026-10-16: valid measurement restored; historical latency tracked separately
+
+Both the exact unchanged baseline `4b21cef23ef9d395f667694ab2a6df97c380deaf` and
+current `e8a4508f23f1b99e0c22494656fad1fe4a9ecf7d` passed the supported focused
+four-method class: each 4 executed, 4 passed, 0 failed/errors/skipped, exit 0.
+Both draw methods retained all eight openings; the slow control rejected its
+3800/3768 ms draw, and the held-pipe control passed. All 17 readiness barriers per
+run completed without sampling failure. Test/helper, fixture and four primary
+production measurement-file hashes match between the trees. No Mobile logic repair
+is warranted: the repair and its controlled regressions belong to external #2178.
+
+The first open question is resolved for current conditions: measurement is valid
+after runner/host remediation. The second is resolved within the retained evidence:
+earlier load was real host/compiler/GC pressure with guest steal, not established
+counter misinterpretation or held sampling. Current 250 ms windows reach the same
+four-window contract; maximum acquisition/read is 9/32 ms baseline and 24/32 ms
+current. Five-second numeric host/guest samples and gate phase boundaries are
+retained separately, including startup busy windows and the baseline observer's
+device-restart counter reset. They do not replace per-opening readiness.
+
+The third question remains historically unresolved. Fragmented offline/held-newest
+first draws are 676/609 ms (baseline original) and 639/583 ms (current original),
+841/678 ms (baseline projection twin) and 839/687 ms (current twin). These do not
+establish the cause or repair of the old 1434/1436 ms full-gate misses. Filed and
+verified [#2202](https://github.com/pyrycode/pyrycode-mobile/issues/2202), Backlog,
+low priority, for that independent latency disposition. It is not a readiness
+dependency. The raw original verifier bundle was retrieved and retained.
+
+Checked content-free comparison, every opening's readiness/draw phases, source
+hashes and raw-manifest hashes are under `app/src/androidTest/assets/readiness-2177/`.
+Raw reports, phone logs, CPU samples and analysis scripts are private under
+`$AGENTS_REPO_PATH/logs/evidence/2177/post-runner-{baseline,current}-20261016/`.
+The evidence README records environment differences: owned shared admission,
+remediated compiler pressure, configured 2048 MiB versus earlier explicit 4 GiB
+Gradle heap, preparation/device timing and an unsuccessful optional property read
+during emulator startup. No warming, retries, skips or threshold change occurred.
+Complete configured UI/scripted-all gates and the documentation update remain
+later-stage work; no complete-gate PASS is claimed by these focused comparisons.
+
 ### 2026-10-16: resume after the external runner repair
 
 #2178 is closed after agents PR #186 (`800e719`) deployed shared admission for APK
