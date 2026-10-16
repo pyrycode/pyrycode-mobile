@@ -251,3 +251,47 @@ A successful live run can acknowledge a row in the short interval before a promp
 replay can render the same required screens without that interval. The v4 model follows actual
 presentation and actual acknowledgements. It preserves original feature assertions and the
 explicit read/attention tests instead of forcing that incidental interval to repeat.
+
+## Complete-suite rollout evidence, 2026-10-16
+
+The inventory accounts for all 73 original native methods. All 71 active scenarios have
+reviewed genuine recordings. Two workspace scenarios remain explicitly retired.
+
+| Check | Reported | Failed | Skipped |
+| --- | ---: | ---: | ---: |
+| Genuine real-Claude capture | 71 | 0 | 0 |
+| Saved recording replay | 71 | 0 | 0 |
+| Fresh recording replay | 71 | 0 | 0 |
+| All promoted recordings in the normal device run | 71 | 0 | 0 |
+| Complete normal device selection | 335 | 0 | 1 |
+| Full JVM check | 5718 | 0 | 0 |
+| Recording host checks | 35 | 0 | 0 |
+
+The normal device run used the actual 66-class selection, Gradle's configured focus
+listener and a writable screenshot output directory. It preserved counted XML and
+screenshot outputs. The existing rename pixel-capture test skipped because its rendered-content
+assumption failed on the ATD image; its source already reserves that pixel evidence for the
+full Pixel 8 image. Every recorded scenario executed and passed. The run removed
+Claude credentials and used failing producer-launch traps. Neither producer was invoked.
+
+All genuine captures used Mobile `788314223b701ea5c6a0b530ac255451de97e36e`,
+daemon `c2e7bec7a434014dfc2089f64d507898c79f8e89`, Claude Code 2.1.280 and Android
+API 33. The application package stayed byte-for-byte unchanged during subsequent
+player repairs. Passing per-case replay receipts retain their actual player revisions.
+The final combined run exercised every promoted recording together from source
+`355af9088e3e60564a7b43d33e5f3019aa9b83ef` on one final app and test package.
+Capture package hashes identify the producer before asset promotion. The separate
+combined-run receipt identifies the package containing the promoted recordings.
+
+Strict comparison of the older and fresh captures reports 71 differences. Its failures
+remain failures. New genuine observation checkpoints account for the recorder upgrade.
+Complete normalized action payloads and counts match in all 71 cases; connection
+lifecycles match in all 71. One automatic peer approval changed order. Seven cases
+have reviewed background-query count variations. Each recording still requires its
+own complete requests and counts. The exact successful fresh captures become the
+reviewed baseline. No successful strict-compatibility receipt is claimed.
+
+The [structured rollout evidence](evidence/recorded-claude-rollout-review.json) records
+actual producer and player identities, every counted scenario, the final combined
+result and the explicit comparison decisions. It is a manual rollout review, not
+input to the strict compatibility gate. Real service and timing obligations remain live.
