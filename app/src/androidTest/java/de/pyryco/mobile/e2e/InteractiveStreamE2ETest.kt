@@ -906,10 +906,13 @@ class InteractiveStreamE2ETest {
         }
         composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
-        // "pong" is in neither the prompt nor the expected reply, so this must time out (→ fail).
+        // Like the positive matcher, inspect delivered message bubbles. A suggested next reply can say "pong".
+        val impossibleReply =
+            hasText("pong", substring = true, ignoreCase = true) and
+                hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
         RecordedSuiteNative.negativeObservation("never-word") {
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText("pong", substring = true, ignoreCase = true).fetchSemanticsNodes().isNotEmpty()
+                composeTestRule.onAllNodes(impossibleReply, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
         }
     }
@@ -9296,8 +9299,10 @@ class InteractiveStreamE2ETest {
         // shows during. Correctness does NOT depend on the window being reliably catchable — that is why
         // the test ships @Ignore'd; the exact wording is the developer's to tune on first operator run.
         const val THINK_PROMPT =
-            "Without using any tools, take a moment to reason this through silently, then reply with only " +
-                "the single word: ready. (Reason through first: what is the 12th prime number?)"
+            "Without using any tools, solve this carefully in private and independently check every congruence: " +
+                "find the smallest positive integer n with n mod 97 = 13, n mod 89 = 27, n mod 83 = 51, " +
+                "n mod 79 = 64 and n mod 73 = 9. Work through all the arithmetic before answering. " +
+                "When all five checks pass, reply with only the single word: ready."
 
         // Production UI strings. Keep in sync with res/values/strings.xml:
         //   cd_send_message = "Send message", cd_back = "Back".
