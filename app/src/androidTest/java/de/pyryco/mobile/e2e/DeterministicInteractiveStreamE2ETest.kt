@@ -540,17 +540,16 @@ class DeterministicInteractiveStreamE2ETest {
             runBlocking {
                 peer.open(CONNECT_TIMEOUT_MS)
                 val history = peer.history(conversationId, THREAD_TIMEOUT_MS)
-                assertTrue(
-                    "peer received the durable post",
-                    history.any {
+                val durablePost =
+                    history.singleOrNull {
                         val text =
                             it.payload.jsonObject["text"]
                                 ?.jsonPrimitive
                                 ?.content
                         it.type == "assistant_delta" && text == postText
-                    },
-                )
-                val latest = requireNotNull(history.maxOfOrNull { it.id })
+                    }
+                assertTrue("peer received the durable post", durablePost != null)
+                val latest = requireNotNull(durablePost).id
                 assertTrue("peer read confirmed", peer.markRead(conversationId, latest, THREAD_TIMEOUT_MS) >= latest)
             }
             val idle = context.getString(R.string.cd_conversation_attention_idle)
