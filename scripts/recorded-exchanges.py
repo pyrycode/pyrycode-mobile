@@ -157,7 +157,8 @@ def capture(serial, destination, pyry):
     # Keep the daemon's Unix control socket below macOS's path-length limit.
     with tempfile.TemporaryDirectory(prefix='mobile-exchange-', dir='/tmp') as directory:
         private = Path(directory)
-        home, work = private / 'home', private / 'work'
+        home = private / 'home'
+        work = home / 'work'
         home.mkdir(mode=0o700); work.mkdir(mode=0o700)
         (home / '.pyry').mkdir(mode=0o700)
         (home / '.pyry/config.json').write_text(json.dumps({'interactive_runner': 'stream-json', 'stdio_permission_prompt': True}))
@@ -207,7 +208,7 @@ def capture(serial, destination, pyry):
                 def clean(value):
                     if isinstance(value, dict): return {key: 'recorded-answer-token' if key == 'answer_token' else clean(child) for key, child in value.items()}
                     if isinstance(value, list): return [clean(child) for child in value]
-                    return value.replace(str(work), '/controlled/mobile-recording') if isinstance(value, str) else value
+                    return value.replace(str(work.resolve()), '/controlled/mobile-recording').replace(str(work), '/controlled/mobile-recording') if isinstance(value, str) else value
                 document = clean(document)
                 require_safe(document)
                 output = json.dumps(document, ensure_ascii=False, separators=(',', ':')).encode()
