@@ -15,4 +15,6 @@ if not script.is_file():
 os.environ["PYRY_MOBILE_REPO"] = str(root)
 os.chdir(root)
 runtime = "bash" if name.endswith(".sh") else sys.executable
+if name in {"android-test-gate.py", "jvm-test-gate.py"}:
+    os.execvp(sys.executable, [sys.executable, str(root / "scripts/test-admission.py"), "--", runtime, str(script), *sys.argv[2:]])
 os.execvp(runtime, [runtime, str(script), *sys.argv[2:]])

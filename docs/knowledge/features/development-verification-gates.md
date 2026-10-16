@@ -81,6 +81,16 @@ failed even when an earlier test report is present. The shared dispatcher runs
 these named comparisons in the same worktree and on the main commit merged
 into it. A confirmed inherited failure still requires its tracking ticket.
 
+Direct Gradle checks acquire the same host hold through
+`python3 scripts/test-admission.py -- ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process <tasks>`.
+Android and JVM gate entry points acquire it automatically, before the Android
+device hold. Nested calls reuse the validated inherited descriptor. The pinned
+Android cleanup owner retains both descriptors, including after parent loss.
+Use `PYRY_TEST_ADMISSION_LOCK` for a common host-bound path when project containers
+have separate home directories. Forward that variable into builder shells.
+The documented single-use Gradle worker keeps compiler work within the owned
+command lifetime while preserving build-cache reuse.
+
 For filesystem tests that assert permission preservation, set the fixture's
 starting mode explicitly before exercising the code. `mkdir(mode=0o755)` is
 filtered by the inherited umask: under `077` it creates a `0700` directory, so a
