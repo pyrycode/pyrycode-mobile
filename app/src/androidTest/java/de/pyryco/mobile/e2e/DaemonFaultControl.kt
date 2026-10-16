@@ -3,6 +3,7 @@ package de.pyryco.mobile.e2e
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
+import de.pyryco.mobile.recording.RecordedSuiteNative
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -78,8 +79,10 @@ internal class DaemonFaultControl {
         action: String,
         body: String = "",
     ) {
-        checkedDaemonFaultRequest(action, { Log.i("DaemonFaultControl", "event=daemon_fault_request $it") }) {
-            exchangeDaemonFaultRequest("10.0.2.2", port, action, body)
+        RecordedSuiteNative.control(action, body) {
+            checkedDaemonFaultRequest(action, { Log.i("DaemonFaultControl", "event=daemon_fault_request $it") }) {
+                exchangeDaemonFaultRequest("10.0.2.2", port, action, body)
+            }
         }
     }
 }
