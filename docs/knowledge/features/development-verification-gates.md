@@ -60,6 +60,26 @@ fresh worktree, Gradle may need `ANDROID_HOME` set because `local.properties` is
 ignored. Preserve the command's exit status when inspecting output; piping Gradle
 through `tail` can hide a failure.
 
+The verifier keeps static checks, JVM execution, APK assembly, UI execution and
+scripted execution as independently retained gates. The static invocation is
+`./gradlew check -x :app:testDebugUnitTest`. Its excluded task runs immediately
+afterwards through `python3 scripts/jvm-test-gate.py`, which forces fresh test
+execution and emits only joined JUnit XML on standard output. Build logs go to
+standard error. The complete recorded-suite inventory remains a dependency of
+the static `check` invocation. APK assembly and instrumented Kotlin compilation
+share one Gradle invocation.
+
+Named failures use `jvm-test-gate.py --tests package.Class#method` or
+`android-test-gate.py ui --tests package.Class#method`. Scripted failures use
+`android-test-gate.py scripted-all --tests package.Class#method`. The last command
+resolves the original scenario from the harness and runs only that scenario,
+including its isolated daemon and relay. Normal `scripted-all` still runs every
+scenario. Unknown methods, stale or missing reports, zero execution and skipped
+selected methods cannot establish a passing comparison. A failed build remains
+failed even when an earlier test report is present. The shared dispatcher runs
+these named comparisons in the same worktree and on the main commit merged
+into it. A confirmed inherited failure still requires its tracking ticket.
+
 For filesystem tests that assert permission preservation, set the fixture's
 starting mode explicitly before exercising the code. `mkdir(mode=0o755)` is
 filtered by the inherited umask: under `077` it creates a `0700` directory, so a
