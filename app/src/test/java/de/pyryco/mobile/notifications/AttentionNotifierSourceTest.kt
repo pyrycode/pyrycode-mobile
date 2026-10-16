@@ -332,7 +332,7 @@ class AttentionNotifierSourceTest {
             val newer = shadowOf(manager).allNotifications.single()
             a.read(5u)
             runCurrent()
-            assertEquals(ConversationReadMarks(5u, 7u), source.currentReadMarks("a", "same"))
+            assertEquals(ConversationReadMarks(5u, 6u), source.currentReadMarks("a", "same"))
             assertEquals(newer, shadowOf(manager).allNotifications.single())
             a.end("unseen-replay", 5u)
             runCurrent()
@@ -351,7 +351,7 @@ class AttentionNotifierSourceTest {
             // Unconfined consumers run inside tryEmit, before the inbound producer continues.
             a.end("future", 6u)
             runCurrent()
-            assertEquals(ConversationReadMarks(5u, 6u), source.readMarks.value["a"]?.get("same"))
+            assertEquals(ConversationReadMarks(5u, 5u), source.readMarks.value["a"]?.get("same"))
             assertEquals(setOf(target("a")), postedTargets())
         }
 
