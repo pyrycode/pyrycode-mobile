@@ -29,7 +29,7 @@ The data-model entity is **`Conversation`** with an `isPromoted: Boolean` flag, 
 ## Build & test
 
 Direct Gradle checks acquire the shared host test hold. Android and JVM gate
-helpers acquire it automatically. Single-use Gradle and in-process Kotlin keep
+helpers acquire it automatically. The owned Gradle client JVM and in-process Kotlin keep
 compiler work within the owned command lifetime. Build-cache reuse stays on.
 
 ```bash
