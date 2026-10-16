@@ -181,6 +181,30 @@ passes holders without reading their frame-updated values during composition. Mo
 the edge alone would leave layout/reveal subscriptions and historical-map scans
 behind: all three belong to the single candidate.
 
+Legacy receipt coverage and a daemon-confirmable displayable target are distinct
+(#2198). In scripted ping, the exact finished reply carried complete receipts through
+12, but visible content ended at 9; successful completion 10 changed the row without
+adding unread content, and metadata 11–12 could not raise the daemon's
+`LatestDisplayableEntryID` clamp. Resumed, unobscured qualification and confirmation
+of 9 had succeeded; waiting for 12 misdiagnosed a test target as a read-write failure.
+
+The test-only `awaitScriptedReplyReadCheckpoint` first retains the exact completed
+live reply and its complete `ThreadReadEvidence.checkpoint` proof. Only then may its
+bounded `requestHistory` classify receipt ids using `contributesToUnreadWatermark`;
+the target is the highest displayable receipt belonging to that retained reply.
+History merges can populate receipts and finish rows, so fetching first could conceal
+missing live delivery. A later projection cannot replace the retained proof. Unknown
+receipts, holes/barriers, unfinished or wrong replies and metadata-only claims still
+withhold a target. Receipt classification supplies no foreground sight, and local
+pending writes supply no daemon confirmation. The later peer-read step confirms the
+exact received durable post id rather than the maximum bookkeeping id.
+
+`ScriptedReplyReadCheckpointTest` covers both classifier rejection and orchestration:
+missing receipts/completion must prevent the query, and projection replacement during
+classification must preserve the retained proof. Linux validation recorded 79 focused
+passes, 2 ping passes and 22 scripted-all passes, all without failures or skips; UI
+recorded 334 passes and one skip. See [final counts, revisions and raw evidence](../../e2e-interactive-stream.md#scripted-read-target-evidence-2198).
+
 Required device probes live in `ThreadReadViewportTest` in `sharedTest`, selected
 through `ThreadReadViewportDeviceTest` in `androidTest`. They cover lifecycle,
 scrolled-away updates, dialogs, production-host scroll composition, replacement tool
