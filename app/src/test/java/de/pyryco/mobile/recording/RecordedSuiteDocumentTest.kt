@@ -2,6 +2,7 @@ package de.pyryco.mobile.recording
 
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.NoiseClientInfo
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -12,6 +13,95 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class RecordedSuiteDocumentTest {
+    private val runnerInfo = NoiseClientInfo("Android ATD built for x86_64", "current-client")
+
+    private fun registration(
+        name: String,
+        owner: String = "phone/host-0/0",
+        id: Long = 1,
+    ) = SuiteStep(
+        "client",
+        owner,
+        Envelope(
+            id,
+            "register_push_token",
+            "time",
+            MobileJson.parseToJsonElement(
+                """{"platform":"fcm","token":"recorded-push-device-address","device_name":"$name"}""",
+            ),
+        ),
+    )
+
+    private fun registeredDocument(steps: List<SuiteStep>): RecordedSuiteDocument {
+        val body = RecordedSuiteDocument.body("scenario", JsonObject(emptyMap()), emptySet(), steps)
+        return RecordedSuiteDocument.parse(JsonObject(body + ("source" to candidate().getValue("source"))).toString())
+    }
+
+    @Test fun replayUsesCapturedPhoneNameWhileKeepingCurrentVersionAndExactTape() {
+        val step = registration("Android ATD built for arm64")
+        val document = registeredDocument(listOf(step))
+        val original = document.document
+        val info = document.replayClientInfo(runnerInfo)
+        assertEquals(NoiseClientInfo("Android ATD built for arm64", "current-client"), info)
+        val request =
+            step.message!!.copy(
+                id = 20,
+                payload =
+                    JsonObject(
+                        step.message.payload.jsonObject + ("device_name" to JsonPrimitive(info.deviceName)),
+                    ),
+            )
+        val tape = document.tape()
+        tape.request(step.owner, request)
+        tape.assertComplete()
+        assertEquals(original, document.document)
+    }
+
+    @Test fun replayStillRejectsWrongRegistrationPayloads() {
+        val step = registration("Android ATD built for arm64")
+        val document = registeredDocument(listOf(step))
+        val info = document.replayClientInfo(runnerInfo)
+        val correct = JsonObject(step.message!!.payload.jsonObject + ("device_name" to JsonPrimitive(info.deviceName)))
+        for (payload in listOf(
+            JsonObject(correct + ("platform" to JsonPrimitive("wrong"))),
+            JsonObject(correct + ("device_name" to JsonPrimitive("wrong phone"))),
+            JsonObject(correct + ("unexpected" to JsonPrimitive(true))),
+        )) {
+            assertThrows(IllegalStateException::class.java) {
+                document.tape().request(step.owner, step.message.copy(id = 20, payload = payload))
+            }
+        }
+    }
+
+    @Test fun aSuiteWithoutPhoneRegistrationKeepsTheRunnerIdentity() {
+        assertEquals(runnerInfo, RecordedSuiteDocument.parse(candidate().toString()).replayClientInfo(runnerInfo))
+        val peer = registeredDocument(listOf(registration("peer", "peer/host-0/0")))
+        assertEquals(runnerInfo, peer.replayClientInfo(runnerInfo))
+    }
+
+    @Test fun reconnectAndMultipleHostsKeepTheSingleRecordedPhoneIdentity() {
+        val document =
+            registeredDocument(
+                listOf(
+                    registration("captured phone"),
+                    registration("captured phone", "phone/host-1/0"),
+                    registration("captured phone", "phone/host-0/1"),
+                ),
+            )
+        assertEquals("captured phone", document.replayClientInfo(runnerInfo).deviceName)
+    }
+
+    @Test fun inconsistentRecordedPhoneNamesCannotSilentlyChooseAnIdentity() {
+        val document =
+            registeredDocument(
+                listOf(
+                    registration("first"),
+                    registration("second", "phone/host-1/0"),
+                ),
+            )
+        assertThrows(IllegalArgumentException::class.java) { document.replayClientInfo(runnerInfo) }
+    }
+
     @Test fun observedCheckpointsAreDeclaredWithoutAddingThemToOlderCaptures() {
         assertEquals(null, candidate()["checkpointPolicy"])
         val request = Envelope(1, "test-control:checkpoint", "time", MobileJson.parseToJsonElement("""{"body":"reply-visible"}"""))
