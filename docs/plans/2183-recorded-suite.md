@@ -8,7 +8,8 @@ start Halted with manual ownership. Preserve existing fleet drains and independe
    assertion, external effect and host/peer dependency to an owned scenario batch.
 2. Add a shared application-message tape spanning phone, peer, host, connection lifecycle
    and explicit test-control actions. Keep strict payload/correlation/identity matching.
-   Production changes are limited to a generic pump dependency, with unchanged defaults.
+   Production dependencies retain their normal pump and push-wake defaults. Ticket 2193
+   corrects the observed unread marker regression, with real capture and original UI proof.
 3. Reuse original native scenarios through test-only capture/replay bindings. Record
    scenario-generated inputs explicitly. Capture only controlled successful real runs.
 4. Complete each scenario family with reviewed recordings, no-producer replay evidence

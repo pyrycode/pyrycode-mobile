@@ -1,4 +1,4 @@
-# Recorded Claude permission flow
+# Recorded Claude client tests
 
 These tests record the Android client's application messages during a controlled real
 Claude permission flow. Offline replay uses the same repository, connection coordinator,
@@ -161,6 +161,9 @@ The suite declares three limited scheduling models separately from Claude conten
 
 All generated replies retain recorded payloads and correlate to the actual request.
 Duplicate request IDs fail. Synthetic response IDs share an allocator above recorded IDs.
+A closed replay pump refuses further local sends, matching the normal pump's Boolean
+contract. These cannot emit daemon messages. Any explicitly captured refused call still
+requires its complete request payload and must be consumed.
 Recorded stream events retain cadence. Real push delivery, encryption, transport recovery
 and timing obligations retain their external checks.
 

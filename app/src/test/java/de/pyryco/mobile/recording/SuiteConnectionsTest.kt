@@ -63,6 +63,58 @@ class SuiteConnectionsTest {
             hub.close()
         }
 
+    @Test fun aClosedPumpRefusesFurtherChunksWithoutSendingThemToTheRecordedDaemon() =
+        runTest {
+            val entries =
+                listOf(
+                    SuiteStep("connect", "phone"),
+                    SuiteStep("open", "phone"),
+                    SuiteStep("close", "phone"),
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, RecordedSuiteTape(entries))
+            val transport = hub.transport("phone") { error("Live transport started") }
+            transport.connect()
+            val pump = hub.pump(transport) { error("Live pump started") }
+            pump.start()
+            runCurrent()
+            pump.close()
+            assertFalse(pump.send(frame(1, "attachment_chunk", """{"index":2}""")))
+            hub.assertComplete()
+            hub.close()
+        }
+
+    @Test fun aCapturedRejectedRequestAfterCloseStillRequiresItsCompletePayload() =
+        runTest {
+            for (changed in listOf(false, true)) {
+                val expected = frame(1, "request_attachment", """{"attachment_id":"file"}""")
+                val entries =
+                    listOf(
+                        SuiteStep("connect", "phone"),
+                        SuiteStep("open", "phone"),
+                        SuiteStep("close", "phone"),
+                        SuiteStep("client", "phone", expected, accepted = false),
+                    )
+                val tape = RecordedSuiteTape(entries)
+                val hub = SuiteConnections.replaying(backgroundScope, tape)
+                val transport = hub.transport("phone") { error("Live transport started") }
+                transport.connect()
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                runCurrent()
+                pump.close()
+                if (changed) {
+                    assertThrows(
+                        IllegalStateException::class.java,
+                    ) { pump.send(frame(80, "request_attachment", """{"attachment_id":"other"}""")) }
+                    assertThrows(IllegalStateException::class.java) { hub.assertComplete() }
+                } else {
+                    assertFalse(pump.send(expected.copy(id = 80, payload = tape.arguments(expected.payload.jsonObject))))
+                    hub.assertComplete()
+                }
+                hub.close()
+            }
+        }
+
     @Test fun recordedCadencePreservesIntermediateObservations() =
         runTest {
             val entries =

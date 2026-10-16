@@ -278,6 +278,11 @@ internal class RecordedSuiteTape(
 
     @Synchronized fun initial(): List<SuiteStep> = drain()
 
+    @Synchronized fun hasEligibleRefusal(owner: String) =
+        eligible().any {
+            steps[it].direction == "client" && steps[it].owner == owner && !steps[it].accepted
+        }
+
     @Synchronized fun send(
         owner: String,
         actual: Envelope,
