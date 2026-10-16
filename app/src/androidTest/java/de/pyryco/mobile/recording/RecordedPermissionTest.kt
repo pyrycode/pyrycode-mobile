@@ -2,6 +2,7 @@ package de.pyryco.mobile.recording
 
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.click
@@ -14,13 +15,12 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.printToLog
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -198,12 +198,28 @@ class RecordedPermissionTest {
                     .performScrollTo()
                     .assertIsDisplayed()
                     .assertIsEnabled()
-                rule.onRoot().printToLog("RecordedTree")
-                android.util.Log.i("RecordedExchange", "choiceBounds=${rule.onNode(choice).fetchSemanticsNode().boundsInRoot}")
-                instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
-                    File(instrumentation.targetContext.filesDir, "recorded-screen.png").outputStream().use {
-                        bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
-                    }
+                // The list draws behind the composer. Its scroll semantics alone can expose a
+                // button geometrically while the composer still intercepts the pointer.
+                val composerTop =
+                    rule
+                        .onNode(hasTestTag("thread-composer"))
+                        .fetchSemanticsNode()
+                        .boundsInRoot.top
+                val overlap =
+                    rule
+                        .onNode(choice)
+                        .fetchSemanticsNode()
+                        .boundsInRoot.bottom - composerTop + 24f
+                if (overlap > 0f) {
+                    rule.onNode(hasScrollToNodeAction()).performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, -overlap) }
+                }
+                check(
+                    rule
+                        .onNode(choice)
+                        .fetchSemanticsNode()
+                        .boundsInRoot.bottom < composerTop,
+                ) {
+                    "Permission choice remains behind the composer"
                 }
                 rule.onNode(choice).performTouchInput { click(center) }
             }
