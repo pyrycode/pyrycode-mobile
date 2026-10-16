@@ -174,13 +174,14 @@ internal object RecordedSuiteNative {
             }
             single<RelayConnectionFactory> {
                 val original = get<RelayTransportFactory>()
+                val clientInfo = get<NoiseClientInfo>()
                 RelayConnectionFactory(
                     get(),
                     RelayTransportFactory { pairing ->
                         session.remember(pairing)
                         session.hub.transport(session.owner("phone", pairing.serverId)) { original.create(pairing) }
                     },
-                    get(),
+                    session.document?.replayClientInfo(clientInfo) ?: clientInfo,
                     pushTokens =
                         if (session.document != null) {
                             session.pushTokens
