@@ -144,6 +144,8 @@ File downloads are read-only queries. They may race other reads, including a mod
 lookup after reconnect. The attachment identity and complete request remain exact.
 Upload chunks and user messages remain ordered commands. Downloaded chunks cannot be
 released before the actual request or across a test observation checkpoint.
+A connection's end and close also wait for all earlier required requests on that
+connection. Read-only requests still count. Another connection can finish independently.
 
 The suite declares three limited scheduling models separately from Claude content:
 

@@ -42,7 +42,7 @@ internal class RecordedSuiteTape(
     private val identities = mutableMapOf<String, String>()
     private val released = mutableSetOf<Int>()
     private var lifecycleBefore = emptyList<Int?>()
-    private var ownerCommandBefore = emptyList<Int?>()
+    private var requiredRequests = emptyMap<String, List<Int>>()
     private var matched = 0
     private var failure: String? = null
     private var readReceipts: SuiteReadReceipts? = null
@@ -204,19 +204,14 @@ internal class RecordedSuiteTape(
                     }.toMap()
         }
         val lifecycle = mutableMapOf<String, Int>()
-        val ownerCommands = mutableMapOf<String, Int>()
         lifecycleBefore =
             steps.mapIndexed { index, step ->
                 val previous = lifecycle[family(step.owner)]
                 if (step.direction in setOf("connect", "close")) lifecycle[family(step.owner)] = index
                 previous
             }
-        ownerCommandBefore =
-            steps.mapIndexed { index, step ->
-                val previous = ownerCommands[step.owner]
-                if (step.direction == "client" && step.message!!.type !in queryTypes) ownerCommands[step.owner] = index
-                previous
-            }
+        requiredRequests =
+            steps.indices.filter { steps[it].direction == "client" && it !in optionalModelReplies }.groupBy { steps[it].owner }
     }
 
     private fun collect(
@@ -257,6 +252,11 @@ internal class RecordedSuiteTape(
 
     private fun family(owner: String) = owner.substringBeforeLast('/', owner)
 
+    private fun precedingRequestsComplete(
+        index: Int,
+        owner: String,
+    ) = requiredRequests[owner].orEmpty().all { it >= index || it in consumed }
+
     private fun commandBoundary(): Int =
         steps.indices.firstOrNull {
             it !in consumed && steps[it].direction == "client" && steps[it].message!!.type !in queryTypes
@@ -287,7 +287,7 @@ internal class RecordedSuiteTape(
             when {
                 index in consumed || !connected || index > checkpoint -> false
                 step.direction == "connect" -> true
-                step.direction == "close" -> ownerCommandBefore[index]?.let { it in consumed } ?: true
+                step.direction == "close" -> precedingRequestsComplete(index, step.owner)
                 step.direction == "client" -> step.message!!.type in queryTypes || index == boundary
                 else -> false
             }
@@ -477,6 +477,7 @@ internal class RecordedSuiteTape(
                 continue
             }
             if (lifecycleBefore[index]?.let { it !in consumed } == true) continue
+            if (step.direction in setOf("inbound_end", "down", "transport_down") && !precedingRequestsComplete(index, step.owner)) continue
             // An automatic read update must not hold the producer traffic that makes that read possible.
             // Keep connection termination behind it, while independent messages retain their source order.
             if (step.owner in blockedOwners && step.direction !in setOf("daemon", "settings_snapshot")) continue

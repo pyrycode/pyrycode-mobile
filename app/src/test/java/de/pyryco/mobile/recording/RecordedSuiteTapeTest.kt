@@ -8,6 +8,41 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class RecordedSuiteTapeTest {
+    @Test fun aConnectionCannotEndBeforeItsEarlierDownloadRequestAndChunks() {
+        val owner = "peer/host/0"
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client(owner, frame(1, "request_attachment", """{"attachment_id":"file"}""")),
+                    daemon(owner, frame(2, "attachment_chunk", """{"data":"YWJj"}""", reply = 1)),
+                    SuiteStep("inbound_end", owner),
+                    SuiteStep("close", owner),
+                ),
+                literalProducerIdentities = true,
+            )
+        assertEquals(emptyList<SuiteStep>(), tape.initial())
+        val delivered = tape.request(owner, frame(90, "request_attachment", """{"attachment_id":"file"}"""))
+        assertEquals(listOf("daemon", "inbound_end"), delivered.map { it.direction })
+        assertEquals(90L, delivered.first().message!!.inReplyTo)
+        tape.lifecycle("close", owner)
+        tape.assertComplete()
+    }
+
+    @Test fun closingOneConnectionCannotCancelItsRequiredReadOrBlockAnotherConnection() {
+        val rows =
+            listOf(
+                client("phone", frame(1, "request_model_list")),
+                SuiteStep("inbound_end", "peer"),
+                SuiteStep("close", "peer"),
+                SuiteStep("inbound_end", "phone"),
+                SuiteStep("close", "phone"),
+            )
+        val tape = RecordedSuiteTape(rows)
+        assertEquals(listOf("peer"), tape.initial().map { it.owner })
+        tape.lifecycle("close", "peer")
+        assertThrows(IllegalStateException::class.java) { tape.lifecycle("close", "phone") }
+    }
+
     @Test fun aFileDownloadIsAReadAndDoesNotTurnARacingCatalogLookupIntoAUserAction() {
         val owner = "phone/host/0"
         val payload = """{"conversation_id":"chat"}"""
