@@ -164,7 +164,9 @@ def capture(serial, destination, pyry):
         (home / '.pyry/config.json').write_text(json.dumps({'interactive_runner': 'stream-json', 'stdio_permission_prompt': True}))
         (home / '.claude').mkdir(mode=0o700)
         (home / '.claude/settings.json').write_text(json.dumps({'skipDangerousModePermissionPrompt': True}))
-        (home / '.claude.json').write_text(json.dumps({'hasCompletedOnboarding': True}))
+        configured = json.loads((Path.home() / '.claude.json').read_text())
+        onboarding = {key: configured[key] for key in ['oauthAccount', 'hasCompletedOnboarding', 'lastOnboardingVersion', 'installMethod', 'userID'] if key in configured}
+        private_write(home / '.claude.json', json.dumps(onboarding).encode())
         child_env = {key: value for key, value in os.environ.items() if not key.startswith('OP_')}
         child_env.update(HOME=str(home), PYRY_MOBILE_V2='1')
         relay = 'wss://' + os.environ.get('LIVE_RELAY_HOST', 'pyrycode-relay.pyryco.de')

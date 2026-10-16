@@ -168,11 +168,14 @@ class RecordedPermissionTest {
             rule.waitForIdle()
             rule.onNode(hasSetTextAction()).performTextInput(prompt)
             rule.onNodeWithContentDescription(instrumentation.targetContext.getString(de.pyryco.mobile.R.string.cd_send_message)).performClick()
+            android.util.Log.i("RecordedExchange", "stage=prompt-sent")
             rule.waitUntil(120000) { vm.currentModal.value is ModalUiState.Open }
+            android.util.Log.i("RecordedExchange", "stage=permission-shown")
             val shown = vm.currentModal.value as ModalUiState.Open
             val allow = shown.options.single { it.id == "allow_once" }.label
             rule.onNodeWithText(allow).performScrollTo().performClick()
             rule.waitUntil(10000) { vm.armedOptionId.value == "allow_once" }
+            android.util.Log.i("RecordedExchange", "stage=allow-armed")
             val replyNode = hasText(reply) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
             assertFalse(
                 "Reply arrived before permission confirmation",
