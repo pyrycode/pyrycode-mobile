@@ -76,3 +76,32 @@ the explicit live command. Timing, encrypted transport, reconnect, other permiss
 session grants and other live scenarios retain their existing tests and requirements.
 Android startup and UI costs remain, so report measured Android times rather than using
 Desktop's replay timing as an Android forecast.
+
+## Verified evidence, 2026-10-16
+
+The device was the owned, read-only `claude955` Android ATD emulator, Android 13,
+API 33, arm64. The committed fixture has 48 application frames and SHA-256
+`71fff5a9926e594b9568b615480e8c797276eee3956f87829aab0086631c49c1`.
+Its producer metadata is stored with the asset. It includes the observed initial
+read errors and the actual `backfill_since` request. No Desktop retry action was added.
+
+A separate fresh compatibility run used clean daemon main
+`4d98f07513f04fa36fa55714b31ecf09e1cb34c2`, executable SHA-256
+`af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9`,
+and Claude Code 2.1.280. The outgoing contracts matched, and both recordings passed.
+
+| Check | Executed | Failed | Skipped | Android seconds |
+| --- | ---: | ---: | ---: | ---: |
+| Fresh live capture against current daemon main | 1 | 0 | 0 | 8.210 |
+| Committed fixture replay in that check | 1 | 0 | 0 | 2.929 |
+| Fresh candidate replay in that check | 1 | 0 | 0 | 2.826 |
+| Default asset with credentials removed and producer traps | 1 | 0 | 0 | 3.454 |
+| Repeated offline replay with producer traps | 2 | 0 | 0 | 2.863, 2.852 |
+
+These are instrumentation wall times on an already booted emulator. They exclude
+build, install and daemon startup. The traps replaced both `claude` and `pyry` on
+PATH and recorded zero invocations. Android received no Claude test credentials.
+The production debug APK contained neither recording classes nor the recording switch.
+The full JVM suite passed 5646 tests. The seven Python contract/export checks passed.
+Formatting and the documentation guard passed. The full scripted and live suites
+were not rerun for this test-only slice.
