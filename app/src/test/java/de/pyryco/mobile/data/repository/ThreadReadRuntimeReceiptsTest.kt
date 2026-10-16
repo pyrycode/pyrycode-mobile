@@ -123,6 +123,72 @@ class ThreadReadRuntimeReceiptsTest {
             assertNull(other.readEvidence.checkpoint(reply(resolved.rows), 0u))
         }
 
+    @Test fun aKnownTemporaryPermissionPromptCannotPermanentlyPoisonLaterReadCheckpoints() =
+        runTest {
+            val page = fixture(true)
+            val projection = ThreadProjection()
+            projection.mergeHistoryPage(CONVERSATION, page, true)
+            val before = projection.observeSnapshot(CONVERSATION).first()
+            val prompt =
+                Envelope(
+                    1000,
+                    "modal_shown",
+                    "2026-10-16T00:00:00Z",
+                    MobileJson.parseToJsonElement(
+                        """{"conversation_id":"$CONVERSATION","modal_id":"permission","class":"permission","title":"Permission","prompt":"Run controlled tool?","options":[{"id":"allow_once","label":"Allow once"}],"default_option_id":"allow_once"}""",
+                    ),
+                )
+            projection.recordReadEnvelope(prompt, true, before.rows)
+            val after = projection.observeSnapshot(CONVERSATION).first()
+            assertTrue(after.readEvidence.unidentified.isEmpty())
+            assertEquals(before.rows, after.rows)
+            assertEquals(before.readEvidence.facts, after.readEvidence.facts)
+            assertEquals(6uL, after.readEvidence.checkpoint(reply(after.rows), 0u))
+
+            // Unknown or malformed content and unexpected durable control entries remain conservative.
+            for (invalid in listOf(
+                prompt.copy(type = "future_prompt"),
+                prompt.copy(payload = MobileJson.parseToJsonElement("""{"conversation_id":"$CONVERSATION","class":"permission"}""")),
+                prompt.copy(
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            prompt.payload.toString().replace("\"class\":\"permission\"", "\"class\":\"future_permission\""),
+                        ),
+                ),
+                prompt.copy(historyEntryId = 2u),
+            )) {
+                val guarded = ThreadProjection()
+                val entries = page.entries.filterNot { it.unsignedId == invalid.historyEntryId }
+                guarded.mergeHistoryPage(CONVERSATION, page.copy(entries = entries), true)
+                guarded.recordReadEnvelope(invalid, true, before.rows)
+                val snapshot = guarded.observeSnapshot(CONVERSATION).first()
+                assertNull(snapshot.readEvidence.checkpoint(reply(snapshot.rows), 0u))
+            }
+        }
+
+    @Test fun aKnownTemporaryQuestionCannotPoisonLaterReadCheckpointsButMalformedQuestionsStillBlock() =
+        runTest {
+            val page = fixture(true)
+            val payload =
+                """{"conversation_id":"$CONVERSATION","question_batch_id":"batch",
+                    "questions":[{"question":"Choose","header":"Choice",
+                    "options":[{"label":"One","description":"First choice"}],"multi_select":false}]}"""
+            for (valid in listOf(true, false)) {
+                val projection = ThreadProjection()
+                projection.mergeHistoryPage(CONVERSATION, page, true)
+                val before = projection.observeSnapshot(CONVERSATION).first()
+                val bytes = if (valid) payload else payload.replace("\"multi_select\":false", "\"multi_select\":\"false\"")
+                projection.recordReadEnvelope(
+                    Envelope(1000, "question_shown", "2026-10-16T00:00:00Z", MobileJson.parseToJsonElement(bytes)),
+                    true,
+                    before.rows,
+                )
+                val snapshot = projection.observeSnapshot(CONVERSATION).first()
+                assertEquals(valid, snapshot.readEvidence.unidentified.isEmpty())
+                assertEquals(if (valid) 6uL else null, snapshot.readEvidence.checkpoint(reply(snapshot.rows), 0u))
+            }
+        }
+
     private fun envelope(entry: HistoryEntry) =
         Envelope(900, entry.type, entry.timestamp.toString(), entry.payload, historyEntryId = entry.unsignedId)
 

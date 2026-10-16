@@ -4,6 +4,13 @@ Automated end-to-end coverage for the phone receiving claude's live reply. Manua
 path is cumbersome, so this builds it steadiest-layer-first and climbs toward the flakier full-UI
 layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire test pyrycode #642.
 
+## Recorded Claude permission behaviour
+
+The normal non-live Android UI selection includes the captured permission-flow test.
+It uses real recorded application messages through the production repository and thread
+screen. [Recorded-test guidance](recorded-tests.md) covers the offline command, controlled
+live capture, compatibility verification and limits. Existing scripted and live gates remain.
+
 ## The ladder (reliable → flaky)
 
 Durable reconnect catch-up (#1842) adds rung-4

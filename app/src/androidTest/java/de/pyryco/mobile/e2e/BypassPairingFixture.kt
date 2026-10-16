@@ -14,6 +14,22 @@ internal class BypassPairingFixture private constructor(
 ) {
     companion object {
         fun request(): BypassPairingFixture {
+            val result =
+                de.pyryco.mobile.recording.SuiteHostFixtures.pairing("bypass/pair") {
+                    val fixture = requestLive()
+                    kotlinx.serialization.json.buildJsonObject {
+                        put("serverId", kotlinx.serialization.json.JsonPrimitive(fixture.serverId))
+                        put("pairCode", kotlinx.serialization.json.JsonPrimitive(fixture.pairCode))
+                        put("peerToken", kotlinx.serialization.json.JsonPrimitive(fixture.peerToken))
+                        put("serverStaticPublicKey", kotlinx.serialization.json.JsonPrimitive(fixture.serverStaticPublicKey))
+                    }
+                }
+
+            fun field(name: String) = (result.getValue(name) as kotlinx.serialization.json.JsonPrimitive).content
+            return BypassPairingFixture(field("serverId"), field("pairCode"), field("peerToken"), field("serverStaticPublicKey"))
+        }
+
+        private fun requestLive(): BypassPairingFixture {
             try {
                 val args = InstrumentationRegistry.getArguments()
                 val port = requireNotNull(args.getString("bypassFixturePort")).toInt()
