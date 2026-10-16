@@ -9206,6 +9206,7 @@ class InteractiveStreamE2ETest {
         up: Boolean,
     ) {
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        if (!up) RecordedSuiteNative.beforeHostLinkClose(serverId)
         runBlocking {
             withTimeoutDiagnostic({
                 "host link ${if (up) "reconnect" else "close"} timed out; repository present=${bundle.coordinator.currentRepository.value != null}"

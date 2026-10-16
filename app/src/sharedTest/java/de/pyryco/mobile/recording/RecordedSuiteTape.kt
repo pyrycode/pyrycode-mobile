@@ -304,6 +304,14 @@ internal class RecordedSuiteTape(
 
     @Synchronized fun initial(): List<SuiteStep> = drain()
 
+    @Synchronized fun closeReady(owner: String): Boolean {
+        failure?.let { fail(it) }
+        val close =
+            steps.indices.firstOrNull { it !in consumed && steps[it].owner == owner && steps[it].direction == "close" }
+                ?: fail("No recorded close for connection $owner")
+        return close in eligible() && precedingWorkReleased(close, allowDeferredReads = true)
+    }
+
     @Synchronized fun hasEligibleRefusal(owner: String) =
         eligible().any {
             steps[it].direction == "client" && steps[it].owner == owner && !steps[it].accepted

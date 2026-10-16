@@ -151,6 +151,11 @@ the whole application graph. They wait for all earlier required requests and lif
 events before delivery. They cannot move across a captured app restart and accidentally
 change an earlier connection's requests. Independent ordinary connection frames still
 progress separately. Only the declared automatic read notifications may remain deferred.
+The shared test-driven host disconnect also waits for its recorded close prefix before
+cancelling the application jobs. A stored push token alone does not prove its registration
+request has run. Replay waits for the actual required requests and queued replies, then
+lets the original disconnect proceed. This uses the already recorded lifecycle event;
+it does not add observations to historical captures or omit registration requests.
 
 The suite declares three limited scheduling models separately from Claude content:
 

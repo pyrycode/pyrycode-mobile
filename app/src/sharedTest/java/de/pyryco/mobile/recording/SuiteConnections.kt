@@ -194,6 +194,15 @@ internal class SuiteConnections private constructor(
         }
     }
 
+    /** A test must reach the captured close prefix before cancelling the app jobs that supply it. */
+    suspend fun beforeClose(owner: String) {
+        if (tape == null || synchronized(this) { transports[owner]?.localClose?.get() == true }) return
+        withTimeout(30000) {
+            while (!synchronized(this@SuiteConnections) { tape.closeReady(owner) }) delay(10)
+            awaitIdle()
+        }
+    }
+
     suspend fun checkpoint(name: String) {
         require(name.matches(Regex("[a-z][a-z0-9-]{0,79}"))) { "Invalid test checkpoint name" }
         if (tape != null) {

@@ -236,6 +236,12 @@ internal object RecordedSuiteNative {
 
     val replaying get() = current?.document != null
 
+    fun beforeHostLinkClose(serverId: String) {
+        val session = current?.takeIf { it.document != null } ?: return
+        val owner = session.currentOwner("phone", serverId) ?: return
+        runBlocking { session.hub.beforeClose(owner) }
+    }
+
     fun exchange(
         action: String,
         body: JsonObject,
@@ -429,6 +435,16 @@ internal object RecordedSuiteNative {
         fun remember(pairing: PairedServer) {
             credentials += pairing.token
             credentials += pairing.serverStaticPublicKey
+        }
+
+        @Synchronized fun currentOwner(
+            role: String,
+            host: String,
+        ): String? {
+            val label = hosts[host] ?: return null
+            val key = "$role/$label"
+            val generation = generations[key]?.minus(1) ?: return null
+            return "$key/$generation"
         }
 
         @Synchronized fun owner(

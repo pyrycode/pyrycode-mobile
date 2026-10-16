@@ -18,6 +18,39 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteConnectionsTest {
+    @Test fun aTestDrivenCloseWaitsForRecordedRequestsAndTheirDeliveryBeforeCancellingThePump() =
+        runTest {
+            val registration =
+                frame(1, "register_push_token", """{"token":"recorded-push-device-address","platform":"fcm","device_name":"phone"}""")
+            val entries =
+                listOf(
+                    SuiteStep("connect", "phone"),
+                    SuiteStep("open", "phone"),
+                    SuiteStep("client", "phone", registration),
+                    SuiteStep("daemon", "phone", frame(2, "ack", reply = 1), delayMs = 100),
+                    SuiteStep("close", "phone"),
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, RecordedSuiteTape(entries))
+            val transport = hub.transport("phone") { error("Live transport started") }
+            transport.connect()
+            val pump = hub.pump(transport) { error("Live pump started") }
+            pump.start()
+            runCurrent()
+            val closing = async { hub.beforeClose("phone") }
+            runCurrent()
+            assertFalse(closing.isCompleted)
+            pump.send(registration.copy(id = 90))
+            runCurrent()
+            assertFalse(closing.isCompleted)
+            advanceTimeBy(120)
+            runCurrent()
+            closing.await()
+            assertEquals(90L, pump.inbound.first().inReplyTo)
+            pump.close()
+            hub.assertComplete()
+            hub.close()
+        }
+
     @Test fun observationCheckpointWaitsForEarlierRequestsAndTheirScheduledDelivery() =
         runTest {
             val entries =
