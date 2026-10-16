@@ -13,6 +13,27 @@ spec.loader.exec_module(suite)
 
 
 class SuiteDriverTest(unittest.TestCase):
+    def test_download_queries_can_reorder_but_keep_the_complete_file_identity(self):
+        import base64
+        original = self.fixture()
+        download = original['steps'][0]['message']
+        download.update(type='request_attachment', payload={'attachment_id': 'file'})
+        query = copy.deepcopy(original['steps'][0])
+        query['message'].update(id=2, type='request_model_list', payload={'conversation_id': 'chat'})
+        upload = copy.deepcopy(original['steps'][0])
+        data = b'captured bytes'
+        upload['owner'] = 'peer'
+        upload['message'].update(type='attachment_chunk', payload={'attachment_id': 'file', 'index': 0, 'total_chunks': 1,
+                                                                  'sha256': suite.digest(data), 'data': base64.b64encode(data).decode()})
+        send = copy.deepcopy(query)
+        send['message'].update(id=3, type='send_message', payload={'conversation_id': 'chat', 'message_id': 'user-send', 'text': 'unrelated later message'})
+        original['steps'] = [upload, original['steps'][0], send, query]
+        reordered = copy.deepcopy(original)
+        reordered['steps'] = [reordered['steps'][0], reordered['steps'][2], reordered['steps'][3], reordered['steps'][1]]
+        self.assertEqual(suite.contract(original), suite.contract(reordered))
+        reordered['steps'][-1]['message']['payload']['attachment_id'] = 'substituted-file'
+        self.assertNotEqual(suite.contract(original), suite.contract(reordered))
+
     def test_query_order_may_vary_inside_but_never_across_observation_checkpoints(self):
         original = self.fixture()
         first = original['steps'][0]

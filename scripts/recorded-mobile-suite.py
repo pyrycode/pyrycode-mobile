@@ -27,7 +27,7 @@ PACKAGE = legacy.PACKAGE
 MANIFEST = ROOT / 'app/src/androidTest/assets/recorded/suite.json'
 COUNTS = {'executed': 1, 'failed': 0, 'skipped': 0}
 PUSH_ADDRESS = 'recorded-push-device-address'
-QUERIES = legacy.QUERIES | {'backfill_since', 'register_push_token'}
+QUERIES = legacy.QUERIES | {'backfill_since', 'register_push_token', 'request_attachment'}
 
 
 def require(condition, message):

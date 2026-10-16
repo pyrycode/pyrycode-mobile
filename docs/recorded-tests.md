@@ -140,6 +140,10 @@ The full suite preserves all mutating commands in recorded order. Independent co
 may progress separately. Background queries match their complete owner, payload and count.
 Their responses wait for their actual correlated requests and preceding recorded commands.
 Moving a query earlier cannot expose a future action's answer.
+File downloads are read-only queries. They may race other reads, including a model
+lookup after reconnect. The attachment identity and complete request remain exact.
+Upload chunks and user messages remain ordered commands. Downloaded chunks cannot be
+released before the actual request or across a test observation checkpoint.
 
 The suite declares three limited scheduling models separately from Claude content:
 

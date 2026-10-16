@@ -60,6 +60,7 @@ internal class RecordedSuiteTape(
         setOf(
             "list_conversations",
             "request_history",
+            "request_attachment",
             "request_model_list",
             "request_context_usage",
             "request_session_settings",

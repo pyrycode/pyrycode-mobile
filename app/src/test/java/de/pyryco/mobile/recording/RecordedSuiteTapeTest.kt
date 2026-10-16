@@ -8,6 +8,36 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class RecordedSuiteTapeTest {
+    @Test fun aFileDownloadIsAReadAndDoesNotTurnARacingCatalogLookupIntoAUserAction() {
+        val owner = "phone/host/0"
+        val payload = """{"conversation_id":"chat"}"""
+        val rows =
+            listOf(
+                daemon(owner, frame(1, "model_list", """{"conversation_id":"chat","models":[]}""")),
+                client(owner, frame(1, "request_attachment", """{"attachment_id":"file"}""")),
+                daemon(owner, frame(2, "attachment_chunk", """{"data":"YWJj"}""", reply = 1)),
+                client(owner, frame(3, "send_message", """{"text":"next actual user action"}""")),
+            )
+        val tape = RecordedSuiteTape(rows, literalProducerIdentities = true, redundantModelQueries = true)
+        tape.initial()
+        assertEquals(true, tape.send(owner, frame(90, "request_model_list", payload)).accepted)
+        val downloaded = tape.request(owner, frame(91, "request_attachment", """{"attachment_id":"file"}"""))
+        assertEquals(
+            "YWJj",
+            downloaded.single().message!!.payload.jsonObject.getValue("data").let {
+                (it as kotlinx.serialization.json.JsonPrimitive).content
+            },
+        )
+        assertEquals(91L, downloaded.single().message!!.inReplyTo)
+        tape.request(owner, frame(92, "send_message", """{"text":"next actual user action"}"""))
+        tape.assertComplete()
+        val changed = RecordedSuiteTape(rows, literalProducerIdentities = true, redundantModelQueries = true)
+        changed.initial()
+        assertThrows(IllegalStateException::class.java) {
+            changed.request(owner, frame(99, "request_attachment", """{"attachment_id":"another-file"}"""))
+        }
+    }
+
     @Test fun anObservationCheckpointHoldsFutureQueriesAndRepliesUntilTheTestReachesIt() {
         val checkpoint = client("control", frame(1, "test-control:checkpoint", """{"body":"reply-visible"}"""))
         val tape =
