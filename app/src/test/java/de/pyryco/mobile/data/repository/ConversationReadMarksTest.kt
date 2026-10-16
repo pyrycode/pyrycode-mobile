@@ -192,7 +192,7 @@ class ConversationReadMarksTest {
     fun runtimeReceiptHistoryRequiresCorrelatedDaemonReadConfirmation() =
         runTest {
             // Real-store examples and list/clamp expectations from daemon PR #3034.
-            for ((fixture, latest, expectedCheckpoint) in listOf(Triple("enabled", 5uL, 6uL), Triple("disabled", 4uL, 5uL))) {
+            for ((fixture, latest, expectedCheckpoint) in listOf(Triple("enabled", 4uL, 6uL), Triple("disabled", 3uL, 5uL))) {
                 val pump = Pump()
                 val repository = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
                 val otherHost = RemoteConversationRepository(Pump(), backgroundScope, negotiatedCapabilities = { setOf("interactive") })
@@ -213,7 +213,7 @@ class ConversationReadMarksTest {
                     val unseenReply = reduceOrderedHistoryPage(page.entries, true).rows.filterIsInstance<ThreadItem.MessageItem>().last()
                     assertNull(receiptOnly.readEvidence.checkpoint(unseenReply, 0u))
                     assertEquals(true, receiptOnly.readEvidence.facts[receipt.unsignedId])
-                    assertEquals(ConversationReadMarks(0u, 2u), repository.observeReadMarks("a").first())
+                    assertEquals(ConversationReadMarks(0u, 0u), repository.observeReadMarks("a").first())
                     assertTrue(pump.sent.none { it.type == "mark_conversation_read" })
                 }
                 val request = backgroundScope.async { repository.requestHistory("a", "", 100) }
@@ -233,7 +233,7 @@ class ConversationReadMarksTest {
                 val presented = held.rows.filterIsInstance<ThreadItem.MessageItem>().last()
                 assertEquals(2, held.rows.count { it.isReadContent() })
                 assertFalse(presented.message.isStreaming)
-                // The completed turn_end counts, while the following idle receipt only extends sight.
+                // Reply content determines unread. Later completion and idle still extend qualified sight.
                 assertEquals(ConversationReadMarks(0u, latest), repository.observeReadMarks("a").first())
                 assertTrue(pump.sent.none { it.type == "mark_conversation_read" })
                 val checkpoint = requireNotNull(held.readEvidence.checkpoint(presented, 0u))
@@ -725,6 +725,49 @@ class ConversationReadMarksTest {
             }
         }
 
+    @Test fun knownNonvisualLegacyMetadataAndSuccessfulCompletionCannotStrandUnreadAfterARead() =
+        runTest {
+            val cases =
+                listOf(
+                    "context_usage" to "{}",
+                    "thinking_progress" to "{}",
+                    "tool_progress" to "{}",
+                    "background_task_roster" to "{}",
+                    "background_task_progress" to "{}",
+                    "rate_limited" to "{}",
+                    "model_announced" to "{}",
+                    "session_facts" to "{}",
+                    "mcp_status" to "{}",
+                    "model_list" to "{}",
+                    "slash_command_list" to "{}",
+                    "turn_end" to """{"turn_id":"t","stop_reason":"end_turn","outcome":"success"}""",
+                    "banner" to """{"level":"info","text":"status only"}""",
+                    "background_task_updated" to """{"task_id":"task","status":"","summary":""}""",
+                )
+            for ((type, fields) in cases) {
+                for (fromHistory in listOf(false, true)) {
+                    val pump = Pump()
+                    val repository = interactiveRepo(pump)
+                    pump.push(snapshot(row("a", "41", "41")))
+                    val data = MobileJson.parseToJsonElement(fields).jsonObject
+                    val payload =
+                        kotlinx.serialization.json.JsonObject(
+                            data + ("conversation_id" to kotlinx.serialization.json.JsonPrimitive("a")),
+                        )
+                    val metadata = content(42u).copy(type = type, payload = payload)
+                    if (fromHistory) history(repository, pump, listOf(metadata, content(41u))) else pump.push(metadata)
+                    runCurrent()
+                    assertEquals("$type history=$fromHistory", ConversationReadMarks(41u, 41u), repository.observeReadMarks("a").first())
+                    val facts =
+                        repository
+                            .observeThreadSnapshot("a")
+                            .first()
+                            .readEvidence.facts
+                    assertTrue("metadata receipt remains accounted for", 42uL in facts)
+                }
+            }
+        }
+
     @Test fun invariantEachExcludedLiveAndReplayTypeKeepsReceiptWithoutRaisingUnread() =
         runTest {
             for (type in excludedTypes) {
@@ -844,14 +887,8 @@ class ConversationReadMarksTest {
                     "message",
                     "assistant_delta",
                     "turn_end",
-                    "thinking_progress",
                     "resetting",
                     "banner",
-                    "context_usage",
-                    "rate_limited",
-                    "model_list",
-                    "slash_command_list",
-                    "mcp_status",
                     "compaction_boundary",
                     "future_type",
                     "Turn_state",

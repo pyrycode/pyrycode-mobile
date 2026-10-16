@@ -16,13 +16,16 @@ import de.pyryco.mobile.data.network.CompactionBoundaryPayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.ModelRefusalFallbackPayloadDto
 import de.pyryco.mobile.data.network.ModelRefusalNoFallbackPayloadDto
+import de.pyryco.mobile.data.network.QuestionShownPayloadDto
 import de.pyryco.mobile.data.network.ToolDeniedPayloadDto
 import de.pyryco.mobile.data.network.ToolProgressPayloadDto
 import de.pyryco.mobile.data.network.UnrecognizedMessagePayloadDto
 import de.pyryco.mobile.data.network.WireRole
 import de.pyryco.mobile.data.network.failed
+import de.pyryco.mobile.data.network.toBatch
 import de.pyryco.mobile.data.network.toDenial
 import de.pyryco.mobile.data.network.toRow
 import kotlinx.coroutines.flow.Flow
@@ -245,7 +248,7 @@ internal class ThreadProjection(
                 ?.takeIf { it.isNotEmpty() } ?: return
         val id = envelope.historyEntryId?.takeIf { it > 0u }
         if (id == null) {
-            if (envelope.type in READ_METADATA_TYPES) return
+            if (envelope.type in READ_METADATA_TYPES || interactive && envelope.isTemporaryInteractivePrompt()) return
             state.update { current ->
                 val evidence = current.readEvidence[conversation] ?: ThreadReadEvidence()
                 current.copy(
@@ -1349,6 +1352,26 @@ internal class ThreadProjection(
             null
         }
 }
+
+/** Temporary controls live outside durable history; the viewport still excludes their obscured content. */
+private fun Envelope.isTemporaryInteractivePrompt(): Boolean =
+    try {
+        when (type) {
+            "modal_shown" ->
+                MobileJson.decodeFromJsonElement<ModalShownPayloadDto>(payload).let {
+                    it.modalClass == "permission" && it.modalId.isNotBlank()
+                }
+            "question_shown" ->
+                MobileJson
+                    .decodeFromJsonElement<QuestionShownPayloadDto>(payload)
+                    .toBatch()
+                    .questionBatchId
+                    .isNotBlank()
+            else -> false
+        }
+    } catch (_: IllegalArgumentException) {
+        false
+    }
 
 private val READ_METADATA_TYPES =
     setOf(

@@ -352,6 +352,15 @@ internal class SessionErrorRecoveryScenario(
         action: String,
     ): JsonObject {
         if (action != "close") stage(arm, "fixture_$action")
+        return de.pyryco.mobile.recording.SuiteHostFixtures.pairing("session-error/$arm/$action") {
+            requestLive(arm, action)
+        }
+    }
+
+    private fun requestLive(
+        arm: String,
+        action: String,
+    ): JsonObject {
         val connection = URL("http://10.0.2.2:$port/$arm/$action").openConnection() as HttpURLConnection
         try {
             connection.requestMethod = "POST"

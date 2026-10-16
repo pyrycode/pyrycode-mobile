@@ -247,6 +247,14 @@ by type, normalized timestamp and payload; only an ordinary matching history ent
 clears it, and no extra fetch is made to find it. Valid timestamps are canonicalized on
 both lanes, since `2026-10-07T00:00:00.1234Z` parses to `.123400Z`.
 
+Temporary permission and question controls are not durable content. On the legacy interactive
+lane, a strictly decoded `modal_shown` of class `permission` or `question_shown` without a
+durable identity does not create an unidentified history barrier. These controls create no
+history fact and grant no read checkpoint. The viewport still refuses sight while the prompt
+obscures content. Unknown modal classes, malformed controls and any unexpected durable
+control entry retain the conservative barrier. `ThreadReadRuntimeReceiptsTest` covers both
+valid controls and the negative cases.
+
 Unread classification and evidence classification are independent. Excluding a
 status type from latest grants no sight and bypasses none of the unknown, malformed,
 missing-identity or receipt-gap barriers. Conversely, a strictly decoded

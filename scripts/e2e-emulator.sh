@@ -1748,6 +1748,16 @@ GRADLE_TEST_ARGS+=(
   -Pandroid.testInstrumentationRunnerArguments.serverId="${SERVER_ID}"
   -Pandroid.testInstrumentationRunnerArguments.serverStaticPublicKey="${SERVER_STATIC_PUBKEY}"
 )
+if [ -n "${RECORDED_SUITE_MODE:-}" ]; then
+  [ "${RECORDED_SUITE_MODE}" = "capture" ] && [ -n "${LIVE}" ] \
+    || die "recorded suite capture requires explicit LIVE mode"
+  [[ "${RECORDED_SUITE_FILE:-}" =~ ^recorded-[a-f0-9]+\.json$ ]] \
+    || die "recorded suite output name is invalid"
+  GRADLE_TEST_ARGS+=(
+    -Pandroid.testInstrumentationRunnerArguments.recordedSuite=capture
+    -Pandroid.testInstrumentationRunnerArguments.suiteFile="${RECORDED_SUITE_FILE}"
+  )
+fi
 TEST_STATUS=0
 if [ "${E2E_INSTALLED:-}" = "1" ]; then
   run_installed_instrumentation "${GRADLE_TEST_ARGS[@]}" || TEST_STATUS=$?
