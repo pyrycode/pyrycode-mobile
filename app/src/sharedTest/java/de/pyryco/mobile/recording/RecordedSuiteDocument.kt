@@ -40,6 +40,8 @@ internal class RecordedSuiteDocument private constructor(
             retainedPhoneHistory = document["readReceiptNormalization"] == JsonPrimitive("coalesced-visible-history-v3"),
             literalProducerIdentities = document["producerIdentityMode"] == JsonPrimitive("literal"),
             redundantModelQueries = document["modelQueryNormalization"] == JsonPrimitive("reconnect-catalog-race-v1"),
+            recordedSettingsReads = document["settingsReadNormalization"] == JsonPrimitive("recorded-snapshots-v1"),
+            refusedBackfillProbes = document["backfillProbeNormalization"] == JsonPrimitive("unsupported-legacy-probe-v1"),
         )
 
     companion object {
@@ -67,6 +69,8 @@ internal class RecordedSuiteDocument private constructor(
                 put("version", 1)
                 put("readReceiptNormalization", "coalesced-visible-history-v3")
                 put("modelQueryNormalization", "reconnect-catalog-race-v1")
+                put("settingsReadNormalization", "recorded-snapshots-v1")
+                put("backfillProbeNormalization", "unsupported-legacy-probe-v1")
                 put("producerIdentityMode", if (steps.any { it.message?.type == "debug_bundle_chunk" }) "literal" else "rebind")
                 put("scenario", scenario)
                 put("inputs", inputs)
@@ -90,6 +94,8 @@ internal class RecordedSuiteDocument private constructor(
                         ),
                 )
                 require(document["modelQueryNormalization"] in setOf(null, JsonPrimitive("reconnect-catalog-race-v1")))
+                require(document["settingsReadNormalization"] in setOf(null, JsonPrimitive("recorded-snapshots-v1")))
+                require(document["backfillProbeNormalization"] in setOf(null, JsonPrimitive("unsupported-legacy-probe-v1")))
                 require(document["producerIdentityMode"] in setOf(null, JsonPrimitive("literal"), JsonPrimitive("rebind")))
                 require(
                     document

@@ -334,4 +334,54 @@ class RecordedSuiteTapeTest {
         future.request(owner, frame(90, "send_message"))
         assertThrows(IllegalStateException::class.java) { future.assertComplete() }
     }
+
+    @Test fun polledSettingsCannotBorrowAFutureWriteOrDuplicateWireIds() {
+        val owner = "phone/host/0"
+        val query = frame(1, "request_session_settings", """{"conversation_id":"chat"}""")
+        val before = frame(2, "session_settings", """{"permission_mode":"default"}""", 1)
+        val after = frame(5, "session_settings", """{"permission_mode":"plan"}""", 4)
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client(owner, query),
+                    daemon(owner, before),
+                    client(owner, frame(3, "set_permission_mode")),
+                    client(owner, query.copy(id = 4)),
+                    daemon(owner, after),
+                ),
+                recordedSettingsReads = true,
+            )
+        val first = tape.initial().single()
+        assertEquals("settings_snapshot", first.direction)
+        tape.deliveredSnapshot(first)
+        val request = query.copy(id = 80, payload = tape.arguments(query.payload.jsonObject))
+        assertEquals(
+            before.payload,
+            tape
+                .request(owner, request)
+                .single()
+                .message!!
+                .payload,
+        )
+        val next = tape.request(owner, frame(81, "set_permission_mode")).single()
+        assertEquals(
+            before.payload,
+            tape
+                .request(owner, request.copy(id = 82))
+                .single()
+                .message!!
+                .payload,
+        )
+        tape.deliveredSnapshot(next)
+        assertEquals(
+            after.payload,
+            tape
+                .request(owner, request.copy(id = 83))
+                .single()
+                .message!!
+                .payload,
+        )
+        tape.assertComplete()
+        assertThrows(IllegalStateException::class.java) { tape.request(owner, request.copy(id = 83)) }
+    }
 }

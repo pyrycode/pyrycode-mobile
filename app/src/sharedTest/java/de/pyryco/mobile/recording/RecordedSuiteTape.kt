@@ -31,6 +31,8 @@ internal class RecordedSuiteTape(
     private val literalProducerIdentities: Boolean = false,
     private val redundantModelQueries: Boolean = false,
     retainedPhoneHistory: Boolean = false,
+    recordedSettingsReads: Boolean = false,
+    refusedBackfillProbes: Boolean = false,
 ) {
     private var optionalModelReplies = emptyMap<Int, Int>()
     private val redundantModels = mutableSetOf<Pair<String, String>>()
@@ -44,6 +46,16 @@ internal class RecordedSuiteTape(
     private var matched = 0
     private var failure: String? = null
     private var readReceipts: SuiteReadReceipts? = null
+    private var polledReads: SuitePolledReads? = null
+    private val daemonIds = mutableMapOf<String, Long>()
+
+    private fun nextDaemonId(owner: String): Long {
+        val next = daemonIds[owner] ?: 1L
+        check(next < Long.MAX_VALUE) { "Recorded response ID exhausted" }
+        daemonIds[owner] = next + 1
+        return next
+    }
+
     private val queryTypes =
         setOf(
             "list_conversations",
@@ -111,6 +123,10 @@ internal class RecordedSuiteTape(
                 message.inReplyTo?.let {
                     require(step.direction == "daemon" && it in ids[step.owner to "client"].orEmpty())
                 }
+                if (step.direction == "daemon") {
+                    require(message.id < Long.MAX_VALUE)
+                    daemonIds.merge(step.owner, message.id + 1, ::maxOf)
+                }
                 requireSafeSuiteFrame(step.direction, message)
                 bytes +=
                     message.payload
@@ -124,8 +140,12 @@ internal class RecordedSuiteTape(
             }
         }
         if (coalescedReadReceipts) {
-            readReceipts = SuiteReadReceipts(steps, queryTypes, ::mapped, retainedPhoneHistory)
+            readReceipts = SuiteReadReceipts(steps, queryTypes, ::mapped, retainedPhoneHistory, ::nextDaemonId)
             steps = readReceipts!!.steps
+        }
+        if (recordedSettingsReads || refusedBackfillProbes) {
+            polledReads = SuitePolledReads(steps, ::mapped, ::nextDaemonId, recordedSettingsReads, refusedBackfillProbes)
+            steps = polledReads!!.steps
         }
         if (redundantModelQueries) {
             optionalModelReplies =
@@ -163,7 +183,13 @@ internal class RecordedSuiteTape(
                             }
                                 ?: return@mapNotNull null
                         val reply = steps[response].message!!
-                        if (reply.type != "model_list" || reply.historyEntryId != null || reply.eventId != null) return@mapNotNull null
+                        if (reply.type != "model_list" ||
+                            reply.historyEntryId != null ||
+                            reply.eventId != null ||
+                            (reply.payload as? JsonObject)?.get("conversation_id") != frame.payload.jsonObject["conversation_id"]
+                        ) {
+                            return@mapNotNull null
+                        }
                         val independent =
                             (start until end).any {
                                 val other = steps[it]
@@ -258,6 +284,13 @@ internal class RecordedSuiteTape(
     ): SuiteOutcome {
         failure?.let { fail(it) }
         if (actual.id in actualIds[owner].orEmpty()) fail("Recorded suite duplicate request ID")
+        if (polledReads?.accepts(owner, actual) == true) {
+            val connection = steps.indices.lastOrNull { steps[it].owner == owner && steps[it].direction == "connect" }
+            if (connection != null && connection !in consumed) fail("Recorded polling connection not open")
+            val response = polledReads!!.send(owner, actual)
+            actualIds.getOrPut(owner) { mutableSetOf() } += actual.id
+            return SuiteOutcome(response + drain(), true)
+        }
         if (readReceipts?.accepts(owner, actual) == true) {
             return try {
                 val response = readReceipts!!.send(owner, actual)
@@ -419,9 +452,13 @@ internal class RecordedSuiteTape(
                 continue
             }
             if (step.direction == "daemon" && frame!!.inReplyTo?.let { step.owner to it !in requests } == true) continue
-            if (step.direction == "daemon") {
+            if (step.direction in setOf("daemon", "settings_snapshot")) {
                 val encoded = mapped(MobileJson.encodeToJsonElement(Envelope.serializer(), frame!!)).jsonObject.toMutableMap()
-                frame.inReplyTo?.let { encoded["in_reply_to"] = JsonPrimitive(checkNotNull(requests[step.owner to it])) }
+                if (step.direction == "settings_snapshot") {
+                    encoded.remove("in_reply_to")
+                } else {
+                    frame.inReplyTo?.let { encoded["in_reply_to"] = JsonPrimitive(checkNotNull(requests[step.owner to it])) }
+                }
                 result += step.copy(message = MobileJson.decodeFromJsonElement(Envelope.serializer(), JsonObject(encoded)))
             } else {
                 result += step
@@ -430,6 +467,8 @@ internal class RecordedSuiteTape(
         }
         return result
     }
+
+    @Synchronized fun deliveredSnapshot(step: SuiteStep): List<SuiteStep> = checkNotNull(polledReads).delivered(step)
 
     @Synchronized fun delivered(
         owner: String,
@@ -454,6 +493,7 @@ internal class RecordedSuiteTape(
         failure?.let { fail(it) }
         check(released.size == steps.size) { progress() }
         readReceipts?.assertComplete()
+        polledReads?.assertComplete()
     }
 }
 

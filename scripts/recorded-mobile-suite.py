@@ -48,6 +48,8 @@ def validate(document):
         require(document.get('readReceiptNormalization') in {None, 'coalesced-visible-history-v2', 'coalesced-visible-history-v3'}, 'Unsupported receipt normalization')
         require(document.get('producerIdentityMode') in {None, 'literal', 'rebind'}, 'Unsupported producer identity mode')
         require(document.get('modelQueryNormalization') in {None, 'reconnect-catalog-race-v1'}, 'Unsupported model lookup normalization')
+        require(document.get('settingsReadNormalization') in {None, 'recorded-snapshots-v1'}, 'Unsupported settings read normalization')
+        require(document.get('backfillProbeNormalization') in {None, 'unsupported-legacy-probe-v1'}, 'Unsupported backfill probe normalization')
         source = document['source']
         for key in ['mobileRevision', 'daemonRevision']:
             require(re.fullmatch('[a-f0-9]{40}', source[key]), 'Invalid source revision')
@@ -120,16 +122,30 @@ def instrument(serial, method, arguments):
     return {'seconds': round(time.monotonic() - started, 3), 'nativeSeconds': float(timing.group(1))}
 
 
+def installed_apks(serial):
+    result = {}
+    for package, key, relative in [(PACKAGE, 'appApkSha256', 'debug/app-debug.apk'),
+                                   (PACKAGE + '.test', 'testApkSha256', 'androidTest/debug/app-debug-androidTest.apk')]:
+        location = legacy.adb(serial, 'shell', 'pm', 'path', package).decode().strip()
+        require(re.fullmatch(r'package:/data/app/[A-Za-z0-9_./=+~-]+/base\.apk', location), 'Unexpected installed package path')
+        installed = legacy.adb(serial, 'shell', 'sha256sum', location.removeprefix('package:')).decode().split()[0]
+        expected = digest((ROOT / 'app/build/outputs/apk' / relative).read_bytes())
+        require(installed == expected, 'Installed Android package differs from the built package')
+        result[key] = installed
+    return result
+
+
 def replay(serial, path):
     data = path.read_bytes()
     document = json.loads(data)
     validate(document)
+    packages = installed_apks(serial)
     legacy.adb(serial, 'shell', 'pm', 'clear', PACKAGE)
     name = 'recorded-' + uuid.uuid4().hex + '.json'
     legacy.adb(serial, 'shell', 'run-as', PACKAGE, 'sh', '-c',
                "'umask 077; mkdir -p files; cat > files/" + name + "'", data=data)
     elapsed = instrument(serial, document['scenario'], {'suiteFile': name, 'disableAnimations': 'true'})
-    return {**COUNTS, **elapsed, 'fixtureSha256': digest(data)}
+    return {**COUNTS, **elapsed, 'fixtureSha256': digest(data), **packages}
 
 
 def inspect_diagnostic_bytes(document, credentials):
@@ -185,7 +201,8 @@ def capture(serial, method, destination, pyry, daemon_source):
     require(re.fullmatch(r'[A-Za-z0-9_]{1,180}', method), 'Invalid method')
     require(not destination.exists(), 'Candidate already exists')
     require(os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') or os.environ.get('ANTHROPIC_API_KEY'), 'Configured Claude login required')
-    require(not legacy.run(['git', 'status', '--porcelain', '--untracked-files=no']).strip(), 'Commit source before capture')
+    require(not legacy.run(['git', 'status', '--porcelain']).strip(), 'Commit source before capture')
+    packages = installed_apks(serial)
     revision = legacy.run(['git', 'rev-parse', 'HEAD']).decode().strip()
     metadata = legacy.run(['go', 'version', '-m', str(pyry)]).decode()
     match = re.search(r'vcs.revision=([a-f0-9]{40})', metadata)
@@ -242,8 +259,7 @@ def capture(serial, method, destination, pyry, daemon_source):
         require(document['scenario'] == method, 'Wrong captured scenario')
         document['source'] = {'mobileRevision': revision, 'daemonRevision': match.group(1),
                               'daemonBinarySha256': digest(pyry.read_bytes()),
-                              'testApkSha256': digest((ROOT / 'app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk').read_bytes()),
-                              'appApkSha256': digest((ROOT / 'app/build/outputs/apk/debug/app-debug.apk').read_bytes()),
+                              **packages,
                               'claudeVersion': legacy.run(['claude', '--version']).decode().strip(),
                               'capturedAt': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
                               'presentation': 'current-production',
@@ -273,18 +289,53 @@ def redundant_catalog_query(document, index):
         return False
     payload = frame.get('payload')
     if not isinstance(payload, dict) or set(payload) != {'conversation_id'}: return False
-    boundary = len(document['steps'])
-    for position in range(index + 1, len(document['steps'])):
-        row = document['steps'][position]
-        if row['direction'] == 'close' or row['direction'] == 'client' and row['message']['type'] not in QUERIES:
-            boundary = position
-            break
-    for row in document['steps'][:boundary]:
-        message = row.get('message') or {}
-        if (row['direction'] == 'daemon' and row['owner'] == step['owner'] and message.get('type') == 'model_list' and
-                message.get('in_reply_to') is None and message.get('payload', {}).get('conversation_id') == payload['conversation_id']):
-            return True
-    return False
+    requests = [row for row in document['steps'] if row['direction'] == 'client' and row['owner'] == step['owner'] and
+                row['message']['type'] == frame['type'] and row['message'].get('payload') == payload]
+    if len(requests) != 1: return False
+    start = 0
+    end = len(document['steps'])
+    for position, row in enumerate(document['steps']):
+        if row['direction'] == 'client' and row['message']['type'] not in QUERIES:
+            if position < index: start = position + 1
+            elif position > index:
+                end = position
+                break
+    responses = [row['message'] for row in document['steps'][index + 1:end] if row['direction'] == 'daemon' and
+                 row['owner'] == step['owner'] and row['message'].get('in_reply_to') == frame['id']]
+    if len(responses) != 1 or responses[0]['type'] != 'model_list': return False
+    response = responses[0]
+    if response.get('payload', {}).get('conversation_id') != payload['conversation_id']: return False
+    if response.get('event_id') is not None or response.get('history_entry_id') is not None: return False
+    return any(row['direction'] == 'daemon' and row['owner'] == step['owner'] and row['message']['type'] == 'model_list' and
+               row['message'].get('in_reply_to') is None and row['message'].get('payload') == response.get('payload')
+               for row in document['steps'][start:end])
+
+
+def polling_groups(document):
+    groups, replies = {}, {}
+    for step in document['steps']:
+        frame = step.get('message') or {}
+        if step['direction'] == 'daemon' and frame.get('in_reply_to') is not None:
+            replies.setdefault((step['owner'], frame['in_reply_to']), []).append(frame)
+        if step['direction'] == 'client' and step['owner'].startswith('phone/'):
+            enabled = (frame['type'] == 'request_session_settings' and document.get('settingsReadNormalization') == 'recorded-snapshots-v1' or
+                       frame['type'] == 'backfill_since' and document.get('backfillProbeNormalization') == 'unsupported-legacy-probe-v1')
+            if enabled:
+                key = (step['owner'], frame['type'], json.dumps(frame.get('payload'), sort_keys=True))
+                groups.setdefault(key, []).append(step)
+    normalized = {}
+    for key, requests in groups.items():
+        responses = [replies.get((key[0], step['message']['id']), []) for step in requests]
+        def qualifies(rows):
+            if len(rows) != 1: return False
+            frame = rows[0]
+            if frame.get('event_id') is not None or frame.get('history_entry_id') is not None: return False
+            if key[1] == 'request_session_settings':
+                return set(requests[0]['message'].get('payload') or {}) == {'conversation_id'} and frame['type'] == 'session_settings'
+            return frame['type'] == 'error' and frame.get('payload', {}).get('code') == 'protocol.unknown_type'
+        if all(step['accepted'] for step in requests) and all(qualifies(rows) for rows in responses):
+            for step in requests: normalized[key[0], step['message']['id']] = key[1]
+    return normalized
 
 
 def contract(document):
@@ -375,10 +426,8 @@ def contract(document):
         for old, new in sorted(aliases.items(), key=lambda item: -len(item[0])): value = value.replace(old, new)
         return value
     result, pending = [], []
-    def flush():
-        if pending:
-            result.append(sorted(pending, key=lambda value: json.dumps(value, sort_keys=True)))
-            pending.clear()
+    lifecycle, modeled = {}, set()
+    polling = polling_groups(document)
     for index, step in enumerate(document['steps']):
         frame = step.get('message', {})
         if step['direction'] == 'client':
@@ -391,20 +440,22 @@ def contract(document):
                 if canonical is not None: payload = {**payload, 'data': base64.b64encode(canonical).decode()}
             value = {'owner': step['owner'], 'type': frame['type'], 'accepted': step['accepted'],
                      'payload': normalized(payload, attachment=frame['type'] == 'attachment_chunk')}
+            poll = polling.get((step['owner'], frame['id']))
+            if poll == 'backfill_since': continue
+            if poll:
+                key = json.dumps(value, sort_keys=True)
+                if key in modeled: continue
+                modeled.add(key)
             if frame['type'] in QUERIES: pending.append(value)
             else:
-                flush()
                 result.append(value)
-        elif step['direction'] == 'connect':
-            pending.append({'lifecycle': 'connect', 'owner': step['owner']})
-        elif step['direction'] == 'close':
-            flush()
-            result.append({'lifecycle': 'close', 'owner': step['owner']})
+        elif step['direction'] in {'connect', 'close'}:
+            family = step['owner'].rsplit('/', 1)[0]
+            lifecycle.setdefault(family, []).append({'lifecycle': step['direction'], 'owner': step['owner']})
         elif step['direction'] == 'external' and step['detail']['event'] != 'push-token':
-            flush()
             result.append({'external': step['detail']['event'], 'owner': step['owner']})
-    flush()
-    return result
+    return {'commands': result, 'queries': sorted(pending, key=lambda value: json.dumps(value, sort_keys=True)),
+            'lifecycle': lifecycle}
 
 
 def verify(args):
@@ -416,7 +467,8 @@ def verify(args):
     reviewed_replay = replay(args.serial, args.fixture)
     fresh_replay = replay(args.serial, candidate)
     require(contract(original) == contract(json.loads(candidate.read_text())), 'Fresh Claude request contract changed; review candidate without replacing the recording')
-    result = {'scenario': original['scenario'], 'capture': captured, 'reviewedReplay': reviewed_replay, 'freshReplay': fresh_replay}
+    result = {'scenario': original['scenario'], 'capture': captured, 'reviewedReplay': reviewed_replay,
+              'freshReplay': fresh_replay, 'contractMatched': True}
     legacy.private_write(args.output / 'receipt.json', (json.dumps(result, indent=2) + '\n').encode())
     return result
 

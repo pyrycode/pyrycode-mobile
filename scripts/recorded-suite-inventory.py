@@ -80,10 +80,38 @@ def audit(manifest, actual, selected, directory):
     return {'total': len(actual), 'liveSelected': len(selected), 'recorded': len(completed), 'retired': retired, 'pending': pending}
 
 
+def audit_live(manifest, summary):
+    rows = [row for row in manifest['scenarios'] if not row.get('retired')]
+    receipts = summary.get('results', [])
+    expected = {row['method'] for row in rows}
+    if (summary.get('required') != len(rows) or summary.get('verified') != len(rows) or summary.get('failures') != [] or
+            len(receipts) != len(rows) or {item.get('scenario') for item in receipts} != expected):
+        raise ValueError('Fresh suite compatibility inventory is incomplete')
+    by_method = {item['scenario']: item for item in receipts}
+    producers = set()
+    fields = ['mobileRevision', 'daemonRevision', 'daemonBinarySha256', 'testApkSha256', 'appApkSha256', 'claudeVersion', 'androidApi']
+    for row in rows:
+        receipt = by_method[row['method']]
+        baseline = row.get('evidence', {}).get('fixtureSha256')
+        fresh = receipt.get('capture', {}).get('fixtureSha256')
+        source = receipt.get('capture', {}).get('source', {})
+        if not (baseline and fresh and counted(receipt.get('capture'), fresh) and counted(receipt.get('freshReplay'), fresh) and
+                counted(receipt.get('reviewedReplay'), baseline) and receipt.get('contractMatched') is True and
+                all(source.get(field) for field in fields)):
+            raise ValueError('Fresh suite compatibility evidence is incomplete')
+        for replay in ['reviewedReplay', 'freshReplay']:
+            if any(receipt[replay].get(field) != source[field] for field in ['appApkSha256', 'testApkSha256']):
+                raise ValueError('Fresh compatibility used different installed packages')
+        producers.add(tuple(source[field] for field in fields))
+    if len(producers) != 1:
+        raise ValueError('Fresh suite compatibility must use one verified producer and client build')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path, default=MANIFEST)
     parser.add_argument('--require-live', action='store_true', help='Require fresh counted compatibility for every recording')
+    parser.add_argument('--live-evidence', type=Path, default=ROOT / 'docs/evidence/recorded-claude-live.json')
     parser.add_argument('--report-only', action='store_true', help='Show pending work without claiming completion')
     args = parser.parse_args()
     manifest = json.loads(args.manifest.read_text())
@@ -96,15 +124,7 @@ def main():
     audit_runner((ROOT / 'app/src/androidTest/java/de/pyryco/mobile/recording/RecordedMobileSuiteTest.kt').read_text(),
                  methods(SOURCE.read_text()), set(report['retired']))
     if args.require_live:
-        for row in manifest['scenarios']:
-            if row.get('retired'): continue
-            evidence = row.get('evidence', {})
-            receipt = evidence.get('liveVerification', {})
-            checksum = evidence.get('fixtureSha256')
-            fresh = receipt.get('capture', {}).get('fixtureSha256')
-            if not (fresh and counted(receipt.get('capture'), fresh) and counted(receipt.get('freshReplay'), fresh) and
-                    counted(receipt.get('reviewedReplay'), checksum) and receipt.get('contractMatched') is True):
-                raise ValueError('Fresh suite compatibility evidence is incomplete')
+        audit_live(manifest, json.loads(args.live_evidence.read_text()))
     print(json.dumps(report))
     if report['pending'] and not args.report_only:
         raise SystemExit(1)

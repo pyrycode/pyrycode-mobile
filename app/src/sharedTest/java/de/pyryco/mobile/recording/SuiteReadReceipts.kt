@@ -16,6 +16,7 @@ internal class SuiteReadReceipts(
     private val queries: Set<String>,
     private val resolve: (JsonElement) -> JsonElement,
     private val retainedPhoneHistory: Boolean = false,
+    private val allocateId: ((String) -> Long)? = null,
 ) {
     private data class Key(
         val owner: String,
@@ -275,7 +276,7 @@ internal class SuiteReadReceipts(
                 "is_muted" to JsonPrimitive(false),
             )
         val response = if (group != null) resolve(original.payload).jsonObject else JsonObject(defaults + snapshot)
-        val id = nextIds[owner] ?: 1L
+        val id = allocateId?.invoke(owner) ?: nextIds[owner] ?: 1L
         nextIds[owner] = id + 1
         return SuiteStep(
             "daemon",

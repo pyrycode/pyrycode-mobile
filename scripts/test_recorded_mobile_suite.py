@@ -95,6 +95,10 @@ class SuiteDriverTest(unittest.TestCase):
         original['steps'][0]['message']['type'] = 'send_message'
         changed = copy.deepcopy(original)
         changed['steps'].reverse()
+        self.assertEqual(suite.contract(original), suite.contract(changed))
+        original['steps'].append({**connect, 'direction': 'close'})
+        changed = copy.deepcopy(original)
+        changed['steps'][1:] = reversed(changed['steps'][1:])
         self.assertNotEqual(suite.contract(original), suite.contract(changed))
 
     def test_compressed_diagnostic_members_cannot_hide_a_credential(self):
@@ -123,9 +127,61 @@ class SuiteDriverTest(unittest.TestCase):
         lookup = copy.deepcopy(document['steps'][1])
         lookup['message'].update(id=3, type='request_model_list')
         changed['steps'].append(lookup)
+        response = copy.deepcopy(catalog)
+        response['message'].update(id=4, in_reply_to=3)
+        changed['steps'].append(response)
         self.assertEqual(suite.contract(document), suite.contract(changed))
-        changed['steps'][-1]['message']['payload']['conversation_id'] = 'other'
+        changed['steps'][-2]['message']['payload']['conversation_id'] = 'other'
         self.assertNotEqual(suite.contract(document), suite.contract(changed))
+
+    def test_poll_contract_varies_only_for_successful_recorded_settings_and_known_backfill_refusal(self):
+        def document(kind, response, payload):
+            result = self.fixture()
+            result['steps'][0]['owner'] = 'phone/host/0'
+            result['steps'][0]['message'].update(type=kind, payload={'conversation_id': 'chat'})
+            reply = copy.deepcopy(result['steps'][0])
+            reply.update(direction='daemon')
+            reply['message'].update(id=2, type=response, payload=payload, in_reply_to=1)
+            result['steps'].append(reply)
+            result['settingsReadNormalization'] = 'recorded-snapshots-v1'
+            result['backfillProbeNormalization'] = 'unsupported-legacy-probe-v1'
+            return result
+        for original in [document('request_session_settings', 'session_settings', {'permission_mode': 'default'}),
+                         document('backfill_since', 'error', {'code': 'protocol.unknown_type'})]:
+            repeated = copy.deepcopy(original)
+            for step in copy.deepcopy(original['steps']):
+                step['message']['id'] += 2
+                if 'in_reply_to' in step['message']: step['message']['in_reply_to'] += 2
+                repeated['steps'].append(step)
+            self.assertEqual(suite.contract(original), suite.contract(repeated))
+            if original['steps'][0]['message']['type'] == 'backfill_since':
+                absent = copy.deepcopy(original)
+                absent['steps'] = []
+                self.assertEqual(suite.contract(original), suite.contract(absent))
+            changed = copy.deepcopy(repeated)
+            changed['steps'][-1]['message'].update(type='error', payload={'code': 'changed'})
+            self.assertNotEqual(suite.contract(original), suite.contract(changed))
+
+    def test_queries_may_cross_actions_but_full_query_counts_payloads_and_command_order_remain(self):
+        original = self.fixture()
+        command = copy.deepcopy(original['steps'][0])
+        command['message'].update(id=2, type='send_message', payload={'text': 'hello'})
+        original['steps'].append(command)
+        moved = copy.deepcopy(original)
+        moved['steps'].reverse()
+        self.assertEqual(suite.contract(original), suite.contract(moved))
+        moved['steps'].append(copy.deepcopy(original['steps'][0]))
+        self.assertNotEqual(suite.contract(original), suite.contract(moved))
+        original['steps'].append(copy.deepcopy(command))
+        original['steps'][-1]['message']['payload']['text'] = 'next'
+        moved = copy.deepcopy(original)
+        moved['steps'][1:] = reversed(moved['steps'][1:])
+        self.assertNotEqual(suite.contract(original), suite.contract(moved))
+
+    def test_wrong_installed_apk_is_rejected_before_native_execution(self):
+        from unittest.mock import patch
+        with patch.object(suite.legacy, 'adb', side_effect=[b'package:/data/app/test/base.apk\n', b'0' * 64 + b'  /data/app/test/base.apk\n']):
+            with self.assertRaises(ValueError): suite.installed_apks('emulator-5582')
 
 
 if __name__ == '__main__':

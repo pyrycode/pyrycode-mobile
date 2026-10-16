@@ -105,3 +105,57 @@ The production debug APK contained neither recording classes nor the recording s
 The full JVM suite passed 5646 tests. The seven Python contract/export checks passed.
 Formatting and the documentation guard passed. The full scripted and live suites
 were not rerun for this test-only slice.
+
+## Complete native suite
+
+The permission recording above remains separate. The complete suite inventories every
+annotated real-Claude method in `scripts/recorded-suite-inventory.py`. Its native runner
+calls each original scenario body through the real repository and Compose interface.
+Two workspace scenarios remain explicitly retired because their controls were removed.
+Missing recordings fail the inventory. They never count as converted scenarios.
+
+```sh
+python3 scripts/recorded-suite-inventory.py
+python3 scripts/recorded-mobile-suite.py replay-all --serial "$TEST_SERIAL"
+scripts/with-claude-login.sh python3 scripts/recorded-mobile-suite.py verify-all \
+  --serial "$TEST_SERIAL" --pyry "$PYRY_BIN" --daemon-source "$PYRYCODE_SRC" \
+  --output /absolute/path/to/new-verification-directory
+python3 scripts/recorded-suite-inventory.py --require-live \
+  --live-evidence /absolute/path/to/new-verification-directory/summary.json
+```
+
+Capture requires committed source. Before either capture or replay, the host checks the
+installed app and test package hashes against the local build outputs. Evidence records
+those verified hashes. Fresh compatibility evidence lives outside Android assets so its
+own package hashes cannot change the test package they describe. The complete gate
+requires one common client build and producer, one successful real capture and two counted
+replays per scenario, matching contracts and no skipped methods.
+
+The full suite preserves all mutating commands in recorded order. Independent connections
+may progress separately. Background queries match their complete owner, payload and count.
+Their responses wait for their actual correlated requests and preceding recorded commands.
+Moving a query earlier cannot expose a future action's answer.
+
+The suite declares three limited scheduling models separately from Claude content:
+
+- Automatic phone read acknowledgements can coalesce. They must advance through history
+  actually delivered to that phone on the same host and reach recorded final progress.
+  Explicit peer reads stay exact. Peer observations wait for the actual phone read.
+- A single model lookup can race an unsolicited catalogue on the same connection and
+  conversation. Omitting a recorded lookup requires an identical independent catalogue in
+  the same command interval. On-demand lookups without that evidence stay mandatory.
+- Successful settings polling reads the most recently delivered captured settings state.
+  Snapshot updates remain in producer order and behind their original user commands.
+  Poll counts can vary. Changed owners or complete query payloads fail. Refused or errored
+  settings requests remain exact. A legacy backfill probe can vary only when that exact
+  probe was captured as unsupported. Other history requests and error types stay exact.
+
+All generated replies retain recorded payloads and correlate to the actual request.
+Duplicate request IDs fail. Synthetic response IDs share an allocator above recorded IDs.
+Recorded stream events retain cadence. Real push delivery, encryption, transport recovery
+and timing obligations retain their external checks.
+
+Failed runs can export separately named private application traces. Their format cannot
+be loaded as a successful recording. Compressed diagnostic archives are excluded from
+failed exports. Successful archive captures undergo bounded decompression and credential
+inspection before promotion. Private host logs and failed traces are never fixtures.

@@ -105,7 +105,10 @@ internal class SuiteConnections private constructor(
     @Synchronized private fun enqueue(values: List<SuiteStep>) {
         if (values.isEmpty()) return
         pending.addAndGet(values.size)
-        check(deliveries.trySend(Delivery.Steps(values)).isSuccess) { "Recorded suite delivery closed" }
+        val (responses, scheduled) = values.partition { it.detail["replayResponse"] == kotlinx.serialization.json.JsonPrimitive(true) }
+        responses.forEach(::route)
+        if (scheduled.isEmpty()) return
+        check(deliveries.trySend(Delivery.Steps(scheduled)).isSuccess) { "Recorded suite delivery closed" }
     }
 
     @Synchronized private fun request(
@@ -129,6 +132,11 @@ internal class SuiteConnections private constructor(
     }
 
     @Synchronized private fun route(step: SuiteStep) {
+        if (step.direction == "settings_snapshot") {
+            enqueue(checkNotNull(tape).deliveredSnapshot(step))
+            pending.decrementAndGet()
+            return
+        }
         if (step.direction == "external") {
             onExternal(step)
             pending.decrementAndGet()

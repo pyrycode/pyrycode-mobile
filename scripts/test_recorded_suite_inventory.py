@@ -57,6 +57,29 @@ class SuiteInventoryTest(unittest.TestCase):
         for source in ['@Test fun a() {}\n@Ignore @Test fun b() {}', '@Test fun old() {}', '@Test fun a() {}\n@Test fun b() {}']:
             with self.assertRaises(ValueError): inventory.audit_runner(source, {'a', 'old'}, {'old'})
 
+    def test_fresh_evidence_is_external_hash_bound_complete_and_uses_the_same_installed_packages(self):
+        import copy
+        source = {'mobileRevision': 'a' * 40, 'daemonRevision': 'b' * 40, 'daemonBinarySha256': 'c' * 64,
+                  'testApkSha256': 'd' * 64, 'appApkSha256': 'e' * 64, 'claudeVersion': 'test', 'androidApi': '33'}
+        def counted(checksum): return {'executed': 1, 'failed': 0, 'skipped': 0, 'fixtureSha256': checksum,
+                                      'testApkSha256': source['testApkSha256'], 'appApkSha256': source['appApkSha256']}
+        row = {'method': 'a', 'evidence': {'fixtureSha256': '1' * 64}}
+        receipt = {'scenario': 'a', 'capture': {**counted('2' * 64), 'source': source},
+                   'reviewedReplay': counted('1' * 64), 'freshReplay': counted('2' * 64), 'contractMatched': True}
+        manifest = {'scenarios': [row]}
+        summary = {'required': 1, 'verified': 1, 'failures': [], 'results': [receipt]}
+        inventory.audit_live(manifest, summary)
+        mutations = [lambda x: x.update(verified=0), lambda x: x['results'].clear(),
+                     lambda x: x['results'].append(copy.deepcopy(receipt)),
+                     lambda x: x['results'][0]['freshReplay'].update(skipped=1),
+                     lambda x: x['results'][0]['reviewedReplay'].update(fixtureSha256='3' * 64),
+                     lambda x: x['results'][0]['freshReplay'].update(testApkSha256='f' * 64),
+                     lambda x: x['results'][0].update(contractMatched=False)]
+        for mutate in mutations:
+            changed = copy.deepcopy(summary)
+            mutate(changed)
+            with self.assertRaises(ValueError): inventory.audit_live(manifest, changed)
+
 
 if __name__ == '__main__':
     unittest.main()
