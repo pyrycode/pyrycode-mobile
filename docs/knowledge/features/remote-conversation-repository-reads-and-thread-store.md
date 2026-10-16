@@ -299,10 +299,20 @@ in-memory `AuthoritativeThreadStore`; existing `ThreadSnapshotSource` and
 `observeMessages` consumers still read `ThreadProjection`. Authoritative items
 never become raw history events. `observe(host, conversation)` selects one atomic
 snapshot containing complete `ThreadItemDto` items, epoch, `completedVersion`,
-resumable `checkpoint`, certified `coverage`, `repairNeeded`, `resetNeeded` and a
-local `generation`.
+resumable `checkpoint`, certified `coverage`, `repairNeeded`, `resetNeeded`,
+local `generation` and process-memory `pendingSends`. Publication retires pending
+feedback only against admitted `user_message` facts with exact string device/client
+IDs in the same host/conversation, including hidden terminal items. Missing device
+identity and peer client-ID collisions never match. Newest admitted revisions own
+lifecycle/content/placement; older, duplicate and partial/overlapping inputs retain
+unmatched sends and held queued/lost items. Omission is neither deletion nor loss.
+Acknowledgements/errors cannot recreate retired feedback. The coordinator shares
+this store across connections; reset preserves unresolved sends while generation
+fences retired facts/actions. No automatic resend or cross-host transfer occurs;
+provisional feedback is never cached and ends at process death. See
+[send registration](remote-conversation-repository-send-create-promote-rename.md#sendmessageconversationid-text--the-first-mutation-346).
 Synchronous synchronized mutations publish a single StateFlow map; recollection
-reads held facts, and process death loses them. The daemon's
+reads held facts; accepted-item persistence uses the existing authoritative cache contract. The daemon's
 [supplied delivery contract](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#daemon-thread-updates-v2-supplied-delivery-contract)
 and [ADR 042](https://github.com/pyrycode/pyrycode/blob/main/docs/knowledge/decisions/042-daemon-built-thread.md)
 remain the authority for wire facts; query shapes and ordering belong to the
@@ -355,8 +365,8 @@ future connection owners. Reconnect creates fresh route/query decoders and reope
 desired conversations using held certified checkpoints and coverage; neither queued
 intents nor fragment assembly crosses connections. Held upserts may include newer
 live facts from an interrupted query, but they do not authorize a newer resume
-version. Atomic save/restore belongs to #2149; queue reconciliation (#1986) and
-production activation (#1988) consume these additive seams. Production negotiation
+version. Atomic save/restore uses #2149; #1986 adds pending-send reconciliation.
+Production activation (#1988) consumes these additive seams. Production negotiation
 and the raw-row/UI route switch remain with #1988.
 
 ### Item application and explicit clears

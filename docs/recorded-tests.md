@@ -1,0 +1,297 @@
+# Recorded Claude client tests
+
+These tests record the Android client's application messages during a controlled real
+Claude permission flow. Offline replay uses the same repository, connection coordinator,
+ViewModel and Compose thread screen. The source lives in test directories. The normal
+application contains no recorder or recording switch.
+
+The first scenario sends a controlled Bash request, arms Allow once, confirms it, observes
+the permission close and checks the exact settled assistant reply. The live producer also
+proves that the witness file is absent before confirmation and present afterwards.
+
+## Build and run
+
+Use an explicitly owned test emulator. Build and install the normal application and test
+APKs with the existing Android SDK and JDK configuration:
+
+```sh
+./gradlew assembleDebug assembleDebugAndroidTest
+adb -s "$TEST_SERIAL" install -r app/build/outputs/apk/debug/app-debug.apk
+adb -s "$TEST_SERIAL" install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+python3 scripts/recorded-exchanges.py replay --serial "$TEST_SERIAL"
+```
+
+The instrumented class is `de.pyryco.mobile.recording.RecordedPermissionTest`. It runs in
+the ordinary non-live UI selection. Its default is offline replay. No real daemon, Claude
+executable, test login or relay connection is used. The app's unused transport throws if
+anything attempts a real connection. Existing scripted and live test selections remain.
+
+## Capture and compatibility
+
+Commit the source being exercised before capturing. Use an isolated test daemon executable
+with Go source metadata and the existing configured Claude test login. The producer uses
+the existing live relay and creates its own daemon home, working directory and permitted
+test pairing. It stops that daemon and its children afterwards. It does not alter the
+application daemon or saved phone pairings.
+
+```sh
+scripts/with-claude-login.sh python3 scripts/recorded-exchanges.py capture \
+  --serial "$TEST_SERIAL" --pyry "$PYRY_BIN" --output /absolute/path/to/new-candidate.json
+scripts/with-claude-login.sh python3 scripts/recorded-exchanges.py verify \
+  --serial "$TEST_SERIAL" --pyry "$PYRY_BIN"
+```
+
+Capture records only decoded application messages, with a 2 MB and 5000-frame limit.
+Handshake frames, keys and pairing credentials do not enter the recorder. Sensitive
+fields, known credential patterns and the actual configured Claude credentials are
+rejected. Controlled workspace paths and ephemeral approval values are normalized.
+The fixture is suitable for this controlled scenario, not personal conversations.
+
+Only a successful UI run and the required file-effect checks can create a candidate.
+Candidates use private permissions and never overwrite existing files. Review a candidate
+before committing it. Failure diagnostics stay in the private local build directory.
+The producer records the Mobile revision, daemon revision and executable checksum,
+Claude version, test APK checksum, negotiated capabilities and capture time.
+
+Verification captures a fresh candidate, compares the logical outgoing request contracts
+and replays both the committed and fresh recordings. It never replaces the committed
+recording. Changed requests, choices or recovery steps require a reviewed replacement.
+Missing login, setup failure and a run with no executed tests fail these explicit commands.
+
+## What replay proves
+
+Every outgoing request must match its complete recorded type and payload. Generated
+identities are rebound, and replies follow the actual request identifiers. Commands
+retain their action order. Only named read-only queries may reorder within one action.
+Daemon frames keep their recorded order and wait for their causal requests. Missing,
+extra, duplicate or changed requests fail, including requests after the last UI assertion.
+
+The recording identifies the current production presentation. Mobile has not yet activated
+required daemon-built threads in ticket 2175. This test does not turn on a test-only
+production route or synthesize thread items. The migration must pass live verification
+and refresh the recording when its actual requests change.
+
+Replay proves the recorded permission behaviour. Current-daemon compatibility requires
+the explicit live command. Timing, encrypted transport, reconnect, other permissions,
+session grants and other live scenarios retain their existing tests and requirements.
+Android startup and UI costs remain, so report measured Android times rather than using
+Desktop's replay timing as an Android forecast.
+
+## Verified evidence, 2026-10-16
+
+The device was the owned, read-only `claude955` Android ATD emulator, Android 13,
+API 33, arm64. The committed fixture has 48 application frames and SHA-256
+`71fff5a9926e594b9568b615480e8c797276eee3956f87829aab0086631c49c1`.
+Its producer metadata is stored with the asset. It includes the observed initial
+read errors and the actual `backfill_since` request. No Desktop retry action was added.
+
+A separate fresh compatibility run used clean daemon main
+`4d98f07513f04fa36fa55714b31ecf09e1cb34c2`, executable SHA-256
+`af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9`,
+and Claude Code 2.1.280. The outgoing contracts matched, and both recordings passed.
+
+| Check | Executed | Failed | Skipped | Android seconds |
+| --- | ---: | ---: | ---: | ---: |
+| Fresh live capture against current daemon main | 1 | 0 | 0 | 8.210 |
+| Committed fixture replay in that check | 1 | 0 | 0 | 2.929 |
+| Fresh candidate replay in that check | 1 | 0 | 0 | 2.826 |
+| Default asset with credentials removed and producer traps | 1 | 0 | 0 | 3.454 |
+| Repeated offline replay with producer traps | 2 | 0 | 0 | 2.863, 2.852 |
+
+These are instrumentation wall times on an already booted emulator. They exclude
+build, install and daemon startup. The traps replaced both `claude` and `pyry` on
+PATH and recorded zero invocations. Android received no Claude test credentials.
+The production debug APK contained neither recording classes nor the recording switch.
+The full JVM suite passed 5646 tests. The seven Python contract/export checks passed.
+Formatting and the documentation guard passed. The full scripted and live suites
+were not rerun for this test-only slice.
+
+## Complete native suite
+
+The permission recording above remains separate. The complete suite inventories every
+annotated real-Claude method in `scripts/recorded-suite-inventory.py`. Its native runner
+calls each original scenario body through the real repository and Compose interface.
+Two workspace scenarios remain explicitly retired because their controls were removed.
+Missing recordings fail the inventory. They never count as converted scenarios.
+The normal Gradle `check` task enforces this inventory, including capture and replay hashes.
+
+```sh
+python3 scripts/recorded-suite-inventory.py
+python3 scripts/recorded-mobile-suite.py replay-all --serial "$TEST_SERIAL"
+scripts/with-claude-login.sh python3 scripts/recorded-mobile-suite.py verify-all \
+  --serial "$TEST_SERIAL" --pyry "$PYRY_BIN" --daemon-source "$PYRYCODE_SRC" \
+  --output /absolute/path/to/new-verification-directory
+python3 scripts/recorded-suite-inventory.py --require-live \
+  --live-evidence /absolute/path/to/new-verification-directory/summary.json
+```
+
+Capture requires committed source. Before either capture or replay, the host checks the
+installed app and test package hashes against the local build outputs. Evidence records
+those verified hashes. Fresh compatibility evidence lives outside Android assets so its
+own package hashes cannot change the test package they describe. The complete gate
+requires one common client build and producer, one successful real capture and two counted
+replays per scenario, matching contracts and no skipped methods. The suite index declares
+version 1 of its query policy for all recordings, including historical captures. It enables
+only the three bounded models below. Raw captured messages and their capture hashes remain
+verifiable. Standalone recordings without this suite policy retain strict query counts
+unless both recordings declare the same model. Unknown policy keys or versions fail.
+
+The full suite preserves all mutating commands in recorded order. Independent connections
+may progress separately. Background queries match their complete owner, payload and count.
+Their responses wait for their actual correlated requests and preceding recorded commands.
+Moving a query earlier cannot expose a future action's answer.
+File downloads are read-only queries. They may race other reads, including a model
+lookup after reconnect. The attachment identity and complete request remain exact.
+Upload chunks and user messages remain ordered commands. Downloaded chunks cannot be
+released before the actual request or across a test observation checkpoint.
+A connection's end and close also wait for all earlier required requests on that
+connection. Read-only requests still count. Another connection can finish independently.
+Recorded Android inputs, such as a push token becoming available or a push wake, affect
+the whole application graph. They wait for all earlier required requests and lifecycle
+events before delivery. They cannot move across a captured app restart and accidentally
+change an earlier connection's requests. Independent ordinary connection frames still
+progress separately. Only the declared automatic read notifications may remain deferred.
+The shared test-driven host disconnect also waits for its recorded close prefix before
+cancelling the application jobs. A stored push token alone does not prove its registration
+request has run. Replay waits for the actual required requests and queued replies, then
+lets the original disconnect proceed. This uses the already recorded lifecycle event;
+it does not add observations to historical captures or omit registration requests.
+
+The suite declares three limited scheduling models separately from Claude content:
+
+- Automatic phone read acknowledgements follow content actually presented by the real UI.
+  They may coalesce or omit an incidental visibility window. The suite explicitly declares
+  `readReceiptPolicy: presented-visible-history-v4`; historical capture bytes stay unchanged.
+  Every actual read must increase and refer to history delivered to that phone on that host.
+  A peer's captured read notification waits for the actual phone acknowledgement. If its
+  connection ends first, only that unsent notification is cancelled. Ordinary frames,
+  required queries, user commands and explicit peer reads remain exact. Original read-specific
+  UI assertions still require actual confirmation. The migration adds no blanket final-read
+  assertion to unrelated feature tests. Standalone v2/v3 recordings retain their stricter
+  recorded-final-progress requirement unless the suite explicitly applies its newer policy.
+- A single model lookup can race an unsolicited catalogue on the same connection and
+  conversation. Omitting a recorded lookup requires an identical independent catalogue in
+  the same command interval. On-demand lookups without that evidence stay mandatory.
+- Successful settings polling reads the most recently delivered captured settings state.
+  Snapshot updates remain in producer order and behind their original user commands.
+  A settings write invalidates earlier snapshots for that session, including replies
+  already queued for delivery. The next fresh read waits for a post-write snapshot.
+  Poll counts can vary. Changed owners or complete query payloads fail. Refused or errored
+  settings requests remain exact. A final unanswered settings poll cancelled by closing
+  that connection may be omitted only when earlier successful settings snapshots exist.
+  It cannot supply a new state or hide a missing response before another client action.
+  A legacy backfill probe can vary only when that exact
+  probe was captured as unsupported. Other history requests and error types stay exact.
+
+All generated replies retain recorded payloads and correlate to the actual request.
+Duplicate request IDs fail. Synthetic response IDs share an allocator above recorded IDs.
+A closed replay pump refuses further local sends, matching the normal pump's Boolean
+contract. These cannot emit daemon messages. Any explicitly captured refused call still
+requires its complete request payload and must be consumed.
+Checking the pump's close state and accepting a send share one lock. A sender queued
+before teardown cannot reuse an earlier open-state check after that connection closes.
+Recorded stream events retain cadence. Real push delivery, encryption, transport recovery
+and timing obligations retain their external checks.
+
+### Observation checkpoints and separate verification results
+
+New captures record explicit checkpoints before a phone send and after the original
+scenario succeeds. A checkpoint waits for earlier recorded requests and scheduled
+deliveries. Intermediate observations allow only the declared automatic read notifications
+to remain deferred until the phone actually acknowledges their content. They never invent
+an acknowledgement or release a peer read notification early. Under the declared v4 policy,
+connection termination cancels only a still-unsent automatic read notification. Strict older
+models continue to require recorded final read progress. Ordinary requests, daemon frames and
+connection events remain required. Later queries cannot borrow replies across a checkpoint.
+Complete request payloads, permission choices and uploaded bytes retain their existing checks. Captures declare
+`checkpointPolicy: test-observations-v1`; older captures keep their original checks and
+are not rewritten to invent observations that were never captured.
+
+Every verification attempt writes `verification.json`, including failed attempts.
+It reports the real capture, committed replay, fresh replay and strict comparison
+separately. A failed real capture leaves the later stages unexecuted. Both replays are
+attempted after successful capture, even if one replay fails. A comparison difference
+retains the successful stage counts and writes private comparison details. It still
+fails verification and never produces a successful compatibility receipt. Review
+differences explicitly, as Desktop does; do not call them passing compatibility.
+`verify-all` retains each attempt and groups failures by stage. `--methods-file`
+selects a diagnostic subset; such a subset cannot satisfy the full live inventory gate.
+Real push failures belong to the live capture result. Replay cannot overrule them.
+`verify-all --stop-file /absolute/path/STOP` finishes its current scenario, preserves the
+completed reports and marks the remaining stages unexecuted. A stopped batch fails acceptance.
+
+Desktop uses one continuous recorded prefix. Mobile deliberately differs: independent
+query replies and connections may advance separately, and automatic phone reads use the
+bounded model above. The shared guarantees are exact actions, request correlation,
+connection termination after required work, observation boundaries and complete consumption.
+Do not interpret copying Desktop's checkpoints as copying its entire scheduler.
+
+Replay restores the instrumentation arguments, prior pairings and preferences, and the
+ordinary application graph after each case, including failures. Recorded mode must not
+leak into another device test or make its ordinary-mode check silently skip. A device
+regression enters an incomplete replay, requires that replay to fail, then checks that
+the arguments and ordinary repository binding are restored.
+
+Failed runs can export separately named private application traces. Their format cannot
+be loaded as a successful recording. Compressed diagnostic archives are excluded from
+failed exports. Successful archive captures undergo bounded decompression and credential
+inspection before promotion. Private host logs and failed traces are never fixtures.
+
+### Read acknowledgements and temporary prompts
+
+The migration exposed valid temporary permission and question controls being retained as
+unidentified durable content. That permanently prevented later read checkpoints after a prompt.
+The production projection now recognizes these two strictly decoded controls only when they
+have no durable history identity. It creates no history fact and grants no visibility.
+The real viewport still refuses read qualification while a prompt obscures the thread.
+Unknown classes, malformed controls and unexpected durable entries retain their barriers.
+
+A blanket final-read assertion was also adding a timing requirement to unrelated scenarios.
+A successful live run can acknowledge a row in the short interval before a prompt covers it;
+replay can render the same required screens without that interval. The v4 model follows actual
+presentation and actual acknowledgements. It preserves original feature assertions and the
+explicit read/attention tests instead of forcing that incidental interval to repeat.
+
+## Complete-suite rollout evidence, 2026-10-16
+
+The inventory accounts for all 73 original native methods. All 71 active scenarios have
+reviewed genuine recordings. Two workspace scenarios remain explicitly retired.
+
+| Check | Reported | Failed | Skipped |
+| --- | ---: | ---: | ---: |
+| Genuine real-Claude capture | 71 | 0 | 0 |
+| Saved recording replay | 71 | 0 | 0 |
+| Fresh recording replay | 71 | 0 | 0 |
+| All promoted recordings in the normal device run | 71 | 0 | 0 |
+| Complete normal device selection | 335 | 0 | 1 |
+| Full JVM check | 5718 | 0 | 0 |
+| Recording host checks | 35 | 0 | 0 |
+
+The normal device run used the actual 66-class selection, Gradle's configured focus
+listener and a writable screenshot output directory. It preserved counted XML and
+screenshot outputs. The existing rename pixel-capture test skipped because its rendered-content
+assumption failed on the ATD image; its source already reserves that pixel evidence for the
+full Pixel 8 image. Every recorded scenario executed and passed. The run removed
+Claude credentials and used failing producer-launch traps. Neither producer was invoked.
+
+All genuine captures used Mobile `788314223b701ea5c6a0b530ac255451de97e36e`,
+daemon `c2e7bec7a434014dfc2089f64d507898c79f8e89`, Claude Code 2.1.280 and Android
+API 33. The application package stayed byte-for-byte unchanged during subsequent
+player repairs. Passing per-case replay receipts retain their actual player revisions.
+The final combined run exercised every promoted recording together from source
+`355af9088e3e60564a7b43d33e5f3019aa9b83ef` on one final app and test package.
+Capture package hashes identify the producer before asset promotion. The separate
+combined-run receipt identifies the package containing the promoted recordings.
+
+Strict comparison of the older and fresh captures reports 71 differences. Its failures
+remain failures. New genuine observation checkpoints account for the recorder upgrade.
+Complete normalized action payloads and counts match in all 71 cases; connection
+lifecycles match in all 71. One automatic peer approval changed order. Seven cases
+have reviewed background-query count variations. Each recording still requires its
+own complete requests and counts. The exact successful fresh captures become the
+reviewed baseline. No successful strict-compatibility receipt is claimed.
+
+The [structured rollout evidence](evidence/recorded-claude-rollout-review.json) records
+actual producer and player identities, every counted scenario, the final combined
+result and the explicit comparison decisions. It is a manual rollout review, not
+input to the strict compatibility gate. Real service and timing obligations remain live.

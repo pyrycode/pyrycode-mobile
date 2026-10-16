@@ -243,6 +243,17 @@ on two emulators, the in-depth run to use every now and then or before a release
 zero-count or failed run is not device evidence. Agents author the tests and
 triage the supplied failure; a local `connectedAndroidTest` run is optional.
 
+The default device selection also includes the captured Claude client scenarios in
+`de.pyryco.mobile.recording`. These exercise the original native UI assertions using
+application messages recorded from successful real Claude runs. They start no Claude
+process or real daemon. `./gradlew check` requires complete recording inventory and
+counted capture/replay evidence. Use the explicit full-suite live compatibility command
+when checking a new daemon or refreshing a recording. It requires a fresh real capture,
+replays the reviewed and fresh recordings and compares their request contracts.
+Real FCM delivery, encrypted transport and timing obligations keep their live checks.
+See [recorded client tests](../../recorded-tests.md#complete-native-suite) for commands,
+recording review rules and the limits of replay evidence.
+
 The `ui` gate skips itself, exiting 0 with `Android gate: ui skipped` on stderr and
 no XML, when every path the branch changes since it left `main` is under `docs/` or
 `scripts/`, is Markdown, or is one of the e2e-only sources listed in

@@ -82,12 +82,28 @@ fun QueuedMessageRow(
     onDrop: () -> Unit,
     modifier: Modifier = Modifier,
     onSendNow: (() -> Unit)? = null,
+) = AuthoritativeSendRow(text, onDrop, modifier, onSendNow)
+
+@Composable
+internal fun AuthoritativeSendRow(
+    text: String,
+    onDrop: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    onSendNow: (() -> Unit)? = null,
+    status: String = "queued",
 ) {
     // The row announces its own text plus the waiting state. `stateDescription` rather than a
     // `contentDescription` that would replace the text: the row now sits among delivered rows, so what
     // distinguishes it is a state, not a different identity. It is also the Compose-test handle, the
     // marker idiom ThreadScreen's ModalOptionButton already uses.
-    val queuedState = stringResource(R.string.thread_queued_state_desc)
+    val queuedState =
+        stringResource(
+            when (status) {
+                "lost" -> R.string.thread_send_lost
+                "sending" -> R.string.thread_send_sending
+                else -> R.string.thread_queued_state_desc
+            },
+        )
     val actionHeight = if (onSendNow != null) QueuedActionTarget * 2 else QueuedActionTarget
     Layout(
         modifier =
@@ -113,7 +129,7 @@ fun QueuedMessageRow(
             ) {
                 Box(contentAlignment = Alignment.CenterStart) {
                     Text(
-                        text = text,
+                        text = if (status == "queued") text else "$text\n$queuedState",
                         modifier = Modifier.padding(horizontal = BubbleHorizontalPadding, vertical = BubbleVerticalPadding),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -152,14 +168,15 @@ fun QueuedMessageRow(
 /** Adjoining targets meet at the bubble midpoint while the visible glyphs stay 25dp apart. */
 @Composable
 private fun QueuedActions(
-    onDrop: () -> Unit,
+    onDrop: (() -> Unit)?,
     onSendNow: (() -> Unit)?,
 ) {
     val paired = onSendNow != null
-    val callbacks = if (onSendNow != null) listOf(onSendNow, onDrop) else listOf(onDrop)
+    val callbacks = listOfNotNull(onSendNow, onDrop)
     val sendLabel = stringResource(R.string.cd_thread_queued_send_now)
     val dropLabel = stringResource(R.string.cd_thread_queued_drop)
     Box(modifier = Modifier.testTag("queued-actions"), contentAlignment = Alignment.Center) {
+        if (callbacks.isEmpty()) return@Box
         Layout(
             modifier = Modifier.requiredSize(QueuedActionTarget, QueuedActionTarget * callbacks.size),
             content = {

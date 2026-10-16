@@ -4,7 +4,7 @@ The phone's **long-term cryptographic identity** in Mobile Protocol v2. As the `
 
 Package: `de.pyryco.mobile.data.crypto` (`app/src/main/java/de/pyryco/mobile/data/crypto/`). Two files — `DeviceStaticKeyStore.kt` (the portable contract) and `KeystoreDeviceStaticKeyStore.kt` (the Android-bound impl). Landed in [#291](../codebase/291.md); reuses the existing `app_prefs` DataStore — **no new file, no new dependency**. The mechanism choice is [ADR 0006](../decisions/0006-keystore-wrap-at-rest-device-static-key.md).
 
-> **Greenfield.** Nothing references this yet. The consumer is [#275](https://github.com/pyrycode/pyrycode-mobile/issues/275) (the Noise_IK session), which calls `loadOrCreate(serverId)` and feeds the raw private bytes to `Curve25519DHState.setPrivateKey` as the initiator's local static key.
+The Noise_IK session consumes `loadOrCreate(serverId)` for the initiator's local static key. Supplied send reconciliation also consumes the public mirror, as described under [Wiring & usage](#wiring--usage).
 
 ## The contract
 
@@ -81,13 +81,25 @@ DI (Koin, `AppModule.kt`):
 single { KeystoreDeviceStaticKeyStore(get()) } bind DeviceStaticKeyStore::class
 ```
 
-Consumer (the shape #275 will use):
+Noise handshake consumer:
 
 ```kotlin
 val kp = deviceStaticKeyStore.loadOrCreate(serverId)   // raw 32-byte X25519
 hs.localKeyPair.setPrivateKey(kp.privateKey, 0)        // Curve25519DHState, initiator's local s
 // kp.publicKey is byte-identical to what the DH derives from kp.privateKey
 ```
+
+For supplied send reconciliation (#1986), `RelayConnectionFactory` injects a
+suspending per-host identity supplier into `RelayRepositoryCoordinator`, which
+forwards it to each replacement remote repository. It calls only
+`DeviceStaticKeyStore.publicKey(host)`, requires 32 bytes, and formats lowercase hex
+to match the daemon's authenticated Noise `content.device_id`. The public mirror
+read uses no private-key access, key generation or `loadOrCreate` call, and never
+substitutes a display name. Missing public identity cannot settle a
+pending send. Registration precedes this suspending read so feedback stays immediate.
+Correlation/event logs do not include identity, message text or queue selectors.
+This additive wiring does not activate the supplied thread route; #1988 owns
+activation and combined deterministic/live proof. See [send ownership](remote-conversation-repository-send-create-promote-rename.md#sendmessageconversationid-text--the-first-mutation-346).
 
 ## Edge cases & limits
 

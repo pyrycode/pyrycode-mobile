@@ -16,6 +16,11 @@ send the outbound `dequeue_message` drop (#466). It renders nothing — the
 [queued backlog section](queued-backlog-section.md) (#461) shows the backlog and (#467) the
 visible drop affordance.
 
+The snapshot/echo rules below describe the legacy route. Supplied authoritative
+threads (#1986) instead use admitted daemon items and the guarded controls in the
+Drop/Send now sections; they do not require `queue_state`. #1988 owns activation
+and combined deterministic/live proof. See [thread placement](thread-screen.md#what-it-does).
+
 ## The signal
 
 ```kotlin
@@ -86,7 +91,28 @@ now" condition, not durable state.
 
 ## Dropping a queued entry (`dequeue_message`, #466)
 
-The **outbound** half: `dropQueuedMessage(conversationId: String, queuedMessageId: Long)` sends a
+**Supplied authoritative Drop (#1986).** `actOnAuthoritativeQueue(target, false)`
+encodes `dequeue_message` with `conversation_id`, exact numeric `queued_msg_id`
+from `content.queued_msg_id`, and numeric `accepted_item_id = item.id`. Handles
+must be canonical positive JSON uint64 integers through `18446744073709551615`;
+acceptance IDs must be in `1..9007199254740991`. Strings, fractions, exponents,
+zero, overflow and missing handles expose no actionable controls. The queue counter
+is independent of the acceptance ID and can be reused after daemon restart: the
+acceptance guard must remain in both payloads even before an old item's loss
+revision reaches the phone.
+
+A captured target carries host, conversation, epoch, generation, acceptance ID and
+handle. Only a current shown, active, queued `user_message` can supply it. The
+ViewModel checks current presentation ownership; the remote revalidates the held
+item and scope under the store lock immediately before sending, without suspension.
+Terminal/hidden items, replacement generations, retired connection sources and
+changed handles reject the target without an unbound fallback. The stable facade
+can forward through a replacement repository only after its current-store checks.
+Pump refusal, failure or a silent daemon no-op changes neither lifecycle nor
+placement. Successful enqueue is also not settlement: only admitted daemon facts
+can hide a drop or move delivery.
+
+**Legacy outbound path (retained):** `dropQueuedMessage(conversationId: String, queuedMessageId: Long)` sends a
 `dequeue_message` frame `{conversation_id, queued_msg_id}` so the daemon removes a not-yet-drained message
 before it reaches claude. It is the outbound **peer** of the inbound `queue_state` decode.
 
@@ -133,7 +159,7 @@ suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long): Un
   only the `queued_msg_id` the caller already has; the repository looks up that item's `messageId` in its
   **own** `queuedByConversation` snapshot before sending, because a successful drop provokes a fresh
   `queue_state` that would remove the item first if read afterwards (safe to read early since
-  `queued_msg_id` is a per-conversation counter that is never recycled). Once the confirming `queue_state`
+  this legacy lookup is connection-scoped; the counter can be reused after restart). Once the confirming `queue_state`
   settles the drop, the resolved id is checked against a connection-scoped **minted-id ledger** —
   `conversationId -> the message ids this device minted and echoed`, written by `sendMessage` as it issues
   the send ([#1355](https://github.com/pyrycode/pyrycode-mobile/issues/1355); a failed send's id is left in
@@ -169,9 +195,9 @@ suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long): Un
   distinguished from success even under the old ack-based mapping, and the [#467](../codebase/467.md) drop
   affordance already swallows any failure inert (no "already gone" visual), so nothing downstream needed
   the distinction.
-- **No idempotency key** (unlike `modal_answer`) — `queued_msg_id` is a monotonic per-conversation ordinal,
-  never recycled, so a replayed drop targets an already-consumed id → a benign daemon stale-id reject, no
-  double-effect hazard. The `modal_cancel` no-token posture.
+- **No acceptance guard on legacy controls.** A queue counter is monotonic within a daemon run,
+  but restart may reuse it. This legacy command cannot prevent retargeting across restart;
+  authoritative controls above must carry the permanent `accepted_item_id` guard.
 
 See [#466](../codebase/466.md) for the files, the `DequeueMessagePayloadDto` encode DTO, and verification.
 
@@ -313,7 +339,16 @@ Send now coverage remains in [the real-Claude ladder](../../e2e-interactive-stre
 
 ## Sending a queued entry now (#1642)
 
-`sendQueuedNow(conversationId, queuedMessageId)` sends the encode-only `send_queued_now`
+**Supplied authoritative Send now (#1986).** `actOnAuthoritativeQueue(target, true)`
+encodes `send_queued_now` with the same exact handle, acceptance guard and conversation
+as [Drop](#dropping-a-queued-entry-dequeue_message-466), with identical stale/terminal
+rejection and failure/no-op behavior. It works without `queue_state` and retains
+the fresh current-session `capabilities.mid_turn_input: true` requirement below.
+A captured callback must still own the current presentation and current session
+eligibility at execution. Neither verb moves a row optimistically or promises
+current-turn delivery. Legacy unbound controls retain their existing behavior.
+
+**Legacy path:** `sendQueuedNow(conversationId, queuedMessageId)` sends the encode-only `send_queued_now`
 control through the owning host's remote/stable repository. It returns after pump enqueue,
 with no reply waiter or confirmation dialog. The row remains unchanged until authoritative
 `queue_state`; a refused send rolls back local placement intent and uses drop's inert failure

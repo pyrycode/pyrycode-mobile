@@ -4,14 +4,35 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
 
 ## `sendMessage(conversationId, text)` — the first mutation (#346)
 
-Posts the user's text over v2 `send_message` and returns the persisted `Message`.
+Posts the user's text over v2 `send_message` and returns a locally constructed `Message` after receipt.
 [#346](../codebase/346.md) implements it, and in doing so adds the **shared request↔reply correlation
 primitive** the remaining mutations (#347/#348) reuse. The body now lives on `MessageCommands` (#915,
 `data/repository/MessageCommands.kt`), beside `uploadAttachment`, `requestScreenSnapshot` and
 `dropQueuedMessage`; the repository's `override suspend fun sendMessage` (both overloads) is a one-line
 hand-off.
 
-**The corrected wire premise is load-bearing.** `send_message` does **not** echo the sender its own
+**Supplied authoritative sends (#1986).** With the supplied host/capability route,
+`MessageCommands` records the list preview and registers provisional feedback in
+`AuthoritativeThreadStore` before awaiting the suspending public-identity read or
+sending. Identifying the pending send under the same store lock also checks held
+items, so delayed key storage cannot delay feedback or miss an early matching item.
+This route does not write a legacy thread echo/minted ledger. A retired supplied
+connection source refuses new sends before provisional registration.
+
+The empty `ack` confirms receipt only; success, timeout and late error never write
+accepted lifecycle or recreate retired feedback. Only an admitted `user_message`
+with exact string `content.device_id` and `content.message_id` in the same
+host/conversation retires it, including a hidden terminal item received live,
+through catch-up or paging. Missing identity, another device's identical client ID
+and equal text do not match. The device identity is the sending device's authenticated per-host Noise
+static public key, not its display name. Pending feedback stays in process memory
+across connection replacement and resets, without automatic resend or cross-host
+transfer; it is excluded from disk cache and does not survive process death.
+See [store ownership](remote-conversation-repository-reads-and-thread-store.md#authoritative-daemon-items-alongside-the-raw-event-projection)
+and [public-key wiring](device-static-keystore.md#wiring--usage).
+Activation and combined deterministic/live acceptance remain with #1988.
+
+**Legacy path (retained). The corrected wire premise is load-bearing.** `send_message` does **not** echo the sender its own
 persisted `Message`. The only sender-correlated reply is an empty **`ack`** on success
 (`in_reply_to == requestId`, payload `{}`) or an **`error`** on failure (`{code, message, retryable}`).
 A `message` envelope reaching this device is a user-echo to *other* paired devices or the assistant's
@@ -29,9 +50,9 @@ it. A refused send (a server `error` or a not-connected throw) leaves the echo i
 rollback, because desktop has no failure surface for a send to roll back against either. The trust
 property the original ruling protected — the thread never shows a message the server did not receive —
 no longer holds by construction; it is traded for responsiveness, matching desktop's own posture. `ack`
-still has to come back clean for the send to be considered delivered in the wire sense, but nothing in
+confirms receipt when it comes back clean, but nothing in
 the UI distinguishes a delivered bubble from a not-yet-acknowledged one (`Message` still carries no
-delivery-status field, so a "sending" treatment remains a future UI-layer concern, not a data-layer one).
+delivery-status field, so the supplied authoritative route above carries Sending separately).
 
 **Original ruling (superseded above, kept for context).** Before #1355 the message was projected into
 the read path only on the correlated `ack`, never before and never on failure, so the thread could never

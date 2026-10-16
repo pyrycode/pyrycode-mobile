@@ -422,6 +422,13 @@ class StableConversationRepository(
         queuedMessageId: Long,
     ): Unit = live.sendQueuedNow(conversationId, queuedMessageId)
 
+    override suspend fun actOnAuthoritativeQueue(
+        target: AuthoritativeQueueTarget,
+        sendNow: Boolean,
+    ): Result<Unit> =
+        currentRepository.value?.actOnAuthoritativeQueue(target, sendNow)
+            ?: Result.failure(IllegalStateException("queue source unavailable"))
+
     override suspend fun dropQueuedMessage(
         conversationId: String,
         queuedMessageId: Long,

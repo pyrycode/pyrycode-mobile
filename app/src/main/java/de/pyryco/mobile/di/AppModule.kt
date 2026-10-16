@@ -201,6 +201,10 @@ val appModule =
         single { PushTokenSink(get()) } onClose { it?.dispose() }
         // #1102: ask FCM for the current token while none is stored, rather than wait only for onNewToken.
         // Eager for the driver's reason: a push can start the process with no activity.
+        single<de.pyryco.mobile.push.PushWakeHandler> {
+            de.pyryco.mobile.push
+                .PushWakeHandler { get<LifecycleConnectionDriver>().onPushWake() }
+        }
         single<PushTokenSource> { FirebasePushTokenSource(androidContext()) }
         single(createdAtStart = true) {
             PushTokenRefresher(

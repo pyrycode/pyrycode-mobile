@@ -20,6 +20,27 @@ above), `## Configuration`, `## Related`.
 
 ## What it does
 
+**Supplied send reconciliation (#1986).** A send immediately adds one provisional
+**Sending** row owned by the client. Empty acknowledgement is receipt only: it
+neither delivers nor removes feedback. An admitted daemon `user_message` with the
+same host, conversation, originating device public identity and client message ID
+retires that feedback, including through live, catch-up or page recovery without
+an acknowledgement. Peer ID collisions and equal text cannot settle it. Late
+acknowledgements/errors cannot recreate the row. See [send ownership](remote-conversation-repository-send-create-promote-rename.md#sendmessageconversationid-text--the-first-mutation-346).
+
+Daemon items own accepted lifecycle and placement. Shown unordered queued/lost items
+(including peers') form the tail in acceptance-item-ID order; queued rows show
+**Waiting**. Unresolved
+local sends follow in local send order. Delivery moves the same scoped daemon item
+key into history at daemon `order`, without a waiting copy or reordering other
+ordered rows. A hidden drop disappears; explicit shown unordered `lost` retains
+its text and **Lost** label without delivered styling or queue controls. Sending
+has no controls; queued items with malformed handles retain text without actions.
+Omission from a batch, disconnect, timeout and queue disappearance prove neither
+delivery nor loss. [Guarded actions](queued-backlog.md#dropping-a-queued-entry-dequeue_message-466)
+wait for admitted facts before changing rows. Capability activation and combined
+deterministic/real-daemon proof remain with #1988.
+
 Dismissal reasons and attachment “File saved” use inert Default pills at the bottom
 of the [top-overlay stack](thread-top-overlay.md#the-default-confirmation-pill-1851).
 They share a conversation-keyed FIFO independent of errors: each occurrence, even
@@ -30,7 +51,7 @@ cancel an earlier one; unrelated recomposition does not replay it. Reopening ret
 the host fold’s existing latest-dismissal behavior. Pills overlay messages without
 shifting content; the thread has no confirmation snackbar host.
 
-Queued rows expose an independent **Send now** action before drop only when the current
+On the legacy route, queued rows expose an independent **Send now** action before drop only when the current
 session's fresh capability report explicitly enables mid-turn input (#1642). Settings replacement,
 session change and owning-host disconnect invalidate stale support. A tap uses the destination's
 repository without confirmation or optimistic row movement; failure uses drop's existing inert
@@ -96,6 +117,31 @@ the shown watermark and requires the newest shown row currently visible plus sig
 of **every shown row revision above confirmed read**, including an older row appended
 between confirmed read and the newest watermark. Seeing only the newest row can
 otherwise mark an intermediate offscreen append read.
+
+Both viewport selection and checkpoint qualification use
+`AuthoritativeThreadPresentation.newestReadKey`: the last delivered row carrying
+admitted `shownRowRevisions` evidence, even beneath Sending, Waiting or Lost tails.
+Those tails supply no read revision and cannot certify reads by themselves. Viewed
+history and a subsequent delivered reply can qualify while feedback remains;
+exact sight, summary bounds, unread intermediate revisions and certified coverage
+still apply. Selecting the final rendered row instead would let a retained Lost
+row block reads indefinitely.
+
+Deterministic regression evidence for #1986 (2026-10-14): the fresh focused XML
+recorded **135 executed/passed, 0 failed/errors, 0 skipped**, including
+`AuthoritativeSendReconciliationTest`, `AuthoritativeSendRepositoryTest`,
+`AuthoritativeSendScreenTest`, `AuthoritativeQueueActionTest` and retained legacy
+queue/Send now/geometry probes. All four read regressions passed:
+`AuthoritativeReadSightTest.sendingWaitingAndLostTailsPreserveExactHistoryReadRequirements`
+and `AuthoritativeReadViewportTest.sendingTailAllowsViewedHistoryAndReplyWhileFeedbackRemains`,
+`waitingTailAllowsViewedHistoryAndReplyWhileFeedbackRemains`, and
+`lostTailAllowsViewedHistoryAndReplyWhileFeedbackRemains`. XML was retained at
+`/tmp/builder-1986/rework-focused-results/` at documentation time. The
+[verifier's final evidence](https://github.com/pyrycode/pyrycode-mobile/pull/2165#issuecomment-6178853468)
+records 5,615 unit/shared tests passed with 0 failures/errors/skips; the configured
+UI gate executed/passed 261 with 0 failures and 1 unrelated skip
+(`renameAtFigmaViewport`), and scripted-all executed/passed 22 with 0 failures/skips.
+These are deterministic results, not #1988's pending real-daemon acceptance.
 
 Authoritative candidates and the composition-local seen ledger use scoped list keys
 and exact revisions. Equal banners, refusals, dividers and compactions cannot share

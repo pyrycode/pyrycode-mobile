@@ -4,6 +4,72 @@ Split from [Conversation cache](conversation-cache.md); this topic retains the s
 
 ## Testing
 
+### Indexed legacy disk probes (#2162)
+
+`LegacyRoomStorageTest` uses Robolectric with a real on-disk Room database and fresh database/
+storage instances between persistence assertions. An in-memory database or a same-instance
+read cannot establish restart fidelity. Its 18 probes cover all six persisted row kinds and
+fields, exact owner isolation, equal/misleading timestamp order, stale continuations, unsigned
+extremes, legacy fragment bindings, exclusions/uniqueness, 100000-row trims with and without
+coverage, optional-history isolation, scoped removal and transaction rollback after failure or
+cancellation. Metadata-only reads assert zero row payload reads/decodes.
+
+Bounded probes measure actual row payload reads/decodes, ordinal-only probes and evidence
+reads/decodes at the DAO/codec boundaries. Equal returned row counts alone do not establish
+bounded work. Retain these independent cases:
+
+- `boundedEvidenceInvariant_fragmentedFixtureDoesNotDecodeOutsideWindow` keeps the unchanged
+  `fragmentedHistoryFixture`: 18000 rows, 36000 durable entries and 18000 spans. Newest-200 reads/
+  decodes exactly 200 row payloads, probes one older ordinal and reads/decodes 1002 evidence cells.
+  Adding older held rows does not increase those page counts. Exhaustive backward traversal
+  visits all 18000 rows exactly once over 90 pages.
+- `boundedEvidenceInvariant_olderCursorsAndWalksDoNotGrowContinuousSpanPages` grows older
+  cursor/walk evidence inside one continuous span by 36000 cells while keeping the selected
+  newest 200 rows unchanged. Counts remain 200 row reads/decodes, one ordinal probe, 609 evidence
+  reads and 608 evidence decodes. Sparse fragmented spans alone cannot catch this full-span scan.
+- `boundedEvidenceInvariant_sharedGapBoundaryKeepsBothSides` reopens disk and traverses one-row
+  newest/before pages through spans `[1,1]`, `[3,3]`, `[5,5]` and gaps `[1,3]`, `[3,5]`. The
+  middle page must retain both touching gaps, both retry walks and nearest relevant cursors while
+  excluding non-intersecting intervals. Check `gapCursors` directly too: an independent page-edge
+  lookup can mask a missing sibling-query result.
+- `boundedEvidenceInvariant_olderEvidenceDoesNotGrowSharedBoundaryPages` and
+  `boundedEvidenceInvariant_sharedGapBoundaryPreservesUnsignedExtremes` shift the same boundary
+  case and exercise maximum-unsigned positions. Adding 4000 unrelated older evidence cells
+  leaves the middle page at one row read/decode, one ordinal-only probe, 16 evidence reads and
+  13 evidence decodes.
+- `committedEvidenceInvariant_parseableInvalidSpansAndClaimsAreIsolated` and
+  `committedEvidenceInvariant_parseableInvalidFragmentBindingsAreIsolated` corrupt selected
+  evidence with parseable but invalid cells. Assert that rows remain readable, optional evidence/
+  saved cursor/completeness disappear and storage is unchanged. Malformed JSON alone does not
+  exercise projection validation.
+
+The [builder's focused report](https://github.com/pyrycode/pyrycode-mobile/pull/2164) records
+`testDebugUnitTest -PfullRetentionTests=true` selecting `LegacyRoomStorageTest`,
+`LegacyRowCodecTest`, `FileConversationCacheThreadTest`, `DecodedThreadRestoreTest`,
+`HistoryHashCompatibilityTest`, `UnsignedHistoryCacheTest` and `HistoryDurabilityTest`:
+102 executed/passed, 0 failed/errors, 0 skipped, including 18 Room tests. These retain canonical
+file-codec/proof compatibility, unsigned/history durability and existing restore/timing/exact-row
+regressions; Room probes supplement them. Keep full-retention admission rather than shrinking
+the shared fixture or replacing full-cap disk tests with count-only assertions.
+
+The [final verifier report](https://github.com/pyrycode/pyrycode-mobile/pull/2164#issuecomment-6179402443)
+for `9f939dd05333da04c104c71522c3baabf02fed72` (2026-10-14) records the fresh unit XML from
+`./gradlew check`: 5610 executed/passed, 0 failed/errors, 0 skipped; the seven named classes had
+100 executed/passed, 0 failed/errors, 0 skipped, including all 18 Room methods. Each of the three
+shared-boundary methods above executed once and passed, with the unchanged 16-read/13-decode
+counts in report output. These dispatcher counts differ from the separate focused builder run.
+The dispatcher gate report also records UI: 261 executed/passed, 0 failed, 1 skipped
+(`renameAtFigmaViewport`); scripted-all: 22 executed/passed, 0 failed, 0 skipped. The skipped
+capture supplies no visual evidence. This unbound data-layer work needs no real-Claude scenario.
+Counts here preserve the reports' evidence; removed gate-worktree build paths are not durable
+artifact links.
+
+Import/application binding belongs to #2161, authoritative Room storage to #2163 and reader
+activation/owned partial writes to #2068. These disk probes do not establish application restore
+latency or production bounded reading before those consumers are activated.
+
+### File-cache regressions
+
 [`FileConversationCacheTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/cache/FileConversationCacheTest.kt)
 is a plain JVM unit test on a `TemporaryFolder` — no Robolectric, no device — because the
 implementation takes a root `File` rather than a `Context`. 20 cases cover field-for-field and

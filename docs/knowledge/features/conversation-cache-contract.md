@@ -11,6 +11,9 @@ interface ConversationCache {
     suspend fun readThread(serverId: String, conversationId: String): List<ThreadItem> = emptyList()
     suspend fun writeThread(serverId: String, conversationId: String, rows: List<ThreadItem>): Result<Unit> =
         Result.success(Unit)
+    suspend fun readAuthoritativeThread(serverId: String, conversationId: String): SavedAuthoritativeThread? = null
+    suspend fun writeAuthoritativeThread(serverId: String, conversationId: String, saved: SavedAuthoritativeThread): Result<Unit> =
+        Result.success(Unit)
     suspend fun readHistoryPosition(serverId: String, conversationId: String): HistoryPosition? = null
     suspend fun writeHistoryPosition(serverId: String, conversationId: String, position: HistoryPosition?): Result<Unit> =
         Result.success(Unit)
@@ -43,6 +46,33 @@ threads (`InertConversationCache`, and the fakes in `HostConversationSourceTest`
 replace**, like `writeConversations` is a whole-host replace, and it always stores
 `cacheableThreadRows(rows)` — never the caller's raw list — so no caller can persist an
 unrecognized, streaming or in-flight-tool row by constructing a `ThreadItem` list itself.
+
+**The authoritative thread family (#2149).** `readAuthoritativeThread`/`writeAuthoritativeThread`
+are additive, default-bodied methods over `SavedAuthoritativeThread(epoch, items, appliedVersion,
+checkpoint, coverage)`. One atomic replacement binds full raw item objects and their epoch to the
+certified reconnect checkpoint and optional continuous history coverage. `SavedThreadCoverage`
+holds `lowerOrder`, `upperOrder`, `continuation` and `olderExists`; parent or active facts outside
+that range do not enlarge it. Applied progress may exceed the checkpoint after an interrupted
+multi-batch reply: saving newer complete items does not certify the unfinished reply.
+
+The store retains one item per identity at its newest accepted revision in daemon order.
+Raw objects preserve identity, revision, order, parents, explicit-null clears and inert unknown
+fields/kinds. Full active facts are retained as saved facts; connection capabilities, runtime
+generation, query assembly and transient live progress are excluded. Unlike the legacy row
+family, this family does not apply settled-row or unknown-kind exclusions. Its 100000-item cap
+keeps the ordered tail; any trimming sets `checkpoint` to zero and `coverage` to null while
+retaining applied progress. Omitted facts must never remain certified.
+
+The [separate envelope](conversation-cache-layout.md#layout) validates version and exact host/
+conversation ownership. Invalid full items, duplicate identities, numeric/revision bounds or
+coverage invalidate the whole record. Reads return null without repairing disk; failed writes
+preserve the last successful document. Records redact `toString`, and diagnostics contain only
+static operation/failure codes. Legacy rows remain readable through `readThread` and cannot be
+converted into authoritative items or certify this checkpoint. Both thread families are removed
+with the conversation or host. The sole save/restore consumer is the
+[supplied caching seam](caching-conversation-repository.md#what-is-written-and-when);
+production route activation remains with #1988, authoritative Room storage with #2163
+(split from #2067), and bounded reading with #2068.
 
 **The saved history position (#1354, extended by #1832 and #1910).** `HistoryPosition(cursor, atStart,
 coverage = null)` lives inside the thread document beside its rows, under the same host and
@@ -80,6 +110,66 @@ for lazy demand and marker/cursor behavior.
 
 Visible marker eligibility is documented in the parent
 [cache contract](conversation-cache.md#the-contract); saved unresolved coverage remains authoritative.
+
+### Indexed legacy operations and pages (#2162)
+
+`LegacyRoomStorage` supplies full `readThread`/`writeThread`, `readHistoryPosition`/
+`writeHistoryPosition`, `removeConversation` and `removeHost` operations independently of the
+application binding. Whole-thread replacement still applies `cacheableThreadRows`, validates
+uniqueness and retains content-bound history only for committed rows. Changed/removed proofs
+invalidate their producing claims. A 100000-row trim drops a position without coverage; with
+coverage it resets cursor/`atStart` and retains conservative evidence. History replacement binds
+and validates claims against the stored rows; a null position clears metadata without deleting
+rows, and clearing a never-written owner is a no-op. Every mutation commits rows and applicable
+evidence in one Room transaction. Expected failures preserve the last committed representation.
+The [indexed layout](conversation-cache-layout.md#indexed-legacy-room-layout-2162) also describes
+atomic scoped removal and backup exclusion of the database and its sidecars.
+
+`newestPage(serverId, conversationId, size)` and `beforePage(serverId, conversationId,
+Continuation, size)` return a distinct nullable `LegacyThreadPage`, never a shortened full-cache
+read. A positive size selects at most that many payloads in held ordinal order, plus at most
+one ordinal-only continuation probe; its payload is never decoded. Newest selects the tail and
+before selects earlier ordinals. Repeated pages traverse an unchanged snapshot exactly once
+even with equal or misleading timestamps. The result carries its exact owner. Its opaque local
+`Continuation` belongs only to the legacy family and binds exact case-sensitive host,
+conversation and committed generation. Wrong-owner or stale tokens return null. Replacement
+invalidates old tokens; local continuation is never a daemon cursor.
+
+`LegacyPageEvidence` exposes typed unsigned spans, gaps, selected row/delta claims and proofs,
+fragment bindings and relevant cursor/walk evidence. It is a projection, not full
+`HistoryCoverage`: omitted history is neither loaded nor certified. Saved high-water/unknown-edge
+and global unknown/incomplete flags retain their committed meanings even when selected rows fit
+the signed range. `savedCursor` and `savedAtStart` are saved metadata, not deductions from local
+page exhaustion. Local exhaustion cannot close gaps, change server completeness or rewrite
+opaque cursors.
+
+Evidence selection uses selected ordinals/producing claims, intersecting spans/gaps and needed
+adjacent spans, nearest edge/gap cursors and unknown-walk evidence. Cursor selection must use
+the selected claim window, not an intersecting continuous span's full endpoints: older anchors
+inside that span would otherwise grow page reads/decoding. Closed intervals sharing the selected
+boundary both intersect it. The interval, gap-walk and gap-cursor queries therefore include the
+strict predecessor (`low < first`) alongside intervals starting at `first`, filtered by
+`high >= first` and `low <= last`. This preserves both gaps and their retry/cursor evidence
+without loading unrelated older history.
+
+Parseability alone is insufficient. Selected evidence payloads must match their SQL indexes
+and row ordinals; projection validation checks ordered spans, gap structure, covered producing
+claims, exact row/delta proofs and fragment bounds/hashes. It does so without requiring omitted
+gaps or certifying omitted rows. Invalid optional evidence withholds the entire projection,
+saved cursor and saved completeness while preserving readable rows. Reads never repair storage.
+Full metadata reads remain available without row payload decoding; content binding is established
+on committed writes, and page reads additionally check selected content.
+
+Expected SQLite, IO, security and invalid-data failures follow the graceful-read/reporting-mutation
+contract: empty rows or null metadata/pages on read, and causeless `ConversationCacheException`
+failures inside mutation `Result`s. Cancellation and unclassified programming errors propagate.
+Diagnostics contain static operation/failure codes; page, evidence, continuation and schema
+result strings redact content, cursors and owner ids.
+
+The backend remains unbound. #2161 owns import/application binding, #2163 authoritative Room
+storage and #2068 reader activation/owned partial writes. Legacy rows/evidence never become
+authoritative items or certify an authoritative checkpoint. Existing file-cache operations,
+metadata lists, read positions, settings and attachment-byte storage remain available.
 
 **The read-position family (#877, fallback-only since #1883).**
 `readReadPositions`/`writeReadPositions` retain their graceful-read,
@@ -147,6 +237,6 @@ Values read back are the same daemon-authored text that arrived over the wire. P
 the cache neither validates nor bounds them — a cached conversation name is exactly as
 untrusted as a live one, and the render path owns length-bounding and escaping either way.
 
-No `android.*` type appears in the contract. `data/` is portable by project rule (root
-`CLAUDE.md` § Don't); only `FileConversationCache` may reach for a platform storage handle, and
-even there the only platform type is `java.io.File` — see § Root and storage scope below.
+No `android.*` type appears in the storage contract. Android database construction stays
+at the `di/` platform boundary; `FileConversationCache` accepts a `java.io.File` root.
+See [storage scope](conversation-cache.md).

@@ -27,6 +27,11 @@ interface ConversationRepository {
     /** Decorators forward this optional provider; existing repositories retain their ordinary reads. */
     val runConfigurationReadings: RunConfigurationReadings? get() = null
 
+    suspend fun actOnAuthoritativeQueue(
+        target: AuthoritativeQueueTarget,
+        sendNow: Boolean,
+    ): Result<Unit> = Result.failure(IllegalStateException("authoritative queue unavailable"))
+
     fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>>
 
     fun observeMessages(conversationId: String): Flow<List<ThreadItem>>
