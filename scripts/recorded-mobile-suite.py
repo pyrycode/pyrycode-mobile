@@ -225,6 +225,13 @@ def capture(serial, method, destination, pyry, daemon_source):
             artifact = report_dir / filename
             if artifact.is_file() and artifact.stat().st_mtime_ns >= started:
                 (evidence / filename).write_bytes(artifact.read_bytes())
+        if result.returncode != 0:
+            try:
+                failed = legacy.adb(serial, 'exec-out', 'run-as', PACKAGE, 'cat', 'files/' + name + '.failed')
+                require(not any(value and value in failed for value in capture_credentials(home)), 'Credential rejected from failed-run diagnostics')
+                legacy.private_write(evidence / 'failed-protocol.json', failed)
+            except (subprocess.CalledProcessError, OSError):
+                pass
         require(result.returncode == 0, 'Native capture failed; inspect private host evidence')
         report = report_dir / 'TEST-installed.xml'
         require(report.stat().st_mtime_ns >= started, 'Stale native report')

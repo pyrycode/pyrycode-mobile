@@ -37,7 +37,9 @@ internal class RecordedSuiteTape(
     private val requests = mutableMapOf<Pair<String, Long>, Long>()
     private val actualIds = mutableMapOf<String, MutableSet<Long>>()
     private val identities = mutableMapOf<String, String>()
-    private var cursor = 0
+    private val released = mutableSetOf<Int>()
+    private var lifecycleBefore = emptyList<Int?>()
+    private var ownerCommandBefore = emptyList<Int?>()
     private var matched = 0
     private var failure: String? = null
     private var readReceipts: SuiteReadReceipts? = null
@@ -124,6 +126,20 @@ internal class RecordedSuiteTape(
             readReceipts = SuiteReadReceipts(steps, queryTypes, ::mapped, retainedPhoneHistory)
             steps = readReceipts!!.steps
         }
+        val lifecycle = mutableMapOf<String, Int>()
+        val ownerCommands = mutableMapOf<String, Int>()
+        lifecycleBefore =
+            steps.mapIndexed { index, step ->
+                val previous = lifecycle[family(step.owner)]
+                if (step.direction in setOf("connect", "close")) lifecycle[family(step.owner)] = index
+                previous
+            }
+        ownerCommandBefore =
+            steps.mapIndexed { index, step ->
+                val previous = ownerCommands[step.owner]
+                if (step.direction == "client" && step.message!!.type !in queryTypes) ownerCommands[step.owner] = index
+                previous
+            }
     }
 
     private fun collect(
@@ -162,22 +178,26 @@ internal class RecordedSuiteTape(
         throw IllegalStateException(failure)
     }
 
+    private fun family(owner: String) = owner.substringBeforeLast('/', owner)
+
+    private fun commandBoundary(): Int =
+        steps.indices.firstOrNull {
+            it !in consumed && steps[it].direction == "client" && steps[it].message!!.type !in queryTypes
+        } ?: steps.size
+
     private fun eligible(): List<Int> {
-        val result = mutableListOf<Int>()
-        for (i in cursor until steps.size) {
-            val step = steps[i]
-            if (i in consumed || step.direction !in setOf("client", "connect", "close")) continue
-            if (step.direction == "connect") {
-                result += i
-                continue
+        val boundary = commandBoundary()
+        return steps.indices.filter { index ->
+            val step = steps[index]
+            val connected = lifecycleBefore[index]?.let { it in consumed } ?: true
+            when {
+                index in consumed || !connected -> false
+                step.direction == "connect" -> true
+                step.direction == "close" -> ownerCommandBefore[index]?.let { it in consumed } ?: true
+                step.direction == "client" -> step.message!!.type in queryTypes || index == boundary
+                else -> false
             }
-            if (step.direction != "client" || step.message!!.type !in queryTypes) {
-                if (result.isEmpty()) result += i
-                break
-            }
-            result += i
         }
-        return result
     }
 
     @Synchronized fun initial(): List<SuiteStep> = drain()
@@ -254,6 +274,11 @@ internal class RecordedSuiteTape(
                 }
             fail(mismatch + checkpoint)
         }
+        if (actual.type == "request_model_list") {
+            (actual.payload as? JsonObject)?.get("conversation_id")?.jsonPrimitive?.contentOrNull?.let {
+                redundantModels += owner to it
+            }
+        }
         actualIds.getOrPut(owner) { mutableSetOf() } += actual.id
         requests[owner to expected.id] = actual.id
         consumed += candidate
@@ -293,11 +318,7 @@ internal class RecordedSuiteTape(
         ) {
             return false
         }
-        val boundary =
-            (cursor until steps.size).firstOrNull {
-                it !in consumed &&
-                    (steps[it].direction == "close" || steps[it].direction == "client" && steps[it].message?.type !in queryTypes)
-            } ?: steps.size
+        val boundary = commandBoundary()
         val observed =
             steps.take(boundary).any {
                 it.owner == owner &&
@@ -328,20 +349,29 @@ internal class RecordedSuiteTape(
 
     private fun drain(): List<SuiteStep> {
         val result = mutableListOf<SuiteStep>()
-        while (cursor < steps.size) {
-            val step = steps[cursor]
-            if (readReceipts?.permits(step) == false) break
+        val blockedOwners = mutableSetOf<String>()
+        for (index in 0 until commandBoundary()) {
+            if (index in released) continue
+            val step = steps[index]
             if (step.direction in setOf("client", "connect", "close")) {
-                if (cursor !in consumed) break
-            } else if (step.direction == "daemon") {
-                val frame = step.message!!
-                val encoded = mapped(MobileJson.encodeToJsonElement(Envelope.serializer(), frame)).jsonObject.toMutableMap()
+                if (index in consumed) released += index
+                continue
+            }
+            if (lifecycleBefore[index]?.let { it !in consumed } == true || step.owner in blockedOwners) continue
+            if (readReceipts?.permits(step) == false) {
+                blockedOwners += step.owner
+                continue
+            }
+            val frame = step.message
+            if (step.direction == "daemon" && frame!!.inReplyTo?.let { step.owner to it !in requests } == true) continue
+            if (step.direction == "daemon") {
+                val encoded = mapped(MobileJson.encodeToJsonElement(Envelope.serializer(), frame!!)).jsonObject.toMutableMap()
                 frame.inReplyTo?.let { encoded["in_reply_to"] = JsonPrimitive(checkNotNull(requests[step.owner to it])) }
                 result += step.copy(message = MobileJson.decodeFromJsonElement(Envelope.serializer(), JsonObject(encoded)))
             } else {
                 result += step
             }
-            cursor++
+            released += index
         }
         return result
     }
@@ -353,9 +383,16 @@ internal class RecordedSuiteTape(
         readReceipts?.delivered(owner, frame)
     }
 
+    @Synchronized fun progress(): String {
+        val index = commandBoundary()
+        val next = steps.getOrNull(index)
+        val type = next?.message?.type?.takeIf { it.matches(Regex("[A-Za-z0-9_:-]{1,100}")) } ?: "none"
+        return "Recorded suite progress: matched=$matched remaining=${steps.size - released.size} next=${next?.owner}:$type index=$index"
+    }
+
     @Synchronized fun assertComplete() {
         failure?.let { fail(it) }
-        check(cursor == steps.size) { "Recorded suite incomplete" }
+        check(released.size == steps.size) { "Recorded suite incomplete" }
         readReceipts?.assertComplete()
     }
 }

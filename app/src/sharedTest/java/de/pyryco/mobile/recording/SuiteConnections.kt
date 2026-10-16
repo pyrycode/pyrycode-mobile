@@ -242,6 +242,8 @@ internal class SuiteConnections private constructor(
 
     fun completedCapture(success: Boolean): List<SuiteStep> = checkNotNull(capture).completed(success)
 
+    fun diagnosticCapture(): List<SuiteStep>? = checkNotNull(capture).diagnostic()
+
     override fun close() {
         deliveries.close()
         pumps.values.forEach { it.frames.close() }
@@ -387,7 +389,10 @@ internal class SuiteConnections private constructor(
         fun deliver(step: SuiteStep) {
             when (step.direction) {
                 "open" -> state.value = PumpState.Open(connection.owner, step.capabilities)
-                "down" -> state.value = PumpState.Closed(null)
+                "down" -> {
+                    state.value = PumpState.Closed(null)
+                    connection.close()
+                }
                 "daemon" -> {
                     val frame = checkNotNull(step.message)
                     tape!!.delivered(connection.owner, frame)

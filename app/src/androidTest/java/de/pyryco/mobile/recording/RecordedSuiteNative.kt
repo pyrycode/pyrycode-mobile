@@ -269,57 +269,70 @@ internal object RecordedSuiteNative {
                     session.hub.awaitIdle()
                 }
             }
-            if (!success) return
+            if (!success) {
+                if (session.document != null) error(checkNotNull(session.tape).progress())
+                exportCapture(session, failed = true)
+                return
+            }
             if (session.document != null) {
                 check(session.clockIndex == session.clockReads.size) { "Unconsumed generated suite inputs" }
                 session.hub.assertComplete()
             } else {
-                val inputs =
-                    buildJsonObject {
-                        put("arguments", session.arguments)
-                        put("clockReads", JsonArray(session.clockReads.map(::JsonPrimitive)))
-                        put(
-                            "hosts",
-                            JsonArray(
-                                session.hosts.map { (id, label) ->
-                                    buildJsonObject {
-                                        put("id", id)
-                                        put("label", label)
-                                    }
-                                },
-                            ),
-                        )
-                    }
-                val declared =
-                    session.hosts.keys +
-                        session.arguments
-                            .filterKeys { it.endsWith("Id") || it == "serverIdB" }
-                            .values
-                            .map { it.jsonPrimitive.content }
-                val body = RecordedSuiteDocument.body(session.scenario, inputs, declared.toSet(), session.hub.completedCapture(true))
-                requireSafeSuiteDocument(body)
-                val serialized = body.toString()
-                check(session.credentials.none { it.isNotEmpty() && serialized.contains(it) }) { "Credential rejected from suite capture" }
-                val args = InstrumentationRegistry.getArguments()
-                val fileName = requireNotNull(args.getString("suiteFile"))
-                require(Regex("recorded-[a-f0-9]+\\.json").matches(fileName))
-                val file = File(InstrumentationRegistry.getInstrumentation().targetContext.filesDir, fileName)
-                val options = setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
-                Files
-                    .newByteChannel(
-                        file.toPath(),
-                        options,
-                        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")),
-                    ).use {
-                        val bytes = ByteBuffer.wrap(serialized.toByteArray())
-                        while (bytes.hasRemaining()) it.write(bytes)
-                    }
+                exportCapture(session, failed = false)
             }
         } finally {
             session.hub.close()
             session.scope.cancel()
             current = null
         }
+    }
+
+    private fun exportCapture(
+        session: Session,
+        failed: Boolean,
+    ) {
+        val steps = if (failed) session.hub.diagnosticCapture() ?: return else session.hub.completedCapture(true)
+        val inputs =
+            buildJsonObject {
+                put("arguments", session.arguments)
+                put("clockReads", JsonArray(session.clockReads.map(::JsonPrimitive)))
+                put(
+                    "hosts",
+                    JsonArray(
+                        session.hosts.map { (id, label) ->
+                            buildJsonObject {
+                                put("id", id)
+                                put("label", label)
+                            }
+                        },
+                    ),
+                )
+            }
+        val declared =
+            session.hosts.keys +
+                session.arguments
+                    .filterKeys { it.endsWith("Id") || it == "serverIdB" }
+                    .values
+                    .map { it.jsonPrimitive.content }
+        val body = RecordedSuiteDocument.body(session.scenario, inputs, declared.toSet(), steps)
+        requireSafeSuiteDocument(body)
+        val output = if (failed) JsonObject(body + ("format" to JsonPrimitive("pyrycode.mobile-suite-failure"))) else body
+        val serialized = output.toString()
+        check(session.credentials.none { it.isNotEmpty() && serialized.contains(it) }) { "Credential rejected from suite capture" }
+        val args = InstrumentationRegistry.getArguments()
+        val fileName = requireNotNull(args.getString("suiteFile"))
+        require(Regex("recorded-[a-f0-9]+\\.json").matches(fileName))
+        val file = File(InstrumentationRegistry.getInstrumentation().targetContext.filesDir, fileName + if (failed) ".failed" else "")
+        val options = setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+        Files
+            .newByteChannel(
+                file.toPath(),
+                options,
+                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")),
+            ).use {
+                val bytes = ByteBuffer.wrap(serialized.toByteArray())
+                while (bytes.hasRemaining()) it.write(bytes)
+            }
     }
 
     private class Session(

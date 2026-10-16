@@ -56,4 +56,13 @@ internal class SuiteCapture(
         RecordedSuiteTape(snapshot)
         return snapshot
     }
+
+    @Synchronized fun diagnostic(): List<SuiteStep>? =
+        if (rejected || steps.isEmpty() ||
+            steps.any { it.message?.type == "debug_bundle_chunk" }
+        ) {
+            null
+        } else {
+            steps.toList()
+        }
 }

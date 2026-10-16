@@ -155,4 +155,38 @@ class SuiteConnectionsTest {
             observed.close()
             hub.close()
         }
+
+    @Test fun aRemotePumpEndClosesItsTransportBeforeThePeerRedials() =
+        runTest {
+            val entries =
+                listOf(
+                    SuiteStep("connect", "peer/host/0"),
+                    SuiteStep("open", "peer/host/0"),
+                    SuiteStep("client", "control", frame(1, "test-control:stop", """{"body":""}""")),
+                    SuiteStep("down", "peer/host/0"),
+                    SuiteStep("close", "peer/host/0"),
+                    SuiteStep("inbound_end", "peer/host/0"),
+                    SuiteStep("connect", "peer/host/1"),
+                    SuiteStep("open", "peer/host/1"),
+                    SuiteStep("close", "peer/host/1"),
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, RecordedSuiteTape(entries))
+            val first = hub.transport("peer/host/0") { error("Live transport started") }
+            first.connect()
+            val pump = hub.pump(first) { error("Live pump started") }
+            pump.start()
+            runCurrent()
+            hub.control("stop", "") { error("Live control started") }
+            runCurrent()
+            assertEquals(PumpState.Closed(null), pump.state.value)
+            val second = hub.transport("peer/host/1") { error("Live transport started") }
+            second.connect()
+            val next = hub.pump(second) { error("Live pump started") }
+            next.start()
+            runCurrent()
+            assertEquals(true, next.state.value is PumpState.Open)
+            next.close()
+            hub.assertComplete()
+            hub.close()
+        }
 }

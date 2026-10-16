@@ -91,4 +91,41 @@ class SuiteCaptureTest {
         val changed = request.copy(id = 90, payload = MobileJson.parseToJsonElement("{}"))
         assertThrows(IllegalStateException::class.java) { RecordedSuiteTape(steps).send("phone", changed) }
     }
+
+    @Test fun failureDiagnosticsCannotBecomeASuccessfulCaptureOrExposeARejectedFrame() {
+        val capture = SuiteCapture()
+        val message =
+            de.pyryco.mobile.data.network
+                .Envelope(1, "send_message", "time", kotlinx.serialization.json.JsonObject(emptyMap()))
+        capture.observe(SuiteStep("client", "phone", message))
+        org.junit.Assert.assertEquals(1, capture.diagnostic()?.size)
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) { capture.completed(false) }
+        capture.observe(
+            SuiteStep(
+                "client",
+                "phone",
+                message.copy(
+                    id = 2,
+                    payload =
+                        de.pyryco.mobile.data.network.MobileJson
+                            .parseToJsonElement("""{"token":"controlled-private-value"}"""),
+                ),
+            ),
+        )
+        org.junit.Assert.assertEquals(null, capture.diagnostic())
+    }
+
+    @Test fun failedDiagnosticsCannotExportUncheckedCompressedArchives() {
+        val capture = SuiteCapture()
+        val chunk =
+            de.pyryco.mobile.data.network.Envelope(
+                1,
+                "debug_bundle_chunk",
+                "time",
+                de.pyryco.mobile.data.network.MobileJson
+                    .parseToJsonElement("""{"seq":0,"data":"Y29udHJvbGxlZA=="}"""),
+            )
+        capture.observe(SuiteStep("daemon", "phone", chunk))
+        org.junit.Assert.assertEquals(null, capture.diagnostic())
+    }
 }

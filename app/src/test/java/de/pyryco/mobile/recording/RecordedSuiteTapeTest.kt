@@ -74,13 +74,13 @@ class RecordedSuiteTapeTest {
         tape.assertComplete()
     }
 
-    @Test fun aCommandCannotMoveToAnotherHostOrPastAControlAction() {
+    @Test fun aCommandCannotMoveToAnotherHostOrPastAnotherCommand() {
         for (wrong in listOf("phone/b/0", "control")) {
             val tape = RecordedSuiteTape(listOf(client("phone/a/0", frame(1, "send_message"))))
             assertThrows(IllegalStateException::class.java) { tape.request(wrong, frame(2, "send_message")) }
         }
-        val tape = RecordedSuiteTape(listOf(client("control", frame(1, "test-control:stop")), client("phone", frame(1, "request_history"))))
-        assertThrows(IllegalStateException::class.java) { tape.request("phone", frame(2, "request_history")) }
+        val tape = RecordedSuiteTape(listOf(client("control", frame(1, "test-control:stop")), client("phone", frame(1, "send_message"))))
+        assertThrows(IllegalStateException::class.java) { tape.request("phone", frame(2, "send_message")) }
     }
 
     @Test fun readQueriesCanPermuteWithinAnActionAcrossOwners() {
@@ -94,8 +94,8 @@ class RecordedSuiteTapeTest {
                     client("phone", frame(3, "send_message")),
                 ),
             )
-        assertEquals(emptyList<SuiteStep>(), tape.request("peer", frame(20, "list_conversations")))
-        assertEquals(listOf("phone", "peer"), tape.request("phone", frame(30, "request_model_list")).map { it.owner })
+        assertEquals(listOf("peer"), tape.request("peer", frame(20, "list_conversations")).map { it.owner })
+        assertEquals(listOf("phone"), tape.request("phone", frame(30, "request_model_list")).map { it.owner })
         tape.request("phone", frame(40, "send_message"))
         tape.assertComplete()
     }
@@ -162,7 +162,7 @@ class RecordedSuiteTapeTest {
         tape.assertComplete()
     }
 
-    @Test fun independentConnectionSetupCanCommuteButCannotCrossAnActionOrClose() {
+    @Test fun connectionSetupAndBackgroundQueriesMustAllBeConsumed() {
         val register =
             frame(1, "register_push_token", """{"platform":"fcm","token":"recorded-push-device-address","device_name":"phone"}""")
         val rows =
@@ -179,7 +179,7 @@ class RecordedSuiteTapeTest {
             )
         val tape = RecordedSuiteTape(rows)
         tape.lifecycle("connect", "phone")
-        assertEquals(emptyList<SuiteStep>(), tape.lifecycle("connect", "peer"))
+        assertEquals(listOf("peer"), tape.lifecycle("connect", "peer").map { it.owner })
         tape.send("phone", frame(80, "list_conversations"))
         tape.send("peer", frame(80, "list_conversations"))
         tape.send("phone", register.copy(id = 81))
@@ -188,7 +188,8 @@ class RecordedSuiteTapeTest {
         tape.assertComplete()
         val early = RecordedSuiteTape(rows)
         early.lifecycle("connect", "phone")
-        assertThrows(IllegalStateException::class.java) { early.send("phone", frame(90, "create_conversation")) }
+        early.send("phone", frame(90, "create_conversation"))
+        assertThrows(IllegalStateException::class.java) { early.assertComplete() }
     }
 
     @Test fun redundantModelLookupRequiresAnObservedCatalogAndCannotRepeatOrCrossAnAction() {
@@ -221,5 +222,75 @@ class RecordedSuiteTapeTest {
         assertThrows(IllegalStateException::class.java) { late.send(owner, extra.copy(payload = payload)) }
         val missing = tape(listOf(SuiteStep("client", owner, query)))
         assertThrows(IllegalStateException::class.java) { missing.send(owner, extra) }
+    }
+
+    @Test fun backgroundQueriesRemainRequiredButCannotBlockTheNextUserAction() {
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client("phone", frame(1, "request_history")),
+                    daemon("phone", frame(2, "history_page", reply = 1)),
+                    client("phone", frame(3, "modal_answer")),
+                    daemon("phone", frame(4, "modal_dismissed", reply = 3)),
+                    client("phone", frame(5, "send_message")),
+                    daemon("phone", frame(6, "turn_end")),
+                ),
+            )
+        val action = tape.request("phone", frame(90, "modal_answer"))
+        assertEquals(listOf("modal_dismissed"), action.map { it.message!!.type })
+        assertEquals(90L, action.single().message!!.inReplyTo)
+        assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
+        val history = tape.request("phone", frame(91, "request_history"))
+        assertEquals(listOf("history_page"), history.map { it.message!!.type })
+        assertEquals(91L, history.single().message!!.inReplyTo)
+        assertEquals(listOf("turn_end"), tape.request("phone", frame(92, "send_message")).map { it.message!!.type })
+        tape.assertComplete()
+    }
+
+    @Test fun independentConnectionCloseCannotBlockAnotherClientsReconnect() {
+        val rows =
+            listOf(
+                SuiteStep("connect", "peer/host/0"),
+                SuiteStep("open", "peer/host/0"),
+                SuiteStep("close", "peer/host/0"),
+                SuiteStep("connect", "phone/host/0"),
+                SuiteStep("open", "phone/host/0"),
+                SuiteStep("close", "phone/host/0"),
+            )
+        val tape = RecordedSuiteTape(rows)
+        tape.lifecycle("connect", "peer/host/0")
+        assertEquals(listOf("phone/host/0"), tape.lifecycle("connect", "phone/host/0").map { it.owner })
+        tape.lifecycle("close", "peer/host/0")
+        tape.lifecycle("close", "phone/host/0")
+        tape.assertComplete()
+        val same =
+            RecordedSuiteTape(
+                listOf(
+                    SuiteStep("connect", "phone/host/0"),
+                    SuiteStep("open", "phone/host/0"),
+                    SuiteStep("close", "phone/host/0"),
+                    SuiteStep("connect", "phone/host/1"),
+                    SuiteStep("open", "phone/host/1"),
+                ),
+            )
+        same.lifecycle("connect", "phone/host/0")
+        assertThrows(IllegalStateException::class.java) { same.lifecycle("connect", "phone/host/1") }
+    }
+
+    @Test fun anEarlyBackgroundQueryCannotReceiveAnAnswerFromAFutureUserAction() {
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client("control", frame(1, "test-control:stop")),
+                    client("phone", frame(1, "request_history")),
+                    daemon("phone", frame(2, "history_page", reply = 1)),
+                ),
+            )
+        assertEquals(emptyList<SuiteStep>(), tape.request("phone", frame(90, "request_history")))
+        assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
+        val released = tape.request("control", frame(2, "test-control:stop"))
+        assertEquals(listOf("history_page"), released.map { it.message!!.type })
+        assertEquals(90L, released.single().message!!.inReplyTo)
+        tape.assertComplete()
     }
 }
