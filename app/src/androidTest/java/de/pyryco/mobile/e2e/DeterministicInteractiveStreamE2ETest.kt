@@ -60,7 +60,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -462,30 +461,16 @@ class DeterministicInteractiveStreamE2ETest {
                     }
                 val checkpoint =
                     withTimeoutOrNull(REPLY_TIMEOUT_MS) {
-                        val history = repository.requestHistory(conversationId)
-                        repository
-                            .threadSnapshots(conversationId)
-                            .mapNotNull { snapshot ->
-                                val reply =
-                                    snapshot.rows
-                                        .filterIsInstance<ThreadItem.MessageItem>()
-                                        .lastOrNull { it.message.role == Role.Assistant && it.message.content == PING }
-                                reply?.let {
-                                    val evidence = snapshot.readEvidence
-                                    val checkpoint = scriptedReplyReadCheckpoint(snapshot, it, history.entries)
-                                    val receipts = evidence.facts.keys.sorted()
-                                    android.util.Log.i(
-                                        "ScriptedReadProof",
-                                        "event=reply_checkpoint checkpoint=$checkpoint streaming=${it.message.isStreaming} " +
-                                            "deltas=${it.message.segment?.deltas?.size} claims=${evidence.versions[it]?.sorted()} " +
-                                            "receipts=$receipts holes=${receipts.zipWithNext().filter { (a, b) -> b - a > 1u }} " +
-                                            "unknown=${evidence.facts.filterValues { fact -> fact == null }.keys.sorted()} " +
-                                            "gaps=${evidence.gaps.map { gap -> gap.anchor to gap.edge }} " +
-                                            "unidentified=${evidence.unidentified.size}",
-                                    )
-                                    checkpoint
-                                }
-                            }.first()
+                        awaitScriptedReplyReadCheckpoint(repository.threadSnapshots(conversationId), PING) {
+                            android.util.Log.i("ScriptedReadProof", "event=reply_proof_qualified classification=starting")
+                            repository.requestHistory(conversationId).entries
+                        }.also {
+                            val marks = repository.observeReadMarks(conversationId).first()
+                            android.util.Log.i(
+                                "ScriptedReadProof",
+                                "event=reply_checkpoint checkpoint=$it thread_supported=${marks?.threadSupported}",
+                            )
+                        }
                     }
                 if (checkpoint == null) {
                     val evidence = repository.threadSnapshots(conversationId).first().readEvidence

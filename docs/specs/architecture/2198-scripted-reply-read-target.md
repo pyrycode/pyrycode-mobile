@@ -64,6 +64,8 @@ Six focused regressions now use the real history reducer. Before the final class
 
 The next Linux run passed reply confirmation and failed at the later peer-read assertion. It executed two cases, one passed and one failed, with no skips. Its evidence is retained under `logs/evidence/2198/manual-final-ping-20261017`. The peer target now names the exact durable post already required by that assertion.
 
+Rework on Linux: both new ordering regressions failed with the extracted fetch-first behavior (2 executed, 2 failed, 0 skipped), each because the query ran before live qualification. With the retained-proof ordering, the focused receipt/read/viewport suite executed and passed 79 tests, including all nine classifier/orchestration regressions, with 0 failures/errors/skips. Fresh ping and final build evidence are recorded in PR #2199 after the pushed candidate runs; the dispatcher still owns complete UI and scripted-all verification.
+
 ## Revisions
 
 - 2026-10-16, initial implementation: [50ab68573179fce3ab8413adddff791b766e3776](https://github.com/pyrycode/pyrycode-mobile/commit/50ab68573179fce3ab8413adddff791b766e3776) introduced this plan in the same commit as the helper and tests. It did **not** satisfy plan-before-code. No earlier committed target-repair design has been identified. [37a24662000feeddda80b95e9225396e13f67505](https://github.com/pyrycode/pyrycode-mobile/commit/37a24662000feeddda80b95e9225396e13f67505) is genuine earlier evidence of the inherited timeout in the #2196 plan, not a design for this repair. This chronology is retrospective and does not repair the original sequencing violation.

@@ -7,11 +7,18 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadReadEvidence
 import de.pyryco.mobile.data.repository.ThreadSnapshot
 import de.pyryco.mobile.data.repository.reduceOrderedHistoryPage
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ScriptedReplyReadCheckpointTest {
     private fun entry(
         id: ULong,
@@ -31,6 +38,80 @@ class ScriptedReplyReadCheckpointTest {
     private val reply = reduced.rows.filterIsInstance<ThreadItem.MessageItem>().last()
     private val evidence = ThreadReadEvidence().received(entries, reduced, reduced.rows)
     private val snapshot = ThreadSnapshot(reduced.rows, readEvidence = evidence)
+
+    @Test fun classificationCannotRepairMissingLiveReceipts() =
+        runTest {
+            val observed = MutableStateFlow(snapshot.copy(readEvidence = evidence.copy(facts = evidence.facts - 8uL)))
+            var queries = 0
+            val target =
+                async {
+                    awaitScriptedReplyReadCheckpoint(observed, "ping") {
+                        queries++
+                        // requestHistory merges decoded history and can fill the missing live receipt.
+                        val fetched = reduceOrderedHistoryPage(entries, true)
+                        observed.value =
+                            ThreadSnapshot(
+                                fetched.rows,
+                                readEvidence = ThreadReadEvidence().received(entries, fetched, fetched.rows),
+                            )
+                        entries
+                    }
+                }
+            runCurrent()
+            assertEquals("classification must wait for complete live receipts", 0, queries)
+            assertFalse("history cannot manufacture live delivery proof", target.isCompleted)
+            observed.value = snapshot
+            assertEquals(9uL, target.await())
+            assertEquals(1, queries)
+        }
+
+    @Test fun classificationCannotFinishTheLiveReply() =
+        runTest {
+            val streamingReply = reply.copy(message = reply.message.copy(isStreaming = true))
+            val observed =
+                MutableStateFlow(
+                    snapshot.copy(
+                        rows = listOf(streamingReply),
+                        readEvidence = evidence.copy(versions = mapOf(streamingReply to setOf(9uL))),
+                    ),
+                )
+            var queries = 0
+            val target =
+                async {
+                    awaitScriptedReplyReadCheckpoint(observed, "ping") {
+                        queries++
+                        // The same mutating query can settle the row from a history turn_end.
+                        val fetched = reduceOrderedHistoryPage(entries, true)
+                        observed.value =
+                            ThreadSnapshot(
+                                fetched.rows,
+                                readEvidence = ThreadReadEvidence().received(entries, fetched, fetched.rows),
+                            )
+                        entries
+                    }
+                }
+            runCurrent()
+            assertEquals("classification must wait for live completion", 0, queries)
+            assertFalse("history cannot manufacture live completion proof", target.isCompleted)
+            observed.value = snapshot
+            assertEquals(9uL, target.await())
+            assertEquals(1, queries)
+        }
+
+    @Test fun classificationUsesTheRetainedReplyProof() =
+        runTest {
+            val observed = MutableStateFlow(snapshot)
+            var queries = 0
+            val target =
+                awaitScriptedReplyReadCheckpoint(observed, "ping") {
+                    queries++
+                    // A newer row version arriving during I/O must not replace the qualified snapshot.
+                    observed.value = snapshot.copy(readEvidence = ThreadReadEvidence())
+                    entries
+                }
+            assertEquals(9uL, target)
+            assertEquals(1, queries)
+        }
 
     @Test fun completedReplyTargetsItsDisplayableReceiptInsteadOfHiddenCompletionAndMetadata() {
         assertEquals(12uL, evidence.checkpoint(reply, 0uL))
