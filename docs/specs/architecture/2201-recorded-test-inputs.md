@@ -40,6 +40,14 @@ Run the focused document class and recording tests after restoration, compile th
 
 There are no new exported types, signatures, lifecycle state or failure branches. The rework is bounded to this plan, one test assertion's order and its evidence index, well below 1600 written lines. No in-flight branch overlaps these edits.
 
+### 2026-10-16: retained failed and repaired Linux results
+
+The controlled pre-repair run executed the same eleven document cases with three failures, including the actual strict `register_push_token` mismatch. Its exact pre-repair native factory also failed the affected method (one executed, one failed). Restoring the merged implementation passed all 85 recording unit tests, including all eleven document cases and wrong-payload rejection. Pushed source `f402e59722c7dae8b1e828ee2be4feba2b4cb9a4` then passed all 71 native recorded scenarios, including `interactiveTurn_pingPrompt_footerShowsContextUsage`, with zero failures, errors, skips or producer invocations. These are fresh reproductions, not recovery of the original reported run.
+
+Raw XML, phone logs, commands, source snapshots, the reproduction patch and verified `SHA256SUMS` are retained owner-only at `/work/Projects/pyrycode-mobile-agents/logs/evidence/2201/rework-20261016-identity/`. The content-free index is `app/src/androidTest/assets/recorded-2201/evidence.json`. All 73 recording/index JSON files retain their original hashes. The implementation files match `50ba564df` for failure and `589bf9239` for repair; the temporary unit API bridge is retained only in the private failed-source snapshot. The initial device admission timeout is explicitly recorded as zero executed and not a test result.
+
+Review finding 3 remains a separate gate dependency: #2198 is linked as a blocker. A fresh complete green scripted-all dispatcher result after its repair remains required; this ticket's 71-case recorded replay does not substitute for it.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/recorded-tests.md`, replay contract and verified evidence: describe replay-only captured phone labels, current client versions, unchanged live identity and strict matching; link failed and repaired Linux evidence and the final disposition of #2198.

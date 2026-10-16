@@ -1,0 +1,80 @@
+{
+  "ticket": 2201,
+  "verificationScope": "Linux x86_64 / Android API 33",
+  "privateEvidenceRoot": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2201/rework-20261016-identity",
+  "manifest": "SHA256SUMS",
+  "manifestSha256": "3b0b0f049afa94b54261f42952ab0fb535379374ef25e081a2d9e91a669431bd",
+  "unchangedRecordingJsonFiles": 73,
+  "originalClaim": "The original eleven-case/three-failure raw report was not recovered. These are fresh controlled reproductions.",
+  "failed": {
+    "sourceHead": "ccd0e3f19fa3ce80649d9e64ab7511af1eeb8127",
+    "implementationFilesMatchRevision": "50ba564dfa999e3ab5e1e24f815667d989a3b17c",
+    "sourceSnapshot": "failed/source",
+    "sourcePatch": "failed/reproduction.patch",
+    "unitAdapter": "PreRepairIdentityAdapter.kt returns the runner identity to bridge the API absent in the pre-repair document. Native replay uses the exact original factory without this adapter.",
+    "unitCommand": "./gradlew testDebugUnitTest --tests de.pyryco.mobile.recording.RecordedSuiteDocumentTest --console=plain",
+    "unitExit": 1,
+    "unitCounts": {
+      "executed": 11,
+      "passed": 8,
+      "failed": 3,
+      "errors": 0,
+      "skipped": 0
+    },
+    "nativeCommand": "env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY PATH=/tmp/builder-2201/producer-traps:$PATH python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_pingPrompt_footerShowsContextUsage",
+    "nativeExit": 1,
+    "nativeCounts": {
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "repaired": {
+    "sourceCommittedAs": "f402e59722c7dae8b1e828ee2be4feba2b4cb9a4",
+    "implementationFilesMatchRevision": "589bf92393bf262d1487fdcb4fc3e623d3ea24a4",
+    "sourceSha256": {
+      "app/src/sharedTest/java/de/pyryco/mobile/recording/RecordedSuiteDocument.kt": "ccb8dc1cd435840df7972be917ae4d45447d09365d2a983677c167285bdc860d",
+      "app/src/androidTest/java/de/pyryco/mobile/recording/RecordedSuiteNative.kt": "a0f1b8e58a4db84dc71bdbc6f45d295bf34e9587853759d092dba4f21a83167c",
+      "app/src/test/java/de/pyryco/mobile/recording/RecordedSuiteDocumentTest.kt": "df8ca22504f9daad3a8649a01ba1c2859a87886859484fa7b94f88999bb34bd6"
+    },
+    "unitCommand": "./gradlew testDebugUnitTest --tests 'de.pyryco.mobile.recording.*' --console=plain",
+    "unitExit": 0,
+    "unitCounts": {
+      "executed": 85,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 85
+    },
+    "documentClassCounts": {
+      "executed": 11,
+      "passed": 11,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "nativeHead": "f402e59722c7dae8b1e828ee2be4feba2b4cb9a4",
+    "nativeCommand": "env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY ANDROID_GATE_WAIT_SECONDS=1800 PATH=/tmp/builder-2201/producer-traps:$PATH python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.recording.RecordedMobileSuiteTest",
+    "nativeExit": 0,
+    "nativeCounts": {
+      "executed": 71,
+      "passed": 71,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "affectedMethod": "interactiveTurn_pingPrompt_footerShowsContextUsage",
+    "affectedMethodExecuted": 1,
+    "affectedMethodPassed": 1
+  },
+  "producerInvocations": 0,
+  "rawReports": {
+    "failed/TEST-de.pyryco.mobile.recording.RecordedSuiteDocumentTest.xml": "e98bb634c22cc3c7fe45e83b5d9b7877d9ff819d7bc9e29b77030f6fea1e5659",
+    "failed/native/dispatcher.xml": "0e031bfa648535e53cc018e7b56a56364a044895071986c9848a34f14ef336c0",
+    "repaired/TEST-de.pyryco.mobile.recording.RecordedSuiteDocumentTest.xml": "b90f97d8f7b3a2aad071e5c3f7583162a8cd4487746bbd2622adbc0577af46a3",
+    "repaired/native/dispatcher.xml": "5a8e56e0512b1466cb4b98c20af71e7574fc6453e9474aac9b7c4b7cc6f5213f"
+  },
+  "requiredGate": "Complete scripted-all remains pending the separate #2198 repair; the prior 22-case gate had 1 inherited failure."
+}
