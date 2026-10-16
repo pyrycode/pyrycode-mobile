@@ -47,4 +47,35 @@ class SuiteCaptureTest {
         capture.observe(SuiteStep("client", "phone", message()))
         assertThrows(IllegalStateException::class.java) { capture.completed(true) }
     }
+
+    @Test fun pushAddressIsNormalizedWithoutChangingTheRequestSentToTheDaemon() {
+        val capture = SuiteCapture()
+        val original =
+            message("""{"platform":"fcm","token":"private-device-address","device_name":"test phone"}""")
+                .copy(type = "register_push_token")
+        var sent: Envelope? = null
+        capture.send("phone", original) {
+            sent = original
+            true
+        }
+        assertEquals(original, sent)
+        val frame = capture.completed(true).single().message!!
+        assertEquals("register_push_token", frame.type)
+        assertEquals(
+            MobileJson.parseToJsonElement(
+                """{"platform":"fcm","token":"recorded-push-device-address","device_name":"test phone"}""",
+            ),
+            frame.payload,
+        )
+        val tape = RecordedSuiteTape(capture.completed(true))
+        assertThrows(IllegalStateException::class.java) { tape.send("phone", frame.copy(payload = original.payload)) }
+    }
+
+    @Test fun aTokenOutsideTheScopedClientRegistrationStillRejectsTheWholeCandidate() {
+        for (direction in listOf("daemon", "client")) {
+            val capture = SuiteCapture()
+            capture.observe(SuiteStep(direction, "phone", message("""{"token":"recorded-push-device-address"}""")))
+            assertThrows(IllegalStateException::class.java) { capture.completed(true) }
+        }
+    }
 }

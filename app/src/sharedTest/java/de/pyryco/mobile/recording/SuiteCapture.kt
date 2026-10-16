@@ -9,21 +9,25 @@ internal class SuiteCapture(
     private var previous: Long? = null
     private var bytes = 0
     private var rejected = false
+    private var rejectedType = "none"
 
     @Synchronized fun observe(step: SuiteStep) {
         if (rejected) return
         try {
-            step.message?.let { requireSafe(it.payload) }
+            val normalized = step.message?.let { capturedSuiteFrame(step.direction, it) }
+            normalized?.let { requireSafeSuiteFrame(step.direction, it) }
+            requireSafe(step.detail)
             val now = clockMs()
             val delay = previous?.let { now - it } ?: 0
             require(delay >= 0)
-            val event = step.copy(delayMs = delay)
+            val event = step.copy(message = normalized, delayMs = delay)
             bytes += event.toString().toByteArray().size
             require(bytes <= maxBytes && steps.size < 50000)
             steps += event
             previous = now
         } catch (_: Exception) {
             rejected = true
+            rejectedType = step.message?.type?.takeIf { it.matches(Regex("[a-z_:-]{1,100}")) } ?: step.direction
             steps.clear()
         }
     }
@@ -47,7 +51,7 @@ internal class SuiteCapture(
     }
 
     @Synchronized fun completed(success: Boolean): List<SuiteStep> {
-        check(success && !rejected) { "Recorded suite capture rejected or incomplete" }
+        check(success && !rejected) { "Recorded suite capture rejected or incomplete: $rejectedType" }
         val snapshot = steps.toList()
         RecordedSuiteTape(snapshot)
         return snapshot

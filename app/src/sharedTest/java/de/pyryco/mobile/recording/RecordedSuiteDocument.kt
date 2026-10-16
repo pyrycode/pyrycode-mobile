@@ -62,7 +62,7 @@ internal class RecordedSuiteDocument private constructor(
             try {
                 require(text.toByteArray().size <= 20_000_000)
                 val document = MobileJson.parseToJsonElement(text).jsonObject
-                requireSafe(document)
+                requireSafeSuiteDocument(document)
                 require(document.getValue("format").jsonPrimitive.content == "pyrycode.mobile-suite")
                 require(document.getValue("version").jsonPrimitive.long == 1L)
                 require(

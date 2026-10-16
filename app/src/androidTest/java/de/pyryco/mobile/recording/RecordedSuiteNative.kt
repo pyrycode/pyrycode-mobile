@@ -139,6 +139,15 @@ internal object RecordedSuiteNative {
     fun bindings(): Module {
         val session = current ?: return module { }
         return module {
+            if (session.document != null) {
+                single<de.pyryco.mobile.push.PushTokenSource> {
+                    object : de.pyryco.mobile.push.PushTokenSource {
+                        override fun isAvailable() = session.document.steps.any { it.message?.type == "register_push_token" }
+
+                        override suspend fun currentToken() = RECORDED_PUSH_ADDRESS
+                    }
+                }
+            }
             single<RelayConnectionFactory> {
                 val original = get<RelayTransportFactory>()
                 RelayConnectionFactory(
@@ -231,7 +240,7 @@ internal object RecordedSuiteNative {
                             .values
                             .map { it.jsonPrimitive.content }
                 val body = RecordedSuiteDocument.body(session.scenario, inputs, declared.toSet(), session.hub.completedCapture(true))
-                requireSafe(body)
+                requireSafeSuiteDocument(body)
                 val serialized = body.toString()
                 check(session.credentials.none { it.isNotEmpty() && serialized.contains(it) }) { "Credential rejected from suite capture" }
                 val args = InstrumentationRegistry.getArguments()

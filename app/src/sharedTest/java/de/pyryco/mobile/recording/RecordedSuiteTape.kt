@@ -85,7 +85,7 @@ internal class RecordedSuiteTape(
                 message.inReplyTo?.let {
                     require(step.direction == "daemon" && it in ids[step.owner to "client"].orEmpty())
                 }
-                requireSafe(message.payload)
+                requireSafeSuiteFrame(step.direction, message)
                 bytes +=
                     message.payload
                         .toString()
