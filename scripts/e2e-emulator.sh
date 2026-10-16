@@ -131,7 +131,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ -n "${LIVE}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${E2E_LOGIN_TRIED:-}" ]; then
   E2E_LOGIN_TRIED=1 exec "${REPO_ROOT}/scripts/with-claude-login.sh" bash "${BASH_SOURCE[0]}" "$@"
 fi
-GRADLEW="${REPO_ROOT}/gradlew"
+GRADLEW="${REPO_ROOT}/scripts/gradle-gate.py"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pyry-e2e.XXXXXX")"
 RELAY_LOG="${WORK_DIR}/relay.log"
 DAEMON_LOG="${WORK_DIR}/daemon.log"

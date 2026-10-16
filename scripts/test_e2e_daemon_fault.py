@@ -313,6 +313,12 @@ else: time.sleep(120)
     def test_spawn_failure_is_not_an_exit_of_the_new_generation(self):
         script = "import time; print('relay: conn established', flush=True); time.sleep(120)"
         with self.controller(script, executable=True) as (request, path):
+            # This proof starts from a registered predecessor. Process startup
+            # is setup, not part of the controller's short readiness deadline.
+            deadline = time.monotonic() + 5
+            while b'relay: conn established' not in (path / 'child.log').read_bytes():
+                self.assertLess(time.monotonic(), deadline, 'fixture child did not finish startup')
+                time.sleep(0.01)
             status, first = request("start")
             self.assertEqual(200, status)
             self.assertTrue(first["ready"])
