@@ -8,6 +8,54 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class RecordedSuiteTapeTest {
+    @Test fun androidInputsCannotArriveBeforeTheirRecordedConnectionRestartAndRequests() {
+        for (event in listOf("push-token", "push-wake")) {
+            val old = "phone/host/0"
+            val next = "phone/host/1"
+            val external = SuiteStep("external", "android", detail = MobileJson.parseToJsonElement("""{"event":"$event"}""").jsonObject)
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", old),
+                        SuiteStep("open", old),
+                        client(old, frame(1, "request_model_list")),
+                        daemon(old, frame(2, "model_list", reply = 1)),
+                        SuiteStep("close", old),
+                        SuiteStep("inbound_end", old),
+                        SuiteStep("connect", next),
+                        SuiteStep("open", next),
+                        client(next, frame(1, "list_conversations")),
+                        external,
+                        daemon(next, frame(2, "conversations", reply = 1)),
+                    ),
+                )
+            assertEquals(emptyList<SuiteStep>(), tape.initial())
+            assertEquals(listOf("open"), tape.lifecycle("connect", old).map { it.direction })
+            assertEquals(listOf("daemon"), tape.request(old, frame(90, "request_model_list")).map { it.direction })
+            assertEquals(listOf("inbound_end"), tape.lifecycle("close", old).map { it.direction })
+            assertEquals(listOf("open"), tape.lifecycle("connect", next).map { it.direction })
+            assertEquals(listOf("external", "daemon"), tape.request(next, frame(90, "list_conversations")).map { it.direction })
+            tape.assertComplete()
+        }
+    }
+
+    @Test fun anAndroidInputWaitsForRequiredWorkWhileIndependentFramesCanProgress() {
+        val external = SuiteStep("external", "android", detail = MobileJson.parseToJsonElement("""{"event":"push-token"}""").jsonObject)
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client("phone", frame(1, "request_history")),
+                    daemon("phone", frame(2, "history_page", reply = 1)),
+                    daemon("peer", frame(1, "model_list")),
+                    external,
+                ),
+            )
+        assertEquals(listOf("peer"), tape.initial().map { it.owner })
+        assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
+        assertEquals(listOf("daemon", "external"), tape.request("phone", frame(90, "request_history")).map { it.direction })
+        tape.assertComplete()
+    }
+
     @Test fun aConnectionCannotEndBeforeItsEarlierDownloadRequestAndChunks() {
         val owner = "peer/host/0"
         val tape =

@@ -146,6 +146,11 @@ Upload chunks and user messages remain ordered commands. Downloaded chunks canno
 released before the actual request or across a test observation checkpoint.
 A connection's end and close also wait for all earlier required requests on that
 connection. Read-only requests still count. Another connection can finish independently.
+Recorded Android inputs, such as a push token becoming available or a push wake, affect
+the whole application graph. They wait for all earlier required requests and lifecycle
+events before delivery. They cannot move across a captured app restart and accidentally
+change an earlier connection's requests. Independent ordinary connection frames still
+progress separately. Only the declared automatic read notifications may remain deferred.
 
 The suite declares three limited scheduling models separately from Claude content:
 

@@ -268,7 +268,14 @@ internal class RecordedSuiteTape(
             it !in consumed && steps[it].owner == "control" && steps[it].message?.type == "test-control:checkpoint"
         } ?: steps.size
 
-    /** Observations fence ordinary wire work; completion also waits for modeled read notifications. */
+    private fun precedingWorkReleased(
+        before: Int,
+        allowDeferredReads: Boolean,
+    ) = (0 until before).all {
+        it in released || allowDeferredReads && readReceipts?.permits(steps[it]) == false
+    }
+
+    /** Observations fence ordinary wire work. The declared read model governs deferred notifications. */
     @Synchronized fun checkpointReady(name: String): Boolean {
         failure?.let { fail(it) }
         val boundary = checkpointBoundary()
@@ -276,13 +283,7 @@ internal class RecordedSuiteTape(
         if (expected != JsonObject(mapOf("body" to JsonPrimitive(name)))) {
             fail("Recorded suite test checkpoint mismatch")
         }
-        return (0 until boundary).all {
-            it in released ||
-                // Automatic read notifications already follow actual phone acknowledgement, not UI action timing.
-                // Keep them deferred across intermediate observations, then require delivery at completion.
-                (name != "scenario-complete" || !requireRecordedReadProgress) &&
-                readReceipts?.permits(steps[it]) == false
-        }
+        return precedingWorkReleased(boundary, name != "scenario-complete" || !requireRecordedReadProgress)
     }
 
     private fun eligible(): List<Int> {
@@ -494,6 +495,8 @@ internal class RecordedSuiteTape(
                 continue
             }
             if (lifecycleBefore[index]?.let { it !in consumed } == true) continue
+            // Android inputs affect the whole graph. They cannot cross a captured restart or unfinished request.
+            if (step.direction == "external" && !precedingWorkReleased(index, allowDeferredReads = true)) continue
             if (step.direction in setOf("inbound_end", "down", "transport_down") && !precedingRequestsComplete(index, step.owner)) continue
             // An automatic read update must not hold the producer traffic that makes that read possible.
             // Keep connection termination behind it, while independent messages retain their source order.
