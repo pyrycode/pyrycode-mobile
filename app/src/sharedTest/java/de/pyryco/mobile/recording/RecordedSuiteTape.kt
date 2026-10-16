@@ -444,7 +444,10 @@ internal class RecordedSuiteTape(
                 if (index in consumed || index in optionalModelReplies) released += index
                 continue
             }
-            if (lifecycleBefore[index]?.let { it !in consumed } == true || step.owner in blockedOwners) continue
+            if (lifecycleBefore[index]?.let { it !in consumed } == true) continue
+            // An automatic read update must not hold the producer traffic that makes that read possible.
+            // Keep connection termination behind it, while independent messages retain their source order.
+            if (step.owner in blockedOwners && step.direction !in setOf("daemon", "settings_snapshot")) continue
             if (readReceipts?.permits(step) == false) {
                 blockedOwners += step.owner
                 continue

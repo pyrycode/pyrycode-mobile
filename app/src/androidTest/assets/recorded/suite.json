@@ -1463,22 +1463,22 @@
       "fixture": "suite/interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation.json",
       "retainedLive": [],
       "evidence": {
-        "fixtureSha256": "3e2f3fa35b660918682057286a192ebc886526d82f7b617dcf98325ce3bf2119",
+        "fixtureSha256": "739d1ad3a5c48f765efc21bdd39ec58130f372a32896de02a8673689fbdb9ac4",
         "capture": {
           "executed": 1,
           "failed": 0,
           "skipped": 0,
-          "seconds": 46.387,
-          "nativeSeconds": 33.168,
-          "fixtureSha256": "3e2f3fa35b660918682057286a192ebc886526d82f7b617dcf98325ce3bf2119",
+          "seconds": 25.526,
+          "nativeSeconds": 21.742,
+          "fixtureSha256": "739d1ad3a5c48f765efc21bdd39ec58130f372a32896de02a8673689fbdb9ac4",
           "source": {
-            "mobileRevision": "b66c1a84ce5a5aed0b0b3efdc5842be1f8fefba0",
-            "daemonRevision": "4d98f07513f04fa36fa55714b31ecf09e1cb34c2",
-            "daemonBinarySha256": "af8261315dd0d4f347a523b3a138bbc36b8cb49aecc3c1d8f6bbaada64227fd9",
-            "testApkSha256": "c31d01d1d4e8da452ff45554d802a4eeb57c613444b0438d236752636f6ef92d",
+            "mobileRevision": "8a90ad58f103f7b9c508075f9f2625f19fee476f",
+            "daemonRevision": "c2e7bec7a434014dfc2089f64d507898c79f8e89",
+            "daemonBinarySha256": "b34fcad79d7235d1d13ad2763859da92218b63ef33775e17c5300813d6bae9a0",
             "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+            "testApkSha256": "786d707f5e3a96a643468d9ad005ef5e6395bc7e31eac466131389590fb8bab0",
             "claudeVersion": "2.1.280 (Claude Code)",
-            "capturedAt": "2026-10-16T10:02:34Z",
+            "capturedAt": "2026-10-16T12:27:08Z",
             "presentation": "current-production",
             "androidApi": "33"
           }
@@ -1487,9 +1487,11 @@
           "executed": 1,
           "failed": 0,
           "skipped": 0,
-          "seconds": 34.194,
-          "nativeSeconds": 31.666,
-          "fixtureSha256": "3e2f3fa35b660918682057286a192ebc886526d82f7b617dcf98325ce3bf2119"
+          "seconds": 20.755,
+          "nativeSeconds": 20.192,
+          "fixtureSha256": "739d1ad3a5c48f765efc21bdd39ec58130f372a32896de02a8673689fbdb9ac4",
+          "appApkSha256": "9965854dea480d4a18ad21abe7a7aee5417969b57c6e049b18066d186b1051c4",
+          "testApkSha256": "7e92080ad84131e7d7ffc419348972155b725739c6e6987fa780a165ccf6c6f1"
         }
       }
     },

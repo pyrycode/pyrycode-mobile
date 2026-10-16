@@ -122,6 +122,34 @@ class SuiteReadReceiptsTest {
         tape.assertComplete()
     }
 
+    @Test fun aPendingPhoneReadCannotBlockThePeersPermissionPromptOrAnotherConversation() {
+        val message = frame(1, "assistant_delta", """{"conversation_id":"chat","text":"captured"}""").copy(historyEntryId = 10u)
+        val read = frame(1, "mark_conversation_read", """{"conversation_id":"chat","up_to":10}""")
+        val update = frame(2, "conversation_updated", """{"id":"chat","read_up_to":10}""")
+        val prompt = frame(3, "modal_shown", """{"conversation_id":"chat","modal_id":"permission"}""")
+        val other = frame(4, "assistant_delta", """{"conversation_id":"other","text":"independent"}""").copy(historyEntryId = 1u)
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    SuiteStep("daemon", "phone", message),
+                    SuiteStep("client", "phone", read),
+                    SuiteStep("daemon", "peer", update),
+                    SuiteStep("daemon", "phone", update.copy(inReplyTo = 1)),
+                    SuiteStep("daemon", "peer", prompt),
+                    SuiteStep("daemon", "peer", other),
+                ),
+                coalescedReadReceipts = true,
+            )
+        val initial = tape.initial()
+        assertEquals(listOf("assistant_delta", "modal_shown", "assistant_delta"), initial.map { it.message!!.type })
+        initial.forEach { tape.delivered(it.owner, it.message!!) }
+        assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
+        val id = (initial.first().message!!.payload as kotlinx.serialization.json.JsonObject).getValue("conversation_id")
+        val acknowledgement = tape.send("phone", frame(90, "mark_conversation_read", """{"conversation_id":$id,"up_to":10}"""))
+        assertEquals(listOf("phone", "peer"), acknowledgement.deliveries.map { it.owner })
+        tape.assertComplete()
+    }
+
     @Test fun explicitPeerReadActionsNeverUseAutomaticPhoneReadNormalization() {
         val read = frame(1, "mark_conversation_read", """{"conversation_id":"chat","up_to":10}""")
         val tape = RecordedSuiteTape(listOf(SuiteStep("client", "peer", read)), coalescedReadReceipts = true)

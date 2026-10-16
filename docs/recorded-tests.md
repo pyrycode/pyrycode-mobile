@@ -142,7 +142,8 @@ The suite declares three limited scheduling models separately from Claude conten
 
 - Automatic phone read acknowledgements can coalesce. They must advance through history
   actually delivered to that phone on the same host and reach recorded final progress.
-  Explicit peer reads stay exact. Peer observations wait for the actual phone read.
+  Explicit peer reads stay exact. Peer read notifications wait for the actual phone read.
+  Independent permission prompts and turn events continue while that notification waits.
   The replay rule keeps the screen alive until its required automatic reads settle.
 - A single model lookup can race an unsolicited catalogue on the same connection and
   conversation. Omitting a recorded lookup requires an identical independent catalogue in
