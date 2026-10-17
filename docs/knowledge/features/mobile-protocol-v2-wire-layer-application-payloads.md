@@ -155,7 +155,7 @@ require the producing session target.
 (encode-only `request_session_settings` request, one required `@SerialName("conversation_id")` key) and
 `SessionSettingsPayloadDto` (decode-only `session_settings` reply). Wire SSOT:
 `../pyrycode/docs/protocol-mobile.md` § `request_session_settings` / § `session_settings`. Consumed by
-[`RemoteConversationRepository.observeSessionSettings`](remote-conversation-repository-conversation-writes.md#observesessionsettingsconversationid--refreshsessionsettingsconversationid--the-settings-read-counterpart-to-setsessionsettings-590).
+[`RemoteConversationRepository.observeSessionSettings`](remote-conversation-repository-session-settings-read.md#observesessionsettingsconversationid--refreshsessionsettingsconversationid--the-settings-read-counterpart-to-setsessionsettings-590).
 
 - **`SessionSettingsPayloadDto` models seven original fields, deliberately not eight — the eighth
   (`effective_effort`) never reaches this DTO.** Every modeled original field (`session_id`, `model`,
@@ -208,7 +208,7 @@ require the producing session target.
   (a missing/wrong-typed original field) is authored by kotlinx-serialization, whose message can quote the
   offending input, so the no-payload-content guarantee for *those* rests on the caught throwable being
   discarded at the consumer, not on the message being clean — see the read flow's `.catch` in
-  [the repository doc](remote-conversation-repository-conversation-writes.md#observesessionsettingsconversationid--refreshsessionsettingsconversationid--the-settings-read-counterpart-to-setsessionsettings-590).
+  [the repository doc](remote-conversation-repository-session-settings-read.md#observesessionsettingsconversationid--refreshsessionsettingsconversationid--the-settings-read-counterpart-to-setsessionsettings-590).
 - **Never an error frame.** An empty/unhosted/unbound/dormant conversation id is answered with the same
   all-zero `session_settings` reply as a populated one — the daemon's own contract, not a client-side
   fallback — which is what keeps this verb from being usable as a conversation-membership probe. `model`/
