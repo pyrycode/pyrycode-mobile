@@ -33,6 +33,7 @@ helpers acquire it automatically. The owned Gradle client JVM and in-process Kot
 compiler work within the owned command lifetime. Build-cache reuse stays on.
 
 ```bash
+python3 scripts/gradle-gate.py testDebugUnitTest --tests '<fully.qualified.TestClass>'  # one unit test class
 python3 scripts/gradle-gate.py assembleDebug              # build debug APK
 python3 scripts/gradle-gate.py installDebug               # optional local install; dispatcher owns routine device execution
 python3 scripts/gradle-gate.py test                       # unit tests, including the Robolectric screen tests in app/src/sharedTest
@@ -41,6 +42,10 @@ UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui   # in-depth run: every 
 python3 scripts/gradle-gate.py lint                       # Android Lint
 python3 scripts/gradle-gate.py clean                      # clean build outputs
 ```
+
+Run only the test classes that cover the changed files plus the required format or lint
+check; run the full unit suite only when a change touches shared test setup or build
+configuration, or when the operator asks.
 
 New Compose screen tests go in `app/src/sharedTest`, not `app/src/androidTest`. See
 [where a screen test goes](docs/knowledge/features/development-verification-gates.md#where-a-screen-test-goes).
