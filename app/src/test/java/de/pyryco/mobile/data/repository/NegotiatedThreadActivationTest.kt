@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.network.HelloClientPayload
 import de.pyryco.mobile.data.network.InnerFrameV2
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.PumpState
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RelayTransport
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.network.TransportEvent
@@ -30,16 +31,28 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /** #2175: production negotiation, verdict ownership and request suppression through real coordinators. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class NegotiatedThreadActivationTest {
+    private val oldSink = RelayLog.sink
+
+    @Before fun quietLogs() {
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After fun restoreLogs() {
+        RelayLog.sink = oldSink
+    }
+
     @Test fun helloAdvertisesThreadAndOmitsTheReplayCursor() {
         val hello = HelloClientPayload(deviceName = "d", clientVersion = "1.0", token = "t")
         assertTrue(CAPABILITY_THREAD in hello.capabilities)

@@ -1308,20 +1308,12 @@ class RelayConnectionFactoryTest {
                 )
                 assertEquals("A content", a.state.value.displayName)
                 assertEquals("B content", b.state.value.displayName)
-                assertEquals(
-                    "A content",
-                    a.state.value.items
-                        .filterIsInstance<ThreadItem.MessageItem>()
-                        .single()
-                        .message.content,
-                )
-                assertEquals(
-                    "B content",
-                    b.state.value.items
-                        .filterIsInstance<ThreadItem.MessageItem>()
-                        .single()
-                        .message.content,
-                )
+                // #2175: production threads come only from each host's negotiated route. These peers grant no
+                // `thread`, so legacy `message` frames never become rows on either colliding destination.
+                assertTrue(a.state.value.items.none { it is ThreadItem.MessageItem })
+                assertTrue(b.state.value.items.none { it is ThreadItem.MessageItem })
+                assertNull(a.state.value.authoritativeThread)
+                assertNull(b.state.value.authoritativeThread)
                 // #1830: colliding task/conversation ids stay on each destination's captured host.
                 val roster =
                     envelope(

@@ -88,7 +88,7 @@ class NoiseIkSessionTest {
                 assertEquals(listOf("v2"), hello.protocolVersions)
                 assertEquals("secret-tok", hello.token)
                 assertFalse(hello.toString().contains("secret-tok"))
-                assertEquals(listOf("interactive", "multi_agent", "stop_background_task"), hello.capabilities)
+                assertEquals(listOf("interactive", "multi_agent", "stop_background_task", "thread"), hello.capabilities)
             } finally {
                 session.close()
             }

@@ -52,7 +52,7 @@ class NegotiatedThreadViewModelTest {
     @Test fun offlineCachedThreadReadsUntilAMissingVerdictSuppressesIt() =
         runTest {
             val route = Route("host")
-            route.store.restore("host", "c", AuthoritativeThreadSnapshot(epoch = "e", items = listOf(item(1, 2, 1, text = "held"))), 0)
+            route.store.restore("host", "c", AuthoritativeThreadSnapshot(epoch = "e", items = listOf(item(1, 2, 1, text = "held")), completedVersion = 10, checkpoint = 10), 0)
             val owner = ViewModelStore()
             val vm = viewModel(owner, Legacy(), route)
             backgroundScope.launch { vm.state.collect {} }
