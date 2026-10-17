@@ -1,0 +1,428 @@
+package de.pyryco.mobile.data.cache
+
+import android.database.sqlite.SQLiteDatabase
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.repository.HistoryCoverage
+import de.pyryco.mobile.data.repository.HistoryPosition
+import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.UnsignedHistoryGap
+import de.pyryco.mobile.data.repository.UnsignedHistorySpan
+import de.pyryco.mobile.data.repository.historyKeys
+import de.pyryco.mobile.data.repository.historyRowProofs
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.Instant
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import java.io.File
+import java.io.IOException
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [33])
+class AuthoritativeRoomStorageTest {
+    @get:Rule val temporary = TemporaryFolder()
+    private val path by lazy { File(temporary.root, "cache.db").absolutePath }
+    private var database: ConversationCacheDatabase? = null
+
+    private fun open(failure: suspend () -> Unit = {}): AuthoritativeRoomStorage {
+        database?.close()
+        val db =
+            Room
+                .databaseBuilder(
+                    ApplicationProvider.getApplicationContext(),
+                    ConversationCacheDatabase::class.java,
+                    path,
+                ).build()
+        database = db
+        return AuthoritativeRoomStorage(db, Dispatchers.IO, failure)
+    }
+
+    @After fun close() {
+        database?.close()
+    }
+
+    private fun raw(
+        id: Int,
+        order: Int? = id,
+        rev: Int = id,
+    ): JsonObject =
+        MobileJson
+            .parseToJsonElement(
+                """{
+                "id":$id,"rev":$rev,"kind":"future-kind","status":"done","active":false,"shown":true,
+                "summary":"private-content","content":{"future":[null,1,"text"]}${order?.let { ",\"order\":$it" } ?: ""},
+                "unknown":{"x":null}
+            }""",
+            ).jsonObject
+
+    private fun saved(
+        items: List<JsonObject>,
+        epoch: String = "epoch",
+        version: Long = 200_000,
+    ) = SavedAuthoritativeThread(epoch, items, version, version - 1, SavedThreadCoverage(2, 500, 2, true))
+
+    private suspend fun seed(
+        store: AuthoritativeRoomStorage,
+        value: SavedAuthoritativeThread,
+        host: String = "Host",
+        thread: String = "thread",
+    ) {
+        store.writeAuthoritativeThread(host, thread, value).getOrThrow()
+    }
+
+    @Test fun orderingInvariant_restartAndBackwardTraversal() =
+        runTest {
+            val items =
+                (1..421).reversed().map {
+                    raw(
+                        it,
+                        if (it % 5 == 0) {
+                            null
+                        } else if (it % 3 == 0) {
+                            0
+                        } else {
+                            it / 3
+                        },
+                    )
+                }
+            val expected = saved(items).retained()
+            seed(open(), saved(items))
+            var store = open()
+            assertEquals(expected, store.readAuthoritativeThread("Host", "thread"))
+            var page = requireNotNull(store.newestPage("Host", "thread", 200))
+            assertEquals(expected.items.takeLast(200), page.items)
+            var walked = page.items
+            while (page.continuation != null) {
+                val token = requireNotNull(page.continuation)
+                store = open()
+                page = requireNotNull(store.beforePage("Host", "thread", token, 200))
+                walked = page.items + walked
+            }
+            assertEquals(expected.items, walked)
+            assertEquals(421, walked.map { it["id"] }.distinct().size)
+        }
+
+    @Test fun replacementInvariant_revisionsAndTokens() =
+        runTest {
+            seed(open(), saved(listOf(raw(1), raw(2), raw(3))))
+            val token = requireNotNull(open().newestPage("Host", "thread", 1)?.continuation)
+            val revised =
+                JsonObject(
+                    raw(1, rev = 9) + mapOf("order" to JsonNull, "parent" to JsonNull, "agent" to JsonNull, "content" to JsonNull),
+                )
+            val replacement = saved(listOf(revised, raw(4)))
+            seed(open(), replacement)
+            assertNull(open().beforePage("Host", "thread", token, 1))
+            assertEquals(replacement.retained(), open().readAuthoritativeThread("Host", "thread"))
+            val next = requireNotNull(open().newestPage("Host", "thread", 1)?.continuation)
+            seed(open(), replacement.copy(epoch = "other"))
+            assertNull(open().beforePage("Host", "thread", next, 1))
+            seed(open(), replacement)
+            assertNull(open().beforePage("Host", "thread", token, 1))
+            assertNull(open().beforePage("host", "thread", next, 1))
+            assertNull(open().beforePage("Host", "other", next, 1))
+        }
+
+    @Test fun pageInvariant_emptyAndSingleItem() =
+        runTest {
+            assertNull(open().newestPage("Host", "thread", 1))
+            seed(open(), saved(emptyList()))
+            val empty = requireNotNull(open().newestPage("Host", "thread", 1))
+            assertTrue(empty.items.isEmpty())
+            assertNull(empty.continuation)
+            seed(open(), saved(listOf(raw(1))))
+            assertEquals(listOf(raw(1)), open().newestPage("Host", "thread", Int.MAX_VALUE)?.items)
+            assertNull(open().newestPage("Host", "thread", 0))
+            assertNull(open().newestPage("Host", "thread", -1))
+            assertNull(open().newestPage("Host", "thread", 1)?.continuation)
+        }
+
+    @Test fun certificationInvariant_pagesNeverAdvanceSavedEvidence() =
+        runTest {
+            val value = saved((1..3).map { raw(it) }).copy(appliedVersion = 10, checkpoint = 4)
+            seed(open(), value)
+            val store = open()
+            var page = requireNotNull(store.newestPage("Host", "thread", 1))
+            do {
+                assertEquals("Host", page.serverId)
+                assertEquals("thread", page.conversationId)
+                assertEquals(value.epoch, page.epoch)
+                assertEquals(10L, page.appliedVersion)
+                assertEquals(4L, page.checkpoint)
+                assertEquals(value.coverage, page.coverage)
+                val token = page.continuation ?: break
+                page = requireNotNull(store.beforePage("Host", "thread", token, 1))
+            } while (true)
+            assertEquals(value, open().readAuthoritativeThread("Host", "thread"))
+        }
+
+    @Test fun boundedInvariant_onlySelectedPayloadsDecode() =
+        runTest {
+            val counts =
+                listOf(401, 4001).map { size ->
+                    seed(open(), saved((4002 - size..4001).map { raw(it) }))
+                    val store = open()
+                    val page = requireNotNull(store.newestPage("Host", "thread", 200))
+                    assertEquals(200, page.items.size)
+                    val newestCounts = store.lastReadCounts
+                    assertEquals(200, store.beforePage("Host", "thread", requireNotNull(page.continuation), 200)?.items?.size)
+                    assertEquals(newestCounts, store.lastReadCounts)
+                    newestCounts.also {
+                        assertEquals(200, it.itemReads)
+                        assertEquals(200, it.itemDecodes)
+                        assertEquals(1, it.ordinalReads)
+                        assertEquals(1, it.evidenceReads)
+                        assertEquals(1, it.evidenceDecodes)
+                    }
+                }
+            assertEquals(counts.first(), counts.last())
+            // Corrupt an omitted payload: a page must neither fetch nor decode it, even as its probe.
+            database?.openHelper?.writableDatabase?.execSQL("UPDATE authoritative_items SET payload='broken' WHERE ordinal=3800")
+            val store = open()
+            assertEquals(200, store.newestPage("Host", "thread", 200)?.items?.size)
+            assertNull(store.readAuthoritativeThread("Host", "thread"))
+        }
+
+    @Test fun validationInvariant_rejectsInvalidReplacements() =
+        runTest {
+            val good = saved(listOf(raw(1)))
+            seed(open(), good)
+            val invalid =
+                listOf(
+                    good.copy(items = listOf(raw(1), raw(1))),
+                    good.copy(epoch = ""),
+                    good.copy(appliedVersion = 0),
+                    good.copy(checkpoint = -1),
+                    good.copy(checkpoint = good.appliedVersion + 1),
+                    good.copy(appliedVersion = 9_007_199_254_740_992),
+                    good.copy(items = listOf(raw(0))),
+                    good.copy(items = listOf(raw(2, rev = 1))),
+                    good.copy(items = listOf(raw(1, rev = 200001))),
+                    good.copy(items = listOf(JsonObject(raw(1) + ("order" to JsonPrimitive(-1))))),
+                    good.copy(coverage = SavedThreadCoverage(3, 2, 3, false)),
+                    good.copy(coverage = SavedThreadCoverage(2, 3, 1, true)),
+                    good.copy(items = listOf(JsonObject(raw(1) + ("id" to JsonPrimitive("1"))))),
+                )
+            for (value in invalid) {
+                val failure = open().writeAuthoritativeThread("Host", "thread", value).exceptionOrNull()
+                assertTrue(failure is ConversationCacheException)
+                assertNull(failure?.cause)
+                assertEquals(good, open().readAuthoritativeThread("Host", "thread"))
+            }
+        }
+
+    @Test fun atomicInvariant_failedMutationsPreserveBothFamilies() =
+        runTest {
+            val good = saved(listOf(raw(1), raw(2)))
+            seed(open(), good)
+            val token = requireNotNull(open().newestPage("Host", "thread", 1)?.continuation)
+            val legacy = LegacyRoomStorage(requireNotNull(database))
+            val row = ThreadItem.MessageItem(Message("held", "s", Role.User, "private", Instant.fromEpochSeconds(0), false))
+            legacy.writeThread("Host", "thread", listOf(row)).getOrThrow()
+            legacy.writeHistoryPosition("Host", "thread", HistoryPosition("secret-cursor", false)).getOrThrow()
+            val failure =
+                open { throw IOException("sensitive-host") }
+                    .writeAuthoritativeThread("Host", "thread", saved(listOf(raw(2))))
+            assertTrue(failure.isFailure)
+            assertFalse(failure.toString().contains("sensitive-host"))
+            assertEquals(good, open().readAuthoritativeThread("Host", "thread"))
+            try {
+                open { throw CancellationException("cancel") }.removeHost("Host")
+                fail("cancellation must propagate")
+            } catch (_: CancellationException) {
+            }
+            assertEquals(good, open().readAuthoritativeThread("Host", "thread"))
+            val restored = LegacyRoomStorage(requireNotNull(database))
+            assertEquals(listOf(row), restored.readThread("Host", "thread"))
+            assertEquals(HistoryPosition("secret-cursor", false), restored.readHistoryPosition("Host", "thread"))
+            assertTrue(open { throw IOException() }.removeConversation("Host", "thread").isFailure)
+            assertEquals(good, open().readAuthoritativeThread("Host", "thread"))
+            val denied =
+                open { throw SecurityException("sensitive-host") }
+                    .writeAuthoritativeThread("Host", "thread", saved(listOf(raw(2))))
+            assertTrue(denied.exceptionOrNull() is ConversationCacheException)
+            assertTrue(denied.exceptionOrNull()?.message?.endsWith("denied") == true)
+            assertEquals(good, open().readAuthoritativeThread("Host", "thread"))
+            try {
+                open { throw IllegalStateException("programming failure") }
+                    .writeAuthoritativeThread("Host", "thread", saved(listOf(raw(2))))
+                fail("programming failures must propagate")
+            } catch (_: IllegalStateException) {
+            }
+            assertEquals(good, open().readAuthoritativeThread("Host", "thread"))
+            assertEquals(listOf(raw(1)), open().beforePage("Host", "thread", token, 1)?.items)
+        }
+
+    @Test fun retentionInvariant_trimDropsCertificationOnly() =
+        runTest {
+            val value = saved((1..MAX_CACHED_THREAD_ROWS + 1).reversed().map { raw(it) })
+            seed(open(), value)
+            val restored = requireNotNull(open().readAuthoritativeThread("Host", "thread"))
+            assertEquals(MAX_CACHED_THREAD_ROWS, restored.items.size)
+            assertEquals(raw(2), restored.items.first())
+            assertEquals(raw(MAX_CACHED_THREAD_ROWS + 1), restored.items.last())
+            assertEquals(value.appliedVersion, restored.appliedVersion)
+            assertEquals(0L, restored.checkpoint)
+            assertNull(restored.coverage)
+        }
+
+    @Test fun ownershipInvariant_familiesAndRemovalStayIsolated() =
+        runTest {
+            val value = saved(listOf(raw(1), raw(2)))
+            val store = open()
+            val legacy = LegacyRoomStorage(requireNotNull(database))
+            val row = ThreadItem.MessageItem(Message("held", "s", Role.User, "private", Instant.fromEpochSeconds(0), false))
+            val newer = ThreadItem.MessageItem(row.message.copy(id = "held-newer"))
+            val rows = listOf(row, newer)
+            val position =
+                HistoryPosition(
+                    "cursor",
+                    false,
+                    HistoryCoverage(
+                        unsignedSpans = listOf(UnsignedHistorySpan(1u, 1u), UnsignedHistorySpan(3u, 3u)),
+                        unsignedGaps = listOf(UnsignedHistoryGap(1u, 3u)),
+                        unsignedRowOrder = mapOf(row.historyKeys().first() to 1uL, newer.historyKeys().first() to 3uL),
+                        unsignedRowEntries = mapOf(row.historyKeys().first() to setOf(1uL), newer.historyKeys().first() to setOf(3uL)),
+                        proofs = historyRowProofs(rows),
+                    ),
+                )
+            val owners = listOf("Host" to "thread", "host" to "thread", "Host" to "other")
+            for ((host, thread) in owners) {
+                legacy.writeThread(host, thread, rows).getOrThrow()
+                legacy.writeHistoryPosition(host, thread, position).getOrThrow()
+                assertNull(store.readAuthoritativeThread(host, thread))
+                seed(store, value, host, thread)
+                assertEquals(rows, legacy.readThread(host, thread))
+                assertEquals(position, legacy.readHistoryPosition(host, thread))
+                legacy.writeThread(host, thread, rows).getOrThrow()
+                legacy.writeHistoryPosition(host, thread, position).getOrThrow()
+                assertEquals(value, store.readAuthoritativeThread(host, thread))
+            }
+            val token = requireNotNull(store.newestPage("Host", "thread", 1)?.continuation)
+            legacy.removeConversation("Host", "thread").getOrThrow()
+            assertNull(store.readAuthoritativeThread("Host", "thread"))
+            assertTrue(legacy.readThread("Host", "thread").isEmpty())
+            assertNull(legacy.readHistoryPosition("Host", "thread"))
+            assertTrue(requireNotNull(database).legacy().allEvidence("Host", "thread").isEmpty())
+            seed(store, value)
+            assertNull(store.beforePage("Host", "thread", token, 1))
+            assertTrue(legacy.readThread("Host", "thread").isEmpty())
+            assertEquals(value, store.readAuthoritativeThread("Host", "other"))
+            store.removeHost("Host").getOrThrow()
+            assertNull(store.readAuthoritativeThread("Host", "other"))
+            assertTrue(legacy.readThread("Host", "other").isEmpty())
+            assertTrue(requireNotNull(database).legacy().allEvidence("Host", "other").isEmpty())
+            assertEquals(value, store.readAuthoritativeThread("host", "thread"))
+            assertEquals(rows, legacy.readThread("host", "thread"))
+            assertEquals(position, legacy.readHistoryPosition("host", "thread"))
+        }
+
+    @Test fun migrationInvariant_preservesLegacyContentAndEvidence() =
+        runTest {
+            val schemaFile = File("src/main/roomSchemas", "de.pyryco.mobile.data.cache.ConversationCacheDatabase/1.json")
+            val schema =
+                MobileJson
+                    .parseToJsonElement(schemaFile.readText())
+                    .jsonObject
+                    .getValue("database")
+                    .jsonObject
+            SQLiteDatabase.openOrCreateDatabase(path, null).use { db ->
+                for (entry in schema.getValue("entities").jsonArray) {
+                    val entity = entry.jsonObject
+                    val table = entity.getValue("tableName").jsonPrimitive.content
+                    db.execSQL(
+                        entity
+                            .getValue("createSql")
+                            .jsonPrimitive.content
+                            .replace("\${TABLE_NAME}", table),
+                    )
+                    entity["indices"]?.jsonArray?.forEach {
+                        db.execSQL(
+                            it.jsonObject
+                                .getValue("createSql")
+                                .jsonPrimitive.content
+                                .replace("\${TABLE_NAME}", table),
+                        )
+                    }
+                }
+                schema.getValue("setupQueries").jsonArray.forEach { db.execSQL(it.jsonPrimitive.content) }
+                db.execSQL("INSERT INTO legacy_headers VALUES ('Host','thread','generation','cursor',0,NULL)")
+                db.execSQL("INSERT INTO legacy_rows VALUES ('Host','thread',0,'held-payload')")
+                db.execSQL("INSERT INTO legacy_evidence VALUES ('Host','thread','proofs','key',0,0,'0','0','proof-payload')")
+                db.version = 1
+            }
+            val store = open()
+            assertNull(store.readAuthoritativeThread("Host", "thread"))
+            assertEquals("cursor", requireNotNull(database).legacy().header("Host", "thread")?.cursor)
+            assertEquals(
+                "held-payload",
+                requireNotNull(database)
+                    .legacy()
+                    .rows("Host", "thread", 1, 1)
+                    .single()
+                    .payload,
+            )
+            assertEquals(
+                "proof-payload",
+                requireNotNull(database)
+                    .legacy()
+                    .allEvidence("Host", "thread")
+                    .single()
+                    .payload,
+            )
+            seed(store, saved(listOf(raw(1))))
+            assertEquals(saved(listOf(raw(1))), open().readAuthoritativeThread("Host", "thread"))
+        }
+
+    @Test fun diagnosticsInvariant_resultsRedactAndCorruptReadsNeverRepair() =
+        runTest {
+            val messages = mutableListOf<String>()
+            val oldSink = RelayLog.sink
+            val oldEnabled = RelayLog.enabled
+            RelayLog.enabled = true
+            RelayLog.sink = { _, _, message -> messages.add(message) }
+            try {
+                seed(open(), saved(listOf(raw(1), raw(2))))
+                val page = requireNotNull(open().newestPage("Host", "thread", 1))
+                val header = requireNotNull(database).authoritative().header("Host", "thread")
+                for (result in listOf(page, page.continuation, page.coverage, header)) {
+                    val text = result.toString()
+                    listOf("Host", "thread", "epoch", "private-content").forEach { assertFalse(text.contains(it)) }
+                }
+                requireNotNull(database).openHelper.writableDatabase.execSQL("UPDATE authoritative_headers SET checkpoint=-1")
+                assertNull(open().newestPage("Host", "thread", 1))
+                assertNull(open().readAuthoritativeThread("Host", "thread"))
+                assertEquals(-1L, requireNotNull(database).authoritative().header("Host", "thread")?.checkpoint)
+                requireNotNull(database).close()
+                assertNull(AuthoritativeRoomStorage(requireNotNull(database)).newestPage("Host", "thread", 1))
+                assertTrue(messages.any { "code=invalid_data" in it })
+                assertTrue(messages.any { "code=io" in it })
+                for (text in messages) listOf("Host", "private-content", "secret-cursor").forEach { assertFalse(text.contains(it)) }
+            } finally {
+                RelayLog.sink = oldSink
+                RelayLog.enabled = oldEnabled
+            }
+        }
+}

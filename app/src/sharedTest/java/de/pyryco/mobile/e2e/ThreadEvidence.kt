@@ -54,7 +54,7 @@ internal class ThreadEvidenceRecord(
 internal class ThreadEvidence(
     val owner: ThreadEvidenceOwner,
     val records: List<ThreadEvidenceRecord>,
-    private val admitted: Boolean = true,
+    val admitted: Boolean = true,
 ) {
     /** Ordinary loaded history remains usable for selection; it does not acquire delta evidence. */
     fun loadedMainReply(): Message? =
@@ -130,6 +130,7 @@ internal class ThreadEvidence(
 
 /** Observation only. Construction never opens a query or enables an application route. */
 internal class ThreadEvidenceSource private constructor(
+    val kind: ThreadEvidenceKind,
     val observe: (String) -> Flow<ThreadEvidence>,
 ) {
     companion object {
@@ -137,13 +138,15 @@ internal class ThreadEvidenceSource private constructor(
             host: String?,
             connection: Any,
             observe: (String) -> Flow<List<ThreadItem>>,
-        ) = ThreadEvidenceSource { conversation -> observe(conversation).map { legacyThreadEvidence(host, conversation, connection, it) } }
+        ) = ThreadEvidenceSource(ThreadEvidenceKind.Legacy) { conversation ->
+            observe(conversation).map { legacyThreadEvidence(host, conversation, connection, it) }
+        }
 
         fun authoritative(
             host: String,
             connection: Any,
             observe: (String) -> Flow<AuthoritativeThreadSnapshot>,
-        ) = ThreadEvidenceSource { conversation ->
+        ) = ThreadEvidenceSource(ThreadEvidenceKind.Authoritative) { conversation ->
             observe(conversation).map { authoritativeThreadEvidence(host, conversation, connection, it) }
         }
     }

@@ -194,9 +194,9 @@ class LegacyRoomStorage internal constructor(
     suspend fun removeConversation(
         serverId: String,
         conversationId: String,
-    ): Result<Unit> = mutate("remove_conversation") { remove(serverId, conversationId) }
+    ): Result<Unit> = mutate("remove_conversation") { database.removeScope(serverId, conversationId) }
 
-    suspend fun removeHost(serverId: String): Result<Unit> = mutate("remove_host") { remove(serverId, null) }
+    suspend fun removeHost(serverId: String): Result<Unit> = mutate("remove_host") { database.removeScope(serverId, null) }
 
     suspend fun newestPage(
         serverId: String,
