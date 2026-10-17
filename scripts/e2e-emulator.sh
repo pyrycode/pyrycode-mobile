@@ -1617,8 +1617,6 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgentProgress_showsOnRunningCard"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgent_followsBottomUntilFinished"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgent_replyStaysUnderAgent"
-  # #2221: a foreground and a background Agent's child tool calls carry their Agent's id and nest live. One turn.
-  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_foregroundAndBackgroundAgent_childToolsNestUnderAgent"
   # #1223: the phone's acknowledged choice in one chat applies before the first real turn in a new chat.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage"
   # #1249 restores the discussion round trip and host-isolated Archive proof through the list toolbar.

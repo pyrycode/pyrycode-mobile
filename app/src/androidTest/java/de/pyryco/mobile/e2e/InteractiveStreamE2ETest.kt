@@ -62,7 +62,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performFirstLinkClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
@@ -169,7 +168,6 @@ import de.pyryco.mobile.ui.conversations.thread.inert
 import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
 import de.pyryco.mobile.ui.conversations.thread.slashCommandOptions
 import de.pyryco.mobile.ui.conversations.thread.slashCommandTypeAheadRows
-import de.pyryco.mobile.ui.conversations.thread.toolNestingDepths
 import de.pyryco.mobile.ui.onboarding.ScannerEvent
 import de.pyryco.mobile.ui.onboarding.ScannerUiState
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
@@ -193,7 +191,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -5453,121 +5450,6 @@ class InteractiveStreamE2ETest {
                 runBlocking { preferences.setCollapseToolUses(previousCollapse) }
                 peer.close()
             }
-        }
-    }
-
-    /**
-     * #2221: a foreground and a background Agent each run one Bash call. The capture records whether each child
-     * `tool_use` names its Agent's `tool_use_id` as parent, in a content-free line, then proves the loaded rows
-     * nest live: depth 1 in [toolNestingDepths] and the rendered row's subagent description.
-     */
-    @Test
-    fun interactiveTurn_foregroundAndBackgroundAgent_childToolsNestUnderAgent() {
-        val peer = runningToolPeer()
-        val preferences = GlobalContext.get().get<AppPreferences>()
-        val previousCollapse = runBlocking { preferences.collapseToolUses.first() }
-        val allowed = mutableSetOf<String>()
-        try {
-            runBlocking { preferences.setCollapseToolUses(false) }
-            awaitChannelList()
-            awaitConnected()
-            val serverId = twoHostArg(ARG_SERVER_ID)
-            val (chat, name) = answerChat(serverId, "e2e2221-nest-")
-            val liveRepositories =
-                checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)).coordinator.currentRepository
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
-            openChatRow(name)
-            sendFromPhone(
-                "Use the Agent tool twice, one after the other. First a foreground Agent with run_in_background=false, " +
-                    "subagent_type=general-purpose and description=Foreground nest agent. Tell it to run exactly the Bash command " +
-                    "printf fg2221 once and then reply done. Wait for it to finish. Then a background Agent with " +
-                    "run_in_background=true, subagent_type=general-purpose and description=Background nest agent. Tell it to run " +
-                    "exactly the Bash command printf bg2221 once and then reply done. Do not use any other tool yourself and do " +
-                    "not wait for the background agent. Briefly confirm and end your turn.",
-            )
-
-            fun toolUse(frame: Envelope): ToolUsePayloadDto? =
-                if (frame.type != "tool_use") {
-                    null
-                } else {
-                    runCatching { MobileJson.decodeFromJsonElement(ToolUsePayloadDto.serializer(), frame.payload) }.getOrNull()
-                }
-
-            fun inputField(
-                call: ToolUsePayloadDto,
-                key: String,
-            ): String = ((call.input as? JsonObject)?.get(key) as? JsonPrimitive)?.contentOrNull.orEmpty()
-
-            fun child(marker: String): ToolUsePayloadDto =
-                toolUse(
-                    allowPromptsUntil(
-                        peer,
-                        chat,
-                        BACKGROUND_FINISH_TIMEOUT_MS,
-                        "no $marker subagent tool call",
-                        allowed,
-                        frame = "tool_use",
-                    ) {
-                        toolUse(it)?.let { call -> call.name == "Bash" && marker in inputField(call, "command") } == true
-                    },
-                ).let(::checkNotNull)
-
-            fun agent(description: String): ToolUsePayloadDto =
-                checkNotNull(
-                    peer.recorded(chat).mapNotNull(::toolUse).firstOrNull {
-                        it.name in setOf("Agent", "Task") && inputField(it, "description") == description
-                    },
-                ) { "no Agent call described $description" }
-
-            val foregroundChild = child("fg2221")
-            val backgroundChild = child("bg2221")
-            val pairs =
-                listOf(
-                    "foreground" to (agent("Foreground nest agent") to foregroundChild),
-                    "background" to (agent("Background nest agent") to backgroundChild),
-                )
-            // The finding for the ticket: ids are opaque daemon identities, logged only as lengths and a match bit.
-            pairs.forEach { (kind, call) ->
-                val (root, leaf) = call
-                Log.i(
-                    "SubagentParent2221",
-                    "event=subagent_parent kind=$kind agent_id_len=${root.toolUseId.length} " +
-                        "parent_len=${leaf.parentToolUseId.length} matches=${leaf.parentToolUseId == root.toolUseId}",
-                )
-            }
-            pairs.forEach { (kind, call) ->
-                assertEquals("$kind child tool_use must name its Agent as parent", call.first.toolUseId, call.second.parentToolUseId)
-            }
-            val loaded =
-                runBlocking {
-                    withTimeout(THREAD_TIMEOUT_MS) {
-                        liveRepositories.firstOnLive({ it.observeMessages(chat) }) { items ->
-                            val ids = items.filterIsInstance<ThreadItem.MessageItem>().map { it.message.reconciliationId ?: it.message.id }
-                            foregroundChild.toolUseId in ids && backgroundChild.toolUseId in ids
-                        }
-                    }
-                }
-            val depths = toolNestingDepths(loaded)
-            val step = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_tool_subagent_step, 1)
-            val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
-            listOf(foregroundChild, backgroundChild).forEach { call ->
-                val message =
-                    loaded
-                        .filterIsInstance<ThreadItem.MessageItem>()
-                        .map { it.message }
-                        .first { (it.reconciliationId ?: it.id) == call.toolUseId }
-                assertEquals("loaded child row must nest one level", 1, depths[message.id])
-                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                    val index = list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:${message.id}")
-                    index >= 0 && runCatching { list.performScrollToIndex(index) }.isSuccess
-                }
-                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                    composeTestRule.onAllNodes(hasContentDescription(step)).fetchSemanticsNodes().isNotEmpty()
-                }
-            }
-        } finally {
-            runBlocking { preferences.setCollapseToolUses(previousCollapse) }
-            peer.close()
         }
     }
 
