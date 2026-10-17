@@ -51,15 +51,9 @@ import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -1123,12 +1117,26 @@ class DeterministicInteractiveStreamE2ETest {
         arriveInSeededThread()
         val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
         val repository = requireNotNull(coordinator.currentRepository.value)
-        val events = MutableStateFlow<List<LiveSessionEvent>>(emptyList())
-        val eventScope = CoroutineScope(Dispatchers.IO)
-        eventScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            coordinator.liveSessionEvents.collect { event -> events.update { it + event } }
-        }
+        val conversationId =
+            runBlocking {
+                repository
+                    .observeConversations(ConversationFilter.All)
+                    .first()
+                    .single { it.name == SEED_CHANNEL_NAME }
+                    .id
+            }
+        val args = InstrumentationRegistry.getArguments()
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    requireNotNull(args.getString("serverId")),
+                    requireNotNull(args.getString("peerToken")),
+                    requireNotNull(args.getString("relayUrl")),
+                    requireNotNull(args.getString("serverStaticPublicKey")),
+                ),
+            )
         try {
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             typeAndSend(SEND_PROMPT)
             val running = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_still_working)
             val finished = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_finished)
@@ -1139,29 +1147,20 @@ class DeterministicInteractiveStreamE2ETest {
             val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(running).fetchSemanticsNodes().isNotEmpty() }
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                events.value.filterIsInstance<LiveSessionEvent.ToolUse>().count { it.parentToolUseId == "agent1783" } >= 3
+                peer.recorded(conversationId).count { it.type == "tool_use" && peer.field(it, "parent_tool_use_id") == "agent1783" } >= 3
             }
-            val received = events.value
-            val origin = received.filterIsInstance<LiveSessionEvent.ToolUse>().single { it.toolUseId == "agent1783" }.turnId
-            val mainEnd = received.indexOfFirst { it is LiveSessionEvent.TurnEnd && it.turnId == origin }
+            val received = peer.recorded(conversationId)
+            val origin = peer.field(received.single { it.type == "tool_use" && peer.field(it, "tool_use_id") == "agent1783" }, "turn_id")
+            val mainEnd = received.indexOfFirst { it.type == "turn_end" && peer.field(it, "turn_id") == origin }
             assertTrue("launching main turn must end", mainEnd >= 0)
             val lateTools =
                 received
                     .drop(mainEnd + 1)
-                    .filterIsInstance<LiveSessionEvent.ToolUse>()
-                    .filter { it.parentToolUseId == "agent1783" }
-            assertEquals(listOf("late1951-one", "late1951-two"), lateTools.map { it.toolUseId })
-            assertTrue("late children retain launching attribution", lateTools.all { it.turnId == origin })
-            assertEquals("child activity must not open another main turn", 1, received.filterIsInstance<LiveSessionEvent.TurnEnd>().size)
+                    .filter { it.type == "tool_use" && peer.field(it, "parent_tool_use_id") == "agent1783" }
+            assertEquals(listOf("late1951-one", "late1951-two"), lateTools.map { peer.field(it, "tool_use_id") })
+            assertTrue("late children retain launching attribution", lateTools.all { peer.field(it, "turn_id") == origin })
+            assertEquals("child activity must not open another main turn", 1, received.count { it.type == "turn_end" })
             // Raw live events above diagnose attribution; the rendered block and run identities prove the phone's content.
-            val conversationId =
-                runBlocking {
-                    repository
-                        .observeConversations(ConversationFilter.All)
-                        .first()
-                        .single { it.name == SEED_CHANNEL_NAME }
-                        .id
-                }
             val evidence = harnessThreadEvidence(repository)
             val launched =
                 runBlocking {
@@ -1247,7 +1246,7 @@ class DeterministicInteractiveStreamE2ETest {
                     .launch(MainActivity::class.java)
             }, openThread = ::arriveInSeededThread, send = { typeAndSend("settlement2175") })
         } finally {
-            eventScope.cancel()
+            peer.close()
         }
     }
 

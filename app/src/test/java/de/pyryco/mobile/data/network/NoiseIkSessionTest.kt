@@ -245,6 +245,25 @@ class NoiseIkSessionTest {
     }
 
     @Test
+    fun handshake_usesDiagnosticPeersExplicitCapabilities() {
+        val responder = TestResponder()
+        val diagnosticCapabilities = listOf("interactive", "multi_agent", "stop_background_task")
+        val session =
+            NoiseIkSession(
+                newPrivateKey(),
+                responder.staticPublicKey,
+                "tok",
+                clientInfo.copy(capabilities = diagnosticCapabilities),
+            )
+        val hello =
+            MobileJson.decodeFromJsonElement<HelloClientPayload>(
+                MobileJson.decodeFromString<Envelope>(responder.readInit(session.writeInit())).payload,
+            )
+        assertEquals(diagnosticCapabilities, hello.capabilities)
+        session.close()
+    }
+
+    @Test
     fun readResp_helloAckEchoingInteractiveSurfacesGrantedSet() {
         val responder = TestResponder()
         val session = NoiseIkSession(newPrivateKey(), responder.staticPublicKey, "tok", clientInfo)
