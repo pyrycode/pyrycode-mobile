@@ -65,8 +65,10 @@ internal class ThreadEvidence(
                 .lastOrNull {
                     it.message.role == Role.Assistant &&
                         it.agentId == null &&
-                        it.message.parentToolUseId.isEmpty() &&
-                        (it.fact?.parent ?: 0) == 0L &&
+                        when (owner.kind) {
+                            ThreadEvidenceKind.Legacy -> it.message.parentToolUseId.isEmpty()
+                            ThreadEvidenceKind.Authoritative -> (it.fact?.parent ?: 0) == 0L
+                        } &&
                         !it.message.isStreaming &&
                         it.message.content.isNotBlank() &&
                         it.fullText.isNotBlank() &&

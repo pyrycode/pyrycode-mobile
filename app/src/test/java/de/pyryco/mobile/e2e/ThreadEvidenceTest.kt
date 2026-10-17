@@ -148,6 +148,29 @@ class ThreadEvidenceTest {
         }
     }
 
+    @Test fun authoritativeLoadedMainReplyAcceptsAbsentAndClearedParentsButRejectsAgentChildren() {
+        for (parent in listOf(null, 0L)) {
+            val snap = snapshot(item(parent = parent))
+            val held = evidence(snap)
+            val record = held.records.single()
+            assertNull(record.agentId)
+            assertEquals(parent, record.fact?.parent)
+            assertEquals(
+                if (parent == null) "" else "${projectAuthoritativeThread("host", "chat", snap).scope}:0",
+                record.message.parentToolUseId,
+            )
+            assertNotNull(held.settledReply(held.owner, "session", "turn"))
+            assertSame(record.message, held.loadedMainReply())
+        }
+        val orphan = evidence(snapshot(item(parent = 99)))
+        assertNull(orphan.records.single().agentId)
+        assertNull(orphan.settledReply(orphan.owner, "session", "turn"))
+        assertNull(orphan.loadedMainReply())
+        val child = evidence(snapshot(item(1, "agent"), item(parent = 1)))
+        assertNotNull(child.records.single { it.fact?.id == 2L }.agentId)
+        assertNull(child.loadedMainReply())
+    }
+
     @Test fun highestRevisionAndAdmissionControlSettlementWithoutInventedDeltas() {
         val current = evidence(snapshot(item(), item(rev = 8, active = true)))
         assertEquals(

@@ -47,6 +47,7 @@ Cold mapping flows run in the caller's scope, with no jobs, dispatchers or globa
 | Repeated exact user echo | `userEchoCountRequiresExactlyOneDeliveredUser` |
 | Unsupported item or `turn_end` alongside a complete assistant item | `unsupportedAuthoritativeKindsCannotSettleReplies`, `turnEndAndUnknownItemsDoNotJoinAnAuthoritativeAssistantFamily` |
 | Legacy background block with intervening prose and collision aliases | `legacyBackgroundIdentitiesFollowPresentationAcrossProseAndAliases`, `legacySettlementKeepsRawParentAttributionForRenderedAliases` |
+| Authoritative main parent absent or explicitly cleared to zero, versus resolved or unresolved positive parents | `authoritativeLoadedMainReplyAcceptsAbsentAndClearedParentsButRejectsAgentChildren` |
 
 ## Error handling
 
@@ -62,7 +63,7 @@ None.
 
 ## Documentation handoff
 
-- Pending for the documentation stage: `docs/knowledge/features/development-verification-gates.md`, “Live Claude reply assertions”: document evidence factories, ownership checks, loaded selection versus strict settlement, rendered identities versus raw attribution, and the legacy-only harness binding/future activation seam. Carry forward the orphan-parent and bounded-rendered-text lessons.
+- Pending for the documentation stage: `docs/knowledge/features/development-verification-gates.md`, “Live Claude reply assertions”: document evidence factories, ownership checks, loaded selection versus strict settlement, rendered identities versus raw attribution, and the legacy-only harness binding/future activation seam. Carry forward the orphan-parent and bounded-rendered-text lessons, and distinguish a daemon parent cleared to zero from its nonempty scoped presentation identity.
 
 ## Revisions
 
@@ -72,3 +73,4 @@ None.
 - 2026-10-15 (verifier finding 2): Legacy rendered Agent and tool-run identities come from `foldQueuedRows`, `foldBackgroundAgentBlocks` and `foldToolRuns`, with loaded lifecycle evidence. Original messages retain raw parent/segment attribution; legacy strict settlement continues to select by raw parent and delegate to `holdsSettledAssistantReply`. A missing rendered block never establishes main-thread attribution for loaded selection. Four regression probes add about 120 lines; the complete ticket remains below 850 written lines, five shared types and two observation consumers. No in-flight branch overlaps either evidence file.
 - 2026-10-15 (native validation return): Managed task `ffa7e4529efbdc290d7728ab17d66643a868f51431b55679926dd690aa21cc45` for repair candidate `33c652a94` failed with `Native execution failed: RuntimeError. Private logs retained.` It returned no artifacts or test counts. The content-free result is retained in `app/src/androidTest/assets/thread-evidence-2169/native-check.txt`; this is unverified native execution, not a test pass. No implementation change is indicated by the returned evidence.
 - 2026-10-16 (completed native validation return): Managed task `0f91c9feeeb8f212148c7cb305c261925eb4cb8396827bdab255b630bbbcb6f1` ran the focused scripted `reply-suggestion` and `selection-copy` methods on Linux/Android at pushed candidate `09e1a604f`; each executed and passed one test with zero skips and exit 0. The six returned artifact hashes, counts and supporting revisions were verified; private raw evidence is preserved under `/work/Projects/pyrycode-mobile-agents/logs/evidence/2169/builder-native-0f91c9-20261016/`, with a content-free summary in `native-check.txt`. The earlier failed attempt remains failed. No implementation or recording change is needed; this test-only ticket requires no new real-Claude proof. Full dispatcher gates and the documentation handoff remain later-stage work.
+- 2026-10-17 (verifier finding 1 on `14de75414`): Loaded main-reply selection checks raw `Message.parentToolUseId` only for legacy evidence. Authoritative selection uses the daemon parent (absent or zero) together with no projected Agent block; explicit zero clears ownership even though its projected parent identity is nonempty. The regression named above preserves rejection of unresolved positive parents and resolved Agent children, with all existing admission, text and completion checks retained. Pending documentation handoff also covers this distinction between cleared daemon ownership and scoped presentation identity.
