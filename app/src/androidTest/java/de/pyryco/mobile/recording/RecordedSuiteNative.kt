@@ -174,13 +174,14 @@ internal object RecordedSuiteNative {
             }
             single<RelayConnectionFactory> {
                 val original = get<RelayTransportFactory>()
+                val clientInfo = get<NoiseClientInfo>()
                 RelayConnectionFactory(
                     get(),
                     RelayTransportFactory { pairing ->
                         session.remember(pairing)
                         session.hub.transport(session.owner("phone", pairing.serverId)) { original.create(pairing) }
                     },
-                    get(),
+                    session.document?.replayClientInfo(clientInfo) ?: clientInfo,
                     pushTokens =
                         if (session.document != null) {
                             session.pushTokens
@@ -223,14 +224,16 @@ internal object RecordedSuiteNative {
         current?.hub?.control(action, body, live) ?: live()
     }
 
-    /** The original sentinel must time out at its deliberately impossible final observation. */
+    /** Keep the real sentinel, but a completed replay needs no producer's 90-second response budget. */
     fun negativeObservation(
         name: String,
-        originalWait: () -> Unit,
+        liveTimeoutMs: Long,
+        originalWait: (Long) -> Unit,
     ) {
-        if (!active) return originalWait()
+        if (!active) return originalWait(liveTimeoutMs)
+        if (replaying) runBlocking { checkNotNull(current).hub.beforeNegativeObservation(name) }
         try {
-            originalWait()
+            originalWait(if (replaying) 1000 else liveTimeoutMs)
         } catch (_: androidx.compose.ui.test.ComposeTimeoutException) {
             control("negative-absence", name) { }
             return

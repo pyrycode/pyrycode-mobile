@@ -214,6 +214,14 @@ internal class SuiteConnections private constructor(
         control("checkpoint", name) { }
     }
 
+    suspend fun beforeNegativeObservation(name: String) {
+        if (tape == null) return
+        withTimeout(90000) {
+            while (!tape.negativeObservationReady(name)) delay(10)
+            awaitIdle()
+        }
+    }
+
     fun observeExternal(event: String) {
         checkNotNull(capture).observe(SuiteStep("external", "android", detail = buildJsonObject { put("event", event) }))
     }

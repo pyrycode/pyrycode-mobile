@@ -5,7 +5,9 @@ import android.os.Bundle
 import android.os.Looper
 import android.util.Log
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.crypto.PairedServer
@@ -44,6 +46,18 @@ import org.koin.dsl.module
  * `scripts/e2e-emulator.sh`).
  */
 class E2eTestApplication : Application() {
+    // appModule's singleton factories are shared with isolated navigation-test graphs. Closing
+    // one drops those factories without cancelling DataStore's file owner. Own that instance here
+    // so ordinary tests and replay rebuilds keep one store for the instrumentation process.
+    private val applicationPreferences: DataStore<Preferences> by lazy {
+        PreferenceDataStoreFactory.create(produceFile = { preferencesDataStoreFile("app_prefs") })
+    }
+
+    private fun preferencesModule() =
+        module {
+            single<DataStore<Preferences>> { applicationPreferences }
+        }
+
     override fun onCreate() {
         super.onCreate()
         val args = InstrumentationRegistry.getArguments()
@@ -55,8 +69,9 @@ class E2eTestApplication : Application() {
             // Ordinary instrumented runs stay fake-backed in both real and demo builds.
             Log.i("E2E", "app.onCreate: no relayUrl arg → FAKE repository mode")
             startKoin {
+                allowOverride(true)
                 androidContext(this@E2eTestApplication)
-                modules(appModule, conversationRepositoryModule(useRelay = false))
+                modules(appModule, conversationRepositoryModule(useRelay = false), preferencesModule())
             }
             return
         }
@@ -71,9 +86,9 @@ class E2eTestApplication : Application() {
             )
         val koin =
             startKoin {
-                if (RecordedSuiteNative.active) allowOverride(true)
+                allowOverride(true)
                 androidContext(this@E2eTestApplication)
-                modules(appModule, tappedRelayRepositoryModule(), RecordedSuiteNative.bindings())
+                modules(appModule, tappedRelayRepositoryModule(), preferencesModule(), RecordedSuiteNative.bindings())
             }.koin
         // Persist into the SAME store singleton MainActivity reads, so load() != null → channel list.
         runBlocking {
@@ -94,16 +109,15 @@ class E2eTestApplication : Application() {
      * hosts the store already holds are the state under test. Call with no activity alive (the old
      * view models hold the old graph) and on the main thread, which `ProcessLifecycleOwner` requires.
      *
-     * Two carry-overs keep the rebuild honest. The running `DataStore` is handed to the new graph,
-     * because `appModule` creates it with no `onClose` and a second instance over `app_prefs` throws
-     * "multiple DataStores active". And the old [LifecycleConnectionDriver] is unregistered first, so
+     * The application's process-lifetime `DataStore` is bound through a fresh factory in every graph,
+     * independent of isolated test graphs that also load `appModule`. A second store over `app_prefs`
+     * would throw "multiple DataStores active". The old [LifecycleConnectionDriver] is unregistered first, so
      * lifecycle edges reach only the new registry. `stopKoin` disposes the old registry and host sources
      * through their `onClose`, closing every old socket.
      */
     fun rebuildGraph() {
         check(Looper.myLooper() == Looper.getMainLooper()) { "rebuildGraph must run on the main thread" }
         val old = GlobalContext.get()
-        val preferences = old.get<DataStore<Preferences>>()
         val repositoryModule =
             if (InstrumentationRegistry.getArguments().getString(ARG_RELAY_URL) == null) {
                 conversationRepositoryModule(useRelay = false)
@@ -115,7 +129,7 @@ class E2eTestApplication : Application() {
         startKoin {
             allowOverride(true)
             androidContext(this@E2eTestApplication)
-            modules(appModule, repositoryModule, module { single<DataStore<Preferences>> { preferences } }, RecordedSuiteNative.bindings())
+            modules(appModule, repositoryModule, preferencesModule(), RecordedSuiteNative.bindings())
         }
         Log.i("E2E", "app.rebuildGraph: object graph rebuilt over the same on-device state")
     }

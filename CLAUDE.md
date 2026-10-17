@@ -28,14 +28,18 @@ The data-model entity is **`Conversation`** with an `isPromoted: Boolean` flag, 
 
 ## Build & test
 
+Direct Gradle checks acquire the shared host test hold. Android and JVM gate
+helpers acquire it automatically. The owned Gradle client JVM and in-process Kotlin keep
+compiler work within the owned command lifetime. Build-cache reuse stays on.
+
 ```bash
-./gradlew assembleDebug              # build debug APK
-./gradlew installDebug               # optional local install; dispatcher owns routine device execution
-./gradlew test                       # unit tests, including the Robolectric screen tests in app/src/sharedTest
-./gradlew connectedAndroidTest       # optional local run; dispatcher owns managed-device UI execution
+python3 scripts/gradle-gate.py assembleDebug              # build debug APK
+python3 scripts/gradle-gate.py installDebug               # optional local install; dispatcher owns routine device execution
+python3 scripts/gradle-gate.py test                       # unit tests, including the Robolectric screen tests in app/src/sharedTest
+python3 scripts/gradle-gate.py connectedAndroidTest       # optional local run; dispatcher owns managed-device UI execution
 UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui   # in-depth run: every screen test on the emulator
-./gradlew lint                       # Android Lint
-./gradlew clean                      # clean build outputs
+python3 scripts/gradle-gate.py lint                       # Android Lint
+python3 scripts/gradle-gate.py clean                      # clean build outputs
 ```
 
 New Compose screen tests go in `app/src/sharedTest`, not `app/src/androidTest`. See

@@ -1,0 +1,126 @@
+Ticket #2208 — Linux DataStore ownership repair
+
+Initial repair tested source: 7426bb4613ff0a9da79c8580937bc5d00312bc50
+Main baseline: a0c7db693245cce59d67377f672d2bec4c7dca65
+The rework below changes the seeded regression fixture and has separate evidence.
+Private evidence root: /work/Projects/pyrycode-mobile-agents/logs/evidence/2208/
+Every retained run has an owner-only SHA256SUMS manifest.
+
+Baseline: main-a0c7db693/
+The fresh dispatcher main sweep reproduced 113 executed, 110 passed, 3 failed.
+Background-agent and footer failed in replay setup while reading the paired store:
+the initial application graph's DataStore was still active, but an ordinary isolated
+Koin graph had cleared appModule's shared singleton factory. The subsequent global
+lookup created a second store over app_prefs. Both instrumentation shards crashed.
+Delete's empty failure is a process-crash interruption, not a product assertion.
+Its unchanged original scenario passes in both repaired runs below.
+
+Controlled pre-repair regression: controlled-red/
+python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.recording.RecordedSuiteIsolationDeviceTest#ordinaryGraphClosurePreservesApplicationPreferences
+Exit 1; 1 executed, 0 passed, 1 failed, 0 skipped.
+The assertion proves that closing an isolated graph replaces the application's
+already-initialized DataStore. The retained source.txt identifies the test patch hash.
+
+Focused repair: focused-green/
+python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.recording.RecordedSuiteIsolationDeviceTest,de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_backgroundAgent_followsBottomUntilFinished,de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_pingPrompt_footerShowsContextUsage,de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_deleteConversation_removesFromListAndClosesThread'
+Exit 0; 6 executed/passed, 0 failed/errors/skipped.
+All three reported scenarios pass. Isolation coverage checks an ordinary graph
+closing before replay, successive incomplete replay sessions, and successful
+original ping replay. Preferences, pairing credentials and local host names restore.
+
+Complete profile: full-green-7426bb461/
+UI_GATE_FULL=1 UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui
+Exit 0; 1692 unique XML cases, 1690 executed/passed, 0 failed/errors, 2 skipped.
+Shard 0: 882 reported, 882 passed, 0 skipped.
+Shard 1: 810 reported, 808 passed, 2 skipped.
+All 71 RecordedMobileSuiteTest scenarios and all 3 isolation tests pass.
+The progress counter's 812/810 includes the two skips twice; raw XML has exactly
+810 unique shard-1 cases and no duplicate identities across either shard.
+The existing skips are RenameDialogCaptureTest#renameAtFigmaViewport and
+ComposerPasteTest#pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty.
+The latter is explicitly Robolectric-only; ComposerImagePasteDeviceTest covers
+real device image paste. No skips, retries or time-limit increases were added.
+All retained phone logs were scanned: zero "multiple DataStores active" errors.
+Host admission wait: 1003 seconds; device Gradle phase: 20m21s.
+
+These are offline recorded scenarios: no Claude or real daemon launch is required.
+Production appModule and its after-graph-close initialization contract are unchanged.
+
+Focused JVM and static/build checks:
+python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.di.AppPreferencesTeardownTest lint assembleDebug compileDebugAndroidTestKotlin --console=plain
+Exit 0; teardown contract 1 executed/passed, 0 failed/errors/skipped.
+Lint, APK assembly and instrumented Kotlin compilation pass.
+
+Scripted relay startup: scripted-and-jvm-green/
+python3 scripts/android-test-gate.py scripted ping
+Exit 0; 2 executed/passed, 0 failed/errors/skipped:
+DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread
+DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_durableGapCatchUp
+Mobile Kotlin source revision: 7426bb4613ff0a9da79c8580937bc5d00312bc50
+Daemon revision: 0917625fc6e91eeb2a16556f09e5ba0bbf62aabf
+Backend: scripted fakeclaude; zero real Claude turns.
+Isolated daemon/relay diagnostics were retained by the harness under
+the evidence root's harness/fault-068f020b0f61d889b52cb80b16c30ce0/ directory.
+
+Verifier rework — synthetic registry ownership after seeded fixture cleanup
+
+The fixture's direct DataStore restoration did not notify the observable paired
+store revision. Its ordinary registry could retain the synthetic connection after
+the persisted pairing was gone. Cleanup now rebuilds the ordinary graph on main
+after restoring the original snapshot, including when a seeded assertion fails.
+Production code, original scenario assertions, matching and time limits are unchanged.
+
+Controlled pre-fix probes: rework-controlled-red/
+RecordedSuiteIsolationDeviceTest#seededStateCleanupRestoresRegistryAfterSuccess
+RecordedSuiteIsolationDeviceTest#seededStateCleanupRestoresRegistryAfterAssertionFailure
+Exit 1; 2 executed, 0 passed, 2 failed, 0 skipped.
+Both first await the synthetic host in the ordinary registry after replay cleanup,
+then fail because its connection remains held after restoring persisted preferences.
+The probes' own outer cleanup contains these expected failures. Exact source at
+2ac17e137 plus the pre-fix patch, raw XML and both phone logs are retained privately.
+
+Focused rework: rework-focused-green/
+Same focused command as the initial repair, now including all five isolation tests.
+Exit 0; 8 executed/passed, 0 failed/errors/skipped. Both new probes pass and verify
+exact original preferences, pairing records and registry hosts on normal return
+and assertion failure. All three original failing scenarios pass unchanged.
+
+Scripted rework: rework-scripted-green/
+python3 scripts/android-test-gate.py scripted ping
+Exit 0; 2 executed/passed, 0 failed/errors/skipped. Daemon revision remains
+0917625fc6e91eeb2a16556f09e5ba0bbf62aabf; scripted fakeclaude, zero Claude turns.
+Raw XML and phone logs are retained with source patches; isolated daemon and relay
+logs are in harness/fault-97dc48c1eac266e7979ca766b9bf7ee7/.
+
+Focused rework JVM/static checks:
+python3 scripts/gradle-gate.py spotlessApply testDebugUnitTest --tests de.pyryco.mobile.di.AppPreferencesTeardownTest lint assembleDebug compileDebugAndroidTestKotlin --console=plain
+Exit 0; teardown contract 1 executed/passed, 0 failed/errors/skipped.
+Formatting, lint, APK assembly and instrumented compilation pass.
+
+Complete Linux rework profile: rework-full-local-3f4703e08/
+Source: 3f4703e08ede017f69e19ba5109762bf94f88035
+Agents: 49cd6dd07c163a7d0e9583850aafb28378ec0b3c; Linux x86_64.
+UI_GATE_FULL=1 UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui
+Exit 0; 1694 unique selected/reported cases, 1692 executed/passed,
+0 failed/errors, 2 unchanged skips. Device Gradle phase: 20m25s.
+Shard 0: 883 selected/reported, 883 executed/passed, 0 skipped.
+Shard 1: 811 selected/reported, 809 executed/passed, 2 skipped.
+All 71 recorded scenarios, all 5 isolation methods and the three original failures
+pass. Selected counts, instrumentation identities/outcomes, both raw shard XMLs
+and joined XML reconcile exactly, without duplicates or missing cases. Compared
+with the initial complete profile, no method was removed; only the two new
+registry cleanup probes were added. The skip identities match the initial profile.
+All 1694 raw phone logs contain zero duplicate-DataStore errors. No inherited
+application failure was found. The progress counter's 813/811 again counts the
+two skips twice; raw shard-1 XML has exactly 811 unique cases.
+Raw XML, instrumentation textproto, phone logs, phases, exact source and hashes
+are private under the directory above; reconciliation.json records the counts
+and reconcile-full.py reproduces the identity/membership comparison.
+
+Managed launcher diagnostic, retained separately: rework-in-depth-3f4703e08/
+Task 95bc2120a91af20a7c8039a37547b408ea1bccad994c7e6b7a8a6a0cd021ae01
+failed during preparation with zero tests executed because mobile_capture omitted
+AGENTS_REPO_PATH from its cleaned environment. The complete local run above uses
+the documented gate and inherited path at the same pushed Mobile revision.
+Dispatcher repair: https://github.com/pyrycode/agent-dispatcher/issues/294
+Confirmed Backlog, priority:low. Mobile's forwarding wrapper is unchanged.
