@@ -404,7 +404,7 @@ internal object RecordedSuiteNative {
                 SuiteConnections.replaying(
                     scope,
                     tape,
-                    originalSpeed = document.scenario in SuiteConnections.ORIGINAL_SPEED_SCENARIOS,
+                    originalSpeed = document?.scenario in SuiteConnections.ORIGINAL_SPEED_SCENARIOS,
                 ) { event ->
                     when (
                         event.detail
