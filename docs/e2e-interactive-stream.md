@@ -3977,6 +3977,74 @@ retaining reserved placement and renderer ownership. See
 [assistant continuity](knowledge/features/remote-conversation-repository-assistant-reply-segments.md)
 and [queue history](knowledge/features/queued-backlog.md#queued-display-metadata-and-history).
 
+### Background-agent following evidence migration (#2173)
+
+`interactiveTurn_backgroundAgent_followsBottomUntilFinished`'s four thread
+observations (newer reply, later reply, owned child reply, the final
+later-user read), its two raw `toolCall.parentToolUseId`/`runId` joins and its
+raw `agentId` used in the header tag, marker lazy key, child tag and final
+`msg:` index now go through #2169's `harnessThreadEvidence` binding instead of
+reading the repository directly and keying rendered rows by raw peer IDs.
+That binding still selects the current legacy source; no production route,
+capability or fixture changed. New shared predicates in
+`app/src/sharedTest/java/de/pyryco/mobile/e2e/BackgroundAgentEvidence.kt`:
+`ThreadEvidenceRecord.rawToolUseId()` correlates a wire `tool_use_id` to an
+admitted item only (`ordinaryId` on legacy rows, `content.tool_use_id` on
+authoritative facts) and is never used as a rendering key;
+`ThreadEvidence.settledTurnReply(turn, rawAgent = "")` settles one turn's
+assistant family (main or, through `renderedAgent(rawAgent)`, a resolved
+Agent's) without a caller-supplied session, failing instead of guessing when
+the turn's assistant records span zero or several sessions;
+`ThreadEvidence.renderedAgent(rawAgent)` returns a `RenderedAgentFamily(owner,
+agentId, children)` — the admitted root tool record owning its own block,
+with `childIds`, `runId` (the projected `toolRunId` of its first child tool)
+and `ownsTools(rawIds)` — or null when unadmitted or unmatched; and
+`ThreadEvidence.deliveredUser(text)` finds the single delivered user record
+with that full text. `verifyAgentRunNavigation` now receives the family's
+rendered `agentId`, `runId` and `childIds` rather than raw peer IDs, and the
+header tag, marker lazy key, child tag and final `msg:` index all use
+`renderedAgent`'s rendered `agentId`. `ThreadEvidence.admitted` is now
+readable outside the class, the same one-line edit #2170 and #2171 make.
+Rendered identities are always read from the snapshot each step observes and
+never carried into a later step's keys, because an authoritative epoch or
+generation change re-scopes every row ID. The existing running/final
+navigation, bottom-following, later-reply ordering, nested child
+visibility/collapse, terminal settlement, prompt handling, fixture release and
+cleanup assertions are unchanged; only the evidence source and the keys moved.
+
+`BackgroundAgentEvidenceTest`
+(`app/src/test/java/de/pyryco/mobile/e2e/BackgroundAgentEvidenceTest.kt`)
+covers authoritative families built from scoped facts with active-to-terminal
+child revisions against `projectAuthoritativeThread`/`foldToolRuns`, a child
+reply that settles only on its own terminal revision while its parent Agent
+is still running, same raw tool IDs on another host, retired evidence
+(missing epoch, repair, reset), a retired source settling after connection
+replacement, a turn split across two sessions, the legacy aliased family (a
+collision alias on root and children correlated by raw ID, keyed by the
+rendered block), and the single delivered later-user echo.
+
+[PR #2236](https://github.com/pyrycode/pyrycode-mobile/pull/2236), merged at
+`b600c1994`, supplies the counted evidence: `testDebugUnitTest` for the new
+`BackgroundAgentEvidenceTest` (7 executed, 7 passed, 0 failed, 0 skipped — a
+mutation check using rendered IDs as raw joins and keying the legacy family by
+the rendered block failed 2 of the 7 as expected before the helper was
+restored) and for the unchanged `ThreadEvidenceTest` (17 executed, 17 passed,
+0 failed, 0 skipped). The recorded native run,
+`python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_backgroundAgent_followsBottomUntilFinished'`
+at that commit, exited 0 with **1 executed, 1 passed, 0 failed, 0 skipped**
+(51.5 s); the logcat contains the full `AgentRunProof` sequence (8
+`agent_run_proof` stages, `late_agent_tools`). Raw XML, logcat, phases and a
+SHA-256 manifest are retained at
+`$AGENTS_REPO_PATH/logs/evidence/2173/builder-recorded-b600c19-20261017/`
+(pruned after 30 days). The dispatcher's own verifier gate 7
+(`android-test-gate.py ui`, 335 executed/333 passed, 2 failed, 1 skipped)
+separately recorded this named method passing, and verifier gate 5
+(`jvm-test-gate.py`, 5842 executed/5842 passed, 0 failed, 0 skipped) covers
+the new JVM probes. The recorded fixture and baseline are unchanged because
+no outgoing request changed. These passes cover only the current legacy route
+exercised by `harnessThreadEvidence`; they do not prove negotiated production
+activation — #2175 owns that.
+
 ### Scripted streaming and reopen source-bound migration (#2171)
 
 The nine `ConversationRepository.observeMessages` reads inside
