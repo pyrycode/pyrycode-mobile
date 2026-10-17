@@ -139,6 +139,13 @@ interface ConversationCache {
     suspend fun removeHost(serverId: String): Result<Unit>
 
     /**
+     * [serverId] was paired, possibly again after [removeHost] (#2161). A cache that refuses a forgotten host's thread
+     * writes in this process, so a closing repository's held or final save cannot recreate its content, accepts them
+     * again from here. The default holds no such fence.
+     */
+    suspend fun admitHost(serverId: String) = Unit
+
+    /**
      * Remove every cached artefact keyed by [conversationId] under [serverId], leaving that host's
      * other conversations readable.
      *
