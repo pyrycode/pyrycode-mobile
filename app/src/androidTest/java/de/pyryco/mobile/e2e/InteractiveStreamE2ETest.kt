@@ -5772,7 +5772,9 @@ class InteractiveStreamE2ETest {
                                 lastOwnedReadings =
                                     held.records.map {
                                         "role=${it.message.role},owned=${block != null && it.agentId == block}," +
-                                            "turn=${it.turn == childReplyTurn},text=${it.fullText.isNotBlank()},streaming=${it.message.isStreaming}"
+                                            "turn=${it.turn == childReplyTurn},text=${it.fullText.isNotBlank()},streaming=${it.message.isStreaming}," +
+                                            "session=${it.session != null},active=${it.fact?.active}," +
+                                            "done=${it.fact?.status in setOf("done", "finished")},interrupted=${it.fact?.status == "interrupted"}"
                                     }
                                 held.settledTurnReply(childReplyTurn, agentId) != null
                             }
