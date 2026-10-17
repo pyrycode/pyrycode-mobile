@@ -9,13 +9,32 @@ import de.pyryco.mobile.data.network.NoiseSessionFactory
 import de.pyryco.mobile.data.network.NoiseSessionPump
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.RelayTransport
 import de.pyryco.mobile.data.network.RelayTransportFactory
+import de.pyryco.mobile.data.repository.ManagedSessionPump
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import java.util.concurrent.atomic.AtomicBoolean
+
+/** A generic connection dependency. Production uses the Noise implementation. */
+fun interface RelaySessionPumpFactory {
+    fun create(
+        transport: RelayTransport,
+        sessionFactory: NoiseSessionFactory,
+        dispatcher: CoroutineDispatcher,
+        onClientMinimum: (String) -> Unit,
+    ): ManagedSessionPump
+
+    companion object {
+        val noise =
+            RelaySessionPumpFactory { transport, session, dispatcher, minimum ->
+                NoiseSessionPump(transport, session, dispatcher, onClientMinimum = minimum)
+            }
+    }
+}
 
 /** Builds independent connection owners without resolving any application-wide connection state. */
 class RelayConnectionFactory(
@@ -27,6 +46,7 @@ class RelayConnectionFactory(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     /** The process-wide message trail (#1564), shared by every host's connections. */
     private val messageTrail: MessageTrail = MessageTrail(),
+    private val pumpFactory: RelaySessionPumpFactory = RelaySessionPumpFactory.noise,
 ) {
     /** The supplied immutable record remains the dial, handshake and re-key identity until disposal. */
     fun create(record: PairedServer): RelayConnectionBundle =
@@ -42,7 +62,17 @@ class RelayConnectionFactory(
     fun createCompatibility(store: PairedServerStore): RelayConnectionBundle = build(store)
 
     private fun build(store: PairedServerStore): RelayConnectionBundle =
-        RelayConnectionBundle(deviceStaticKeyStore, transportFactory, clientInfo, store, pushTokens, dispatcher, ioDispatcher, messageTrail)
+        RelayConnectionBundle(
+            deviceStaticKeyStore,
+            transportFactory,
+            clientInfo,
+            store,
+            pushTokens,
+            dispatcher,
+            ioDispatcher,
+            messageTrail,
+            pumpFactory,
+        )
 }
 
 /**
@@ -58,6 +88,7 @@ class RelayConnectionBundle internal constructor(
     dispatcher: CoroutineDispatcher,
     ioDispatcher: CoroutineDispatcher,
     messageTrail: MessageTrail,
+    pumpFactory: RelaySessionPumpFactory,
 ) {
     val supervisor = RelayConnectionSupervisor(transportFactory, pairedServerStore, dispatcher)
     val sessionFactory: NoiseSessionFactory =
@@ -75,7 +106,7 @@ class RelayConnectionBundle internal constructor(
             relayStatus = supervisor.relayStatus,
             // Each pump reports its own transport's app-too-old minimum to the supervisor that dialled it (#1008).
             createPump = { transport ->
-                NoiseSessionPump(
+                pumpFactory.create(
                     transport,
                     sessionFactory,
                     dispatcher,

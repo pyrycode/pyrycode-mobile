@@ -121,6 +121,16 @@ suspend fun sendAndAwaitReply(request: Envelope): JsonElement {
 }
 ```
 
+> **Internal refinement by #2213 — `pendingRequests`' value type, not its contract.** The map above is the
+> shape `sendMessage` and every bare-`ack`/typed-reply caller still sees through `waiter()`, which still
+> hands back a `CompletableDeferred<JsonElement>?`. Internally the value is now a private `PendingReply`
+> wrapper (`payload: CompletableDeferred<JsonElement>` plus a nullable captured `conversation:
+> Conversation?`), so `RelayRequests.completeConversationReply` can stash the collector-folded row beside the
+> raw payload before completing the same deferred `sendAndAwaitConversation` awaits — see [state &
+> concurrency § `RelayRequests.waiter` hands back the pending `CompletableDeferred`](remote-conversation-repository-state-errors-and-handoff.md#state--concurrency-model).
+> `failAllPending()`'s behavior is unchanged: it still fails every still-registered entry's `payload`
+> exceptionally and clears the map, non-suspending and silent.
+
 - **Keyed on the envelope id, not the payload `message_id`** — two distinct ids; conflating them would
   break correlation. The repository's `onInbound` `ack`/`error` arms look the matching deferred up through
   `RelayRequests.waiter(envelope.inReplyTo)` and complete or fail it themselves (see the demux table above);
@@ -238,10 +248,23 @@ one-line hand-off.
 
 **The central contrast with `sendMessage`.** `send_message`'s reply is an empty `ack`, so `sendMessage`
 *reconstructs* its return `Message` from the input. `create_conversation`'s reply is a **typed
-`conversation_created` payload** carrying the **server-assigned** `id` and `cwd`, so `createDiscussion`
-*decodes* its return `Conversation` from the reply — it cannot reconstruct it (the server assigns the id,
-and a null `workspace` means the server picks the scratch `cwd`). The reply rides the **same** correlation
-primitive: `RelayRequests.sendAndAwaitReply` hands the raw reply `JsonElement` back, and the caller decodes it.
+`conversation_created` payload** carrying the **server-assigned** `id` and `cwd`, so `createDiscussion`'s
+return `Conversation` must come from that reply — it cannot reconstruct it (the server assigns the id,
+and a null `workspace` means the server picks the scratch `cwd`).
+
+> **Updated by #2213 — decode and fold moved into the inbound collector.** The paragraphs and code below
+> describe the shape #347 originally shipped, where `create`/`promote`/`rename` each called
+> `RelayRequests.sendAndAwaitReply`, decoded the raw reply themselves and called
+> `ConversationListProjection.upsertConversation` in their own coroutine. #2213 found that a caller resumed
+> from an older reply could still re-run that decode-and-upsert after a newer, already-folded record had
+> landed, overwriting it with stale data (see
+> [state & concurrency § the list projection has exactly one writer](remote-conversation-repository-state-errors-and-handoff.md#state--concurrency-model)).
+> Every one of these commands now calls `RelayRequests.sendAndAwaitConversation(request)` instead: the
+> single inbound collector decodes the reply, folds it into `ConversationListProjection` through the
+> **same** `upsertConversation` shown below, captures the stored row on the pending request, and only then
+> completes the caller — who returns that capture without decoding or folding anything itself. The fold
+> itself, its field rules and its failure/no-op behavior are otherwise unchanged; only *which coroutine*
+> performs the decode-and-fold step, and *when relative to completion*, has moved.
 
 The flow (≤ ~10 lines) — since #956 the body behind both `createDiscussion` and `createChannel` is one
 private `create(payload)`, so the shape below is shared, not `createDiscussion`-only:
@@ -256,11 +279,7 @@ private suspend fun create(payload: CreateConversationPayloadDto): Conversation 
         type = TYPE_CREATE_CONVERSATION, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(payload),
     )
-    val reply = requests.sendAndAwaitReply(request)     // throws on server `error` / not-Open; the decode below is unreachable on failure
-    // Confirmed-insert — ONLY after a successful decode (AC #2). Since #1108 upsertConversation takes the
-    // decoded record (not a mapped Conversation) and returns the row as stored, so create/promote/rename
-    // return exactly what the projection now holds.
-    return conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+    return requests.sendAndAwaitConversation(request)
 }
 ```
 
@@ -270,17 +289,18 @@ private suspend fun create(payload: CreateConversationPayloadDto): Conversation 
   server decodes identically to an absent key (its `*string` field has no `omitempty`) — so
   `createDiscussion(null)` encodes to `{"is_promoted":false}` and means "server assigns the scratch
   cwd". See the
-  [wire-layer doc](mobile-protocol-v2-wire-layer-application-payloads.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
+  [wire-layer doc](mobile-protocol-v2-wire-layer-request-encoders.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
 - **The returned `cwd` is the server's reply value, never the input.** A null `workspace` returns the
   server-assigned scratch cwd (`DEFAULT_SCRATCH_CWD`); this is the one divergence from
   `FakeConversationRepository.createDiscussion`, which picks `cwd = workspace ?: ""` locally (AC #1).
 - **Decode precedes the fold, so a garbage reply cannot corrupt the list.** A malformed
   `conversation_created` (missing field / bad `last_used_at`) throws the #318 decode boundary's
-  `SerializationException` / `IllegalArgumentException` **before** `ConversationListProjection.upsertConversation`
-  runs — the
-  projection is never mutated by a failure path (AC #3). The decode runs in the **caller's** coroutine
-  (after the `RelayRequests.pendingRequests` entry is removed), so it never throws inside the single inbound
-  collector.
+  `SerializationException` / `IllegalArgumentException` inside the collector's shared
+  `TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED` arm, caught **before**
+  `ConversationListProjection.upsertConversation` runs — the projection is never mutated by a failure path
+  (AC #3), and the single inbound collector survives. `sendAndAwaitConversation` then finds no captured row
+  and throws its own `SerializationException("Malformed conversation reply")` in `createDiscussion`'s
+  caller — a static message, not the original decode exception (#2213).
 
 ### `createChannel(name, workspace)` — a named, promoted channel in one step (#956)
 
@@ -308,7 +328,8 @@ suspend fun createChannel(name: String, workspace: String?): Conversation =
   `createDiscussion`'s `cwd`, extended to `name`. A reply whose `name` differs from the request (the
   daemon truncated or otherwise altered it) is what the caller gets back.
 - **Same failure contract as `createDiscussion`**: a server `error`, a disconnected session or a malformed
-  reply all throw before `ConversationListProjection.upsertConversation` runs, so nothing is inserted.
+  reply all leave `ConversationListProjection.upsertConversation` unrun in the collector, so nothing is
+  inserted, and `create`'s `sendAndAwaitConversation` call throws without a caller-side decode (#2213).
 - **No logging** — `ConversationCommands` is documented as "Nothing here logs"; the channel name and
   workspace path are operator-chosen and stay off the log, the same posture as `sendMessage`'s text and
   `mapError`'s server message.
@@ -348,7 +369,8 @@ fun upsertConversation(record: ConversationResponseDto): Conversation {
 }
 ```
 
-`createDiscussion` folds the decoded record into `projection` **after** the reply, so
+The inbound collector folds the decoded record into `projection` as part of completing `createDiscussion`'s
+request (before #2213 this ran in `createDiscussion`'s own coroutine, after the reply), so
 `observeConversations` re-emits to include it without waiting on a server-pushed `conversations` snapshot
 (AC #2 — deterministic and self-contained). It is an **upsert by `id`** (not blind append), so it's
 idempotent against a re-delivered create and retry-merges with a concurrent authoritative snapshot. The
@@ -369,23 +391,22 @@ attempt — the same discipline `applyWorkspaceLabel` follows.
 > **Confirmed-insert is the trust property (mirrors #346).** A conversation is folded into the read
 > projection **only** on a server `conversation_created` success reply, never speculatively and never on
 > a failure path — so the list never shows a conversation the server did not create, by construction
-> (the fold is the last step, after both `RelayRequests.sendAndAwaitReply` *and* the decode succeed; no
-> rollback path
-> to get wrong). `RelayRequests.mapError` is reused as-is — its `conversation.not_found` →
-> `IllegalArgumentException`
+> (the fold is the collector's last step on that reply, after the decode succeeds; no rollback path to get
+> wrong). `RelayRequests.mapError` is reused as-is — its `conversation.not_found` → `IllegalArgumentException`
 > branch is **not exercised** here, since create references no existing conversation.
 
 ## `promote(conversationId, name, workspace)` — the third mutation (#348)
 
 Promotes an existing (scratch) discussion into a named, persistent channel over v2
 `promote_conversation`, and returns the now-promoted `Conversation`. [#348](../codebase/348.md) is
-`createDiscussion` with **three deltas** — otherwise byte-for-byte the same build-request →
-`sendAndAwaitReply` → decode-reply → confirmed-fold → return shape — and is almost pure composition:
-it **reuses** #346's `sendAndAwaitReply` + `mapError`, #318's `ConversationResponseDto.toConversation()`,
-and #347's `upsertConversation`, adding only a new `promote_conversation` request encoder
-(`PromoteConversationPayloadDto`) and one `cwd`-resolution line. The body now lives on `ConversationCommands`
-(#914, `data/repository/ConversationCommands.kt`), beside `createDiscussion`; the repository's `override
-suspend fun promote` is a one-line hand-off.
+`createDiscussion` with **three deltas** — otherwise the same build-request → collector-decode →
+collector-fold → captured-return shape (since #2213; originally build-request → `sendAndAwaitReply` →
+decode-reply → confirmed-fold → return, in the caller's own coroutine) — and is almost pure composition:
+it **reuses** #346's `mapError`, #318's `ConversationResponseDto.toConversation()`, #347's
+`upsertConversation`, and #2213's `sendAndAwaitConversation`, adding only a new `promote_conversation`
+request encoder (`PromoteConversationPayloadDto`) and one `cwd`-resolution line. The body now lives on
+`ConversationCommands` (#914, `data/repository/ConversationCommands.kt`), beside `createDiscussion`; the
+repository's `override suspend fun promote` is a one-line hand-off.
 
 The flow (≤ ~10 lines):
 
@@ -402,9 +423,7 @@ suspend fun promote(conversationId: String, name: String, workspace: String?): C
             PromoteConversationPayloadDto(conversationId = conversationId, name = name, cwd = cwd),
         ),
     )
-    val reply = requests.sendAndAwaitReply(request)     // throws on server `error` / not-Open; the decode below is unreachable on failure
-    // Confirmed-upsert — ONLY after a successful decode (AC #2/#3) — returns the row as stored (#1108).
-    return conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+    return requests.sendAndAwaitConversation(request)
 }
 ```
 
@@ -412,13 +431,14 @@ suspend fun promote(conversationId: String, name: String, workspace: String?): C
   `PromoteConversationPayloadDto(conversationId, name, cwd)` carries all three as **non-null** `String`s
   (contrast `CreateConversationPayloadDto`'s optional `cwd`) — there is no `explicitNulls` elision to
   reason about; the encoded payload always has `conversation_id`, `name`, `cwd`. See the
-  [wire-layer doc](mobile-protocol-v2-wire-layer-application-payloads.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
-- **Delta 2 — the reply is `conversation_updated`** (routed into the **same** success arm as
+  [wire-layer doc](mobile-protocol-v2-wire-layer-request-encoders.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
+- **Delta 2 — the reply is `conversation_updated`** (routed into the **same** collector arm as
   `conversation_created`), decoded through the **same** #318 `ConversationResponseDto` (one DTO models
-  both response types). A malformed reply throws the #318 decode exception in the **caller's** coroutine
-  **before** `ConversationListProjection.upsertConversation` runs, so the projection is never mutated by a
-  garbage success reply
-  (AC #3, "no partial promote") — and never inside the lone inbound collector.
+  both response types). A malformed reply fails to decode inside the collector's arm, **before**
+  `ConversationListProjection.upsertConversation` runs there, so the projection is never mutated by a
+  garbage success reply (AC #3, "no partial promote"), and the lone inbound collector survives; `promote`'s
+  `sendAndAwaitConversation` call then throws its own generic `SerializationException` in the caller's
+  coroutine (#2213), not the original decode exception.
 - **Delta 3 — `cwd` resolution.** The domain `workspace` arg is nullable but the wire `cwd` is required.
   A **non-null** `workspace` (the `DEDICATED` choice) is sent verbatim; a **null** `workspace` (the
   `SCRATCH` choice / discussion-list default — both production callers reach this) means "promote in
@@ -445,12 +465,13 @@ entry in place** (same
 
 Renames an existing conversation (channel or discussion) over v2 `rename_conversation`, and returns the
 renamed `Conversation`. [#530](../codebase/530.md) is `promote` ([#348](../codebase/348.md)) **minus
-`cwd`** — otherwise byte-for-byte the same build-request → `sendAndAwaitReply` → decode-reply →
-confirmed-fold → return shape, and pure composition: it reuses #346's `sendAndAwaitReply` + `mapError`,
-\#318's `ConversationResponseDto.toConversation()`, and #347's `upsertConversation`, adding only a new
-`rename_conversation` request encoder (`RenameConversationPayloadDto`). The body now lives on
-`ConversationCommands` (#914, `data/repository/ConversationCommands.kt`), beside `promote`; the
-repository's `override suspend fun rename` is a one-line hand-off.
+`cwd`** — otherwise the same build-request → collector-decode → collector-fold → captured-return shape
+(since #2213), and pure composition: it reuses #346's `mapError`, #318's
+`ConversationResponseDto.toConversation()`, #347's `upsertConversation`, and #2213's
+`sendAndAwaitConversation`, adding only a new `rename_conversation` request encoder
+(`RenameConversationPayloadDto`). The body now lives on `ConversationCommands` (#914,
+`data/repository/ConversationCommands.kt`), beside `promote`; the repository's `override suspend fun
+rename` is a one-line hand-off.
 
 The flow (≤ ~10 lines):
 
@@ -464,9 +485,7 @@ suspend fun rename(conversationId: String, name: String): Conversation {
             RenameConversationPayloadDto(conversationId = conversationId, name = name),
         ),
     )
-    val reply = requests.sendAndAwaitReply(request)     // throws on server `error` / not-Open; the decode below is unreachable on failure
-    // Confirmed-upsert — ONLY after a successful decode — returns the row as stored (#1108).
-    return conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+    return requests.sendAndAwaitConversation(request)
 }
 ```
 
@@ -474,11 +493,12 @@ suspend fun rename(conversationId: String, name: String): Conversation {
   (`RenameConversationPayload`, server #820) is deliberately **not** a reuse of
   `PromoteConversationPayloadDto`: a rename neither has nor means a `cwd`. `RenameConversationPayloadDto`
   carries exactly `conversation_id` / `name`, both required.
-- **The reply is `conversation_updated`**, routed into the **same** success arm `promote`'s reply already
-  uses (added by #348) — no `onInbound` change needed. Decoded through the **same** #318
-  `ConversationResponseDto`. A malformed reply throws the #318 decode exception in the caller's coroutine
-  **before** `ConversationListProjection.upsertConversation` runs, so the projection is never mutated by a
-  garbage success reply.
+- **The reply is `conversation_updated`**, routed into the **same** collector arm `promote`'s reply already
+  uses (added by #348) — no further `onInbound` change was needed for rename. Decoded through the **same**
+  #318 `ConversationResponseDto`. A malformed reply fails to decode inside that arm, **before**
+  `ConversationListProjection.upsertConversation` runs, so the projection is never mutated by a garbage
+  success reply, and `rename`'s `sendAndAwaitConversation` call throws the collector-side failure's generic
+  `SerializationException` in the caller's coroutine (#2213), not the original decode exception.
 - **`name` is forwarded verbatim.** The `RenameDialog` is the sole trim authority; the daemon re-validates
   and rejects empty/whitespace titles server-side (`protocol.malformed`), surfaced as an ordinary
   `RelayErrorException` — no second client-side validation surface is added.

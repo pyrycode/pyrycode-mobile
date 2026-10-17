@@ -127,6 +127,43 @@ class RelayConnectionFactoryTest {
     }
 
     @Test
+    fun injectedSessionFactoryUsesTheRealHostTransportAndKeepsNormalRouting() =
+        runTest {
+            val built = mutableListOf<RelayTransport>()
+            val pumpFactory =
+                RelaySessionPumpFactory { transport, session, dispatcher, minimum ->
+                    built += transport
+                    de.pyryco.mobile.data.network
+                        .NoiseSessionPump(transport, session, dispatcher, onClientMinimum = minimum)
+                }
+            val f = Fixture(this, pumpFactory = pumpFactory)
+            f.store.save(f.a.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                assertEquals(1, built.size)
+                assertSame(f.transports.single(), built.single())
+                assertEquals(RelayLinkStatus.Connected, registry.connectionStatus.value.relay)
+                registry
+                    .connectionFor("A")!!
+                    .coordinator.currentRepository.value!!
+                    .observeConversations(ConversationFilter.All)
+                    .launchIn(backgroundScope)
+                runCurrent()
+                assertTrue(
+                    f.transports
+                        .single()
+                        .outbound
+                        .any { it.type == "list_conversations" },
+                )
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
     fun sendNowReadinessIgnoresStoppedSelectedHost() =
         runTest {
             val f = Fixture(this)
@@ -1653,6 +1690,7 @@ class RelayConnectionFactoryTest {
     private class Fixture(
         scope: TestScope,
         private val dispatcher: kotlinx.coroutines.CoroutineDispatcher = StandardTestDispatcher(scope.testScheduler),
+        pumpFactory: RelaySessionPumpFactory = RelaySessionPumpFactory.noise,
     ) {
         val a = Host("A")
         val b = Host("B")
@@ -1689,6 +1727,7 @@ class RelayConnectionFactoryTest {
                 NoiseClientInfo("test-device", "test-version"),
                 dispatcher = dispatcher,
                 ioDispatcher = dispatcher,
+                pumpFactory = pumpFactory,
             )
 
         fun registry() = RelayConnectionRegistry(store, factory, dispatcher)

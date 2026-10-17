@@ -22,6 +22,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.data.repository.projectDisplay
+import de.pyryco.mobile.recording.RecordedSuiteNative
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.ThreadRow
 import de.pyryco.mobile.ui.conversations.thread.foldQueuedRows
@@ -42,7 +43,7 @@ internal class DurableGapProof(
     private val cache get() = GlobalContext.get().get<ConversationCache>()
     private val fault = DaemonFaultControl()
     private var finalRows: List<ThreadItem>? = null
-    val prefix = "e2e1833-" + System.currentTimeMillis()
+    val prefix = "e2e1833-" + RecordedSuiteNative.uniqueStamp()
     val olderPost = "$prefix-a-000"
     private val batchSize = 120
     val lastOlderPost = "$prefix-a-${(batchSize - 1).toString().padStart(3, '0')}"

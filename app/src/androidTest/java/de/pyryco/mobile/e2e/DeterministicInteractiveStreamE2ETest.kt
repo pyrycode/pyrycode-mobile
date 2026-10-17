@@ -60,7 +60,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -462,29 +461,16 @@ class DeterministicInteractiveStreamE2ETest {
                     }
                 val checkpoint =
                     withTimeoutOrNull(REPLY_TIMEOUT_MS) {
-                        repository
-                            .threadSnapshots(conversationId)
-                            .mapNotNull { snapshot ->
-                                val reply =
-                                    snapshot.rows
-                                        .filterIsInstance<ThreadItem.MessageItem>()
-                                        .lastOrNull { it.message.role == Role.Assistant && it.message.content == PING }
-                                reply?.let {
-                                    val evidence = snapshot.readEvidence
-                                    val checkpoint = evidence.checkpoint(it, 0uL)
-                                    val receipts = evidence.facts.keys.sorted()
-                                    android.util.Log.i(
-                                        "ScriptedReadProof",
-                                        "event=reply_checkpoint checkpoint=$checkpoint streaming=${it.message.isStreaming} " +
-                                            "deltas=${it.message.segment?.deltas?.size} claims=${evidence.versions[it]?.sorted()} " +
-                                            "receipts=$receipts holes=${receipts.zipWithNext().filter { (a, b) -> b - a > 1u }} " +
-                                            "unknown=${evidence.facts.filterValues { fact -> fact == null }.keys.sorted()} " +
-                                            "gaps=${evidence.gaps.map { gap -> gap.anchor to gap.edge }} " +
-                                            "unidentified=${evidence.unidentified.size}",
-                                    )
-                                    checkpoint
-                                }
-                            }.first()
+                        awaitScriptedReplyReadCheckpoint(repository.threadSnapshots(conversationId), PING) {
+                            android.util.Log.i("ScriptedReadProof", "event=reply_proof_qualified classification=starting")
+                            repository.requestHistory(conversationId).entries
+                        }.also {
+                            val marks = repository.observeReadMarks(conversationId).first()
+                            android.util.Log.i(
+                                "ScriptedReadProof",
+                                "event=reply_checkpoint checkpoint=$it thread_supported=${marks?.threadSupported}",
+                            )
+                        }
                     }
                 if (checkpoint == null) {
                     val evidence = repository.threadSnapshots(conversationId).first().readEvidence
@@ -539,17 +525,16 @@ class DeterministicInteractiveStreamE2ETest {
             runBlocking {
                 peer.open(CONNECT_TIMEOUT_MS)
                 val history = peer.history(conversationId, THREAD_TIMEOUT_MS)
-                assertTrue(
-                    "peer received the durable post",
-                    history.any {
+                val durablePost =
+                    history.singleOrNull {
                         val text =
                             it.payload.jsonObject["text"]
                                 ?.jsonPrimitive
                                 ?.content
                         it.type == "assistant_delta" && text == postText
-                    },
-                )
-                val latest = requireNotNull(history.maxOfOrNull { it.id })
+                    }
+                assertTrue("peer received the durable post", durablePost != null)
+                val latest = requireNotNull(durablePost).id
                 assertTrue("peer read confirmed", peer.markRead(conversationId, latest, THREAD_TIMEOUT_MS) >= latest)
             }
             val idle = context.getString(R.string.cd_conversation_attention_idle)

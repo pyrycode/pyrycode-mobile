@@ -1,0 +1,74 @@
+{
+  "ticket": 2177,
+  "platform": "Linux/build-fractal-2 (Intel Core i7-3770)",
+  "device": "pixel2Api33Atd",
+  "revisions": {
+    "mobile": "24a015e8b5f580a6933b45542ed01386c0b704f3",
+    "main_merged": "46909f852",
+    "agents": "c8edc37edbcc111bf769b93840beea0fe5e8c02f"
+  },
+  "managed_generation": {
+    "identity": "151a9dbd74aea4118480cc270492d68ef7fd255ce0b03cfacf6db74537c098d8",
+    "reused": true
+  },
+  "renderer": "Android Emulator OpenGL ES Translator (ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0))",
+  "bound": {
+    "logged_bound_ms": 2000,
+    "source": "#2228 operator decision on main: 1000 ms product bound, 2000 ms under SwiftShader; projection hold = bound + 100 ms",
+    "product_target_ms": 1000,
+    "all_16_openings_met_product_target": true
+  },
+  "source_sha256": {
+    "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "1153149d4d3e205e80168568a1457948a010355048ebdf4dafd3e2e28eb6c826",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b76344d827dd69b4356d27e1620e21c120668af0cc8fa8d36e05a5c1c2a9b33b",
+    "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "df15f0d6c7f3114adab4e239a8a94c952c7c1d226333d01c24d06db7079d303f",
+    "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/FragmentedHistoryFixture.kt": "59f23bda2db97ddb8f40c768f642c39d917e06ff0f11aad90624cb83a50bace1",
+    "app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt": "0771ca82b27994812531da90c1c175940f954911bd79456a1d4c6df80cab2261",
+    "app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt": "49dad7519f2fbabb5ca716bd4a93dbf967fb1da83d0bda77fadcecc06c7c578a",
+    "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt": "3f0e3b2c968c2aa205c7fac27cbb33c98a104fa8debce4db8702baebd970c4cf",
+    "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt": "c3506277f37f6c5f13c25f0c800d1516208d399a0a90fb47f26a181114ba2626"
+  },
+  "command": "python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest'",
+  "result": {
+    "executed": 4,
+    "passed": 4,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "exit": 0,
+    "xml_timestamp": "2026-10-17T12:07:26",
+    "xml_sha256": "7a992230a445d9cb6780f0259c1c307e72c2b0d6ee6d391fddd2fac0375c0627",
+    "methods": [
+      "slowRestore_negativeControlRejectsTheSameFirstDrawBound",
+      "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+      "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+      "heldCpuPipeCancelsAndClosesItsDescriptor"
+    ]
+  },
+  "admission_wait_s": 990,
+  "readiness": {
+    "barriers": 17,
+    "qualified": 17,
+    "windows": 77,
+    "max_acquire_ms": 9,
+    "max_read_ms": 32,
+    "probes_installed": 17
+  },
+  "fragmented_first_opens_ms": {
+    "projection_held": {
+      "false": 774,
+      "true": 650
+    },
+    "original": {
+      "false": 591,
+      "true": 664
+    }
+  },
+  "slow_control_drawn_ms": 3727,
+  "comparison": {
+    "prior_fractal_bound_1000_run": "2026-10-17T07:50:49 4/2/2/0/0 exit 1; fragmented first opens 1314/1032 (projection) and 1026/619 (original); remains failed",
+    "historical_2163_misses": "1434/1436 ms, unattributed; #2202 disposition retained"
+  },
+  "raw_evidence": "$AGENTS_REPO_PATH/logs/evidence/2177/post-2218-class-20261017/ (13 files, SHA256SUMS 55569ed777cbd4ce9e46efd2863acf37fc86765eacc029cad7d1070e1a8ca17e)",
+  "no_retry_skip_or_assertion_change_by_this_ticket": true
+}

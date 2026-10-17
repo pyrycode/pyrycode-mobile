@@ -1,0 +1,90 @@
+{
+  "ticket": 2219,
+  "os": "Linux",
+  "device": "pixel2Api33Atd (Android 13 / API 33 / x86_64)",
+  "candidateRevision": "3c4ccf7f8d938f0ac4600bbfc4afea5e168c40d6",
+  "evidenceRoot": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2219/atomic-close-20261017",
+  "countOrder": [
+    "executed",
+    "passed",
+    "failed",
+    "errors",
+    "skipped"
+  ],
+  "historical2213": {
+    "revision": "4098c704edd1a21aee007f41ec9da304bc1a55d0",
+    "bundleRunId": "b8ee8f123e2e81294cb33330bbb535ae3fd6f7c8dc44c593af4b814804e8ac4c",
+    "failureCounts": [1,0,1,0,0],
+    "pending": [
+      "request_attachment",
+      "inbound_end",
+      "scenario-complete checkpoint"
+    ],
+    "focusedRerunCounts": [1,1,0,0,0],
+    "focusedRerunSeconds": 6.65
+  },
+  "controlledRed": {
+    "revision": "bf1bf2ba03e1d5abacb9af2ea447de5ff69b98b0",
+    "patch": "red-source/regression.patch",
+    "evidence": [
+      "red-initial",
+      "red-warm"
+    ],
+    "countsPerAttempt": [1,0,1,0,0],
+    "unrepairedHarnessSha256": "b61f67db13f0f66917f8ddb52d4413c1801778b8c996aa6e80dfa708cdae0bf2",
+    "matchesHistoricalFailingHarness": true
+  },
+  "unrepairedNativeBaseline": {
+    "revision": "10666ec436367745e706879f6c7726bda89667e2",
+    "evidence": "baseline-native",
+    "counts": [1,1,0,0,0],
+    "seconds": 7.816
+  },
+  "unitChecks": [
+    {
+      "class": "de.pyryco.mobile.recording.SuiteConnectionsTest",
+      "evidence": "green-final",
+      "counts": [15,15,0,0,0]
+    },
+    {
+      "class": "de.pyryco.mobile.recording.RecordedSuiteTapeTest",
+      "evidence": "tape-final",
+      "counts": [23,23,0,0,0]
+    }
+  ],
+  "nativeCommand": "python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile'",
+  "nativeCountsPerRun": [1,1,0,0,0],
+  "fiveConsecutiveNativeRuns": [
+    {
+      "evidence": "native-1",
+      "seconds": 8.897
+    },
+    {
+      "evidence": "native-2",
+      "seconds": 8.169
+    },
+    {
+      "evidence": "native-3",
+      "seconds": 8.624
+    },
+    {
+      "evidence": "native-4",
+      "seconds": 8.274
+    },
+    {
+      "evidence": "native-5",
+      "seconds": 7.809
+    }
+  ],
+  "sourceSha256": {
+    "app/src/sharedTest/java/de/pyryco/mobile/recording/SuiteConnections.kt": "ac790b5363c469faee41ee0f4daa4a88a8434877eceaffbb4865388892485b1b",
+    "app/src/test/java/de/pyryco/mobile/recording/SuiteConnectionsTest.kt": "66f263d5a03a541ec548bb23bc1039cf7859c0d72cab009f6f1e5cf0dac1786e",
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt": "1dbc17fb0f98919e2c661a3b613d0d4e5649dd1653cf89df42f46d4202f4fa6b",
+    "app/src/androidTest/assets/recorded/suite/interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile.json": "665118409da012222d66a0c163b3aec635f413292f8dbfcfe36109094aaa78fc"
+  },
+  "originalScenarioAndRecordingUnchanged": true,
+  "pending": [
+    "Dispatcher-owned configured UI gate must execute and pass the named method before verifier PASS.",
+    "Documentation stage: docs/recorded-tests.md replay scheduling and evidence."
+  ]
+}

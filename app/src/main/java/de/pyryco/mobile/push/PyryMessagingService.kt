@@ -4,7 +4,6 @@ import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.preferences.AppPreferences
-import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +13,11 @@ import kotlinx.coroutines.launch
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
 import java.io.IOException
+
+/** Push delivery can only request a wake. The application owns the resulting connection lifetime. */
+fun interface PushWakeHandler {
+    fun onPushWake()
+}
 
 /**
  * The push trust boundary (#361). The system creates this service outside Compose, so its two
@@ -34,7 +38,7 @@ class PyryMessagingService :
 
     override fun onMessageReceived(message: RemoteMessage) {
         RelayLog.d { "event=push_wake" }
-        get<LifecycleConnectionDriver>().onPushWake()
+        get<PushWakeHandler>().onPushWake()
     }
 }
 

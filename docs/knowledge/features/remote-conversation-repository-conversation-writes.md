@@ -100,124 +100,7 @@ suspend fun setSessionSettings(
 
 ## `observeSessionSettings(conversationId)` / `refreshSessionSettings(conversationId)` — the settings read, counterpart to `setSessionSettings` (#590)
 
-The **read** half `setSessionSettings` never had: a conversation-scoped `request_session_settings` →
-`session_settings` round trip, exposed as a cold per-conversation reading rather than a one-shot return —
-a **new consumer shape**, not another mutation. `#590` is a net-new read path, not a replacement: mobile
-never shipped the bootstrap-scoped read desktop had to retire. `settingsRevision` and this whole read —
-`observeSessionSettings`, `sessionSettingsRead`, `readSessionSettings`, `refreshSessionSettings` and
-`bumpSettingsRevision` — now live on `SessionSettingsCommands` (#916,
-`data/repository/SessionSettingsCommands.kt`); the repository's `override fun observeSessionSettings` /
-`refreshSessionSettings` are one-line hand-offs, and its `session_transition` arm calls
-`sessionSettingsCommands.bumpSettingsRevision(conversationId)` at the position this used to occupy inline.
-
-```kotlin
-// SessionSettingsCommands
-fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> =
-    settingsRevision
-        .map { it[conversationId] ?: 0L }
-        .distinctUntilChanged()
-        .flatMapLatest { sessionSettingsRead(conversationId) }
-        .onStart { emit(null) }
-
-private fun sessionSettingsRead(conversationId: String): Flow<SessionSettings?> =
-    flow {
-        emit(if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) readSessionSettings(conversationId) else null)
-    }.catch { emit(null) }
-
-fun refreshSessionSettings(conversationId: String) = bumpSettingsRevision(conversationId)
-
-/** Public so the repository's `session_transition` arm can call it (was private). */
-fun bumpSettingsRevision(conversationId: String) { /* … */ }
-```
-
-- **Nothing is cached on this class — the projection is the trigger, not the reading.** `settingsRevision:
-  MutableStateFlow<Map<String, Long>>` holds `conversationId -> ordinal`, not a `SessionSettings`. A bump
-  means "re-read", and the read always asks the daemon fresh; there is no `StateFlow<SessionSettings>` for
-  a stale value to sit in. This is the structural reason a late reply can never overwrite a current
-  reading (see below), not a check anywhere in the code.
-- **Four refresh triggers, one mechanism each, no fifth mechanism needed.** *Thread entry* is plain
-  subscription — the revision `StateFlow` always has a value, so a fresh collector reads immediately (the
-  `onStart { emit(null) }` resets to *unavailable* first, so a host handoff never shows the **previous**
-  host's values while the new read is in flight). *The owning host's reconnect* falls out of
-  [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) minting a **fresh repository** per
-  connection plus the [facade](stable-conversation-repository.md)'s `flatMapLatest` re-subscribing under
-  it — host isolation is structural, not a checked property, because a reply from another host cannot
-  arrive at this instance at all. *That conversation's `session_transition`* is a third write on the
-  existing `TYPE_SESSION_TRANSITION` arm, beside `appendSessionBoundary` and `updateCurrentSessionId` —
-  `bumpSettingsRevision(conversationId)`, gated by the same decoded conversation id so a transition cannot
-  invalidate another conversation's reading. *A caller's `refreshSessionSettings`* — the moment a settled
-  `setSessionSettings` write should surface a fresh reading — is the same bump, called directly; it is
-  **fire-and-forget, non-suspending, non-throwing**, because an invalidation with no live connection is a
-  no-op the caller has nothing to recover from (the next connection re-reads on subscription regardless).
-- **`flatMapLatest` is what makes a superseded reply harmless, not a correlation check.** A new trigger
-  cancels the in-flight read before starting the next, so a reply that arrives late has no collector to
-  reach; `RelayRequests.sendAndAwaitReply`'s `finally` has already deregistered its pending deferred, so the reply
-  correlates with nothing and is dropped at the demux — the same idempotent-`complete`-on-no-match posture
-  every correlated reply already has. `session_settings` carries **no `conversation_id` of its own**, so a
-  reading is routed strictly by the id the caller asked with; a hostile or confused daemon cannot steer one
-  into a conversation the phone never asked about.
-- **Fails closed to `null`, never to the caller.** `sessionSettingsRead`'s `flow { }.catch { emit(null) }`
-  is scoped to the **inner** read flow, not the outer `observeSessionSettings` — a `.catch` on the outer
-  flow would be terminal and end the conversation's re-reads after one failure. The caught throwable is
-  **discarded, never logged**: only the `effective_effort` decode failure below is this repository's own
-  and content-free; a structural decode failure is authored by kotlinx-serialization, whose message can
-  quote the offending input, so dropping it (not just writing a clean message) is what keeps "logs no
-  payload content" true. A well-meaning `.catch { Log.w(TAG, it) }` added later would leak daemon payload
-  content to Logcat in one line — the drop is load-bearing, flagged in a comment at the site.
-- **Gated fail-closed on `interactive`, before any frame is sent.** The daemon leaves a conn that never
-  negotiated `interactive` fully inert on this verb — no reply at all, not even a not-found — so an
-  ungated send would suspend until teardown rather than erroring. Not sending is what keeps "the read sends
-  `request_session_settings` and nothing else" true even in the degenerate case: no claude child starts, no
-  model turn begins, no `set_session_settings` rides along, and nothing is written to `AppPreferences`.
-- **`readSessionSettings` is the repository's `requestHistory` body minus the fold** — encode
-  `RequestSessionSettingsPayloadDto(conversationId)`, `requests.sendAndAwaitReply`, decode the reply through
-  [`toSessionSettings()`](mobile-protocol-v2-wire-layer-application-payloads.md#the-session-settings-read-exchange-590).
-  It throws rather than converting to `null` itself — `sessionSettingsRead` owns that conversion — so every
-  failure mode (pump not `Open`, a server `error`, a malformed reply) stays distinguishable at the seam that
-  needs to distinguish them. The verb publishes **no reject codes of its own** (it always answers, even for
-  an unhosted/unbound/dormant conversation — the all-zero reply is a successful read of "nothing resolved",
-  not a failure), so a server `error` here can only be a generic transport-level one the existing
-  `RelayRequests.mapError` arm already handles.
-- **`effort` is the saved choice; `effectiveEffort` is the applied reading — neither substitutes for the
-  other,** and `effectiveEffort` keeps `session_settings`' one optional wire key's three states apart:
-  **key omitted** → `EffectiveEffort.Unavailable` (unsupported, or an older daemon that predates the field
-  — such a reply still decodes successfully, it just reads `Unavailable`); **explicit `null`** →
-  `EffectiveEffort.NotReported` (Claude reported no effort parameter this turn); **a string** →
-  `EffectiveEffort.Applied(value)`, retained verbatim including `""` and a level this build does not
-  recognise. See [the decode](mobile-protocol-v2-wire-layer-application-payloads.md#the-session-settings-read-exchange-590)
-  for how the two-step decode keeps these apart under `explicitNulls = false`.
-- **An empty `permissionMode` means *unavailable*, never Manual approval — and `yolo: false` alone is not
-  evidence approvals are enforced.** Both accompany a live child that hasn't confirmed yet, or a dormant
-  session with no child. Nothing in this read path manufactures a default for either field; `permissionMode`
-  stays an open `String` (not an enum) precisely because a closed set would have to mint a member for "no
-  confirmation" a consumer could mistake for a posture, and this read accepts `bypassPermissions` even
-  though `setSessionSettings`'s write half refuses that spelling.
-- **Token counts (`usedTokens`/`windowTokens`) are `Long`, carried but not consumed here** — the
-  pyrycode#720 64-bit-Go-`int` width trap. `windowTokens: 0` means the usage reader is unwired, not an
-  empty window; a dormant reply reports `0` in both fields as a pair, never independently. No consumer
-  reads them until a later context-figure ticket; carried now because the all-zero/dormant reply naming
-  their zero state as decodable is part of this ticket's acceptance.
-- **`StableConversationRepository`** delegates `observeSessionSettings` through `switchToLive<SessionSettings?>(null)`
-  (the [`observeLastMessage`](remote-conversation-repository-reads-and-thread-store.md#observelastmessageconversationid--the-live-last-message-preview-329)
-  shape) — here the connection switch **is** the host-isolation mechanism, not just plumbing:
-  `flatMapLatest` drops the previous connection's read the instant the connection changes. `refreshSessionSettings`
-  is routed through `currentRepository.value?.refreshSessionSettings(id)`, deliberately **not** through the
-  throwing `live` helper — invalidation with no connection is a no-op, not an `IllegalStateException`; it is
-  the one facade method on this pair that must not throw.
-- **`FakeConversationRepository`** seeds a `MutableStateFlow<Map<String, SessionSettings>>` **empty on
-  purpose** — an unseeded conversation reads `null`, the same "unavailable" a live repository reports
-  before its first reply, so a consumer's unavailable path is the Fake's default rather than a case a test
-  has to arrange. A `setSessionSettingsReading(conversationId, reading)` seam sets or clears one entry (the
-  test/preview seam for a populated composer); `refreshSessionSettings` records the ask into
-  `sessionSettingsRefreshes` (mirroring `setSessionSettingsCalls`) rather than re-emitting anything — the
-  Fake has no wire to re-read, so a seeded reading is already current. This is why `observeSessionSettings`
-  /`refreshSessionSettings` join `createWorkspaceFolder`/`delete`/`requestScreenSnapshot`/`requestHistory`
-  as the group **all three** impls override, unlike `observeStall`/`observeQueue`/`observeApiRetry`/
-  `observeCompacting`, which the Fake deliberately inherits — see
-  [`conversation-repository.md`](conversation-repository.md) for the full override-set accounting.
-- **No composable or screen change** — data layer only. #649 wires the composer controls to `effort`, #650
-  projects `permissionMode`/`yolo` into confirmed permissions, and #651 projects `effectiveEffort`; all
-  three name this reading as their source. No live rung: nothing operator-facing changes until #649.
+Moved to [Remote conversation repository — session-settings read](remote-conversation-repository-session-settings-read.md#observesessionsettingsconversationid--refreshsessionsettingsconversationid--the-settings-read-counterpart-to-setsessionsettings-590) to keep this document under the docs guard's byte cap.
 
 ## `archive(conversationId)` / `unarchive(conversationId)` — the sixth and seventh mutations (#549)
 
@@ -238,22 +121,26 @@ private suspend fun sendArchiveToggle(conversationId: String, type: String) {
         id = requests.nextRequestId(), type = type, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(ArchiveConversationPayloadDto(conversationId = conversationId)),
     )
-    val reply = requests.sendAndAwaitReply(request)     // throws on server `error` / not-Open; the decode below is unreachable on failure
-    // Confirmed-upsert — ONLY after a successful decode; no return value (interface is Unit). Since #1108
-    // upsertConversation takes the decoded record, not a mapped Conversation — see
-    // [ConversationListProjection.upsertConversation](remote-conversation-repository-send-create-promote-rename.md#confirmed-insert-via-conversationlistprojectionupsertconversation-the-projections-second-writer).
-    conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+    requests.sendAndAwaitConversation(request)     // #2213: collector decodes, folds and captures; no return value needed (interface is Unit)
 }
 ```
+
+> Before [#2213](remote-conversation-repository-state-errors-and-handoff.md#state--concurrency-model), this
+> body called `requests.sendAndAwaitReply(request)` and then decoded + `upsertConversation`'d the raw reply
+> itself, the same shape `rename`/`promote` originally shipped. See
+> [Send, create, promote, rename § `createDiscussion`](remote-conversation-repository-send-create-promote-rename.md#creatediscussionworkspace--the-second-mutation-347)
+> for why that caller-side re-fold was retired.
 
 - **One shared request DTO for both verbs.** `ArchiveConversationPayloadDto` carries only
   `conversation_id` — archive and restore are a symmetric toggle of one durable flag (same shape, same
   handler, same not-found/reply behaviour), so pyrycode#881 defined one payload server-side for the pair
   and this mirrors that; `ConversationCommands` disambiguates by the `Envelope.type` string passed into
   `sendArchiveToggle`, not by the payload shape.
-- **The reply is `conversation_updated`**, the same success arm `rename`/`promote` already use — no
+- **The reply is `conversation_updated`**, the same collector arm `rename`/`promote` already use — no
   `onInbound` change needed. Decoded through the same #318 `ConversationResponseDto`, so a malformed reply
-  throws the decode exception before `ConversationListProjection.upsertConversation` runs, same as every prior mutation.
+  fails inside that arm before `ConversationListProjection.upsertConversation` runs there, same as every
+  other mutation, and `sendAndAwaitConversation` throws its own generic `SerializationException` in this
+  caller.
 - **The load-bearing change is to the shared decode boundary, not these methods.** Before #549,
   `ConversationResponseDto` didn't decode any archived field and `toConversation()` hardcoded
   `archived = false` — every mutation reply, including this one, would have folded a permanently-unarchived
@@ -306,15 +193,15 @@ suspend fun setMuted(conversationId: String, muted: Boolean) {
         id = requests.nextRequestId(), type = TYPE_SET_CONVERSATION_MUTED, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(SetConversationMutedPayloadDto(conversationId = conversationId, muted = muted)),
     )
-    val reply = requests.sendAndAwaitReply(request)
-    conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+    requests.sendAndAwaitConversation(request)
 }
 ```
 
-- **`sendArchiveToggle`'s shape with a payload that carries a value, not just an id.** Same encode → await
-  correlated `conversation_updated` → #318 `ConversationResponseDto` decode → confirmed-upsert order; a
-  failure (`error`, not-Open session, or a malformed reply) throws before the fold runs, so
-  `ConversationListProjection` keeps its previous value (AC #3).
+- **`sendArchiveToggle`'s shape with a payload that carries a value, not just an id.** Same encode → the
+  collector decodes the correlated `conversation_updated` through #318's `ConversationResponseDto`, folds it
+  and captures it → `sendAndAwaitConversation` returns that capture (#2213); a failure (`error`, not-Open
+  session, or a malformed reply) leaves the fold unrun, so `ConversationListProjection` keeps its previous
+  value (AC #3).
 - **`SetConversationMutedPayloadDto.muted` is a non-nullable `Boolean` with no Kotlin default**, so `false`
   is always on the wire — the daemon refuses a frame with `muted` absent or explicit `null` as
   `protocol.malformed` rather than reading a missing key as `false`. Contrast
@@ -339,6 +226,64 @@ suspend fun setMuted(conversationId: String, muted: Boolean) {
   `pump.sent`. Filter by `Envelope.type` instead of asserting on the whole list, and when a case needs "no
   re-list happened," count matching frames before and after rather than asserting emptiness of the whole
   sent log.
+
+## `setPinned(conversationId, pinned)` — the host-owned pin write (#2214, server pyrycode#3538)
+
+Pins or unpins a conversation over v2 `set_conversation_pinned`, `setMuted`'s round trip with a second
+boolean name. The body lives on `ConversationCommands` (beside `setMuted`); the repository's `override
+suspend fun setPinned` is a one-line hand-off, and `StableConversationRepository.setPinned` forwards both
+arguments verbatim to `live`.
+
+```kotlin
+// ConversationCommands
+suspend fun setPinned(conversationId: String, pinned: Boolean) {
+    val request = Envelope(
+        id = requests.nextRequestId(), type = TYPE_SET_CONVERSATION_PINNED, ts = Clock.System.now().toString(),
+        payload = MobileJson.encodeToJsonElement(SetConversationPinnedPayloadDto(conversationId = conversationId, pinned = pinned)),
+    )
+    requests.sendAndAwaitConversation(request)
+}
+```
+
+- **Writes nothing itself — `setMuted`'s posture, not a new one.** The command only sends and awaits; the
+  correlated `conversation_updated` is decoded and folded by the existing collector arm before
+  `sendAndAwaitConversation` resumes, and the host's matching uncorrelated push upserts the same record by
+  id afterward. Both folds land through `ConversationListProjection.upsertConversation`, so a pending
+  request changes nothing, and the two deliveries for one write leave one row holding the host's confirmed
+  `Conversation.pinnedAt` (#2213's decode), never a duplicate or a stale second entry. A repeat pin on an
+  already-pinned conversation keeps the host's *original* `pinned_at` — the host, not this method, decides
+  that; the command does not special-case "already pinned" and does not need to.
+- **`SetConversationPinnedPayloadDto.pinned` is a non-nullable `Boolean` with no Kotlin default**, so
+  `false` is always on the wire — same discipline as `SetConversationMutedPayloadDto.muted`: the daemon
+  refuses an absent or explicit-`null` `pinned` as `protocol.malformed` rather than reading a missing key
+  as `false`.
+- **No return value** — like `setMuted`, the `ConversationRepository` contract's `setPinned` is `Unit`;
+  the decoded conversation is folded but discarded.
+- **Errors mirror `setMuted` exactly:** `conversation.not_found` → `IllegalArgumentException`, any other
+  server code (an older host's `protocol.unknown_type`, or `conversation.not_promoted`) →
+  `RelayErrorException`, both via the existing `RelayRequests.mapError`; a malformed reply is a
+  `SerializationException` (⊂ `IllegalArgumentException`) from `sendAndAwaitConversation`'s own decode, and
+  no connection is `IllegalStateException` before any frame is sent. Every one of these leaves the prior
+  confirmed record — including unrelated fields (mute, archive stamp, label, agent) — untouched; nothing
+  about the write is logged (the security review's one SHOULD FIX: no `RelayLog` call here carries the
+  conversation id, the requested boolean, or a reply's `pinned_at`).
+- **Host-scoped, like every other mutation on this class.** A write against one connection's pump cannot
+  touch another host's copy of a conversation sharing the same id — the per-connection
+  `RemoteConversationRepository` instance and its own `ConversationListProjection` make this structural, not
+  a checked property (`setPinned_onOneHostLeavesTheOtherHostsSameIdUntouched`).
+- **No UI controls in this slice** — #2213 supplies the decode and persistence this write relies on; a
+  pin/unpin affordance is a later ticket's concern.
+- **`RemoteConversationRepositoryPinTest`** extends #2213's pin fixtures: `setPinned` joins `commandNames`/
+  `executeCommand` so the shared queued-reply, cancelled-caller and malformed-reply probes
+  (`queuedCommandRepliesCannotOverwriteLaterConfirmedPins`, `cancelledCommandsKeepInboundConfirmedPins`,
+  `malformedCommandRepliesFailWithoutPublishing`) cover it alongside every other mutation, plus
+  `setPinned`-specific cases for the exact wire verb and explicit boolean, the pending-request/no-fold
+  window, reply-and-duplicate-push ordering, refusals (`protocol.unknown_type`, `conversation.not_promoted`,
+  `conversation.not_found`, a malformed reply) preserved until a fresh snapshot, a disconnected session, and
+  host isolation. `StableConversationRepositoryTest.setPinned_whenLive_delegatesVerbatim` and the
+  no-live-repository throw cover the facade; `FakeConversationRepositoryTest`'s
+  `setPinned_repeatPinKeepsTimestamp_unpinClears` and `setPinned_onUnknownId_throwsAndChangesNothing` cover
+  the fake.
 
 ## `delete(conversationId)` — the eighth mutation, first REMOVE-shaped one ([#532](../codebase/532.md))
 
@@ -422,17 +367,17 @@ suspend fun changeWorkspace(conversationId: String, workspace: String): Session 
         id = requests.nextRequestId(), type = TYPE_CHANGE_WORKSPACE, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(ChangeWorkspacePayloadDto(conversationId = conversationId, cwd = workspace)),
     )
-    val reply = requests.sendAndAwaitReply(request) // throws on server `error` / not-Open; the decode below is unreachable on failure
-    conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply)) // confirmed-upsert — ONLY after a successful decode
+    requests.sendAndAwaitConversation(request) // #2213: collector decodes, folds and captures; the row itself is unused here
     return Session(id = "", conversationId = conversationId, claudeSessionUuid = "",
         startedAt = Clock.System.now(), endedAt = null)
 }
 ```
 
-- **The reply is `conversation_updated`**, the same success arm `rename`/`promote`/`archive` already use
+- **The reply is `conversation_updated`**, the same collector arm `rename`/`promote`/`archive` already use
   — no `onInbound` change needed (unlike [`delete`](#deleteconversationid--the-eighth-mutation-first-remove-shaped-one-532),
-  whose reply type was genuinely new). Decoded through the same #318 `ConversationResponseDto`; a
-  malformed reply throws before `upsertConversation` runs.
+  whose reply type was genuinely new). Decoded through the same #318 `ConversationResponseDto`; a malformed
+  reply fails inside that arm before `upsertConversation` runs there, and `sendAndAwaitConversation` throws
+  in this caller instead (#2213).
 - **The path is forwarded verbatim, untrusted.** The mobile side does not validate, canonicalise, or
   open the path — the daemon confines it to `$HOME` (fail-closed, strict non-creating confiner) *before*
   storing the resolved realpath, and rejects an empty / out-of-`$HOME` / undecodable path with
@@ -492,10 +437,14 @@ suspend fun setSystemPrompt(conversationId: String, systemPrompt: String?) {
         id = requests.nextRequestId(), type = TYPE_SET_SYSTEM_PROMPT, ts = Clock.System.now().toString(),
         payload = setSystemPromptPayload(conversationId, systemPrompt),
     )
-    val reply = requests.sendAndAwaitReply(request)
-    conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+    requests.sendAndAwaitConversation(request)
 }
 ```
+
+> Since [#2213](remote-conversation-repository-state-errors-and-handoff.md#state--concurrency-model),
+> `setSystemPrompt` no longer takes a `conversationList: ConversationListProjection` constructor parameter
+> (it never read it, only wrote through it) — `SessionSettingsCommands` is published by the collector's
+> fold, the same as every other conversation-mutation command.
 
 - **The read is gated fail-closed on `interactive`, before any frame is built — the load-bearing
   divergence from every other one-shot read in this class.** The daemon leaves a conn that never

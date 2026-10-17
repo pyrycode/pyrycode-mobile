@@ -1,0 +1,280 @@
+{
+  "ticket": 2177,
+  "platform": "Linux/build-fractal-2",
+  "outcome": "waiting_on_blocker",
+  "blocker": 2218,
+  "no_mobile_logic_change": true,
+  "complete_dispatcher_ui": "pending",
+  "complete_dispatcher_scripted_all": "pending",
+  "measured_mobile": "c8060639b8903a65b8e29641b8f812047cfcb9b0",
+  "agents": "9aad4b5db84f2897c5eda3e8ed78a5ec9256ad71",
+  "merged_main": "10666ec436367745e706879f6c7726bda89667e2",
+  "source_sha256": {
+    "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "07b697f780bf83202a39e31b5730f4429d86c64764012575738bde2629a36295",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b76344d827dd69b4356d27e1620e21c120668af0cc8fa8d36e05a5c1c2a9b33b",
+    "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "df15f0d6c7f3114adab4e239a8a94c952c7c1d226333d01c24d06db7079d303f",
+    "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/FragmentedHistoryFixture.kt": "59f23bda2db97ddb8f40c768f642c39d917e06ff0f11aad90624cb83a50bace1",
+    "app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt": "fb55c52e9272635cb45e3c26645b254bd3829f357d8a02b8c0b852e5f784faa6",
+    "app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt": "49dad7519f2fbabb5ca716bd4a93dbf967fb1da83d0bda77fadcecc06c7c578a",
+    "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt": "3f0e3b2c968c2aa205c7fac27cbb33c98a104fa8debce4db8702baebd970c4cf",
+    "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt": "c3506277f37f6c5f13c25f0c800d1516208d399a0a90fb47f26a181114ba2626"
+  },
+  "readiness_contract": "four consecutive 250 ms windows >=80% idle within 30000 ms",
+  "positive_draw_bound_ms": 1000,
+  "optional_projection_hold_ms": 1100,
+  "negative_restore_delay_ms": 3000,
+  "fresh_class": {
+    "xml_timestamp": "2026-10-17T07:50:49",
+    "command": "python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest",
+    "counts": {
+      "executed": 4,
+      "passed": 2,
+      "failed": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    "tests": {
+      "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#slowRestore_negativeControlRejectsTheSameFirstDrawBound": "passed",
+      "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen": "failed",
+      "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen": "failed",
+      "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#heldCpuPipeCancelsAndClosesItsDescriptor": "passed"
+    },
+    "exit": 1,
+    "xml_sha256": "b7944a6154f40475d8bca5ec35e8792f5f104c05f51684dfe265072a7a9be38e",
+    "raw_evidence": {
+      "path": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2177/repaired-image-class-20261017",
+      "manifest_sha256": "91cff080ea355cc3ccbeac879c0b9b9483e92ed0a903560de729b75e73196253"
+    },
+    "ready_barriers": 17,
+    "probes": 17,
+    "readiness_windows": 98,
+    "qualifying_final_window_min_pct": 81,
+    "maximum_acquire_ms": 22,
+    "maximum_read_ms": 80,
+    "late_draws": [
+      {
+        "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+        "case": "fragmented online=false opening=0",
+        "rows": 18000,
+        "durable": 36000,
+        "spans": 18000,
+        "restored_ms": 935,
+        "snapshot_ms": 936,
+        "complete_ms": 985,
+        "drawn_ms": 1314
+      },
+      {
+        "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+        "case": "fragmented online=true opening=0",
+        "rows": 18000,
+        "durable": 36000,
+        "spans": 18000,
+        "restored_ms": 710,
+        "snapshot_ms": 713,
+        "complete_ms": 749,
+        "drawn_ms": 1032
+      },
+      {
+        "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+        "case": "fragmented online=false opening=0",
+        "rows": 18000,
+        "durable": 36000,
+        "spans": 18000,
+        "restored_ms": 791,
+        "snapshot_ms": 792,
+        "complete_ms": 816,
+        "drawn_ms": 1026
+      }
+    ],
+    "negative_control_draw_ms": 3928
+  },
+  "owner_comparison": {
+    "mobile": "5e3e4471733f63e97ccb6c4fc5f054d8107f9445",
+    "raw_evidence": {
+      "path": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2177/managed-image-owner-comparison-20261017",
+      "manifest_sha256": "f251fca3fb2a5139606d691a5d2ae2ee7af19a51c82bb5736c01ce042246591d"
+    },
+    "runs": {
+      "fractal-reference": {
+        "agents": "49cd6dd07c163a7d0e9583850aafb28378ec0b3c",
+        "counts": {
+          "executed": 4,
+          "passed": 3,
+          "failed": 1,
+          "errors": 0,
+          "skipped": 0
+        },
+        "tests": {
+          "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#slowRestore_negativeControlRejectsTheSameFirstDrawBound": "failed",
+          "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen": "passed",
+          "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen": "passed",
+          "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#heldCpuPipeCancelsAndClosesItsDescriptor": "passed"
+        },
+        "exit": 1,
+        "ready_barriers": 16,
+        "xml_sha256": "6c667ce147f689d29419fc188877b53877f4f69c73a19c13c7a6cc9e48975fb4"
+      },
+      "fractal-prepared": {
+        "agents": "9aad4b5db84f2897c5eda3e8ed78a5ec9256ad71",
+        "counts": {
+          "executed": 4,
+          "passed": 4,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "tests": {
+          "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#slowRestore_negativeControlRejectsTheSameFirstDrawBound": "passed",
+          "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen": "passed",
+          "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen": "passed",
+          "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#heldCpuPipeCancelsAndClosesItsDescriptor": "passed"
+        },
+        "exit": 0,
+        "ready_barriers": 17,
+        "xml_sha256": "9d24264f9de187775b0af9122c999e8d643ed06529f19c2f2a51baaa181c0eac"
+      }
+    }
+  },
+  "environment": {
+    "owner_generation": "07867931f3b7daad8564d9cae6cd26dbea9bd36d16b51e07986a2fe8fc4e7e6e",
+    "fresh_generation": "151a9dbd74aea4118480cc270492d68ef7fd255ce0b03cfacf6db74537c098d8",
+    "fresh_generation_reused": false,
+    "generation_input_differences": {
+      "launcher": {
+        "owner": "27e9a8cbd545529ba2c1aca973e5bc060f50b36a68d2c03296b0162291a16b83",
+        "fresh": "2b8a7ed59605827ec9338f91379effad04466891a83e82a0be65ac6dc18ebfb0"
+      }
+    },
+    "owner_hardware": {
+      "hw.cpu.arch": "x86_64",
+      "hw.cpu.ncore": "2",
+      "hw.ramSize": "2048",
+      "hw.lcd.width": "1080",
+      "hw.lcd.height": "1920",
+      "hw.lcd.density": "420",
+      "hw.gpu.mode": "lavapipe"
+    },
+    "fresh_hardware": {
+      "hw.cpu.arch": "x86_64",
+      "hw.cpu.ncore": "2",
+      "hw.ramSize": "2048",
+      "hw.lcd.width": "1080",
+      "hw.lcd.height": "1920",
+      "hw.lcd.density": "420",
+      "hw.gpu.mode": "swiftshader"
+    },
+    "preparation": {
+      "prepare": {
+        "windows": 266,
+        "last_40_min_idle_pct": 82.45614035087719
+      },
+      "restore": {
+        "windows": 40,
+        "last_40_min_idle_pct": 83.63636363636364
+      }
+    }
+  },
+  "cpu_observation": {
+    "host": {
+      "intervals": 35,
+      "idle_range": [
+        1.63,
+        99.6
+      ],
+      "steal_range": [
+        0.0,
+        0.0
+      ]
+    },
+    "guest": {
+      "emulator-5602": {
+        "intervals": 1,
+        "idle_range": [
+          94.87,
+          94.87
+        ],
+        "steal_range": [
+          0.2,
+          0.2
+        ]
+      },
+      "emulator-5554": {
+        "intervals": 16,
+        "idle_range": [
+          22.89,
+          73.87
+        ],
+        "steal_range": [
+          0.1,
+          16.17
+        ]
+      }
+    },
+    "process_tick_deltas": {
+      "239": {
+        "name": "node-MainThread",
+        "ticks": 131
+      },
+      "272": {
+        "name": "node-MainThread",
+        "ticks": 4
+      },
+      "4684": {
+        "name": "node-MainThread",
+        "ticks": 2
+      },
+      "4992": {
+        "name": "node-MainThread",
+        "ticks": 0
+      },
+      "5074": {
+        "name": "node-MainThread",
+        "ticks": 0
+      },
+      "5075": {
+        "name": "node-MainThread",
+        "ticks": 0
+      },
+      "9108": {
+        "name": "qemu-system-x86",
+        "ticks": 77
+      },
+      "9394": {
+        "name": "java",
+        "ticks": 9377
+      },
+      "9659": {
+        "name": "qemu-system-x86",
+        "ticks": 7170
+      },
+      "9776": {
+        "name": "node-MainThread",
+        "ticks": 0
+      }
+    },
+    "samples": 36,
+    "limits": "Bounded read-only observer adds overhead. Five-second intervals include preparation and measured work; they cannot attribute an individual draw. Search PID 5074 records zero additional CPU ticks during observation."
+  },
+  "ping": {
+    "xml_timestamp": "2026-10-17T07:54:33",
+    "command": "python3 scripts/android-test-gate.py scripted ping",
+    "counts": {
+      "executed": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "exit": 0,
+    "xml_sha256": "ba3f69f2612976d901f1b0867ab9340c9649b68fb3c663dd5dba3d491a1f9008",
+    "raw_evidence": {
+      "path": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2177/repaired-image-ping-20261017",
+      "manifest_sha256": "26ff85e2d1f8cfa12b0d2373e4026a9b49e1c9a307e37557b71ef42f3413e6ba"
+    }
+  },
+  "historical_latency": {
+    "tracker": 2202,
+    "state": "closed",
+    "disposition": "Historical 1434/1436 ms failures retained; cause unresolved, not reproduced under the recorded repaired-runner conditions. Fresh current misses are tracked by #2218 and do not attribute historical failures."
+  }
+}

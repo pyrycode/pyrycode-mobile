@@ -29,6 +29,104 @@ paragraphs, and a background agent's later reply may have its own turn identity.
 Precise commands that create controlled test conditions and fixed app labels remain
 appropriate. Display tests should use controlled fixtures when they need fixed prose.
 
+### Shared thread evidence: legacy and authoritative (#2169)
+
+`ThreadEvidence.kt` (`app/src/sharedTest/java/de/pyryco/mobile/e2e/`) gives both the
+legacy (`observeMessages`) and the daemon-authored (`AuthoritativeThreadSnapshot`)
+presentations a common evidence shape, so migration helpers do not have to special-case
+either source. It is test-only: nothing in it opens a query, advertises capability or
+changes a production binding.
+
+**The shared types.** `ThreadEvidenceKind` (`Legacy` / `Authoritative`) tags a
+`ThreadEvidenceOwner` — host, conversation, a reference-identity `connection` token, and,
+for authoritative evidence, epoch/generation. `ThreadEvidenceOwner.matches` requires every
+field equal, including reference identity on `connection`, so a reused host/conversation
+pair on a different connection, or the same connection carried over a stale epoch or
+generation, is a different owner and cannot settle against retained evidence. A legacy
+caller that only has a repository, not a connection-scoped host, reports `host = null`
+rather than inventing attribution — never read a null host as "unknown but probably this
+one." A `ThreadEvidenceRecord` pairs one original `Message` with the full daemon text,
+session/turn, and the rendered `agentId`/`toolRunId` the presentation layer assigned it;
+for authoritative records it also keeps the raw `ThreadItemDto` fact. `ThreadEvidence`
+wraps an owner, its records and an `admitted` flag, and exposes `loadedMainReply`,
+`settledReply` and `userEchoCount`. `ThreadEvidenceSource` is construction-only
+(`.legacy(...)` / `.authoritative(...)`); it wraps an `observe(conversationId)` flow and
+performs no side effects itself.
+
+**Loaded selection vs. strict settlement.** `loadedMainReply()` answers "is there a
+reply a human could select right now" — nonblank, non-streaming, no agent block, and a
+main-thread parent. It does not require delta evidence, so an ordinary history message
+that was never streamed still counts. Main-thread parent means different things per
+source: legacy evidence reads the raw `Message.parentToolUseId`; authoritative evidence
+requires the daemon parent to be absent or explicitly `0` *and* no projected Agent block
+ID, because a positive parent with no resolved block is an orphaned child, not main-thread
+evidence, and a parent explicitly cleared to `0` is not the same fact as a nonempty scoped
+presentation identity that happens to render in the main column. `settledReply(...)`
+answers a stricter question — "is this specific session/turn/agent family's reply
+completely delivered" — and the two sources settle differently:
+
+- **Legacy** filters records by raw parent (`parentToolUseId == agentId`) within the
+  session/turn, then delegates to `holdsSettledAssistantReply`, which still requires the
+  original contiguous-delta and full-length checks. Nothing here loosens that contract.
+- **Authoritative** filters by `fact.kind == "assistant_message"` and the projected
+  `agentId`, then requires every record in that family to be inactive, carry a
+  `done`/`finished` status on *its own* item, and have nonblank full text. A `turn_end`
+  fact or any fallback/unsupported-kind row never joins the family and can never block or
+  fake a settlement. Critically, settlement reads the assistant item's own completion, not
+  whether its parent agent (which may still be running) has terminated — a still-running
+  parent does not prevent its own completed child item from settling.
+
+Do not synthesize delta evidence for authoritative items to make them look like legacy
+ones, and do not treat receipt, delivery acknowledgement, or a query checkpoint as
+settlement — `userEchoCount` requires the user message's own `fact.status == "delivered"`
+when a fact is present, not just that a row with matching text exists.
+
+**Full text vs. bounded rendered text.** Authoritative records keep the full daemon
+`fact` content (unwrapped from its `JsonObject`/`JsonPrimitive` wire shape) separately
+from whatever the presentation layer bounds for display. A record can have complete full
+text while its rendered text is blank or truncated; `loadedMainReply()` requires both the
+record's `fullText` and the underlying message content to be nonblank, so a complete item
+whose bounded presentation renders blank is correctly excluded from "something a user can
+select," even though the daemon considers the item done.
+
+**Identity provenance.** Authoritative identities are never derived from raw tool/task
+IDs read off the wire fact — they come from `projectAuthoritativeThread` (for
+`agentBlockId` / scope-qualified item IDs) and `foldToolRuns` (for `toolRunId`), the same
+functions production rendering uses, so test evidence and the screen agree on what a
+rendered row's identity is even when two hosts or agent families reuse the same raw tool
+ID. Legacy identities come from `foldQueuedRows` → `foldBackgroundAgentBlocks` →
+`foldToolRuns`, matching production's legacy presentation fold order; a legacy message
+with no resolved rendered block still keeps its raw parent/segment attribution in the
+record; that raw attribution is usable for legacy's own raw-parent settlement check but
+never establishes main-thread *loaded-selection* attribution by itself.
+
+**The harness binding is a single seam.** `harnessThreadEvidence(repository)` is the one
+function every consumer calls; today it always returns `ThreadEvidenceSource.legacy(...)`.
+Production activation will change only that function's body to follow the real
+negotiation (once a daemon advertises `thread` support), and no consumer needs to migrate
+again. The binding controls test observation only — it cannot itself enable an app route,
+and it must never infer daemon support from cached or empty data. `ThreadEvidenceSource`'s
+authoritative factory exists and is exercised by fixtures now, ahead of that activation,
+precisely so the later seam change carries no risk of its own.
+
+**Where this plugged in.** `awaitFinishedSelectionReply` and
+`assertReplySuggestionLongPress` (`ReplySuggestionE2EAssertions.kt`) now observe through
+`harnessThreadEvidence(repository).observe(conversationId)` instead of calling
+`observeMessages` directly, but kept their existing signatures and callers unchanged.
+`awaitFinishedSelectionReply` still means "a loaded main reply appeared"; the suggestion
+helper's echo check still means "exactly one delivered copy of this exact text exists," and
+its revisioned-clear check is untouched. `holdsSettledAssistantReply` itself was not
+changed — legacy settlement still delegates to it unmodified.
+
+**Lesson for later migrations.** When moving a stream-suite consumer off raw
+`observeMessages` or a raw `AuthoritativeThreadSnapshot` read, reach for `ThreadEvidence`
+rather than re-deriving ownership or settlement locally: the owner-equality check (`===`
+on `connection`, not just equal host/conversation strings) is what makes
+`firstOnLive`'s replacement/cancellation guarantees (see
+[reconnect-slash-commands-follow-live-connection](../../specs/architecture/1029-reconnect-slash-commands-follow-live-connection.md))
+compose correctly with either presentation, and re-deriving it by hand is an easy place to
+accidentally accept stale evidence across a reconnect.
+
 ## Gradle and source checks
 
 Use the smallest gate that proves the change, then run the repository guard before
@@ -59,6 +157,49 @@ The aggregate `test` task does not accept the test filter in this project. In a
 fresh worktree, Gradle may need `ANDROID_HOME` set because `local.properties` is
 ignored. Preserve the command's exit status when inspecting output; piping Gradle
 through `tail` can hide a failure.
+
+Script fixtures for installed-APK rejection must own the bytes they compare (#2196).
+`SuiteDriverTest.test_wrong_installed_apk_is_rejected_before_native_execution`
+uses a temporary `ROOT` with controlled app APK bytes, a validated recording and a
+deliberately different installed digest supplied by mocked adb. Assert the exact
+digest-mismatch error, the package-path and SHA-256 queries, and that instrumentation
+was never invoked. Depending on checkout assembly outputs instead can fail with
+`FileNotFoundError` before exercising rejection, or pass only after an unrelated
+build. This control needs no real APK assembly or device; runtime installed-byte
+validation remains strict.
+
+The verifier keeps static checks, JVM execution, APK assembly, UI execution and
+scripted execution as independently retained gates. The static invocation is
+`./gradlew check -x :app:testDebugUnitTest`. Its excluded task runs immediately
+afterwards through `python3 scripts/jvm-test-gate.py`, which emits joined JUnit XML on standard output. A successful full invocation may
+retain Gradle-verified cached results. Exact named comparisons force fresh execution. Build logs go to
+standard error. The complete recorded-suite inventory remains a dependency of
+the static `check` invocation. APK assembly and instrumented Kotlin compilation
+share one Gradle invocation.
+
+Named JVM failures use `jvm-test-gate.py --tests-json '["package.Class#method"]'`.
+JSON preserves Kotlin names with spaces, commas and apostrophes. UI failures use
+`android-test-gate.py ui --tests package.Class#method`. Scripted failures use
+`android-test-gate.py scripted-all --tests package.Class#method`. The last command
+resolves the original scenario from the harness and runs only that scenario,
+including its isolated daemon and relay. Normal `scripted-all` still runs every
+scenario. Unknown methods, stale or missing reports, zero execution and skipped
+selected methods cannot establish a passing comparison. A failed build remains
+failed even when an earlier test report is present. The shared dispatcher runs
+these named comparisons in the same worktree and on the main commit merged
+into it. A confirmed inherited failure still requires its tracking ticket.
+
+Direct Gradle checks acquire the same host hold through
+`python3 scripts/gradle-gate.py <tasks>`.
+Android and JVM gate entry points acquire it automatically, before the Android
+device hold. Nested calls reuse the validated inherited descriptor. The pinned
+Android cleanup owner retains both descriptors, including after parent loss.
+Use `PYRY_TEST_ADMISSION_LOCK` for a common host-bound path when project containers
+have separate home directories. Forward that variable into builder shells.
+The managed launcher runs the pinned Gradle build inside its admitted JDK 21
+client process. Matching client/build JVM options avoid the detached single-use
+worker that --no-daemon alone can create. Kotlin compilation stays in that JVM.
+Build-cache reuse remains enabled.
 
 For filesystem tests that assert permission preservation, set the fixture's
 starting mode explicitly before exercising the code. `mkdir(mode=0o755)` is
@@ -242,6 +383,90 @@ tests already ran in `./gradlew check`. `UI_DEVICE_ALL=1` runs every screen test
 on two emulators, the in-depth run to use every now and then or before a release. Report the command, XML evidence and executed count. A missing,
 zero-count or failed run is not device evidence. Agents author the tests and
 triage the supplied failure; a local `connectedAndroidTest` run is optional.
+
+The default device selection also includes the captured Claude client scenarios in
+`de.pyryco.mobile.recording`. These exercise the original native UI assertions using
+application messages recorded from successful real Claude runs. They start no Claude
+process or real daemon. `./gradlew check` requires complete recording inventory and
+counted capture/replay evidence. Use the explicit full-suite live compatibility command
+when checking a new daemon or refreshing a recording. It requires a fresh real capture,
+replays the reviewed and fresh recordings and compares their request contracts.
+Real FCM delivery, encrypted transport and timing obligations keep their live checks.
+See [recorded client tests](../../recorded-tests.md#complete-native-suite) for commands,
+recording review rules and the limits of replay evidence.
+
+### Preference ownership across ordinary tests and replay
+
+`E2eTestApplication` owns one process-lifetime `DataStore<Preferences>` for
+`app_prefs`, bound through a fresh override module in both initial startup paths
+and every graph rebuild. Ordinary navigation tests also load the shared
+`appModule` value into isolated Koin graphs. Closing such a graph clears shared
+singleton factories without cancelling an already-active DataStore's I/O scope.
+Without the Application override, the next application lookup can create a second
+owner of the same file. Carrying a store only during rebuild misses this initial
+graph boundary. Keep the production after-graph-close initialization contract
+covered by `AppPreferencesTeardownTest`; graph closure alone does not release
+DataStore file ownership.
+
+Replay restores arguments, pairings and preferences before rebuilding the ordinary
+graph. Seeded fixtures have a second cleanup boundary: restoring their original
+raw DataStore snapshot does not increment `ObservablePairedServerStore.revision`.
+The ordinary registry created after replay can therefore retain a synthetic host
+whose persisted pairing has been removed. In `finally`, restore the snapshot and
+rebuild the ordinary graph on main with no Activity alive, including on assertion
+failure. A regression must first await the synthetic host in the registry, then
+check connection release and exact original preferences, pairings and registry
+hosts; persisted-state assertions alone can pass while a connection leaks.
+See [replay isolation](../../recorded-tests.md#replay-isolation).
+
+### Linux ownership repair evidence (#2208)
+
+The fresh baseline at `a0c7db693245cce59d67377f672d2bec4c7dca65` reproduced
+113 executed, 110 passed and three failed tests. Background-agent and context-footer
+failed during duplicate-store replay setup. Delete's empty failure was an
+instrumentation process-crash interruption; no independent product assertion
+failure was established. The controlled ownership regression failed once before
+repair (one executed/failed, zero passed/skipped). Two later registry-cleanup
+probes also failed before their fix (two executed/failed, zero passed/skipped).
+
+Final tested Mobile source was `3f4703e08ede017f69e19ba5109762bf94f88035`,
+with agents `49cd6dd07c163a7d0e9583850aafb28378ec0b3c`, on Linux x86_64.
+The complete command was
+`UI_GATE_FULL=1 UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui`:
+
+| Selection | Selected/reported | Executed | Passed | Failed/errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Complete profile, shared tests and both managed-device shards | 1694 | 1692 | 1692 | 0 | 2 |
+| Shard 0 | 883 | 883 | 883 | 0 | 0 |
+| Shard 1 | 811 | 809 | 809 | 0 | 2 |
+| Separate focused isolation class plus three original failures | 8 | 8 | 8 | 0 | 0 |
+
+All 71 `RecordedMobileSuiteTest` scenarios and five
+`RecordedSuiteIsolationDeviceTest` methods executed and passed, including
+`interactiveTurn_backgroundAgent_followsBottomUntilFinished`,
+`interactiveTurn_pingPrompt_footerShowsContextUsage` and
+`interactiveTurn_deleteConversation_removesFromListAndClosesThread`.
+Selected identities, instrumentation outcomes, both shard XMLs and joined XML
+reconciled exactly without duplicates or missing cases. The two existing skips
+were `RenameDialogCaptureTest#renameAtFigmaViewport` and
+`ComposerPasteTest#pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty`
+(Robolectric-only). No skips, acceptance retries or timeout increases were added.
+All 1694 retained phone logs contained zero duplicate-DataStore errors; no
+inherited application failure was found in this complete profile. The shard-1
+progress counter showed 813/811 because it counted the skips twice; XML establishes
+the completed inventory.
+
+The [committed evidence index](../../../app/src/androidTest/assets/datastore-2208/evidence.txt)
+retains commands, source revisions and counts. Raw XML, instrumentation reports,
+phone logs, reconciliation and hash manifests were retained at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2208/rework-full-local-3f4703e08/`.
+The separate managed `mobile-in-depth` task failed during preparation with zero
+tests because its cleaned environment omitted the agents path; it is not passing
+evidence. [Dispatcher #294](https://github.com/pyrycode/agent-dispatcher/issues/294)
+tracks that launcher defect. The complete local profile above ran at the same
+pushed candidate. macOS was outside this ticket's verification scope.
+
+### Selection and execution
 
 The `ui` gate skips itself, exiting 0 with `Android gate: ui skipped` on stderr and
 no XML, when every path the branch changes since it left `main` is under `docs/` or

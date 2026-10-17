@@ -308,3 +308,12 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
+
+// A new live method needs a reviewed recording before the normal verification gate can pass.
+val verifyRecordedSuiteInventory by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Verify complete, counted recorded-Claude coverage against the native source inventory"
+    workingDir(rootProject.projectDir)
+    commandLine("python3", rootProject.file("scripts/recorded-suite-inventory.py"))
+}
+tasks.named("check") { dependsOn(verifyRecordedSuiteInventory) }

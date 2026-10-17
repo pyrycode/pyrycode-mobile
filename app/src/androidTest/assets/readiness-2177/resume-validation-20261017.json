@@ -1,0 +1,130 @@
+{
+  "ticket": 2177,
+  "platform": "Linux/build-fractal-2",
+  "device": "pixel2Api33Atd",
+  "revisions": {
+    "mobile": "5e3e4471733f63e97ccb6c4fc5f054d8107f9445",
+    "agents": "49cd6dd07c163a7d0e9583850aafb28378ec0b3c",
+    "daemon": "ef41c46842871700ed9ca3e4661634ceba4e4f63",
+    "relay": "2fd9338dd1662dbd68f3710a33e6a8cc4e7a0bc1"
+  },
+  "source_sha256": {
+    "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "07b697f780bf83202a39e31b5730f4429d86c64764012575738bde2629a36295",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b76344d827dd69b4356d27e1620e21c120668af0cc8fa8d36e05a5c1c2a9b33b",
+    "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "df15f0d6c7f3114adab4e239a8a94c952c7c1d226333d01c24d06db7079d303f",
+    "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/FragmentedHistoryFixture.kt": "59f23bda2db97ddb8f40c768f642c39d917e06ff0f11aad90624cb83a50bace1",
+    "app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt": "fb55c52e9272635cb45e3c26645b254bd3829f357d8a02b8c0b852e5f784faa6",
+    "app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt": "49dad7519f2fbabb5ca716bd4a93dbf967fb1da83d0bda77fadcecc06c7c578a",
+    "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt": "3f0e3b2c968c2aa205c7fac27cbb33c98a104fa8debce4db8702baebd970c4cf",
+    "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt": "c3506277f37f6c5f13c25f0c800d1516208d399a0a90fb47f26a181114ba2626"
+  },
+  "external_blocker": "https://github.com/pyrycode/pyrycode-mobile/issues/2209",
+  "historical_latency_tracker": "https://github.com/pyrycode/pyrycode-mobile/issues/2202",
+  "previous_blocker_2198": "closed and merged; focused ping passes, prior failed report preserved",
+  "no_mobile_logic_change": true,
+  "readiness_contract": "four consecutive 250 ms windows >=80% idle within 30000 ms",
+  "complete_dispatcher_ui": "pending",
+  "complete_dispatcher_scripted_all": "pending",
+  "runs": [
+    {
+      "name": "resume-first-draw-20261017-0014",
+      "exit": 1,
+      "counts": {
+        "executed": 4,
+        "passed": 3,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "tests": {
+        "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#slowRestore_negativeControlRejectsTheSameFirstDrawBound": "failed",
+        "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen": "passed",
+        "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen": "passed",
+        "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#heldCpuPipeCancelsAndClosesItsDescriptor": "passed"
+      },
+      "xml_sha256": "bb67fa87f462f882fb122afd4617c47e09db707d2b30c54490be8b7fed9d98cf",
+      "raw_evidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2177/resume-first-draw-20261017-0014",
+      "manifest_sha256": "aeae1a93533703e304f359f7b26da12a37c622741f3339b7a3f28eaf95a1a6ac",
+      "readiness": [
+        {
+          "method": "slowRestore_negativeControlRejectsTheSameFirstDrawBound",
+          "case": "negative-control",
+          "windows": 109,
+          "minimum_idle_pct": 0,
+          "maximum_idle_pct": 49,
+          "ready": false,
+          "failures": [
+            {
+              "kind": "deadline",
+              "stage": "window",
+              "stage_ms": "184"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "resume-negative-diagnostic-20261017",
+      "exit": 1,
+      "counts": {
+        "executed": 1,
+        "passed": 0,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "tests": {
+        "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#slowRestore_negativeControlRejectsTheSameFirstDrawBound": "failed"
+      },
+      "xml_sha256": "5f71f04463371dd655088ac47ad939c46f61cbe9614f4e35f9d1e507314c5086",
+      "raw_evidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2177/resume-negative-diagnostic-20261017",
+      "manifest_sha256": "8428d5d0756c0935462e9e72983a00db14f6ed7e28b058b2238af087fb6af2c1",
+      "readiness": [
+        {
+          "method": "slowRestore_negativeControlRejectsTheSameFirstDrawBound",
+          "case": "negative-control",
+          "windows": 110,
+          "minimum_idle_pct": 0,
+          "maximum_idle_pct": 49,
+          "ready": false,
+          "failures": [
+            {
+              "kind": "deadline",
+              "stage": "window",
+              "stage_ms": "267"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "resume-ping-20261017",
+      "exit": 0,
+      "counts": {
+        "executed": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "tests": {
+        "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_durableGapCatchUp": "passed",
+        "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread": "passed"
+      },
+      "xml_sha256": "f5d3c022ee7145719f07b631027459bfd385c0570e75bfcb9431d6492d929bfb",
+      "raw_evidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2177/resume-ping-20261017",
+      "manifest_sha256": "c618fa25a19db264ef808fb66a709c2b6c7df3e0e3c3ca0d33520318d19e4e33",
+      "readiness": []
+    }
+  ],
+  "observation_limits": [
+    "The isolated method is diagnostic reproduction, not acceptance retry; both new readiness failures remain failures.",
+    "No Probe was installed in either slow-control failure; neither supplies a slow draw or bound-rejection result.",
+    "The first class began while the read-only documentation search request was still pending; its lifetime ps CPU average does not measure ongoing load. The subsequent isolated diagnostic has zero additional search-process CPU ticks.",
+    "Five-second guest intervals overlapping diagnostic readiness: idle 3.97-37.83%, steal 0-0.20%; host idle 45.28-74.39%. These do not replace 250 ms test windows.",
+    "Fresh one-second top screen near deadline/teardown: idle 18/200 percentage points, host/steal 0; GMS persistent 66%, GMS 23%, system_server 26%, Mobile 3%. Initiating background operation and all-window attribution remain unproved.",
+    "dumpsys cpuinfo repeats an old boot snapshot and is not current process attribution.",
+    "The diagnostic adds read-only host/guest observation overhead; no settings, process lifecycle, fixtures, thresholds, assertions, skips, or measured work changed.",
+    "Earlier 4/4 plus 4/4 comparisons remain valid in their original conditions. New failures prevent current acceptance and do not attribute the historical 1434/1436 ms draw misses."
+  ]
+}

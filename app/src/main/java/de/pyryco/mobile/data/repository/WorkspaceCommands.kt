@@ -3,7 +3,6 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.ChangeWorkspacePayloadDto
-import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.CreateWorkspaceFolderPayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
@@ -129,10 +128,7 @@ internal class WorkspaceCommands(
                         ChangeWorkspacePayloadDto(conversationId = conversationId, cwd = workspace),
                     ),
             )
-        // Throws on a server `error` / not-Open session; the decode + confirmed upsert below are
-        // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
-        val reply = requests.sendAndAwaitReply(request)
-        conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+        requests.sendAndAwaitConversation(request)
         // Vestigial: change_workspace has no session transition (AC #4), so no session identity.
         return Session(
             id = "",
