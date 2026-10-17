@@ -70,6 +70,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -314,13 +315,19 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.onAllNodes(hasText("Share to…")).assertCountEquals(0)
         val repository =
             requireNotNull(GlobalContext.get().get<HostConversationSource>().repositoryFor(target.serverId))
-        val before = runBlocking { repository.observeMessages(target.conversationId).first() }
-        assertFalse(before.any { it is ThreadItem.MessageItem && it.message.role == Role.User })
+        val evidence = harnessThreadEvidence(repository)
+        val before = runBlocking { evidence.observe(target.conversationId).first() }
+        assertTrue("nothing may be sent before the explicit tap", before.holdsNoUserMessage())
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(PING, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onAllNodesWithText(PING, substring = true).onFirst().assertIsDisplayed()
+        runBlocking {
+            withTimeout(REPLY_TIMEOUT_MS) {
+                evidence.observe(target.conversationId).first { it.ownedUserEcho(before.owner, SEND_PROMPT) != null }
+            }
+        }
     }
 
     /** #1866: the native fixture holds the suggestion until the explicit submission clears it. */
@@ -719,30 +726,30 @@ class DeterministicInteractiveStreamE2ETest {
                         .id
                 }
             }
-
-        fun assistantRows() =
-            runBlocking { repository.observeMessages(conversationId).first() }
-                .filterIsInstance<ThreadItem.MessageItem>()
-                .map { it.message }
-                .filter { it.role == Role.Assistant }
-
-        fun assertOpenReply(expected: String) {
-            val rows = assistantRows()
-            assertEquals("only the held reply may exist before completion", 1, rows.size)
-            val row = rows.single()
-            assertEquals(expected, row.content)
-            assertTrue("the reply must remain streaming at the display checkpoint", row.isStreaming)
-            assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
-        }
+        val evidence = harnessThreadEvidence(repository)
         val inBubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
         val prefix = hasText(REOPEN_PREFIX, substring = true) and inBubble
         typeAndSend(SEND_PROMPT)
-        runBlocking {
-            withTimeout(REPLY_TIMEOUT_MS) {
-                repository.observeMessages(conversationId).first { rows ->
-                    rows.filterIsInstance<ThreadItem.MessageItem>().any { it.message.content == REOPEN_PREFIX && it.message.isStreaming }
+        val arrived =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    evidence.observe(conversationId).first { it.openReply(it.owner)?.fullText == REOPEN_PREFIX }
                 }
             }
+        val arrivedReply = requireNotNull(arrived.openReply(arrived.owner))
+
+        fun assistantRows() = runBlocking { evidence.observe(conversationId).first() }
+
+        fun assertOpenReply(expected: String) {
+            val rows = assistantRows()
+            assertEquals("only the held reply may exist before completion", 1, rows.assistantRecords().size)
+            val row = requireNotNull(rows.openReply(arrived.owner)) { "the reply must remain streaming at the display checkpoint" }
+            assertEquals(expected, row.fullText)
+            assertTrue(
+                "the open reply must be the arrived prefix's item",
+                if (expected == REOPEN_PREFIX) row.isSameItem(arrivedReply) else row.advancesFrom(arrivedReply),
+            )
+            assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
         }
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.onAllNodes(prefix, useUnmergedTree = true).fetchSemanticsNodes().size ==
@@ -769,9 +776,7 @@ class DeterministicInteractiveStreamE2ETest {
             val combined = REOPEN_PREFIX + REOPEN_SUFFIX
             runBlocking {
                 withTimeout(REPLY_TIMEOUT_MS) {
-                    repository.observeMessages(conversationId).first { rows ->
-                        rows.filterIsInstance<ThreadItem.MessageItem>().any { it.message.content == combined }
-                    }
+                    evidence.observe(conversationId).first { rows -> rows.assistantRecords().any { it.fullText == combined } }
                 }
             }
             assertOpenReply(combined)
@@ -802,14 +807,16 @@ class DeterministicInteractiveStreamE2ETest {
         }
         composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNode(fullReply, useUnmergedTree = true).assertIsDisplayed()
-        runBlocking {
-            withTimeout(REPLY_TIMEOUT_MS) {
-                repository.observeMessages(conversationId).first { rows ->
-                    rows.filterIsInstance<ThreadItem.MessageItem>().any { it.message.content == combined && !it.message.isStreaming }
+        val settled =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    evidence.observe(conversationId).first { it.settledFormOf(arrived.owner, arrivedReply)?.fullText == combined }
                 }
             }
-        }
-        assertEquals(1, assistantRows().count { it.content == combined && !it.isStreaming })
+        assertTrue(requireNotNull(settled.settledFormOf(arrived.owner, arrivedReply)).advancesFrom(arrivedReply))
+        val final = assistantRows().assistantRecords()
+        assertEquals(1, final.size)
+        assertEquals(1, final.count { it.fullText == combined && !it.isOpen })
         composeTestRule.onAllNodes(fullReply, useUnmergedTree = true).assertCountEquals(1)
     }
 
@@ -864,21 +871,19 @@ class DeterministicInteractiveStreamE2ETest {
             composeTestRule.onAllNodes(prefix, useUnmergedTree = true).fetchSemanticsNodes().size == 1
         }
         composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
-        val held =
-            runBlocking { repository.observeMessages(conversationId).first() }
-                .filterIsInstance<ThreadItem.MessageItem>()
-                .single { it.message.role == Role.Assistant }
-                .message
-        assertEquals(STREAMED_PREFIX, held.content.trimEnd())
-        assertTrue("displayed arrived text must belong to an ongoing reply", held.isStreaming)
+        val evidence = harnessThreadEvidence(repository)
+        val heldEvidence = runBlocking { evidence.observe(conversationId).first() }
+        assertEquals(1, heldEvidence.assistantRecords().size)
+        val heldReply =
+            requireNotNull(heldEvidence.openReply(heldEvidence.owner)) { "displayed arrived text must belong to an ongoing reply" }
+        assertEquals(STREAMED_PREFIX, heldReply.fullText.trimEnd())
+        val held = heldReply.message
         assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
 
         acknowledgeFailedMcpPill()
         composeTestRule.assertSideMessageCopy(held)
         val sent =
-            runBlocking { repository.observeMessages(conversationId).first() }
-                .filterIsInstance<ThreadItem.MessageItem>()
-                .single { it.message.role == Role.User && it.message.content == SEND_PROMPT }
+            requireNotNull(runBlocking { evidence.observe(conversationId).first() }.ownedUserEcho(heldEvidence.owner, SEND_PROMPT))
                 .message
         composeTestRule.assertSideMessageCopy(sent)
 
@@ -891,29 +896,24 @@ class DeterministicInteractiveStreamE2ETest {
         }
         val staged = heldQuote + "User:\n\"${sent.content}\"\n"
         composeTestRule.assertSideMessageReply(sent, staged)
-        assertEquals(
-            1,
-            runBlocking { repository.observeMessages(conversationId).first() }
-                .filterIsInstance<ThreadItem.MessageItem>()
-                .count { it.message.role == Role.User },
+        assertNotNull(
+            "exactly one owned user message while the quote is staged",
+            runBlocking { evidence.observe(conversationId).first() }.ownedUserEcho(heldEvidence.owner, SEND_PROMPT),
         )
         // Release later chunks without another turn while the phone's staged quote stays open.
         DaemonFaultControl().releaseStream()
         val finished =
             runBlocking {
                 withTimeout(REPLY_TIMEOUT_MS) {
-                    val rows =
-                        repository.observeMessages(conversationId).first { rows ->
-                            rows.filterIsInstance<ThreadItem.MessageItem>().any {
-                                it.message.id == held.id && !it.message.isStreaming && it.message.content == STREAMED_REPLY
-                            }
-                        }
+                    val reply =
+                        evidence
+                            .observe(conversationId)
+                            .first { it.settledFormOf(heldEvidence.owner, heldReply)?.fullText == STREAMED_REPLY }
+                            .let { requireNotNull(it.settledFormOf(heldEvidence.owner, heldReply)) }
                     repository.observeTurnPhase(conversationId).first { it == LiveSessionEvent.TurnState.Phase.Idle }
                     // Keep the same captured reply identity through all three deltas.
-                    rows
-                        .filterIsInstance<ThreadItem.MessageItem>()
-                        .single { it.message.role == Role.Assistant && it.message.id == held.id }
-                        .message
+                    assertTrue("the settled reply must grow from the displayed prefix", reply.advancesFrom(heldReply))
+                    reply.message
                 }
             }
         assertEquals(held.id, finished.id)
