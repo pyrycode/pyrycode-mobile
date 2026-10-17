@@ -2,8 +2,12 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
+import de.pyryco.mobile.data.cache.OwnedLegacyCache
+import de.pyryco.mobile.data.cache.OwnedLegacyRow
 import de.pyryco.mobile.data.cache.SavedAuthoritativeThread
+import de.pyryco.mobile.data.cache.applyOwnedRows
 import de.pyryco.mobile.data.cache.cacheableThreadRows
+import de.pyryco.mobile.data.cache.legacyRowKey
 import de.pyryco.mobile.data.cache.settledThreadRows
 import de.pyryco.mobile.data.cache.threadRowsWereTrimmed
 import de.pyryco.mobile.data.cache.toSavedAuthoritativeThread
@@ -107,11 +111,12 @@ class CachingConversationRepository(
     private val generations = AtomicLong()
     private val drawnThreads = ConcurrentHashMap<String, DrawnThread>()
 
-    // Updated under historyWrites by both row writers; coverage alone supersedes older candidates.
+    // Updated under historyWrites by both row writers; successful captures fence older candidates.
     private data class PersistedThread(
         val coverageGeneration: Long,
         val coverageRevision: Long,
         val cacheable: List<ThreadItem>,
+        val generation: Long = coverageGeneration,
     )
 
     private val persistedThreads = ConcurrentHashMap<String, PersistedThread>()
@@ -122,6 +127,9 @@ class CachingConversationRepository(
         val ready: CompletableDeferred<Unit> = CompletableDeferred(),
         val authoritative: SavedAuthoritativeThread? = null,
         val storeGeneration: Long = 0,
+        val owned: Set<String> = emptySet(),
+        val rowGenerations: Map<String, Long> = emptyMap(),
+        val removedGenerations: Map<String, Long> = emptyMap(),
     )
 
     private inner class ThreadWriter(
@@ -136,6 +144,11 @@ class CachingConversationRepository(
         private val signals = Channel<Unit>(Channel.CONFLATED)
         private var timer: Job? = null
         private val initial = restored
+        private val owned by lazy { restored.mapTo(HashSet()) { it.legacyRowKey() } }
+        private val seen by lazy { restored.associateByTo(HashMap()) { it.legacyRowKey() } }
+        private val rowGenerations = HashMap<String, Long>()
+        private val removedGenerations = HashMap<String, Long>()
+        private var previousRows = restored
         private var completed: CacheCandidate? = null
         private val writer =
             scope.launch(processingDispatcher, start = CoroutineStart.UNDISPATCHED) {
@@ -147,7 +160,26 @@ class CachingConversationRepository(
 
         // Called sequentially on the processing dispatcher; disk work never holds this path.
         fun accept(drawn: DrawnThread) {
+            owned += drawn.rows.map { it.legacyRowKey() }
             val cacheable = cacheableThreadRows(drawn.rows)
+            if (cache is OwnedLegacyCache) {
+                val present = drawn.rows.mapTo(HashSet()) { it.legacyRowKey() }
+                // Losing an unsettled row or excluding it at a disconnect never authorizes removal.
+                cacheableThreadRows(previousRows).forEach { row ->
+                    val key = row.legacyRowKey()
+                    if (key !in present) {
+                        removedGenerations[key] = drawn.generation
+                        seen.remove(key)
+                    }
+                }
+                previousRows = drawn.rows
+                cacheable.forEach { row ->
+                    val key = row.legacyRowKey()
+                    if (seen[key] != row) rowGenerations[key] = drawn.generation
+                    seen[key] = row
+                    removedGenerations.remove(key)
+                }
+            }
             val previous = latest.get()
             val changed = cacheable != (previous?.cacheable ?: initial)
             val persisted = persistedThreads[conversationId]
@@ -158,9 +190,16 @@ class CachingConversationRepository(
                     (previous?.drawn?.generation ?: 0) <= persisted.coverageGeneration &&
                     drawn.generation > persisted.coverageGeneration &&
                     cacheable != persisted.cacheable
-            if (!changed && !superseded && !retry.getAndSet(false)) return
+            if (!changed && !superseded && removedGenerations == previous?.removedGenerations.orEmpty() && !retry.getAndSet(false)) return
             retry.set(false)
-            val candidate = CacheCandidate(drawn, cacheable)
+            val candidate =
+                CacheCandidate(
+                    drawn,
+                    cacheable,
+                    owned = owned.toSet(),
+                    rowGenerations = rowGenerations.toMap(),
+                    removedGenerations = removedGenerations.toMap(),
+                )
             schedule(candidate)
         }
 
@@ -208,19 +247,55 @@ class CachingConversationRepository(
                     if (candidate.authoritative != null) return@withLock persistAuthoritative(conversationId, candidate, refreshReset)
                     val persisted = persistedThreads[conversationId]
                     if (conversationId in deleted ||
-                        candidate.drawn.generation <= (persisted?.coverageGeneration ?: 0)
+                        candidate.drawn.generation <= (persisted?.generation ?: 0)
                     ) {
                         return@withLock null
                     }
                     val baseline = persisted?.cacheable ?: initial
-                    if (candidate.cacheable == baseline) return@withLock Result.success(Unit)
                     // Untrimmed drawn rows let the cache invalidate cursor/stop claims on retention loss.
                     // Finish mutation and bookkeeping together: cancellation can otherwise hide a committed write.
                     withContext(NonCancellable) {
-                        val result = cache.writeThread(serverId, conversationId, candidate.drawn.rows)
+                        val ownedCache = cache as? OwnedLegacyCache
+                        val previous = baseline.associateBy { it.legacyRowKey() }
+                        val removed =
+                            candidate.removedGenerations
+                                .filter { (key, capture) ->
+                                    key in candidate.owned &&
+                                        capture > (persisted?.generation ?: 0)
+                                }.keys
+                        val keys = candidate.cacheable.map { it.legacyRowKey() }
+                        val nextHeld = arrayOfNulls<String>(keys.size)
+                        var next: String? = null
+                        for (index in keys.indices.reversed()) {
+                            nextHeld[index] = next
+                            if (keys[index] in previous) next = keys[index]
+                        }
+                        val changes =
+                            candidate.cacheable.mapIndexedNotNull { index, row ->
+                                if (row == previous[keys[index]] ||
+                                    (ownedCache != null && (candidate.rowGenerations[keys[index]] ?: 0) <= (persisted?.generation ?: 0))
+                                ) {
+                                    null
+                                } else {
+                                    OwnedLegacyRow(row, keys.getOrNull(index - 1), nextHeld[index])
+                                }
+                            }
+                        val result =
+                            when {
+                                ownedCache != null && (changes.isNotEmpty() || removed.isNotEmpty()) ->
+                                    ownedCache.mutateLegacyRows(serverId, conversationId, changes, removed)
+                                ownedCache != null || candidate.cacheable == baseline -> Result.success(Unit)
+                                else -> cache.writeThread(serverId, conversationId, candidate.drawn.rows)
+                            }
                         if (result.isSuccess) {
+                            val successful = if (ownedCache == null) candidate.cacheable else applyOwnedRows(baseline, changes, removed)
                             persistedThreads[conversationId] =
-                                PersistedThread(persisted?.coverageGeneration ?: 0, persisted?.coverageRevision ?: 0, candidate.cacheable)
+                                PersistedThread(
+                                    persisted?.coverageGeneration ?: 0,
+                                    persisted?.coverageRevision ?: 0,
+                                    successful,
+                                    candidate.drawn.generation,
+                                )
                         }
                         result
                     }

@@ -39,12 +39,15 @@ No new scopes, flows or jobs. Collection-owned writer, coalesced pending slot an
 | --- | --- |
 | Partial owned update/removal, colliding second host, reopen | `OwnedLegacyWritesTest.ownershipInvariant_partialViewPreservesUnownedRowsAndEvidence` |
 | Newest update with short/18000 saved rows | `OwnedLegacyWritesTest.boundedInvariant_newestUpdateDoesNotScaleWithSavedHistory` |
-| Affected producing claims, unsigned maximum, token rejection/recovery | `OwnedLegacyWritesTest.certificationInvariant_changesInvalidateOnlyAffectedClaimsAndRejectOldTokens` |
+| Affected producing claims, unsigned maximum, token rejection/recovery | `OwnedLegacyWritesTest.ownershipInvariant_partialViewPreservesUnownedRowsAndEvidence` |
 | Retention overflow | `OwnedLegacyWritesTest.retentionInvariant_discardedContentCannotRemainCertified` |
-| Held write, newer candidate/removal, coalescing | `OwnedLegacyWritesTest.orderingInvariant_newerOwnedChangesWinHeldWrites` |
-| Failure, unchanged emission and final retry | `OwnedLegacyWritesTest.failureInvariant_unchangedEmissionAndFinalFlushRetry` |
-| Cancellation after commit, overlapping collectors and reconnect | `OwnedLegacyWritesTest.captureInvariant_oldCollectorsCannotUndoNewerChanges` |
-| Held write followed by confirmed deletion/forgetting | `OwnedLegacyWritesTest.retirementInvariant_removalWinsHeldWritesAndRestart` |
+| Held write, newer candidate/removal, coalescing | `OwnedLegacyConcurrencyTest.orderingInvariant_newerOwnedChangesWinHeldWrites` |
+| Failure, unchanged emission and final retry | `OwnedLegacyConcurrencyTest.failureInvariant_unchangedEmissionAndFinalFlushRetry` |
+| Cancellation after commit | `OwnedLegacyConcurrencyTest.cancellationInvariant_committedWriteAndBaselineFinishTogether` |
+| Overlapping collectors and reconnect | `OwnedLegacyConcurrencyTest.captureInvariant_oldCollectorsCannotUndoNewerChanges` |
+| Held write followed by confirmed deletion/forgetting | `OwnedLegacyConcurrencyTest.retirementInvariant_removalWinsHeldWritesAndRestart` |
+| Existing version-3 storage upgraded | `OwnedLegacyMigrationTest.migrationInvariant_existingRowsGainOwnedIndexWithoutChangingHeldOrder` |
+| Unsettled replacement, disconnect and a different settled row | `OwnedLegacyWritesTest.settlementInvariant_unsettledRowCannotRemoveSavedIdentity` |
 
 ## Error handling
 
@@ -80,3 +83,15 @@ Pending documentation stage: update owned-row, affected-evidence invalidation, r
 
 **Reviewer:** builder self-review
 **Date:** 2026-10-17
+
+## Revisions
+
+### 2026-10-17: stale content reused by a later capture
+
+`OwnedLegacyConcurrencyTest.captureInvariant_oldCollectorsCannotUndoNewerChanges` failed after a newer collector saved text and an older collector resumed, reconnected and received a different identity. Fencing only the candidate's capture rejects its first stale save but treats its unchanged old text as a new change in the later candidate. Each candidate must therefore carry the capture of each actual row change and deliberate removal. Only changes newer than the shared successful fence are eligible. Mutation bookkeeping retains newer baseline content for rows a candidate did not change; a new capture alone cannot refresh stale content. This strengthens the concurrency finding in the security review.
+
+The additive migration widens legacy ordinals to `Long` (SQLite keeps INTEGER affinity), preserving old ordinal zero and multiplying the held spacing together with evidence ordinals. Invalid row bytes survive with no indexed identity; existing graceful reads still withhold them. Mutation rejects exhausted neighbour space instead of silently moving held rows. Full-view coverage saves bind evidence to the actual held ordinals after mutation.
+
+The strengthened settlement probe also failed when a saved identity became unsettled, disappeared on disconnect and a different settled row arrived. Comparing only the final candidate with disk incorrectly classified that disappearance as deliberate removal. Removal intents now come from cacheable identities present in the preceding observed raw view and absent in the next raw view. Settlement exclusion never creates an intent. An intent survives coalescing/failure until a settled reappearance or a successful newer fence supersedes it. Successful baseline application preserves chronological neighbour slots and the existing retention cap.
+
+The migration probe's second insertion into the same held gap exposed immediate ordinal exhaustion when the first insert used the next integer. Placement now divides available space among the pending rows sharing that older boundary, retaining space on either side for later owned changes without moving existing ordinals. Restored identity indexes initialize lazily during worker acceptance, after cached first draw, preserving the existing processing boundary.

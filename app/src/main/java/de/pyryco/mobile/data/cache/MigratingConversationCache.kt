@@ -36,7 +36,8 @@ internal class MigratingConversationCache(
     private val database: ConversationCacheDatabase,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val beforeCommit: suspend () -> Unit = {},
-) : ConversationCache {
+) : ConversationCache,
+    OwnedLegacyCache {
     private val files = FileConversationCache(root, ioDispatcher)
     private val legacy = LegacyRoomStorage(database, ioDispatcher, beforeCommit)
     private val authoritative = AuthoritativeRoomStorage(database, ioDispatcher, beforeCommit)
@@ -52,6 +53,14 @@ internal class MigratingConversationCache(
 
     /** The legacy storage's counts for the last page or thread read, for bounded-decoding probes. */
     internal val legacyReadCounts get() = legacy.lastReadCounts
+    internal val legacyMutationCounts get() = legacy.lastMutationCounts
+
+    override suspend fun mutateLegacyRows(
+        host: String,
+        conversation: String,
+        upserts: List<OwnedLegacyRow>,
+        removed: Set<String>,
+    ): Result<Unit> = write(host, conversation, LEGACY, "mutate_rows") { legacy.mutateRows(host, conversation, upserts, removed) }
 
     override suspend fun readConversations(serverId: String): List<Conversation> = files.readConversations(serverId)
 
