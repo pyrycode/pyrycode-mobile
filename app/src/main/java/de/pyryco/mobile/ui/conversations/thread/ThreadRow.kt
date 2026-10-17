@@ -303,8 +303,8 @@ private fun ThreadItem.listKey(): String =
  *
  * `parentToolUseId` is a grouping hint, not a capability (`protocol-mobile.md` § `tool_use`), so every
  * way it can fail degrades to top level rather than to an error:
- * - `""` is the main thread, and a row restored from the disk cache carries `""` because the cache does
- *   not persist the field.
+ * - `""` is the main thread. A row restored from a cache document written before #2221 also carries `""`,
+ *   because the cache did not persist the field until then.
  * - A parent that names no *tool row* loaded in the thread matches nothing — an older page not yet
  *   fetched, or an id that belongs to some other kind of row.
  * - A chain that loops back on itself stops at the first row the walk reaches twice, which counts as
