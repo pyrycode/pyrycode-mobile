@@ -127,9 +127,12 @@ class RelayConnectionSupervisor(
      *  while the Settings relay leg reads honestly not-connected. */
     @Synchronized
     override fun close() {
+        // Read before cancelling (#2219): the cancelled loop's finally can clear liveConnection on its own
+        // thread and close the socket later, so the caller's next send would still find it open.
+        val live = liveConnection.value
         loopJob?.cancel()
         loopJob = null
-        liveConnection.value?.close()
+        (live ?: liveConnection.value)?.close()
         liveConnection.value = null
         state.value = RelayLinkStatus.Idle
         activeBackoff.value = null
