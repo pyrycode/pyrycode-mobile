@@ -73,7 +73,7 @@ Write `app/src/test/java/de/pyryco/mobile/e2e/QueueRecoveryAgentEvidenceTest.kt`
 
 ## Open Questions
 
-- Does the legacy root and every owned child row carry the rendered block ID the header tag uses, so `agentFamily` matches the old raw family? The `background-agent` run settles it.
+- Does the legacy root and every owned child row carry the rendered block ID the header tag uses, so `agentFamily` matches the old raw family? The `background-agent` run settles it. Resolved 2026-10-17: yes. The gated `scripted background-agent` run passed with header, child and run matchers and `verifyAgentRunNavigation` driven from `agentFamily`.
 
 ## Documentation handoff
 
@@ -83,3 +83,4 @@ Write `app/src/test/java/de/pyryco/mobile/e2e/QueueRecoveryAgentEvidenceTest.kt`
 
 - 2026-10-17: A probe expecting owned prose between tools to split the Agent's run failed: inside an Agent block the folded run spans its owned prose too, which is why `verifyAgentRunNavigation` expects every child key to disappear when the run is closed. The case was a wrong expectation and is removed; `settledAgentPrecedes` keeps its one-run check, which still rejects a tool outside the owned run. Queued-prompt integrity is asserted on the completion snapshot itself (wait for the held item's completed text, then `settledHeldReply`), so a transient split row cannot be waited out.
 - 2026-10-17: In `AuthoritativeScenarioScreenTest`, `verifyAgentRunNavigation` over the rendered daemon agent could not find the closed owned run's expansion control under Robolectric. Within the remaining budget the screen probe asserts the family-derived header tag and unmatched prose outside the block; the run, child and navigation proof over daemon facts stays with the JVM probes (`agentFamilyUsesRenderedIdentitiesNotRawJoins`) and the device method on the current legacy route. Diagnosing the daemon-rendered run control is left to activation (#1988).
+- 2026-10-17: Diagnosed the screen-probe gap above. `ThreadScreen` renders `authoritative.rows` without `foldBackgroundAgentBlocks`/`foldToolRuns`, so a daemon-built Agent's owned tools appear as separate tool rows. There's no `tool-run:` "Using tools:" control to collapse. That is production presentation outside this test-only ticket, filed as #2238. The contract is unchanged: on daemon facts the collapse and navigation proof waits for #2238; on the current legacy route the device method keeps it.
