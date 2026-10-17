@@ -288,6 +288,44 @@ raw XML, output, phone diagnostics and source snapshots were kept under
 time and are pruned after 30 days, so the counted results above, not that path, are the
 durable record.
 
+**Second cause: the supervisor's own close could race its cancelled loop.** After the
+fix above was in the failing tree, the method stalled again on macOS in [#2173's UI
+gate](https://github.com/pyrycode/pyrycode-mobile/issues/2173), on commit `00d9118fd3`:
+`setHostLink(up = true)` timed out after 30 s with the repository still absent, and the
+same-tree rerun passed. A temporary, uncommitted match trace on a normal device run ruled
+out replay scheduling — the list, MCP and context asks matched 258 ms before
+`request_history`, so the history reply never had a window to overtake an earlier ask.
+The trace instead placed the cut's `attachment_request` on the main thread while the
+captured `close` was consumed on the cancelled supervisor loop's own worker thread,
+inside its `finally`. `RelayConnectionSupervisor.close` cancelled the loop before reading
+`liveConnection`; if the loop's `finally` cleared `liveConnection` and closed its
+transport between the cancel and that read, `close()` closed nothing and returned, and
+the cut's thread could then send the retrieval request on a transport the loop had not
+closed yet. The tape failed on that request before its captured close, the app absorbed
+the failure as `Unavailable`, and the next generation's `connect` rethrew the stored
+failure — the `host link reconnect timed out; repository present=false` signature. The
+same run's `interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes` failure
+(`step 17`, a chunk reaching the tape before its close) is the same race, not a separate
+cause; that scenario's fix is tracked under #2138.
+
+The fix: `close()` now reads the live transport before cancelling the loop, and closes
+that transport itself (or one an `Up` published meanwhile) before returning, so it can no
+longer return with the socket still open underneath an in-app cut. See
+`RelayConnectionSupervisor.close` in
+`app/src/main/java/de/pyryco/mobile/data/network/RelayConnectionSupervisor.kt`.
+`RelayConnectionSupervisorTest#close_closesTheLiveTransportBeforeReturning_whenTheCancelledLoopClearsItFirst`
+forces the race with a single-thread loop dispatcher that holds `close()`'s caller inside
+cancellation dispatch until the loop's `finally` has cleared `liveConnection` and parked
+in the transport's close; against the pre-fix source it failed with zero completed closes
+(38 executed, 1 failed, 0 skipped), and passed 38/38 after the fix.
+`SuiteConnectionsTest` (15 tests, including the two #2220 regressions above) and
+`RecordedSuiteTapeTest` (23 tests) both stayed green — a reply-ordering fix in
+`RecordedSuiteTape.drain` was drafted for this same failure, tested and then reverted once
+the trace pointed at the supervisor instead, so the tape gained no new hold logic from
+this ticket. `RecordedSuiteTape.progress()` does keep the `first-failure=<sticky
+failure>` field it gained during that investigation, naming the first tape mismatch a
+teardown failure is based on.
+
 ### Observation checkpoints and separate verification results
 
 New captures record explicit checkpoints before a phone send and after the original
