@@ -43,11 +43,11 @@ No new jobs or flows. The request runs in the caller's coroutine; the reply is f
 | Request pending, no reply yet | `setPinned_pendingRequestLeavesConfirmedStateUntilReplyArrives` |
 | Correlated reply then duplicate push (and push first) | `setPinned_replyAndDuplicatePushInEitherOrderKeepOneRowAndHostTimestamp` |
 | Repeat pin; host returns the original timestamp | same test, second write |
-| Unpin after pin | `setPinned_sendsExactVerbAndExplicitBoolean` / `setPinned_unpinAdoptsExplicitNull` |
+| Unpin after pin | `setPinned_sendsExactVerbAndExplicitBoolean` |
 | Reply queued behind a newer confirmed record | `queuedCommandRepliesCannotOverwriteLaterConfirmedPins` with `setPinned` added to `commandNames` |
 | Caller cancelled after reply queued | `cancelledCommandsKeepInboundConfirmedPins` with `setPinned` added |
 | Socket closed before send / during await | `setPinned_disconnectedSessionFailsAndKeepsConfirmedRecord` |
-| Reconnect snapshot after a failure | `setPinned_failuresPreserveConfirmedRecordUntilSnapshotRefreshesIt` |
+| Snapshot or reconnect after a failure | `setPinned_refusalsAndMalformedReplyPreserveConfirmedRecordUntilSnapshot`, `setPinned_disconnectedSessionFailsAndKeepsConfirmedRecord` |
 | Same conversation id on two hosts | `setPinned_onOneHostLeavesTheOtherHostsSameIdUntouched` |
 | Fake repeat pin | `setPinned_repeatPinKeepsTimestamp_unpinClears` |
 
@@ -66,7 +66,7 @@ The command adds no log line of its own; the inbound arm already logs the malfor
 
 Unit tests only (pure data layer, `runTest`, the fake pump):
 
-- `RemoteConversationRepositoryPinTest` (extend; reuses #2213's fixtures): add `setPinned` to `commandNames`/`executeCommand` so the queued, malformed, and cancelled probes cover it; give `FakeSessionPump` an `open` flag. New tests named in the table above, plus `setPinned_refusalsAndMalformedReplyPreserveConfirmedRecord` iterating `protocol.unknown_type`, `conversation.not_promoted`, `conversation.not_found` and a malformed reply, asserting the held row (pin, mute, archive stamp, label, agent) is unchanged.
+- `RemoteConversationRepositoryPinTest` (extend; reuses #2213's fixtures): add `setPinned` to `commandNames`/`executeCommand` so the queued, malformed, and cancelled probes cover it; give `FakeSessionPump` an `open` flag. New tests named in the table above, including `setPinned_refusalsAndMalformedReplyPreserveConfirmedRecordUntilSnapshot` iterating `protocol.unknown_type`, `conversation.not_promoted`, `conversation.not_found` and a malformed reply, asserting the held row (pin, mute, archive stamp, label, agent) is unchanged.
 - `StableConversationRepositoryTest`: `setPinned` in `oneShots_whileAbsent_throwIllegalState`; `setPinned_whenLive_delegatesVerbatim` with a `setPinnedCalls` recorder.
 - `FakeConversationRepositoryTest`: pin stamps a time, repeat keeps it, unpin clears, unknown id throws and changes nothing.
 
@@ -81,6 +81,10 @@ No screen or device test: no UI.
 ## Open Questions
 
 - None blocking. Whether `setPinned` should validate that the reply's id and pin state match the request (as `routeReadMarkReply` does for read marks): not adopted, to keep the mute contract the ticket names; the folded record is the host's confirmed record either way.
+
+## Revisions
+
+- 2026-10-17: Test naming only, no contract change. The unpin case folded into `setPinned_sendsExactVerbAndExplicitBoolean` (it asserts the explicit-null reply is adopted), and the refusal and snapshot-refresh cases share `setPinned_refusalsAndMalformedReplyPreserveConfirmedRecordUntilSnapshot`. The table above names the tests as landed.
 
 ## Security review
 

@@ -244,6 +244,18 @@ class FakeConversationRepository(
         }
     }
 
+    /** Stands in for the host's pin (#2214): a repeat pin keeps its first time, unpin clears it. */
+    override suspend fun setPinned(
+        conversationId: String,
+        pinned: Boolean,
+    ) {
+        state.update { records ->
+            val record = records[conversationId] ?: throw unknown(conversationId)
+            val pinnedAt = if (pinned) record.conversation.pinnedAt ?: Clock.System.now() else null
+            records + (conversationId to record.copy(conversation = record.conversation.copy(pinnedAt = pinnedAt)))
+        }
+    }
+
     /**
      * Applies [shouldArchive] across the whole store at [referenceTime], flipping
      * `archived = true` on every unpromoted, not-already-archived match so that
