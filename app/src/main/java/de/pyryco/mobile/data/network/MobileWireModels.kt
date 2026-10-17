@@ -87,6 +87,9 @@ internal const val CAPABILITY_STOP_BACKGROUND_TASK = "stop_background_task"
  */
 internal const val CAPABILITY_MULTI_AGENT = "multi_agent"
 
+internal val MOBILE_CAPABILITIES =
+    listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT, CAPABILITY_STOP_BACKGROUND_TASK, CAPABILITY_THREAD)
+
 /** App-owned report for `hello.client_features`; prompt admission is defined in pyrycode `docs/protocol-mobile.md`. */
 internal const val MOBILE_CLIENT_FEATURES =
     "Markdown links to absolute paths of served .md or .markdown files open in the in-app reader. " +
@@ -103,7 +106,7 @@ internal const val MOBILE_CLIENT_FEATURES =
  * (the wire needs it). `equals`/`hashCode` are intentionally NOT overridden.
  *
  * [capabilities] advertises the v2 features the phone understands; it defaults to
- * `["interactive", "multi_agent", "stop_background_task"]` and rides every `hello` via `MobileJson`'s `encodeDefaults = true`
+ * `["interactive", "multi_agent", "stop_background_task", "thread"]` and rides every `hello` via `MobileJson`'s `encodeDefaults = true`
  * (same mechanism as [protocolVersions]). It is non-secret, so [toString] surfaces it.
  *
  * [lastEventId] is the replay cursor (#416): on reconnect the phone advertises the latest
@@ -127,7 +130,7 @@ data class HelloClientPayload(
     @SerialName("client_version") val clientVersion: String,
     @SerialName("protocol_versions") val protocolVersions: List<String> = listOf("v2"),
     val token: String,
-    val capabilities: List<String> = listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT, CAPABILITY_STOP_BACKGROUND_TASK),
+    val capabilities: List<String> = MOBILE_CAPABILITIES,
     @SerialName("last_event_id") val lastEventId: Long? = null,
     @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("client_features") val clientFeatures: String = "",
 ) {

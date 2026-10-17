@@ -5170,6 +5170,16 @@ class InteractiveStreamE2ETest {
     /** #1827: attributed prose belongs only to the real background Agent's collapsible block. */
     @Test
     fun interactiveTurn_backgroundAgent_replyStaysUnderAgent() {
+        backgroundAgentReplyProof(restart = false)
+    }
+
+    /** #2175: genuine historical Agent, native graph restart and reconnect while a new-session send settles. */
+    @Test
+    fun interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect() {
+        backgroundAgentReplyProof(restart = true)
+    }
+
+    private fun backgroundAgentReplyProof(restart: Boolean) {
         val fixture = twoHostArg("backgroundAgentFixtureUrl")
         require(fixture.matches(Regex("http://127\\.0\\.0\\.1:[0-9]+"))) { "invalid background Agent fixture" }
         val peer = runningToolPeer()
@@ -5262,11 +5272,25 @@ class InteractiveStreamE2ETest {
                 runBlocking {
                     withTimeout(THREAD_TIMEOUT_MS) {
                         liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) {
-                            it.agentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn) != null
+                            val agent = it.backgroundAgent(task.taskId, agentId)
+                            val childReplies = it.records.filter { row -> row.message.role == Role.Assistant && row.turn == childTurn }
+                            android.util.Log.i(
+                                "AgentReplyEvidence",
+                                "event=agent_reply_evidence_wait roots=${it.records.count { row -> row.fact?.kind == "agent" }} " +
+                                    "matched=${agent != null} child_replies=${childReplies.size} " +
+                                    "active_child=${childReplies.count { row -> row.fact?.active == true }} " +
+                                    "done_child=${childReplies.count { row -> row.fact?.status in setOf("done", "finished") }} " +
+                                    "owned_child=${childReplies.count { row -> row.agentId == agent?.block }} " +
+                                    "owned_tools=${it.records.count { row ->
+                                        row.message.role == Role.Tool && row.agentId == agent?.block && row.message.id != agent?.block
+                                    }} " +
+                                    "main_reply=${it.settledMainReply(it.owner, mainTurn) != null}",
+                            )
+                            it.heldAgentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn) != null
                         }
                     }
                 }.let {
-                    checkNotNull(it.agentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn)) {
+                    checkNotNull(it.heldAgentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn)) {
                         "the held Agent must supply its own paragraph"
                     }
                 }
@@ -5332,6 +5356,13 @@ class InteractiveStreamE2ETest {
                 it.type == "background_task_updated" &&
                     peer.field(it, "task_id") == task.taskId &&
                     !peer.field(it, "status").isNullOrEmpty()
+            }
+            if (restart) {
+                composeTestRule.proveNegotiatedAgentRestart(serverId, chat, agentId, task.taskId, restart = ::restartApp, openThread = {
+                    awaitChannelList()
+                    awaitConnected()
+                    openChatRow(name)
+                }, send = { sendFromPhone("Reply briefly to this new-session settlement check.") })
             }
         } finally {
             try {
@@ -5741,7 +5772,11 @@ class InteractiveStreamE2ETest {
                                 lastOwnedReadings =
                                     held.records.map {
                                         "role=${it.message.role},owned=${block != null && it.agentId == block}," +
-                                            "turn=${it.turn == childReplyTurn},text=${it.fullText.isNotBlank()},streaming=${it.message.isStreaming}"
+                                            "turn=${it.turn == childReplyTurn},text=${it.fullText.isNotBlank()}," +
+                                            "streaming=${it.message.isStreaming}," +
+                                            "session=${it.session != null},active=${it.fact?.active}," +
+                                            "done=${it.fact?.status in setOf("done", "finished")}," +
+                                            "interrupted=${it.fact?.status == "interrupted"}"
                                     }
                                 held.settledTurnReply(childReplyTurn, agentId) != null
                             }

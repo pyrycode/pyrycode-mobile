@@ -51,15 +51,9 @@ import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -1121,13 +1115,17 @@ class DeterministicInteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_seededChannel_backgroundAgentMovesAndSettles() {
         arriveInSeededThread()
-        val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
-        val repository = requireNotNull(coordinator.currentRepository.value)
-        val events = MutableStateFlow<List<LiveSessionEvent>>(emptyList())
-        val eventScope = CoroutineScope(Dispatchers.IO)
-        eventScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            coordinator.liveSessionEvents.collect { event -> events.update { it + event } }
-        }
+        val host = requireNotNull(InstrumentationRegistry.getArguments().getString(E2eTestApplication.ARG_SERVER_ID))
+        val repository = GlobalContext.get().get<de.pyryco.mobile.di.ThreadDestinationFactory>().repository(host)
+        val conversationId =
+            runBlocking {
+                repository
+                    .observeConversations(ConversationFilter.All)
+                    .first()
+                    .single { it.name == SEED_CHANNEL_NAME }
+                    .id
+            }
+        val route = requireNotNull(repository.negotiatedThread)
         try {
             typeAndSend(SEND_PROMPT)
             val running = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_still_working)
@@ -1138,30 +1136,53 @@ class DeterministicInteractiveStreamE2ETest {
             val expandLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_expand)
             val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(running).fetchSemanticsNodes().isNotEmpty() }
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                events.value.filterIsInstance<LiveSessionEvent.ToolUse>().count { it.parentToolUseId == "agent1783" } >= 3
-            }
-            val received = events.value
-            val origin = received.filterIsInstance<LiveSessionEvent.ToolUse>().single { it.toolUseId == "agent1783" }.turnId
-            val mainEnd = received.indexOfFirst { it is LiveSessionEvent.TurnEnd && it.turnId == origin }
+            val facts =
+                runBlocking {
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        route.observe(conversationId).first { snapshot ->
+                            val root =
+                                snapshot.items.singleOrNull {
+                                    it.kind == "agent" &&
+                                        it.content.jsonObject["tool_use_id"]
+                                            ?.jsonPrimitive
+                                            ?.content == "agent1783"
+                                }
+                            root != null &&
+                                snapshot.items.count { it.kind == "tool_call" && it.parent == root.id } == 3 &&
+                                snapshot.items.any { it.kind == "turn_end" && it.turn == root.turn }
+                        }
+                    }
+                }
+            assertTrue(
+                "scripted diagnostics require the admitted production route",
+                route.support.value is de.pyryco.mobile.data.repository.ThreadSupport.Supported,
+            )
+            val received = facts.items.sortedBy { it.order }
+            val root =
+                received.single {
+                    it.kind == "agent" &&
+                        it.content.jsonObject["tool_use_id"]
+                            ?.jsonPrimitive
+                            ?.content == "agent1783"
+                }
+            val origin = requireNotNull(root.turn) { "launching Agent omitted its turn attribution" }
+            val mainEnd = received.indexOfFirst { it.kind == "turn_end" && it.turn == origin }
             assertTrue("launching main turn must end", mainEnd >= 0)
             val lateTools =
                 received
                     .drop(mainEnd + 1)
-                    .filterIsInstance<LiveSessionEvent.ToolUse>()
-                    .filter { it.parentToolUseId == "agent1783" }
-            assertEquals(listOf("late1951-one", "late1951-two"), lateTools.map { it.toolUseId })
-            assertTrue("late children retain launching attribution", lateTools.all { it.turnId == origin })
-            assertEquals("child activity must not open another main turn", 1, received.filterIsInstance<LiveSessionEvent.TurnEnd>().size)
-            // Raw live events above diagnose attribution; the rendered block and run identities prove the phone's content.
-            val conversationId =
-                runBlocking {
-                    repository
-                        .observeConversations(ConversationFilter.All)
-                        .first()
-                        .single { it.name == SEED_CHANNEL_NAME }
-                        .id
-                }
+                    .filter { it.kind == "tool_call" && it.parent == root.id }
+            assertEquals(
+                listOf("late1951-one", "late1951-two"),
+                lateTools.map {
+                    it.content.jsonObject["tool_use_id"]
+                        ?.jsonPrimitive
+                        ?.content
+                },
+            )
+            assertTrue("late children retain launching attribution", lateTools.all { it.turn == origin })
+            assertEquals("child activity must not open another main turn", 1, received.count { it.kind == "turn_end" })
+            // Admitted daemon facts diagnose attribution; projected identities below prove the phone's content.
             val evidence = harnessThreadEvidence(repository)
             val launched =
                 runBlocking {
@@ -1236,8 +1257,17 @@ class DeterministicInteractiveStreamE2ETest {
                 expandLabel = expandLabel,
                 collapseLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_collapse),
             )
+            // #2175: the same native restart/settlement proof as the genuine scenario, after every
+            // retained scripted lifecycle, placement and nested-tool assertion above has executed.
+            composeTestRule.proveNegotiatedAgentRestart(host, conversationId, "agent1783", "task1783", restart = {
+                val instrumentation = InstrumentationRegistry.getInstrumentation()
+                composeTestRule.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.DESTROYED)
+                instrumentation.runOnMainSync { (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph() }
+                androidx.test.core.app.ActivityScenario
+                    .launch(MainActivity::class.java)
+            }, openThread = ::arriveInSeededThread, send = { typeAndSend("settlement2175") })
         } finally {
-            eventScope.cancel()
+            route.cancel(conversationId)
         }
     }
 

@@ -203,7 +203,11 @@ class RelayConnectionRegistry(
             return
         }
         // Like compatibility retry, the supervisor's nonblocking call completes under this lock.
-        scope.launch(start = CoroutineStart.UNDISPATCHED) { expectedBundle.supervisor.retry() }
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            // #2175: a connected host without threads redials, so an updated daemon is negotiated afresh.
+            if (expectedBundle.coordinator.threadMissing.value) expectedBundle.supervisor.close()
+            expectedBundle.supervisor.retry()
+        }
         RelayLog.d { "event=host_retry_requested" }
     }
 
@@ -228,4 +232,13 @@ internal fun RelayRepositoryCoordinator.hostConversationConnection(
     serverId: String,
     displayName: String?,
 ): HostConversationConnection =
-    HostConversationConnection(serverId, displayName, currentRepository, connectionStatus, liveSessionEvents, hostModals, questionBatches)
+    HostConversationConnection(
+        serverId,
+        displayName,
+        currentRepository,
+        connectionStatus,
+        liveSessionEvents,
+        hostModals,
+        questionBatches,
+        threadMissing,
+    )

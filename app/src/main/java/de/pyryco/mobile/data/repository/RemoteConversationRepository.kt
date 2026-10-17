@@ -99,7 +99,7 @@ import kotlinx.serialization.json.encodeToJsonElement
  */
 class RemoteConversationRepository internal constructor(
     private val pump: SessionPump,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     /**
      * The connection-level device name sent as `register_push_token`'s `device_name` (#359) — the
      * same value [de.pyryco.mobile.data.network.NoiseClientInfo.deviceName] puts in the `hello`
@@ -178,7 +178,7 @@ class RemoteConversationRepository internal constructor(
      * before `Open`. Never the full `conn_id`.
      */
     connToken: () -> String? = { null },
-    /** Supplied authoritative route only; production activation supplies the source in #1988. */
+    /** The exact host's thread route (#2175); non-empty retires every legacy content request. */
     private val authoritativeHostId: String = "",
     internal val authoritativeThreads: AuthoritativeThreadStore = AuthoritativeThreadStore(),
     private val authoritativeNowMillis: () -> Long = { System.nanoTime() / 1000000 },
@@ -191,7 +191,12 @@ class RemoteConversationRepository internal constructor(
 ) : ConversationRepository,
     ThreadSnapshotSource {
     internal val authoritativeRoute: AuthoritativeThreadRoute =
-        AuthoritativeThreadRoute(authoritativeHostId, authoritativeThreads, onRepair = { authoritativeQueries.repair(it) })
+        AuthoritativeThreadRoute(
+            authoritativeHostId,
+            authoritativeThreads,
+            onRepair = { authoritativeQueries.repair(it) },
+            onTurnCompleted = ::refreshAuthoritativeReadFacts,
+        )
 
     @Volatile private var authoritativeCommandsEnded = false
 
@@ -303,6 +308,9 @@ class RemoteConversationRepository internal constructor(
             authoritativeNowMillis,
             retireAuthoritativeConnection,
         )
+
+    /** The exact host this connection's thread route serves, or empty on the legacy test entry (#2175). */
+    internal val authoritativeHost: String get() = authoritativeHostId
 
     /** The cache may borrow this supplied store only for its exact host namespace. */
     internal fun authoritativeStoreFor(host: String): AuthoritativeThreadStore? =
@@ -579,6 +587,14 @@ class RemoteConversationRepository internal constructor(
     private fun authoritativeLiveEnabled(): Boolean =
         authoritativeHostId.isNotEmpty() &&
             setOf(CAPABILITY_THREAD, CAPABILITY_INTERACTIVE).all { it in negotiatedCapabilities() }
+
+    private fun refreshAuthoritativeReadFacts() {
+        scope.launch {
+            if (authoritativeCommandsEnded || !authoritativeLiveEnabled()) return@launch
+            val sent = pump.send(listConversationsRequest())
+            RelayLog.i { "event=thread_summary_refresh code=${if (sent) "requested" else "refused"}" }
+        }
+    }
 
     /** Supplied transient progress, never a durable item or read checkpoint. */
     fun observeAuthoritativeToolProgress(conversationId: String): Flow<Map<String, Int>> =
@@ -1455,6 +1471,7 @@ class RemoteConversationRepository internal constructor(
         cursor: String,
         limit: Int,
     ): HistoryPage {
+        refuseRetiredLegacyContent()
         val page = readHistoryPage(conversationId, cursor, limit)
         page.entries
             .asSequence()
@@ -1466,7 +1483,21 @@ class RemoteConversationRepository internal constructor(
     }
 
     /** Notification enrichment fetches one newest page without changing rows, coverage or read facts. */
-    internal suspend fun requestAttentionHistory(conversationId: String): HistoryPage = readHistoryPage(conversationId, "", 0)
+    internal suspend fun requestAttentionHistory(conversationId: String): HistoryPage {
+        refuseRetiredLegacyContent()
+        return readHistoryPage(conversationId, "", 0)
+    }
+
+    /**
+     * #2175: a host with a negotiated thread route sends no history, backfill or replay request on any
+     * connection: capable connections use thread queries, and missing-thread or unacknowledged ones get no content.
+     */
+    private fun refuseRetiredLegacyContent() {
+        if (authoritativeHostId.isNotEmpty()) {
+            RelayLog.d { "event=legacy_content_request_refused" }
+            throw IllegalStateException("legacy history retired")
+        }
+    }
 
     private suspend fun readHistoryPage(
         conversationId: String,
@@ -1580,7 +1611,11 @@ class RemoteConversationRepository internal constructor(
 
     override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
         flow {
-            pump.send(backfillSinceRequest(conversationId))
+            if (authoritativeHostId.isEmpty()) {
+                pump.send(backfillSinceRequest(conversationId))
+            } else {
+                RelayLog.d { "event=legacy_content_request_refused" }
+            }
             emitAll(threadProjection.observeSnapshot(conversationId))
         }
 

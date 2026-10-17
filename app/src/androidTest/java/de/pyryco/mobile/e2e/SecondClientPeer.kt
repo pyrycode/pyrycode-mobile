@@ -677,7 +677,15 @@ class SecondClientPeer(
 
         /** The id field of each prompt the daemon re-sends to a new connection. */
         val PROMPT_ID_FIELDS = mapOf("modal_shown" to "modal_id", "question_shown" to "question_batch_id")
-        val CLIENT_INFO = NoiseClientInfo(deviceName = "e2e-peer", clientVersion = "e2e-peer")
+
+        // Raw producer diagnostics require the legacy stream. This independent device never supplies
+        // the phone's rendered evidence, which remains bound to its negotiated authoritative route.
+        val CLIENT_INFO =
+            NoiseClientInfo(
+                deviceName = "e2e-peer",
+                clientVersion = "e2e-peer",
+                capabilities = listOf("interactive", "multi_agent", "stop_background_task"),
+            )
         const val PERMISSION_CLASS = "permission"
         const val ALLOW_ONCE = "allow_once"
         const val REMOTE_SOURCE = "remote"
