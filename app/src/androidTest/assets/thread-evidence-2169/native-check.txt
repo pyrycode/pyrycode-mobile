@@ -1,0 +1,145 @@
+Historical failed attempt (2026-10-15)
+Ticket: pyrycode/pyrycode-mobile#2169
+Task: ffa7e4529efbdc290d7728ab17d66643a868f51431b55679926dd690aa21cc45
+Recipe: android-tool-then-text
+Capability: android-emulator
+Candidate: 33c652a9413fe13c63ea0b36314f243645ba4e96
+Native run: ae41026cf49c3dae79d157920a9043fa4720c6ee0f235a68618da00579be64eb
+Computer: build-fractal-2
+State: failed
+Result: Native execution failed: RuntimeError. Private logs retained.
+Returned artifact files: 0
+Returned artifact bytes: 0
+Executed/passed/failed/skipped test counts: not reported
+Assessment: native validation is unverified; this result is not a passing check.
+Retrieved on 2026-10-15 with fleet-task.py read; earlier ticket evidence bundles
+were also retrieved and contained no results or artifacts for this native run.
+The local container has no /dev/kvm. No replacement task was requested for the
+unchanged test implementation. Dispatcher UI/scripted acceptance remains pending.
+
+Completed focused native check (retrieved 2026-10-16)
+Task: 0f91c9feeeb8f212148c7cb305c261925eb4cb8396827bdab255b630bbbcb6f1
+Recipe: mobile-scripted-evidence
+Capability: mobile-android
+Candidate: 09e1a604f61ad2b5c4eebadbfb8104e78fecbbd9
+Native run: 4d945a84a86159f6c0e7df3606596a0735d6470461aeb3afbec37de6979e6ced
+Computer: build-hp-1 (Linux, pixel2Api33Atd Android emulator)
+State: complete
+Result: Mobile mobile-scripted-evidence: complete counted checks
+Command: python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py scripted reply-suggestion
+Method: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_replySuggestionLongPressSends
+Counts: 1 executed, 1 passed, 0 failed, 0 skipped; exit 0
+Command: python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py scripted selection-copy
+Method: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_systemCopyCopiesSelectedWord
+Counts: 1 executed, 1 passed, 0 failed, 0 skipped; exit 0
+Mobile revision: 09e1a604f61ad2b5c4eebadbfb8104e78fecbbd9
+Runner revision: 800e719515a91bf2040d9d26b0e0a802e931bca3
+Daemon revision: 0917625fc6e91eeb2a16556f09e5ba0bbf62aabf
+Relay revision: 9939bc1ff8afec5021c09862e6f14dadba33ad42
+Assessment: both focused scripted checks passed; no real Claude turns were run.
+The historical failed attempt remains failed. Full dispatcher acceptance remains pending.
+No recordings were changed. The tested evidence adapter implementation is unchanged.
+Private raw artifacts and verified SHA256SUMS:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2169/builder-native-0f91c9-20261016/
+Returned artifact hashes (SHA-256):
+3fd7dc7da2519e3942d4e4222f6f9f7fdd3dd7ba3193bf8205f1d39313a59457  mobile/capture.json
+f57b7601805ee986f4420ed0da18204d21af812af10841ac900a7c82b57e470f  mobile/execution.log
+3d2b38833837b1fd850251f8217739f1da7fbccd3afaec074eff957484cda97d  mobile/gate-0.xml
+5839ed80cfa059f005f088c15c5572922d1f957956ba97f27d8282ec9d138b75  mobile/gate-1.xml
+b7ef3f7c035bd9baa87b35a5b005bc817b9b7cd11e88b2c13c179a4df110eba1  mobile/phases-0.jsonl
+9961d537cc963cba5a7af8457120c4beac1efc2a4cc29f81c1fd9aa9979735fe  mobile/phases-1.jsonl
+
+Failed focused native rework check (retrieved 2026-10-17)
+Task: 434c643e69ff0186e7a61051af900cd42d092ccea5bc3d6a29802a0b580e2bde
+Recipe: mobile-scripted-evidence
+Capability: mobile-android
+Candidate: 5472a815fd3fab55a29b00829b8fbaab701cb73f
+Native run: f1b04af9887772f1c4a5c22c17e29535ff6d42bd4f2ce58cba7eab1cac3d4a37
+Computer: build-hp-1 (Linux)
+State: failed
+Command: python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py scripted reply-suggestion
+Exit: 1, during APK preparation; no device test started
+Executed/passed test counts: 0/0; returned gate-0.xml is empty
+The selection-copy command was not reached.
+Diagnostic: Install pyrycode-mobile-agents beside this checkout or set AGENTS_REPO_PATH.
+Capture: complete=false; errors=[Malformed JUnit report]
+Mobile revision: 5472a815fd3fab55a29b00829b8fbaab701cb73f
+Runner revision: 9aad4b5db84f2897c5eda3e8ed78a5ec9256ad71
+Daemon revision: c49aaf179ef7ade7d7e834a46904e57eb94ea957
+Relay revision: 9939bc1ff8afec5021c09862e6f14dadba33ad42
+Assessment: failed launcher preparation, not a passing scenario or an app assertion failure.
+Known open dependency: https://github.com/pyrycode/agent-dispatcher/issues/294
+Both focused scripted checks remain unverified for this repair until that launcher is fixed.
+The earlier counted native pass remains historical; all failed attempts remain failed.
+Private raw artifacts and verified SHA256SUMS:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2169/builder-native-434c643e-20261017/
+Returned artifact hashes (SHA-256):
+fc65a114928b5f2a192ba44d706ab8986a94ce5ca74b40aa3247e6ca62ca2ef5  mobile/capture.json
+b3889a35c00ad59cccccfd44de0abca6a7346952c385ef8b07a50721d00d9f9c  mobile/execution.log
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  mobile/gate-0.xml
+7ea74dda0fe1f143e86a0a382654610a4c952420ff5a9b94cfb0c2ee254c9ca8  mobile/phases-0.jsonl
+
+Partly failed focused native rework check after the launcher repair (retrieved 2026-10-17)
+Task: 1d6ed25136523c7eca559348818315688ab62fb71e8b369883f46e8bede10576
+Recipe: mobile-scripted-evidence
+Capability: mobile-android
+Candidate: ac5ab7cba2e651ff274d30a9260a8784928e5405 (contains repair 5472a815f)
+Native run: a8fe5f421b7bd09393b94febd0539152f647d698fad4e874d6a71d1d3733d39e
+Computer: build-hp-1 (Linux, pixel2Api33Atd Android emulator)
+State: failed
+Command: python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py scripted reply-suggestion
+Method: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_replySuggestionLongPressSends
+Counts: 1 executed, 1 passed, 0 failed, 0 skipped; exit 0
+Command: python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py scripted selection-copy
+Exit: 1; Gradle could not start the device test because another process held the
+shared Gradle user-home journal cache lock (Timeout waiting to lock journal cache).
+Executed/passed test counts: 0/0; returned gate-1.xml is empty.
+Capture: complete=false; errors=[Malformed JUnit report]
+Mobile revision: ac5ab7cba2e651ff274d30a9260a8784928e5405
+Runner revision: c8edc37edbcc111bf769b93840beea0fe5e8c02f
+Daemon revision: c49aaf179ef7ade7d7e834a46904e57eb94ea957
+Relay revision: 9939bc1ff8afec5021c09862e6f14dadba33ad42
+Assessment: reply-suggestion passed on the repair; selection-copy is unverified
+because of host lock contention before any device test started, not an app assertion.
+Private raw artifacts and verified SHA256SUMS:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2169/builder-native-1d6ed2-20261017/
+Returned artifact hashes (SHA-256):
+b091b60f4ad4c4017af0475c4d0e3823b41987f129c400cf0db4c2a93ae002f0  mobile/capture.json
+584e48f64cdcba3edfb5937dd54b512768700963238cd6441c1d1eff84b46c86  mobile/execution.log
+6c62a88b855cb73ad708d749b2ae10bbd36af59fdeba63b269ee2b446d49904a  mobile/gate-0.xml
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  mobile/gate-1.xml
+63c91bdfe02df6dd2035c3a55bbaf746f98092b94142687752997c6110cb1c9b  mobile/phases-0.jsonl
+dcaeaab2a2b4192be13d9d25d1b640557e96944d811385c6449792d03063fcda  mobile/phases-1.jsonl
+
+Completed focused native rework check on the repair (retrieved 2026-10-17)
+Task: 7797fc922d340f445f529230792a2ba3e70e6fc60e6d6fc7ab7db8df52e38994
+Recipe: mobile-scripted-evidence
+Capability: mobile-android
+Candidate: 2f78ceb370c546eec7a696300330333543260345 (contains repair 5472a815f)
+Native run: c7608c1bbfd125b1882c08b04a489daeb7c08b176e98bf40e6672644b160406d
+Computer: build-fractal-2 (Linux Android emulator)
+State: complete
+Result: Mobile mobile-scripted-evidence: complete counted checks
+Command: python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py scripted reply-suggestion
+Method: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_replySuggestionLongPressSends
+Counts: 1 executed, 1 passed, 0 failed, 0 skipped; exit 0
+Command: python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py scripted selection-copy
+Method: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_systemCopyCopiesSelectedWord
+Counts: 1 executed, 1 passed, 0 failed, 0 skipped; exit 0
+Capture: complete=true; errors=[]
+Mobile revision: 2f78ceb370c546eec7a696300330333543260345
+Runner revision: c8edc37edbcc111bf769b93840beea0fe5e8c02f
+Daemon revision: c49aaf179ef7ade7d7e834a46904e57eb94ea957
+Relay revision: 2fd9338dd1662dbd68f3710a33e6a8cc4e7a0bc1
+Assessment: both focused scripted checks passed on the repaired adapter; no real Claude
+turns were run and no recordings changed. Earlier failed attempts remain failed.
+Full dispatcher acceptance remains pending.
+Private raw artifacts and verified SHA256SUMS:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2169/builder-native-7797fc-20261017/
+Returned artifact hashes (SHA-256):
+1b1d04087cab01780df08ec6b791801fb5b6a48084ca3fecf3e3f865dd08e91a  mobile/capture.json
+103ab1c756f5cb9bdd42022d51f6ec1a4ddb920bdb9f4f122350798e033aae63  mobile/execution.log
+81ab5af309aa9c54a4a03dfc36f3e1a48c6b5fffce9a4643bbdb800dfd6226f4  mobile/gate-0.xml
+9c7eae82888c0c2f1bafc22600ee6f48b9870fbfccfd5b18ce8aec3d057f7d34  mobile/gate-1.xml
+17f8e1ba2c280bc3e01adf189e01bf741f94c2906194ebe9fe7321c41f9a6a4d  mobile/phases-0.jsonl
+fa156ecfb811a396fbe0325c1d0be8ac87f0312b707a39438249c01dfecad9a3  mobile/phases-1.jsonl
