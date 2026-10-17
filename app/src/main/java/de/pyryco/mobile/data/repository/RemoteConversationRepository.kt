@@ -577,7 +577,8 @@ class RemoteConversationRepository internal constructor(
     }
 
     private fun authoritativeLiveEnabled(): Boolean =
-        !authoritativeCommandsEnded && authoritativeHostId.isNotEmpty() &&
+        !authoritativeCommandsEnded &&
+            authoritativeHostId.isNotEmpty() &&
             setOf(CAPABILITY_THREAD, CAPABILITY_INTERACTIVE).all { it in negotiatedCapabilities() }
 
     /** Supplied transient progress, never a durable item or read checkpoint. */
