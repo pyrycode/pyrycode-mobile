@@ -5325,32 +5325,25 @@ class InteractiveStreamE2ETest {
                         !peer.field(it, "status").isNullOrEmpty()
                 },
             )
-            val loaded =
+            // Raw peer task/tool facts only locate the admitted Agent; rendered identities come from evidence.
+            val evidence =
                 runBlocking {
                     withTimeout(THREAD_TIMEOUT_MS) {
-                        liveRepositories.firstOnLive({ it.observeMessages(chat) }) { items ->
-                            val messages = items.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
-                            holdsSettledAssistantReply(items, childTurn, agentId) &&
-                                holdsSettledAssistantReply(items, mainTurn) &&
-                                messages.any { it.role == Role.Tool && it.toolCall?.parentToolUseId == agentId }
+                        liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) {
+                            it.agentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn) != null
                         }
                     }
-                }.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
-            val held =
-                loaded.filter {
-                    it.role == Role.Assistant && it.segment?.turnId == childTurn && it.parentToolUseId == agentId && it.content.isNotBlank()
+                }.let {
+                    checkNotNull(it.agentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn)) {
+                        "the held Agent must supply its own paragraph"
+                    }
                 }
-            assertTrue("the held Agent must supply its own paragraph", held.isNotEmpty())
-            val mainReply =
-                loaded.last {
-                    it.role == Role.Assistant && it.segment?.turnId == mainTurn && it.parentToolUseId.isEmpty() && it.content.isNotBlank()
-                }
-            // The root Agent stays separate; its run is keyed by the first loaded child tool.
-            val runId = loaded.first { it.role == Role.Tool && it.toolCall?.parentToolUseId == agentId }.id
             // Body identity excludes user prompts and accepts any reply wording or Markdown.
-            val reply = hasTestTag("assistant-reply:${held.last().id}")
-            val child = hasTestTag("background-agent-child:$agentId")
-            val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:$runId"))
+            val reply = hasTestTag("assistant-reply:${evidence.heldReply.message.id}")
+            val child = hasTestTag("background-agent-child:${evidence.agent.block}")
+            // The root Agent stays separate; its owned paragraph and tools fold into this run.
+            val run =
+                hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:${evidence.runId}"))
             val expandLabel = string(R.string.tool_run_expand)
             val closedRun =
                 run and
@@ -5390,7 +5383,7 @@ class InteractiveStreamE2ETest {
                     composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
             }
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
-            val mainBody = hasTestTag("assistant-reply:${mainReply.id}")
+            val mainBody = hasTestTag("assistant-reply:${evidence.mainReply.message.id}")
             list.performScrollToNode(mainBody)
             composeTestRule.onNode(mainBody, useUnmergedTree = true).assertIsDisplayed()
             sendFromPhone(
@@ -5519,17 +5512,15 @@ class InteractiveStreamE2ETest {
                 checkNotNull(
                     GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId),
                 ).coordinator.currentRepository
-            val messages =
+            val reply =
                 runBlocking {
                     withTimeout(THREAD_TIMEOUT_MS) {
-                        liveRepositories.firstOnLive({ it.observeMessages(chat) }) { holdsSettledAssistantReply(it, turnId) }
+                        liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) {
+                            it.settledMainReply(it.owner, turnId) != null
+                        }
                     }
-                }.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
-            val reply =
-                messages.last {
-                    it.role == Role.Assistant && it.segment?.turnId == turnId && it.parentToolUseId.isEmpty() && it.content.isNotBlank()
-                }
-            val body = hasTestTag("assistant-reply:${reply.id}")
+                }.let { checkNotNull(it.settledMainReply(it.owner, turnId)) }
+            val body = hasTestTag("assistant-reply:${reply.message.id}")
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
                 composeTestRule.onNode(body, useUnmergedTree = true).isDisplayed()
             }
