@@ -2,6 +2,7 @@ package de.pyryco.mobile.recording
 
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.NoiseClientInfo
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -26,6 +27,24 @@ internal class RecordedSuiteDocument private constructor(
             .jsonArray
             .map { it.jsonPrimitive.content }
             .toSet()
+
+    /** The captured phone label is replay input, not a requirement on the runner's emulator model. */
+    fun replayClientInfo(actual: NoiseClientInfo): NoiseClientInfo {
+        val names =
+            steps
+                .filter {
+                    it.direction == "client" &&
+                        (it.owner == "phone" || it.owner.startsWith("phone/")) &&
+                        it.message?.type == "register_push_token"
+                }.map {
+                    it.message!!
+                        .payload.jsonObject
+                        .getValue("device_name")
+                        .jsonPrimitive.content
+                }.distinct()
+        require(names.size <= 1) { "Recording has inconsistent phone device names" }
+        return names.singleOrNull()?.let { actual.copy(deviceName = it) } ?: actual
+    }
 
     /** A reviewed suite can declare the existing query models for historical raw captures. */
     fun withQueryPolicy(policy: JsonObject): RecordedSuiteDocument {

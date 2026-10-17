@@ -60,6 +60,49 @@ fresh worktree, Gradle may need `ANDROID_HOME` set because `local.properties` is
 ignored. Preserve the command's exit status when inspecting output; piping Gradle
 through `tail` can hide a failure.
 
+Script fixtures for installed-APK rejection must own the bytes they compare (#2196).
+`SuiteDriverTest.test_wrong_installed_apk_is_rejected_before_native_execution`
+uses a temporary `ROOT` with controlled app APK bytes, a validated recording and a
+deliberately different installed digest supplied by mocked adb. Assert the exact
+digest-mismatch error, the package-path and SHA-256 queries, and that instrumentation
+was never invoked. Depending on checkout assembly outputs instead can fail with
+`FileNotFoundError` before exercising rejection, or pass only after an unrelated
+build. This control needs no real APK assembly or device; runtime installed-byte
+validation remains strict.
+
+The verifier keeps static checks, JVM execution, APK assembly, UI execution and
+scripted execution as independently retained gates. The static invocation is
+`./gradlew check -x :app:testDebugUnitTest`. Its excluded task runs immediately
+afterwards through `python3 scripts/jvm-test-gate.py`, which emits joined JUnit XML on standard output. A successful full invocation may
+retain Gradle-verified cached results. Exact named comparisons force fresh execution. Build logs go to
+standard error. The complete recorded-suite inventory remains a dependency of
+the static `check` invocation. APK assembly and instrumented Kotlin compilation
+share one Gradle invocation.
+
+Named JVM failures use `jvm-test-gate.py --tests-json '["package.Class#method"]'`.
+JSON preserves Kotlin names with spaces, commas and apostrophes. UI failures use
+`android-test-gate.py ui --tests package.Class#method`. Scripted failures use
+`android-test-gate.py scripted-all --tests package.Class#method`. The last command
+resolves the original scenario from the harness and runs only that scenario,
+including its isolated daemon and relay. Normal `scripted-all` still runs every
+scenario. Unknown methods, stale or missing reports, zero execution and skipped
+selected methods cannot establish a passing comparison. A failed build remains
+failed even when an earlier test report is present. The shared dispatcher runs
+these named comparisons in the same worktree and on the main commit merged
+into it. A confirmed inherited failure still requires its tracking ticket.
+
+Direct Gradle checks acquire the same host hold through
+`python3 scripts/gradle-gate.py <tasks>`.
+Android and JVM gate entry points acquire it automatically, before the Android
+device hold. Nested calls reuse the validated inherited descriptor. The pinned
+Android cleanup owner retains both descriptors, including after parent loss.
+Use `PYRY_TEST_ADMISSION_LOCK` for a common host-bound path when project containers
+have separate home directories. Forward that variable into builder shells.
+The managed launcher runs the pinned Gradle build inside its admitted JDK 21
+client process. Matching client/build JVM options avoid the detached single-use
+worker that --no-daemon alone can create. Kotlin compilation stays in that JVM.
+Build-cache reuse remains enabled.
+
 For filesystem tests that assert permission preservation, set the fixture's
 starting mode explicitly before exercising the code. `mkdir(mode=0o755)` is
 filtered by the inherited umask: under `077` it creates a `0700` directory, so a
