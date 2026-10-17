@@ -403,6 +403,17 @@ restores every child's individual key. Keep pointer taps, expansion semantics an
 prose visibility assertions alongside membership; membership alone cannot distinguish the
 closed representative from its first child.
 
+**A screen test that calls `verifyAgentRunNavigation` must mount with collapse on, explicitly.**
+`AuthoritativeScenarioScreenTest`'s `mount` helper defaults `collapseToolUses` to `false`, matching
+`ThreadScreen`'s own parameter default, so a call site that leaves it unset runs the proof over the
+unfolded tree — no run header ever forms, so "Show tool uses"/"Hide tool uses" assertions fail, and
+the failure reads like a navigation regression rather than a test-setup gap (#2238, diagnosing a
+report against PR #2237). `settledAgentRunNavigatesOpensAndClosesOverDaemonBuiltThread` mounts
+`finishedAgentScenarioItems()` with `collapseToolUses = true` and takes `agentId`/`runId`/`childIds`
+from `ThreadEvidence.agentFamily`, proving the same collapse/reopen/navigation contract over a
+daemon-built thread that `BackgroundAgentBlocksScreenTest.settledNavigationThenOwnedPointerTapsOpenAndCloseALongChildRun`
+already proves over the legacy fixtures.
+
 A screen-level `ToolRunCollapseTest` (`app/src/sharedTest/.../thread/`) covers the composable
 end to end: collapse/expand both directions with the flush join and sub-agent indent preserved; a run
 staying expanded as a new tool row joins it; the three status states plus a live count change; and
