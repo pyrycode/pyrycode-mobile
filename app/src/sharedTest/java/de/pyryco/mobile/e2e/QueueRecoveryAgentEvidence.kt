@@ -159,7 +159,8 @@ internal fun AgentFamilyEvidence.ownsSingleProse(text: String): Boolean =
 internal fun ThreadEvidence.holdsOutsideAgent(
     text: String,
     family: AgentFamilyEvidence,
-): Boolean = admitted && records.filter { it.fullText == text }.let { rows -> rows.isNotEmpty() && rows.none { it.agentId == family.agentId } }
+): Boolean =
+    admitted && records.filter { it.fullText == text }.let { rows -> rows.isNotEmpty() && rows.none { it.agentId == family.agentId } }
 
 /**
  * [family]'s block under the same identity has completed, with every tool in one run under the launching

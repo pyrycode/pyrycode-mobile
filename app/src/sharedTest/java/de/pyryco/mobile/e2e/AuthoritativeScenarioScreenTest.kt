@@ -37,7 +37,12 @@ class AuthoritativeScenarioScreenTest {
         compose.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
-                    state = ThreadUiState("conversation", "Channel", authoritativeThread = projectAuthoritativeThread("host", "conversation", snapshot)),
+                    state =
+                        ThreadUiState(
+                            "conversation",
+                            "Channel",
+                            authoritativeThread = projectAuthoritativeThread("host", "conversation", snapshot),
+                        ),
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,

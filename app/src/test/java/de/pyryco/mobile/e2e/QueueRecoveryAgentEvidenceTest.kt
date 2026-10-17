@@ -38,7 +38,11 @@ class QueueRecoveryAgentEvidenceTest {
     // --- queued follow-up -------------------------------------------------------------------------
 
     private val heldItems =
-        arrayOf(scenarioUser(1, "hello"), scenarioItem(2, text = "Hello, streamed ", rev = 2, active = true), scenarioUser(3, "bye", "queued", order = null))
+        arrayOf(
+            scenarioUser(1, "hello"),
+            scenarioItem(2, text = "Hello, streamed ", rev = 2, active = true),
+            scenarioUser(3, "bye", "queued", order = null),
+        )
 
     @Test fun queuedFollowUpNeverSplitsOrSettlesTheHeldReply() {
         val start = evidence(*heldItems)
@@ -70,12 +74,22 @@ class QueueRecoveryAgentEvidenceTest {
         val start = evidence(*heldItems)
         val held = requireNotNull(start.heldOpenReply(start.owner, "Hello, streamed"))
         // A recovered page re-delivers an older revision after the newer completion.
-        val recovered = evidence(heldItems[0], scenarioItem(2, text = "Hello, streamed world", rev = 4), scenarioItem(2, text = "Hello, streamed ", rev = 3, active = true))
+        val recovered =
+            evidence(
+                heldItems[0],
+                scenarioItem(2, text = "Hello, streamed world", rev = 4),
+                scenarioItem(2, text = "Hello, streamed ", rev = 3, active = true),
+            )
         assertNotNull(recovered.settledHeldReply(start.owner, held, "Hello, streamed world"))
         val replay = evidence(*replayItems, scenarioItem(4, text = "char", rev = 2, active = true))
         assertTrue(replay.hasCompletedReplay(ORDERED))
         assertNull(replay.authoritativeReplayFailure(ORDERED, "hello"))
-        val agent = evidence(*finishedAgent, scenarioItem(2, "agent", rev = 1, active = true), scenarioItem(8, "tool_call", rev = 1, active = true, parent = 2))
+        val agent =
+            evidence(
+                *finishedAgent,
+                scenarioItem(2, "agent", rev = 1, active = true),
+                scenarioItem(8, "tool_call", rev = 1, active = true, parent = 2),
+            )
         assertTrue(agent.settledAgentPrecedes(agent.owner, requireNotNull(agent.agentFamily(agent.owner)), "after1783"))
         val sendNow = evidence(*sendNowItems, scenarioItem(2, "tool_call", rev = 1, active = true))
         assertNull(sendNow.sendNowPlacementFailure("bye", "send-now-marker"))
@@ -193,8 +207,6 @@ class QueueRecoveryAgentEvidenceTest {
             evidence(*head, scenarioItem(2, "agent", rev = 11, active = true), doneTool, prose, reply),
             evidence(*head, finished, scenarioItem(8, "tool_call", rev = 10, parent = 2, active = true), prose, reply),
             evidence(*head, finished, scenarioItem(8, "tool_call", rev = 10, parent = 2, turn = "other"), prose, reply),
-            // Prose between tools splits the run.
-            evidence(*head, finished, scenarioItem(8, "tool_call", rev = 10, parent = 2, order = 10), scenarioItem(9, text = "split", parent = 2, order = 9), reply),
             evidence(*head, scenarioItem(2, "agent", rev = 11, status = "finished", endedOrder = 13), doneTool, prose, reply),
             evidence(snapshot(*finishedAgent).copy(repairNeeded = true)),
         )) {
@@ -260,14 +272,27 @@ class QueueRecoveryAgentEvidenceTest {
         val held = requireNotNull(start.heldOpenReply(start.owner, "Hello, streamed"))
         val done = legacyReply("seg", "Hello, streamed world", listOf(7, 9, 5))
         assertNotNull(legacy(legacyUser("hello"), done).settledHeldReply(start.owner, held, "Hello, streamed world"))
-        assertNull(legacy(legacyUser("hello"), done.copy(content = "Hello, streamed wor")).settledHeldReply(start.owner, held, "Hello, streamed wor"))
+        assertNull(
+            legacy(
+                legacyUser("hello"),
+                done.copy(content = "Hello, streamed wor"),
+            ).settledHeldReply(start.owner, held, "Hello, streamed wor"),
+        )
         assertNull(
             legacy(legacyUser("hello"), legacyReply("seg", "Hello, streamed ", listOf(7, 9)), legacyReply("suffix", "world", listOf(5)))
                 .settledHeldReply(start.owner, held, "Hello, streamed "),
         )
-        val sendNow = arrayOf(legacyUser("hello"), legacyTool("toolu_e2e"), legacyUser("bye"), legacyReply("r", "send-now-marker", listOf(15)))
+        val sendNow =
+            arrayOf(legacyUser("hello"), legacyTool("toolu_e2e"), legacyUser("bye"), legacyReply("r", "send-now-marker", listOf(15)))
         assertNull(legacy(*sendNow).sendNowPlacementFailure("bye", "send-now-marker"))
-        assertNotNull(legacy(sendNow[0], legacyTool("toolu_e2e", status = ToolCallStatus.Running), sendNow[2], sendNow[3]).sendNowPlacementFailure("bye", "send-now-marker"))
+        assertNotNull(
+            legacy(
+                sendNow[0],
+                legacyTool("toolu_e2e", status = ToolCallStatus.Running),
+                sendNow[2],
+                sendNow[3],
+            ).sendNowPlacementFailure("bye", "send-now-marker"),
+        )
         val replay = listOf(legacyUser("hello"), legacyReply("a", "alpha ", listOf(6)), legacyReply("b", "bravo charlie", listOf(6, 7)))
         val rows = replay.map { ThreadItem.MessageItem(it) }
         assertEquals(rows.hasCompletedReplay(ORDERED), legacy(*replay.toTypedArray()).hasCompletedReplay(ORDERED))

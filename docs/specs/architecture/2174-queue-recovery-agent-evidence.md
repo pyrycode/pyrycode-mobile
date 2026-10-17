@@ -78,3 +78,7 @@ Write `app/src/test/java/de/pyryco/mobile/e2e/QueueRecoveryAgentEvidenceTest.kt`
 ## Documentation handoff
 
 - Pending for the documentation stage: `docs/e2e-interactive-stream.md`, scripted ladder: record that `stream-queued-echo`, `send-now`, `background-agent` and `replay-order` observe through `harnessThreadEvidence` (legacy route) with the named counted results from the PR, that rendered agent/run identities replace the raw joins, and that these passes do not prove negotiated production activation.
+
+## Revisions
+
+- 2026-10-17: A probe expecting owned prose between tools to split the Agent's run failed: inside an Agent block the folded run spans its owned prose too, which is why `verifyAgentRunNavigation` expects every child key to disappear when the run is closed. The case was a wrong expectation and is removed; `settledAgentPrecedes` keeps its one-run check, which still rejects a tool outside the owned run. Queued-prompt integrity is asserted on the completion snapshot itself (wait for the held item's completed text, then `settledHeldReply`), so a transient split row cannot be waited out.

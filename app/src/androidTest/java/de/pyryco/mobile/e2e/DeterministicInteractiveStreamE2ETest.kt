@@ -989,7 +989,10 @@ class DeterministicInteractiveStreamE2ETest {
                                 current.records.any { it.message.id == held.message.id && it.fullText == STREAMED_REPLY }
                         }
                     // The held item's one settled form, alone in its turn: no suffix row split it.
-                    assertNotNull("the held reply must settle alone; shape=$snapshotShape", finished.settledHeldReply(start.owner, held, STREAMED_REPLY))
+                    assertNotNull(
+                        "the held reply must settle alone; shape=$snapshotShape",
+                        finished.settledHeldReply(start.owner, held, STREAMED_REPLY),
+                    )
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 throw AssertionError("queued echo checkpoint timed out: $checkpoint; shape=$snapshotShape", e)
