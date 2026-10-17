@@ -4252,6 +4252,9 @@ harness to the real negotiated source — is later work and is not claimed here.
 
 ### Reply, reopen and readiness evidence migration (#2170)
 
+The word-reveal method named below was removed on 2026-10-17. This section is
+the historical record of the migration.
+
 The ten `observeMessages` reads inside
 `interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately`,
 `interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
