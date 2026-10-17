@@ -5281,7 +5281,9 @@ class InteractiveStreamE2ETest {
                                     "active_child=${childReplies.count { row -> row.fact?.active == true }} " +
                                     "done_child=${childReplies.count { row -> row.fact?.status in setOf("done", "finished") }} " +
                                     "owned_child=${childReplies.count { row -> row.agentId == agent?.block }} " +
-                                    "owned_tools=${it.records.count { row -> row.message.role == Role.Tool && row.agentId == agent?.block && row.message.id != agent?.block }} " +
+                                    "owned_tools=${it.records.count { row ->
+                                        row.message.role == Role.Tool && row.agentId == agent?.block && row.message.id != agent?.block
+                                    }} " +
                                     "main_reply=${it.settledMainReply(it.owner, mainTurn) != null}",
                             )
                             it.heldAgentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn) != null

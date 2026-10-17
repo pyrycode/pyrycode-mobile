@@ -135,7 +135,9 @@ class AgentReplyEvidenceTest {
         val proof = held.heldAgentReplyEvidence(held.owner, "raw-task", "raw-agent", "child", "main")
         assertNotNull(proof)
         assertEquals(2L, proof?.heldReply?.fact?.id)
-        assertNull(held.heldAgentReplyEvidence(evidence(agentReplySnapshot(), token = Any()).owner, "raw-task", "raw-agent", "child", "main"))
+        assertNull(
+            held.heldAgentReplyEvidence(evidence(agentReplySnapshot(), token = Any()).owner, "raw-task", "raw-agent", "child", "main"),
+        )
         val unowned = evidence(agentReplySnapshot(child = authoritativeItem(2, active = true, status = "running", turn = "child")))
         assertNull(unowned.heldAgentReplyEvidence(unowned.owner, "raw-task", "raw-agent", "child", "main"))
     }

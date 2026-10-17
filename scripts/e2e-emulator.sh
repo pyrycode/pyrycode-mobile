@@ -1439,7 +1439,7 @@ PY
     [ -n "${PEER_TOKEN}" ] || die "empty peer pairing token"
     log "second-client peer minted on serverId=${SERVER_ID}"
   fi
-  if [ -n "${DETERMINISTIC}" ] && { [ "${SCENARIO}" = "ping" ] || [ "${SCENARIO}" = "background-agent" ]; }; then
+  if [ -n "${DETERMINISTIC}" ] && [ "${SCENARIO}" = "ping" ]; then
     env "HOME=${ISO_HOME}" PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME_PEER}" \
       >"${PAIR_PEER_OUT}" 2>&1 || die "scripted peer pairing failed"
     PARSED_PEER="$(pair_token "${PAIR_PEER_OUT}")" || die "scripted peer parsing failed"

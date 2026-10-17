@@ -101,15 +101,18 @@ internal fun ThreadEvidence.heldAgentReplyEvidence(
     if (!admitted || !owner.matches(current)) return null
     if (owner.kind == ThreadEvidenceKind.Legacy) return agentReplyEvidence(current, taskId, toolUseId, childTurn, mainTurn)
     val agent = backgroundAgent(taskId, toolUseId) ?: return null
-    val paragraphs = records.filter {
-        it.fact?.kind == "assistant_message" && it.turn == childTurn && it.agentId == agent.block && it.fullText.isNotBlank()
-    }
+    val paragraphs =
+        records.filter {
+            it.fact?.kind == "assistant_message" && it.turn == childTurn && it.agentId == agent.block && it.fullText.isNotBlank()
+        }
     paragraphs.map { it.session }.distinct().singleOrNull() ?: return null
     val held = paragraphs.lastOrNull() ?: return null
     val main = settledMainReply(current, mainTurn) ?: return null
-    val run = records.firstOrNull {
-        it.message.role == Role.Tool && it.agentId == agent.block && it.message.id != agent.block
-    }?.toolRunId ?: return null
+    val run =
+        records
+            .firstOrNull {
+                it.message.role == Role.Tool && it.agentId == agent.block && it.message.id != agent.block
+            }?.toolRunId ?: return null
     return AgentReplyEvidence(agent, held, run, main)
 }
 

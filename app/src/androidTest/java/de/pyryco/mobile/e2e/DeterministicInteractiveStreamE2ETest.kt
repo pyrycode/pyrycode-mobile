@@ -1125,18 +1125,8 @@ class DeterministicInteractiveStreamE2ETest {
                     .single { it.name == SEED_CHANNEL_NAME }
                     .id
             }
-        val args = InstrumentationRegistry.getArguments()
-        val peer =
-            SecondClientPeer(
-                PairedServer(
-                    requireNotNull(args.getString("serverId")),
-                    requireNotNull(args.getString("peerToken")),
-                    requireNotNull(args.getString("relayUrl")),
-                    requireNotNull(args.getString("serverStaticPublicKey")),
-                ),
-            )
+        val route = requireNotNull(repository.negotiatedThread)
         try {
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             typeAndSend(SEND_PROMPT)
             val running = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_still_working)
             val finished = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_finished)
@@ -1146,21 +1136,31 @@ class DeterministicInteractiveStreamE2ETest {
             val expandLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_expand)
             val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(running).fetchSemanticsNodes().isNotEmpty() }
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                peer.recorded(conversationId).count { it.type == "tool_use" && peer.field(it, "parent_tool_use_id") == "agent1783" } >= 3
+            val facts = runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    route.observe(conversationId).first { snapshot ->
+                        val root = snapshot.items.singleOrNull {
+                            it.kind == "agent" && it.content.jsonObject["tool_use_id"]?.jsonPrimitive?.content == "agent1783"
+                        }
+                        root != null && snapshot.items.count { it.kind == "tool_call" && it.parent == root.id } == 3 &&
+                            snapshot.items.any { it.kind == "turn_end" && it.turn == root.turn }
+                    }
+                }
             }
-            val received = peer.recorded(conversationId)
-            val origin = peer.field(received.single { it.type == "tool_use" && peer.field(it, "tool_use_id") == "agent1783" }, "turn_id")
-            val mainEnd = received.indexOfFirst { it.type == "turn_end" && peer.field(it, "turn_id") == origin }
+            assertTrue("scripted diagnostics require the admitted production route", route.support.value is de.pyryco.mobile.data.repository.ThreadSupport.Supported)
+            val received = facts.items.sortedBy { it.order }
+            val root = received.single { it.kind == "agent" && it.content.jsonObject["tool_use_id"]?.jsonPrimitive?.content == "agent1783" }
+            val origin = root.turn
+            val mainEnd = received.indexOfFirst { it.kind == "turn_end" && it.turn == origin }
             assertTrue("launching main turn must end", mainEnd >= 0)
             val lateTools =
                 received
                     .drop(mainEnd + 1)
-                    .filter { it.type == "tool_use" && peer.field(it, "parent_tool_use_id") == "agent1783" }
-            assertEquals(listOf("late1951-one", "late1951-two"), lateTools.map { peer.field(it, "tool_use_id") })
-            assertTrue("late children retain launching attribution", lateTools.all { peer.field(it, "turn_id") == origin })
-            assertEquals("child activity must not open another main turn", 1, received.count { it.type == "turn_end" })
-            // Raw live events above diagnose attribution; the rendered block and run identities prove the phone's content.
+                    .filter { it.kind == "tool_call" && it.parent == root.id }
+            assertEquals(listOf("late1951-one", "late1951-two"), lateTools.map { it.content.jsonObject["tool_use_id"]?.jsonPrimitive?.content })
+            assertTrue("late children retain launching attribution", lateTools.all { it.turn == origin })
+            assertEquals("child activity must not open another main turn", 1, received.count { it.kind == "turn_end" })
+            // Admitted daemon facts diagnose attribution; projected identities below prove the phone's content.
             val evidence = harnessThreadEvidence(repository)
             val launched =
                 runBlocking {
@@ -1246,7 +1246,7 @@ class DeterministicInteractiveStreamE2ETest {
                     .launch(MainActivity::class.java)
             }, openThread = ::arriveInSeededThread, send = { typeAndSend("settlement2175") })
         } finally {
-            peer.close()
+            route.cancel(conversationId)
         }
     }
 
