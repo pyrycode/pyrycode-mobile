@@ -5272,6 +5272,18 @@ class InteractiveStreamE2ETest {
                 runBlocking {
                     withTimeout(THREAD_TIMEOUT_MS) {
                         liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) {
+                            val agent = it.backgroundAgent(task.taskId, agentId)
+                            val childReplies = it.records.filter { row -> row.message.role == Role.Assistant && row.turn == childTurn }
+                            android.util.Log.i(
+                                "AgentReplyEvidence",
+                                "event=agent_reply_evidence_wait roots=${it.records.count { row -> row.fact?.kind == "agent" }} " +
+                                    "matched=${agent != null} child_replies=${childReplies.size} " +
+                                    "active_child=${childReplies.count { row -> row.fact?.active == true }} " +
+                                    "done_child=${childReplies.count { row -> row.fact?.status in setOf("done", "finished") }} " +
+                                    "owned_child=${childReplies.count { row -> row.agentId == agent?.block }} " +
+                                    "owned_tools=${it.records.count { row -> row.message.role == Role.Tool && row.agentId == agent?.block && row.message.id != agent?.block }} " +
+                                    "main_reply=${it.settledMainReply(it.owner, mainTurn) != null}",
+                            )
                             it.agentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn) != null
                         }
                     }
