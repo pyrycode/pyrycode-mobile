@@ -224,8 +224,16 @@ contract. These cannot emit daemon messages. Any explicitly captured refused cal
 requires its complete request payload and must be consumed.
 Checking the pump's close state and accepting a send share one lock. A sender queued
 before teardown cannot reuse an earlier open-state check after that connection closes.
-Recorded stream events retain cadence. Real push delivery, encryption, transport recovery
-and timing obligations retain their external checks.
+Recorded stream events keep their exact order, but replay compresses their cadence.
+Each captured gap replays at one tenth of its length, `SuiteConnections.REPLAY_DELAY_DIVISOR`.
+A nonzero gap keeps at least 20 ms, or its captured length when that is shorter, so
+consecutive frames still reach the screen in separate UI frames and intermediate states
+stay observable. Recordings keep the real captured gaps; only the player shortens them.
+Replay proves payload, order and correlation, not timing, so the shorter wait drops no
+coverage. Checkpoints, close readiness and negative observations wait for released
+messages, not tape time, and the negative window stays its fixed one second.
+Real push delivery, encryption, transport recovery and timing obligations retain their
+external checks.
 
 ### Atomic transport close (#2219)
 

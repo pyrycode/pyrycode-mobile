@@ -74,7 +74,7 @@ internal class SuiteConnections private constructor(
                     is Delivery.Barrier -> delivery.done.complete(Unit)
                     is Delivery.Steps -> for (step in delivery.values) {
                         try {
-                            delay(step.delayMs)
+                            delay(replayDelayMs(step.delayMs))
                             route(step)
                         } catch (error: Throwable) {
                             failure.compareAndSet(null, error)
@@ -458,6 +458,18 @@ internal class SuiteConnections private constructor(
     }
 
     companion object {
+        /**
+         * Replay proves payload, order and correlation, not timing (docs/recorded-tests.md), so captured
+         * gaps shrink by this divisor. Capture still records the real gaps; recordings stay unchanged.
+         */
+        const val REPLAY_DELAY_DIVISOR = 10L
+
+        /** A nonzero gap keeps this much, or its captured value if shorter, so frames stay in separate UI frames. */
+        const val REPLAY_MIN_GAP_MS = 20L
+
+        fun replayDelayMs(capturedMs: Long): Long =
+            if (capturedMs <= 0) 0 else maxOf(capturedMs / REPLAY_DELAY_DIVISOR, minOf(capturedMs, REPLAY_MIN_GAP_MS))
+
         fun replaying(
             scope: CoroutineScope,
             tape: RecordedSuiteTape,

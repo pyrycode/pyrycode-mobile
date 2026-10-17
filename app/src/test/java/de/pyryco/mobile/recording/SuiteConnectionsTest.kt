@@ -346,6 +346,15 @@ class SuiteConnectionsTest {
             }
         }
 
+    @Test fun replayScalesCapturedGapsWithAFloorThatNeverExceedsTheCapture() {
+        assertEquals(0L, SuiteConnections.replayDelayMs(0))
+        assertEquals(1L, SuiteConnections.replayDelayMs(1))
+        assertEquals(20L, SuiteConnections.replayDelayMs(20))
+        assertEquals(20L, SuiteConnections.replayDelayMs(150))
+        assertEquals(50L, SuiteConnections.replayDelayMs(500))
+        assertEquals(2697L, SuiteConnections.replayDelayMs(26975))
+    }
+
     @Test fun recordedCadencePreservesIntermediateObservations() =
         runTest {
             val entries =
@@ -367,7 +376,8 @@ class SuiteConnectionsTest {
             runCurrent()
             assertEquals("turn_state", pump.inbound.first().type)
             val finished = async { pump.inbound.first() }
-            advanceTimeBy(499)
+            // The captured 500 ms gap replays scaled to 50 ms; order and the intermediate state remain.
+            advanceTimeBy(49)
             runCurrent()
             assertFalse(finished.isCompleted)
             advanceTimeBy(1)
