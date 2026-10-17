@@ -54,7 +54,7 @@ Missing or mismatched evidence returns null; callers wait within existing timeou
 
 - JVM `app/src/test/java/de/pyryco/mobile/e2e/AgentReplyEvidenceTest.kt`, written first: the probes in the table, on authoritative facts and one legacy parity case.
 - Shared screen probe `app/src/sharedTest/java/de/pyryco/mobile/e2e/AgentReplyEvidenceScreenTest.kt` (Robolectric): mount `ThreadScreen` with an authoritative projection and collapsed tool uses, derive ids only from `agentReplyEvidence`, then replay the scenario's rendered steps: closed run under `tool-run:<runId>` hides the paragraph; opening shows exactly one paragraph under `background-agent-child:<block>`; closing hides it; the main reply renders outside the block.
-- Existing `ThreadEvidenceTest`, `SettledAssistantReplyTest` unchanged and rerun.
+- Existing `ThreadEvidenceTest` and `SettledAssistantReplyTest` stay unchanged; their sources are untouched, so the focused gate (one class per run) is spent on the new probes.
 - `compileDebugAndroidTestKotlin`; recorded replay of both methods via `python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.recording.RecordedMobileSuiteTest#…'` with counts. No new device-only test.
 
 ## Open Questions
