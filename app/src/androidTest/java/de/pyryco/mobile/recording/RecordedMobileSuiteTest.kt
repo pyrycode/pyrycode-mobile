@@ -234,9 +234,6 @@ class RecordedMobileSuiteTest {
     @Test fun interactiveTurn_twoHostsCollidingConversationId_stayPerHost() =
         original.interactiveTurn_twoHostsCollidingConversationId_stayPerHost()
 
-    @Test fun interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply() =
-        original.interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply()
-
     @Test
     fun negativeControl_toolClaudeNeverUses_isNeverDisplayed() = original.negativeControl_toolClaudeNeverUses_isNeverDisplayed()
 

@@ -112,7 +112,7 @@ The permission recording above remains separate. The complete suite inventories 
 annotated real-Claude method in `scripts/recorded-suite-inventory.py`. Its native runner
 calls each original scenario body through the real repository and Compose interface.
 Two workspace scenarios remain explicitly retired because their controls were removed.
-The current routine runner contains 68 recordings. Three further original methods are
+The current routine runner contains 67 recordings. Three further original methods are
 owned by the existing scripted suite because both versions execute the same assertions:
 
 | Original scenario | Retained scripted scenario | Shared assertions |
@@ -125,13 +125,15 @@ The manifest names each exact scripted method. The inventory requires that annot
 method and its original harness mapping to remain enabled. It accepts no other scripted
 exemptions. These three methods remain in the explicit live selection. Their recordings
 are no longer shipped or counted as successful captures. No other recording used them.
-The 73 original methods therefore comprise 68 recordings, three scripted owners and
+The 72 original methods therefore comprise 67 recordings, three scripted owners and
 two obsolete workspace methods. Every scripted scenario remains in the normal gate.
+The word-reveal scenario and its recording were removed on 2026-10-17 at Juhana's
+request, because text appearing at once is acceptable.
 
-Recording capture, replay and strict compatibility commands below select the 68 retained
+Recording capture, replay and strict compatibility commands below select the 67 retained
 recordings. Scripted ownership never supplies a capture or compatibility receipt.
 Missing recordings, changed contracts, package mismatches and incomplete counted
-evidence still fail. Historical 71-recording receipts below describe the earlier selection.
+evidence still fail. Historical 71- and 68-recording receipts describe earlier selections.
 Removing the repeated routine native executions accounts for 42.416 seconds in one
 retained Mac run. This is expected test work saved, not a measured whole-verifier gain.
 
@@ -224,8 +226,25 @@ contract. These cannot emit daemon messages. Any explicitly captured refused cal
 requires its complete request payload and must be consumed.
 Checking the pump's close state and accepting a send share one lock. A sender queued
 before teardown cannot reuse an earlier open-state check after that connection closes.
-Recorded stream events retain cadence. Real push delivery, encryption, transport recovery
-and timing obligations retain their external checks.
+Recorded stream events keep their exact order, but replay compresses their cadence.
+Each captured gap replays at one tenth of its length, `SuiteConnections.REPLAY_DELAY_DIVISOR`.
+A nonzero gap keeps at least 20 ms, or its captured length when that is shorter, so
+consecutive frames still reach the screen in separate UI frames and intermediate states
+stay observable. Recordings keep the real captured gaps; only the player shortens them.
+Replay proves payload, order and correlation, not timing, so the shorter wait drops no
+coverage.
+
+A few recordings replay at their captured speed instead. They are listed by scenario name in
+`SuiteConnections.ORIGINAL_SPEED_SCENARIOS` and selected when the suite loads the tape.
+Each asserts a transient on-screen state that lasts only as long as a captured gap, so the
+scaled gap could end it before the assertion sees it. The new-session scenario is listed
+because it waits for the "wrapping up" label, which lasts about 4.5 seconds in the recording.
+Add a scenario only after it fails at the scaled speed and the failed wait is such a
+transient. Do not add one for a slow or flaky device; a unit test checks that each
+listed name has a shipped recording. Checkpoints, close readiness and negative observations wait for released
+messages, not tape time, and the negative window stays its fixed one second.
+Real push delivery, encryption, transport recovery and timing obligations retain their
+external checks.
 
 ### Atomic transport close (#2219)
 
