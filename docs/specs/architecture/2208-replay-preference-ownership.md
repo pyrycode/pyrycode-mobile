@@ -36,7 +36,7 @@ The preferences instance belongs to the test Application, independent of any Koi
 | Incomplete replay restores original graph and state | `RecordedSuiteIsolationDeviceTest.incompleteReplayRestoresOrdinaryInstrumentationArgumentsAndGraph` checks arguments, preferences, pairings and fake repository. |
 | A second replay reuses the same file and host identities | Repeat the incomplete replay in the isolation regression, with ordinary graph closure between sessions. |
 | Successful replay cleanup | Run the three original recorded methods and assert restoration around a successful original ping scenario in the isolation class. |
-| Application graph rebuild | Existing `PeerIdentityLifecycleTest` plus identity checks in the isolation regression. |
+| Application graph rebuild | Store identity checks in the isolation regression and the original recorded restart scenarios in the complete profile. |
 
 ## Error handling
 
@@ -48,10 +48,14 @@ Reproduce the complete in-depth Linux command on unchanged main. Add a native re
 
 ## Open Questions
 
-- Confirm the shared-module factory invalidation with a controlled failing regression and classify the empty delete failure from fresh native reports.
+- Resolved: the controlled native regression fails because isolated graph closure replaces the application's DataStore. The fresh main sweep reports instrumentation process crashes after duplicate-store exceptions; delete has an empty crash record, not a product assertion failure. The original delete scenario must pass after repair.
 - Record full-profile inventory, completion and any independently established inherited failures in the PR and evidence summary.
 
 ## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/development-verification-gates.md`, Device gate guidance: diagnosed ownership boundary and counted Linux evidence.
 - Pending documentation stage: `docs/recorded-tests.md`, replay isolation lifecycle: document the application-owned preference boundary if its documented lifecycle changes.
+
+## Revisions
+
+- 2026-10-17: Confirmed the planned ownership cause with one executed/failed native regression before the fixture change. The fresh dispatcher sweep at `a0c7db693245cce59d67377f672d2bec4c7dca65` reproduces all three failures (113 executed, 110 passed, 3 failed), with explicit instrumentation process-crash diagnostics. The existing after-graph-close production contract remains unchanged. Rebuild coverage uses the isolation regression and recorded restart scenarios, which run in the non-live UI profile, rather than the separately packaged e2e peer test.
