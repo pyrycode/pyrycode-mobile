@@ -39,7 +39,6 @@ import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.LiveSessionEvent
-import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
