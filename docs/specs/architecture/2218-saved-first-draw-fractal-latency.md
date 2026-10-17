@@ -69,7 +69,15 @@ Identical source and generation therefore pass on build-hp-1 with at least 445 m
 
 ## Open Questions
 
-- Is the fractal-2 SwANGLE launcher intended? This is answered by the native blocker, not by Mobile.
+- Is the fractal-2 SwANGLE launcher intended? This is answered by the native blocker, not by Mobile. Resolved on #2222: yes, see Revisions.
+
+## Revisions
+
+### 2026-10-17: blocker #2222 resolved by operator decision and #2228
+
+- **What changed.** The operator answered #2222 directly and closed it. The SwANGLE wrapper is intended on both build-hp-1 and build-fractal-2, so the mount stays and no native-launcher A/B runs. The operator attributes the remaining difference to Fractal's slower processor under software rendering. PR #2228, which the operator made outside the pipeline and which is merged into this branch, changes `SavedThreadFirstDrawDeviceTest`. It keeps #1949's 1000 ms bound on hardware renderers and applies 2000 ms when the guest `GL_RENDERER` string contains SwiftShader. The renderer is read once through a 1x1 EGL pbuffer before any timing. The optional-projection twin holds projection for the applied bound plus 100 ms, so 2100 ms under SwiftShader. The 3000 ms slow control exceeds both bounds.
+- **What drove it.** The operator's decision on #2222 rescoped the goal: the class must pass under SwANGLE on both hosts, and the operator allowed either a faster draw or a timing budget justified for software rendering. That decision supersedes the ticket's "1000 ms bound, 1100 ms projection hold, no threshold relaxation" wording, but only under a SwiftShader renderer. Everything else in that criterion stands unchanged: readiness windows, cold timed construction, the exact frame endpoint, both fixtures, every row, marker and request assertion, and no warming, retries or skips.
+- **New contract for #2218.** This ticket still changes no Mobile production or test source. The localization above remains its cause analysis, and the Mobile-side candidates it names stay unimplemented, because no measurement shows a Mobile defect. Fresh focused acceptance runs on Linux/build-hp-1 at the merged candidate, which includes #2228. That run is also the first device run of #2228's renderer detection, so it checks the logged `event=first_draw_bound` renderer and bound against the failure messages and phases. Its checked summary goes beside the earlier ones under `app/src/androidTest/assets/saved-first-draw-2218/`, and the raw evidence goes under `$AGENTS_REPO_PATH/logs/evidence/2218/`. build-fractal-2 is not run from this ticket, which is claimed to build-hp-1. The dispatcher's configured UI gate stays pending, and a Fractal result comes only from that gate, never from this run.
 
 ## Documentation handoff
 
