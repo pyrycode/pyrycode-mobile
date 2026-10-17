@@ -69,6 +69,25 @@ in the usage-limit line and both effort notes (footer + Status sheet), and [#111
 in the question-batch modal's title. The model picker still says "Claude" unconditionally; the model picker
 and the agent switch `agent` will eventually drive are still open, per #1108's stated motivation.
 
+`pinnedAt` (#2213) is the host's confirmed pin instant for a channel, trailing-defaulted to `null` so
+existing constructor sites and fixtures are unaffected; `null` means unpinned, whether the host never
+pinned the conversation or an older host omits the key entirely. Wire mapping:
+[`ConversationSummaryDto`](mobile-protocol-v2-wire-layer-application-payloads.md#application-payloads-decoded-on-top-of-envelope)
+(`conversations` rows) and [`ConversationResponseDto`](mobile-protocol-v2-wire-layer-application-payloads.md#application-payloads-decoded-on-top-of-envelope)
+(`conversation_created` / `conversation_updated`) both carry `@SerialName("pinned_at")` through the
+existing `InstantIso8601Serializer`, so a valid RFC 3339 instant maps exactly and a malformed non-null
+value fails the whole decode — the #316 posture, not a per-field catch — before any row reaches
+`ConversationListProjection`. A confirmed `conversation_updated`, correlated or an unsolicited other-device
+push, replaces the stored `pinnedAt` by id the same way it replaces every other field; `null` is itself a
+confirmed value and clears a previous pin rather than being read as "field omitted, keep the old one" (the
+`workspaceLabel` convention, not the `agent` one). This slice is readable and persisted only — no command
+sends a pin/unpin request yet and no UI renders the value; those are separate slices of #2205. See
+[Conversation cache § the cache-local record must mirror every Conversation field](conversation-cache-layout.md#the-cache-local-record-must-mirror-every-conversation-field-999)
+for the on-disk mirror and
+[Remote conversation repository — state, errors and hand-off § State & concurrency model](remote-conversation-repository-state-errors-and-handoff.md#state--concurrency-model)
+for why every mutation command now returns the row the inbound collector published, rather than
+re-decoding and re-upserting its own reply.
+
 `workspaceLabel` (#720) is opaque, daemon-authored display text, retained verbatim and independent of `cwd` — never a path, never derived from it. Trailing-defaulted to `null` so existing constructor sites and fixtures are unaffected. Wire mapping: [`ConversationSummaryDto`](mobile-protocol-v2-wire-layer.md#application-payloads-decoded-on-top-of-envelope) (`conversations` rows, including archived) and [`ConversationResponseDto`](mobile-protocol-v2-wire-layer.md#application-payloads-decoded-on-top-of-envelope) (`conversation_created` / `conversation_updated`) both carry `@SerialName("workspace_label")` and copy it straight through their mappers; an explicit wire `null` and an absent legacy key both map to `null`. Its first render path is the shared `de.pyryco.mobile.ui.workspace.workspaceDisplayName(cwd, label)` function, added by [`#722`](https://github.com/pyrycode/pyrycode-mobile/issues/722) — see [`workspace-chip.md`](workspace-chip.md#workspacelabel-derivation) for the label-first display rule and its render-path length clamp. #722 also deleted the private `Conversation.workspaceLabel()` extension that previously lived in `ThreadViewModel.kt` and derived a cwd-basename fallback only; the parens-only naming clash between that extension and this property is retired along with it — see [`thread-screen-how-it-works-state.md`](thread-screen-how-it-works-state.md#combineobserveconversations-observemessages-pendingworkspacepickerstatein-whilesubscribed--three-upstreams-since-137) for the history.
 
 Co-located in the same file: a top-level `const val DEFAULT_SCRATCH_CWD: String = "~/.pyrycode/scratch"` — the sentinel `cwd` for conversations with no bound workspace. Single source of truth for the value: imported by `FakeConversationRepository` seeds and `ConversationRow` (which suppresses its workspace label when `cwd == DEFAULT_SCRATCH_CWD`). Introduced in #19; renamed from `DefaultScratchCwd` in #83 to satisfy ktlint's `property-naming` default (Kotlin official style for top-level `const val`). Lives at `data/model/Conversation.kt` because both the UI and data layers already depend on this package, and a separate `WorkspacePaths.kt` for one constant would be premature.

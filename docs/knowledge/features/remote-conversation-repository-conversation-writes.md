@@ -238,22 +238,26 @@ private suspend fun sendArchiveToggle(conversationId: String, type: String) {
         id = requests.nextRequestId(), type = type, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(ArchiveConversationPayloadDto(conversationId = conversationId)),
     )
-    val reply = requests.sendAndAwaitReply(request)     // throws on server `error` / not-Open; the decode below is unreachable on failure
-    // Confirmed-upsert — ONLY after a successful decode; no return value (interface is Unit). Since #1108
-    // upsertConversation takes the decoded record, not a mapped Conversation — see
-    // [ConversationListProjection.upsertConversation](remote-conversation-repository-send-create-promote-rename.md#confirmed-insert-via-conversationlistprojectionupsertconversation-the-projections-second-writer).
-    conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+    requests.sendAndAwaitConversation(request)     // #2213: collector decodes, folds and captures; no return value needed (interface is Unit)
 }
 ```
+
+> Before [#2213](remote-conversation-repository-state-errors-and-handoff.md#state--concurrency-model), this
+> body called `requests.sendAndAwaitReply(request)` and then decoded + `upsertConversation`'d the raw reply
+> itself, the same shape `rename`/`promote` originally shipped. See
+> [Send, create, promote, rename § `createDiscussion`](remote-conversation-repository-send-create-promote-rename.md#creatediscussionworkspace--the-second-mutation-347)
+> for why that caller-side re-fold was retired.
 
 - **One shared request DTO for both verbs.** `ArchiveConversationPayloadDto` carries only
   `conversation_id` — archive and restore are a symmetric toggle of one durable flag (same shape, same
   handler, same not-found/reply behaviour), so pyrycode#881 defined one payload server-side for the pair
   and this mirrors that; `ConversationCommands` disambiguates by the `Envelope.type` string passed into
   `sendArchiveToggle`, not by the payload shape.
-- **The reply is `conversation_updated`**, the same success arm `rename`/`promote` already use — no
+- **The reply is `conversation_updated`**, the same collector arm `rename`/`promote` already use — no
   `onInbound` change needed. Decoded through the same #318 `ConversationResponseDto`, so a malformed reply
-  throws the decode exception before `ConversationListProjection.upsertConversation` runs, same as every prior mutation.
+  fails inside that arm before `ConversationListProjection.upsertConversation` runs there, same as every
+  other mutation, and `sendAndAwaitConversation` throws its own generic `SerializationException` in this
+  caller.
 - **The load-bearing change is to the shared decode boundary, not these methods.** Before #549,
   `ConversationResponseDto` didn't decode any archived field and `toConversation()` hardcoded
   `archived = false` — every mutation reply, including this one, would have folded a permanently-unarchived
@@ -306,15 +310,15 @@ suspend fun setMuted(conversationId: String, muted: Boolean) {
         id = requests.nextRequestId(), type = TYPE_SET_CONVERSATION_MUTED, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(SetConversationMutedPayloadDto(conversationId = conversationId, muted = muted)),
     )
-    val reply = requests.sendAndAwaitReply(request)
-    conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+    requests.sendAndAwaitConversation(request)
 }
 ```
 
-- **`sendArchiveToggle`'s shape with a payload that carries a value, not just an id.** Same encode → await
-  correlated `conversation_updated` → #318 `ConversationResponseDto` decode → confirmed-upsert order; a
-  failure (`error`, not-Open session, or a malformed reply) throws before the fold runs, so
-  `ConversationListProjection` keeps its previous value (AC #3).
+- **`sendArchiveToggle`'s shape with a payload that carries a value, not just an id.** Same encode → the
+  collector decodes the correlated `conversation_updated` through #318's `ConversationResponseDto`, folds it
+  and captures it → `sendAndAwaitConversation` returns that capture (#2213); a failure (`error`, not-Open
+  session, or a malformed reply) leaves the fold unrun, so `ConversationListProjection` keeps its previous
+  value (AC #3).
 - **`SetConversationMutedPayloadDto.muted` is a non-nullable `Boolean` with no Kotlin default**, so `false`
   is always on the wire — the daemon refuses a frame with `muted` absent or explicit `null` as
   `protocol.malformed` rather than reading a missing key as `false`. Contrast
@@ -422,17 +426,17 @@ suspend fun changeWorkspace(conversationId: String, workspace: String): Session 
         id = requests.nextRequestId(), type = TYPE_CHANGE_WORKSPACE, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(ChangeWorkspacePayloadDto(conversationId = conversationId, cwd = workspace)),
     )
-    val reply = requests.sendAndAwaitReply(request) // throws on server `error` / not-Open; the decode below is unreachable on failure
-    conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply)) // confirmed-upsert — ONLY after a successful decode
+    requests.sendAndAwaitConversation(request) // #2213: collector decodes, folds and captures; the row itself is unused here
     return Session(id = "", conversationId = conversationId, claudeSessionUuid = "",
         startedAt = Clock.System.now(), endedAt = null)
 }
 ```
 
-- **The reply is `conversation_updated`**, the same success arm `rename`/`promote`/`archive` already use
+- **The reply is `conversation_updated`**, the same collector arm `rename`/`promote`/`archive` already use
   — no `onInbound` change needed (unlike [`delete`](#deleteconversationid--the-eighth-mutation-first-remove-shaped-one-532),
-  whose reply type was genuinely new). Decoded through the same #318 `ConversationResponseDto`; a
-  malformed reply throws before `upsertConversation` runs.
+  whose reply type was genuinely new). Decoded through the same #318 `ConversationResponseDto`; a malformed
+  reply fails inside that arm before `upsertConversation` runs there, and `sendAndAwaitConversation` throws
+  in this caller instead (#2213).
 - **The path is forwarded verbatim, untrusted.** The mobile side does not validate, canonicalise, or
   open the path — the daemon confines it to `$HOME` (fail-closed, strict non-creating confiner) *before*
   storing the resolved realpath, and rejects an empty / out-of-`$HOME` / undecodable path with
@@ -492,10 +496,14 @@ suspend fun setSystemPrompt(conversationId: String, systemPrompt: String?) {
         id = requests.nextRequestId(), type = TYPE_SET_SYSTEM_PROMPT, ts = Clock.System.now().toString(),
         payload = setSystemPromptPayload(conversationId, systemPrompt),
     )
-    val reply = requests.sendAndAwaitReply(request)
-    conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+    requests.sendAndAwaitConversation(request)
 }
 ```
+
+> Since [#2213](remote-conversation-repository-state-errors-and-handoff.md#state--concurrency-model),
+> `setSystemPrompt` no longer takes a `conversationList: ConversationListProjection` constructor parameter
+> (it never read it, only wrote through it) — `SessionSettingsCommands` is published by the collector's
+> fold, the same as every other conversation-mutation command.
 
 - **The read is gated fail-closed on `interactive`, before any frame is built — the load-bearing
   divergence from every other one-shot read in this class.** The daemon leaves a conn that never
