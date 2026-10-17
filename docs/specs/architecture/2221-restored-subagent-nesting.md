@@ -56,13 +56,17 @@ No new failure modes. A malformed document is still rejected whole by the existi
 ## Testing strategy
 
 - `LegacyRowCodecTest` (unit): a tool row and a prose row with parents round-trip through `encodeLegacyRow`/`decodeLegacyRows`; a literal pre-change payload decodes with empty parents; a parentless row encodes with no `parentToolUseId` key.
-- `RestoredSubagentNestingTest` (new, `app/src/sharedTest/.../ui/conversations/thread/`, Robolectric): writes a foreground Agent with a child Bash, and a background Agent (`run_in_background=true`) with a child tool and a child prose row, through a real `FileConversationCache`, reads them back with `readThread`, and mounts `ThreadScreen` with the restored items and a roster naming the background `local_agent`. Asserts the foreground child carries `cd_tool_subagent_step` level 1 and the background child tool and prose sit under `background-agent-child:<agentId>`. This is AC2's regression test; it fails on main because the restored parents are empty.
+- `RestoredSubagentNestingTest` (new, `app/src/sharedTest/.../ui/conversations/thread/`, Robolectric): writes a foreground Agent with a child tool, and a background Agent (`run_in_background=true`) with a child tool and a child prose row, through a real `FileConversationCache`, reads them back with `readThread`, and mounts `ThreadScreen` with the restored items and a roster naming the background `local_agent`. Asserts the foreground child carries `cd_tool_subagent_step` level 1 and the background child tool and prose sit under `background-agent-child:<agentId>`. This is AC2's regression test; it fails on main because the restored parents are empty.
 - Live capture (AC3): new method `InteractiveStreamE2ETest#interactiveTurn_foregroundAndBackgroundAgent_childToolsNestUnderAgent`, run once through `python3 scripts/android-test-gate.py live --tests`. One turn launches a foreground and a background Agent, each running one Bash call. It records whether each child `tool_use` carries `parent_tool_use_id` equal to its Agent's `tool_use_id` in a content-free log line, asserts it, and asserts the loaded rows nest live (`toolNestingDepths` depth 1 and the rendered row's subagent description). Device-only because it needs the real daemon and Claude. The finding is posted on the ticket; a daemon or Mobile follow-up is filed per AC3.
 
 ## Open Questions
 
-- Whether the released daemon sends matching parents live. Resolved by the capture.
+- Whether the released daemon sends matching parents live. Resolved by the capture: both the foreground and the background child `tool_use` carried their Agent's id, and both rows nested live (daemon source `0fa1b5f`, v0.40.4-189). No follow-up ticket.
 
 ## Documentation handoff
 
 - `docs/knowledge/features/conversation-cache-layout.md` (or the cache overview section that lists `CachedToolCall`/`CachedMessage` fields): record that both parent ids are now persisted, nullable and omitted when empty, pending for the documentation stage.
+
+## Revisions
+
+- 2026-10-17: the live method is also added to the curated LIVE list in `scripts/e2e-emulator.sh`, beside the other Agent methods. The live gate only accepts curated methods, so the capture cannot run without it. Design unchanged.
