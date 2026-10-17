@@ -4,7 +4,6 @@ import android.util.Log
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
-import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -18,6 +17,7 @@ import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.ui.conversations.components.SESSION_BOUNDARY_TEST_TAG
+import de.pyryco.mobile.ui.conversations.components.TOOL_ROW_TAG
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -127,7 +127,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                     agent.message.id,
                     requireNotNull(owned.toolRunId),
                     children.map { it.message.id },
-                    hasText(requireNotNull(owned.message.toolCall).toolName) and
+                    hasTestTag(TOOL_ROW_TAG) and
                         hasAnyAncestor(hasTestTag("background-agent-child:${agent.message.id}")),
                     context.getString(R.string.agent_go_to),
                     context.getString(R.string.tool_run_expand),
