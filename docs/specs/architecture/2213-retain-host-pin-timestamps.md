@@ -8,6 +8,7 @@
 - `app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt`: `CachedConversation`, `toRecord`, `toDomain`, host hashing and atomic metadata replacement.
 - `app/src/main/java/de/pyryco/mobile/data/repository/ConversationListProjection.kt`: `applySnapshot` validates before mutation; `upsertConversation` replaces by id while retaining session/agent/archive projection rules.
 - `app/src/main/java/de/pyryco/mobile/data/repository/RemoteConversationRepository.kt`: `onInbound` accepts correlated and unsolicited updates and drops malformed records.
+- `app/src/main/java/de/pyryco/mobile/di/HostConversationSource.kt` and `app/src/test/java/de/pyryco/mobile/di/HostConversationSourceTest.kt`: disconnected cache restore and confirmed-list replacement, exercised together in the reconnect probe.
 - `app/src/test/java/de/pyryco/mobile/data/network/ConversationsPayloadTest.kt`: decode and map conventions.
 - `app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryAgentTest.kt`: small channel-backed pump and correlated mutation fixture.
 - `app/src/test/java/de/pyryco/mobile/data/cache/FileConversationCacheTest.kt`: fresh-instance equality and legacy document fixtures.
@@ -40,7 +41,8 @@ No jobs, scopes or flows are introduced. The connection-owned inbound collector 
 | Malformed later list row or update, followed by valid delivery | `RemoteConversationRepositoryPinTest.malformedPinCannotPartiallyMutateTheListOrStopUpdates` |
 | Same conversation id on two hosts | `RemoteConversationRepositoryPinTest.equalConversationIdsRemainConnectionLocal` and cache host collision probe |
 | Cold restore while offline, then reconnect snapshot replacement, reorder and empty list | `RemoteConversationRepositoryPinTest.restoredPinsSurviveOfflineAndReconcileWithFreshSnapshots` |
-| Fresh cache instance, pinned/null records, old documents without field, repeated overwrite | new pin-focused tests beside existing `FileConversationCacheTest` metadata tests |
+| Fresh cache instance, pinned/null records and repeated overwrite | `FileConversationCacheTest`: `pins round-trip exactly and stay isolated for colliding host conversation ids` |
+| Old document without the pin field; malformed persisted pin | `FileConversationCacheTest`: `old metadata documents without a pin load as unpinned` and `malformed cached pin withholds the document without rewriting it` |
 
 ## Error handling
 

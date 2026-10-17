@@ -71,6 +71,9 @@ data class ConversationSummaryDto(
     // Raw, not an [Instant]: an unparsable stamp must cost only the stamp, not the whole list, so
     // [parseArchivedAt] reads it. A non-string value still fails the decode, as a bad `last_used_at` does.
     @SerialName("archived_at") val archivedAt: String? = null,
+    @SerialName("pinned_at")
+    @Serializable(with = InstantIso8601Serializer::class)
+    val pinnedAt: Instant? = null,
 )
 
 /**
@@ -102,6 +105,7 @@ private fun ConversationSummaryDto.toConversation(): Conversation =
         muted = isMuted,
         agent = conversationAgentOf(agent),
         archivedAt = parseArchivedAt(archivedAt),
+        pinnedAt = pinnedAt,
     )
 
 /**
