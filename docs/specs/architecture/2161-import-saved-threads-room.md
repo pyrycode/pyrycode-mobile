@@ -92,12 +92,14 @@ Forecast: about 370 production lines, about 700 test lines, and this plan, about
 - [Trust boundaries] The file-to-database boundary is the pair `legacySource`/`authoritativeSource`. Imported content passes the same validation as today's readers (row uniqueness and settled rows, history coverage validation, `toSnapshot`, exact owner envelope), and the storages validate again inside the import transaction. Owners come only from the caller's exact ids, never from hashed filenames. SHOULD FIX: the authoritative owner check must compare both ids exactly, so a document copied under another conversation's hash is `invalid` and never imported. A probe covers it.
 - [Tokens] No findings. No credentials are stored. Ledger rows hold owner ids and static outcomes only.
 - [Files and storage] Paths still derive from SHA-256 of the ids. The database and its sidecars stay in `noBackupFilesDir`, proven by the factory test. Plaintext app-private storage keeps the existing threat model (ADR 0009). Encryption at rest is out of scope for this migration. Rejected bytes are never rewritten or deleted except by explicit removal.
+  - Revised 2026-10-17 (second rework): `File.isFile` suppresses metadata errors, including denied parent search permission, so it cannot establish absence for a durable import marker. `source` opens through `Files.readAllBytes` and classifies only `NoSuchFileException` as absent. Access and other IO failures remain unavailable, with no marker or replacement write, including across restart.
 - [Android surface] No findings. No component, intent, provider or WebView is added.
 - [Cryptography] No findings. The design adds no primitives and uses SHA-256 only for existing namespacing.
 - [Network and I/O] No findings. Nothing downloads. Import is bounded by the existing 100000-row cap, and page reads go through bounded storage pages after import.
 - [Errors and logs] SHOULD FIX: import logs and exceptions carry static family/outcome/code only. A test asserts that sentinel owner and content strings never reach `RelayLog` or exception messages.
 - [Concurrency] One cache mutex orders import, save and removal under the wrapper's `historyWrites`. Tombstones are durable and commit with the removal. The in-memory host fence stops stale final saves in-process. SHOULD FIX: lift the fence only after a successful `writeConversations`, never on reads. OUT OF SCOPE: a stale conversation-list write from a forgotten host landing after re-pair is the existing metadata behaviour of the file cache, not changed here.
   - Revised 2026-10-17 (rework, see Revisions): a list write must not lift the fence, because the forgotten host's own list collector can write one after `removeHost` and before the closing repository's final save. Only a saved pairing lifts it (`admitHost`). A deferred import that commits content after this process served or refused that owner without it leaves every write of that family refused until restart, since no caller can show its view includes the import. Cancelled import callers also count as unobserved; retry checks the durable import marker because cancellation can suppress delivery after Room commits.
+  - Revised 2026-10-17 (second rework): after successful pairing persistence, revision publication and saved-host admission complete under `NonCancellable`. Cancelling a caller while admission waits on the cache mutex cannot leave a persisted pairing fenced. Persistence itself stays cancellable and a failed save admits nothing.
 - [Threat model] Relay and daemon threats are unchanged: imported content is saved daemon data that stays inert text. A rooted-device reader of app-private storage is unchanged in scope. Interrupted imports cannot expose a half-imported thread, because content and marker commit together. No UI surface.
   - Revised 2026-10-17 (rework, see Revisions): offline history is also at risk when an import is deferred. A restore that ran while the import was unavailable read nothing, and a save merged from it would replace the content once the import commits. The `import_unobserved` refusal closes that path.
 
@@ -109,8 +111,10 @@ Forecast: about 370 production lines, about 700 test lines, and this plan, about
 Pending for the documentation stage:
 - `docs/knowledge/features/conversation-cache-layout.md`, “Layout”: version 3 `file_imports` ledger, the binding is now active, and source files kept until removal.
 - `docs/knowledge/features/conversation-cache-contract.md`, “The contract”: import classification, `import_unavailable` and `import_unobserved` write refusals, rows-only import when Room rejects optional history, superseded and retired outcomes.
+- `docs/knowledge/features/conversation-cache-contract.md`, “The contract”: source absence requires an exception-reporting open; denied parent access and other IO failures remain retryable without a completion marker.
 - `docs/knowledge/features/conversation-cache-removal.md`, “Removal on unpair”: durable host retirement and the in-process write fence lifted only by a saved pairing through `admitHost`, never by `writeConversations`.
 - `docs/knowledge/features/dependency-injection.md`: `openConversationCache` replaces the `FileConversationCache` binding; `ObservablePairedServerStore` binds `admitSavedHost` as `onHostSaved`.
+- `docs/knowledge/features/conversation-cache-removal.md`, “Removal on unpair”: saved pairing revision publication and admission finish despite cancellation while waiting on the cache mutex.
 
 ## Revisions
 
@@ -139,3 +143,15 @@ A controlled probe for finding 1 committed an import while its caller's dispatch
 | Event | Test |
 | --- | --- |
 | Cancel result delivery after Room commits a retrying read or first-write import, then save and restart; both families | `classificationInvariant_cancelledCommittedImportCannotReadmitUnobservedWrites` |
+
+### 2026-10-17: source access errors and cancelled pairing admission
+
+1. **Only confirmed absence settles an absent import** (second review finding 1). `source` replaces the boolean metadata predicate with `Files.readAllBytes`; only `NoSuchFileException` yields `SavedSource.Absent`. `AccessDeniedException`, other IO failures and security failures remain retryable through the existing static classifications. `importFamily` therefore records no completion marker and refuses writes until the source is readable. A recovered import retains the existing `import_unobserved` protection. The missed failure mode was a valid source behind a parent without search permission: Java's boolean file predicates returned false without reporting the error, permanently hiding offline history behind an `absent` marker.
+2. **Successful pairing admission finishes under cancellation** (second review finding 2). Once `delegate.save` succeeds, `ObservablePairedServerStore.save` publishes its revision and awaits `onHostSaved` under `NonCancellable`, matching the existing removal cleanup contract. No new job or scope is introduced. A held cache mutex may delay admission, but cancellation cannot strand a saved pairing behind the forgotten-host fence.
+
+| Event | Test |
+| --- | --- |
+| Both source parents lose search permission; read/write and restart while denied; restore access and retry without losing bytes | `classificationInvariant_inaccessibleSourceParentIsRetriedAcrossRestart` |
+| Save pairing while another cache operation holds the mutex, cancel admission, release the holder, then save a thread | `ConversationCacheFactoryTest.repairInvariant_cancelledSavedPairingFinishesAdmissionAfterMutexWait` |
+
+This rework adds no exported types, changes no consumer signatures, and adds about 160 written lines across the two production files, two test files and this plan. The elevated effort assessment still applies. Security review rechecked file custody and cancellation boundaries against both findings; other trust boundaries remain unchanged.

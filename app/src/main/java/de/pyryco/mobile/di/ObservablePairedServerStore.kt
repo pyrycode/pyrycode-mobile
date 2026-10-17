@@ -53,8 +53,11 @@ class ObservablePairedServerStore(
 
     override suspend fun save(record: PairedServer) {
         delegate.save(record)
-        changes.update { it + 1 }
-        onHostSaved(record.serverId)
+        // Persistence succeeded: cancellation must not strand the saved host behind its cache write fence.
+        withContext(NonCancellable) {
+            changes.update { it + 1 }
+            onHostSaved(record.serverId)
+        }
     }
 
     override suspend fun remove(serverId: String) {

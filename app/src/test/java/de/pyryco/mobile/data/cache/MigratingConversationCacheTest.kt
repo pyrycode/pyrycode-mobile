@@ -60,6 +60,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
 import java.io.IOException
+import java.nio.file.AccessDeniedException
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermission
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -446,6 +449,53 @@ class MigratingConversationCacheTest {
                 assertEquals(saved().retained(), open().readAuthoritativeThread("Host", "thread"))
             } finally {
                 locked.forEach { it.setReadable(true) }
+            }
+        }
+
+    @Test fun classificationInvariant_inaccessibleSourceParentIsRetriedAcrossRestart() =
+        runBlocking {
+            val rows = listOf(row(1))
+            files.writeThread("Host", "thread", rows).getOrThrow()
+            files.writeAuthoritativeThread("Host", "thread", saved()).getOrThrow()
+            val sources = listOf(legacyFile("Host", "thread"), authoritativeFile("Host", "thread"))
+            val bytes = sources.map { it.readBytes() }
+            val permissions =
+                sources.associate {
+                    val parent = requireNotNull(it.parentFile).toPath()
+                    parent to Files.getPosixFilePermissions(parent)
+                }
+            val search = setOf(PosixFilePermission.OWNER_EXECUTE, PosixFilePermission.GROUP_EXECUTE, PosixFilePermission.OTHERS_EXECUTE)
+            try {
+                permissions.forEach { (parent, original) -> Files.setPosixFilePermissions(parent, original - search) }
+                assumeFalse("the process can search directories without permission", sources.any { it.canRead() })
+                sources.forEach { source ->
+                    assertFalse(source.isFile)
+                    assertTrue(runCatching { Files.readAllBytes(source.toPath()) }.exceptionOrNull() is AccessDeniedException)
+                }
+                var cache = open()
+                repeat(2) {
+                    cache = open()
+                    assertEquals(emptyList<ThreadItem>(), cache.readThread("Host", "thread"))
+                    assertNull(cache.readAuthoritativeThread("Host", "thread"))
+                    assertRefused("import_unavailable", cache.writeThread("Host", "thread", listOf(row(2))))
+                    assertRefused("import_unavailable", cache.writeAuthoritativeThread("Host", "thread", saved("newer")))
+                    listOf("legacy", "authoritative").forEach { family ->
+                        assertTrue(requireNotNull(database).imports().settled("Host", "thread", family).isEmpty())
+                    }
+                }
+                permissions.forEach { (parent, original) -> Files.setPosixFilePermissions(parent, original) }
+                // Recovery must import the saved content without admitting a writer built from the failed restore.
+                assertRefused("import_unobserved", cache.writeThread("Host", "thread", listOf(row(2))))
+                assertRefused("import_unobserved", cache.writeAuthoritativeThread("Host", "thread", saved("newer")))
+                assertEquals(rows, cache.readThread("Host", "thread"))
+                assertEquals(saved().retained(), cache.readAuthoritativeThread("Host", "thread"))
+                val restarted = open()
+                assertEquals(rows, restarted.readThread("Host", "thread"))
+                assertEquals(saved().retained(), restarted.readAuthoritativeThread("Host", "thread"))
+                listOf("legacy", "authoritative").forEach { assertEquals("imported", outcome("Host", "thread", it)) }
+                sources.zip(bytes).forEach { (source, original) -> assertArrayEquals(original, source.readBytes()) }
+            } finally {
+                permissions.forEach { (parent, original) -> Files.setPosixFilePermissions(parent, original) }
             }
         }
 

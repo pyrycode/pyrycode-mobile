@@ -35,6 +35,7 @@ import kotlinx.serialization.json.encodeToStream
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.time.DateTimeException
@@ -183,13 +184,15 @@ class FileConversationCache(
         withContext(ioDispatcher) {
             mutex.withLock {
                 try {
-                    if (!document.isFile) return@withLock SavedSource.Absent
-                    val bytes = document.readBytes()
+                    // Boolean file predicates suppress access errors; only a missing-path exception proves absence.
+                    val bytes = Files.readAllBytes(document.toPath())
                     if (threadReadJson.decodeFromString<CachedVersion>(bytes.toString(Charsets.UTF_8)).version != VERSION) {
                         SavedSource.Rejected("unsupported_version")
                     } else {
                         SavedSource.Readable(decode(bytes))
                     }
+                } catch (_: NoSuchFileException) {
+                    SavedSource.Absent
                 } catch (error: Exception) {
                     when (val code = failureCode(error) ?: throw error) {
                         "invalid_data" -> SavedSource.Rejected(code)

@@ -10,6 +10,10 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -19,6 +23,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * #2161: the bound cache keeps both stores under `noBackupFilesDir`: thread families in the Room database and its
@@ -84,6 +89,78 @@ class ConversationCacheFactoryTest {
             store.save(PairedServer("probe-host", "token", "wss://relay.invalid", "key"))
             cache.writeThread("probe-host", "probe", listOf(row)).getOrThrow()
             assertEquals(listOf(row), cache.readThread("probe-host", "probe"))
+        }
+
+    @Test fun repairInvariant_cancelledSavedPairingFinishesAdmissionAfterMutexWait() =
+        runBlocking {
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            val database = openConversationCacheDatabase(context)
+            try {
+                val entered = CompletableDeferred<Unit>()
+                val release = CompletableDeferred<Unit>()
+                val hold = AtomicBoolean(false)
+                val cache =
+                    MigratingConversationCache(File(context.noBackupFilesDir, "conversations"), database, Dispatchers.IO) {
+                        if (hold.compareAndSet(true, false)) {
+                            entered.complete(Unit)
+                            release.await()
+                        }
+                    }
+                var persisted: PairedServer? = null
+                val pairings =
+                    object : PairedServerCollectionStore {
+                        override suspend fun load(): PairedServer? = persisted
+
+                        override suspend fun save(record: PairedServer) {
+                            persisted = record
+                        }
+
+                        override suspend fun list(): List<PairedServerEntry> = listOfNotNull(persisted?.let(::PairedServerEntry))
+
+                        override suspend fun loadById(serverId: String): PairedServerEntry? = list().find { it.record.serverId == serverId }
+
+                        override suspend fun setDisplayName(
+                            serverId: String,
+                            displayName: String?,
+                        ) = Unit
+
+                        override suspend fun remove(serverId: String) {
+                            persisted = null
+                        }
+                    }
+                val admissionEntered = CompletableDeferred<Unit>()
+                val admit = admitSavedHost(lazyOf(cache))
+                val store =
+                    ObservablePairedServerStore(pairings, {
+                        admissionEntered.complete(Unit)
+                        admit(it)
+                    }) { cache.removeHost(it) }
+                store.remove("probe-host")
+                assertTrue(cache.writeThread("probe-host", "probe", listOf(row)).isFailure)
+                hold.set(true)
+                val holder = launch { cache.writeThread("other-host", "probe", listOf(row)).getOrThrow() }
+                entered.await()
+                try {
+                    val record = PairedServer("probe-host", "token", "wss://relay.invalid", "key")
+                    // Undispatched start reaches the held cache mutex before returning, proving contention without a delay.
+                    val saver = launch(start = CoroutineStart.UNDISPATCHED) { store.save(record) }
+                    admissionEntered.await()
+                    assertEquals(record, store.load())
+                    assertEquals(2L, store.revision.value)
+                    saver.cancel()
+                    release.complete(Unit)
+                    holder.join()
+                    saver.join()
+                    assertTrue(saver.isCancelled)
+                    cache.writeThread("probe-host", "probe", listOf(row)).getOrThrow()
+                    assertEquals(listOf(row), cache.readThread("probe-host", "probe"))
+                } finally {
+                    release.complete(Unit)
+                    holder.join()
+                }
+            } finally {
+                database.close()
+            }
         }
 
     private fun files(root: File): Set<String> =
