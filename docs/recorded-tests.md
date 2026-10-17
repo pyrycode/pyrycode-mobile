@@ -112,6 +112,29 @@ The permission recording above remains separate. The complete suite inventories 
 annotated real-Claude method in `scripts/recorded-suite-inventory.py`. Its native runner
 calls each original scenario body through the real repository and Compose interface.
 Two workspace scenarios remain explicitly retired because their controls were removed.
+The current routine runner contains 68 recordings. Three further original methods are
+owned by the existing scripted suite because both versions execute the same assertions:
+
+| Original scenario | Retained scripted scenario | Shared assertions |
+| --- | --- | --- |
+| Session-error recovery | `session-error` | Retained and dropped backlog recovery, message identity and original-host restoration |
+| Finished reply selection | `selection-copy` | Real Android word selection, Copy menu and clipboard result |
+| Reply suggestion | `reply-suggestion` | Long-press send, one user echo and revisioned suggestion removal |
+
+The manifest names each exact scripted method. The inventory requires that annotated
+method and its original harness mapping to remain enabled. It accepts no other scripted
+exemptions. These three methods remain in the explicit live selection. Their recordings
+are no longer shipped or counted as successful captures. No other recording used them.
+The 73 original methods therefore comprise 68 recordings, three scripted owners and
+two obsolete workspace methods. Every scripted scenario remains in the normal gate.
+
+Recording capture, replay and strict compatibility commands below select the 68 retained
+recordings. Scripted ownership never supplies a capture or compatibility receipt.
+Missing recordings, changed contracts, package mismatches and incomplete counted
+evidence still fail. Historical 71-recording receipts below describe the earlier selection.
+Removing the repeated routine native executions accounts for 42.416 seconds in one
+retained Mac run. This is expected test work saved, not a measured whole-verifier gain.
+
 Missing recordings fail the inventory. They never count as converted scenarios.
 The normal Gradle `check` task enforces this inventory, including capture and replay hashes.
 
@@ -342,8 +365,9 @@ Earlier failed captures remain failures. macOS was outside this ticket's verific
 
 ## Complete-suite rollout evidence, 2026-10-16
 
-The inventory accounts for all 73 original native methods. All 71 active scenarios have
-reviewed genuine recordings. Two workspace scenarios remain explicitly retired.
+At rollout, the inventory accounted for all 73 original native methods. All 71 active
+scenarios had reviewed genuine recordings. Two workspace scenarios were explicitly retired.
+The current routine selection is described above and does not rewrite these historical results.
 
 | Check | Reported | Failed | Skipped |
 | --- | ---: | ---: | ---: |

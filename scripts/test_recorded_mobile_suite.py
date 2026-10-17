@@ -13,6 +13,19 @@ spec.loader.exec_module(suite)
 
 
 class SuiteDriverTest(unittest.TestCase):
+    def test_recording_commands_select_only_recorded_rows_and_reject_scripted_requests(self):
+        method = 'interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog'
+        manifest = {'scenarios': [{'method': 'recorded', 'fixture': 'recorded.json'},
+                    {'method': method, 'scripted': {'scenario': 'session-error',
+                     'test': 'de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#' + method}}]}
+        self.assertEqual([row['method'] for row in suite.selected_rows(manifest, ready=True)], ['recorded'])
+        with tempfile.TemporaryDirectory() as directory:
+            methods = Path(directory) / 'methods.json'
+            methods.write_text(json.dumps([method]))
+            with self.assertRaises(ValueError): suite.selected_rows(manifest, methods, ready=True)
+        manifest['scenarios'][1]['scripted']['scenario'] = 'ping'
+        with self.assertRaises(ValueError): suite.selected_rows(manifest, ready=True)
+
     def test_stopping_full_verification_preserves_completed_cases_and_counts_the_rest_unrun(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
