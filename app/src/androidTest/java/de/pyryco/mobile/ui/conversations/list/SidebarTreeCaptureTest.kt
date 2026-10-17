@@ -34,7 +34,9 @@ import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
+import de.pyryco.mobile.ui.conversations.components.treeConversationPinTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostChannelAddTestTag
+import de.pyryco.mobile.ui.conversations.components.treeHostChatAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.host.HostEditorState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -195,6 +197,23 @@ class SidebarTreeCaptureTest {
         val openC3 = ChannelListEvent.TreeRowTapped(HostConversationTarget("pyry", "c3"))
         val openC4 = ChannelListEvent.TreeRowTapped(HostConversationTarget("pyry", "c4"))
         val hostEditEvent = ChannelListEvent.TreeHostEditTapped("pyry")
+
+        fun pin(id: String) = ChannelListEvent.TreePinToggled(HostConversationTarget("pyry", id), pinned = true)
+        val c3Pin = rule.onNodeWithTag(treeConversationPinTestTag("pyry", "c3")).getUnclippedBoundsInRoot()
+        assertTrue("c3's row must end where its pin control starts", conversation.right <= c3Pin.left)
+        // #2215: the first and last channel rows border the Channels and Chats section rows, so their pins and
+        // row regions share band edges with those rows' fold regions and plus controls.
+        val firstRow = rule.onNodeWithText("Culinary Corner").getUnclippedBoundsInRoot()
+        val firstPin = rule.onNodeWithTag(treeConversationPinTestTag("pyry", "c5")).getUnclippedBoundsInRoot()
+        val lastPin = rule.onNodeWithTag(treeConversationPinTestTag("pyry", "c4")).getUnclippedBoundsInRoot()
+        val chatsFold =
+            rule
+                .onNode(hasContentDescription(instrumentation.targetContext.getString(R.string.cd_tree_row_expand, "Chats on Pyry")))
+                .getUnclippedBoundsInRoot()
+        val chatAdd = rule.onNodeWithTag(treeHostChatAddTestTag("pyry")).getUnclippedBoundsInRoot()
+        val chatsFoldEvent = ChannelListEvent.TreeFoldToggled(TreeFoldKey(ConversationTreeSection.Chats, "pyry"))
+        val chatAddEvent = ChannelListEvent.TreeHostChatAddTapped("pyry")
+        val openC5 = ChannelListEvent.TreeRowTapped(HostConversationTarget("pyry", "c5"))
         val taps =
             listOf(
                 Triple(fold.right.value - 1f, fold.midY(), hostFoldEvent),
@@ -204,9 +223,22 @@ class SidebarTreeCaptureTest {
                 Triple(addBounds.right.value - 1f, addBounds.midY(), addEvent),
                 Triple(conversation.left.value + 1f, conversation.midY(), openC3),
                 Triple(conversation.right.value - 1f, conversation.midY(), openC3),
-                // The selected row draws no pen (#1563): its trailing edge, in the host pen's column, opens it.
-                Triple(editBounds.midX(), conversation.midY(), openC3),
+                // The selected row still draws no pen (#1563), but a connected host's channel row ends in its Pin
+                // control (#2215), in the host pen's column; one pixel either side of the pin's start edge.
+                Triple(editBounds.midX(), conversation.midY(), pin("c3")),
+                Triple(c3Pin.left.value + 1f, conversation.midY(), pin("c3")),
+                Triple(c3Pin.left.value - 1f, conversation.midY(), openC3),
                 Triple(nextConversation.left.value + 1f, nextConversation.midY(), openC4),
+                // One pixel inside each region where a section row meets a channel row: neither folds the
+                // section, presses its plus or reaches the neighbouring row's pin.
+                Triple(addBounds.midX(), addBounds.bottom.value - 1f, addEvent),
+                Triple(firstPin.midX(), firstPin.top.value + 1f, pin("c5")),
+                Triple(firstRow.midX(), sectionFold.bottom.value - 1f, sectionFoldEvent),
+                Triple(firstRow.midX(), firstRow.top.value + 1f, openC5),
+                Triple(lastPin.midX(), lastPin.bottom.value - 1f, pin("c4")),
+                Triple(chatAdd.midX(), chatAdd.top.value + 1f, chatAddEvent),
+                Triple(nextConversation.midX(), nextConversation.bottom.value - 1f, openC4),
+                Triple(nextConversation.midX(), chatsFold.top.value + 1f, chatsFoldEvent),
                 Triple(editBounds.left.value + 1f, editBounds.midY(), hostEditEvent),
                 Triple(editBounds.midX(), editBounds.midY(), hostEditEvent),
                 Triple(editBounds.right.value - 1f, editBounds.midY(), hostEditEvent),

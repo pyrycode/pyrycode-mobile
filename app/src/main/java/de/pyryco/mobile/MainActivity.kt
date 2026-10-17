@@ -470,6 +470,7 @@ internal fun PyryNavHost(
                             if (shared == null || shareIntake?.select(event.target) == true) vm.onHostRowTapped(event.target)
                         }
                         is ChannelListEvent.TreeFoldToggled -> vm.onFoldToggled(event.key)
+                        is ChannelListEvent.TreePinToggled -> vm.setPinned(event.target, event.pinned)
                         // The gear captures the current host once, here, the way a row tap
                         // captures its own (#749). The destination owns that exact id from then
                         // on; a later selection change cannot re-aim what it describes.

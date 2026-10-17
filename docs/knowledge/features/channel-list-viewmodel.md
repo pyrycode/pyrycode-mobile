@@ -181,6 +181,36 @@ target is already the open editor's: `HostUnpairRequested -> vm.requestHostUnpai
 [Dependency injection § Exact-host Retry and lifecycle](dependency-injection-host-conversation-source.md#exact-host-retry-and-lifecycle)
 — and touches no VM state: not `collapsedKeys`, not the snapshot, not the editor.
 
+### `pinnedChannels` and `setPinned` (#2215)
+
+`data class PinnedChannel(val entry: HostChannelListEntry,
+val conversation: Conversation)` carries its own host's entry — `target` derives
+`HostConversationTarget(entry.host.serverId, conversation.id)` from it, never from
+`destinations.selectedServerId()`, the same rule every other row control in this file follows.
+`internal fun pinnedChannels(hosts: List<HostChannelListEntry>): List<PinnedChannel>` is a pure function:
+every `entry.host.channels` row with a non-null `pinnedAt`, across every host, `sortedWith(compareBy({
+it.conversation.pinnedAt }, { it.entry.host.serverId }, { it.conversation.id }))` — oldest pin first, then
+`serverId`, then `conversation.id`, both compared as UTF-16 code units via `Comparable<String>`'s default,
+so the order never depends on `hosts`' own enumeration order. It reads only `channels`, never `chats`, so
+no chat can appear in the shared Pinned group even if one somehow carried a `pinnedAt`.
+
+`fun setPinned(target: HostConversationTarget, pinned: Boolean)` guards before sending, reusing
+`createChat`'s read of `hostSource.snapshots.value` immediately before dispatch: the target's host must be
+present (else `code=unknown_host`), live via the same `ConnectionStatus.isLive()` `createChat` uses (else
+`disconnected`), and the target conversation must still be one of that host's active `channels` (else
+`unknown_channel`); `hostSource.repositoryFor(serverId)` not resolving is `unavailable`. Any refusal logs
+`event=channel_pin_rejected code=<code> pinned=$pinned` and returns without launching anything — no
+server id, conversation id or message in the log line, by design (the security review's SHOULD FIX).
+Otherwise it launches once in `viewModelScope` and calls `repository.setPinned(conversationId, pinned)`.
+**`setPinned` never writes view-model state on any outcome** — success logs
+`event=channel_pin_confirmed`, a thrown non-cancellation error logs `event=channel_pin_failed` (again with
+no ids or exception text) and `CancellationException` rethrows. The row's placement moves only when the
+host's own confirmed `pinnedAt` arrives through its conversation stream and `pinnedChannels` re-derives
+from the new snapshot — a pending request, a refusal, a dropped reply or a duplicate push can never
+leave the group in an inconsistent or duplicated state, because nothing here is optimistic and nothing
+here accumulates. See [ChannelListScreen § Pinned group](channel-list-screen-tree-and-controls.md#pinned-group-2215)
+for the row rendering and disconnected treatment this projection feeds.
+
 **Conversation editing belongs to the thread.** #1582 removed the list's chat editor
 state and both conversation editors' flows, entry points and disconnect cleanup.
 `HostChannelListState` has neither `chatEditor` nor `channelEditor`. The shared channel

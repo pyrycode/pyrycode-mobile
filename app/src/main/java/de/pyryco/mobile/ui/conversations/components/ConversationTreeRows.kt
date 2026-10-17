@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -50,8 +51,11 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -98,6 +102,11 @@ private val TreeCaptionBottomPadding = 6.dp
 private const val RUNNING_BLINK_MIN_ALPHA = 0.3f
 private const val RUNNING_BLINK_HALF_PERIOD_MS = 1000
 private const val SECTION_HEADER_ALPHA = 0.85f
+
+// A disconnected host's pinned row (#2215): its leading region's alpha, and Material's disabled content
+// alpha for its unpin control.
+private const val DISCONNECTED_ROW_ALPHA = 0.60f
+private const val DISABLED_CONTROL_ALPHA = 0.38f
 
 // The design fills a selected conversation row with the primary family's next darker step below the
 // hover fill. Taken as a literal token that is `onPrimary`, which is white in the light scheme and
@@ -421,13 +430,31 @@ fun TreeWorkspaceRow(
     }
 }
 
+fun treeConversationPinTestTag(
+    serverId: String,
+    conversationId: String,
+): String {
+    // Length-prefixed, as `treeItemKey` is, so no id can forge another row's handle across the separator.
+    val host = boundedTagId(serverId)
+    val conversation = boundedTagId(conversationId)
+    return "tree-pin:${host.length}|$host|${conversation.length}|$conversation"
+}
+
+/** A channel row's trailing pin control (#2215); [None] draws nothing and leaves the band to the row. */
+enum class TreePinControl { None, Pin, Unpin, UnpinDisabled }
+
 /**
  * One conversation under its host's Channels or Chats section — the same row for both, as the design
- * instances one component in both sections.
+ * instances one component in both sections — and in the shared Pinned group (#2215).
  *
  * The leading status dot draws [attention], the row's one state that #877 resolves by precedence (#878).
  * Under the static dark palette, [selected] draws 15:8's `Hover` fill (`primary-container`) and a pressed
  * row its darker `on-primary` fill (#1523).
+ *
+ * A non-null [hostName] appends the Pinned group's " · host" suffix in `onSurfaceVariant`. [disconnected]
+ * is the owning host's disconnected accent: name, suffix and a solid dot in `error`, the leading region at
+ * 60% alpha. [pinControl] adds a trailing [TreeRowControl], tagged [pinTestTag], reporting through
+ * [onPinToggled]; its [UnpinDisabled][TreePinControl.UnpinDisabled] form stays visible but sends nothing.
  */
 @Composable
 fun TreeConversationRow(
@@ -437,9 +464,25 @@ fun TreeConversationRow(
     modifier: Modifier = Modifier,
     attention: ConversationAttention = ConversationAttention.Idle,
     enabled: Boolean = true,
+    hostName: String? = null,
+    disconnected: Boolean = false,
+    pinControl: TreePinControl = TreePinControl.None,
+    pinTestTag: String? = null,
+    onPinToggled: () -> Unit = {},
 ) {
-    // Clamp daemon-authored text before layout, as the host row does.
-    val bounded = boundedRowText(conversationName)
+    // Clamp daemon-authored text before layout, as the host row does; each part on its own, so a host
+    // name can never make the joined label unbounded.
+    val nameColor = if (disconnected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+    val suffixColor = if (disconnected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+    val boundedName = boundedRowText(conversationName)
+    val suffix = hostName?.let { stringResource(R.string.tree_pinned_host_suffix, boundedRowText(it)) }
+    val label =
+        remember(boundedName, suffix, suffixColor) {
+            buildAnnotatedString {
+                append(boundedName)
+                if (suffix != null) withStyle(SpanStyle(color = suffixColor)) { append(suffix) }
+            }
+        }
     val interactionSource = remember { MutableInteractionSource() }
     val pressed = interactionSource.collectIsPressedAsState().value
     val staticDark = LocalStaticDarkPalette.current
@@ -481,15 +524,34 @@ fun TreeConversationRow(
                     ).padding(start = ConversationRowIndent),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ConversationStatusDot(attention = attention)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = bounded,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
+            Row(
+                modifier = Modifier.weight(1f).alpha(if (disconnected) DISCONNECTED_ROW_ALPHA else 1f),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ConversationStatusDot(attention = attention, disconnected = disconnected)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = nameColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        if (pinControl != TreePinControl.None) {
+            val pin = pinControl == TreePinControl.Pin
+            TreeRowControl(
+                painter = painterResource(if (pin) R.drawable.ic_tree_pin else R.drawable.ic_tree_unpin),
+                contentDescription = stringResource(if (pin) R.string.cd_tree_pin_channel else R.string.cd_tree_unpin_channel),
+                onClick = onPinToggled,
+                modifier = if (pinTestTag != null) Modifier.testTag(pinTestTag) else Modifier,
+                height = ConversationBandHeight,
+                // The thumbtack's own bounds at the 16dp glyph height; the slashed one is square.
+                glyphWidth = if (pin) 11.29412.dp else 16.dp,
+                glyphHeight = 16.dp,
+                enabled = pinControl != TreePinControl.UnpinDisabled,
             )
         }
     }
@@ -577,8 +639,8 @@ private fun FoldableTreeRow(
 
 /**
  * The trailing row control: each section header's plus, the host row's pencil (#744), a disconnected
- * host's plug (#840), an update-required host's update control (#1009), a chat row's pencil (#827) and a workspace row's pencil
- * (#905) and plus (#958). The body remains glyph-agnostic: the caller supplies the painter and nothing else
+ * host's plug (#840), an update-required host's update control (#1009), a chat row's pencil (#827), a workspace row's pencil
+ * (#905) and plus (#958), and a channel row's pin or unpin (#2215). The body remains glyph-agnostic: the caller supplies the painter and nothing else
  * differs between them.
  *
  * [contentDescription] is the whole accessible name, because the controls repeat down the screen and two
@@ -589,6 +651,9 @@ private fun FoldableTreeRow(
  *
  * Adjacent to the row's fold or open target, so this stays its own node with its own name, tag and
  * click action and a tap on it never reaches the row's main action.
+ *
+ * A disabled control (a disconnected host's unpin, #2215) keeps its node and name but takes no click,
+ * and draws in Material's disabled content colour.
  */
 @Composable
 private fun TreeRowControl(
@@ -599,6 +664,7 @@ private fun TreeRowControl(
     modifier: Modifier = Modifier,
     glyphWidth: Dp = 12.dp,
     glyphHeight: Dp = 12.dp,
+    enabled: Boolean = true,
 ) {
     Box(
         modifier =
@@ -606,6 +672,7 @@ private fun TreeRowControl(
                 .width(TreeControlWidth)
                 .height(height)
                 .clickable(
+                    enabled = enabled,
                     onClick = onClick,
                     onClickLabel = contentDescription,
                     role = Role.Button,
@@ -615,7 +682,12 @@ private fun TreeRowControl(
         Icon(
             painter = painter,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
+            tint =
+                if (enabled) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = DISABLED_CONTROL_ALPHA)
+                },
             modifier = Modifier.size(glyphWidth, glyphHeight),
         )
     }
@@ -628,19 +700,26 @@ private fun TreeRowControl(
  * The dot names its state, so the meaning never rests on colour; the row's `selectable` merges that name
  * with the conversation's. Only Running blinks, and the alpha is read in the layer, so the blink redraws
  * the dot without recomposing the row.
+ *
+ * A [disconnected] host's pinned row (#2215) draws a solid `error` disc instead, still naming its state.
  */
 @Composable
-private fun ConversationStatusDot(attention: ConversationAttention) {
+private fun ConversationStatusDot(
+    attention: ConversationAttention,
+    disconnected: Boolean = false,
+) {
     val fill =
-        when (attention) {
-            ConversationAttention.WaitingForAnswer -> MaterialTheme.colorScheme.warning
-            ConversationAttention.Running -> MaterialTheme.colorScheme.primary
-            ConversationAttention.Unread -> MaterialTheme.colorScheme.success
-            ConversationAttention.Idle -> Color.Transparent
+        when {
+            disconnected -> MaterialTheme.colorScheme.error
+            attention == ConversationAttention.WaitingForAnswer -> MaterialTheme.colorScheme.warning
+            attention == ConversationAttention.Running -> MaterialTheme.colorScheme.primary
+            attention == ConversationAttention.Unread -> MaterialTheme.colorScheme.success
+            else -> Color.Transparent
         }
+    val ring = attention == ConversationAttention.Idle && !disconnected
     val description = stringResource(attention.descriptionRes())
     val blink =
-        if (attention == ConversationAttention.Running) {
+        if (attention == ConversationAttention.Running && !disconnected) {
             rememberInfiniteTransition(label = "running-dot").animateFloat(
                 initialValue = 1f,
                 targetValue = RUNNING_BLINK_MIN_ALPHA,
@@ -661,7 +740,7 @@ private fun ConversationStatusDot(attention: ConversationAttention) {
                 .graphicsLayer { alpha = blink?.value ?: 1f }
                 .background(fill, CircleShape)
                 .then(
-                    if (attention == ConversationAttention.Idle) {
+                    if (ring) {
                         Modifier.border(TreeDotRingWidth, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape)
                     } else {
                         Modifier
@@ -709,6 +788,22 @@ private fun TreeRowsPreviewMatrix() {
             ConversationAttention.entries.forEach { state ->
                 TreeConversationRow(conversationName = state.name, selected = false, onClick = {}, attention = state)
             }
+            TreeConversationRow(conversationName = "pin me", selected = false, onClick = {}, pinControl = TreePinControl.Pin)
+            TreeConversationRow(
+                conversationName = "pinned",
+                selected = false,
+                onClick = {},
+                hostName = "Pyrybox",
+                pinControl = TreePinControl.Unpin,
+            )
+            TreeConversationRow(
+                conversationName = "pinned offline",
+                selected = false,
+                onClick = {},
+                hostName = "Macbook",
+                disconnected = true,
+                pinControl = TreePinControl.UnpinDisabled,
+            )
             TreeHostRow(
                 serverId = "macbook",
                 hostName = "Macbook",
