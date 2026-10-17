@@ -154,7 +154,11 @@ status, inputFields: Map<String, String> = emptyMap())` — `inputFields` added 
 `Bash` row keeps its described/simple [header](tool-call-row.md#subject-and-elapsed-text) instead of
 falling back to the `input_summary` précis; the default keeps a document written before #1575 (no
 `inputFields` key) readable with empty fields, the same additive pattern as `CachedMessage.attachments`
-(#983). `parentToolUseId`, `denial` and `resultDetail` stay uncached. `CachedBoundary(previousSessionId,
+(#983). `denial` and `resultDetail` stay uncached. `CachedToolCall.parentToolUseId: String? = null`
+(#2221) is the tool-row half of subagent nesting: it is written from `ToolCall.parentToolUseId.ifEmpty
+{ null }` and read back with `.orEmpty()`, the same nullable-not-`""`-defaulted shape as
+`CachedMessage.parentToolUseId` below, for the same reason — see that field for the full rationale.
+`CachedBoundary(previousSessionId,
 newSessionId, reason, occurredAt, workspaceCwd:
 String? = null)` round out the two original row kinds. `CachedBanner(level, text, truncated,
 occurredAt)`, `CachedCompaction(preTokens: Long? = null, postTokens: Long? = null, manual,
@@ -175,15 +179,28 @@ from `CachedSegment`; when reconciliation converts legacy content to segments, o
 metadata is cleared. See [Message identities](data-model.md#message) and
 [restore ownership](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
 
-Assistant attribution (`Message.parentToolUseId`, #1826) is also absent from disk serialization;
-The reconciliation field above does not add attribution storage or change the document version. Cache-only assistant rows
-therefore restore with unknown (empty) attribution. Same-conversation wire/history evidence enriches
-those rows in memory through `mergeCachedRows`, including legacy rows without recoverable segment
-records. The wrapper retains reconciled rows across reconnect, so a later unattributed cache copy
-cannot erase a known parent. A process restart can lose that hint until fresh evidence arrives.
-See [parent precedence through seams and merges](remote-conversation-repository-assistant-reply-segments.md#parent-attribution-through-seams-and-merges-1826)
-for conflict handling. File-cache round-trip and wrapper probes verify omission from stored bytes,
-restoration as empty, enrichment and reconnect retention without a cache migration.
+Assistant attribution (`Message.parentToolUseId`, #1826) is persisted as of #2221, which supersedes
+\#1826's "disk serialization is unchanged" / "attribution is not serialized" decision for this field.
+`CachedMessage.parentToolUseId: String? = null` is written from `Message.parentToolUseId.ifEmpty { null
+}` and read back with `.orEmpty()`. The reconciliation field above still does not carry attribution — it
+is a separate mechanism — and the document version is unchanged: the field is additive and nullable
+rather than `""`-defaulted, so with `explicitNulls = false` a parentless main-thread row encodes byte-
+for-byte as it did before #2221 and its `cachedThreadRowProof`/stored coverage hashes stay valid. Only a
+row that carries a parent gains the key.
+
+A document written before #2221 has no key for either `parentToolUseId`, so it restores with both empty
+(unattributed/top level) exactly as before, through the same `ignoreUnknownKeys`/default-field mechanism
+every other additive cache field here uses — it is not retroactively repaired. From then on, same-
+conversation wire/history evidence still enriches an unattributed restored row in memory through
+`mergeCachedRows`, including legacy rows without recoverable segment records, and the wrapper still
+retains reconciled rows across reconnect, so a later unattributed cache copy cannot erase a known
+parent. What #2221 changes is that the *next* write of an enriched row — including the collector's final
+flush on cancellation — persists the parent it learned, so a subsequent restore (including after a
+process restart) already carries it instead of relying solely on in-memory enrichment. See [parent
+precedence through seams and merges](remote-conversation-repository-assistant-reply-segments.md#parent-attribution-through-seams-and-merges-1826)
+for conflict handling. `AssistantParentCacheTest.diskFormatKeepsAttribution_wireEvidenceEnrichesUnattributedRows_andReconnectKeepsIt`
+and `LegacyRowCodecTest` verify the attributed round trip, the pre-#2221 unattributed restore, enrichment
+and reconnect/flush retention, and that a parentless row's encoded bytes and proof are unchanged.
 
 `CachedAttachment(attachmentId, displayName: String? = null, mimeType: String? = null)` (#983) maps
 `Message.attachments` 1:1; `explicitNulls = false` omits a `null` hint on encode rather than writing

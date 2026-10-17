@@ -740,6 +740,8 @@ private data class CachedMessage(
     val segment: CachedSegment? = null,
     /** Local ordinary-row identity survives emitted collision aliases and restart. */
     val reconciliationId: String? = null,
+    /** #2221: [Message.parentToolUseId], `null` for the main thread so a parentless row encodes as before. */
+    val parentToolUseId: String? = null,
 )
 
 /**
@@ -763,7 +765,11 @@ private data class CachedAttachment(
     override fun toString(): String = "CachedAttachment(attachmentId=$attachmentId)"
 }
 
-/** [inputFields] (#1575) defaults to empty, so a tool record written before fields were kept reads back with none. */
+/**
+ * [inputFields] (#1575) defaults to empty, so a tool record written before fields were kept reads back with none.
+ * [parentToolUseId] (#2221) is `null` for the main thread, so a parentless record keeps its pre-#2221 bytes and
+ * row proof, and a record written before parents were kept reads back at top level.
+ */
 @Serializable
 private data class CachedToolCall(
     val toolName: String,
@@ -771,6 +777,7 @@ private data class CachedToolCall(
     val output: String,
     val status: ToolCallStatus,
     val inputFields: Map<String, String> = emptyMap(),
+    val parentToolUseId: String? = null,
 )
 
 @Serializable
@@ -882,12 +889,23 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
                         role = message.role,
                         content = message.content,
                         timestamp = message.timestamp.toString(),
-                        tool = message.toolCall?.let { CachedToolCall(it.toolName, it.input, it.output, it.status, it.inputFields) },
+                        tool =
+                            message.toolCall?.let {
+                                CachedToolCall(
+                                    it.toolName,
+                                    it.input,
+                                    it.output,
+                                    it.status,
+                                    it.inputFields,
+                                    it.parentToolUseId.ifEmpty { null },
+                                )
+                            },
                         attachments = message.attachments.map { CachedAttachment(it.attachmentId, it.displayName, it.mimeType) },
                         segment =
                             message.segment?.let { segment ->
                                 CachedSegment(segment.turnId, segment.deltas.map { it.seq }, segment.deltas.map { it.length })
                             },
+                        parentToolUseId = message.parentToolUseId.ifEmpty { null },
                     ),
             )
         is ThreadItem.SessionBoundary ->
@@ -925,9 +943,20 @@ private fun CachedThreadRow.toDomain(): ThreadItem {
                 content = message.content,
                 timestamp = parseThreadInstant(message.timestamp),
                 isStreaming = false,
-                toolCall = message.tool?.let { ToolCall(it.toolName, it.input, it.output, it.status, it.inputFields) },
+                toolCall =
+                    message.tool?.let {
+                        ToolCall(
+                            it.toolName,
+                            it.input,
+                            it.output,
+                            it.status,
+                            it.inputFields,
+                            parentToolUseId = it.parentToolUseId.orEmpty(),
+                        )
+                    },
                 attachments = message.attachments.map { MessageAttachment(it.attachmentId, it.displayName, it.mimeType) },
                 segment = message.segment?.toDomain(message.content),
+                parentToolUseId = message.parentToolUseId.orEmpty(),
             ),
         )
     }
