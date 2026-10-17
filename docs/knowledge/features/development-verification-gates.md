@@ -29,6 +29,104 @@ paragraphs, and a background agent's later reply may have its own turn identity.
 Precise commands that create controlled test conditions and fixed app labels remain
 appropriate. Display tests should use controlled fixtures when they need fixed prose.
 
+### Shared thread evidence: legacy and authoritative (#2169)
+
+`ThreadEvidence.kt` (`app/src/sharedTest/java/de/pyryco/mobile/e2e/`) gives both the
+legacy (`observeMessages`) and the daemon-authored (`AuthoritativeThreadSnapshot`)
+presentations a common evidence shape, so migration helpers do not have to special-case
+either source. It is test-only: nothing in it opens a query, advertises capability or
+changes a production binding.
+
+**The shared types.** `ThreadEvidenceKind` (`Legacy` / `Authoritative`) tags a
+`ThreadEvidenceOwner` — host, conversation, a reference-identity `connection` token, and,
+for authoritative evidence, epoch/generation. `ThreadEvidenceOwner.matches` requires every
+field equal, including reference identity on `connection`, so a reused host/conversation
+pair on a different connection, or the same connection carried over a stale epoch or
+generation, is a different owner and cannot settle against retained evidence. A legacy
+caller that only has a repository, not a connection-scoped host, reports `host = null`
+rather than inventing attribution — never read a null host as "unknown but probably this
+one." A `ThreadEvidenceRecord` pairs one original `Message` with the full daemon text,
+session/turn, and the rendered `agentId`/`toolRunId` the presentation layer assigned it;
+for authoritative records it also keeps the raw `ThreadItemDto` fact. `ThreadEvidence`
+wraps an owner, its records and an `admitted` flag, and exposes `loadedMainReply`,
+`settledReply` and `userEchoCount`. `ThreadEvidenceSource` is construction-only
+(`.legacy(...)` / `.authoritative(...)`); it wraps an `observe(conversationId)` flow and
+performs no side effects itself.
+
+**Loaded selection vs. strict settlement.** `loadedMainReply()` answers "is there a
+reply a human could select right now" — nonblank, non-streaming, no agent block, and a
+main-thread parent. It does not require delta evidence, so an ordinary history message
+that was never streamed still counts. Main-thread parent means different things per
+source: legacy evidence reads the raw `Message.parentToolUseId`; authoritative evidence
+requires the daemon parent to be absent or explicitly `0` *and* no projected Agent block
+ID, because a positive parent with no resolved block is an orphaned child, not main-thread
+evidence, and a parent explicitly cleared to `0` is not the same fact as a nonempty scoped
+presentation identity that happens to render in the main column. `settledReply(...)`
+answers a stricter question — "is this specific session/turn/agent family's reply
+completely delivered" — and the two sources settle differently:
+
+- **Legacy** filters records by raw parent (`parentToolUseId == agentId`) within the
+  session/turn, then delegates to `holdsSettledAssistantReply`, which still requires the
+  original contiguous-delta and full-length checks. Nothing here loosens that contract.
+- **Authoritative** filters by `fact.kind == "assistant_message"` and the projected
+  `agentId`, then requires every record in that family to be inactive, carry a
+  `done`/`finished` status on *its own* item, and have nonblank full text. A `turn_end`
+  fact or any fallback/unsupported-kind row never joins the family and can never block or
+  fake a settlement. Critically, settlement reads the assistant item's own completion, not
+  whether its parent agent (which may still be running) has terminated — a still-running
+  parent does not prevent its own completed child item from settling.
+
+Do not synthesize delta evidence for authoritative items to make them look like legacy
+ones, and do not treat receipt, delivery acknowledgement, or a query checkpoint as
+settlement — `userEchoCount` requires the user message's own `fact.status == "delivered"`
+when a fact is present, not just that a row with matching text exists.
+
+**Full text vs. bounded rendered text.** Authoritative records keep the full daemon
+`fact` content (unwrapped from its `JsonObject`/`JsonPrimitive` wire shape) separately
+from whatever the presentation layer bounds for display. A record can have complete full
+text while its rendered text is blank or truncated; `loadedMainReply()` requires both the
+record's `fullText` and the underlying message content to be nonblank, so a complete item
+whose bounded presentation renders blank is correctly excluded from "something a user can
+select," even though the daemon considers the item done.
+
+**Identity provenance.** Authoritative identities are never derived from raw tool/task
+IDs read off the wire fact — they come from `projectAuthoritativeThread` (for
+`agentBlockId` / scope-qualified item IDs) and `foldToolRuns` (for `toolRunId`), the same
+functions production rendering uses, so test evidence and the screen agree on what a
+rendered row's identity is even when two hosts or agent families reuse the same raw tool
+ID. Legacy identities come from `foldQueuedRows` → `foldBackgroundAgentBlocks` →
+`foldToolRuns`, matching production's legacy presentation fold order; a legacy message
+with no resolved rendered block still keeps its raw parent/segment attribution in the
+record; that raw attribution is usable for legacy's own raw-parent settlement check but
+never establishes main-thread *loaded-selection* attribution by itself.
+
+**The harness binding is a single seam.** `harnessThreadEvidence(repository)` is the one
+function every consumer calls; today it always returns `ThreadEvidenceSource.legacy(...)`.
+Production activation will change only that function's body to follow the real
+negotiation (once a daemon advertises `thread` support), and no consumer needs to migrate
+again. The binding controls test observation only — it cannot itself enable an app route,
+and it must never infer daemon support from cached or empty data. `ThreadEvidenceSource`'s
+authoritative factory exists and is exercised by fixtures now, ahead of that activation,
+precisely so the later seam change carries no risk of its own.
+
+**Where this plugged in.** `awaitFinishedSelectionReply` and
+`assertReplySuggestionLongPress` (`ReplySuggestionE2EAssertions.kt`) now observe through
+`harnessThreadEvidence(repository).observe(conversationId)` instead of calling
+`observeMessages` directly, but kept their existing signatures and callers unchanged.
+`awaitFinishedSelectionReply` still means "a loaded main reply appeared"; the suggestion
+helper's echo check still means "exactly one delivered copy of this exact text exists," and
+its revisioned-clear check is untouched. `holdsSettledAssistantReply` itself was not
+changed — legacy settlement still delegates to it unmodified.
+
+**Lesson for later migrations.** When moving a stream-suite consumer off raw
+`observeMessages` or a raw `AuthoritativeThreadSnapshot` read, reach for `ThreadEvidence`
+rather than re-deriving ownership or settlement locally: the owner-equality check (`===`
+on `connection`, not just equal host/conversation strings) is what makes
+`firstOnLive`'s replacement/cancellation guarantees (see
+[reconnect-slash-commands-follow-live-connection](../../specs/architecture/1029-reconnect-slash-commands-follow-live-connection.md))
+compose correctly with either presentation, and re-deriving it by hand is an easy place to
+accidentally accept stale evidence across a reconnect.
+
 ## Gradle and source checks
 
 Use the smallest gate that proves the change, then run the repository guard before
