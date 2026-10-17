@@ -18,6 +18,17 @@ First opens create fresh cache/repository instances; reopening uses that reposit
 with a new ViewModel and composition. All eight cases require the newest saved message
 to draw within **1,000 ms**, without waiting for the newest response.
 
+**Software-rendering bound (#2222).** 1,000 ms stays the product target. When the
+guest GL renderer string contains SwiftShader, the bound is **2,000 ms**. The SwANGLE
+emulator launcher on `build-hp-1` and `build-fractal-2` reports
+`ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device ...))`. Under it the worst
+18,000-row first opens were **555 ms** on HP and **1,314 ms** on Fractal, which missed 3 of
+16; Fractal's native renderer worst was **816 ms**. The test reads the renderer once
+through a 1x1 EGL pbuffer before any timing, logs `event=first_draw_bound` with
+`bound_ms` and `renderer`, and names both in every bound failure message. Nothing is
+warmed or moved out of the timer. The optional-projection twin holds projection for
+the applied bound plus **100 ms**, so it still fails a draw that waits for projection.
+
 `SystemClock.elapsedRealtimeNanos` starts before cache/repository and ViewModel
 construction. Cache reading, collection, projection and drawing are inside the interval;
 fixture generation and APK/activity startup are outside it. Cumulative probes record
@@ -30,7 +41,7 @@ idleness cannot establish the draw deadline. Polling only waits for recorded evi
 
 `slowRestore_negativeControlRejectsTheSameFirstDrawBound` inserts **3,000 ms** into
 cache reading in the same timed open path and catches the identical bound assertion's
-failure. The #2018 full UI run drew at **3,188 ms**, with restore/snapshot/content at
+failure. The delay exceeds both the 1,000 ms and the software 2,000 ms bound. The #2018 full UI run drew at **3,188 ms**, with restore/snapshot/content at
 **3,040/3,048/3,102 ms**. Passing this test means the latency assertion rejected the
 slow path, not that the slow path met the deadline.
 
@@ -204,8 +215,8 @@ Before each Probe, including the slow-restore control, `awaitDeviceReadiness`
 requires four consecutive **250 ms** windows at **>=80% idle** within **30000 ms**.
 A busy window resets the streak. Readiness exhaustion fails before that opening's
 cache/repository/ViewModel construction; it supplies no draw measurement. It never
-skips the case, retries acceptance, warms measured work or changes the **1000 ms**
-committed-frame bound. Worker CPU time and activity focus snapshots cannot replace
+skips the case, retries acceptance, warms measured work or changes the
+renderer-selected committed-frame bound. Worker CPU time and activity focus snapshots cannot replace
 elapsed draw time or identify the cause of a readiness failure.
 
 Responsive busy sampling and held sampling require different evidence. A 30000 ms
