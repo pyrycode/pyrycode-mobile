@@ -56,6 +56,17 @@ Unchanged.
 - Raw XML, four phone logs and a manifest go under `$AGENTS_REPO_PATH/logs/evidence/2218/`. Checked summaries go under `app/src/androidTest/assets/saved-first-draw-2218/`.
 - Full configured UI and scripted-all gates remain dispatcher-owned and pending.
 
+## Results
+
+The build-hp-1 focused class used generation `151a9dbd…`, the same as the failing run, with the same wrapper and SwiftShader, and its source hashes match. It recorded 4/4/0/0/0, exit 0, XML timestamp 2026-10-17T09:30:11:
+
+- Fragmented first draws were 555, 433, 407 and 420 ms, with cold decode at 249–291 ms and history metadata at 362–522 ms.
+- Ordinary draws were 129–241 ms.
+- The slow control rejected the bound at 3494 ms.
+- All 17 readiness barriers passed, across 85 windows, with maximum acquire/read of 14/35 ms.
+
+Identical source and generation therefore pass on build-hp-1 with at least 445 ms of headroom. The same cold decode takes 1.4 to 3.2 times longer on fractal-2, which fits the localization above.
+
 ## Open Questions
 
 - Is the fractal-2 SwANGLE launcher intended? This is answered by the native blocker, not by Mobile.
