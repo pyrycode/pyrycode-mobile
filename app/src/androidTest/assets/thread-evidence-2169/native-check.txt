@@ -110,3 +110,36 @@ b091b60f4ad4c4017af0475c4d0e3823b41987f129c400cf0db4c2a93ae002f0  mobile/capture
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  mobile/gate-1.xml
 63c91bdfe02df6dd2035c3a55bbaf746f98092b94142687752997c6110cb1c9b  mobile/phases-0.jsonl
 dcaeaab2a2b4192be13d9d25d1b640557e96944d811385c6449792d03063fcda  mobile/phases-1.jsonl
+
+Completed focused native rework check on the repair (retrieved 2026-10-17)
+Task: 7797fc922d340f445f529230792a2ba3e70e6fc60e6d6fc7ab7db8df52e38994
+Recipe: mobile-scripted-evidence
+Capability: mobile-android
+Candidate: 2f78ceb370c546eec7a696300330333543260345 (contains repair 5472a815f)
+Native run: c7608c1bbfd125b1882c08b04a489daeb7c08b176e98bf40e6672644b160406d
+Computer: build-fractal-2 (Linux Android emulator)
+State: complete
+Result: Mobile mobile-scripted-evidence: complete counted checks
+Command: python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py scripted reply-suggestion
+Method: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_replySuggestionLongPressSends
+Counts: 1 executed, 1 passed, 0 failed, 0 skipped; exit 0
+Command: python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py scripted selection-copy
+Method: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_systemCopyCopiesSelectedWord
+Counts: 1 executed, 1 passed, 0 failed, 0 skipped; exit 0
+Capture: complete=true; errors=[]
+Mobile revision: 2f78ceb370c546eec7a696300330333543260345
+Runner revision: c8edc37edbcc111bf769b93840beea0fe5e8c02f
+Daemon revision: c49aaf179ef7ade7d7e834a46904e57eb94ea957
+Relay revision: 2fd9338dd1662dbd68f3710a33e6a8cc4e7a0bc1
+Assessment: both focused scripted checks passed on the repaired adapter; no real Claude
+turns were run and no recordings changed. Earlier failed attempts remain failed.
+Full dispatcher acceptance remains pending.
+Private raw artifacts and verified SHA256SUMS:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2169/builder-native-7797fc-20261017/
+Returned artifact hashes (SHA-256):
+1b1d04087cab01780df08ec6b791801fb5b6a48084ca3fecf3e3f865dd08e91a  mobile/capture.json
+103ab1c756f5cb9bdd42022d51f6ec1a4ddb920bdb9f4f122350798e033aae63  mobile/execution.log
+81ab5af309aa9c54a4a03dfc36f3e1a48c6b5fffce9a4643bbdb800dfd6226f4  mobile/gate-0.xml
+9c7eae82888c0c2f1bafc22600ee6f48b9870fbfccfd5b18ce8aec3d057f7d34  mobile/gate-1.xml
+17f8e1ba2c280bc3e01adf189e01bf741f94c2906194ebe9fe7321c41f9a6a4d  mobile/phases-0.jsonl
+fa156ecfb811a396fbe0325c1d0be8ac87f0312b707a39438249c01dfecad9a3  mobile/phases-1.jsonl
