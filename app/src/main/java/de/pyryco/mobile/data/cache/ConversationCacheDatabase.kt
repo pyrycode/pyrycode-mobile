@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.cache
 
+import androidx.room.AutoMigration
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -7,14 +8,112 @@ import androidx.room.Index
 import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.withTransaction
 
 /** Shared database shell. Legacy evidence cannot certify the authoritative storage family. */
 @Database(
-    entities = [ConversationCacheDatabase.Header::class, ConversationCacheDatabase.Row::class, ConversationCacheDatabase.Evidence::class],
-    version = 1,
+    entities = [
+        ConversationCacheDatabase.Header::class, ConversationCacheDatabase.Row::class, ConversationCacheDatabase.Evidence::class,
+        ConversationCacheDatabase.AuthoritativeHeader::class, ConversationCacheDatabase.AuthoritativeItem::class,
+    ],
+    version = 2,
+    autoMigrations = [AutoMigration(from = 1, to = 2)],
 )
 abstract class ConversationCacheDatabase : RoomDatabase() {
     internal abstract fun legacy(): LegacyDao
+
+    internal abstract fun authoritative(): AuthoritativeDao
+
+    /** Public backend removals share this transaction; family replacements use their own deletes. */
+    internal suspend fun removeScope(
+        host: String,
+        conversation: String?,
+    ) = withTransaction {
+        legacy().deleteEvidence(host, conversation)
+        legacy().deleteRows(host, conversation)
+        legacy().deleteHeaders(host, conversation)
+        authoritative().deleteItems(host, conversation)
+        authoritative().deleteHeaders(host, conversation)
+    }
+
+    @Entity(tableName = "authoritative_headers", primaryKeys = ["host", "conversation"])
+    internal data class AuthoritativeHeader(
+        val host: String,
+        val conversation: String,
+        val epoch: String,
+        val generation: String,
+        val appliedVersion: Long,
+        val checkpoint: Long,
+        val coverage: String?,
+        val itemCount: Int,
+    ) {
+        override fun toString(): String = "AuthoritativeHeader(redacted)"
+    }
+
+    @Entity(
+        tableName = "authoritative_items",
+        primaryKeys = ["host", "conversation", "epoch", "id"],
+        indices = [Index(value = ["host", "conversation", "epoch", "ordinal"], unique = true)],
+    )
+    internal data class AuthoritativeItem(
+        val host: String,
+        val conversation: String,
+        val epoch: String,
+        val id: Long,
+        val ordinal: Int,
+        val orderKey: Long,
+        val payload: String,
+    ) {
+        override fun toString(): String = "AuthoritativeItem(redacted)"
+    }
+
+    @Dao
+    internal interface AuthoritativeDao {
+        @Query("SELECT * FROM authoritative_headers WHERE host=:host AND conversation=:conversation")
+        suspend fun header(
+            host: String,
+            conversation: String,
+        ): AuthoritativeHeader?
+
+        @Query(
+            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND ordinal<:before ORDER BY ordinal DESC LIMIT :limit",
+        )
+        suspend fun items(
+            host: String,
+            conversation: String,
+            epoch: String,
+            before: Int,
+            limit: Int,
+        ): List<AuthoritativeItem>
+
+        @Query(
+            "SELECT ordinal FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND ordinal<:before ORDER BY ordinal DESC LIMIT 1",
+        )
+        suspend fun probe(
+            host: String,
+            conversation: String,
+            epoch: String,
+            before: Int,
+        ): List<Int>
+
+        @Insert
+        suspend fun insertHeader(header: AuthoritativeHeader)
+
+        @Insert
+        suspend fun insertItems(items: List<AuthoritativeItem>)
+
+        @Query("DELETE FROM authoritative_items WHERE host=:host AND (:conversation IS NULL OR conversation=:conversation)")
+        suspend fun deleteItems(
+            host: String,
+            conversation: String?,
+        )
+
+        @Query("DELETE FROM authoritative_headers WHERE host=:host AND (:conversation IS NULL OR conversation=:conversation)")
+        suspend fun deleteHeaders(
+            host: String,
+            conversation: String?,
+        )
+    }
 
     @Entity(tableName = "legacy_headers", primaryKeys = ["host", "conversation"])
     internal data class Header(
