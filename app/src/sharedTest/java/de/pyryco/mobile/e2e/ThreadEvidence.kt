@@ -54,7 +54,7 @@ internal class ThreadEvidenceRecord(
 internal class ThreadEvidence(
     val owner: ThreadEvidenceOwner,
     val records: List<ThreadEvidenceRecord>,
-    private val admitted: Boolean = true,
+    val admitted: Boolean = true,
 ) {
     /** Ordinary loaded history remains usable for selection; it does not acquire delta evidence. */
     fun loadedMainReply(): Message? =
