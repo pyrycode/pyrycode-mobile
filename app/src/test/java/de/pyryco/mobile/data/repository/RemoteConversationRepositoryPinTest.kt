@@ -107,6 +107,92 @@ class RemoteConversationRepositoryPinTest {
                 runCurrent()
                 assertEquals(false, single(repo).muted)
                 assertEquals(Instant.parse(PIN), single(repo).pinnedAt)
+
+                // Queue different confirmed values before the command can resume. Arrival order,
+                // rather than the command's older reply, must decide the final pin.
+                result = null
+                backgroundScope.launch { result = runCatching { repo.setMuted("channel", false) } }
+                runCurrent()
+                val nextRequest = pump.sent.last { it.type == "set_conversation_muted" }
+                val queued = listOf(update(record, nextRequest.id), update(row(JsonNull, muted = false)))
+                (if (pushFirst) queued.reversed() else queued).forEach(pump::push)
+                runCurrent()
+                requireNotNull(result).getOrThrow()
+                assertEquals(if (pushFirst) Instant.parse(PIN) else null, single(repo).pinnedAt)
+            }
+        }
+
+    @Test
+    fun queuedCommandRepliesCannotOverwriteLaterConfirmedPins() =
+        runTest {
+            commandNames.forEach { name ->
+                val pump = FakeSessionPump()
+                val repo = repo(pump)
+                pump.push(
+                    snapshot(
+                        JsonObject(
+                            row().toMutableMap().apply {
+                                put("agent", JsonPrimitive("codex"))
+                                put("archived_at", JsonPrimitive(TS))
+                            },
+                        ),
+                    ),
+                )
+                runCurrent()
+                val held = single(repo)
+                var result: Result<Any>? = null
+                backgroundScope.launch { result = runCatching { executeCommand(repo, name) } }
+                runCurrent()
+                val request = pump.sent.last()
+                pump.push(commandReply(request, row(JsonPrimitive(PIN), muted = false)))
+                pump.push(commandReply(request, row(JsonPrimitive(REPIN), muted = false)))
+                pump.push(update(row(JsonNull, muted = false)))
+                runCurrent()
+                val returned = requireNotNull(result).getOrThrow()
+                if (returned is Conversation) {
+                    assertEquals(name, held.copy(pinnedAt = Instant.parse(PIN), muted = false), returned)
+                }
+                assertEquals(name, held.copy(pinnedAt = null, muted = false), single(repo))
+            }
+        }
+
+    @Test
+    fun malformedCommandRepliesFailWithoutPublishing() =
+        runTest {
+            commandNames.forEach { name ->
+                val pump = FakeSessionPump()
+                val repo = repo(pump)
+                pump.push(snapshot(row(JsonPrimitive(PIN))))
+                runCurrent()
+                val held = single(repo)
+                var result: Result<Any>? = null
+                backgroundScope.launch { result = runCatching { executeCommand(repo, name) } }
+                runCurrent()
+                pump.push(commandReply(pump.sent.last(), row(JsonPrimitive("yesterday"), muted = false)))
+                runCurrent()
+                assertTrue(name, requireNotNull(result).exceptionOrNull() is IllegalArgumentException)
+                assertEquals(name, held, single(repo))
+                pump.push(update(row(JsonNull)))
+                runCurrent()
+                assertEquals(name, held.copy(pinnedAt = null), single(repo))
+            }
+        }
+
+    @Test
+    fun cancelledCommandsKeepInboundConfirmedPins() =
+        runTest {
+            commandNames.forEach { name ->
+                val pump = FakeSessionPump()
+                val repo = repo(pump)
+                pump.push(snapshot(row()))
+                runCurrent()
+                val caller = backgroundScope.launch { executeCommand(repo, name) }
+                runCurrent()
+                pump.push(commandReply(pump.sent.last(), row(JsonPrimitive(PIN))))
+                caller.cancel()
+                runCurrent()
+                assertTrue(name, caller.isCancelled)
+                assertEquals(name, Instant.parse(PIN), single(repo).pinnedAt)
             }
         }
 
@@ -270,6 +356,28 @@ class RemoteConversationRepositoryPinTest {
         reply: Long? = null,
     ) = Envelope(id = 98L, type = "conversation_updated", ts = TS, payload = row, inReplyTo = reply)
 
+    private fun commandReply(
+        request: Envelope,
+        row: JsonObject,
+    ) = update(row, request.id).copy(type = if (request.type == "create_conversation") "conversation_created" else "conversation_updated")
+
+    private suspend fun executeCommand(
+        repo: RemoteConversationRepository,
+        name: String,
+    ): Any =
+        when (name) {
+            "createDiscussion" -> repo.createDiscussion(null)
+            "createChannel" -> repo.createChannel("Channel", null)
+            "promote" -> repo.promote("channel", "Channel", null)
+            "rename" -> repo.rename("channel", "Channel")
+            "archive" -> repo.archive("channel")
+            "unarchive" -> repo.unarchive("channel")
+            "setMuted" -> repo.setMuted("channel", false)
+            "setSystemPrompt" -> repo.setSystemPrompt("channel", null)
+            "changeWorkspace" -> repo.changeWorkspace("channel", "/p")
+            else -> error("Unknown test command")
+        }
+
     private class FakeSessionPump : SessionPump {
         private val channel = Channel<Envelope>(Channel.UNLIMITED)
         override val inbound: Flow<Envelope> = channel.receiveAsFlow()
@@ -290,6 +398,18 @@ class RemoteConversationRepositoryPinTest {
     }
 
     private companion object {
+        val commandNames =
+            listOf(
+                "createDiscussion",
+                "createChannel",
+                "promote",
+                "rename",
+                "archive",
+                "unarchive",
+                "setMuted",
+                "setSystemPrompt",
+                "changeWorkspace",
+            )
         const val TS = "2026-05-08T10:00:00Z"
         const val PIN = "2026-05-08T10:30:00.123456789Z"
         const val REPIN = "2026-05-08T10:31:00.987654321Z"

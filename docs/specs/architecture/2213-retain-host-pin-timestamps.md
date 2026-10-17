@@ -8,6 +8,10 @@
 - `app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt`: `CachedConversation`, `toRecord`, `toDomain`, host hashing and atomic metadata replacement.
 - `app/src/main/java/de/pyryco/mobile/data/repository/ConversationListProjection.kt`: `applySnapshot` validates before mutation; `upsertConversation` replaces by id while retaining session/agent/archive projection rules.
 - `app/src/main/java/de/pyryco/mobile/data/repository/RemoteConversationRepository.kt`: `onInbound` accepts correlated and unsolicited updates and drops malformed records.
+- `app/src/main/java/de/pyryco/mobile/data/repository/RelayRequests.kt`: connection-local request registration and captured confirmed command results.
+- `app/src/main/java/de/pyryco/mobile/data/repository/ConversationCommands.kt`: create, promote, rename, archive and mute await confirmed results without republishing them.
+- `app/src/main/java/de/pyryco/mobile/data/repository/SessionSettingsCommands.kt`: `setSystemPrompt` awaits inbound confirmation without writing the list.
+- `app/src/main/java/de/pyryco/mobile/data/repository/WorkspaceCommands.kt`: `changeWorkspace` awaits inbound confirmation and retains its placeholder session return.
 - `app/src/main/java/de/pyryco/mobile/di/HostConversationSource.kt` and `app/src/test/java/de/pyryco/mobile/di/HostConversationSourceTest.kt`: disconnected cache restore and confirmed-list replacement, exercised together in the reconnect probe.
 - `app/src/test/java/de/pyryco/mobile/data/network/ConversationsPayloadTest.kt`: decode and map conventions.
 - `app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryAgentTest.kt`: small channel-backed pump and correlated mutation fixture.
@@ -25,11 +29,13 @@ Mobile currently drops the host's confirmed `pinned_at`. Retaining it in the dom
 
 Add trailing `Conversation.pinnedAt: Instant? = null`. Both DTOs gain nullable `pinnedAt` with wire name `pinned_at`, the existing `InstantIso8601Serializer`, and null default. Both mappers copy it directly. Missing and explicit null mean unpinned, including when replacing a pinned row; malformed non-null values fail at decode before projection mutation.
 
-Add nullable ISO-text `CachedConversation.pinnedAt` with null default, serialize using `Instant.toString`, restore using `Instant.parse`. Keep version 1 and existing host namespaces and atomic writes. Do not repair unrelated missing cache fields. `ConversationListProjection` needs no implementation change: its authoritative replacement and existing metadata preservation already apply. No UI, new dependencies, commands or ordering changes.
+Add nullable ISO-text `CachedConversation.pinnedAt` with null default, serialize using `Instant.toString`, restore using `Instant.parse`. Keep version 1 and existing host namespaces and atomic writes. Do not repair unrelated missing cache fields. `ConversationListProjection` needs no implementation change: its authoritative replacement and existing metadata preservation already apply. No UI, new dependencies or new commands.
+
+Confirmed `conversation_created` and `conversation_updated` publication belongs to `routeInbound`, before request completion. Create replies retain their correlated-only admission; updates remain unconditional. `RelayRequests.sendAndAwaitConversation` returns the row captured by the first reply, including projection-preserved metadata. All seven former command-side upsert sites use it; later duplicate replies and unsolicited updates never change the captured command result. Malformed replies still fail the command with a serialization exception, without publication.
 
 ## State and concurrency model
 
-No jobs, scopes or flows are introduced. The connection-owned inbound collector continues to decode before atomic `MutableStateFlow.update`; host-local repository instances prevent cross-host identity sharing. File I/O retains its injected dispatcher and mutex. Screen exit/background socket closure and cancellation remain owned by the existing connection lifecycle. Disk restore retains the pin independently of a live socket.
+No jobs, scopes or flows are introduced. The connection-owned inbound collector decodes and publishes records before completing the request, in arrival order. Commands return the captured result without writing the list after suspension: atomic updates alone cannot stop an older reply from overwriting a later record. Each existing request entry retains its captured row until the caller's `finally` removes it; completion makes that capture visible to the awaiting caller. Cancellation never undoes inbound publication, and teardown still fails outstanding requests. Host-local repository instances prevent cross-host identity sharing. File I/O retains its injected dispatcher and mutex. Screen exit/background socket closure and cancellation remain owned by the existing connection lifecycle. Disk restore retains the pin independently of a live socket.
 
 ## State transitions and identity reuse
 
@@ -38,6 +44,8 @@ No jobs, scopes or flows are introduced. The connection-owned inbound collector 
 | Valid/absent/null summary or mutation timestamp; malformed non-null input | `PinnedConversationPayloadTest` strict decode and exact mapping tests |
 | Unsolicited pin, unpin and re-pin, legacy omission | `RemoteConversationRepositoryPinTest.confirmedUpdatesReplacePinsAndKeepProjectionMetadata` |
 | Correlated reply plus duplicate push, delivered in either order | `RemoteConversationRepositoryPinTest.replyAndPushDeliveryIsIdempotentInEitherOrder` |
+| Queued, differing reply/push records before command resumption, across every affected command | `RemoteConversationRepositoryPinTest.queuedCommandRepliesCannotOverwriteLaterConfirmedPins` |
+| Malformed command reply followed by valid delivery; cancellation before caller resumption | `RemoteConversationRepositoryPinTest.malformedCommandRepliesFailWithoutPublishing` and `cancelledCommandsKeepInboundConfirmedPins` |
 | Malformed later list row or update, followed by valid delivery | `RemoteConversationRepositoryPinTest.malformedPinCannotPartiallyMutateTheListOrStopUpdates` |
 | Same conversation id on two hosts | `RemoteConversationRepositoryPinTest.equalConversationIdsRemainConnectionLocal` and cache host collision probe |
 | Cold restore while offline, then reconnect snapshot replacement, reorder and empty list | `RemoteConversationRepositoryPinTest.restoredPinsSurviveOfflineAndReconcileWithFreshSnapshots` |
@@ -67,8 +75,20 @@ None.
 - **Cryptography:** Existing Noise IK and key stores are untouched; timestamps do not affect keys or nonces.
 - **Network and I/O:** Existing frame caps, TLS, timeout and reconnect controls remain in force. No new network verb or I/O operation.
 - **Errors/logs:** Reuse static malformed/cache codes; no payload, timestamp, host/conversation id, credential or decrypted content enters logs through this change.
-- **Concurrency:** Existing connection isolation, atomic StateFlow mutation and cache mutex remain authoritative; no new background work or suspension between live-state read and replacement.
+- **Concurrency:** MUST FIX from verifier finding 1, addressed by sole inbound publication. Atomic StateFlow mutation does not prevent delayed commands from republishing stale replies. `sendAndAwaitConversation` captures the first reply's projected result before completion, then returns it without writing; queued newer records remain authoritative even after command resumption. Cancellation cannot undo a published record; the existing request cleanup and teardown retain ownership. No new job, scope, mutex or suspension within publication.
 - **Threat model:** Hostile authenticated frames are rejected atomically; delayed/repeated valid records use host-confirmed arrival order without inventing recency. A malicious relay still cannot forge Noise plaintext; availability remains the supervisor's responsibility. Rooted-device credential theft remains with Keystore wrapping, and existing plaintext cache access is unchanged. UI screenshot/accessibility/token-entry leakage has no new surface in this data-only slice.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-17
+
+## Documentation handoff
+
+Pending for the documentation stage:
+
+- `docs/knowledge/features/data-model.md` and `mobile-protocol-v2-wire-layer-application-payloads.md`: document nullable host-confirmed `pinnedAt`, strict malformed timestamp rejection and missing/null compatibility.
+- `docs/knowledge/features/conversation-cache.md` and `conversation-cache-layout.md`, “The cache-local record must mirror every Conversation field”: document `CachedConversation.pinnedAt`, unchanged version 1, exact instant retention, legacy defaults and host isolation.
+- `docs/knowledge/features/remote-conversation-repository-state-errors-and-handoff.md`, State & concurrency model, and conversation write overviews: replace the duplicate-publication rationale with inbound arrival-order publication and captured command return values; record offline restore/reconnect reconciliation in repository/cache overviews.
+
+## Revisions
+
+- 2026-10-17 — Verifier finding 1 exposed stale command republication after a queued newer pin update. Move all seven caller-side publication sites into inbound routing, including correlated creates, and capture command return values at the first reply. Add queued differing-value, malformed-reply and cancellation probes. Rework remains one pin-retention deliverable, below 1600 written lines, with no exported types, one constructor consumer update and seven command sites. Branch #1947 overlaps `RemoteConversationRepository.kt` in separate context-usage/session-transition blocks; edits here stay local.
