@@ -53,7 +53,7 @@ class HarnessThreadEvidenceBindingTest {
         assertEquals(ThreadEvidenceKind.Legacy, harnessThreadEvidence(FakeConversationRepository()).kind)
     }
 
-    private class Route : NegotiatedThread {
+    private class Route : NegotiatedThread() {
         override val host = "host"
         override val support = MutableStateFlow<ThreadSupport>(ThreadSupport.Unverified)
         override val store = AuthoritativeThreadStore()

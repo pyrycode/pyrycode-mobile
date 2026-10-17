@@ -370,7 +370,7 @@ class RelayRepositoryCoordinator(
     /** The exact host's thread route over the store shared by its connections; null on the legacy test entry. */
     val negotiatedThread: NegotiatedThread? =
         authoritativeHostId.takeIf { it.isNotEmpty() }?.let { host ->
-            object : NegotiatedThread {
+            object : NegotiatedThread() {
                 override val host: String = host
                 override val support: StateFlow<ThreadSupport> get() = threadSupport
                 override val store: AuthoritativeThreadStore get() = authoritativeThreads

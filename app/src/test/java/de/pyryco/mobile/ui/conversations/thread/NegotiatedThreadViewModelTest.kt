@@ -173,7 +173,7 @@ class NegotiatedThreadViewModelTest {
 
     private class Route(
         override val host: String,
-    ) : NegotiatedThread {
+    ) : NegotiatedThread() {
         override val support = MutableStateFlow<ThreadSupport>(ThreadSupport.Unverified)
         override val store = AuthoritativeThreadStore()
         val opened = mutableListOf<Any>()

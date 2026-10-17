@@ -29,18 +29,18 @@ sealed interface ThreadSupport {
  * The production thread route of one exact host (#2175). Decorators forward it, as they forward
  * [ConversationRepository.runConfigurationReadings]; a repository without it is the legacy route.
  */
-interface NegotiatedThread {
-    val host: String
-    val support: StateFlow<ThreadSupport>
-    internal val store: AuthoritativeThreadStore
+abstract class NegotiatedThread {
+    abstract val host: String
+    abstract val support: StateFlow<ThreadSupport>
+    internal abstract val store: AuthoritativeThreadStore
 
     /** Observation only: never opens a query. */
-    internal fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot>
+    internal abstract fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot>
 
     /** Opens synchronization on the connection named by the current [ThreadSupport.Supported] verdict only. */
-    suspend fun open(conversationId: String): Boolean
+    abstract suspend fun open(conversationId: String): Boolean
 
-    fun older(conversationId: String): Boolean
+    abstract fun older(conversationId: String): Boolean
 
-    fun cancel(conversationId: String)
+    abstract fun cancel(conversationId: String)
 }

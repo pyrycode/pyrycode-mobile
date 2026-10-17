@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.network.RelayTransport
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.network.TransportEvent
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.item
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +38,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** #2175: production negotiation, verdict ownership and request suppression through real coordinators. */
+@OptIn(ExperimentalCoroutinesApi::class)
 class NegotiatedThreadActivationTest {
     @Test fun helloAdvertisesThreadAndOmitsTheReplayCursor() {
         val hello = HelloClientPayload(deviceName = "d", clientVersion = "1.0", token = "t")

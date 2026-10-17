@@ -106,7 +106,7 @@ class CachingConversationRepository(
     /** The host route with this cache's restore-before-query observation and opening (#2175). */
     override val negotiatedThread: NegotiatedThread? =
         hostThread?.let { route ->
-            object : NegotiatedThread {
+            object : NegotiatedThread() {
                 override val host: String = route.host
                 override val support: StateFlow<ThreadSupport> get() = route.support
                 override val store: AuthoritativeThreadStore get() = authoritativeThreads
