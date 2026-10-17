@@ -97,7 +97,7 @@ Forecast: about 370 production lines, about 700 test lines, and this plan, about
 - [Network and I/O] No findings. Nothing downloads. Import is bounded by the existing 100000-row cap, and page reads go through bounded storage pages after import.
 - [Errors and logs] SHOULD FIX: import logs and exceptions carry static family/outcome/code only. A test asserts that sentinel owner and content strings never reach `RelayLog` or exception messages.
 - [Concurrency] One cache mutex orders import, save and removal under the wrapper's `historyWrites`. Tombstones are durable and commit with the removal. The in-memory host fence stops stale final saves in-process. SHOULD FIX: lift the fence only after a successful `writeConversations`, never on reads. OUT OF SCOPE: a stale conversation-list write from a forgotten host landing after re-pair is the existing metadata behaviour of the file cache, not changed here.
-  - Revised 2026-10-17 (rework, see Revisions): a list write must not lift the fence, because the forgotten host's own list collector can write one after `removeHost` and before the closing repository's final save. Only a saved pairing lifts it (`admitHost`). A deferred import that commits content after this process served or refused that owner without it leaves every write of that family refused until restart, since no caller can show its view includes the import.
+  - Revised 2026-10-17 (rework, see Revisions): a list write must not lift the fence, because the forgotten host's own list collector can write one after `removeHost` and before the closing repository's final save. Only a saved pairing lifts it (`admitHost`). A deferred import that commits content after this process served or refused that owner without it leaves every write of that family refused until restart, since no caller can show its view includes the import. Cancelled import callers also count as unobserved; retry checks the durable import marker because cancellation can suppress delivery after Room commits.
 - [Threat model] Relay and daemon threats are unchanged: imported content is saved daemon data that stays inert text. A rooted-device reader of app-private storage is unchanged in scope. Interrupted imports cannot expose a half-imported thread, because content and marker commit together. No UI surface.
   - Revised 2026-10-17 (rework, see Revisions): offline history is also at risk when an import is deferred. A restore that ran while the import was unavailable read nothing, and a save merged from it would replace the content once the import commits. The `import_unobserved` refusal closes that path.
 
@@ -108,9 +108,9 @@ Forecast: about 370 production lines, about 700 test lines, and this plan, about
 
 Pending for the documentation stage:
 - `docs/knowledge/features/conversation-cache-layout.md`, “Layout”: version 3 `file_imports` ledger, the binding is now active, and source files kept until removal.
-- `docs/knowledge/features/conversation-cache-contract.md`, “The contract”: import classification, `import_unavailable` write refusal, superseded and retired outcomes.
-- `docs/knowledge/features/conversation-cache-removal.md`, “Removal on unpair”: durable host retirement and the in-process write fence lifted by `writeConversations`.
-- `docs/knowledge/features/dependency-injection.md`: `openConversationCache` replaces the `FileConversationCache` binding.
+- `docs/knowledge/features/conversation-cache-contract.md`, “The contract”: import classification, `import_unavailable` and `import_unobserved` write refusals, rows-only import when Room rejects optional history, superseded and retired outcomes.
+- `docs/knowledge/features/conversation-cache-removal.md`, “Removal on unpair”: durable host retirement and the in-process write fence lifted only by a saved pairing through `admitHost`, never by `writeConversations`.
+- `docs/knowledge/features/dependency-injection.md`: `openConversationCache` replaces the `FileConversationCache` binding; `ObservablePairedServerStore` binds `admitSavedHost` as `onHostSaved`.
 
 ## Revisions
 
@@ -131,3 +131,11 @@ State transitions added by this revision:
 | Stale list write after forgetting; re-pair through the pairing store | `retirementInvariant_hostForgettingFencesSavesAndRestart`, `ConversationCacheFactoryTest.repairInvariant_savedPairingReadmitsTheForgottenHostsThreadWrites` |
 
 The Error handling codes gain `import_unobserved`.
+
+### 2026-10-17: cancellation after the import commit
+
+A controlled probe for finding 1 committed an import while its caller's dispatcher was paused, then cancelled result delivery. The next write incorrectly replaced the imported history because the cache had not received `Arrived`. `ensureImported` now records cancelled import callers as having no observed content. When a retry finds an `imported` ledger row for such a caller (or an earlier unavailable restore), it marks the family unobserved before admitting any write. Cancellation before commit still leaves no marker and remains retryable. The security review's offline-history protection therefore also covers a committed transaction whose result was cancelled.
+
+| Event | Test |
+| --- | --- |
+| Cancel result delivery after Room commits a retrying read or first-write import, then save and restart; both families | `classificationInvariant_cancelledCommittedImportCannotReadmitUnobservedWrites` |

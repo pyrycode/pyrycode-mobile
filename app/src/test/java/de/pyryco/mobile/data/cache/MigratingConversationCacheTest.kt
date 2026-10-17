@@ -28,6 +28,7 @@ import de.pyryco.mobile.data.repository.historyRowProofs
 import de.pyryco.mobile.ui.conversations.thread.fragmentedHistoryFixture
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
@@ -36,6 +37,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.withTimeout
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
@@ -478,6 +481,73 @@ class MigratingConversationCacheTest {
             restarted.writeAuthoritativeThread("Host", "thread", saved("newer", listOf(4))).getOrThrow()
             assertEquals(rows + row(3), open().readThread("Host", "thread"))
             assertEquals(saved("newer", listOf(4)).retained(), open().readAuthoritativeThread("Host", "thread"))
+        }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun classificationInvariant_cancelledCommittedImportCannotReadmitUnobservedWrites() =
+        runBlocking {
+            for (writeImport in listOf(false, true)) {
+                for (authoritative in listOf(false, true)) {
+                    val family = if (authoritative) "authoritative" else "legacy"
+                    val thread = "cancelled-$family-$writeImport"
+                    files.writeThread("Host", thread, listOf(row(1))).getOrThrow()
+                    files.writeAuthoritativeThread("Host", thread, saved()).getOrThrow()
+                    val failing = AtomicBoolean(true)
+                    val entered = CompletableDeferred<Unit>()
+                    val release = CompletableDeferred<Unit>()
+                    val cache =
+                        open {
+                            if (failing.get()) throw IOException("database busy")
+                            entered.complete(Unit)
+                            release.await()
+                        }
+
+                    suspend fun read() =
+                        if (authoritative) {
+                            cache.readAuthoritativeThread("Host", thread)
+                        } else {
+                            cache.readThread("Host", thread)
+                        }
+
+                    suspend fun replace() =
+                        if (authoritative) {
+                            cache.writeAuthoritativeThread("Host", thread, saved("newer", listOf(4)))
+                        } else {
+                            cache.writeThread("Host", thread, listOf(row(2)))
+                        }
+
+                    // Probe both a retry after an empty restore and a write that performs the first import.
+                    if (!writeImport) assertEquals(if (authoritative) null else emptyList<ThreadItem>(), read())
+                    failing.set(false)
+                    val scheduler = TestCoroutineScheduler()
+                    val reader = launch(StandardTestDispatcher(scheduler)) { if (writeImport) replace() else read() }
+                    try {
+                        withTimeout(10_000) {
+                            while (!entered.isCompleted) {
+                                scheduler.runCurrent()
+                                delay(1)
+                            }
+                        }
+                        release.complete(Unit)
+                        // Let Room commit while the caller's dispatcher remains paused, then cancel before result delivery.
+                        withTimeout(10_000) {
+                            while (requireNotNull(database).imports().settled("Host", thread, family).isEmpty()) delay(1)
+                        }
+                    } finally {
+                        release.complete(Unit)
+                        reader.cancel()
+                        scheduler.runCurrent()
+                        reader.join()
+                    }
+                    assertTrue(reader.isCancelled)
+                    assertRefused("import_unobserved", replace())
+                    assertEquals(if (authoritative) saved().retained() else listOf(row(1)), read())
+                    val restarted = open()
+                    assertEquals(listOf(row(1)), restarted.readThread("Host", thread))
+                    assertEquals(saved().retained(), restarted.readAuthoritativeThread("Host", thread))
+                }
+            }
         }
 
     @Test fun retirementInvariant_deletionWinsOverHeldWorkAndRestart() =

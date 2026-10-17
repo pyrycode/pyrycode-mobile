@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -206,7 +207,16 @@ internal class MigratingConversationCache(
         }
 
     /** [Import.Arrived] when this call committed the file's content; any other settled outcome is [Import.Ready]. */
-    private suspend fun ensureImported(key: Triple<String, String, String>): Import {
+    private suspend fun ensureImported(key: Triple<String, String, String>): Import =
+        try {
+            importFamily(key)
+        } catch (cancelled: CancellationException) {
+            // Room may have committed before cancellation prevents delivery back to this caller's dispatcher.
+            servedWithout += key
+            throw cancelled
+        }
+
+    private suspend fun importFamily(key: Triple<String, String, String>): Import {
         if (key in settled) return Import.Ready
         val (serverId, conversationId, family) = key
         val recorded =
@@ -215,6 +225,7 @@ internal class MigratingConversationCache(
                 is CacheTransaction.Failed -> return unavailable(family, read.code)
             }
         if (recorded.isNotEmpty()) {
+            if (key in servedWithout && recorded.any { it.outcome == IMPORTED }) unobserved += key
             settled += key
             return Import.Ready
         }
