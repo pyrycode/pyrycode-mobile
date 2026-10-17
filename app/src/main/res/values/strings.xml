@@ -198,6 +198,7 @@
     <string name="thread_usage_limit_nearly">Nearly at usage limit</string>
     <string name="thread_usage_limit_five_hour">" - 5-hour window"</string>
     <string name="thread_usage_limit_seven_day">" - 7-day window"</string>
+    <string name="thread_usage_limit_percent">", %1$d%% used"</string>
     <string name="thread_usage_limit_resets">", resets %1$s"</string>
     <string name="thread_usage_limit_resets_on">", resets %1$s at %2$s"</string>
     <!-- #1357: recovery advice after a stopped turn, desktop's copy. %1$s is the conversation's agent name, so an

@@ -68,7 +68,12 @@ class ThreadAttentionNoticeTest {
                     onSendMessage = {},
                     connectionState = connection,
                     onRetry = {},
-                    usageLimit = if (usage) UsageLimitReading("allowed_warning", "seven_day", 0, .8, null) else null,
+                    // utilization null: this file tests the attention notice's own positioning and the
+                    // dismiss touch target's expansion/clip geometry, not usage-pill copy. A percent
+                    // clause lengthens the pill text enough to wrap in this layout, which would make the
+                    // click-geometry math here (line-count sensitive) couple to pill content it isn't
+                    // testing. [UsageLimitTextTest] and [ThreadTopOverlayTest] cover the percent clause.
+                    usageLimit = if (usage) UsageLimitReading("allowed_warning", "seven_day", 0, null, null) else null,
                     onDismissUsageLimit = { dismissals++ },
                     mcpFailure = if (usage) "github" else null,
                     sessionError = if (usage) "session.blocked" else null,
