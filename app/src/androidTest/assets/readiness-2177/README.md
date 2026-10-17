@@ -1,5 +1,12 @@
 # Saved first-draw readiness investigation (#2177)
 
+**Current status, 2026-10-17:** waiting on verified external runner/device blocker
+[#2209](https://github.com/pyrycode/pyrycode-mobile/issues/2209). The fresh complete
+focused class is **4 executed / 3 passed / 1 failed / 0 skipped**. Its first slow
+control exhausts readiness without a Probe. Earlier passing comparisons below
+remain historical evidence; they do not establish current acceptance. Scripted
+ping now passes **2/2**, after #2198 merged. See the resumption section below.
+
 This is development evidence from Linux/build-fractal-2, not a completed
 dispatcher UI or scripted-all gate. Raw phone logs remain private. The exact
 test/helper and four primary production measurement files have identical hashes
@@ -107,13 +114,13 @@ The same foreground Gradle invocation passed lint, debug assembly and
 instrumentation compilation. Unit XML SHA-256:
 `b919186695ce234026956c98ded026c7f69666da2acb1f1dd0cbdd5deb6e57dd`.
 
-## Separate scripted validation blocker
+## Historical scripted validation blocker (2026-10-16)
 
 The focused `scripted ping` run failed: **2 executed, 1 passed, 1 failed, 0 skipped,
 exit 1**. The rendered reply/checkpoint assertions completed, then
 `interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` timed out in
 its unchanged 90000 ms `observeReadMarks` wait. The durable-gap method passed.
-This matches open [#2198](https://github.com/pyrycode/pyrycode-mobile/issues/2198),
+This matched then-open [#2198](https://github.com/pyrycode/pyrycode-mobile/issues/2198),
 whose retained clean-main comparison already reproduces the same assertion.
 No production, deterministic-test or harness logic differs from this branch's
 main merge base. The failed focus record follows teardown and does not establish
@@ -122,6 +129,50 @@ why read confirmation failed. No retry or skip was used.
 `scripted-ping.json` retains counts, revisions, XML hash and the existing tracker.
 Raw XML, both phone logs and isolated harness diagnostics are private in
 `$AGENTS_REPO_PATH/logs/evidence/2177/scripted-ping-20261016/`.
-The native blocked-by link from #2177 to open #2198 was verified. First-draw
-measurement is restored; green scripted validation must wait for the owning
-read-confirmation repair. Complete dispatcher gates remain pending.
+The native blocked-by link from #2177 to then-open #2198 was verified. Green
+scripted validation at that point needed the owning read-confirmation repair.
+That repair is now merged; the fresh result follows. Complete dispatcher gates
+remain pending.
+
+## Resumption after #2198 (2026-10-17)
+
+On Mobile `5e3e4471733f63e97ccb6c4fc5f054d8107f9445` and agents
+`49cd6dd07c163a7d0e9583850aafb28378ec0b3c`, supported focused commands report:
+
+| Run | Executed | Passed | Failed | Errors | Skipped | Exit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Complete first-draw class | 4 | 3 | 1 | 0 | 0 | 1 |
+| Isolated slow-control diagnostic | 1 | 0 | 1 | 0 | 0 | 1 |
+| Scripted ping | 2 | 2 | 0 | 0 | 0 | 0 |
+
+Both first-draw methods pass all eight openings, and held-pipe cancellation passes.
+The class's first executed slow control records **109** responsive windows at
+**0–49% idle**, none >=80%; its isolated diagnostic records **110** in the same
+range. Both end at `stage=window` before any Probe. Neither measures a slow draw
+or the bound's rejection. No acceptance retry, warmup, threshold/assertion change
+or skip converts these failures into passes.
+
+Diagnostic five-second intervals overlapping readiness show guest idle
+**3.97–37.83%**, steal **0–0.20%**, and host idle **45.28–74.39%**. A fresh one-second
+guest `top` screen near the deadline/teardown shows **9% idle**, zero host/steal,
+Google Play Services persistent/main **66/23** percentage points of two-core CPU
+capacity, system_server **26**, and Mobile **3**. This identifies substantial
+guest background work near the failure, not its initiating operation or every
+window's cause. The diagnostic adds read-only observation overhead. Its search
+process has zero additional CPU ticks; lifetime `ps %CPU` cannot establish active
+search load. `dumpsys cpuinfo` repeats a boot snapshot and is not current attribution.
+
+No Mobile logic repair is evidenced. The required agents runner/device-environment
+repair is tracked by open native blocker **#2209**, in Backlog at low priority.
+Fresh all-four-method acceptance and complete dispatcher gates remain pending.
+Fragmented offline/held-newest first draws here are **601/589 ms** normally and
+**852/667 ms** with projection held; historical **1434/1436 ms** misses remain
+unattributed in #2202.
+
+`resume-validation-20261017.json` retains counts, revisions, source/XML/manifest
+hashes and observation limits. `resume-openings-20261017.jsonl` retains all sixteen
+valid openings and the failed readiness phase. Raw reports, phone logs, isolated
+ping harness diagnostics and CPU records survive in the three `resume-*` evidence
+directories named in the JSON. All manifests were checked after copying. Update
+the documentation handoff with this renewed guest-load failure as well as actual
+later dispatcher gate results; do not replace either earlier failure history.

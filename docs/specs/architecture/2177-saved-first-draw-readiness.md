@@ -56,6 +56,52 @@ Pending for documentation: update `docs/knowledge/features/thread-screen-testing
 
 ## Revisions
 
+### 2026-10-17: guest load still prevents current acceptance; wait on #2209
+
+After merging #2198, focused scripted ping passes: 2 executed, 2 passed, no
+failures/errors/skips, exit 0. Its earlier failure remains retained. Main is merged
+at `5e3e4471733f63e97ccb6c4fc5f054d8107f9445`; deployed agents are now
+`49cd6dd07c163a7d0e9583850aafb28378ec0b3c`.
+
+The fresh complete first-draw class instead executes 4, passes 3, fails 1, skips 0
+(exit 1). Both draw methods retain and pass all eight openings, and held-pipe
+cancellation passes. The first executed slow-restore control exhausts readiness:
+109 responsive windows at 0–49% idle, none >=80%, ending at `stage=window` before
+any Probe. It supplies no slow-draw or bound-rejection measurement. A separate
+isolated diagnostic reproduces that failure (1 executed, 0 passed, 1 failed,
+0 errors/skips, exit 1): 110 responsive windows at 0–49% idle, no Probe.
+
+Five-second CPU deltas overlapping diagnostic readiness show guest idle
+3.97–37.83%, guest steal 0–0.20%, and host idle 45.28–74.39%. A fresh one-second
+guest process sample near the deadline/teardown reports 9% idle, 0 host/steal,
+Google Play Services persistent/main at 66/23 percentage points of two-core CPU
+capacity, system_server at 26 and Mobile at 3. This demonstrates guest background
+load near this failure, without proving the initiating work or attributing every
+window. The first class also had a pending documentation-search request; neither
+its lifetime CPU average nor its timeout diagnoses that failure. The isolated
+diagnostic records zero additional search-process CPU ticks. `dumpsys cpuinfo`
+repeats an old boot interval and is not current process attribution.
+
+Filed and verified open external runner/device repair [#2209](https://github.com/pyrycode/pyrycode-mobile/issues/2209),
+Backlog, low priority, and the native blocked-by link from #2177. Its owning work
+is in the agents runner/managed-image lifecycle, outside this Mobile builder's
+allowed files. No Mobile measurement logic defect is established. No process or
+device settings were changed, and no warming, retries for acceptance, skips or
+threshold changes were used. The isolated run is diagnostic evidence, preserving
+the failed class. Resume acceptance after an evidenced external repair, including
+fresh execution of all four methods; the earlier 4+4 passes do not clear this red.
+
+Checked counts, revisions, hashes and all sixteen valid openings plus the failed
+readiness phase are in `resume-validation-20261017.json` and
+`resume-openings-20261017.jsonl` under the existing evidence asset directory. Raw
+XML, phone logs, CPU observations, scripts and verified manifests are durable under
+`$AGENTS_REPO_PATH/logs/evidence/2177/resume-{first-draw-20261017-0014,negative-diagnostic-20261017,ping-20261017}/`.
+Historical 1434/1436 ms misses remain unresolved in #2202; current valid fragmented
+first draws of 601/589 ms normally and 852/667 ms with projection held do not
+attribute those misses. Complete dispatcher UI/scripted-all gates and documentation
+remain pending. Documentation must retain this renewed guest-load failure as well
+as the earlier host/compiler diagnosis and original passing comparisons.
+
 ### 2026-10-16: separate inherited scripted failure blocks green validation
 
 Final focused scripted `ping` executed 2, passed 1, failed 1, skipped 0, exit 1.
