@@ -72,3 +72,24 @@ lint, formatting, instrumented compilation and final pre-verification checks.
 - Confirm the controlled regression fails with the same missing refused request
   before implementation, and passes with atomic close. Record measured results
   in the PR and causal ticket comment.
+
+## Revisions
+
+### 2026-10-17 — controlled failure confirmed
+
+The forced overlapping-close regression failed twice before repair, each with
+one executed/failed test and zero skips. Both failures leave precisely the
+refused attachment request and inbound end unconsumed. The cold native baseline
+passed 1/1 in 7.816 seconds, consistent with the historical fail-then-pass. The
+supervisor's synchronous close races its cancelled loop's final transport close;
+the regression forces that overlap with a held hub monitor. No prior test state
+is required. Serialize close publication and lifecycle with send as planned.
+The remaining open question is resolved by retaining the repaired focused results
+and a content-free evidence index at
+`app/src/test/resources/verification/recorded-close-2219/evidence.json`.
+
+## Documentation handoff
+
+Pending documentation stage: `docs/recorded-tests.md`, replay scheduling and
+verified evidence: describe atomic close publication/lifecycle consumption and
+link the controlled failed/repaired regression and five focused Linux runs.

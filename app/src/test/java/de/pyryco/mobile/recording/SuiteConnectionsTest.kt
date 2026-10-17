@@ -22,6 +22,94 @@ import kotlin.concurrent.thread
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteConnectionsTest {
+    @Test fun aRacingCloseCannotHideTheCapturedRefusedAttachmentRequest() =
+        runTest {
+            val request = frame(1, "request_attachment", """{"conversation_id":"chat","attachment_id":"file"}""")
+            val hub =
+                SuiteConnections.replaying(
+                    backgroundScope,
+                    RecordedSuiteTape(
+                        listOf(
+                            SuiteStep("connect", "phone"),
+                            SuiteStep("open", "phone"),
+                            SuiteStep("close", "phone"),
+                            SuiteStep("client", "phone", request, accepted = false),
+                            SuiteStep("inbound_end", "phone"),
+                        ),
+                        literalProducerIdentities = true,
+                    ),
+                )
+            val transport = hub.transport("phone") { error("Live transport started") }
+            transport.connect()
+            val pump = hub.pump(transport) { error("Live pump started") }
+            pump.start()
+            runCurrent()
+            val started = CountDownLatch(1)
+            val failure = AtomicReference<Throwable?>()
+            var closer: Thread? = null
+            try {
+                synchronized(hub) {
+                    closer =
+                        thread {
+                            started.countDown()
+                            try {
+                                transport.close()
+                            } catch (error: Throwable) {
+                                failure.set(error)
+                            }
+                        }
+                    check(started.await(5, TimeUnit.SECONDS))
+                    val worker = checkNotNull(closer)
+                    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+                    while (worker.state != Thread.State.BLOCKED && System.nanoTime() < deadline) Thread.yield()
+                    assertEquals(Thread.State.BLOCKED, worker.state)
+                    // The supervisor and coordinator can both close this connection. The second
+                    // close must finish the tape transition before the cut retrieval sends.
+                    pump.close()
+                    assertFalse(pump.send(request.copy(id = 90)))
+                }
+                checkNotNull(closer).join(5000)
+                assertFalse(checkNotNull(closer).isAlive)
+                assertEquals(null, failure.get())
+                runCurrent()
+                hub.assertComplete()
+            } finally {
+                closer?.join(5000)
+                hub.close()
+            }
+        }
+
+    @Test fun aCapturedRefusalStillRejectsAChangedAttachmentAfterClose() =
+        runTest {
+            val hub =
+                SuiteConnections.replaying(
+                    backgroundScope,
+                    RecordedSuiteTape(
+                        listOf(
+                            SuiteStep("connect", "phone"),
+                            SuiteStep("open", "phone"),
+                            SuiteStep("close", "phone"),
+                            SuiteStep("client", "phone", frame(1, "request_attachment", """{"attachment_id":"file"}"""), accepted = false),
+                        ),
+                        literalProducerIdentities = true,
+                    ),
+                )
+            try {
+                val transport = hub.transport("phone") { error("Live transport started") }
+                transport.connect()
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                runCurrent()
+                pump.close()
+                assertThrows(IllegalStateException::class.java) {
+                    pump.send(frame(90, "request_attachment", """{"attachment_id":"wrong"}"""))
+                }
+                assertThrows(IllegalStateException::class.java) { hub.assertComplete() }
+            } finally {
+                hub.close()
+            }
+        }
+
     @Test fun aSendWaitingBehindCloseCannotUseAnEarlierOpenState() =
         runTest {
             val hub =
