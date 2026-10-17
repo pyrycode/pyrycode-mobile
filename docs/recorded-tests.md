@@ -232,7 +232,16 @@ A nonzero gap keeps at least 20 ms, or its captured length when that is shorter,
 consecutive frames still reach the screen in separate UI frames and intermediate states
 stay observable. Recordings keep the real captured gaps; only the player shortens them.
 Replay proves payload, order and correlation, not timing, so the shorter wait drops no
-coverage. Checkpoints, close readiness and negative observations wait for released
+coverage.
+
+A few recordings replay at their captured speed instead. They are listed by scenario name in
+`SuiteConnections.ORIGINAL_SPEED_SCENARIOS` and selected when the suite loads the tape.
+Each asserts a transient on-screen state that lasts only as long as a captured gap, so the
+scaled gap could end it before the assertion sees it. The new-session scenario is listed
+because it waits for the "wrapping up" label, which lasts about 4.5 seconds in the recording.
+Add a scenario only after it fails at the scaled speed and the failed wait is such a
+transient. Do not add one for a slow or flaky device; a unit test checks that each
+listed name has a shipped recording. Checkpoints, close readiness and negative observations wait for released
 messages, not tape time, and the negative window stays its fixed one second.
 Real push delivery, encryption, transport recovery and timing obligations retain their
 external checks.

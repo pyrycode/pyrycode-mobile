@@ -45,6 +45,7 @@ internal class SuiteConnections private constructor(
     private val tape: RecordedSuiteTape?,
     private val capture: SuiteCapture?,
     private val onExternal: (SuiteStep) -> Unit = { error("Unexpected recorded external event") },
+    private val originalSpeed: Boolean = false,
 ) : AutoCloseable {
     private val scope = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
     private val transports = mutableMapOf<String, RecordedTransport>()
@@ -74,7 +75,7 @@ internal class SuiteConnections private constructor(
                     is Delivery.Barrier -> delivery.done.complete(Unit)
                     is Delivery.Steps -> for (step in delivery.values) {
                         try {
-                            delay(replayDelayMs(step.delayMs))
+                            delay(if (originalSpeed) step.delayMs else replayDelayMs(step.delayMs))
                             route(step)
                         } catch (error: Throwable) {
                             failure.compareAndSet(null, error)
@@ -467,14 +468,23 @@ internal class SuiteConnections private constructor(
         /** A nonzero gap keeps this much, or its captured value if shorter, so frames stay in separate UI frames. */
         const val REPLAY_MIN_GAP_MS = 20L
 
+        /**
+         * Recordings that replay at their captured speed. Each one asserts a transient on-screen state
+         * that lasts only as long as a captured gap, so the scaled gap could end it before the
+         * assertion sees it. The new-session scenario waits for the "wrapping up" label, which the
+         * recording holds for about 4.5 seconds; scaled, it lasts about 0.45 seconds.
+         */
+        val ORIGINAL_SPEED_SCENARIOS = setOf("interactiveTurn_newSession_rendersSessionBoundaryDelimiter")
+
         fun replayDelayMs(capturedMs: Long): Long =
             if (capturedMs <= 0) 0 else maxOf(capturedMs / REPLAY_DELAY_DIVISOR, minOf(capturedMs, REPLAY_MIN_GAP_MS))
 
         fun replaying(
             scope: CoroutineScope,
             tape: RecordedSuiteTape,
+            originalSpeed: Boolean = false,
             onExternal: (SuiteStep) -> Unit = { error("Unexpected recorded external event") },
-        ) = SuiteConnections(scope, tape, null, onExternal)
+        ) = SuiteConnections(scope, tape, null, onExternal, originalSpeed)
 
         fun recording(
             scope: CoroutineScope,
