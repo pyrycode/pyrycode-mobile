@@ -358,6 +358,49 @@ retained with #2202's reviewed evidence. Original raw comparisons were at
 `post-runner-baseline-20261016/`, `post-runner-current-20261016/`,
 `resume-first-draw-20261017-0014/` and `resume-negative-diagnostic-20261017/`.
 
+**Final acceptance, after #2209 and the #2228 software-rendering bound.** At Mobile
+`24a015e8b5f580a6933b45542ed01386c0b704f3` (main `46909f852` merged), agents
+`c8edc37edbcc111bf769b93840beea0fe5e8c02f` reusing managed generation `151a9dbd…`
+on build-fractal-2 with the SwiftShader guest renderer (`event=first_draw_bound
+bound_ms=2000`), the focused class executed **4/4/0/0/0**, exit 0, after a 990 s
+admission wait. All 17 readiness barriers qualified over 77 windows, with 17
+installed Probes and maximum acquisition/read **9/32 ms**. Fragmented
+offline/held-newest first draws were **774/650 ms** with projection held and
+**591/664 ms** originally — inside both the 2000 ms software bound and the
+unchanged 1000 ms product target, so the software bound decided no outcome here.
+The slow-restore control rejected at **3727 ms**. The earlier bound-1000
+build-fractal-2 run stays recorded as failed (**4/2/2/0/0**, see #2218's table
+below); no Mobile measurement logic changed between the two runs.
+
+The configured dispatcher gates then completed for #2177:
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui` passed
+**335/335/0/0/1** (sole skip `RenameDialogCaptureTest.renameAtFigmaViewport`),
+executing and passing both `delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen`
+and `savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen`,
+plus both `slowRestore_negativeControlRejectsTheSameFirstDrawBound` and
+`heldCpuPipeCancelsAndClosesItsDescriptor` controls; scripted-all passed
+**22/22/0/0/0**, including `interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`.
+
+This closes #2177's own acceptance handoff. The diagnosed cause was never a Mobile
+measurement defect: it moved through external host/runner compiler-and-GC
+contention (repaired by #2178), a managed-image lifecycle gap that let guest
+background load into the readiness window (repaired by #2209), and finally
+measured draws exceeding the then-**1000 ms** bound under software rendering,
+repaired by #2228's SwiftShader-conditional **2000 ms** bound (detailed under
+"Cold-decode localization and the software-rendering bound (#2218)" below). No
+`SavedThreadFirstDrawDeviceTest` or `EmulatorCpuReadiness.kt` assertion, fixture,
+warmup, retry or skip changed to reach this pass. The historical #2163
+**1434/1436 ms** misses keep #2202's disposition below: retained as a failure,
+cause unresolved, not reproduced under these repaired conditions.
+
+Checked counts and all 17 opening records for this final run are in
+`post-2218-{validation,openings}-20261017.*` under
+`../../../app/src/androidTest/assets/readiness-2177/`; raw XML, phone logs, gate
+phases, image identity and a verified manifest are under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2177/post-2218-class-20261017/`.
+Documentation inspected these retained reports and the gate report's counted
+results; it ran no comparisons itself.
+
 ### Historical fragmented latency disposition (#2202)
 
 The [historical #2163 verifier failure](https://github.com/pyrycode/pyrycode-mobile/pull/2168#issuecomment-6201154344)
