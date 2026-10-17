@@ -35,6 +35,13 @@ Nullable rather than `""`-defaulted on purpose: with `explicitNulls = false` a m
 
 Nothing in the UI changes. `toolNestingDepths` and `foldBackgroundAgentBlocks` already nest restored rows once the ids survive; the stale clause in the `toolNestingDepths` KDoc is corrected.
 
+This supersedes #1826's storage decision for `Message.parentToolUseId` (`1826-assistant-parent-attribution.md`: "Disk serialization is unchanged", and in its security review "Attribution is not serialized"). #1826 accepted that a restart loses attribution until fresh evidence arrives; this ticket's first criterion requires the reopened thread to nest as before, which in-memory enrichment cannot give. Storing it is acceptable because:
+
+- A parent id is a daemon-issued `tool_use` id, the same opaque value the cache already stores as the parent Agent row's own id (`ordinaryId` is what nesting joins to). No new kind of data reaches disk.
+- It sits in the same app-private thread document as the message text and tool input already stored there, under the same custody.
+- It stays an inert grouping hint: never logged, never a filename or cache key, granting no authority. A tampered document can at most misgroup rows inside its own conversation, as a hostile daemon already can live.
+- #1826's reconciliation is unchanged: a restored empty parent is still filled in memory from wire evidence, and an empty hint never erases a known parent.
+
 ## State and concurrency model
 
 No new jobs, flows or dispatchers. The codec runs inside the existing `FileConversationCache` mutex on its injected IO dispatcher.
@@ -65,10 +72,11 @@ No new failure modes. A malformed document is still rejected whole by the existi
 
 ## Documentation handoff
 
-- `docs/knowledge/features/conversation-cache-layout.md` (or the cache overview section that lists `CachedToolCall`/`CachedMessage` fields): record that both parent ids are now persisted, nullable and omitted when empty, pending for the documentation stage.
+- `docs/knowledge/features/conversation-cache-layout.md`, the `CachedToolCall` field list ("`parentToolUseId`, `denial` and `resultDetail` stay uncached") and the #1826 assistant-attribution paragraph ("absent from disk serialization"): record that both parent ids are now persisted, nullable and omitted when empty, that cache-only rows restore with their stored parent, and that pre-#2221 documents still restore empty and are enriched in memory. Pending for the documentation stage.
 
 ## Revisions
 
 - 2026-10-17: the live method is also added to the curated LIVE list in `scripts/e2e-emulator.sh`, beside the other Agent methods. The live gate only accepts curated methods, so the capture cannot run without it. Design unchanged.
 - 2026-10-17, after verifier review: option (b) of its inventory finding. The one-off AC3 probe `interactiveTurn_foregroundAndBackgroundAgent_childToolsNestUnderAgent` is removed from `InteractiveStreamE2ETest` and from the curated LIVE list once its capture ran. A routine method in that class must also be a recorded suite row with a replay (`suite.json`, `liveSelection`, `RecordedMobileSuiteTest`), and the question the probe answers is a one-time diagnosis, not a behaviour to replay. The capture stays the AC3 evidence: it ran at Mobile revision `95cb6b342477fb52279ab45ec4b933e2382386bf`, which is still in this branch's history, and its XML, logcat and daemon logs are retained outside Git under `logs/evidence/2221/` in the agents repository. The shipped change is the cache fix and its two tests only.
+- 2026-10-17, after verifier review (rework 2): `AssistantParentCacheTest`'s disk-format test asserted #1826's unattributed disk format and failed under this change. It is rewritten to the new contract and renamed `diskFormatKeepsAttribution_wireEvidenceEnrichesUnattributedRows_andReconnectKeepsIt`: an attributed write restores with its parent, an unattributed document still gains the parent from wire evidence and keeps it across a reconnect, and the collector's final flush persists it. The Design section now records that this plan supersedes #1826's "attribution is not serialized" decision for `Message.parentToolUseId`, with the reasons.
 - 2026-10-17: the Testing strategy wording for `RestoredSubagentNestingTest` is corrected. The background child tool is asserted through its level-1 subagent step; `background-agent-child:<agentId>` wraps only the background child prose.
