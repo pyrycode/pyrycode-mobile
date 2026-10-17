@@ -7,7 +7,7 @@
 - `data/repository/NegotiatedThread.kt` on salvage `feature/2175`: retain only `ThreadSupport`, without provider/screen members.
 - `di/HostConversationSource.kt`: `HostConversationConnection`, `HostConversationSnapshot`, `reconcile`, `update` preserve exact host/bundle identity.
 - `di/RelayConnectionRegistry.kt`: `retryHost` retains foreground and exact-bundle ownership.
-- `di/RelayConnectionFactory.kt`: `create`, `RelayConnectionBundle` keep the production authoritative host empty and replay cursor supplied.
+- `di/RelayConnectionFactory.kt`: `create`, `RelayConnectionBundle` keep the production authoritative host empty and replay cursor supplied; an internal coordinator assembly seam lets probes construct opt-in bundles.
 - `ui/conversations/components/ConversationTreeRows.kt`: `TreeHostRow` already owns app-update priority, bounded names and compact controls.
 - `ui/conversations/list/ChannelListScreen.kt`: `treeHost` routes host-specific reconnect, edit and Play Store actions.
 - `res/values/strings.xml`: existing host-update and reconnect copy.
@@ -31,7 +31,7 @@ Overlaps: #1947 changes context-usage clearing in the remote repository; #2098 a
 
 ## Design
 
-Carry the verdict, legacy-refusal and row hunks from `3592d67f1` (`feat(thread): activate required negotiated daemon threads (#2175)`) and retain that original text in the implementation commit body. `NegotiatedThread.kt` contains only the sealed `ThreadSupport` verdict: Unverified, Supported(connection), Missing(connection). A coordinator with a non-empty `authoritativeHostId` switches one collector over `activeConnection` then that connection's `pump.state`. Only authenticated Open grants a verdict; both `thread` and `interactive` are necessary. Missing persists until the next acknowledgement; Supported retires to Unverified.
+Carry the verdict, legacy-refusal and row hunks from `3592d67f1` (`feat(thread): activate required negotiated daemon threads (#2175)`) and retain that original text in the implementation commit body. `ThreadSupport.kt` contains only the sealed `ThreadSupport` verdict: Unverified, Supported(connection), Missing(connection). A coordinator with a non-empty `authoritativeHostId` switches one collector over `activeConnection` then that connection's `pump.state`. Only authenticated Open grants a verdict; both `thread` and `interactive` are necessary. Missing persists until the next acknowledgement; Supported retires to Unverified.
 
 Use the existing coordinator monitor and transport identity to reject a retired collector's writes. Teardown retires Supported synchronously, including permanent close. The per-repository capability supplier also checks the connection child scope and current transport so a retained repository cannot issue a query at the replacement edge before collector cancellation runs. Existing authoritative store/query seams suffice; no negotiated provider is added.
 
@@ -64,7 +64,7 @@ No new remote error type. Legacy methods follow their existing throwing contract
 
 ## Testing strategy
 
-Write a behavioural legacy-snapshot refusal test first and observe the unwanted backfill on main, then carry implementation and remaining probes. Adapt salvage real-coordinator/fake-pump tests to existing repository entry points without provider/cache/ViewModel dependencies. Fake pumps retain their chosen Open state after close to challenge retirement; record envelopes and certify colliding store items with existing batch fixtures. Registry probes use real supervisors/coordinators and fake transports/pumps; MockK only assembles factory/bundle holders, without mocking repository behaviour. Shared row probes assert caption, fold/recovery, host-labelled controls and app-update priority.
+Write a behavioural legacy-snapshot refusal test first and observe the unwanted backfill on main, then carry implementation and remaining probes. Adapt salvage real-coordinator/fake-pump tests to existing repository entry points without provider/cache/ViewModel dependencies. Fake pumps retain their chosen Open state after close to challenge retirement; record envelopes and certify colliding store items with existing batch fixtures. Registry probes use real bundles/supervisors/coordinators and fake transports/pumps through internal constructor assembly seams. Shared row probes assert caption, fold/recovery, host-labelled controls and app-update priority.
 
 Run affected negotiation, retry, host source, coordinator, authoritative-query, remote-history, production hello/factory and row/list tests on Linux. Run lint, assembleDebug, shared/android Kotlin compile, spotlessApply and forced spotlessCheck. Push before the final merge/assemble/pre-verify gate. Complete suite and normal recorded coverage remain dispatcher-owned; A has no live acceptance requirement. Estimated total written work: 1,100–1,350 lines, four new verdict declarations, one consumer requiring update, four acceptance criteria and fewer than ten rejection branches; within the hard ceilings.
 
@@ -92,5 +92,13 @@ Pending for documentation stage:
 - Concurrency: MUST FIX addressed in design: switching collectors alone cannot fence synchronous callbacks before cancellation. Check transport/child-scope ownership in the capability supplier, guard verdict writes under the coordinator monitor, and retire verdict on teardown. Registry retry keeps its existing lifecycle/bundle lock; no extra lock ordering or suspension is introduced.
 - Threat model: a malicious relay may delay/drop connections, leaving Unverified or sticky Missing with no content requests. Hostile capability combinations fail closed. No new daemon text crosses the UI boundary. Rooted token theft and screenshot/IME leakage retain existing protections, outside this change's surface.
 
-**Reviewer:** builder, self-review per `builder/security-review.md`  
+**Reviewer:** builder, self-review per `builder/security-review.md`
 **Date:** 2026-10-17
+
+## Revisions
+
+- 2026-10-17: Unit compilation showed MockK is not installed. Keep the repository's fake-only approach and avoid a new dependency: the registry gains an internal bundle-construction overload while preserving its public factory constructor; the bundle gains an internal optional coordinator-construction callback. Probes can then assemble real opt-in owners. `RelayConnectionFactory.create`, the production default coordinator arguments and replay cursor remain unchanged. Existing constructors require no consumer updates, and no host identity is wired into production.
+
+- 2026-10-17: Spotless requires a single-type file to match its declaration, so A's verdict-only salvage is named `ThreadSupport.kt`. `NegotiatedThread` and its provider remain #2245's work.
+
+- 2026-10-17: The baseline probes executed two tests and failed both: snapshot collection sent `backfill_since`, and `openAuthoritativeThread` accepted a retained repository immediately after transport replacement, before collectors ran. The planned transport/child-scope fence addresses the demonstrated query gap. Like `currentRepository`, `threadSupport.value` also checks the actual live connection so a synchronous reader cannot retain Supported during that scheduling window. Raw red evidence is retained at `/tmp/builder-2244/red-negotiation.xml` and in this run's evidence bundle.

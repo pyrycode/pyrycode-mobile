@@ -59,6 +59,8 @@ data class HostConversationSnapshot(
     val chats: List<Conversation> = emptyList(),
     /** Only an accepted live list establishes absence; startup and cache restoration do not. */
     val rowsLoaded: Boolean = false,
+    /** Daemon feature gap; separate from the app-too-old transport verdict. */
+    val threadMissing: Boolean = false,
 )
 
 /**
@@ -95,6 +97,7 @@ internal data class HostConversationConnection(
     val liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
     val modals: StateFlow<HostModalState> = MutableStateFlow(HostModalState()),
     val questionBatches: StateFlow<List<QuestionBatch>> = MutableStateFlow(emptyList()),
+    val threadMissing: StateFlow<Boolean> = MutableStateFlow(false),
 )
 
 /**
@@ -214,6 +217,9 @@ class HostConversationSource internal constructor(
                 held[connection.serverId] = entry
                 scope.launch(entry.job) {
                     connection.status.collect { status -> update(entry) { it.copy(connectionStatus = status) } }
+                }
+                scope.launch(entry.job) {
+                    connection.threadMissing.collect { missing -> update(entry) { it.copy(threadMissing = missing) } }
                 }
                 cache?.let { store ->
                     scope.launch(entry.job) {
