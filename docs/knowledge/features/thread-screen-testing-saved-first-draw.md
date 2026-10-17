@@ -308,3 +308,145 @@ phone logs and manifests survive under
 four selected phone logs and checksums are under
 `/Users/juhanailmoniemi/.codex/publish/pyrycode-mobile/verifier-2143/evidence/`.
 Documentation inspected these existing reports and logs and ran no tests.
+
+### Responsive load and focused comparisons (#2177)
+
+The [readiness investigation](https://github.com/pyrycode/pyrycode-mobile/pull/2203)
+identified responsive readiness exhaustion under external compiler/GC pressure.
+Runner repair [#2178 / agents PR #186](https://github.com/pyrycode/pyrycode-mobile-agents/pull/186)
+keeps Kotlin compilation in the owned Gradle lifetime. Subsequent focused class
+comparisons on Linux/build-fractal-2, Mobile
+`4b21cef23ef9d395f667694ab2a6df97c380deaf` and
+`e8a4508f23f1b99e0c22494656fad1fe4a9ecf7d`, each recorded
+**4 executed / 4 passed / 0 failed / 0 errors / 0 skipped** with agents
+`800e719515a91bf2040d9d26b0e0a802e931bca3`. The unchanged baseline's fragmented
+offline/held-newest first draws were **676/609 ms** normally and **841/678 ms**
+with projection held; slow controls rejected the bound at **3800/3768 ms** in
+baseline/current. These establish valid measurements under those conditions,
+without attributing or repairing the historical committed-frame misses below.
+
+Later focused evidence at Mobile `5e3e4471733f63e97ccb6c4fc5f054d8107f9445`, agents
+`49cd6dd07c163a7d0e9583850aafb28378ec0b3c`, remains **4/3/1/0/0** in
+executed/passed/failed/errors/skipped order. Both draw methods passed all eight
+openings and held-pipe cancellation passed, but the slow control exhausted readiness
+after **109 responsive windows at 0–49% idle**, before installing its Probe.
+A separate diagnostic retained **1/0/1/0/0**, with **110 windows at 0–49% idle**
+and no Probe. Neither failure supplies a slow-draw or bound-rejection measurement.
+Fresh guest counter deltas and a one-second process interval showed substantial
+Google Play Services/system_server work; the initiating operation and attribution
+across every window remain unproved. Lifetime process CPU averages and boot-restored
+`dumpsys cpuinfo` snapshots cannot identify current load.
+
+Those startup-load failures remain owned by
+[#2209](https://github.com/pyrycode/pyrycode-mobile/issues/2209).
+The later complete #2202 selection reaches these methods under different conditions;
+its passes do not clear that report or replace #2177's own acceptance handoff.
+The checked #2177 `comparison.json` and `resume-validation-20261017.json` are also
+retained with #2202's reviewed evidence. Original raw comparisons were at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2177/`, in
+`post-runner-baseline-20261016/`, `post-runner-current-20261016/`,
+`resume-first-draw-20261017-0014/` and `resume-negative-diagnostic-20261017/`.
+
+### Historical fragmented latency disposition (#2202)
+
+The [historical #2163 verifier failure](https://github.com/pyrycode/pyrycode-mobile/pull/2168#issuecomment-6201154344)
+at Mobile `23176249515918b2a776c4b3429d8ce112d363e0`, build-fractal-2, retains
+**261 executed / 260 passed / 1 failed / 0 errors / 1 skipped**. The delayed-projection
+method drew at **260/357/258/207/1434/478/1436/506 ms** in ordinary offline
+first/reopen, ordinary held-newest first/reopen, fragmented offline first/reopen,
+fragmented held-newest first/reopen order. Its **1434/1436 ms** fragmented first
+opens remain failures against **1000 ms**. The new Room backend was unbound.
+
+The retrieved bundle retains counted XML, verdict and final draw values, but lacks
+contemporaneous host/device CPU/load, raw readiness/worker logs, detailed cumulative
+restore/snapshot/content/frame records, detailed host/device configuration and the
+exact measurement runner revision. Its `pointers.json` is empty. A dispatcher
+revision alone does not identify that runner. These unavailable measurements prevent
+historical attribution; runner remediation and subsequent passes cannot supply them.
+
+The [bounded investigation and verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2211#issuecomment-6229082234)
+record two separate complete regular UI runs on Linux/build-hp-1, one managed
+Pixel 2 API 33 Google ATD x86_64 shard with animations disabled. Counts are
+**executed/passed/failed/errors/skipped**, from inspected fresh XML:
+
+| Run | Mobile revision | XML timestamp (2026-10-17) | Counts |
+| --- | --- | --- | --- |
+| Unchanged-production builder baseline | `33b1353bf5d8929f81690acf376ba47e51b82043` | 01:37:48 | 334/334/0/0/1 |
+| Configured dispatcher UI | `80aa4bcfbbc8d0625c3780891873ebe771ae88d6` | 03:26:35 | 334/334/0/0/1 |
+
+Both used agents `49cd6dd07c163a7d0e9583850aafb28378ec0b3c` and
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`;
+the builder additionally set `UI_GATE_FULL=1`. That flag was absent from the
+configured dispatcher command, but counted XML proves the intended complete
+selection executed. Neither used the in-depth sweep. Each run executed/passed
+all four `SavedThreadFirstDrawDeviceTest` methods once, **1/1/0/0/0** each:
+`savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen`,
+`delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen`,
+`slowRestore_negativeControlRejectsTheSameFirstDrawBound` and
+`heldCpuPipeCancelsAndClosesItsDescriptor`. The sole whole-gate skip was the existing
+unrelated `RenameDialogCaptureTest.renameAtFigmaViewport`.
+
+All sixteen positive openings per run follow. Tuples are cumulative
+**restore/snapshot/complete-content/committed-newest-frame** monotonic milliseconds,
+not independent task durations; “twin” holds optional projection for **1100 ms**.
+
+| Fixture / mode / opening | Baseline normal | Baseline twin | Dispatcher normal | Dispatcher twin |
+| --- | --- | --- | --- | --- |
+| Ordinary / offline / first | 40/46/50/98 | 25/30/35/82 | 21/28/44/84 | 36/38/55/93 |
+| Ordinary / offline / reopen | 15/20/38/81 | 16/20/39/83 | 17/19/25/71 | 34/41/57/102 |
+| Ordinary / held newest / first | 30/36/53/92 | 14/19/24/72 | 18/24/41/90 | 34/40/56/104 |
+| Ordinary / held newest / reopen | 37/39/56/98 | 16/23/27/75 | 19/24/30/80 | 36/41/58/100 |
+| Fragmented / offline / first | 329/329/351/431 | 326/327/336/424 | 304/304/309/391 | 310/310/332/420 |
+| Fragmented / offline / reopen | 44/45/71/138 | 46/46/60/123 | 57/60/82/140 | 49/62/89/176 |
+| Fragmented / held newest / first | 312/313/331/404 | 341/342/353/433 | 299/299/312/390 | 331/332/340/410 |
+| Fragmented / held newest / reopen | 42/43/69/129 | 42/43/63/125 | 60/66/86/163 | 31/44/49/105 |
+
+Positive draws were **72–433 ms** in the baseline and **71–420 ms** in dispatcher
+verification, leaving at least **567/580 ms** headroom respectively. Baseline
+cumulative restore/snapshot/content ranges were **14–341 / 19–342 / 24–353 ms**.
+The **3000 ms** slow control passed by rejecting the identical **1000 ms** bound:
+baseline phases **3015/3052/3080/3123 ms**, dispatcher **3019/3047/3066/3092 ms**.
+Held-pipe cancellation and descriptor closure passed in both runs.
+
+Each run passed all **17 readiness barriers**, each after exactly four windows:
+baseline **68 windows at 82–100% idle**, dispatcher **68 at 88–100%**. Baseline
+acquisition/read ranges were **0–6/10–33 ms**. Cold timed construction, persisted
+ordinary/fragmented fixtures, fresh ViewModel/composition on reopen, exact newest
+committed frame, rows/markers and zero-offline/one-connected request assertions
+remain intact. No Mobile production/test logic, warmup, acceptance retry, skip or
+threshold change was introduced.
+
+All eight measurement-source hashes match the historical revision and inspected
+\#2177 comparisons. The wider trees and conditions differ: #2177 selected a focused
+class on build-fractal-2 with the earlier runner, while these complete runs include
+**73 additional recorded-client cases** versus #2163. The current runner uses its
+owned Gradle JVM launcher; read-confirmation, DI/push and recorded-test changes also
+separate the wider trees. Source equality does not make execution conditions equal.
+
+The builder retained **355 host / 289 guest CPU samples** and **158 worker events**.
+Five-second read-only observation adds overhead; device-phase host idle ranged
+**54.54–98.98%**, while guest intervals across boot and all methods ranged
+**3.30–99.60% idle / 0–4.80% steal**. Those coarse intervals cannot attribute an
+individual subsecond draw. Dispatcher logs retain readiness and worker CPU;
+external host/device CPU observation belongs to the separate builder baseline.
+Neither readiness nor observed headroom establishes general reliability.
+
+The disposition is **“historical failure retained; cause unresolved; not reproduced
+under the recorded repaired-runner conditions.”** No Mobile repair is claimed.
+Separate configured dispatcher JVM and scripted-all results were
+**5733/5733/0/0/0** and **22/22/0/0/0**; scripted-all selects none of these four
+methods. No in-depth main sweep or real-Claude turn was required or run. Other
+operating systems are outside this Linux ticket's verification scope.
+
+[Checked baseline summaries and every opening](../../../app/src/androidTest/assets/latency-2202/)
+retain identities/configuration, eight source hashes, phase/readiness records and
+evidence manifests. Raw files were retained under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2202/`: `baseline-20261017/`
+holds XML, 335 phone logs, CPU samples and configuration; `historical-2163/` holds
+the retrieved failed bundle; `audit-baseline-20261017/` holds the checked audit;
+`verifier-80aa4bc-20261017/` holds fresh dispatcher XML, phone/worker/readiness logs,
+checked phase/source summary and verified manifest. The baseline 348-file manifest
+SHA-256 is `314c33855de229498ec0e1cab06f0e2af16a76477bb5ac22fce56dbc0d105c55`.
+These raw locations are subject to retention; the counted results and phases above
+preserve the disposition. Documentation inspected existing evidence and generated
+no acceptance results.

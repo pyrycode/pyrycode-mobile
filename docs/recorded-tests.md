@@ -112,6 +112,29 @@ The permission recording above remains separate. The complete suite inventories 
 annotated real-Claude method in `scripts/recorded-suite-inventory.py`. Its native runner
 calls each original scenario body through the real repository and Compose interface.
 Two workspace scenarios remain explicitly retired because their controls were removed.
+The current routine runner contains 68 recordings. Three further original methods are
+owned by the existing scripted suite because both versions execute the same assertions:
+
+| Original scenario | Retained scripted scenario | Shared assertions |
+| --- | --- | --- |
+| Session-error recovery | `session-error` | Retained and dropped backlog recovery, message identity and original-host restoration |
+| Finished reply selection | `selection-copy` | Real Android word selection, Copy menu and clipboard result |
+| Reply suggestion | `reply-suggestion` | Long-press send, one user echo and revisioned suggestion removal |
+
+The manifest names each exact scripted method. The inventory requires that annotated
+method and its original harness mapping to remain enabled. It accepts no other scripted
+exemptions. These three methods remain in the explicit live selection. Their recordings
+are no longer shipped or counted as successful captures. No other recording used them.
+The 73 original methods therefore comprise 68 recordings, three scripted owners and
+two obsolete workspace methods. Every scripted scenario remains in the normal gate.
+
+Recording capture, replay and strict compatibility commands below select the 68 retained
+recordings. Scripted ownership never supplies a capture or compatibility receipt.
+Missing recordings, changed contracts, package mismatches and incomplete counted
+evidence still fail. Historical 71-recording receipts below describe the earlier selection.
+Removing the repeated routine native executions accounts for 42.416 seconds in one
+retained Mac run. This is expected test work saved, not a measured whole-verifier gain.
+
 Missing recordings fail the inventory. They never count as converted scenarios.
 The normal Gradle `check` task enforces this inventory, including capture and replay hashes.
 
@@ -140,6 +163,17 @@ The full suite preserves all mutating commands in recorded order. Independent co
 may progress separately. Background queries match their complete owner, payload and count.
 Their responses wait for their actual correlated requests and preceding recorded commands.
 Moving a query earlier cannot expose a future action's answer.
+
+During suite replay, `RecordedSuiteDocument.replayClientInfo` supplies the phone's
+`device_name` from captured `register_push_token` requests to the native connection
+factory. Only owners named `phone` or prefixed `phone/` supply this label; peer identities
+stay separate. The current client's version is retained. A recording without phone
+registration keeps the runner's identity, and inconsistent captured phone labels fail.
+Live capture uses the actual device identity. This lets an ARM capture replay on an x86
+emulator while every registration still matches its complete recorded payload, count and
+server owner. Arbitrary device names remain invalid. Capture provenance and raw fixture
+bytes are unchanged.
+
 File downloads are read-only queries. They may race other reads, including a model
 lookup after reconnect. The attachment identity and complete request remain exact.
 Upload chunks and user messages remain ordered commands. Downloaded chunks cannot be
@@ -226,11 +260,35 @@ bounded model above. The shared guarantees are exact actions, request correlatio
 connection termination after required work, observation boundaries and complete consumption.
 Do not interpret copying Desktop's checkpoints as copying its entire scheduler.
 
-Replay restores the instrumentation arguments, prior pairings and preferences, and the
-ordinary application graph after each case, including failures. Recorded mode must not
-leak into another device test or make its ordinary-mode check silently skip. A device
-regression enters an incomplete replay, requires that replay to fail, then checks that
-the arguments and ordinary repository binding are restored.
+### Replay isolation
+
+`E2eTestApplication` owns one preference DataStore for the instrumentation process.
+Both startup paths and every graph rebuild bind that same instance through a fresh
+override module. An ordinary isolated Koin graph can close without discarding the
+Application's preference factory or opening a competing owner of `app_prefs`.
+Replay isolates values in that store; it does not isolate cases in separate processes
+or preference files. The store remains active until process exit.
+
+Replay restores the instrumentation arguments, prior pairings and preferences, then
+rebuilds the ordinary application graph after each case, including failures. Rebuilds
+run on main with no Activity alive, unregister the old lifecycle observer and dispose
+the old registry and host sources. Recorded mode must not leak into another device
+test or make its ordinary-mode check silently skip.
+
+A seeded fixture must also restore its own original snapshot and rebuild the ordinary
+graph in `finally`. Direct snapshot restoration bypasses the observable pairing-store
+revision, so the registry created after replay can otherwise retain a synthetic host
+connection after its persisted pairing disappears. Cleanup must release that connection
+and restore exactly the original registry hosts as well as persisted state, even when
+the seeded assertion fails.
+
+`RecordedSuiteIsolationDeviceTest` covers ordinary graph closure with real file I/O,
+two successive incomplete replays with ordinary graph closure between them, and a
+successful original ping scenario. Two additional probes await synthetic registry
+ownership before checking cleanup after normal return and deliberate assertion failure.
+See [Device gate evidence for #2208](knowledge/features/development-verification-gates.md#linux-ownership-repair-evidence-2208)
+for counted Linux results. These checks remain offline; they do not establish fresh
+Claude compatibility, encrypted transport, real push delivery or live timing.
 
 Failed runs can export separately named private application traces. Their format cannot
 be loaded as a successful recording. Compressed diagnostic archives are excluded from
@@ -252,10 +310,64 @@ replay can render the same required screens without that interval. The v4 model 
 presentation and actual acknowledgements. It preserves original feature assertions and the
 explicit read/attention tests instead of forcing that incidental interval to repeat.
 
+### Cross-architecture replay evidence, 2026-10-17
+
+Verification scope for [#2201](https://github.com/pyrycode/pyrycode-mobile/issues/2201)
+was Linux x86_64, Android API 33. The original reported eleven-case failure output was
+not recovered. The failed results below are fresh controlled reproductions using the
+exact pre-repair document and native factory from `50ba564df`, with current regressions.
+A temporary unit-only API bridge returned the runner identity; native reproduction used
+the original factory directly. The bridge is absent from the repaired source.
+
+The phone-identity regression sends the registration through the strict tape before
+asserting identity equality. Checking equality first would fail without demonstrating
+the actual request mismatch. Keep the separate wrong-registration-payload rejection
+check so selecting the captured input cannot conceal relaxed matching.
+
+| Check | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Pre-repair document regressions | 11 | 8 | 3 | 0 |
+| Pre-repair affected native method | 1 | 0 | 1 | 0 |
+| Restored recording unit selection, `f402e5972` | 85 | 85 | 0 | 0 |
+| Restored full native recorded class, `f402e5972` | 71 | 71 | 0 | 0 |
+| Current recording unit selection, `323213178` | 86 | 86 | 0 | 0 |
+| Current full native recorded class, `323213178` | 71 | 71 | 0 | 0 |
+
+All rows had zero errors. The failed document case
+`replayUsesCapturedPhoneNameWhileKeepingCurrentVersionAndExactTape` and native method
+`interactiveTurn_pingPrompt_footerShowsContextUsage` reached the strict
+`register_push_token` mismatch. Both passed after restoration; the native method passed
+within each full 71-case run. All eleven document cases, including
+`replayStillRejectsWrongRegistrationPayloads`, passed in both repaired unit selections.
+The native runs removed credentials and recorded zero producer invocations. All 73
+original recording/index JSON files retained their hashes.
+
+The [content-free evidence index](../app/src/androidTest/assets/recorded-2201/evidence.json)
+records commands, revisions, report hashes and retained failed/repaired evidence locations.
+Raw evidence was stored under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2201/`:
+`rework-20261016-identity/` holds the failed/repaired XML, phone logs, source snapshots
+and reproduction patch; `current-20261017/` holds the current unit and native reports.
+Their manifests verified all 111 and 100 files respectively. These private paths identify
+where raw captures were retained at review time; the counted results above survive pruning.
+
+The separate scripted read-confirmation failure
+[#2198](https://github.com/pyrycode/pyrycode-mobile/issues/2198) is resolved by
+[PR #2199](https://github.com/pyrycode/pyrycode-mobile/pull/2199), merged as `a0c7db693`
+and included through `8ddba7509`. Its complete Linux dispatcher `scripted-all` run at
+`894bc402a` executed and passed 22 tests, with zero failures, errors or skips, including
+both ping methods. Raw counted XML was retained at
+`resolved-2198-20261017/logs/verifier-gate__2198_8.log` under the same evidence root;
+all 128 bundle manifest entries verified. The
+[verifier PASS and evidence review](https://github.com/pyrycode/pyrycode-mobile/pull/2207#issuecomment-6228349651)
+distinguishes this historical run from the current candidate's complete scripted gate.
+Earlier failed captures remain failures. macOS was outside this ticket's verification scope.
+
 ## Complete-suite rollout evidence, 2026-10-16
 
-The inventory accounts for all 73 original native methods. All 71 active scenarios have
-reviewed genuine recordings. Two workspace scenarios remain explicitly retired.
+At rollout, the inventory accounted for all 73 original native methods. All 71 active
+scenarios had reviewed genuine recordings. Two workspace scenarios were explicitly retired.
+The current routine selection is described above and does not rewrite these historical results.
 
 | Check | Reported | Failed | Skipped |
 | --- | ---: | ---: | ---: |

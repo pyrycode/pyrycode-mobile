@@ -22,6 +22,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('permission_recording', ROOT / 'scripts/recorded-exchanges.py')
 legacy = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(legacy)
+INVENTORY_SPEC = importlib.util.spec_from_file_location('suite_inventory', ROOT / 'scripts/recorded-suite-inventory.py')
+inventory = importlib.util.module_from_spec(INVENTORY_SPEC)
+INVENTORY_SPEC.loader.exec_module(inventory)
 CLASS = 'de.pyryco.mobile.recording.RecordedMobileSuiteTest'
 PACKAGE = legacy.PACKAGE
 MANIFEST = ROOT / 'app/src/androidTest/assets/recorded/suite.json'
@@ -538,12 +541,12 @@ def verify(args):
 
 
 def selected_rows(manifest, methods_file=None, ready=False):
-    rows = [row for row in manifest['scenarios'] if not row.get('retired')]
+    rows = inventory.recorded_rows(manifest)
     if methods_file is not None:
         chosen = json.loads(methods_file.read_text())
         require(isinstance(chosen, list) and chosen and len(chosen) == len(set(chosen)), 'Invalid selected method list')
         known = {row['method'] for row in rows}
-        require(set(chosen) <= known, 'Selected method is absent or retired')
+        require(set(chosen) <= known, 'Selected method is absent, retired or owned by scripted tests')
         rows = [row for row in rows if row['method'] in chosen]
     require(rows, 'Suite selected no methods')
     if ready: require(all(row.get('fixture') for row in rows), 'Complete suite contains missing recordings')

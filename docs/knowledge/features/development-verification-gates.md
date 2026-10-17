@@ -297,6 +297,79 @@ Real FCM delivery, encrypted transport and timing obligations keep their live ch
 See [recorded client tests](../../recorded-tests.md#complete-native-suite) for commands,
 recording review rules and the limits of replay evidence.
 
+### Preference ownership across ordinary tests and replay
+
+`E2eTestApplication` owns one process-lifetime `DataStore<Preferences>` for
+`app_prefs`, bound through a fresh override module in both initial startup paths
+and every graph rebuild. Ordinary navigation tests also load the shared
+`appModule` value into isolated Koin graphs. Closing such a graph clears shared
+singleton factories without cancelling an already-active DataStore's I/O scope.
+Without the Application override, the next application lookup can create a second
+owner of the same file. Carrying a store only during rebuild misses this initial
+graph boundary. Keep the production after-graph-close initialization contract
+covered by `AppPreferencesTeardownTest`; graph closure alone does not release
+DataStore file ownership.
+
+Replay restores arguments, pairings and preferences before rebuilding the ordinary
+graph. Seeded fixtures have a second cleanup boundary: restoring their original
+raw DataStore snapshot does not increment `ObservablePairedServerStore.revision`.
+The ordinary registry created after replay can therefore retain a synthetic host
+whose persisted pairing has been removed. In `finally`, restore the snapshot and
+rebuild the ordinary graph on main with no Activity alive, including on assertion
+failure. A regression must first await the synthetic host in the registry, then
+check connection release and exact original preferences, pairings and registry
+hosts; persisted-state assertions alone can pass while a connection leaks.
+See [replay isolation](../../recorded-tests.md#replay-isolation).
+
+### Linux ownership repair evidence (#2208)
+
+The fresh baseline at `a0c7db693245cce59d67377f672d2bec4c7dca65` reproduced
+113 executed, 110 passed and three failed tests. Background-agent and context-footer
+failed during duplicate-store replay setup. Delete's empty failure was an
+instrumentation process-crash interruption; no independent product assertion
+failure was established. The controlled ownership regression failed once before
+repair (one executed/failed, zero passed/skipped). Two later registry-cleanup
+probes also failed before their fix (two executed/failed, zero passed/skipped).
+
+Final tested Mobile source was `3f4703e08ede017f69e19ba5109762bf94f88035`,
+with agents `49cd6dd07c163a7d0e9583850aafb28378ec0b3c`, on Linux x86_64.
+The complete command was
+`UI_GATE_FULL=1 UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui`:
+
+| Selection | Selected/reported | Executed | Passed | Failed/errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Complete profile, shared tests and both managed-device shards | 1694 | 1692 | 1692 | 0 | 2 |
+| Shard 0 | 883 | 883 | 883 | 0 | 0 |
+| Shard 1 | 811 | 809 | 809 | 0 | 2 |
+| Separate focused isolation class plus three original failures | 8 | 8 | 8 | 0 | 0 |
+
+All 71 `RecordedMobileSuiteTest` scenarios and five
+`RecordedSuiteIsolationDeviceTest` methods executed and passed, including
+`interactiveTurn_backgroundAgent_followsBottomUntilFinished`,
+`interactiveTurn_pingPrompt_footerShowsContextUsage` and
+`interactiveTurn_deleteConversation_removesFromListAndClosesThread`.
+Selected identities, instrumentation outcomes, both shard XMLs and joined XML
+reconciled exactly without duplicates or missing cases. The two existing skips
+were `RenameDialogCaptureTest#renameAtFigmaViewport` and
+`ComposerPasteTest#pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty`
+(Robolectric-only). No skips, acceptance retries or timeout increases were added.
+All 1694 retained phone logs contained zero duplicate-DataStore errors; no
+inherited application failure was found in this complete profile. The shard-1
+progress counter showed 813/811 because it counted the skips twice; XML establishes
+the completed inventory.
+
+The [committed evidence index](../../../app/src/androidTest/assets/datastore-2208/evidence.txt)
+retains commands, source revisions and counts. Raw XML, instrumentation reports,
+phone logs, reconciliation and hash manifests were retained at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2208/rework-full-local-3f4703e08/`.
+The separate managed `mobile-in-depth` task failed during preparation with zero
+tests because its cleaned environment omitted the agents path; it is not passing
+evidence. [Dispatcher #294](https://github.com/pyrycode/agent-dispatcher/issues/294)
+tracks that launcher defect. The complete local profile above ran at the same
+pushed candidate. macOS was outside this ticket's verification scope.
+
+### Selection and execution
+
 The `ui` gate skips itself, exiting 0 with `Android gate: ui skipped` on stderr and
 no XML, when every path the branch changes since it left `main` is under `docs/` or
 `scripts/`, is Markdown, or is one of the e2e-only sources listed in
