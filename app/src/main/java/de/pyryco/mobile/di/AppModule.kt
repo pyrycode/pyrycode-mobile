@@ -118,9 +118,11 @@ val appModule =
         // opens the Edit host modal carries a draft-store or cache dependency it does not otherwise use,
         // and so any future removal path inherits the eviction. `save` and `setDisplayName` deliberately
         // do not evict: re-pairing the same id and renaming a host both keep their drafts and content.
+        // #2161: `save` re-admits the host's cache thread writes that the removal fenced.
         single {
             ObservablePairedServerStore(
                 KeystorePairedServerStore(get()),
+                admitSavedHost(lazy { get() }),
                 forgetRemovedHost(get(), get(), lazy { get() }, lazy { get() }) { get<SharingShortcuts>().removeHost(it) },
             )
         } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)

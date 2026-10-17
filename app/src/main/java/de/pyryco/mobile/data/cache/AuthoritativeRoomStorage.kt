@@ -1,12 +1,10 @@
 package de.pyryco.mobile.data.cache
 
-import androidx.room.withTransaction
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase.AuthoritativeHeader
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase.AuthoritativeItem
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ThreadItemDto
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -15,7 +13,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
-import java.io.IOException
 import java.util.UUID
 
 /** Selected raw facts with committed certification. Local exhaustion says nothing about the server. */
@@ -235,12 +232,9 @@ class AuthoritativeRoomStorage internal constructor(
         withContext(ioDispatcher) {
             mutex.withLock {
                 lastReadCounts = ReadCounts()
-                try {
-                    database.withTransaction { block() }.also { log(operation, "ok") }
-                } catch (error: Exception) {
-                    val code = failureCode(error) ?: throw error
-                    log(operation, code)
-                    null
+                when (val read = database.classifiedTransaction(block = block)) {
+                    is CacheTransaction.Committed -> read.value.also { log(operation, "ok") }
+                    is CacheTransaction.Failed -> null.also { log(operation, read.code) }
                 }
             }
         }
@@ -251,32 +245,14 @@ class AuthoritativeRoomStorage internal constructor(
     ): Result<Unit> =
         withContext(ioDispatcher) {
             mutex.withLock {
-                try {
-                    database.withTransaction {
-                        block()
-                        beforeCommit()
+                when (val done = database.classifiedTransaction(beforeCommit, block)) {
+                    is CacheTransaction.Committed -> Result.success(Unit).also { log(operation, "ok") }
+                    is CacheTransaction.Failed -> {
+                        log(operation, done.code)
+                        Result.failure(ConversationCacheException("conversation cache $operation failed: ${done.code}"))
                     }
-                    log(operation, "ok")
-                    Result.success(Unit)
-                } catch (error: Exception) {
-                    val code = failureCode(error) ?: throw error
-                    log(operation, code)
-                    Result.failure(ConversationCacheException("conversation cache $operation failed: $code"))
                 }
             }
-        }
-
-    private fun failureCode(error: Exception): String? =
-        when {
-            error is CancellationException -> null
-            error is SecurityException -> "denied"
-            error is IOException -> "io"
-            error is IllegalArgumentException -> "invalid_data"
-            error is IllegalStateException && !database.isOpen -> "io"
-            generateSequence<Class<*>>(error.javaClass) { it.superclass }.any {
-                it.name == "android.database.SQLException" || it.name == "androidx.sqlite.SQLiteException"
-            } -> "io"
-            else -> null
         }
 
     private fun log(

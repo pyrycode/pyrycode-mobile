@@ -34,19 +34,27 @@ import kotlinx.coroutines.withContext
  * app state is gone, so the unpair confirmation closes only after its cleanup. Its production binding
  * is [forgetRemovedHost].
  *
+ * [onHostSaved] runs with the saved id after a successful [save] (#2161), under the same rules. Its production
+ * binding is [admitSavedHost], which lets a re-paired host's cache accept thread writes again. A caller with no
+ * saved-host work uses the two-argument constructor.
+ *
  * Keep this a plain class: a `data class` here would render the bound hook's receiver — and therefore
  * every live composer draft — into any crash trace that prints the store.
  */
 class ObservablePairedServerStore(
     private val delegate: PairedServerCollectionStore,
+    private val onHostSaved: suspend (String) -> Unit,
     private val onHostRemoved: suspend (String) -> Unit,
 ) : PairedServerCollectionStore by delegate {
+    constructor(delegate: PairedServerCollectionStore, onHostRemoved: suspend (String) -> Unit) : this(delegate, {}, onHostRemoved)
+
     private val changes = MutableStateFlow(0L)
     val revision = changes.asStateFlow()
 
     override suspend fun save(record: PairedServer) {
         delegate.save(record)
         changes.update { it + 1 }
+        onHostSaved(record.serverId)
     }
 
     override suspend fun remove(serverId: String) {
@@ -103,3 +111,11 @@ internal fun forgetRemovedHost(
                 .onFailure { RelayLog.d { "event=host_attachments_remove_failed" } }
         }
     }
+
+/**
+ * The production [ObservablePairedServerStore.onHostSaved] (#2161): a saved pairing re-admits its host's thread
+ * writes, which [forgetRemovedHost]'s cache removal refused so the forgotten repository's held and final saves could
+ * not recreate its content. A list write cannot re-admit them, because the forgotten host's own list collector can
+ * still write one after the removal. [cache] is [Lazy] for the reason [forgetRemovedHost] gives.
+ */
+internal fun admitSavedHost(cache: Lazy<ConversationCache>): suspend (String) -> Unit = { cache.value.admitHost(it) }

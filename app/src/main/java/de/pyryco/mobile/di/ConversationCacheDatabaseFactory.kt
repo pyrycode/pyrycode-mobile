@@ -17,5 +17,5 @@ fun openConversationCacheDatabase(context: Context): ConversationCacheDatabase =
         ).build()
 
 /** #2161: the app's one cache. Lists stay in files and saved thread files import into Room, all under noBackupFilesDir. */
-fun openConversationCache(context: Context): ConversationCache =
+internal fun openConversationCache(context: Context): ConversationCache =
     MigratingConversationCache(File(context.noBackupFilesDir, "conversations"), openConversationCacheDatabase(context))

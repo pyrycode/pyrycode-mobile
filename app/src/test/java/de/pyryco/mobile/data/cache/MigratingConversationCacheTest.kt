@@ -39,6 +39,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import org.junit.After
@@ -57,6 +58,8 @@ import org.robolectric.annotation.Config
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /** #2161: real saved files imported into an on-disk Room database, reopened between assertions. */
 @RunWith(RobolectricTestRunner::class)
@@ -195,6 +198,17 @@ class MigratingConversationCacheTest {
         .single()
         .outcome
 
+    private fun assertRefused(
+        code: String,
+        result: Result<Unit>,
+    ) = assertTrue(
+        result
+            .exceptionOrNull()
+            ?.message
+            .orEmpty()
+            .endsWith(code),
+    )
+
     @Test fun ownershipInvariant_bothFamiliesMigrateExactlyAndStayIsolated() =
         runBlocking {
             val (fragment, fragmentCoverage) = fragments()
@@ -269,6 +283,44 @@ class MigratingConversationCacheTest {
             assertEquals(HistoryPosition("saved", true), open().readHistoryPosition("Host", "thread-3"))
         }
 
+    @Test fun ownershipInvariant_historyOnlyRoomRejectsImportsRowsWithoutCertification() =
+        runBlocking {
+            val rows = listOf(row(1), row(2))
+            val keys = rows.map { it.historyKeys().first() }
+            // Two rows of one history entry, the second with a stale proof. Retention drops the entry with that row, so
+            // the projection today's reader serves keeps the first row's claim outside every span.
+            val coverage =
+                HistoryCoverage(
+                    unsignedSpans = listOf(UnsignedHistorySpan(5u, 5u)),
+                    unsignedRowOrder = keys.associateWith { 5uL },
+                    unsignedRowEntries = keys.associateWith { setOf(5uL) },
+                    proofs = mapOf(keys[0] to cachedThreadRowProof(rows[0]), keys[1] to cachedThreadRowProof(row(9))),
+                )
+            files.writeThread("Host", "thread", rows).getOrThrow()
+            val document = legacyFile("Host", "thread")
+            val stored = MobileJson.parseToJsonElement(document.readText()).jsonObject
+            val history =
+                JsonObject(
+                    mapOf(
+                        "cursor" to JsonPrimitive("saved"),
+                        "atStart" to JsonPrimitive(false),
+                        "coverage" to MobileJson.encodeToJsonElement(coverage),
+                    ),
+                )
+            document.writeText(JsonObject(stored + ("history" to history)).toString())
+            val bytes = document.readBytes()
+            val served = requireNotNull(files.readHistoryPosition("Host", "thread")?.coverage)
+            assertTrue(runCatching { served.validated(rows) }.isFailure)
+
+            val cache = open()
+            assertEquals(rows, cache.readThread("Host", "thread"))
+            assertNull(cache.readHistoryPosition("Host", "thread"))
+            assertEquals("imported", outcome("Host", "thread", "legacy"))
+            assertEquals(rows, open().readThread("Host", "thread"))
+            assertNull(open().readHistoryPosition("Host", "thread"))
+            assertArrayEquals(bytes, document.readBytes())
+        }
+
     @Test fun atomicityInvariant_interruptedImportKeepsSourceAndRetries() =
         runBlocking {
             val rows = listOf(row(1), row(2))
@@ -278,14 +330,7 @@ class MigratingConversationCacheTest {
 
             val failing = open { throw IOException("interrupted before commit") }
             assertEquals(emptyList<ThreadItem>(), failing.readThread("Host", "thread"))
-            val refused = failing.writeThread("Host", "thread", listOf(row(3)))
-            assertTrue(
-                refused
-                    .exceptionOrNull()
-                    ?.message
-                    .orEmpty()
-                    .endsWith("import_unavailable"),
-            )
+            assertRefused("import_unavailable", failing.writeThread("Host", "thread", listOf(row(3))))
             assertNull(failing.readAuthoritativeThread("Host", "thread"))
             assertTrue(requireNotNull(database).imports().settled("Host", "thread", "legacy").isEmpty())
             assertArrayEquals(bytes, legacyFile("Host", "thread").readBytes())
@@ -377,27 +422,62 @@ class MigratingConversationCacheTest {
     @Test fun classificationInvariant_unreadableSourceIsRetriedAndBlocksWrites() =
         runBlocking {
             files.writeThread("Host", "thread", listOf(row(1))).getOrThrow()
-            val locked = legacyFile("Host", "thread")
-            locked.setReadable(false)
+            files.writeAuthoritativeThread("Host", "thread", saved()).getOrThrow()
+            val locked = listOf(legacyFile("Host", "thread"), authoritativeFile("Host", "thread"))
+            locked.forEach { it.setReadable(false) }
             try {
-                assumeFalse("the process can read files without permission", locked.canRead())
+                assumeFalse("the process can read files without permission", locked.any { it.canRead() })
                 val cache = open()
                 assertEquals(emptyList<ThreadItem>(), cache.readThread("Host", "thread"))
-                val refused = cache.writeThread("Host", "thread", listOf(row(2)))
-                assertTrue(
-                    refused
-                        .exceptionOrNull()
-                        ?.message
-                        .orEmpty()
-                        .endsWith("import_unavailable"),
-                )
+                assertNull(cache.readAuthoritativeThread("Host", "thread"))
+                assertRefused("import_unavailable", cache.writeThread("Host", "thread", listOf(row(2))))
+                assertRefused("import_unavailable", cache.writeAuthoritativeThread("Host", "thread", saved("newer", listOf(4))))
                 assertTrue(requireNotNull(database).imports().settled("Host", "thread", "legacy").isEmpty())
-                locked.setReadable(true)
+                locked.forEach { it.setReadable(true) }
+                // The next save was merged from the empty restore: the import lands and that save does not replace it.
+                assertRefused("import_unobserved", cache.writeThread("Host", "thread", listOf(row(2))))
+                assertRefused("import_unobserved", cache.writeAuthoritativeThread("Host", "thread", saved("newer", listOf(4))))
                 assertEquals(listOf(row(1)), cache.readThread("Host", "thread"))
+                assertEquals(saved().retained(), cache.readAuthoritativeThread("Host", "thread"))
                 assertEquals(listOf(row(1)), open().readThread("Host", "thread"))
+                assertEquals(saved().retained(), open().readAuthoritativeThread("Host", "thread"))
             } finally {
-                locked.setReadable(true)
+                locked.forEach { it.setReadable(true) }
             }
+        }
+
+    @Test fun classificationInvariant_deferredImportIsNeverReplacedByAnUnobservedWrite() =
+        runBlocking {
+            val rows = listOf(row(1), row(2))
+            files.writeThread("Host", "thread", rows).getOrThrow()
+            files.writeAuthoritativeThread("Host", "thread", saved()).getOrThrow()
+            files.writeThread("Host", "unread", rows).getOrThrow()
+            val failing = AtomicBoolean(true)
+            val cache = open { if (failing.get()) throw IOException("database busy") }
+            // Both restores see nothing while the import cannot commit.
+            assertEquals(emptyList<ThreadItem>(), cache.readThread("Host", "thread"))
+            assertNull(cache.readAuthoritativeThread("Host", "thread"))
+            failing.set(false)
+            assertRefused("import_unobserved", cache.writeThread("Host", "thread", listOf(row(3))))
+            assertRefused("import_unobserved", cache.writeAuthoritativeThread("Host", "thread", saved("newer", listOf(4))))
+            assertEquals("imported", outcome("Host", "thread", "legacy"))
+            assertEquals("imported", outcome("Host", "thread", "authoritative"))
+            assertEquals(rows, cache.readThread("Host", "thread"))
+            assertEquals(saved().retained(), cache.readAuthoritativeThread("Host", "thread"))
+            // A collection that restored empty may still be saving, so a later read cannot readmit this process's saves.
+            assertRefused("import_unobserved", cache.writeThread("Host", "thread", listOf(row(3))))
+            assertRefused("import_unobserved", cache.writeAuthoritativeThread("Host", "thread", saved("newer", listOf(4))))
+            // A write that performs the import itself was built without the file too.
+            assertRefused("import_unobserved", cache.writeThread("Host", "unread", listOf(row(5))))
+            assertEquals(rows, cache.readThread("Host", "unread"))
+
+            // After a restart every restore reads the imported content, so its merged saves are accepted.
+            val restarted = open()
+            assertEquals(rows, restarted.readThread("Host", "thread"))
+            restarted.writeThread("Host", "thread", rows + row(3)).getOrThrow()
+            restarted.writeAuthoritativeThread("Host", "thread", saved("newer", listOf(4))).getOrThrow()
+            assertEquals(rows + row(3), open().readThread("Host", "thread"))
+            assertEquals(saved("newer", listOf(4)).retained(), open().readAuthoritativeThread("Host", "thread"))
         }
 
     @Test fun retirementInvariant_deletionWinsOverHeldWorkAndRestart() =
@@ -409,24 +489,23 @@ class MigratingConversationCacheTest {
             }
             val sources = listOf(legacyFile("Host", "thread"), authoritativeFile("Host", "thread"))
             val bytes = sources.map { it.readBytes() }
-            var hold: CompletableDeferred<Unit>? = null
+            val hold = AtomicReference<CompletableDeferred<Unit>?>()
             val entered = CompletableDeferred<Unit>()
             val cache =
                 open {
-                    hold?.let {
+                    hold.get()?.let {
                         entered.complete(Unit)
                         it.await()
                     }
                 }
             // A captured import holds its commit while deletion is requested.
-            hold = CompletableDeferred()
+            hold.set(CompletableDeferred())
             val importing = async(Dispatchers.IO) { cache.readThread("Host", "thread") }
             entered.await()
             val removing = async(Dispatchers.IO) { cache.removeConversation("Host", "thread") }
             delay(50)
             assertFalse(removing.isCompleted)
-            requireNotNull(hold).complete(Unit)
-            hold = null
+            requireNotNull(hold.getAndSet(null)).complete(Unit)
             assertEquals(rows, importing.await())
             removing.await().getOrThrow()
             assertEquals(emptyList<ThreadItem>(), cache.readThread("Host", "thread"))
@@ -474,19 +553,19 @@ class MigratingConversationCacheTest {
             val bytes = sources.map { it.readBytes() }
             val release = CompletableDeferred<Unit>()
             val entered = CompletableDeferred<Unit>()
-            var holding = false
+            val holding = AtomicBoolean(false)
             val cache =
                 open {
-                    if (holding) {
+                    if (holding.get()) {
                         entered.complete(Unit)
                         release.await()
                     }
                 }
             assertEquals(rows, cache.readThread("Host", "a"))
-            holding = true
+            holding.set(true)
             val save = async(Dispatchers.IO) { cache.writeThread("Host", "a", rows + row(3)) }
             entered.await()
-            holding = false
+            holding.set(false)
             val forget = async(Dispatchers.IO) { cache.removeHost("Host") }
             delay(50)
             assertFalse(forget.isCompleted)
@@ -495,15 +574,9 @@ class MigratingConversationCacheTest {
             forget.await().getOrThrow()
             assertEquals(emptyList<ThreadItem>(), cache.readThread("Host", "a"))
 
-            // A closing repository's final save lands after forgetting and is refused.
-            val late = cache.writeThread("Host", "a", rows)
-            assertTrue(
-                late
-                    .exceptionOrNull()
-                    ?.message
-                    .orEmpty()
-                    .endsWith("host_retired"),
-            )
+            // The forgotten host's own list collector writes after the removal; its closing repository's final save is still refused.
+            cache.writeConversations("Host", listOf(conversation("a"))).getOrThrow()
+            assertRefused("host_retired", cache.writeThread("Host", "a", rows))
             assertTrue(cache.writeAuthoritativeThread("Host", "a", saved()).isFailure)
             assertEquals(emptyList<ThreadItem>(), cache.readThread("Host", "a"))
 
@@ -518,10 +591,11 @@ class MigratingConversationCacheTest {
             // After a restart no stale save exists, so a re-paired host's saves are accepted.
             val repaired = open()
             repaired.writeThread("Host", "a", rows).getOrThrow()
-            // In-process, forgetting fences saves until the re-paired host's list is written.
+            // In-process, forgetting fences saves until the host is paired again; a list write never readmits it.
             repaired.removeHost("Host").getOrThrow()
-            assertTrue(repaired.writeThread("Host", "a", rows).isFailure)
             repaired.writeConversations("Host", listOf(conversation("a"))).getOrThrow()
+            assertRefused("host_retired", repaired.writeThread("Host", "a", rows))
+            repaired.admitHost("Host")
             repaired.writeThread("Host", "a", listOf(row(4))).getOrThrow()
             assertEquals(listOf(row(4)), open().readThread("Host", "a"))
         }
@@ -537,14 +611,14 @@ class MigratingConversationCacheTest {
 
             val cache = open()
             assertEquals(expected, cache.readAuthoritativeThread("Host", "thread"))
-            var page = requireNotNull(cache.authoritative.newestPage("Host", "thread", 200))
+            var page = requireNotNull(cache.newestAuthoritativePage("Host", "thread", 200))
             val visited = page.items.toMutableList()
             while (true) {
                 assertEquals(500, page.appliedVersion)
                 assertEquals(400, page.checkpoint)
                 assertEquals(expected.coverage, page.coverage)
                 val token = page.continuation ?: break
-                page = requireNotNull(cache.authoritative.beforePage("Host", "thread", token, 200))
+                page = requireNotNull(cache.beforeAuthoritativePage("Host", "thread", token, 200))
                 visited.addAll(0, page.items)
             }
             assertEquals(expected.items, visited)
@@ -570,13 +644,13 @@ class MigratingConversationCacheTest {
             val cache = open()
             var page = requireNotNull(cache.newestLegacyPage("Host", "thread", 200))
             assertEquals(rows.takeLast(200), page.rows)
-            assertEquals(200, cache.legacy.lastReadCounts.rowDecodes)
+            assertEquals(200, cache.legacyReadCounts.rowDecodes)
             assertEquals(page.rows.flatMap { it.historyKeys() }.toSet(), requireNotNull(page.evidence).unsignedRowOrder.keys)
             var visited = page.rows
             var pages = 1
             while (page.continuation != null) {
                 page = requireNotNull(cache.beforeLegacyPage("Host", "thread", requireNotNull(page.continuation), 200))
-                assertTrue(cache.legacy.lastReadCounts.rowDecodes <= 200)
+                assertTrue(cache.legacyReadCounts.rowDecodes <= 200)
                 visited = page.rows + visited
                 pages++
             }

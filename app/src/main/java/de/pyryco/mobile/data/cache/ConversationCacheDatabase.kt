@@ -10,6 +10,8 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.withTransaction
+import kotlinx.coroutines.CancellationException
+import java.io.IOException
 
 /** Shared database shell. Legacy evidence cannot certify the authoritative storage family. */
 @Database(
@@ -334,3 +336,43 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         )
     }
 }
+
+/** #2161: a Room cache transaction's value, or the static code of the classified failure it rolled back on. */
+internal sealed interface CacheTransaction<out T> {
+    class Committed<T>(
+        val value: T,
+    ) : CacheTransaction<T>
+
+    class Failed(
+        val code: String,
+    ) : CacheTransaction<Nothing>
+}
+
+/**
+ * #2161: the one transaction shape of the Room cache backends. [block] and then [beforeCommit], a test hold point,
+ * run in one transaction. A classified failure rolls both back and returns its static code; cancellation and
+ * unclassified programming errors propagate.
+ */
+internal suspend fun <T> ConversationCacheDatabase.classifiedTransaction(
+    beforeCommit: suspend () -> Unit = {},
+    block: suspend () -> T,
+): CacheTransaction<T> =
+    try {
+        CacheTransaction.Committed(withTransaction { block().also { beforeCommit() } })
+    } catch (error: Exception) {
+        CacheTransaction.Failed(failureCode(error) ?: throw error)
+    }
+
+private fun ConversationCacheDatabase.failureCode(error: Exception): String? =
+    when {
+        error is CancellationException -> null
+        error is SecurityException -> "denied"
+        error is IOException -> "io"
+        error is IllegalArgumentException -> "invalid_data"
+        error is IllegalStateException && !isOpen -> "io"
+        // Platform SQLite failures are classified without an Android dependency in the data contract.
+        generateSequence<Class<*>>(error.javaClass) { it.superclass }.any {
+            it.name == "android.database.SQLException" || it.name == "androidx.sqlite.SQLiteException"
+        } -> "io"
+        else -> null
+    }
