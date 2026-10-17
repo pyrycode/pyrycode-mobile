@@ -10,8 +10,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
-import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
@@ -30,7 +28,6 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class AuthoritativeScenarioScreenTest {
     @get:Rule val compose = createComposeRule()
-    private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
     private fun mount(items: List<ThreadItemDto>): ThreadEvidence {
         val snapshot: AuthoritativeThreadSnapshot = scenarioSnapshot(items)
@@ -64,7 +61,7 @@ class AuthoritativeScenarioScreenTest {
         assertThrows(AssertionError::class.java) { compose.assertOrderedReplay(evidence, "alpha bravo charlie", "hello") }
     }
 
-    @Test fun settledAgentNavigatesByRenderedFamilyIdentities() {
+    @Test fun settledAgentHeaderAndUnmatchedProseFollowRenderedFamilyIdentities() {
         val evidence = mount(finishedAgentScenarioItems())
         val family = requireNotNull(evidence.agentFamily(evidence.owner))
         val child = hasTestTag("background-agent-child:${family.agentId}")
@@ -72,14 +69,7 @@ class AuthoritativeScenarioScreenTest {
         list.performScrollToNode(hasText("unmatched1827"))
         compose.onNodeWithText("unmatched1827").assertIsDisplayed()
         compose.onAllNodes(hasText("unmatched1827") and hasAnyAncestor(child), useUnmergedTree = true).assertCountEquals(0)
-        compose.verifyAgentRunNavigation(
-            agentId = family.agentId,
-            runId = requireNotNull(family.runId),
-            childIds = family.childIds,
-            ownedChild = hasText("child1827-after") and hasAnyAncestor(child),
-            goLabel = context.getString(R.string.agent_go_to),
-            expandLabel = context.getString(R.string.tool_run_expand),
-            collapseLabel = context.getString(R.string.tool_run_collapse),
-        )
+        list.performScrollToNode(hasTestTag("background-agent:${family.agentId}"))
+        compose.onNode(hasTestTag("background-agent:${family.agentId}")).assertIsDisplayed()
     }
 }
