@@ -5516,8 +5516,7 @@ class InteractiveStreamE2ETest {
                 runBlocking {
                     withTimeout(THREAD_TIMEOUT_MS) {
                         liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) {
-                            it.settledMainReply(it.owner, turnId) !=
-                                null
+                            it.settledMainReply(it.owner, turnId) != null
                         }
                     }
                 }.let { checkNotNull(it.settledMainReply(it.owner, turnId)) }

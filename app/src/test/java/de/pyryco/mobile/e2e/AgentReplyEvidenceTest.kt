@@ -7,6 +7,9 @@ import de.pyryco.mobile.data.model.SegmentDelta
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.thread.authoritativeAgent
+import de.pyryco.mobile.ui.conversations.thread.authoritativeItem
+import de.pyryco.mobile.ui.conversations.thread.authoritativeSnapshot
 import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -16,8 +19,6 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -55,16 +56,12 @@ class AgentReplyEvidenceTest {
         assertNotEquals("raw-tool-3", reply.runId)
         assertNull(held.agentReplyEvidence(held.owner, "other-task", "raw-agent", "child", "main"))
         assertNull(held.agentReplyEvidence(held.owner, "raw-task", "other-agent", "child", "main"))
-        val noToolUse = evidence(agentReplySnapshot(root = agentReplyRoot(toolUse = null)))
+        val noToolUse = evidence(agentReplySnapshot(root = authoritativeAgent(1, task = "raw-task", turn = "launch")))
         assertEquals("$scope:1", noToolUse.reply()?.agent?.block)
         // An Agent block without owned child tools has no run to toggle.
         val toolless =
             evidence(
-                AuthoritativeThreadSnapshot(
-                    epoch = "epoch",
-                    generation = 3,
-                    items = listOf(agentReplyRoot(), agentReplyItem(2, parent = 1, turn = "child"), agentReplyItem(5)),
-                ),
+                snapshot.copy(items = snapshot.items.filter { it.kind != "tool_call" }),
             )
         assertNull(toolless.reply())
     }
@@ -88,7 +85,7 @@ class AgentReplyEvidenceTest {
                 ThreadEvidenceSource.authoritative("host", Any()) {
                     flow {
                         try {
-                            emit(agentReplySnapshot(main = agentReplyItem(5, active = true, status = "running")))
+                            emit(agentReplySnapshot(main = authoritativeItem(5, active = true, status = "running", turn = "main")))
                             awaitCancellation()
                         } finally {
                             closed = true
@@ -108,18 +105,18 @@ class AgentReplyEvidenceTest {
 
     @Test fun incompleteOrMisattributedRepliesDoNotSettle() {
         for (child in listOf(
-            agentReplyItem(2, parent = 1, turn = "child", active = true),
-            agentReplyItem(2, parent = 1, turn = "child", status = "running"),
-            agentReplyItem(2, parent = 1, turn = "child", text = " "),
+            authoritativeItem(2, parent = 1, active = true, turn = "child"),
+            authoritativeItem(2, parent = 1, status = "running", turn = "child"),
+            authoritativeItem(2, parent = 1, content = """{"text":" "}""", turn = "child"),
         )) {
             assertNull(evidence(agentReplySnapshot(child = child)).reply())
         }
         for (main in listOf(
-            agentReplyItem(5, active = true),
-            agentReplyItem(5, status = "running"),
-            agentReplyItem(5, text = ""),
-            agentReplyItem(5, parent = 1),
-            agentReplyItem(5, turn = "child"),
+            authoritativeItem(5, active = true, turn = "main"),
+            authoritativeItem(5, status = "running", turn = "main"),
+            authoritativeItem(5, content = """{"text":""}""", turn = "main"),
+            authoritativeItem(5, parent = 1, turn = "main"),
+            authoritativeItem(5, turn = "child"),
         )) {
             val held = evidence(agentReplySnapshot(main = main))
             assertNull(held.reply())
@@ -127,31 +124,21 @@ class AgentReplyEvidenceTest {
         }
         // One turn recorded under two sessions has no single settlement family.
         val split =
-            agentReplySnapshot().let { it.copy(items = it.items + agentReplyItem(6, session = "other")) }
+            agentReplySnapshot().let { it.copy(items = it.items + authoritativeItem(6, session = "other", turn = "main")) }
         assertNull(evidence(split).settledMainReply(evidence(split).owner, "main"))
     }
 
     @Test fun stopMainReplySettlesOnItsOwnTurnOnly() {
         val task =
-            agentReplyItem(
+            authoritativeItem(
                 1,
                 "tool_call",
-                turn = "launch",
                 active = true,
                 status = "running",
-                content =
-                    buildJsonObject {
-                        put("name", "Bash")
-                        put("task_id", "raw-bash")
-                        put("task_link", buildJsonObject { put("task_type", "local_bash") })
-                    },
+                content = """{"name":"Bash","task_id":"raw-bash","task_link":{"task_type":"local_bash"}}""",
+                turn = "launch",
             )
-        val snapshot =
-            AuthoritativeThreadSnapshot(
-                epoch = "epoch",
-                generation = 3,
-                items = listOf(task, agentReplyItem(2, turn = "launch"), agentReplyItem(5)),
-            )
+        val snapshot = authoritativeSnapshot(task, authoritativeItem(2, turn = "launch"), authoritativeItem(5, turn = "main"))
         val held = evidence(snapshot)
         assertEquals(5L, held.settledMainReply(held.owner, "main")?.fact?.id)
         assertEquals(2L, held.settledMainReply(held.owner, "launch")?.fact?.id)
@@ -168,6 +155,7 @@ class AgentReplyEvidenceTest {
             turn: String? = null,
             text: String = "",
             tool: ToolCall? = null,
+            reconciliation: String? = null,
         ) = ThreadItem.MessageItem(
             Message(
                 id,
@@ -179,26 +167,37 @@ class AgentReplyEvidenceTest {
                 segment = turn?.let { AssistantSegment(it, listOf(SegmentDelta(0, text.length))) },
                 toolCall = tool,
                 parentToolUseId = parent,
+                reconciliationId = reconciliation,
             ),
         )
-        val items =
-            listOf(
-                message("raw-agent", tool = ToolCall("Agent", "", "", inputFields = mapOf("run_in_background" to "true"))),
-                ThreadItem.BackgroundTaskLifecycle("raw-task", Instant.fromEpochMilliseconds(0), "raw-agent", "Agent", "local_agent"),
-                message("child:0", Role.Assistant, "raw-agent", "child", "Child paragraph"),
-                message("B", tool = ToolCall("Bash", "", "", parentToolUseId = "raw-agent")),
-                message("C", tool = ToolCall("Bash", "", "", parentToolUseId = "raw-agent")),
-                message("main:0", Role.Assistant, turn = "main", text = "Main reply"),
-            )
-        val held = legacyThreadEvidence(null, "chat", connection, items)
-        val reply = requireNotNull(held.reply())
-        assertEquals("raw-agent", reply.agent.block)
-        assertEquals("raw-agent", reply.agent.family)
-        assertEquals("child:0", reply.heldReply.message.id)
-        assertEquals("B", reply.runId)
-        assertEquals("main:0", reply.mainReply.message.id)
-        assertEquals("main:0", held.settledMainReply(held.owner, "main")?.message?.id)
-        val blank = legacyThreadEvidence(null, "chat", connection, items.dropLast(1) + message("main:0", Role.Assistant, turn = "main"))
-        assertNull(blank.reply())
+        for (aliased in listOf(false, true)) {
+            // A collided root renders under its local alias; its children keep the raw call id as their parent.
+            val root = if (aliased) "raw-agent#1" else "raw-agent"
+            val agent = ToolCall("Agent", "", "", inputFields = mapOf("run_in_background" to "true"))
+            val items =
+                listOfNotNull(
+                    message("raw-agent", Role.User, text = "Colliding row").takeIf { aliased },
+                    message(root, tool = agent, reconciliation = "raw-agent".takeIf { aliased }),
+                    ThreadItem.BackgroundTaskLifecycle("raw-task", Instant.fromEpochMilliseconds(0), "raw-agent", "Agent", "local_agent"),
+                    message("child:0", Role.Assistant, "raw-agent", "child", "Child paragraph"),
+                    message("B", tool = ToolCall("Bash", "", "", parentToolUseId = "raw-agent")),
+                    message("C", tool = ToolCall("Bash", "", "", parentToolUseId = "raw-agent")),
+                    message("main:0", Role.Assistant, turn = "main", text = "Main reply"),
+                )
+            val held = legacyThreadEvidence(null, "chat", connection, items)
+            val reply = requireNotNull(held.reply())
+            assertEquals(root, reply.agent.block)
+            assertEquals("raw-agent", reply.agent.family)
+            assertEquals("child:0", reply.heldReply.message.id)
+            assertEquals(root, reply.heldReply.agentId)
+            assertEquals("raw-agent", reply.heldReply.message.parentToolUseId)
+            assertEquals("B", reply.runId)
+            assertNotEquals(reply.agent.block, reply.runId)
+            assertEquals("main:0", reply.mainReply.message.id)
+            assertNull(reply.mainReply.agentId)
+            assertEquals("main:0", held.settledMainReply(held.owner, "main")?.message?.id)
+            val blank = legacyThreadEvidence(null, "chat", connection, items.dropLast(1) + message("main:0", Role.Assistant, turn = "main"))
+            assertNull(blank.reply())
+        }
     }
 }
