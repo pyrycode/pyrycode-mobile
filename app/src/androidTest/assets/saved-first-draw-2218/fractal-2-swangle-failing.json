@@ -1,0 +1,455 @@
+{
+ "run": "#2177 focused class, retained bundle 0ad15d3ecd76afa6fdb7df76c2d873f197352b0fa42649e2a683fdcdaaf7c7da",
+ "platform": "Linux/build-fractal-2",
+ "mobile": "c8060639b8903a65b8e29641b8f812047cfcb9b0",
+ "main": "10666ec436367745e706879f6c7726bda89667e2",
+ "agents": "9aad4b5db84f2897c5eda3e8ed78a5ec9256ad71",
+ "generation": "151a9dbd74aea4118480cc270492d68ef7fd255ce0b03cfacf6db74537c098d8",
+ "launcher": {
+  "binary": "emulator.hp-native",
+  "gpu": "swangle",
+  "hardware_renderer": "swiftshader"
+ },
+ "device": "Android 13 Google ATD x86_64, 2 cores, 2048 MiB, 1080x1920, density 420",
+ "counts": {
+  "executed": 4,
+  "passed": 2,
+  "failed": 2,
+  "errors": 0,
+  "skipped": 0
+ },
+ "tests": {
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#slowRestore_negativeControlRejectsTheSameFirstDrawBound": "passed",
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen": "failed",
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen": "failed",
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#heldCpuPipeCancelsAndClosesItsDescriptor": "passed"
+ },
+ "dispatcher_xml_sha256": "b7944a6154f40475d8bca5ec35e8792f5f104c05f51684dfe265072a7a9be38e",
+ "raw_xml_sha256": "326a958478edc4242a196cb5822da45d353591c47a80fffd69871b51646efd56",
+ "source_sha256": {
+  "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "07b697f780bf83202a39e31b5730f4429d86c64764012575738bde2629a36295",
+  "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b76344d827dd69b4356d27e1620e21c120668af0cc8fa8d36e05a5c1c2a9b33b",
+  "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "df15f0d6c7f3114adab4e239a8a94c952c7c1d226333d01c24d06db7079d303f",
+  "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/FragmentedHistoryFixture.kt": "59f23bda2db97ddb8f40c768f642c39d917e06ff0f11aad90624cb83a50bace1",
+  "app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt": "fb55c52e9272635cb45e3c26645b254bd3829f357d8a02b8c0b852e5f784faa6",
+  "app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt": "49dad7519f2fbabb5ca716bd4a93dbf967fb1da83d0bda77fadcecc06c7c578a",
+  "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt": "3f0e3b2c968c2aa205c7fac27cbb33c98a104fa8debce4db8702baebd970c4cf",
+  "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt": "c3506277f37f6c5f13c25f0c800d1516208d399a0a90fb47f26a181114ba2626"
+ },
+ "openings": [
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "ordinary online=false opening=0",
+   "gc": [],
+   "row_decode": {
+    "read_ms": 0,
+    "decode_ms": 8,
+    "validate_ms": 0,
+    "logged_at_ms": 20
+   },
+   "history_decode": {
+    "metadata_ms": 1,
+    "proofs_ms": 0,
+    "logged_at_ms": 22
+   },
+   "phases_ms": [
+    177,
+    178,
+    194,
+    426
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "ordinary online=false opening=1",
+   "gc": [],
+   "phases_ms": [
+    114,
+    133,
+    144,
+    371
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "ordinary online=true opening=0",
+   "gc": [],
+   "phases_ms": [
+    149,
+    198,
+    213,
+    424
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "ordinary online=true opening=1",
+   "gc": [],
+   "phases_ms": [
+    81,
+    135,
+    155,
+    372
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "fragmented online=false opening=0",
+   "gc": [
+    {
+     "ended_ms": 259,
+     "kind": "full",
+     "total_ms": 139
+    },
+    {
+     "ended_ms": 1077,
+     "kind": "young",
+     "total_ms": 213
+    },
+    {
+     "ended_ms": 1411,
+     "kind": "full",
+     "total_ms": 266
+    },
+    {
+     "ended_ms": 2670,
+     "kind": "full",
+     "total_ms": 125
+    }
+   ],
+   "row_decode": {
+    "read_ms": 5,
+    "decode_ms": 789,
+    "validate_ms": 64,
+    "logged_at_ms": 864
+   },
+   "history_decode": {
+    "metadata_ms": 1465,
+    "proofs_ms": 929,
+    "logged_at_ms": 3259
+   },
+   "phases_ms": [
+    935,
+    936,
+    985,
+    1314
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 2,
+    "content_to_frame": 2
+   },
+   "met_1000_ms": false
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "fragmented online=false opening=1",
+   "gc": [],
+   "phases_ms": [
+    138,
+    178,
+    223,
+    474
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "fragmented online=true opening=0",
+   "gc": [
+    {
+     "ended_ms": 174,
+     "kind": "young",
+     "total_ms": 168
+    },
+    {
+     "ended_ms": 969,
+     "kind": "young",
+     "total_ms": 249
+    },
+    {
+     "ended_ms": 1170,
+     "kind": "full",
+     "total_ms": 201
+    },
+    {
+     "ended_ms": 2010,
+     "kind": "full",
+     "total_ms": 129
+    }
+   ],
+   "row_decode": {
+    "read_ms": 7,
+    "decode_ms": 624,
+    "validate_ms": 33,
+    "logged_at_ms": 669
+   },
+   "history_decode": {
+    "metadata_ms": 1069,
+    "proofs_ms": 626,
+    "logged_at_ms": 2365
+   },
+   "phases_ms": [
+    710,
+    713,
+    749,
+    1032
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 1,
+    "content_to_frame": 2
+   },
+   "met_1000_ms": false
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "fragmented online=true opening=1",
+   "gc": [
+    {
+     "ended_ms": 465,
+     "kind": "full",
+     "total_ms": 152
+    }
+   ],
+   "phases_ms": [
+    142,
+    180,
+    203,
+    461
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 1
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "ordinary online=false opening=0",
+   "gc": [],
+   "phases_ms": [
+    90,
+    105,
+    129,
+    267
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "ordinary online=false opening=1",
+   "gc": [],
+   "phases_ms": [
+    64,
+    90,
+    104,
+    269
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "ordinary online=true opening=0",
+   "gc": [],
+   "phases_ms": [
+    63,
+    87,
+    97,
+    241
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "ordinary online=true opening=1",
+   "gc": [],
+   "phases_ms": [
+    64,
+    97,
+    117,
+    349
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "fragmented online=false opening=0",
+   "gc": [
+    {
+     "ended_ms": 105,
+     "kind": "young",
+     "total_ms": 101
+    },
+    {
+     "ended_ms": 891,
+     "kind": "young",
+     "total_ms": 168
+    },
+    {
+     "ended_ms": 1118,
+     "kind": "full",
+     "total_ms": 181
+    },
+    {
+     "ended_ms": 2221,
+     "kind": "full",
+     "total_ms": 119
+    }
+   ],
+   "row_decode": {
+    "read_ms": 14,
+    "decode_ms": 675,
+    "validate_ms": 55,
+    "logged_at_ms": 748
+   },
+   "history_decode": {
+    "metadata_ms": 1149,
+    "proofs_ms": 906,
+    "logged_at_ms": 2805
+   },
+   "phases_ms": [
+    791,
+    792,
+    816,
+    1026
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 2,
+    "content_to_frame": 2
+   },
+   "met_1000_ms": false
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "fragmented online=false opening=1",
+   "gc": [],
+   "phases_ms": [
+    130,
+    178,
+    207,
+    370
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "fragmented online=true opening=0",
+   "gc": [
+    {
+     "ended_ms": 136,
+     "kind": "young",
+     "total_ms": 122
+    }
+   ],
+   "row_decode": {
+    "read_ms": 7,
+    "decode_ms": 395,
+    "validate_ms": 18,
+    "logged_at_ms": 426
+   },
+   "history_decode": {
+    "metadata_ms": 636,
+    "proofs_ms": 537,
+    "logged_at_ms": 1601
+   },
+   "phases_ms": [
+    451,
+    453,
+    473,
+    619
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 1,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "fragmented online=true opening=1",
+   "gc": [
+    {
+     "ended_ms": 323,
+     "kind": "young",
+     "total_ms": 156
+    }
+   ],
+   "phases_ms": [
+    117,
+    153,
+    163,
+    307
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 1
+   },
+   "met_1000_ms": true
+  }
+ ],
+ "notes": [
+  "phases_ms are cumulative restore/snapshot/complete-content/committed-frame milliseconds from Probe start.",
+  "row_decode and history_decode are FileConversationCache stage logs; logged_at_ms is relative to Probe start.",
+  "gc lists app garbage collections ending inside the opening; gc_overlapping counts those whose duration window intersects restore or content-to-frame.",
+  "Correlation only: overlap does not attribute a frame to a collection."
+ ]
+}
