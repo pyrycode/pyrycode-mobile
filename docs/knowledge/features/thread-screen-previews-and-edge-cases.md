@@ -22,9 +22,12 @@ All four previews use the steady-state `ConnectionState.Connected`, so the banne
 ## Edge cases / limitations
 
 - **Cache-only background-agent placement (#1783).** `CachingConversationRepository` restores rows
-  without tool parents or task lifecycle evidence. Those rows retain their existing placement until
-  authoritative remote data supplies the relationships and lifecycle; the cache format is unchanged.
-  See [background-agent lifecycle placement](thread-screen-subagent-tool-rows.md#background-agent-lifecycle-placement-1783).
+  without task lifecycle evidence (the `BackgroundTaskRoster` is not cached). Those rows retain their
+  existing placement until authoritative remote data supplies the roster; the cache format for the
+  roster is unchanged. Tool and prose parent ids are a separate relationship and are cached as of #2221
+  (see [conversation cache layout § the thread document's row kinds](conversation-cache-layout.md)), so
+  a row restored from a cache document written at or after that ticket already carries the parent it had
+  before the reopen. See [background-agent lifecycle placement](thread-screen-subagent-tool-rows.md#background-agent-lifecycle-placement-1783).
 
 - **Message rendering uses a display projection.** The ViewModel supplies repository-ordered
   `ThreadUiState.items`; `ThreadScreen` joins queued rows, places background-agent families, then
