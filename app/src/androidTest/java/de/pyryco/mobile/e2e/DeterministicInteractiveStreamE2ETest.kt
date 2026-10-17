@@ -1136,20 +1136,35 @@ class DeterministicInteractiveStreamE2ETest {
             val expandLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_expand)
             val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(running).fetchSemanticsNodes().isNotEmpty() }
-            val facts = runBlocking {
-                withTimeout(REPLY_TIMEOUT_MS) {
-                    route.observe(conversationId).first { snapshot ->
-                        val root = snapshot.items.singleOrNull {
-                            it.kind == "agent" && it.content.jsonObject["tool_use_id"]?.jsonPrimitive?.content == "agent1783"
+            val facts =
+                runBlocking {
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        route.observe(conversationId).first { snapshot ->
+                            val root =
+                                snapshot.items.singleOrNull {
+                                    it.kind == "agent" &&
+                                        it.content.jsonObject["tool_use_id"]
+                                            ?.jsonPrimitive
+                                            ?.content == "agent1783"
+                                }
+                            root != null &&
+                                snapshot.items.count { it.kind == "tool_call" && it.parent == root.id } == 3 &&
+                                snapshot.items.any { it.kind == "turn_end" && it.turn == root.turn }
                         }
-                        root != null && snapshot.items.count { it.kind == "tool_call" && it.parent == root.id } == 3 &&
-                            snapshot.items.any { it.kind == "turn_end" && it.turn == root.turn }
                     }
                 }
-            }
-            assertTrue("scripted diagnostics require the admitted production route", route.support.value is de.pyryco.mobile.data.repository.ThreadSupport.Supported)
+            assertTrue(
+                "scripted diagnostics require the admitted production route",
+                route.support.value is de.pyryco.mobile.data.repository.ThreadSupport.Supported,
+            )
             val received = facts.items.sortedBy { it.order }
-            val root = received.single { it.kind == "agent" && it.content.jsonObject["tool_use_id"]?.jsonPrimitive?.content == "agent1783" }
+            val root =
+                received.single {
+                    it.kind == "agent" &&
+                        it.content.jsonObject["tool_use_id"]
+                            ?.jsonPrimitive
+                            ?.content == "agent1783"
+                }
             val origin = requireNotNull(root.turn) { "launching Agent omitted its turn attribution" }
             val mainEnd = received.indexOfFirst { it.kind == "turn_end" && it.turn == origin }
             assertTrue("launching main turn must end", mainEnd >= 0)
@@ -1157,7 +1172,14 @@ class DeterministicInteractiveStreamE2ETest {
                 received
                     .drop(mainEnd + 1)
                     .filter { it.kind == "tool_call" && it.parent == root.id }
-            assertEquals(listOf("late1951-one", "late1951-two"), lateTools.map { it.content.jsonObject["tool_use_id"]?.jsonPrimitive?.content })
+            assertEquals(
+                listOf("late1951-one", "late1951-two"),
+                lateTools.map {
+                    it.content.jsonObject["tool_use_id"]
+                        ?.jsonPrimitive
+                        ?.content
+                },
+            )
             assertTrue("late children retain launching attribution", lateTools.all { it.turn == origin })
             assertEquals("child activity must not open another main turn", 1, received.count { it.kind == "turn_end" })
             // Admitted daemon facts diagnose attribution; projected identities below prove the phone's content.
