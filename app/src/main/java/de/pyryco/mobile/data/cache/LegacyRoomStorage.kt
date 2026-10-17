@@ -1,6 +1,5 @@
 package de.pyryco.mobile.data.cache
 
-import androidx.room.withTransaction
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase.Evidence
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase.Header
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase.Row
@@ -10,7 +9,6 @@ import de.pyryco.mobile.data.repository.HistoryCoverage
 import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.historyKeys
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -24,7 +22,6 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import java.io.IOException
 import java.util.UUID
 
 /** A bounded legacy projection. Evidence cannot certify omitted content or authoritative facts. */
@@ -170,10 +167,33 @@ class LegacyRoomStorage internal constructor(
                         coverage = saved.coverage?.retainedBy(kept),
                     )
                 }
-            remove(serverId, conversationId)
-            dao.insertRows(payloads.mapIndexed { ordinal, payload -> Row(serverId, conversationId, ordinal, payload) })
-            storeHistory(serverId, conversationId, retained, kept)
+            replace(serverId, conversationId, payloads, retained, kept)
         }
+
+    /** #2161: a file import's replacement inside the caller's transaction, so its completion marker commits with it. */
+    internal suspend fun importThread(
+        serverId: String,
+        conversationId: String,
+        rows: List<ThreadItem>,
+        history: HistoryPosition?,
+    ) {
+        val kept = cacheableThreadRows(rows)
+        val payloads = kept.map(::encodeLegacyRow)
+        decodeLegacyRows(payloads)
+        replace(serverId, conversationId, payloads, history, kept)
+    }
+
+    private suspend fun replace(
+        serverId: String,
+        conversationId: String,
+        payloads: List<String>,
+        history: HistoryPosition?,
+        kept: List<ThreadItem>,
+    ) {
+        remove(serverId, conversationId)
+        dao.insertRows(payloads.mapIndexed { ordinal, payload -> Row(serverId, conversationId, ordinal, payload) })
+        storeHistory(serverId, conversationId, history, kept)
+    }
 
     suspend fun writeHistoryPosition(
         serverId: String,
@@ -480,12 +500,9 @@ class LegacyRoomStorage internal constructor(
         withContext(ioDispatcher) {
             mutex.withLock {
                 lastReadCounts = ReadCounts()
-                try {
-                    database.withTransaction { block() }.also { log(operation, "ok") }
-                } catch (error: Exception) {
-                    val code = failureCode(error) ?: throw error
-                    log(operation, code)
-                    fallback
+                when (val read = database.classifiedTransaction(block = block)) {
+                    is CacheTransaction.Committed -> read.value.also { log(operation, "ok") }
+                    is CacheTransaction.Failed -> fallback.also { log(operation, read.code) }
                 }
             }
         }
@@ -496,17 +513,12 @@ class LegacyRoomStorage internal constructor(
     ): Result<Unit> =
         withContext(ioDispatcher) {
             mutex.withLock {
-                try {
-                    database.withTransaction {
-                        block()
-                        beforeCommit()
+                when (val done = database.classifiedTransaction(beforeCommit, block)) {
+                    is CacheTransaction.Committed -> Result.success(Unit).also { log(operation, "ok") }
+                    is CacheTransaction.Failed -> {
+                        log(operation, done.code)
+                        Result.failure(ConversationCacheException("conversation cache $operation failed: ${done.code}"))
                     }
-                    log(operation, "ok")
-                    Result.success(Unit)
-                } catch (error: Exception) {
-                    val code = failureCode(error) ?: throw error
-                    log(operation, code)
-                    Result.failure(ConversationCacheException("conversation cache $operation failed: $code"))
                 }
             }
         }
@@ -517,21 +529,6 @@ class LegacyRoomStorage internal constructor(
         } catch (_: IllegalArgumentException) {
             log("read_history_metadata", "invalid_data")
             null
-        }
-
-    private fun failureCode(error: Exception): String? =
-        when {
-            error is CancellationException -> null
-            error is SecurityException -> "denied"
-            error is IOException -> "io"
-            error is IllegalArgumentException -> "invalid_data"
-            error is IllegalStateException && !database.isOpen -> "io"
-            // Platform SQLite failures are classified without an Android dependency in the data contract.
-            generateSequence<Class<*>>(error.javaClass) { it.superclass }.any {
-                it.name == "android.database.SQLException" ||
-                    it.name == "androidx.sqlite.SQLiteException"
-            } -> "io"
-            else -> null
         }
 
     private fun log(

@@ -102,6 +102,24 @@ factory together. The lifecycle driver and registry still control every saved
 host's connection establishment in both modes; selecting the fake does not disable
 that stack.
 
+`appModule` binds one `ConversationCache` with `openConversationCache(androidContext())`
+(#2161), replacing the direct `FileConversationCache` binding. The factory constructs
+`MigratingConversationCache` over `noBackupFilesDir/conversations` and Room's
+`noBackupFilesDir/conversation-cache.db`; all database sidecars stay in the same backup-excluded
+directory, with no destructive upgrade or empty-cache substitute. Both thread families import
+through validated source codecs before Room serves them. Lists and read positions still use
+the file cache; attachment/settings storage and repository/protocol selection are unchanged.
+Bounded screen reading and owned partial writes remain #2068's responsibility. See
+[cache layout](conversation-cache-layout.md#layout).
+
+The `ObservablePairedServerStore` binding passes `admitSavedHost(lazy { get() })` as
+`onHostSaved`, alongside the existing `forgetRemovedHost(...)` removal hook. Only successful
+pairing persistence calls `ConversationCache.admitHost`; conversation-list writes cannot
+readmit a forgotten host's stale final thread saves. Revision publication and admission run
+under `NonCancellable` after successful persistence, including a wait for the cache mutex.
+Lazy cache capture keeps context-free store construction possible. See
+[retirement and admission](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost).
+
 `appModule` eagerly owns `RelayConnectionRegistry` and disposes it on Koin close.
 Both pairing-store interfaces resolve one [observable decorator](paired-server-store.md#wiring--usage).
 Its initial and successful-mutation revisions drive collection reconciliation;
@@ -161,7 +179,7 @@ not a pre-restore projection.
 Resolving the cache inside `ThreadDestinationFactory` (#797) means **any** container
 that builds a thread destination under `useRelay = true` now needs a
 `ConversationCache` binding, even one with no `androidContext()` to build a real
-`FileConversationCache` from. Three `RelayConnectionFactoryTest` containers picked
+`MigratingConversationCache` from. Three `RelayConnectionFactoryTest` containers picked
 up the same `single<ConversationCache> { InertConversationCache }` override their
 sibling container already carried for #796's `HostConversationSource` — before
 \#797 that override was only needed where the host-list source was built.

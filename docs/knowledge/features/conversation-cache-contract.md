@@ -21,6 +21,7 @@ interface ConversationCache {
     suspend fun writeReadPositions(serverId: String, positions: Map<String, ReadPosition>): Result<Unit> =
         Result.success(Unit)
     suspend fun removeHost(serverId: String): Result<Unit>
+    suspend fun admitHost(serverId: String) = Unit
     suspend fun removeConversation(serverId: String, conversationId: String): Result<Unit>
 }
 
@@ -35,6 +36,51 @@ fun settledThreadRows(rows: List<ThreadItem>): List<ThreadItem>
 
 class ConversationCacheException(message: String) : Exception(message)
 ```
+
+**File-to-Room import (#2161).** The active `MigratingConversationCache` attempts import for each
+exact host/conversation and family before its full reads, replacements or internal page
+wrappers use Room. Owner ids come from cache operations; hashed filenames cannot recover
+owners, so unknown-owner sources stay untouched. Legacy and authoritative version-1 codecs
+remain separate: legacy rows never become authoritative facts or certify their checkpoint.
+Held row order, fields, unsigned evidence through `ULong.MAX_VALUE`, fragment bindings and
+marker anchors survive valid legacy import. Authoritative import keeps raw facts, epoch,
+revisions, applied progress (including progress beyond the checkpoint), coverage and continuation.
+Local page exhaustion adds no certification and never supplies a daemon cursor.
+
+The durable ledger uses these static outcomes:
+
+| Outcome | Meaning |
+| --- | --- |
+| `absent` | An exception-reporting source open confirmed a missing path. |
+| `imported` | Valid content and applicable evidence committed with this marker. |
+| `invalid` | Validation rejected the source; its bytes remain untouched. |
+| `unsupported` | The version header names an unsupported format; bytes remain untouched. |
+| `superseded` | This family already has a database header; the file cannot overwrite it. |
+| `retired` | Explicit removal prevents importing leftover sources, including after restart. |
+
+Absence requires `Files.readAllBytes` to throw `NoSuchFileException`. Boolean predicates
+such as `File.isFile` suppress metadata errors: a parent without search permission can look
+missing. Denied access, security failures and other IO failures therefore remain retryable,
+with no completion marker. Database/import failures also cannot install a successful empty
+replacement. Reads retain the graceful empty/null fallback; writes whose import is unavailable
+fail with the causeless static code `import_unavailable`, preserving recoverable offline bytes.
+Cancellation before commit rolls back content and marker together; repeated imports and restart
+respect committed markers. Cancellation and unclassified programming errors propagate.
+
+Invalid optional legacy history does not invalidate readable rows. If the file reader's retained
+history projection is subsequently rejected by Room validation, import retries with rows and no
+history, logs static `outcome=history_rejected` and records `imported`. Only a rows-only retry
+also rejected as `invalid_data` settles as `invalid`. Rejected claims certify nothing.
+
+A successful deferred import must not let a writer built from an earlier empty restore replace
+it. The cache remembers families read or refused while unavailable. If imported content later
+arrives, writes of that family fail with `import_unobserved` for the rest of this cache instance;
+a write that itself imports content is refused too. Later reads cannot prove that every active
+writer observed the import and do not lift this refusal. Cancelled import callers also count as
+unobserved: Room can commit before cancellation suppresses result delivery, so retry checks the
+committed `imported` marker. Restart permits fresh restores of the imported content. Settling
+as absent, invalid, unsupported or superseded imports no content and adds no such refusal.
+Diagnostics use static family/outcome/operation codes without owners, paths, cursors or content.
 
 **The thread-row family (#797).** `readThread`/`writeThread` follow the same graceful-read,
 reporting-mutation shape as the conversation family, over `List<ThreadItem>` (`data/repository/`,
@@ -71,8 +117,8 @@ static operation/failure codes. Legacy rows remain readable through `readThread`
 converted into authoritative items or certify this checkpoint. Both thread families are removed
 with the conversation or host. The sole save/restore consumer is the
 [supplied caching seam](caching-conversation-repository.md#what-is-written-and-when);
-production route activation remains with #1988, authoritative Room storage with #2163
-(split from #2067), and bounded reading with #2068.
+production route activation remains with #1988 and bounded reading with #2068.
+Authoritative Room storage (#2163) is bound through the migration-aware cache (#2161).
 
 **The saved history position (#1354, extended by #1832 and #1910).** `HistoryPosition(cursor, atStart,
 coverage = null)` lives inside the thread document beside its rows, under the same host and
@@ -166,8 +212,9 @@ failures inside mutation `Result`s. Cancellation and unclassified programming er
 Diagnostics contain static operation/failure codes; page, evidence, continuation and schema
 result strings redact content, cursors and owner ids.
 
-The backend remains unbound. #2161 owns import/application binding, #2163 authoritative Room
-storage and #2068 reader activation/owned partial writes. Legacy rows/evidence never become
+The application uses this backend through the import-aware cache (#2161), alongside
+authoritative Room storage (#2163). #2068 owns bounded reader activation/owned partial writes.
+Legacy rows/evidence never become
 authoritative items or certify an authoritative checkpoint. Existing file-cache operations,
 metadata lists, read positions, settings and attachment-byte storage remain available.
 
@@ -176,8 +223,9 @@ metadata lists, read positions, settings and attachment-byte storage remain avai
 `AuthoritativeRoomStorage` is an independently usable backend over the same database as
 `LegacyRoomStorage`, exposing full `readAuthoritativeThread`/`writeAuthoritativeThread`
 equivalent to `ConversationCache`'s, plus `newestPage`/`beforePage` and scoped removal. It is
-unbound: #2161 owns application binding/import, and #2068 owns reader activation and owned
-partial writes. Ownership is the same exact, case-sensitive host-plus-conversation scoping as
+used by the application through the migration-aware cache (#2161); #2068 owns bounded
+reader activation and owned partial writes. Ownership is the same exact, case-sensitive
+host-plus-conversation scoping as
 every other family in this cache, with the authoritative family additionally scoped by epoch —
 identical ids under another host, another conversation or another epoch are different rows,
 never the same fact.
@@ -228,10 +276,12 @@ only its own tables: writing authoritative facts leaves legacy rows and evidence
 owner unchanged, and vice versa. Result, token, header and page string representations redact
 owner, epoch and content; only static operation/failure codes reach diagnostics.
 
-`ConversationCacheDatabase` is raised to schema version 2 through Room's additive
+`ConversationCacheDatabase` gained the authoritative tables at schema version 2 through
+Room's additive
 `AutoMigration(from = 1, to = 2)` — see
 [Layout § the additive version 1 → 2 migration](conversation-cache-layout.md#indexed-legacy-room-layout-2162)
-— adding the authoritative tables without touching existing legacy content.
+— adding the authoritative tables without touching existing legacy content. Version 3
+adds the import ledger described above.
 
 **The read-position family (#877, fallback-only since #1883).**
 `readReadPositions`/`writeReadPositions` retain their graceful-read,
@@ -281,8 +331,8 @@ cache (enforced on write) and [`CachingConversationRepository`](caching-conversa
   offer, so this closes the gap rather than inventing a new rule — see
   [`DurableThreadItem`/`isDurable`](https://github.com/pyrycode/pyrycode/blob/main/src/shared/chatHistory.ts)
   in the sibling desktop checkout. `UnrecognizedMessage` stays out on purpose: its KDoc forbids
-  persisting raw model-adjacent JSON, and this cache is plain files, not desktop's encrypted secure
-  store.
+  persisting raw model-adjacent JSON. This cache uses plaintext app-private storage; desktop
+  uses an encrypted secure store.
 
 **Identity is exact, case-sensitive string equality** on `serverId` and on `Conversation.id` —
 the same rule [`PairedServerCollectionStore`](paired-server-store.md#the-contract) states for
