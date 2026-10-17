@@ -19,6 +19,7 @@ import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RenameConversationPayloadDto
 import de.pyryco.mobile.data.network.SetConversationMutedPayloadDto
+import de.pyryco.mobile.data.network.SetConversationPinnedPayloadDto
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.PLATFORM_FCM
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_ARCHIVE_CONVERSATION
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_CREATE_CONVERSATION
@@ -31,6 +32,7 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.T
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_REGISTER_PUSH_TOKEN
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_RENAME_CONVERSATION
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SET_CONVERSATION_MUTED
+import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SET_CONVERSATION_PINNED
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_UNARCHIVE_CONVERSATION
 import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.Clock
@@ -448,6 +450,30 @@ internal class ConversationCommands(
                 payload =
                     MobileJson.encodeToJsonElement(
                         SetConversationMutedPayloadDto(conversationId = conversationId, muted = muted),
+                    ),
+            )
+        requests.sendAndAwaitConversation(request)
+    }
+
+    /**
+     * Pin or unpin [conversationId] over v2 `set_conversation_pinned` (#2214, server pyrycode#3538) —
+     * [setMuted]'s round trip with a [SetConversationPinnedPayloadDto]. Nothing is written here: the
+     * correlated `conversation_updated` is folded by the inbound collector before this command resumes,
+     * and the host's matching uncorrelated push upserts the same record by id, so the list keeps one row
+     * carrying the host's `pinned_at`. Same failure contract as [setMuted]; nothing is logged here.
+     */
+    suspend fun setPinned(
+        conversationId: String,
+        pinned: Boolean,
+    ) {
+        val request =
+            Envelope(
+                id = requests.nextRequestId(),
+                type = TYPE_SET_CONVERSATION_PINNED,
+                ts = Clock.System.now().toString(),
+                payload =
+                    MobileJson.encodeToJsonElement(
+                        SetConversationPinnedPayloadDto(conversationId = conversationId, pinned = pinned),
                     ),
             )
         requests.sendAndAwaitConversation(request)

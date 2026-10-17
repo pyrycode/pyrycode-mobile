@@ -228,6 +228,8 @@ class StableConversationRepositoryTest {
             assertTrue(runCatching { facade.renameWorkspace("/w", "x") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.archiveWorkspace("/w") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.setMuted("c1", true) }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.setPinned("c1", true) }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.setPinned("c1", false) }.exceptionOrNull() is IllegalStateException)
         }
 
     // #1000: set and clear reach the live repo untouched — false is a write of its own, not an omission.
@@ -241,6 +243,19 @@ class StableConversationRepositoryTest {
             facade.setMuted("c3", false)
 
             assertEquals(listOf("c3" to true, "c3" to false), repoA.setMutedCalls)
+        }
+
+    // #2214: pin and unpin reach this host's live repo untouched — false is a write, not an omission.
+    @Test
+    fun setPinned_whenLive_delegatesVerbatim() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(repoA))
+
+            facade.setPinned("c3", true)
+            facade.setPinned("c3", false)
+
+            assertEquals(listOf("c3" to true, "c3" to false), repoA.setPinnedCalls)
         }
 
     // #663: the workspace verbs reach this host's live repo with the path and label untouched — the
@@ -1136,6 +1151,7 @@ class StableConversationRepositoryTest {
         val renameWorkspaceCalls = mutableListOf<Pair<String, String?>>()
         val archiveWorkspaceCalls = mutableListOf<String>()
         val setMutedCalls = mutableListOf<Pair<String, Boolean>>()
+        val setPinnedCalls = mutableListOf<Pair<String, Boolean>>()
 
         fun pushConversations(value: List<Conversation>) {
             conversations.value = value
@@ -1361,6 +1377,13 @@ class StableConversationRepositoryTest {
             muted: Boolean,
         ) {
             setMutedCalls += conversationId to muted
+        }
+
+        override suspend fun setPinned(
+            conversationId: String,
+            pinned: Boolean,
+        ) {
+            setPinnedCalls += conversationId to pinned
         }
 
         override suspend fun requestScreenSnapshot(conversationId: String): String {
