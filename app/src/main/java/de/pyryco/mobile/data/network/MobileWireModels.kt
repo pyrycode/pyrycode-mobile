@@ -106,7 +106,7 @@ internal const val MOBILE_CLIENT_FEATURES =
  * (the wire needs it). `equals`/`hashCode` are intentionally NOT overridden.
  *
  * [capabilities] advertises the v2 features the phone understands; it defaults to
- * `["interactive", "multi_agent", "stop_background_task"]` and rides every `hello` via `MobileJson`'s `encodeDefaults = true`
+ * `["interactive", "multi_agent", "stop_background_task", "thread"]` and rides every `hello` via `MobileJson`'s `encodeDefaults = true`
  * (same mechanism as [protocolVersions]). It is non-secret, so [toString] surfaces it.
  *
  * [lastEventId] is the replay cursor (#416): on reconnect the phone advertises the latest
