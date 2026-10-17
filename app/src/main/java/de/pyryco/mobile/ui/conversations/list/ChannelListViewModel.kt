@@ -97,6 +97,28 @@ data class HostChannelListState(
 
 private fun ConnectionStatus.isLive(): Boolean = relay == RelayLinkStatus.Connected && pyrycode == PyrycodeLinkStatus.Connected
 
+/** One row of the shared Pinned group (#2215), carrying the entry of the host that owns it. */
+data class PinnedChannel(
+    val entry: HostChannelListEntry,
+    val conversation: Conversation,
+) {
+    val target: HostConversationTarget get() = HostConversationTarget(entry.host.serverId, conversation.id)
+}
+
+/**
+ * The Pinned group: every host's active channel with a host-confirmed [Conversation.pinnedAt], oldest pin
+ * first, then serverId and conversationId in code-unit order, so the order never depends on which host
+ * enumerates or updates first. Chats are never pinned rows, and archived rows are already outside
+ * [HostConversationSnapshot.channels].
+ */
+internal fun pinnedChannels(hosts: List<HostChannelListEntry>): List<PinnedChannel> =
+    hosts
+        .flatMap { entry ->
+            entry.host.channels
+                .filter { it.pinnedAt != null }
+                .map { PinnedChannel(entry, it) }
+        }.sortedWith(compareBy({ it.conversation.pinnedAt }, { it.entry.host.serverId }, { it.conversation.id }))
+
 /**
  * The Edit workspace modal's target and flags (#905), shaped like [HostEditorState].
  *
@@ -546,6 +568,43 @@ class ChannelListViewModel(
     fun reconnectHost(serverId: String) {
         RelayLog.d { "event=tree_host_reconnect_tapped" }
         hostSource.retryHost(serverId)
+    }
+
+    /**
+     * A channel row's pin or unpin control (#2215): one `setPinned` to the row's own host, sent only while
+     * that host is live and still holds [target] as an active channel. Nothing here changes on any outcome —
+     * the row moves only when the host's confirmed record arrives through its conversation stream, so a
+     * pending or refused request leaves the list exactly as the host last confirmed it.
+     */
+    fun setPinned(
+        target: HostConversationTarget,
+        pinned: Boolean,
+    ) {
+        val host = hostSource.snapshots.value.firstOrNull { it.serverId == target.serverId }
+        val code =
+            when {
+                host == null -> "unknown_host"
+                !host.connectionStatus.isLive() -> "disconnected"
+                host.channels.none { it.id == target.conversationId } -> "unknown_channel"
+                else -> null
+            }
+        val live = if (code == null) hostSource.repositoryFor(target.serverId) else null
+        if (live == null) {
+            RelayLog.d { "event=channel_pin_rejected code=${code ?: "unavailable"} pinned=$pinned" }
+            return
+        }
+        viewModelScope.launch {
+            RelayLog.d { "event=channel_pin_requested pinned=$pinned" }
+            try {
+                live.setPinned(target.conversationId, pinned)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                // Never the ids or the host's message.
+                RelayLog.d { "event=channel_pin_failed pinned=$pinned" }
+                return@launch
+            }
+            RelayLog.d { "event=channel_pin_confirmed pinned=$pinned" }
+        }
     }
 
     /**

@@ -171,6 +171,68 @@ storage and #2068 reader activation/owned partial writes. Legacy rows/evidence n
 authoritative items or certify an authoritative checkpoint. Existing file-cache operations,
 metadata lists, read positions, settings and attachment-byte storage remain available.
 
+### Indexed authoritative Room storage and pages (#2163)
+
+`AuthoritativeRoomStorage` is an independently usable backend over the same database as
+`LegacyRoomStorage`, exposing full `readAuthoritativeThread`/`writeAuthoritativeThread`
+equivalent to `ConversationCache`'s, plus `newestPage`/`beforePage` and scoped removal. It is
+unbound: #2161 owns application binding/import, and #2068 owns reader activation and owned
+partial writes. Ownership is the same exact, case-sensitive host-plus-conversation scoping as
+every other family in this cache, with the authoritative family additionally scoped by epoch —
+identical ids under another host, another conversation or another epoch are different rows,
+never the same fact.
+
+`writeAuthoritativeThread` validates and retains the replacement with the existing
+`SavedAuthoritativeThread.retained()` (same rules as the file-backed cache: duplicate ids,
+numeric/revision bounds, coverage and the 100000-item ordered-tail cap), then replaces the
+header and every item row for that owner/epoch in one Room transaction — delete-then-insert,
+never a partial update. A tail-trimming replacement clears `checkpoint` to zero and `coverage`
+to null while keeping `appliedVersion`, the same certification loss the file-backed cache
+applies on retention. A rejected replacement (duplicate/invalid identity, bad coverage, IO or
+security failure) leaves the last committed header and items intact, surfaced as a causeless
+`ConversationCacheException` inside the `Result`; cancellation and unclassified programming
+failures propagate instead of being swallowed. `readAuthoritativeThread` reconstructs and
+re-validates the full saved record from the header and every stored item, returning null rather
+than repairing storage when stored JSON fails to parse or decode.
+
+`newestPage`/`beforePage` return a distinct nullable `AuthoritativeThreadPage` — never a
+shortened full read — carrying the exact owner, epoch, selected raw items, and the header's
+committed `appliedVersion`/`checkpoint`/`coverage` exactly as `readAuthoritativeThread` would
+report them: a page can never advance, shrink or otherwise disagree with the full record's
+certification. For a positive page size, the query selects at most that many item rows in held
+ordinal order (newest-first for `newestPage`, continuing older for `beforePage`) plus one
+ordinal-only continuation probe that never selects or decodes the probed row's payload — the
+same bounded-read shape `LegacyRoomStorage`'s pages use. Growing history outside the requested
+window never grows what a page reads or decodes; only the selected items' rows and the single
+probed ordinal are touched, instrumented by the storage's internal `ReadCounts`. Decoded page
+items are revalidated against their indexed identity, revision and ordinal exactly as a full
+read would, so a page can never surface a row that disagrees with its own index.
+
+The page's nested `AuthoritativeThreadPage.Continuation` is opaque and belongs only to this
+family: it binds the exact host, conversation, epoch and a per-write replacement generation
+(a fresh UUID minted on every `writeAuthoritativeThread`, not a content hash), plus the local
+ordinal to resume before. A token from a wrong owner, a stale epoch or a superseded generation
+returns null rather than a wrong or partial page — any replacement invalidates every token
+issued before it, even one from the same epoch reused by a later replacement. It cannot be
+passed to `LegacyRoomStorage`'s paging, and a continuation running out (`continuation == null`)
+says only that this backend's local storage is exhausted; it is never a server cursor and never
+asserts server-side completeness. Reaching the end of local pages does not change applied
+progress, checkpoint or coverage.
+
+Scoped removal (`removeConversation`/`removeHost`) deletes both the legacy and authoritative
+families for the requested owner in one Room transaction — see
+[Layout § atomic scoped removal](conversation-cache-layout.md#indexed-legacy-room-layout-2162)
+— so a conversation or host disappears from both families together or not at all. A family-local
+write (an authoritative replacement, or `LegacyRoomStorage.writeThread`/history write) touches
+only its own tables: writing authoritative facts leaves legacy rows and evidence for the same
+owner unchanged, and vice versa. Result, token, header and page string representations redact
+owner, epoch and content; only static operation/failure codes reach diagnostics.
+
+`ConversationCacheDatabase` is raised to schema version 2 through Room's additive
+`AutoMigration(from = 1, to = 2)` — see
+[Layout § the additive version 1 → 2 migration](conversation-cache-layout.md#indexed-legacy-room-layout-2162)
+— adding the authoritative tables without touching existing legacy content.
+
 **The read-position family (#877, fallback-only since #1883).**
 `readReadPositions`/`writeReadPositions` retain their graceful-read,
 reporting-mutation, default-bodied shape over `Map<String, ReadPosition>` keyed by

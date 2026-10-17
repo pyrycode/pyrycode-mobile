@@ -25,6 +25,7 @@ internal fun authoritativeItem(
     subtype: String? = null,
     summary: String = "summary-$id",
     content: String = """{"text":"text-$id"}""",
+    turn: String? = null,
 ): ThreadItemDto =
     ThreadItemDto.decode(
         JsonObject(
@@ -36,6 +37,7 @@ internal fun authoritativeItem(
                 parent?.let { put("parent", JsonPrimitive(it)) }
                 endedOrder?.let { put("ended_order", JsonPrimitive(it)) }
                 put("session", JsonPrimitive(session))
+                turn?.let { put("turn", JsonPrimitive(it)) }
                 agent?.let { put("agent", JsonPrimitive(it)) }
                 put("active", JsonPrimitive(active))
                 put("status", JsonPrimitive(status))
@@ -57,6 +59,8 @@ internal fun authoritativeAgent(
     shown: Boolean = true,
     parent: Long? = null,
     order: Long = id,
+    turn: String? = null,
+    toolUse: String? = null,
 ) = authoritativeItem(
     id,
     "agent",
@@ -69,7 +73,10 @@ internal fun authoritativeAgent(
     shown = shown,
     content = """{"name":"Agent","input_summary":"agent-$id","input":{"description":"agent-$id"}${task?.let {
         ",\"task_id\":\"$it\",\"task_link\":{\"task_type\":\"local_agent\",\"description\":\"agent-$id\"}"
+    }.orEmpty()}${toolUse?.let {
+        ",\"tool_use_id\":\"$it\""
     }.orEmpty()},"result":{"result_summary":"instant launch result"},"ending":{"cause":"idle_sleep"}}""",
+    turn = turn,
 )
 
 internal fun authoritativeSnapshot(
