@@ -295,7 +295,34 @@ class ThreadTopOverlayTest {
         composeRule.onNodeWithContentDescription(dismissDescription).assertIsDisplayed()
     }
 
-    // #1519: the copy names no agent and no percent, so a Codex conversation reads the same as a Claude one.
+    @Test
+    fun aComfortableWindow_drawsNoPill_butCrossingThreeQuartersDoes() {
+        usageLimit = warning.copy(utilization = 0.75)
+        setScreen()
+        composeRule.onNodeWithContentDescription(NEARLY_LABEL_76).assertDoesNotExist()
+        composeRule.onNodeWithText("75% used", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(dismissDescription).assertDoesNotExist()
+
+        usageLimit = warning.copy(utilization = 0.76)
+        composeRule.onNodeWithContentDescription(NEARLY_LABEL_76).assertIsDisplayed()
+    }
+
+    @Test
+    fun aRejectedReading_alwaysDraws_evenWellBelowTheThreshold() {
+        usageLimit = warning.copy(status = "rejected", utilization = 0.5)
+        setScreen()
+        composeRule.onNodeWithContentDescription("Usage limit reached - 7-day window, 50% used").assertIsDisplayed()
+    }
+
+    @Test
+    fun aMissingUtilization_drawsThePill_sinceItCannotProveTheWindowIsComfortable() {
+        usageLimit = warning.copy(utilization = null)
+        setScreen()
+        composeRule.onNodeWithContentDescription("Nearly at usage limit - 7-day window").assertIsDisplayed()
+    }
+
+    // #1519: the copy names no agent, so a Codex conversation reads the same as a Claude one. The percent
+    // spent (new) is claude's own figure and renders identically regardless of agent too.
     @Test
     fun theUsagePill_readsTheSameForEveryAgent() {
         usageLimit = warning.copy(status = "rejected")
@@ -308,7 +335,6 @@ class ThreadTopOverlayTest {
         usageLimit = warning.copy(status = "")
         composeRule.onNodeWithContentDescription(NEARLY_LABEL).assertIsDisplayed()
         composeRule.onNodeWithText("Codex", substring = true).assertDoesNotExist()
-        composeRule.onNodeWithText("%", substring = true).assertDoesNotExist()
     }
 
     @Test
@@ -607,7 +633,8 @@ class ThreadTopOverlayTest {
         const val RE_PAIR_LABEL = "Pairing error - Re-pair"
         const val OFFLINE_RETRY_LABEL = "Offline · Retry"
         const val MCP_FAILED_LABEL = "MCP server github failed"
-        const val NEARLY_LABEL = "Nearly at usage limit - 7-day window"
-        const val REACHED_LABEL = "Usage limit reached - 7-day window"
+        const val NEARLY_LABEL = "Nearly at usage limit - 7-day window, 80% used"
+        const val REACHED_LABEL = "Usage limit reached - 7-day window, 80% used"
+        const val NEARLY_LABEL_76 = "Nearly at usage limit - 7-day window, 76% used"
     }
 }
