@@ -1,0 +1,237 @@
+{
+ "run": "unchanged-Mobile owner comparison fractal-prepared, from #2177 owner-comparison.json (manifest f251fca3fb2a5139606d691a5d2ae2ee7af19a51c82bb5736c01ce042246591d)",
+ "platform": "Linux/build-fractal-2",
+ "mobile": "5e3e4471733f63e97ccb6c4fc5f054d8107f9445",
+ "agents": "9aad4b5db84f2897c5eda3e8ed78a5ec9256ad71",
+ "generation": "07867931f3b7daad8564d9cae6cd26dbea9bd36d16b51e07986a2fe8fc4e7e6e",
+ "launcher": {
+  "binary": "emulator",
+  "gpu": "auto-no-window",
+  "hardware_renderer": "lavapipe"
+ },
+ "counts": {
+  "executed": 4,
+  "passed": 4,
+  "failed": 0,
+  "errors": 0,
+  "skipped": 0
+ },
+ "tests": {
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#slowRestore_negativeControlRejectsTheSameFirstDrawBound": "passed",
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen": "passed",
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen": "passed",
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#heldCpuPipeCancelsAndClosesItsDescriptor": "passed"
+ },
+ "xml_sha256": "9d24264f9de187775b0af9122c999e8d643ed06529f19c2f2a51baaa181c0eac",
+ "ready_barriers": 17,
+ "openings": [
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "ordinary online=false opening=0",
+   "rows": 20,
+   "phases_ms": [
+    83,
+    112,
+    129,
+    308
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "ordinary online=false opening=1",
+   "rows": 20,
+   "phases_ms": [
+    66,
+    95,
+    111,
+    271
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "ordinary online=true opening=0",
+   "rows": 20,
+   "phases_ms": [
+    97,
+    124,
+    142,
+    287
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "ordinary online=true opening=1",
+   "rows": 20,
+   "phases_ms": [
+    97,
+    145,
+    161,
+    336
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "fragmented online=false opening=0",
+   "rows": 18000,
+   "phases_ms": [
+    613,
+    614,
+    629,
+    816
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "fragmented online=false opening=1",
+   "rows": 18000,
+   "phases_ms": [
+    136,
+    162,
+    195,
+    369
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "fragmented online=true opening=0",
+   "rows": 18000,
+   "phases_ms": [
+    532,
+    533,
+    559,
+    707
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "fragmented online=true opening=1",
+   "rows": 18000,
+   "phases_ms": [
+    127,
+    160,
+    181,
+    347
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "ordinary online=false opening=0",
+   "rows": 20,
+   "phases_ms": [
+    80,
+    101,
+    119,
+    231
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "ordinary online=false opening=1",
+   "rows": 20,
+   "phases_ms": [
+    76,
+    100,
+    120,
+    260
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "ordinary online=true opening=0",
+   "rows": 20,
+   "phases_ms": [
+    76,
+    95,
+    117,
+    258
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "ordinary online=true opening=1",
+   "rows": 20,
+   "phases_ms": [
+    64,
+    84,
+    103,
+    227
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "fragmented online=false opening=0",
+   "rows": 18000,
+   "phases_ms": [
+    496,
+    497,
+    512,
+    653
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "fragmented online=false opening=1",
+   "rows": 18000,
+   "phases_ms": [
+    123,
+    153,
+    168,
+    311
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "fragmented online=true opening=0",
+   "rows": 18000,
+   "phases_ms": [
+    436,
+    437,
+    445,
+    582
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "fragmented online=true opening=1",
+   "rows": 18000,
+   "phases_ms": [
+    115,
+    155,
+    163,
+    352
+   ],
+   "met_1000_ms": true
+  },
+  {
+   "method": "slowRestore_negativeControlRejectsTheSameFirstDrawBound",
+   "case": "negative-control",
+   "rows": 1,
+   "phases_ms": [
+    3080,
+    3494,
+    3521,
+    3630
+   ],
+   "met_1000_ms": false
+  }
+ ],
+ "notes": [
+  "All eight measurement-source hashes match the failing run (per #2177 comparison).",
+  "Stage and GC lines are not in the retained summary; raw logs stay on build-fractal-2."
+ ]
+}
