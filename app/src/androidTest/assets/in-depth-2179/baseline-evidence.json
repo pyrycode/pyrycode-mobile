@@ -1,0 +1,112 @@
+{
+  "ticket": 2179,
+  "status": "incomplete baseline; timeout cause and repair unproved",
+  "nativeTask": "b797280f2a096b3f90424c101cd754246cadd53065dc56b00053510cb806f562",
+  "mobileRevision": "4b21cef23ef9d395f667694ab2a6df97c380deaf",
+  "agentsRevision": "800e719515a91bf2040d9d26b0e0a802e931bca3",
+  "machine": "build-fractal-2",
+  "containerHost": "428f2abf2873",
+  "operatingSystem": "Linux",
+  "recipe": "mobile-in-depth",
+  "profile": { "UI_GATE_FULL": "1", "UI_DEVICE_ALL": "1", "UI_SHARDS": "2" },
+  "command": "python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py ui",
+  "exitCode": 1,
+  "outerBudgetSeconds": 1800,
+  "elapsedSeconds": 1214.7437399679911,
+  "gateCommandElapsedSeconds": 1198.2936735990224,
+  "gateCommandLaunchOffsetSeconds": 16.429081043985207,
+  "admissionWaitSeconds": 0.0010878389875870198,
+  "preparationSeconds": 64.88040296299732,
+  "deviceCommandSeconds": 1103.1277973749966,
+  "timingLimits": [
+    "Device-command time includes Gradle, device startup, installation, execution and teardown; startup was not separately timed.",
+    "Per-shard XML suite durations are retained, not independently measured execution-only wall times.",
+    "Launcher and gate phase timers have different boundaries; unallocated time has no established attribution.",
+    "Load averages are observations, not evidence identifying a competing process or causal contention."
+  ],
+  "loadBefore": [3.73486328125, 2.6787109375, 4.578125],
+  "loadAfter": [8.345703125, 9.73583984375, 8.5322265625],
+  "shards": [
+    {
+      "shard": 0,
+      "announced": 843,
+      "xmlRecords": 799,
+      "passed": 797,
+      "failureRecords": 2,
+      "errors": 0,
+      "skipped": 0,
+      "instrumentationStarts": 799,
+      "instrumentationCompleted": 798,
+      "unfinished": 1,
+      "unreported": 44,
+      "xmlSuiteSeconds": 965.452,
+      "complete": false,
+      "firstPhoneStart": "10-16 21:02:14.309",
+      "lastPhoneStart": "10-16 21:18:06.717"
+    },
+    {
+      "shard": 1,
+      "announced": 774,
+      "xmlRecords": 774,
+      "passed": 772,
+      "failureRecords": 0,
+      "errors": 0,
+      "skipped": 2,
+      "instrumentationStarts": 774,
+      "instrumentationCompleted": 774,
+      "unfinished": 0,
+      "unreported": 0,
+      "xmlSuiteSeconds": 953.423,
+      "complete": true,
+      "firstPhoneStart": "10-16 21:02:14.648",
+      "lastPhoneFinish": "10-16 21:17:47.359"
+    }
+  ],
+  "reconciliation": {
+    "announced": 1617,
+    "xmlRecords": 1573,
+    "executedIncludingInterruptedRecord": 1571,
+    "passed": 1569,
+    "failureRecords": 2,
+    "completedAssertionFailures": 1,
+    "errors": 0,
+    "skipped": 2,
+    "completedExecuted": 1570,
+    "unfinished": 1,
+    "unreported": 44,
+    "complete": false,
+    "note": "1617 announced = 1570 completed executed + 2 skips + 1 unfinished + 44 unreported. Progress counters double-count skips; they are not executed counts."
+  },
+  "failures": [
+    {
+      "test": "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+      "classification": "completed assertion failure",
+      "fragmentedFirstDrawMilliseconds": { "offline": 1268, "heldNewest": 1039 },
+      "existingTrackers": [2177, 2202],
+      "note": "Historical baseline only; no new Mobile code was present. Later tracker disposition does not turn this failure into a pass."
+    },
+    {
+      "test": "de.pyryco.mobile.ui.onboarding.ScannerFrameTest#fullSizeDarkFrames",
+      "classification": "unfinished instrumentation after device offline/not found; empty XML failure",
+      "note": "No finished instrumentation status or scanner assertion failure. Emulator exit mechanism and relation to the original timeout remain unknown."
+    }
+  ],
+  "existingSkips": [
+    "de.pyryco.mobile.ui.conversations.components.RenameDialogCaptureTest#renameAtFigmaViewport",
+    "de.pyryco.mobile.ui.conversations.thread.ComposerPasteTest#pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty"
+  ],
+  "evidenceDirectory": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2179/baseline-b79728-20261017/",
+  "sha256": {
+    "native-result/capture.json": "e1a89e689cefc11f8c28ecc21e68d0740d31e039668819d9d2cf47fca036b6f6",
+    "native-result/execution.log": "58af0f719a55948cfe6f8a186ad6411e4ac2e9710f708737812f93c11f37310b",
+    "native-result/gate-0.xml": "212da092c0581dd8036c3c09410b7a3507036d9c48614ed3e77a144ea6b8f8c2",
+    "native-result/phases-0.jsonl": "702931a2b27c6d773d9edca1affc5f0511fc419a1fc0472dcce2934f0d549e0f",
+    "shard-0/report.xml": "29410480c73a4d9768b25f961798ff14397f20aac4c36315b68a8ed72fbea22e",
+    "shard-0/instrumentation.log": "a906246de3d2b74c18b1e74f9631597309b2aea413fe09b9085c337f85cfb4e8",
+    "shard-1/report.xml": "2cc14148627bad3f7b97c7a5ec4fc18fa730a72595cc71ef373e3bbfe3e06abc",
+    "shard-1/instrumentation.log": "f6796226365f16f6ad47518ccff2a347eab1ea5e8a53cb40eb51c309498d943f"
+  },
+  "resumePrerequisite": "https://github.com/pyrycode/agent-dispatcher/issues/294",
+  "remaining": "After native launcher repair/deployment, obtain a fresh exact pushed candidate comparison, complete inventory reconciliation, startup and shard phase evidence, and an evidenced cause/repair. No diagnostic pass or timeout resolution is claimed.",
+  "documentationHandoff": "Pending documentation stage: docs/knowledge/features/development-verification-gates.md, Device gate. Retain diagnosed cause/repair and timing/count evidence when established; distinguish diagnostic full profile, configured gates and dispatcher-owned post-merge sweep."
+}
