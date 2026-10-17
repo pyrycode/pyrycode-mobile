@@ -386,28 +386,18 @@ class InteractiveStreamE2ETest {
         val (conversationId, name) = answerChat(serverId, "reopen-stream-")
         openChatRow(name)
         val repository = hostRepository(serverId)
+        val evidence = harnessThreadEvidence(repository)
         sendFromPhone(
             "Write one plain paragraph of at least 800 words about a walk in a forest. " +
                 "Use ordinary words and spaces only, no markdown, lists, headings or tools. Begin writing immediately.",
         )
-        val captured =
+        val (owner, captured) =
             runBlocking {
                 withTimeout(REPLY_TIMEOUT_MS) {
-                    repository
-                        .observeMessages(conversationId)
-                        .map { rows ->
-                            rows
-                                .filterIsInstance<ThreadItem.MessageItem>()
-                                .map { it.message }
-                                .firstOrNull {
-                                    it.role == Role.Assistant &&
-                                        it.isStreaming &&
-                                        it.content
-                                            .trim()
-                                            .split(Regex("\\s+"))
-                                            .size >= 20
-                                }
-                        }.filterNotNull()
+                    evidence
+                        .observe(conversationId)
+                        .map { held -> held.openMainReply { it.trim().split(Regex("\\s+")).size >= 20 }?.let { held.owner to it.message } }
+                        .filterNotNull()
                         .first()
                 }
             }
@@ -420,8 +410,8 @@ class InteractiveStreamE2ETest {
         }
 
         fun assertStillOpen() {
-            val rows = runBlocking { repository.observeMessages(conversationId).first() }.filterIsInstance<ThreadItem.MessageItem>()
-            assertTrue("a completed reply cannot prove ongoing reopen", rows.any { it.message.id == captured.id && it.message.isStreaming })
+            val held = runBlocking { evidence.observe(conversationId).first() }
+            assertTrue("a completed reply cannot prove ongoing reopen", held.reply(owner, captured.id)?.isOpenReply() == true)
             assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
         }
         assertStillOpen()
@@ -499,19 +489,13 @@ class InteractiveStreamE2ETest {
 
         // 5. Match the displayed reply itself; queued prompt removal cannot offset this signal.
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-        val messages =
+        val evidence = harnessThreadEvidence(repository)
+        val held =
             runBlocking {
-                withTimeout(REPLY_TIMEOUT_MS) {
-                    repository
-                        .observeMessages(conversationId)
-                        .first { rows ->
-                            rows.filterIsInstance<ThreadItem.MessageItem>().any {
-                                it.message.role == Role.Assistant && !it.message.isStreaming && it.message.content.isNotBlank()
-                            }
-                        }.filterIsInstance<ThreadItem.MessageItem>()
-                        .map { it.message }
-                }
+                withTimeout(REPLY_TIMEOUT_MS) { evidence.observe(conversationId).first { it.loadedMainReply() != null } }
             }
+        assertEquals("one delivered user echo", 1, held.userEchoCount(PING_PROMPT))
+        val messages = held.records.map { it.message }
         val user = messages.single { it.role == Role.User && it.content == PING_PROMPT }
         val assistant = messages.single { it.role == Role.Assistant }
         composeTestRule.assertSideMessageCopy(user)
@@ -531,12 +515,9 @@ class InteractiveStreamE2ETest {
                 ViewCompat.getRootWindowInsets(composeTestRule.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
             }
         }
-        assertEquals(
-            messages,
-            runBlocking { repository.observeMessages(conversationId).first() }
-                .filterIsInstance<ThreadItem.MessageItem>()
-                .map { it.message },
-        )
+        val after = runBlocking { evidence.observe(conversationId).first() }
+        assertTrue("the thread must still be read from the same source", held.owner.matches(after.owner))
+        assertEquals(messages, after.records.map { it.message })
     }
 
     /**
@@ -558,22 +539,17 @@ class InteractiveStreamE2ETest {
         val prompt =
             "Write one plain paragraph of at least 150 words describing a quiet seaside village. " +
                 "Use ordinary prose only, no markdown, headings, lists or tools. Begin writing immediately."
+        val evidence = harnessThreadEvidence(repository)
         sendFromPhone(prompt)
-        val captured =
+        val (owner, captured) =
             runBlocking {
                 withTimeout(REPLY_TIMEOUT_MS) {
-                    repository
-                        .observeMessages(conversationId)
-                        .map { rows ->
-                            rows
-                                .filterIsInstance<ThreadItem.MessageItem>()
-                                .map { it.message }
-                                .firstOrNull {
-                                    it.role == Role.Assistant &&
-                                        it.isStreaming &&
-                                        it.content.trim().contains(' ') &&
-                                        !prompt.contains(it.content.trim(), ignoreCase = true)
-                                }
+                    evidence
+                        .observe(conversationId)
+                        .map { held ->
+                            held
+                                .openMainReply { it.trim().contains(' ') && !prompt.contains(it.trim(), ignoreCase = true) }
+                                ?.let { held.owner to it.message }
                         }.filterNotNull()
                         .first()
                 }
@@ -588,30 +564,17 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(displayedPrefix, useUnmergedTree = true).fetchSemanticsNodes().size == 1
         }
         composeTestRule.onNode(displayedPrefix, useUnmergedTree = true).assertIsDisplayed()
-        val atDisplay =
-            runBlocking { repository.observeMessages(conversationId).first() }
-                .filterIsInstance<ThreadItem.MessageItem>()
-                .single { it.message.id == captured.id }
-                .message
-        assertTrue("the displayed prefix must still belong to the streaming reply", atDisplay.isStreaming)
+        val atDisplay = runBlocking { evidence.observe(conversationId).first() }.reply(owner, captured.id)
+        assertTrue("the displayed prefix must still belong to the streaming reply", atDisplay?.isOpenReply() == true)
         assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
 
         val finished =
             runBlocking {
                 withTimeout(REPLY_TIMEOUT_MS) {
-                    val rows =
-                        repository.observeMessages(conversationId).first { rows ->
-                            rows.filterIsInstance<ThreadItem.MessageItem>().any { it.message.id == captured.id && !it.message.isStreaming }
-                        }
+                    val held = evidence.observe(conversationId).first { it.reply(owner, captured.id)?.isFinishedReply() == true }
                     repository.observeTurnPhase(conversationId).first { it == LiveSessionEvent.TurnState.Phase.Idle }
-                    assertTrue(
-                        "the observation must use a tool-free turn",
-                        rows.none {
-                            it is ThreadItem.MessageItem &&
-                                it.message.role == Role.Tool
-                        },
-                    )
-                    rows.filterIsInstance<ThreadItem.MessageItem>().single { it.message.id == captured.id }.message
+                    assertTrue("the observation must use a tool-free turn", held.isToolFree())
+                    checkNotNull(held.reply(owner, captured.id)).message
                 }
             }
         assertTrue("the completed reply retains the observed prefix", finished.content.startsWith(prefix))
@@ -3177,10 +3140,12 @@ class InteractiveStreamE2ETest {
             val registry = GlobalContext.get().get<RelayConnectionRegistry>()
             val bundle = registry.connectionFor(serverId)
             val status = bundle?.coordinator?.connectionStatus?.value
+            val repository = bundle?.coordinator?.currentRepository?.value
             return "phone host=${bundle != null} selected=${bundle != null && registry.selected.value === bundle} " +
                 "relay=${status?.relay?.javaClass?.simpleName ?: "absent"} " +
                 "daemon=${status?.pyrycode?.javaClass?.simpleName ?: "absent"} " +
-                "repository=${bundle?.coordinator?.currentRepository?.value != null}; peer=${peer.linkState()}"
+                "repository=${repository != null} evidence=${repository?.let { harnessThreadEvidence(it).kind } ?: "absent"}; " +
+                "peer=${peer.linkState()}"
         }
 
         fun <T> step(
@@ -3282,16 +3247,16 @@ class InteractiveStreamE2ETest {
                 }
             }
             assertDrawnOnce(inThreadList(queuedPrompt))
-            val rows =
+            val held =
                 step(SendNowStage.ReadDeliveredRows) {
                     runBlocking {
-                        withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).observeMessages(conversationId).first() }
-                    }.filterIsInstance<ThreadItem.MessageItem>()
+                        withTimeout(THREAD_TIMEOUT_MS) { harnessThreadEvidence(hostRepository(serverId)).observe(conversationId).first() }
+                    }
                 }
-            val toolIndex = rows.indexOfLast { it.message.role == Role.Tool }
-            val userIndex = rows.indexOfFirst { it.message.id == queued.messageId }
-            assertEquals(1, rows.count { it.message.id == queued.messageId })
-            assertTrue("phone placed the user row before Bash result", toolIndex >= 0 && userIndex > toolIndex)
+            val toolIndex = held.lastToolIndex()
+            val delivered = held.deliveredQueuedUser(queued.messageId, queued.queuedMsgId)
+            assertEquals(1, delivered.size)
+            assertTrue("phone placed the user row before Bash result", toolIndex >= 0 && delivered.single() > toolIndex)
         } finally {
             peer.close()
         }
@@ -8117,9 +8082,7 @@ class InteractiveStreamE2ETest {
         runCatching {
             runBlocking {
                 withTimeout(THREAD_TIMEOUT_MS) {
-                    repository.observeMessages(conversationId).first().any {
-                        it is ThreadItem.MessageItem && it.message.role == Role.Assistant && token in it.message.content
-                    }
+                    harnessThreadEvidence(repository).observe(conversationId).first().holdsAssistantText(token)
                 }
             }
         }.fold(onSuccess = { it.toString() }, onFailure = { "unread" })
@@ -8755,22 +8718,26 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Whether [serverId]'s current live repository holds an assistant `ping` row for [conversationId] (#1456),
-     * or null when there is no repository or its thread does not emit in time.
+     * Whether [serverId]'s current live connection holds a finished main assistant `ping` reply for
+     * [conversationId] (#1456, #2170), or null when there is no repository or its thread does not emit in time.
      */
     private fun liveRepositoryHoldsPingReply(
         serverId: String,
         conversationId: String,
     ): Boolean? {
-        val repository =
+        val repositories =
             GlobalContext
                 .get()
                 .get<RelayConnectionRegistry>()
                 .connectionFor(serverId)
                 ?.coordinator
                 ?.currentRepository
-                ?.value ?: return null
-        return runBlocking { withTimeoutOrNull(THREAD_TIMEOUT_MS) { holdsPingReply(repository.observeMessages(conversationId).first()) } }
+                ?.takeIf { it.value != null } ?: return null
+        return runBlocking {
+            withTimeoutOrNull(
+                THREAD_TIMEOUT_MS,
+            ) { repositories.liveThreadEvidence(conversationId, ::harnessThreadEvidence).holdsPingReply() }
+        }
     }
 
     /** The #849 peer on the first test daemon, the one device allowed to answer its permission prompts. */

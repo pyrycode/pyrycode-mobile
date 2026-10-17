@@ -4035,6 +4035,77 @@ by `harnessThreadEvidence`; the authoritative path is proved only by the JVM
 probes against synthetic facts. Negotiated production activation — binding the
 harness to the real negotiated source — is later work and is not claimed here.
 
+### Reply, reopen and readiness evidence migration (#2170)
+
+The ten `observeMessages` reads inside
+`interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately`,
+`interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
+`interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply` and
+`interactiveTurn_sendQueuedNow_reachesRunningTurn`, plus the `threadHoldsReply`
+and `liveRepositoryHoldsPingReply` diagnostics and the send-now stage's local
+`links()` print, now go through #2169's `harnessThreadEvidence` binding
+instead of reading the repository directly. That binding still selects the
+current legacy source; no production route, capability or fixture changed.
+New shared predicates in
+`app/src/sharedTest/java/de/pyryco/mobile/e2e/ReplyEvidence.kt` back both the
+device methods and new JVM probes: `openMainReply` finds the first open
+main-thread assistant record; `ThreadEvidenceRecord.isOpenReply()`/
+`isFinishedReply()` decide whether a reply is still arriving, finished, or
+(for a failed or interrupted item) neither; `reply(owner, id)` re-reads a
+captured reply only when the owner (host, conversation, connection, epoch and
+generation) still matches, so a reconnect, another host, a new epoch or
+generation, or a repair returns null instead of letting retired or colliding
+evidence satisfy a captured identity; `holdsAssistantText(token)` backs
+`threadHoldsReply`; `holdsPingReply()` accepts only a finished main-thread
+reply reading `ping`, never an active partial, an Agent child or a user echo;
+`deliveredQueuedUser(messageId, queuedMsgId)` matches a daemon-thread queued
+message by its `content.queued_msg_id`, never by the app `message_id`;
+`lastToolIndex()` gives the Bash row for the send-now placement check; and
+`liveThreadEvidence` reads only the current connection through
+`firstOnLive`. `ThreadEvidenceSource` gained a `kind` so the send-now
+diagnostic names the bound route (`evidence=Legacy` today). The rendered
+checks each scenario already made — arrived-prefix immediacy on reopen,
+arrived text visible before settlement on word reveal, the complete reply on
+ping, and queue/tool placement on send-now — are unchanged; only the evidence
+source moved.
+
+`ReplyEvidenceTest`
+(`app/src/test/java/de/pyryco/mobile/e2e/ReplyEvidenceTest.kt`) covers a
+colliding item ID from another host, a retired connection token, an epoch or
+generation change, repair and reset while a reply is open, a reply that is
+still active or ended as failed or interrupted, Agent children, user echoes,
+a queue handle reused by a later item or a message ID shared across items,
+and a retired connection that still holds a ping reply after replacement.
+
+[PR #2234](https://github.com/pyrycode/pyrycode-mobile/pull/2234), merged at
+`06619c33d`, supplies the counted evidence: `testDebugUnitTest` for the new
+`ReplyEvidenceTest` (9 executed, 9 passed, 0 failed, 0 skipped) and for the
+unchanged `ThreadEvidenceTest` (17/17), `PingReplyDiagnosisTest` (14/14),
+`SendNowStepTest` (6/6), `LiveConnectionReadsTest` (4/4) and
+`FinishedSelectionReplyTest` (2/2), all 0 failed/0 skipped. Recorded native
+runs on the managed Pixel 2 API 33 device at that commit, with
+`python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.recording.RecordedMobileSuiteTest#<method>'`,
+each exited 0 with 1 executed, 1 passed, 0 failed, 0 skipped, for
+`interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
+`interactiveTurn_sendQueuedNow_reachesRunningTurn`,
+`interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately` and
+`interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply`. The
+dispatcher's own verifier gate 7 (`android-test-gate.py ui`, 335 executed/335
+passed, 0 failed, 1 skipped) separately recorded all four named methods
+passing, and verifier gate 5 (`jvm-test-gate.py`, 5800 executed/5800 passed,
+0 failed, 0 skipped) covers the new JVM probes; verifier gate 8
+(`scripted-all`, 22 executed/22 passed, 0 failed, 0 skipped) ran but did not
+name these four methods, so it is not cited as evidence for them. These
+passes cover only the current legacy route exercised by
+`harnessThreadEvidence`; they do not prove negotiated production activation —
+#2175 owns that.
+
+A daemon-thread queued delivery cannot be found by the app `message_id`: the
+projected row ID is scoped, and the protocol forbids inferring a queue handle
+from the message ID. Placement checks must match `content.queued_msg_id`. A
+reused handle must give two matches, so the single-delivery check fails
+instead of picking one.
+
 ### Scripted durable-gap closure (#2069)
 
 The [verifier's PASS on PR #2072](https://github.com/pyrycode/pyrycode-mobile/pull/2072#issuecomment-6105030442)
