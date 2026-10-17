@@ -566,8 +566,9 @@ internal class RecordedSuiteTape(
             steps.indices.filter { it !in released }.take(8).joinToString {
                 "${steps[it].owner}:${steps[it].message?.type ?: steps[it].direction}"
             }
+        // The first failure is sticky, and the app absorbs a refused send, so a later stall can hide it.
         return "Recorded suite progress: matched=$matched remaining=${steps.size - released.size} " +
-            "next=${next?.owner}:$type index=$index pending=$pending reads=${readReceipts?.progress()}"
+            "next=${next?.owner}:$type index=$index pending=$pending reads=${readReceipts?.progress()} first-failure=$failure"
     }
 
     @Synchronized fun assertComplete() {
