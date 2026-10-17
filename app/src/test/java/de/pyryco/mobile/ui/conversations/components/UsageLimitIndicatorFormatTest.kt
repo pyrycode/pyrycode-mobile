@@ -1,9 +1,12 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import de.pyryco.mobile.data.repository.UsageLimitReading
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -60,5 +63,59 @@ class UsageLimitIndicatorFormatTest {
             UsageLimitReset(date = null, time = "23:50"),
             formatUsageLimitReset(Instant.parse("2026-09-24T20:50:00Z").epochSeconds, Instant.parse("2026-09-23T21:10:00Z"), helsinki),
         )
+    }
+
+    @Test
+    fun `a finite utilization in range rounds to the nearest whole percent`() {
+        assertEquals(94, usageLimitSpentPercent(0.94))
+        assertEquals(0, usageLimitSpentPercent(0.0))
+        assertEquals(100, usageLimitSpentPercent(1.0))
+        assertEquals(50, usageLimitSpentPercent(0.499)) // rounds up, not truncates
+    }
+
+    @Test
+    fun `an absent utilization shows no percent, never zero`() {
+        assertNull(usageLimitSpentPercent(null))
+    }
+
+    @Test
+    fun `an out-of-range or non-finite utilization declines rather than clamping`() {
+        assertNull(usageLimitSpentPercent(-0.5))
+        assertNull(usageLimitSpentPercent(1.5))
+        assertNull(usageLimitSpentPercent(Double.NaN))
+        assertNull(usageLimitSpentPercent(Double.POSITIVE_INFINITY))
+        assertNull(usageLimitSpentPercent(Double.NEGATIVE_INFINITY))
+    }
+
+    private fun reading(
+        status: String,
+        utilization: Double?,
+    ): UsageLimitReading = UsageLimitReading(status, "seven_day", 0L, utilization, null)
+
+    @Test
+    fun `an other-than-rejected reading at exactly 75 percent stays hidden`() {
+        assertFalse(usageLimitShouldShow(reading("allowed_warning", 0.75)))
+    }
+
+    @Test
+    fun `an other-than-rejected reading just above 75 percent shows`() {
+        assertTrue(usageLimitShouldShow(reading("allowed_warning", 0.76)))
+    }
+
+    @Test
+    fun `a null utilization shows, since it cannot prove the window is comfortable`() {
+        assertTrue(usageLimitShouldShow(reading("allowed_warning", null)))
+    }
+
+    @Test
+    fun `a rejected reading always shows, regardless of utilization`() {
+        assertTrue(usageLimitShouldShow(reading("rejected", 0.5)))
+    }
+
+    @Test
+    fun `an out-of-range or non-finite utilization shows rather than clamping`() {
+        assertTrue(usageLimitShouldShow(reading("allowed_warning", -0.1)))
+        assertTrue(usageLimitShouldShow(reading("allowed_warning", 1.5)))
+        assertTrue(usageLimitShouldShow(reading("allowed_warning", Double.NaN)))
     }
 }
