@@ -97,3 +97,21 @@ Pending documentation stage: update
 complete counts/phases, any evidenced repair and bounded disposition. Fold #2177's
 readiness evidence first, then #2202's latency disposition without erasing either.
 Documentation records evidence; it does not generate missing native results.
+
+## Revisions
+
+### 2026-10-17 — complete baseline resolves the investigation question
+
+The single unchanged-production configured Linux UI baseline passed
+334 executed / 334 passed / 0 failed / 0 errors / 1 existing unrelated skip.
+All four methods passed once, retaining sixteen positive openings and the slow
+control; all seventeen readiness barriers succeeded. Maximum positive draw was
+433 ms, leaving 567 ms headroom; the slow control rejected the identical bound at
+3123 ms. The audit checked raw XML, phases, fixture counts and source hashes.
+
+No local miss or readiness exhaustion reproduced, so no Mobile repair is selected.
+The recorded disposition is “historical failure retained; cause unresolved; not
+reproduced under the recorded repaired-runner conditions.” The checked assets name
+missing historical evidence and the changed host, runner and complete selection.
+They do not attribute the historical failure or clear #2209's separate startup
+readiness report. Final configured dispatcher UI and documentation remain pending.
