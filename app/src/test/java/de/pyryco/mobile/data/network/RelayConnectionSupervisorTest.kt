@@ -1118,7 +1118,8 @@ class RelayConnectionSupervisorTest {
         val releaseLoop = CountDownLatch(1)
         val dispatcher = HandOffDispatcher(loopEntered)
         val transport = LoopParkedTransport(dispatcher, loopEntered, releaseLoop)
-        val supervisor = RelayConnectionSupervisor(RelayTransportFactory { transport }, StubPairedServerStore(PAIRED), dispatcher, Random(SEED))
+        val supervisor =
+            RelayConnectionSupervisor(RelayTransportFactory { transport }, StubPairedServerStore(PAIRED), dispatcher, Random(SEED))
         try {
             supervisor.connect()
             transport.emitUp()
@@ -1192,6 +1193,7 @@ private class HandOffDispatcher(
     private val loopEntered: CountDownLatch,
 ) : CoroutineDispatcher() {
     @Volatile var loopThread: Thread? = null
+
     @Volatile var holdCaller = false
     private val executor = Executors.newSingleThreadExecutor { task -> Thread(task, "supervisor-loop").also { loopThread = it } }
 
