@@ -2856,6 +2856,303 @@ class HostChannelListViewModelTest {
             )
         }
 
+    private fun channel(
+        id: String,
+        pinnedAt: String? = null,
+    ) = row(id, promoted = true).copy(name = "channel $id", pinnedAt = pinnedAt?.let(Instant::parse))
+
+    private fun Fixture.pinned() = pinnedChannels(vm.hostState.value.hosts).map { it.target }
+
+    private fun Fixture.unpinnedChannels(serverId: String) =
+        vm.hostState.value.hosts
+            .single { it.host.serverId == serverId }
+            .host.channels
+            .filter { it.pinnedAt == null }
+            .map { it.id }
+
+    @Test
+    fun pinnedOrderIsOldestFirstThenServerIdThenIdWhateverTheHostOrder() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            val equal = "2026-10-02T00:00:00Z"
+            val aRows =
+                listOf(
+                    channel("a", equal),
+                    channel("B", equal),
+                    channel("old", "2026-10-01T00:00:00Z"),
+                    channel("z"),
+                )
+            val bRows = listOf(channel("B", equal), channel("a", "2026-10-03T00:00:00Z"))
+            // Code-unit order: "B" (66) sorts before "a" (97), and serverId "Host" before "host".
+            val expected =
+                listOf(
+                    HostConversationTarget("Host", "old"),
+                    HostConversationTarget("Host", "B"),
+                    HostConversationTarget("Host", "a"),
+                    HostConversationTarget("host", "B"),
+                    HostConversationTarget("host", "a"),
+                )
+
+            // Arrival order: the second host's list lands first.
+            f.b.repo.rows.value = bRows
+            runCurrent()
+            assertEquals(expected.drop(3), f.pinned())
+            f.a.repo.rows.value = aRows.reversed()
+            runCurrent()
+            assertEquals(expected, f.pinned())
+
+            // Host enumeration and in-host row order never move a pinned row.
+            f.hosts.value = listOf(f.b.entry, f.a.entry)
+            runCurrent()
+            assertEquals(expected, f.pinned())
+            f.a.repo.rows.value = aRows
+            f.b.repo.rows.value = bRows.reversed()
+            runCurrent()
+            assertEquals(expected, f.pinned())
+            assertEquals(listOf("z"), f.unpinnedChannels("Host"))
+        }
+
+    @Test
+    fun pinnedChannelsMembershipProbes() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            // Empty lists on both hosts: no group.
+            f.a.repo.rows.value = emptyList()
+            f.b.repo.rows.value = emptyList()
+            runCurrent()
+            assertTrue(f.pinned().isEmpty())
+
+            // One pinned row on one host; a pinned chat, an archived pinned channel and an unpinned channel
+            // never join the group.
+            f.a.repo.rows.value =
+                listOf(
+                    channel("only", "2026-10-01T00:00:00Z"),
+                    row("chat").copy(pinnedAt = PIN_TIME),
+                    channel("gone", "2026-09-01T00:00:00Z").copy(archived = true),
+                    channel("plain"),
+                )
+            runCurrent()
+            assertEquals(listOf(HostConversationTarget("Host", "only")), f.pinned())
+            assertEquals(listOf("plain"), f.unpinnedChannels("Host"))
+            assertEquals(
+                listOf("chat"),
+                f.vm.hostState.value.hosts[0]
+                    .host.chats
+                    .map { it.id },
+            )
+
+            // Every active pinned channel exactly once, whichever host holds it.
+            f.b.repo.rows.value = listOf(channel("only", "2026-10-01T00:00:00Z"), channel("second", "2026-10-05T00:00:00Z"))
+            runCurrent()
+            val pinned = f.pinned()
+            assertEquals(pinned.distinct(), pinned)
+            assertEquals(
+                setOf(
+                    HostConversationTarget("Host", "only"),
+                    HostConversationTarget("host", "only"),
+                    HostConversationTarget("host", "second"),
+                ),
+                pinned.toSet(),
+            )
+        }
+
+    @Test
+    fun pinRequestChangesNothingUntilTheHostsRecordArrives() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.a.repo.rows.value = listOf(channel("same"))
+            f.b.repo.rows.value = listOf(channel("same"))
+            runCurrent()
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.pinGate = gate
+
+            f.vm.setPinned(HostConversationTarget("Host", "same"), pinned = true)
+            runCurrent()
+            assertEquals(listOf("same" to true), f.a.repo.pins)
+            assertTrue(
+                f.b.repo.pins
+                    .isEmpty(),
+            )
+            // Pending: still in its host's Channels, not in Pinned.
+            assertTrue(f.pinned().isEmpty())
+            assertEquals(listOf("same"), f.unpinnedChannels("Host"))
+
+            gate.complete(Unit)
+            runCurrent()
+            assertEquals(listOf(HostConversationTarget("Host", "same")), f.pinned())
+            assertTrue(f.unpinnedChannels("Host").isEmpty())
+            assertEquals(listOf("same"), f.unpinnedChannels("host"))
+
+            // Unpin waits for confirmation the same way.
+            val unpinGate = CompletableDeferred<Unit>()
+            f.a.repo.pinGate = unpinGate
+            f.vm.setPinned(HostConversationTarget("Host", "same"), pinned = false)
+            runCurrent()
+            assertEquals(listOf(HostConversationTarget("Host", "same")), f.pinned())
+            unpinGate.complete(Unit)
+            runCurrent()
+            assertTrue(f.pinned().isEmpty())
+            assertEquals(listOf("same" to true, "same" to false), f.a.repo.pins)
+            assertTrue(logs.any { "channel_pin_confirmed pinned=false" in it })
+        }
+
+    @Test
+    fun refusedPinLeavesConfirmedPlacementAndLogsNoIds() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.a.repo.rows.value = listOf(channel("secret-pinned", "2026-10-01T00:00:00Z"), channel("secret-plain"))
+            runCurrent()
+            for (failure in listOf(
+                RelayErrorException("conversation.not_promoted", false, "sensitive"),
+                IllegalArgumentException("sensitive"),
+                IllegalStateException("sensitive"),
+            )) {
+                f.a.repo.pinFailure = failure
+                f.vm.setPinned(HostConversationTarget("Host", "secret-pinned"), pinned = false)
+                f.vm.setPinned(HostConversationTarget("Host", "secret-plain"), pinned = true)
+                runCurrent()
+                assertEquals(listOf(HostConversationTarget("Host", "secret-pinned")), f.pinned())
+                assertEquals(listOf("secret-plain"), f.unpinnedChannels("Host"))
+            }
+            assertEquals(6, f.a.repo.pins.size)
+            assertTrue(logs.count { "event=channel_pin_failed" in it } == 6)
+            assertTrue(
+                "no id or server message may reach a log line: $logs",
+                logs.none { "secret" in it || "sensitive" in it },
+            )
+        }
+
+    @Test
+    fun pinnedGroupFollowsPushedRecordsFromAnotherDevice() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.a.repo.rows.value = listOf(channel("one"), channel("two"))
+            runCurrent()
+            assertTrue(f.pinned().isEmpty())
+
+            // Another device pins both; this one sent nothing.
+            f.a.repo.rows.value = listOf(channel("one", "2026-10-02T00:00:00Z"), channel("two", "2026-10-01T00:00:00Z"))
+            runCurrent()
+            assertEquals(listOf(HostConversationTarget("Host", "two"), HostConversationTarget("Host", "one")), f.pinned())
+
+            // It unpins one; the row returns to its host's Channels.
+            f.a.repo.rows.value = listOf(channel("one", "2026-10-02T00:00:00Z"), channel("two"))
+            runCurrent()
+            assertEquals(listOf(HostConversationTarget("Host", "one")), f.pinned())
+            assertEquals(listOf("two"), f.unpinnedChannels("Host"))
+            assertTrue(
+                f.a.repo.pins
+                    .isEmpty(),
+            )
+        }
+
+    @Test
+    fun duplicateAndReListedRecordsNeverDuplicateAPinnedRow() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            val rows = listOf(channel("same", "2026-10-01T00:00:00Z"), channel("other"))
+            f.a.repo.rows.value = rows
+            runCurrent()
+            val once = listOf(HostConversationTarget("Host", "same"))
+            assertEquals(once, f.pinned())
+
+            // The command's reply and the host's push of the same record.
+            f.vm.setPinned(HostConversationTarget("Host", "same"), pinned = true)
+            f.a.repo.rows.value = rows.map { it.copy() }
+            runCurrent()
+            assertEquals(once, f.pinned())
+
+            // A reconnect that re-lists the same records on a fresh repository.
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
+            f.a.live.value = null
+            runCurrent()
+            assertEquals(once, f.pinned())
+            val replacement = Repo("Host").apply { this.rows.value = rows }
+            f.a.live.value = replacement
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+            runCurrent()
+            assertEquals(once, f.pinned())
+            assertEquals(listOf("other"), f.unpinnedChannels("Host"))
+        }
+
+    @Test
+    fun collidingIdsStayDistinctInOrderAndDispatchToTheirOwnHost() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.a.repo.rows.value = listOf(channel("same", "2026-10-01T00:00:00Z"))
+            f.b.repo.rows.value = listOf(channel("same", "2026-10-01T00:00:00Z"))
+            runCurrent()
+            assertEquals(listOf(HostConversationTarget("Host", "same"), HostConversationTarget("host", "same")), f.pinned())
+
+            f.vm.setPinned(HostConversationTarget("host", "same"), pinned = false)
+            runCurrent()
+            assertEquals(listOf("same" to false), f.b.repo.pins)
+            assertTrue(
+                f.a.repo.pins
+                    .isEmpty(),
+            )
+            assertEquals(listOf(HostConversationTarget("Host", "same")), f.pinned())
+            assertEquals(listOf("same"), f.unpinnedChannels("host"))
+        }
+
+    @Test
+    fun offlineHostKeepsCachedPinsAndRefusesToDispatch() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.a.repo.rows.value = listOf(channel("same", "2026-10-01T00:00:00Z"), channel("plain"), row("chat"))
+            runCurrent()
+            val target = HostConversationTarget("Host", "same")
+
+            f.a.available = false
+            f.a.live.value = null
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
+            runCurrent()
+            assertEquals(listOf(target), f.pinned())
+            f.vm.setPinned(target, pinned = false)
+            f.vm.setPinned(HostConversationTarget("Host", "plain"), pinned = true)
+            runCurrent()
+            assertTrue(logs.count { "event=channel_pin_rejected code=disconnected" in it } == 2)
+
+            // Relay up but the daemon leg down is still not connected.
+            f.a.available = true
+            f.a.live.value = f.a.repo
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Down)
+            runCurrent()
+            f.vm.setPinned(target, pinned = false)
+            // Unknown hosts, chats and absent ids send nothing either.
+            f.vm.setPinned(HostConversationTarget("HOST", "same"), pinned = false)
+            runCurrent()
+            assertTrue(
+                f.a.repo.pins
+                    .isEmpty(),
+            )
+
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+            runCurrent()
+            f.vm.setPinned(HostConversationTarget("Host", "chat"), pinned = true)
+            f.vm.setPinned(HostConversationTarget("Host", "missing"), pinned = true)
+            runCurrent()
+            assertTrue(logs.count { "event=channel_pin_rejected code=unknown_channel" in it } == 2)
+            assertTrue(
+                f.a.repo.pins
+                    .isEmpty(),
+            )
+
+            // Reconnected: the cached pin is now actionable on its own host.
+            f.vm.setPinned(target, pinned = false)
+            runCurrent()
+            assertEquals(listOf("same" to false), f.a.repo.pins)
+            assertTrue(f.pinned().isEmpty())
+        }
+
     private fun preferences(values: Flow<Preferences>): AppPreferences {
         val written = MutableStateFlow<Preferences?>(null)
         return AppPreferences(
@@ -3288,6 +3585,25 @@ class HostChannelListViewModelTest {
         val mutes = mutableListOf<Pair<String, Boolean>>()
         var muteFailures = 0
 
+        // #2215: records every pin write, then — past its gate — applies the host's confirmed record to this
+        // repo's own rows, keeping an existing pin time as the host does.
+        override suspend fun setPinned(
+            conversationId: String,
+            pinned: Boolean,
+        ) {
+            pins += conversationId to pinned
+            pinGate?.await()
+            pinFailure?.let { throw it }
+            rows.value =
+                rows.value?.map {
+                    if (it.id == conversationId) it.copy(pinnedAt = if (pinned) it.pinnedAt ?: PIN_TIME else null) else it
+                }
+        }
+
+        val pins = mutableListOf<Pair<String, Boolean>>()
+        var pinGate: CompletableDeferred<Unit>? = null
+        var pinFailure: Throwable? = null
+
         val channelCreates = mutableListOf<Pair<String, String?>>()
         val promptWrites = mutableListOf<Pair<String, String?>>()
         val channelCalls = mutableListOf<String>()
@@ -3299,6 +3615,7 @@ class HostChannelListViewModelTest {
     companion object {
         private const val ATTACHMENT_CONVERSATION = "9d4e7a21-8c05-4f3b-b6e2-1a7c9e30d5f4"
         private const val ATTACHMENT = "7c1d5e92-4a30-4b8f-9e21-6d4c3b0a8f55"
+        private val PIN_TIME = Instant.parse("2026-10-01T00:00:00Z")
 
         private fun row(
             id: String,
