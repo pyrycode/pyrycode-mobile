@@ -620,6 +620,7 @@ private data class CachedConversation(
     val archived: Boolean = false,
     val muted: Boolean = false,
     val workspaceLabel: String? = null,
+    val pinnedAt: String? = null,
 )
 
 private fun Conversation.toRecord() =
@@ -635,6 +636,7 @@ private fun Conversation.toRecord() =
         archived = archived,
         muted = muted,
         workspaceLabel = workspaceLabel,
+        pinnedAt = pinnedAt?.toString(),
     )
 
 private fun CachedConversation.toDomain() =
@@ -650,6 +652,7 @@ private fun CachedConversation.toDomain() =
         archived = archived,
         muted = muted,
         workspaceLabel = workspaceLabel,
+        pinnedAt = pinnedAt?.let(Instant::parse),
     )
 
 /**

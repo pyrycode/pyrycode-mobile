@@ -287,7 +287,7 @@ suspend fun registerPushToken(token: String) {
 ```
 
 - **`RegisterPushTokenPayloadDto`** is the fifth encode-only request DTO (`{platform, token, device_name}`,
-  all required) — see the [wire-layer doc](mobile-protocol-v2-wire-layer-application-payloads.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
+  all required) — see the [wire-layer doc](mobile-protocol-v2-wire-layer-request-encoders.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
   `platform` is the constant `"fcm"`; `device_name` is the `deviceName` `ConversationCommands` is
   constructed with — the repository's connection-level device name, unchanged by the #914 move.
 - **`RelayRequests.sendAndAwaitReply` does all the work, unchanged:** it throws `IllegalStateException` when
