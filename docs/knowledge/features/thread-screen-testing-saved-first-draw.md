@@ -18,6 +18,17 @@ First opens create fresh cache/repository instances; reopening uses that reposit
 with a new ViewModel and composition. All eight cases require the newest saved message
 to draw within **1,000 ms**, without waiting for the newest response.
 
+**Software-rendering bound (#2222).** 1,000 ms stays the product target. When the
+guest GL renderer string contains SwiftShader, the bound is **2,000 ms**. The SwANGLE
+emulator launcher on `build-hp-1` and `build-fractal-2` reports
+`ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device ...))`. Under it the worst
+18,000-row first opens were **555 ms** on HP and **1,314 ms** on Fractal, which missed 3 of
+16; Fractal's native renderer worst was **816 ms**. The test reads the renderer once
+through a 1x1 EGL pbuffer before any timing, logs `event=first_draw_bound` with
+`bound_ms` and `renderer`, and names both in every bound failure message. Nothing is
+warmed or moved out of the timer. The optional-projection twin holds projection for
+the applied bound plus **100 ms**, so it still fails a draw that waits for projection.
+
 `SystemClock.elapsedRealtimeNanos` starts before cache/repository and ViewModel
 construction. Cache reading, collection, projection and drawing are inside the interval;
 fixture generation and APK/activity startup are outside it. Cumulative probes record
@@ -30,7 +41,7 @@ idleness cannot establish the draw deadline. Polling only waits for recorded evi
 
 `slowRestore_negativeControlRejectsTheSameFirstDrawBound` inserts **3,000 ms** into
 cache reading in the same timed open path and catches the identical bound assertion's
-failure. The #2018 full UI run drew at **3,188 ms**, with restore/snapshot/content at
+failure. The delay exceeds both the 1,000 ms and the software 2,000 ms bound. The #2018 full UI run drew at **3,188 ms**, with restore/snapshot/content at
 **3,040/3,048/3,102 ms**. Passing this test means the latency assertion rejected the
 slow path, not that the slow path met the deadline.
 
@@ -204,8 +215,8 @@ Before each Probe, including the slow-restore control, `awaitDeviceReadiness`
 requires four consecutive **250 ms** windows at **>=80% idle** within **30000 ms**.
 A busy window resets the streak. Readiness exhaustion fails before that opening's
 cache/repository/ViewModel construction; it supplies no draw measurement. It never
-skips the case, retries acceptance, warms measured work or changes the **1000 ms**
-committed-frame bound. Worker CPU time and activity focus snapshots cannot replace
+skips the case, retries acceptance, warms measured work or changes the
+renderer-selected committed-frame bound. Worker CPU time and activity focus snapshots cannot replace
 elapsed draw time or identify the cause of a readiness failure.
 
 Responsive busy sampling and held sampling require different evidence. A 30000 ms
@@ -449,4 +460,101 @@ checked phase/source summary and verified manifest. The baseline 348-file manife
 SHA-256 is `314c33855de229498ec0e1cab06f0e2af16a76477bb5ac22fce56dbc0d105c55`.
 These raw locations are subject to retention; the counted results and phases above
 preserve the disposition. Documentation inspected existing evidence and generated
-no acceptance results.
+no acceptance results. Closed #2202's historical **1434/1436 ms** disposition stays
+as recorded above; #2218 below is a separate, later investigation and does not
+reopen or supersede it.
+
+### Cold-decode localization and the software-rendering bound (#2218)
+
+After the readiness repair, #2177 reached valid readiness for every opening on
+Linux/build-fractal-2 but failed both positive methods, **4 executed / 2 passed /
+2 failed**: fragmented first opens drew at **1314/1032 ms** (delayed-projection,
+offline/held-newest) and **1026 ms** (original, offline). #2218 localized that cost
+without changing any Mobile production or test source.
+
+**Localization.** In the failing fractal-2 first opens, the cold row decode in
+`FileConversationCache.readDecodedThread` took **624–789 ms** of **710–935 ms**
+restore; reading the bytes took **5–14 ms** and validation **33–64 ms**. The same
+bytes decoded in **395 ms** in the passing held-newest first open of the same
+process — roughly a twofold variance on identical work. Content-to-committed-frame
+took **210–329 ms** in the failing first opens, and even the 20-row ordinary
+fixture took **138–232 ms**, against roughly **40–60 ms** in the #2202 build-hp-1
+runs — the frame path itself ran slow on that host, independent of row count. The
+lazy history decode (metadata **1069–1465 ms**, proofs **626–929 ms**) starts when
+`ThreadViewModel.historySeed` releases the cache mutex and so overlaps the first
+draw; each failing first open had two app garbage collections overlapping
+content-to-frame (one or two overlapping restore), where the passing first open had
+none. Reopens with no history decode still took **144–258 ms** content-to-frame, so
+the GC overlap is a measured contributor, not a demonstrated sole cause.
+
+**Same-host, same-runner launcher comparison**, build-fractal-2, agents
+`9aad4b5d…`, all eight measurement-source hashes matching:
+
+| Run | Generation / launcher | Counts | Fragmented first draws (ms) |
+| --- | --- | --- | --- |
+| Owner `fractal-prepared` (passing) | `07867931…` / `emulator`, `auto-no-window`, lavapipe | 4/4/0/0/0 | 653, 582, 816, 707 |
+| #2177 failing | `151a9dbd…` / `emulator.hp-native`, `-gpu swangle`, swiftshader | 4/2/2/0/0 | 1026, 619, 1314, 1032 |
+
+Only the launcher-identity input differs between those two generations; the
+failing run also recorded guest steal up to **16.17%**, against **0–3.88%** in the
+earlier fractal reference run. This localizes the regression to fractal-2's
+execution environment at the time (SwiftShader host-side rasterization competing
+for virtual CPUs), but two runs are not a repeated A/B, so the renderer was not
+proven causal by this comparison alone.
+
+**Operator resolution (#2222) and the software-rendering bound (#2228).** The
+operator closed blocker #2222 directly: the SwANGLE launcher is intended on both
+`build-hp-1` and `build-fractal-2`, so no native-launcher A/B runs, and the
+operator attributes the remaining difference to Fractal's slower processor under
+software rendering. PR #2228 (merged outside the pipeline) added the **2000 ms**
+software-rendering bound described above — see "Software-rendering bound (#2222)"
+at the top of this document for the mechanism. That bound is the repair; no
+Mobile restore or decode change followed, because no measurement showed a Mobile
+defect, and the candidates considered (deferring the history seed, rewriting
+decode) remain unimplemented.
+
+**Four counted runs**, Linux, cumulative fragmented first-open phases
+(restore/snapshot/content/committed-frame not repeated here — see counts and
+headline draws):
+
+| Run | Host / generation | Bound | Counts | Fragmented first draws (offline/held-newest) |
+| --- | --- | --- | --- | --- |
+| #2177 failing (above) | fractal-2, `151a9dbd…` | 1000 ms | 4/2/2/0/0 | 1026/1314 (original/twin offline), 619/1032 (held-newest) |
+| Same-host native comparison | fractal-2, `07867931…` | 1000 ms | 4/4/0/0/0 | 582/816, 653/707 |
+| Fresh focused class, unchanged main | build-hp-1, `151a9dbd…` | 1000 ms | 4/4/0/0/0 | 433/555, 407/420 |
+| Fresh acceptance with #2228, main `51954f1d…` | build-hp-1, `151a9dbd…` | 2000 ms (SwiftShader) | 4/4/0/0/0 | 441/614, 415/416 |
+
+The last run is also the first device run of #2228's renderer detection: every
+installed class logged `event=first_draw_bound bound_ms=2000` with the SwiftShader
+renderer, and the optional-projection twin held for **2100 ms**. Cold decode in
+that run was **247–318 ms**, ordinary draws **118–258 ms**, and every opening also
+stayed within the unchanged **1000 ms** product target. The slow-restore control
+drew at **3473 ms** and was rejected (3000 ms inserted delay against either bound).
+Readiness passed all **17 barriers** over **83 windows**, maximum acquire/read
+**10/37 ms**. The build-hp-1 focused class before it recorded cold decode
+**249–291 ms**, history metadata **362–522 ms**, ordinary draws **129–241 ms**, its
+slow control rejected at **3494 ms**, and readiness passed 17 barriers over 85
+windows with maximum acquire/read 14/35 ms.
+
+**Attribution limits.** Readiness passed for every opening in every run above —
+these are elapsed-draw results, not readiness failures. Thirty-six bounded
+host/process/guest observations during the investigation add diagnostic overhead
+only: five-second guest intervals (with up to 16.17% steal) cannot attribute an
+individual subsecond frame, documentation search adds zero CPU ticks, lifetime
+process-CPU averages are not current-load evidence, and a teardown's
+destroyed-activity focus record is not a crash diagnosis. The unchanged-Mobile
+owner comparison passing 4/4 after the readiness repair (versus 4/3 before)
+clears neither this later red nor a latency cause. `build-fractal-2` was not run
+under the new #2228 bound by this ticket; a Fractal result under that bound comes
+only from the dispatcher's configured UI gate, never from this investigation.
+Closed #2202's historical **1434/1436 ms** disposition remains separate and
+unattributed by this work.
+
+[Checked summaries](../../../app/src/androidTest/assets/saved-first-draw-2218/)
+retain per-opening phases, the launcher/generation comparison, FileConversationCache
+stage logs and GC overlap for the failing run, and all four runs' counted results.
+Raw XML, phone logs and manifests are under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2218/` (`hp1-focused-20261017/`,
+`hp1-software-bound-20261017/`); the #2177 failing originals are in bundle run
+`0ad15d3ecd76afa6fdb7df76c2d873f197352b0fa42649e2a683fdcdaaf7c7da`. Documentation
+inspected these retained reports and ran no comparisons.

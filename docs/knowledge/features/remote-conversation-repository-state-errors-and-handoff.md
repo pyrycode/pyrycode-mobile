@@ -43,28 +43,46 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
   it `reset()`s the coordinator's process-scoped [`ReplayCursor`](replay-cursor.md) (the **same single
   writer** as `recordReplayCursor`, so reset and record never race within a connection) and `tryEmit`s a
   `ReplayGap` on `liveSessionEvents`.
-- **Two-or-more writers per projection, still data-safe (#346 / #347 / #348 / #721).** The mutations
-  relaxed each projection from single-writer to **collector + confirmed fold(s)**: `sendMessage` (#346) is
-  the second writer of `lastMessages` and `threadByConversation`; `createDiscussion` (#347) and `promote`
-  ([#348](../codebase/348.md)) both write the list `projection` via `upsertConversation`. [#721](remote-conversation-repository-reads-and-thread-store.md#721-apply-workspace-label-updates-and-the-conversation_updated-split)
-  adds two more writers **inside the collector itself**: a `conversation_updated` fold reuses
-  `upsertConversation` (unsolicited frames only until #996, every well-formed frame since), and `workspace_updated` writes through the new `applyWorkspaceLabel` fold. Data-safety
-  holds in every case: each write goes through an atomic `MutableStateFlow.update {}` (CAS) over a **pure**
-  fold (`recordLastMessage`'s strictly-greater rule / `appendMessages`'s id-dedup / `upsertConversation`'s
-  id-upsert / `applyWorkspaceLabel`'s cwd-keyed relabel), so concurrent writes from the caller coroutines
-  retry-merge rather than clobber. For `projection` the collector's full-replace stays authoritative and
-  convergent; the only race — a stale in-flight snapshot landing after a fold and transiently
-  dropping/reverting the row — is harmless (the server's post-mutation snapshots include it) and is
-  accepted under Evidence-Based Fix Selection. `promote` additionally **reads** `projection.value` (a
-  lock-free snapshot) to resolve the cwd; the read-then-upsert pair is intentionally **not**
-  atomic-as-a-pair — the resolved cwd is request data, not a guarded invariant, so a concurrent snapshot
-  landing between only changes which authoritative cwd the request carries (benign — no TOCTOU of
-  consequence). Since #996 the `conversation_updated` arm folds every well-formed frame before it looks up
-  `RelayRequests.waiter(id)`, so a correlated reply is written twice, once by the collector and once by the
-  caller if it resumes, and a duplicate reply arriving after the caller removed its entry in `finally` is a
-  third write of the same record. All are idempotent re-upserts by the same id — benign by
-  `ConversationListProjection.upsertConversation`'s dedup, not a new race. The KDoc on every affected field was updated to name its
-  writers (and, for `projection`, `promote`'s read).
+- **The list `projection` has exactly one writer for every conversation mutation: the inbound collector
+  itself (#346 / #347 / #348 / #721 / #996 / #2213).** `sendMessage` (#346) remains the second writer of
+  `lastMessages` and `threadByConversation` — that pair is unrelated to the list. But every conversation-row
+  mutation — `createDiscussion`/`createChannel` (#347), `promote` ([#348](../codebase/348.md)), the archive
+  toggle, mute, rename, `setSystemPrompt` and `changeWorkspace` — now shares one `onInbound` arm,
+  `TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED ->`, that decodes `ConversationResponseDto`, folds
+  it into `projection` via `upsertConversation`, and **only then** hands the stored row to
+  `RelayRequests.completeConversationReply`, which captures it on the pending request and completes the
+  caller's deferred. The command functions no longer decode their own reply or call `upsertConversation`
+  themselves — they call `RelayRequests.sendAndAwaitConversation(request)` and return whatever the collector
+  already published. A correlated reply and an unsolicited other-device push both fold through this one arm,
+  keyed by the payload's own `id`; `conversation_created` is additionally gated to only fold when a waiter
+  is registered (the daemon never broadcasts a create unsolicited), while `conversation_updated` folds
+  unconditionally (the correlated and push cases are indistinguishable at the frame). This closes the window
+  #996 left open: before #2213, a correlated reply folded in the collector but a *second*, independent
+  upsert ran again in the caller's coroutine after resumption, so a newer queued record (an unsolicited push,
+  or another mutation's reply) that arrived and folded **after** the collector's first fold but **before**
+  the caller resumed could be silently overwritten by the caller replaying its own, now-stale, decoded copy.
+  Capturing the row at the collector and returning that capture — never re-decoding or re-upserting on the
+  caller's side — makes inbound arrival order the only order that matters: whichever record folds last
+  **wins and stays won**, regardless of which caller is still suspended waiting for an earlier reply.
+  Cancelling the caller changes nothing either way, since the fold already happened on the collector before
+  the caller was ever resumed. A malformed reply still folds nothing (decode precedes every fold) and fails
+  the waiting command with the #318 decode exception, exactly as before. `promote` still **reads**
+  `projection.value` (a lock-free snapshot) to resolve the cwd before sending; that read is unrelated to this
+  write path and remains intentionally not atomic with it, for the reason given below.
+  `RemoteConversationRepositoryPinTest` (added for #2213, but exercising every affected command, not only
+  pins) is the regression suite: `queuedCommandRepliesCannotOverwriteLaterConfirmedPins` pins the ordering
+  guarantee directly, `replyAndPushDeliveryIsIdempotentInEitherOrder` and
+  `equalConversationIdsRemainConnectionLocal` cover duplicate/host-isolation safety,
+  `malformedCommandRepliesFailWithoutPublishing` and `cancelledCommandsKeepInboundConfirmedPins` cover the
+  failure and cancellation edges, and `restoredPinsSurviveOfflineAndReconcileWithFreshSnapshots` covers
+  reconnect: a cold-started row restored from [the disk cache](conversation-cache-layout.md#the-cache-local-record-must-mirror-every-conversation-field-999)
+  while the host was unreachable keeps its pin through `projection`'s existing per-id upsert rules once a
+  live connection's first `conversations` snapshot or `conversation_updated` push supplies the current
+  value — no separate reconciliation step, no duplicate row, the same fold every other field already relies
+  on. The resolved cwd is request data, not a guarded invariant, so a concurrent snapshot landing between the
+  read and the send only changes which authoritative cwd the request carries (benign — no TOCTOU of
+  consequence). The KDoc on every affected field and command was updated to name the collector as the sole
+  writer.
 - **The `pendingRequests` registry (#346), since #914 owned by `RelayRequests`** (`data/repository/RelayRequests.kt`;
   `ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>`)
   tracks awaited replies: an in-flight mutation request registers a deferred keyed by its
@@ -85,7 +103,16 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
   decision — at the time `conversation_updated` tested for a waiter before deciding to fold, `workspace_updated`
   failed a waiter on a malformed frame and completed it only after the apply — exactly as before the move.
   Since #996 `conversation_updated` folds first and completes any waiter afterwards, so a duplicate reply now
-  folds by design, harmlessly.
+  folds by design, harmlessly. Since #2213 the `conversation_created`/`conversation_updated` arm completes
+  through the typed `RelayRequests.completeConversationReply(inReplyTo, payload, conversation)` instead of
+  calling `waiter(...)?.complete(payload)` directly: it captures the folded `Conversation` on the pending
+  request's own `PendingReply` *before* completing the deferred, so `sendAndAwaitConversation` can return
+  that capture without decoding the payload a second time. `completeConversationReply` checks
+  `pending.payload.isCompleted` itself rather than relying on `Deferred.complete`'s boolean, for the same
+  already-completed-waiter reason this bullet gives above. Every other arm — `ack`, `system_prompt`,
+  `workspace_updated`, `error` — still completes through the plain `waiter(...)?.complete(...)` /
+  `completeExceptionally(...)` path; only the two conversation-reply types needed a captured value alongside
+  the raw payload.
 - **Diagnostic archive transfers** use the same `RelayRequests.nextRequestId` allocator and sole
   inbound collector, with a separate synchronized `DebugBundleTransfer` retained
   for the connection lifetime — since #915 the admission logic and the retained transfer live on
@@ -120,8 +147,8 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
 | Malformed `message_chunk` (any one row bad) | the **whole chunk** dropped in one `catch (IllegalArgumentException)` (decode + map-all under one `try`); collector survives; thread unchanged ([#313](../codebase/313.md)) |
 | `pump.send` returns `false` (session not `Open`) | request (`list_conversations` or `backfill_since`) silently not sent (no throw); the projection stays empty until a later subscribe succeeds or a push arrives — the live stream still fills the thread, and the next subscribe re-issues |
 | `pump.inbound` completes (teardown) | collector completes; session errors reset to null; other last projections retained; live `StateFlow` collectors do not complete |
-| Unknown `Envelope.type` | no-op — `backfill_done` (informational) falls to the intentional `else`; `messages` (a never-defined type) stays ignored. `conversation_created` has no unsolicited half (the daemon never broadcasts a create), so an unmatched one is a harmless no-op in its own correlated-only arm |
-| Malformed `conversation_updated` payload, correlated or unsolicited (#721, #996) | decode via `ConversationResponseDto.toConversation()` throws `IllegalArgumentException` (⊃ `SerializationException`), caught before any fold; nothing is folded; collector survives; `projection` unchanged. A matching waiter still receives the raw payload and throws in its own decode in the caller's coroutine, as before #996. The catch logs nothing, since the payload carries the conversation's name and cwd |
+| Unknown `Envelope.type` | no-op — `backfill_done` (informational) falls to the intentional `else`; `messages` (a never-defined type) stays ignored. `conversation_created` has no unsolicited half (the daemon never broadcasts a create), so since #2213 its shared arm with `conversation_updated` drops an unmatched-waiter `conversation_created` before decode — a harmless no-op, not a fold |
+| Malformed `conversation_created` / `conversation_updated` payload, correlated or unsolicited (#721, #996, #2213) | decode via `MobileJson.decodeFromJsonElement<ConversationResponseDto>` throws `IllegalArgumentException` (⊃ `SerializationException`), caught before any fold; nothing is folded; collector survives; `projection` unchanged. `RelayRequests.completeConversationReply` is still called with a `null` captured conversation, so a matching waiter's deferred completes normally (not exceptionally) with the raw payload, but `sendAndAwaitConversation` then finds no captured row and throws its own `SerializationException("Malformed conversation reply")` in the caller's coroutine — a static message naming no field, not the original decode exception. The catch logs nothing, since the payload carries the conversation's name and cwd |
 | Malformed `workspace_updated` payload — missing/wrong-typed `path` (#721) | `WorkspaceUpdatedPayloadDto` decode throws `IllegalArgumentException` (⊃ `SerializationException`), caught before `applyWorkspaceLabel` runs; envelope **dropped**; collector survives; `projection` unchanged; a later valid `workspace_updated` still applies. Neither `path` nor `label` is logged on this or any other branch |
 | `workspace_updated` / unsolicited `conversation_updated` whose `path` / `id` matches no row (#721) | no-op by `StateFlow` conflation (the fold returns an element-equal list) — not an error; nothing re-emits |
 | `sendMessage` — server `error` `conversation.not_found` (#346) | `IllegalArgumentException` (fake parity); **the echo stays projected** ([#1355](https://github.com/pyrycode/pyrycode-mobile/issues/1355) draws it before the await, so a refusal no longer unwinds it) |
@@ -130,11 +157,11 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
 | `sendMessage` — malformed/undecodable `error` payload (#346) | `RelayRequests.mapError` falls back to a `RelayErrorException(error.malformed_reply)` so the waiter is unblocked and the lone collector survives; the echo stays projected (#1355) |
 | `createDiscussion` (on `ConversationCommands` since #914) — server `error` (#347) | `RelayErrorException(code, retryable, message)` via the shared `RelayRequests.mapError`; **no projection mutated** (the confirmed-insert runs only after a successful decode). `conversation.not_found` is not meaningful for create and is not exercised |
 | `createDiscussion` — `pump.send` returns `false` (not `Open`, #347) | `IllegalStateException` from `RelayRequests.sendAndAwaitReply`'s `check`; no request awaited, no projection mutated |
-| `createDiscussion` — malformed `conversation_created` reply (#347) | the #318 decode boundary's `SerializationException` / `IllegalArgumentException`, propagated to the caller; decode precedes `ConversationListProjection.upsertConversation`, so **no projection mutated** (a garbage success reply cannot inject a partial conversation) |
+| `createDiscussion` — malformed `conversation_created` reply (#347, #2213) | the shared collector arm's decode fails before any fold, so **no projection mutated** (a garbage success reply cannot inject a partial conversation); `RelayRequests.sendAndAwaitConversation` then throws its own `SerializationException("Malformed conversation reply")` in `createDiscussion`'s caller, not the original decode exception — see the shared row above |
 | `promote` (on `ConversationCommands` since #914) — server `error` `conversation.not_found` (#348) | `IllegalArgumentException` via the shared `RelayRequests.mapError` — promoting an unknown conversation is **meaningful** here (unlike create), so this branch **is** exercised; **no projection mutated** (the confirmed-upsert runs only after a successful decode) |
 | `promote` — any other server `error` (#348) | `RelayErrorException(code, retryable, message)` via `RelayRequests.mapError`; no projection mutated |
 | `promote` — `pump.send` returns `false` (not `Open`, #348) | `IllegalStateException` from `RelayRequests.sendAndAwaitReply`'s `check`; no request awaited, no projection mutated |
-| `promote` — malformed `conversation_updated` reply (#348) | the #318 decode boundary's `SerializationException` / `IllegalArgumentException`, propagated to the caller; decode precedes `ConversationListProjection.upsertConversation`, so **no projection mutated** (no partial promote) |
+| `promote` — malformed `conversation_updated` reply (#348, #2213) | the shared collector arm's decode fails before any fold, so **no projection mutated** (no partial promote); `promote`'s own `sendAndAwaitConversation` call then throws the same generic `SerializationException`, not the original decode exception — see the shared row above |
 | `setSessionSettings` — server `error` `session.not_found` (unhosted session, #543) | `RelayErrorException(code = "session.not_found", …)` via `RelayRequests.mapError`'s else-branch — **not** `IllegalArgumentException` (unlike `conversation.not_found`; there is no IAE-crash path for this verb) |
 | `setSessionSettings` — server `error` `protocol.malformed` (invalid model/effort) / `server.binary_offline` (#543) | `RelayErrorException(code, retryable, message)` via `RelayRequests.mapError`; no projection mutated (there is none) |
 | `setSessionSettings` — `pump.send` returns `false` (not `Open`, #543) | `IllegalStateException` from `RelayRequests.sendAndAwaitReply`'s `check`; no request awaited |

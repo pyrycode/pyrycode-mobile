@@ -85,6 +85,58 @@ class FileConversationCacheTest {
         }
 
     @Test
+    fun `pins round-trip exactly and stay isolated for colliding host conversation ids`() =
+        runTest {
+            val pinA = Instant.parse("2026-05-08T10:30:00.123456789Z")
+            val pinB = Instant.parse("2026-05-08T10:31:00.987654321Z")
+            val rowsA = listOf(conversation("shared").copy(pinnedAt = pinA), conversation("plain"))
+            val rowsB = listOf(conversation("shared").copy(pinnedAt = pinB), conversation("plain").copy(pinnedAt = pinA))
+            cache().writeConversations("server-a", rowsA).getOrThrow()
+            cache().writeConversations("server-b", rowsB).getOrThrow()
+
+            assertEquals(rowsA, cache().readConversations("server-a"))
+            assertEquals(rowsB, cache().readConversations("server-b"))
+            val unpinned = rowsA.map { it.copy(pinnedAt = null) }
+            repeat(2) { cache().writeConversations("server-a", unpinned).getOrThrow() }
+            assertEquals(unpinned, cache().readConversations("server-a"))
+            assertEquals(rowsB, cache().readConversations("server-b"))
+            assertTrue(logs.none { it.contains(pinA.toString()) || it.contains(pinB.toString()) })
+        }
+
+    @Test
+    fun `old metadata documents without a pin load as unpinned`() =
+        runTest {
+            val expected =
+                Conversation(
+                    id = "legacy",
+                    name = "Old",
+                    cwd = "/p",
+                    currentSessionId = "s",
+                    sessionHistory = emptyList(),
+                    isPromoted = true,
+                    lastUsedAt = Instant.parse("2026-05-08T10:00:00Z"),
+                )
+            cache().writeConversations("server-a", listOf(expected)).getOrThrow()
+            overwriteStoredDocument(
+                """{"version":1,"conversations":[{"id":"legacy","name":"Old","cwd":"/p","currentSessionId":"s","isPromoted":true,"lastUsedAt":"2026-05-08T10:00:00Z"}]}""",
+            )
+
+            assertEquals(listOf(expected), cache().readConversations("server-a"))
+        }
+
+    @Test
+    fun `malformed cached pin withholds the document without rewriting it`() =
+        runTest {
+            val pin = Instant.parse("2026-05-08T10:30:00.123456789Z")
+            cache().writeConversations("server-a", listOf(conversation("alpha").copy(pinnedAt = pin))).getOrThrow()
+            val malformed = storedFiles().single().readText().replace(pin.toString(), "yesterday")
+            overwriteStoredDocument(malformed)
+
+            assertEquals(emptyList<Conversation>(), cache().readConversations("server-a"))
+            assertEquals(malformed, storedFiles().single().readText())
+        }
+
+    @Test
     fun `nullable fields round-trip as null`() =
         runTest {
             val written =

@@ -10,6 +10,7 @@ import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlin.math.roundToInt
 
 /**
  * The furthest ahead a `resets_at` may lie and still be formatted. The observed windows are five hours and
@@ -25,6 +26,12 @@ private const val WARNING_STATUS = "allowed_warning"
 private const val EXHAUSTED_STATUS = "rejected"
 
 /**
+ * The share of the window that must be spent before the pill earns a spot, for any status besides
+ * [EXHAUSTED_STATUS]. At or below this fraction the window still has room, so the pill stays hidden.
+ */
+private const val SHOW_THRESHOLD = 0.75
+
+/**
  * The Top overlay's label for claude's usage-limit report (#802's `rate_limited` projection, hoisted as
  * [de.pyryco.mobile.ui.conversations.thread.ThreadViewModel.usageLimit]); see [usageLimitText] for the rule.
  */
@@ -35,14 +42,16 @@ internal fun usageLimitLabel(reading: UsageLimitReading): String {
 }
 
 /**
- * The usage pill's one line, desktop's `usageLimitNotice` rule (#1519): a lead, the window, then the reset.
+ * The usage pill's one line, desktop's `usageLimitNotice` rule (#1519): a lead, the window, the percent
+ * spent, then the reset.
  *
  * **Every character is client-owned copy.** claude's `status` and `limitType` are lookup keys only, compared
  * by exact equality — no trim, case fold, prefix or substring test, so `rejected_something_new` cannot pull
  * the pill into "Usage limit reached" — and neither is ever appended, so a hostile value cannot reach the
  * text. "Usage limit reached" is reserved for `rejected`; every other status reads "Nearly at usage limit",
  * because over-claiming tells an operator they are blocked while their turns keep running. Only `five_hour`
- * and `seven_day` name a window. The percent spent, the agent's name and `truncatedFields` are not read.
+ * and `seven_day` name a window. The percent spent renders only when [usageLimitSpentPercent] has an honest
+ * figure to give; the agent's name and `truncatedFields` are not read.
  */
 internal fun usageLimitText(
     reading: UsageLimitReading,
@@ -56,6 +65,7 @@ internal fun usageLimitText(
             "seven_day" -> R.string.thread_usage_limit_seven_day
             else -> null
         }
+    val percent = usageLimitSpentPercent(reading.utilization)
     val reset = formatUsageLimitReset(reading.resetsAt, now, timeZone)
     return buildString {
         append(
@@ -64,6 +74,7 @@ internal fun usageLimitText(
             ),
         )
         if (window != null) append(resources.getString(window))
+        if (percent != null) append(resources.getString(R.string.thread_usage_limit_percent, percent))
         when {
             reset == null -> Unit
             reset.date == null -> append(resources.getString(R.string.thread_usage_limit_resets, reset.time))
@@ -73,11 +84,37 @@ internal fun usageLimitText(
 }
 
 /**
+ * The percent of the window claude says is spent, or `null` when there is nothing honest to show.
+ * [UsageLimitReading.utilization] is claude's own number and **not a bounded fraction** — absence is the
+ * common case and must never read as `0`, and a value outside `0.0..1.0` (or non-finite) is declined rather
+ * than clamped, matching the rule on the field itself. Rounds to the nearest whole percent.
+ */
+internal fun usageLimitSpentPercent(utilization: Double?): Int? {
+    if (utilization == null || !utilization.isFinite() || utilization < 0.0 || utilization > 1.0) return null
+    return (utilization * 100).roundToInt()
+}
+
+/**
  * Whether [reading] is the warning the Top overlay lets the operator hide (#1002). Exact equality and
  * nothing else: any other status, recognised or not, is an Error pill with no X, so nothing unknown can
  * be hidden. This picks the pill's variant only.
  */
 internal fun usageLimitIsWarning(reading: UsageLimitReading): Boolean = reading.status == WARNING_STATUS
+
+/**
+ * Whether [reading] earns a spot in the Top overlay at all, independent of [usageLimitIsWarning]'s pill
+ * variant and of the operator's own dismissal. `rejected` always shows — the operator is blocked, and that
+ * holds regardless of what [UsageLimitReading.utilization] says. For every other status, a valid finite
+ * fraction in `0.0..1.0` must clear [SHOW_THRESHOLD] (75%) before the pill appears; at or below it, the
+ * window still has room and nothing is shown. A missing or out-of-range utilization cannot prove the window
+ * is comfortable, so it falls back to showing the pill, matching the rule before this threshold existed.
+ */
+internal fun usageLimitShouldShow(reading: UsageLimitReading): Boolean {
+    if (reading.status == EXHAUSTED_STATUS) return true
+    val utilization = reading.utilization
+    if (utilization == null || !utilization.isFinite() || utilization < 0.0 || utilization > 1.0) return true
+    return utilization > SHOW_THRESHOLD
+}
 
 /** A reset instant in the pill's fixed shape: [time] as `HH:MM`, and [date] as `DD.MM.YYYY` unless it is today. */
 internal data class UsageLimitReset(

@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.ErrorPayload
 import de.pyryco.mobile.data.network.MobileJson
@@ -8,6 +9,7 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.E
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.ERROR_MALFORMED_REPLY
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.PENDING_REQUEST_TORN_DOWN
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.decodeFromJsonElement
 import java.util.concurrent.ConcurrentHashMap
@@ -31,6 +33,11 @@ import java.util.concurrent.atomic.AtomicLong
 internal class RelayRequests(
     private val send: (Envelope) -> Boolean,
 ) {
+    private class PendingReply {
+        val payload = CompletableDeferred<JsonElement>()
+        var conversation: Conversation? = null
+    }
+
     private val requestId = AtomicLong(0)
 
     /**
@@ -42,7 +49,7 @@ internal class RelayRequests(
      * [ConcurrentHashMap] — the same `java.util.concurrent` posture as [requestId]. This is the
      * shared request↔reply correlation primitive #347/#348 reuse.
      */
-    private val pendingRequests = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
+    private val pendingRequests = ConcurrentHashMap<Long, PendingReply>()
 
     /** The next envelope id on this connection, for every request, awaited or not. */
     fun nextRequestId(): Long = requestId.incrementAndGet()
@@ -52,7 +59,26 @@ internal class RelayRequests(
      * pending request (a stale, duplicate or unsolicited reply). Returned rather than completed here so
      * each `onInbound` arm keeps its own completion rule.
      */
-    fun waiter(inReplyTo: Long?): CompletableDeferred<JsonElement>? = inReplyTo?.let { id -> pendingRequests[id] }
+    fun waiter(inReplyTo: Long?): CompletableDeferred<JsonElement>? = inReplyTo?.let { id -> pendingRequests[id]?.payload }
+
+    /** Capture the first reply's projected row before waking its caller; later frames only update the list. */
+    fun completeConversationReply(
+        inReplyTo: Long?,
+        payload: JsonElement,
+        conversation: Conversation?,
+    ) {
+        val pending = inReplyTo?.let { pendingRequests[it] } ?: return
+        if (pending.payload.isCompleted) return
+        pending.conversation = conversation
+        pending.payload.complete(payload)
+    }
+
+    /** The inbound collector publishes; the caller returns that captured row without republishing it. */
+    suspend fun sendAndAwaitConversation(request: Envelope): Conversation {
+        val pending = PendingReply()
+        awaitReply(request, pending)
+        return pending.conversation ?: throw SerializationException("Malformed conversation reply")
+    }
 
     /**
      * Map a server `error` reply payload (#346) to the domain exception the awaiting suspend throws.
@@ -95,9 +121,16 @@ internal class RelayRequests(
         request: Envelope,
         onSent: () -> Unit = {},
         onReply: (Throwable?) -> Unit = {},
+    ): JsonElement = awaitReply(request, PendingReply(), onSent, onReply)
+
+    private suspend fun awaitReply(
+        request: Envelope,
+        pending: PendingReply,
+        onSent: () -> Unit = {},
+        onReply: (Throwable?) -> Unit = {},
     ): JsonElement {
-        val deferred = CompletableDeferred<JsonElement>()
-        pendingRequests[request.id] = deferred
+        val deferred = pending.payload
+        pendingRequests[request.id] = pending
         return try {
             check(send(request)) { "${request.type} not sent: session not connected" }
             onSent()
@@ -129,7 +162,7 @@ internal class RelayRequests(
         val cause = IllegalStateException(PENDING_REQUEST_TORN_DOWN)
         val iterator = pendingRequests.values.iterator()
         while (iterator.hasNext()) {
-            iterator.next().completeExceptionally(cause)
+            iterator.next().payload.completeExceptionally(cause)
             iterator.remove()
         }
     }
