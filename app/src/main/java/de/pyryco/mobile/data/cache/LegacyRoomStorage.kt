@@ -170,10 +170,33 @@ class LegacyRoomStorage internal constructor(
                         coverage = saved.coverage?.retainedBy(kept),
                     )
                 }
-            remove(serverId, conversationId)
-            dao.insertRows(payloads.mapIndexed { ordinal, payload -> Row(serverId, conversationId, ordinal, payload) })
-            storeHistory(serverId, conversationId, retained, kept)
+            replace(serverId, conversationId, payloads, retained, kept)
         }
+
+    /** #2161: a file import's replacement inside the caller's transaction, so its completion marker commits with it. */
+    internal suspend fun importThread(
+        serverId: String,
+        conversationId: String,
+        rows: List<ThreadItem>,
+        history: HistoryPosition?,
+    ) {
+        val kept = cacheableThreadRows(rows)
+        val payloads = kept.map(::encodeLegacyRow)
+        decodeLegacyRows(payloads)
+        replace(serverId, conversationId, payloads, history, kept)
+    }
+
+    private suspend fun replace(
+        serverId: String,
+        conversationId: String,
+        payloads: List<String>,
+        history: HistoryPosition?,
+        kept: List<ThreadItem>,
+    ) {
+        remove(serverId, conversationId)
+        dao.insertRows(payloads.mapIndexed { ordinal, payload -> Row(serverId, conversationId, ordinal, payload) })
+        storeHistory(serverId, conversationId, history, kept)
+    }
 
     suspend fun writeHistoryPosition(
         serverId: String,

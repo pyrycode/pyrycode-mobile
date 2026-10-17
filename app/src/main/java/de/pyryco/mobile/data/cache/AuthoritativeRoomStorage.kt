@@ -81,29 +81,35 @@ class AuthoritativeRoomStorage internal constructor(
         serverId: String,
         conversationId: String,
         saved: SavedAuthoritativeThread,
-    ): Result<Unit> =
-        mutate("write_authoritative") {
-            val kept = saved.retained()
-            val records =
-                kept.toSnapshot().items.mapIndexed { ordinal, item ->
-                    AuthoritativeItem(serverId, conversationId, kept.epoch, item.id, ordinal, orderKey(item), item.raw.toString())
-                }
-            dao.deleteItems(serverId, conversationId)
-            dao.deleteHeaders(serverId, conversationId)
-            dao.insertItems(records)
-            dao.insertHeader(
-                AuthoritativeHeader(
-                    serverId,
-                    conversationId,
-                    kept.epoch,
-                    UUID.randomUUID().toString(),
-                    kept.appliedVersion,
-                    kept.checkpoint,
-                    kept.coverage?.let { MobileJson.encodeToString(it) },
-                    records.size,
-                ),
-            )
-        }
+    ): Result<Unit> = mutate("write_authoritative") { importThread(serverId, conversationId, saved) }
+
+    /** #2161: also a file import's replacement inside the caller's transaction, so its completion marker commits with it. */
+    internal suspend fun importThread(
+        serverId: String,
+        conversationId: String,
+        saved: SavedAuthoritativeThread,
+    ) {
+        val kept = saved.retained()
+        val records =
+            kept.toSnapshot().items.mapIndexed { ordinal, item ->
+                AuthoritativeItem(serverId, conversationId, kept.epoch, item.id, ordinal, orderKey(item), item.raw.toString())
+            }
+        dao.deleteItems(serverId, conversationId)
+        dao.deleteHeaders(serverId, conversationId)
+        dao.insertItems(records)
+        dao.insertHeader(
+            AuthoritativeHeader(
+                serverId,
+                conversationId,
+                kept.epoch,
+                UUID.randomUUID().toString(),
+                kept.appliedVersion,
+                kept.checkpoint,
+                kept.coverage?.let { MobileJson.encodeToString(it) },
+                records.size,
+            ),
+        )
+    }
 
     suspend fun newestPage(
         serverId: String,

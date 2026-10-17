@@ -6,6 +6,7 @@ import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.withTransaction
@@ -15,14 +16,17 @@ import androidx.room.withTransaction
     entities = [
         ConversationCacheDatabase.Header::class, ConversationCacheDatabase.Row::class, ConversationCacheDatabase.Evidence::class,
         ConversationCacheDatabase.AuthoritativeHeader::class, ConversationCacheDatabase.AuthoritativeItem::class,
+        ConversationCacheDatabase.FileImport::class,
     ],
-    version = 2,
-    autoMigrations = [AutoMigration(from = 1, to = 2)],
+    version = 3,
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
 )
 abstract class ConversationCacheDatabase : RoomDatabase() {
     internal abstract fun legacy(): LegacyDao
 
     internal abstract fun authoritative(): AuthoritativeDao
+
+    internal abstract fun imports(): FileImportDao
 
     /** Public backend removals share this transaction; family replacements use their own deletes. */
     internal suspend fun removeScope(
@@ -34,6 +38,33 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         legacy().deleteHeaders(host, conversation)
         authoritative().deleteItems(host, conversation)
         authoritative().deleteHeaders(host, conversation)
+    }
+
+    /** #2161: one file family's settled import or retirement; the host-wide row uses conversation "". */
+    @Entity(tableName = "file_imports", primaryKeys = ["host", "conversation", "family"])
+    internal data class FileImport(
+        val host: String,
+        val conversation: String,
+        val family: String,
+        val outcome: String,
+    ) {
+        override fun toString(): String = "FileImport(family=$family, outcome=$outcome)"
+    }
+
+    @Dao
+    internal interface FileImportDao {
+        @Query("SELECT * FROM file_imports WHERE host=:host AND (family='host' OR (conversation=:conversation AND family=:family))")
+        suspend fun settled(
+            host: String,
+            conversation: String,
+            family: String,
+        ): List<FileImport>
+
+        @Insert(onConflict = OnConflictStrategy.REPLACE)
+        suspend fun record(imports: List<FileImport>)
+
+        @Query("DELETE FROM file_imports WHERE host=:host")
+        suspend fun clearHost(host: String)
     }
 
     @Entity(tableName = "authoritative_headers", primaryKeys = ["host", "conversation"])
