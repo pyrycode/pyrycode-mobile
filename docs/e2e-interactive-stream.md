@@ -19,6 +19,9 @@ to scripted `ping` alongside the original
 `interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` in the same harness.
 It proves newest-page delivery after daemon replay is emptied and multi-page older catch-up
 through reader pulls. See [scripted ping guidance](#scripted-ping-durable-gap-proof-1842).
+The existing ping method's #2198 read proof retains complete live receipts before
+classification and confirms displayable reply and exact peer-post targets; see
+[read-target evidence](#scripted-read-target-evidence-2198).
 [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) strengthens rung-3
 `InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` with the same
 multi-page durable gap and real-Claude turns, and adds an external app force-stop proof that a
@@ -2406,6 +2409,52 @@ Evidence, 2026-10-08, full live run of `python3 scripts/android-test-gate.py liv
 deterministic viewport probes ran in that branch's UI gate:
 `ThreadReadViewportDeviceTest`, 4 executed, 0 failed, 0 skipped.
 
+The rung-4 scripted ping twin in `DeterministicInteractiveStreamE2ETest` retains
+complete live receipt proof separately from its displayable confirmation target
+(#2198). `awaitScriptedReplyReadCheckpoint` waits for and retains the exact completed
+reply and complete receipt snapshot **before** one bounded classification history
+query. `requestHistory` merges rows and receipts and can finish a streaming row;
+fetching first could manufacture the delivery proof being tested. Classification
+uses only the retained reply's receipt claims and `contributesToUnreadWatermark`,
+even if the query replaces the observed projection. The baseline's reply content
+ended at entry 9 while successful completion 10 and metadata 11–12 raised receipt
+coverage to 12. Completion can change the row without contributing unread content;
+the daemon's `LatestDisplayableEntryID` clamp correctly confirmed 9.
+
+Keep full receipt qualification, rendered reply/reveal checks, real daemon
+confirmation and the existing 90000 ms assertion deadline. Missing/unknown receipts,
+holes, unfinished or wrong replies, hidden bookkeeping and newer unseen content
+cannot supply the target. Classification is not sight, and a pending local write
+is not confirmation. See [foreground checkpoint ownership](knowledge/features/thread-screen.md#what-it-does).
+
+#### Scripted read-target evidence (#2198)
+
+Linux, 2026-10-16: `ANDROID_GATE_WAIT_SECONDS=900 timeout 2400 python3 scripts/android-test-gate.py scripted ping`
+exited 0 on Mobile `f8e199bc703ffcbf8dad77e76a3472a79bacedfd`, daemon
+`0917625fc6e91eeb2a16556f09e5ba0bbf62aabf`, relay
+`9939bc1ff8afec5021c09862e6f14dadba33ad42`: **2 executed/passed, 0 failed/errors/skipped**.
+Both `interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` and
+`interactiveTurn_seededChannel_durableGapCatchUp` passed. Phone diagnostics record
+`reply_proof_qualified` before classification, then `checkpoint=9 thread_supported=false`,
+confirming the legacy route. The focused receipt/read/viewport suite recorded
+**79 executed/passed, 0 failed/errors/skipped**, including all nine helper/orchestration
+regressions. The two ordering controls had executed and failed before repair, with
+0 errors/skips. Raw XML, both phone logs, source revisions, exit status and hashes
+were retained at `/work/Projects/pyrycode-mobile-agents/logs/evidence/2198/builder-rework-f8e199bc7-20261016/`
+at documentation time (`scripted-ping/dispatcher.xml`, raw instrumented XML,
+`focused-green/`, `red/`, `summary.json` and `SHA256SUMS`).
+
+The [final verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/2199#issuecomment-6226931778)
+at reviewed Mobile `894bc402a13f6c66c2b5f11af76453ed3dbd27af` records exit 0 for
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`:
+**22 executed/passed, 0 failed/errors/skipped**, including both named ping methods.
+The configured UI gate exited 0 with **334 executed/passed, 0 failed/errors, 1 skipped**
+(`RenameDialogCaptureTest.renameAtFigmaViewport`). These counts are also present in
+the retained gate reports `verifier-gate_#2198_8.log` and `verifier-gate_#2198_7.log`;
+they supersede earlier pending-gate notes without changing historical failed runs.
+macOS is outside this Linux ticket's verification scope. These scripted results use
+zero real-agent turns and claim no new real-Claude run.
+
 ### Peer read clears phone attention (#1883)
 
 `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` preserves
@@ -2440,7 +2489,10 @@ The rung-4 twin is
 selected by ordinary scripted `ping`. After the foreground reply is acknowledged, it
 leaves the thread, receives an exact completed channel post, requests a fresh list for
 its durable latest id, and requires Unread. The peer's history must contain that exact
-post before its confirmed read clears the dot on the still-visible list. Channel-post
+post before its confirmed read clears the dot on the still-visible list. Since #2198,
+the peer confirms that exact owned `assistant_delta` post's id; a maximum history id
+can include bookkeeping beyond the displayable clamp. Exact-post receipt, real daemon
+confirmation and the phone's Unread-to-Idle assertion all remain required. Channel-post
 pushes omit durable ids; receipt alone cannot prove the durable comparison. The owned
 post control retains its allowed `e2e1833-` fixture prefix.
 
@@ -3260,9 +3312,11 @@ The configured `scripted-all` gate includes `ping` and retains both methods:
 ### Scripted ping durable-gap proof (#1842)
 
 The ping method also proves the foreground correlated read and list-only peer attention
-clear. Its #2070 diagnostics identify the selected reply's claims, receipt holes and
-stored gaps without logging content; assertions, ordered selection, coverage checks and
-deadlines remain intact. See [receipt-continuity evidence](#scripted-ping-receipt-continuity-2070).
+clear. Its content-free diagnostics record live proof qualification before history
+classification, then the displayable target and selected route (#2198). Receipt
+holes and gaps remain in timeout diagnostics; ordered selection, complete coverage
+checks and deadlines remain intact. See [receipt-continuity evidence](#scripted-ping-receipt-continuity-2070)
+and [current read-target evidence](#scripted-read-target-evidence-2198).
 
 Run `python3 scripts/android-test-gate.py scripted ping` to execute both
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`
@@ -6911,6 +6965,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   [#2069's durable-gap evidence](#scripted-durable-gap-closure-2069) independently confirms
   the same producer defect; no new scenario or selector is added.
 
+- **Scripted read targets (#2198):** the existing rung-4
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`
+  retains complete live proof before mutating history classification and confirms
+  the reply's displayable receipt and the exact peer post. The rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` is unchanged.
+  [Final Linux evidence](#scripted-read-target-evidence-2198) records 2/2 focused ping
+  and 22/22 scripted-all passes. No scenario follow-up remains; use the existing
+  `python3 scripts/android-test-gate.py scripted ping` and `scripted-all` commands.
+
 - **Shared unread (#1883):**
   `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` now proves
   peer-to-phone clearing without reopening as well as #1912's phone-to-peer mark.
@@ -6928,8 +6991,9 @@ The remaining checks here are specific to a real relay or real Claude execution:
   permission checks. The named pass and full-run counts are recorded under
   [Peer read clears phone attention](#peer-read-clears-phone-attention-1883);
   no scenario follow-up remains. The existing rung-4 scripted `ping` twin in
-  `DeterministicInteractiveStreamE2ETest` keeps its target: its exact channel post
-  ends in non-excluded `assistant_delta` and `turn_end` entries. No new twin or
+  `DeterministicInteractiveStreamE2ETest` now confirms its exact durable
+  `assistant_delta` post id (#2198), excluding successful completion/bookkeeping
+  from the confirmation target. No new twin or
   selector is added; the pre-ship command remains
   `python3 scripts/android-test-gate.py live`.
 
