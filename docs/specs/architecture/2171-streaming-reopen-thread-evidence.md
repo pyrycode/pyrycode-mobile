@@ -68,3 +68,7 @@ Write `app/src/test/java/de/pyryco/mobile/e2e/StreamingReplyEvidenceTest.kt` fir
 ## Documentation handoff
 
 - Pending for the documentation stage: `docs/e2e-interactive-stream.md`, the scripted ladder: record that `direct-share`, `reopen-stream` and `stream` observe through `harnessThreadEvidence` (legacy route), with the counted results from the PR, and that these passes do not prove negotiated production activation.
+
+## Revisions
+
+- 2026-10-17: Open question resolved. The legacy scripted reply keeps its segment through completion: `stream`, `reopen-stream` and `direct-share` each executed and passed one test at `037ddbdf6`, so the settled waits use `settledFormOf` unchanged. Probe fixtures use the daemon's `running` status for open assistant items, because an unknown status projects as a fallback row, and a `failed` user item for an undelivered send. `isSameItem` is a shared helper, used by the reopen identity check, `advancesFrom` and `settledFormOf`.
