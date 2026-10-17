@@ -82,6 +82,10 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                 0
         },
     )
+    // Retire session A before rebuilding the graph: the reopened Agent is already historical.
+    onNode(hasContentDescription("More actions")).performClick()
+    onAllNodesWithText("Reset session").onFirst().performClick()
+    waitUntil(120_000) { onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG).fetchSemanticsNodes().isNotEmpty() }
     runBlocking {
         withTimeout(120_000) {
             val cache = GlobalContext.get().get<ConversationCache>()
@@ -133,9 +137,6 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
             return restored
         }
         checkFamily()
-        onNode(hasContentDescription("More actions")).performClick()
-        onAllNodesWithText("Reset session").onFirst().performClick()
-        waitUntil(120_000) { onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG).fetchSemanticsNodes().isNotEmpty() }
         val bundle = requireNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(host))
         val route = requireNotNull(source().negotiatedThread)
         val oldConnection = (route.support.value as ThreadSupport.Supported).connection
