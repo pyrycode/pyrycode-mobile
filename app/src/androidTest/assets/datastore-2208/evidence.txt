@@ -1,8 +1,8 @@
 Ticket #2208 — Linux DataStore ownership repair
 
-Tested source: 7426bb4613ff0a9da79c8580937bc5d00312bc50
+Initial repair tested source: 7426bb4613ff0a9da79c8580937bc5d00312bc50
 Main baseline: a0c7db693245cce59d67377f672d2bec4c7dca65
-Later evidence/plan-only commits do not change the tested Kotlin sources.
+The rework below changes the seeded regression fixture and has separate evidence.
 Private evidence root: /work/Projects/pyrycode-mobile-agents/logs/evidence/2208/
 Every retained run has an owner-only SHA256SUMS manifest.
 
@@ -61,3 +61,38 @@ Daemon revision: 0917625fc6e91eeb2a16556f09e5ba0bbf62aabf
 Backend: scripted fakeclaude; zero real Claude turns.
 Isolated daemon/relay diagnostics were retained by the harness under
 the evidence root's harness/fault-068f020b0f61d889b52cb80b16c30ce0/ directory.
+
+Verifier rework — synthetic registry ownership after seeded fixture cleanup
+
+The fixture's direct DataStore restoration did not notify the observable paired
+store revision. Its ordinary registry could retain the synthetic connection after
+the persisted pairing was gone. Cleanup now rebuilds the ordinary graph on main
+after restoring the original snapshot, including when a seeded assertion fails.
+Production code, original scenario assertions, matching and time limits are unchanged.
+
+Controlled pre-fix probes: rework-controlled-red/
+RecordedSuiteIsolationDeviceTest#seededStateCleanupRestoresRegistryAfterSuccess
+RecordedSuiteIsolationDeviceTest#seededStateCleanupRestoresRegistryAfterAssertionFailure
+Exit 1; 2 executed, 0 passed, 2 failed, 0 skipped.
+Both first await the synthetic host in the ordinary registry after replay cleanup,
+then fail because its connection remains held after restoring persisted preferences.
+The probes' own outer cleanup contains these expected failures. Exact source at
+2ac17e137 plus the pre-fix patch, raw XML and both phone logs are retained privately.
+
+Focused rework: rework-focused-green/
+Same focused command as the initial repair, now including all five isolation tests.
+Exit 0; 8 executed/passed, 0 failed/errors/skipped. Both new probes pass and verify
+exact original preferences, pairing records and registry hosts on normal return
+and assertion failure. All three original failing scenarios pass unchanged.
+
+Scripted rework: rework-scripted-green/
+python3 scripts/android-test-gate.py scripted ping
+Exit 0; 2 executed/passed, 0 failed/errors/skipped. Daemon revision remains
+0917625fc6e91eeb2a16556f09e5ba0bbf62aabf; scripted fakeclaude, zero Claude turns.
+Raw XML and phone logs are retained with source patches; isolated daemon and relay
+logs are in harness/fault-97dc48c1eac266e7979ca766b9bf7ee7/.
+
+Focused rework JVM/static checks:
+python3 scripts/gradle-gate.py spotlessApply testDebugUnitTest --tests de.pyryco.mobile.di.AppPreferencesTeardownTest lint assembleDebug compileDebugAndroidTestKotlin --console=plain
+Exit 0; teardown contract 1 executed/passed, 0 failed/errors/skipped.
+Formatting, lint, APK assembly and instrumented compilation pass.

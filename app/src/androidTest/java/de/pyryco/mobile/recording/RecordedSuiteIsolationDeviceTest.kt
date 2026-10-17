@@ -10,10 +10,12 @@ import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.di.ObservablePairedServerStore
+import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.e2e.E2eTestApplication
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -71,6 +73,69 @@ class RecordedSuiteIsolationDeviceTest {
             assertTrue("original scenario failed: ${result.failures}", result.wasSuccessful())
         }
 
+    @Test fun seededStateCleanupRestoresRegistryAfterSuccess() = assertSeededCleanupRestoresRegistry(failAssertion = false)
+
+    @Test fun seededStateCleanupRestoresRegistryAfterAssertionFailure() = assertSeededCleanupRestoresRegistry(failAssertion = true)
+
+    private fun assertSeededCleanupRestoresRegistry(failAssertion: Boolean) =
+        runBlocking {
+            val preferences = GlobalContext.get().get<DataStore<Preferences>>()
+            val original = preferences.data.first()
+            val originalPairings = GlobalContext.get().get<ObservablePairedServerStore>().list()
+            val originalHosts = originalPairings.map { it.record.serverId to it.displayName }
+            val expectedFailure = AssertionError("deliberate seeded assertion failure")
+            var seededRegistry: RelayConnectionRegistry? = null
+            var syntheticHostId: String? = null
+            try {
+                val failure =
+                    runCatching {
+                        withSeededState {
+                            incompleteReplayRestoresOrdinaryEnvironment()
+                            val koin = GlobalContext.get()
+                            val seededHosts = koin.get<ObservablePairedServerStore>().list().map { it.record.serverId to it.displayName }
+                            syntheticHostId = (seededHosts.map { it.first } - originalHosts.map { it.first }.toSet()).single()
+                            val registry = koin.get<RelayConnectionRegistry>()
+                            seededRegistry = registry
+                            // Establish the ordering that leaked a connection after direct snapshot restoration.
+                            withTimeout(5_000) {
+                                registry.hostConnections.first { hosts -> hosts.map { it.serverId to it.displayName } == seededHosts }
+                            }
+                            if (failAssertion) throw expectedFailure
+                        }
+                    }.exceptionOrNull()
+                if (failAssertion) {
+                    assertSame("cleanup must preserve the original assertion failure", expectedFailure, failure)
+                } else if (failure != null) {
+                    throw failure
+                }
+                assertEquals(original, preferences.data.first())
+                val restored = GlobalContext.get()
+                assertSame(preferences, restored.get<DataStore<Preferences>>())
+                assertEquals(originalPairings, restored.get<ObservablePairedServerStore>().list())
+                assertNull(
+                    "cleanup must release the synthetic host's connection",
+                    requireNotNull(seededRegistry).connectionFor(requireNotNull(syntheticHostId)),
+                )
+                val registry = restored.get<RelayConnectionRegistry>()
+                val hosts =
+                    withTimeout(5_000) {
+                        registry.hostConnections.first { hosts -> hosts.map { it.serverId to it.displayName } == originalHosts }
+                    }
+                assertEquals(originalHosts, hosts.map { it.serverId to it.displayName })
+            } finally {
+                // Contain a failing regression as well, so later tests receive the original graph.
+                preferences.updateData { original }
+                rebuildOrdinaryGraph()
+            }
+        }
+
+    private fun rebuildOrdinaryGraph() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.runOnMainSync {
+            (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
+        }
+    }
+
     private fun incompleteReplayRestoresOrdinaryEnvironment() {
         val original = Bundle(InstrumentationRegistry.getArguments())
         assertNull("ordinary tests must not inherit relay arguments", original.getString(E2eTestApplication.ARG_RELAY_URL))
@@ -101,7 +166,7 @@ class RecordedSuiteIsolationDeviceTest {
         assertSame(koin.get<FakeConversationRepository>(), koin.get<ConversationRepository>())
     }
 
-    private fun withSeededState(block: () -> Unit) =
+    private fun withSeededState(block: suspend () -> Unit) =
         runBlocking {
             val preferences = GlobalContext.get().get<DataStore<Preferences>>()
             val original = preferences.data.first()
@@ -130,6 +195,7 @@ class RecordedSuiteIsolationDeviceTest {
                 assertSame(restored.get<FakeConversationRepository>(), restored.get<ConversationRepository>())
             } finally {
                 preferences.updateData { original }
+                rebuildOrdinaryGraph()
             }
         }
 }
