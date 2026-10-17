@@ -583,7 +583,8 @@ class ChannelListViewModel(
         val host = hostSource.snapshots.value.firstOrNull { it.serverId == target.serverId }
         val code =
             when {
-                host == null || !host.connectionStatus.isLive() -> "disconnected"
+                host == null -> "unknown_host"
+                !host.connectionStatus.isLive() -> "disconnected"
                 host.channels.none { it.id == target.conversationId } -> "unknown_channel"
                 else -> null
             }

@@ -107,7 +107,6 @@ private const val SECTION_HEADER_ALPHA = 0.85f
 // alpha for its unpin control.
 private const val DISCONNECTED_ROW_ALPHA = 0.60f
 private const val DISABLED_CONTROL_ALPHA = 0.38f
-private const val HOST_SUFFIX_SEPARATOR = " · "
 
 // The design fills a selected conversation row with the primary family's next darker step below the
 // hover fill. Taken as a literal token that is `onPrimary`, which is white in the light scheme and
@@ -455,8 +454,7 @@ enum class TreePinControl { None, Pin, Unpin, UnpinDisabled }
  * A non-null [hostName] appends the Pinned group's " · host" suffix in `onSurfaceVariant`. [disconnected]
  * is the owning host's disconnected accent: name, suffix and a solid dot in `error`, the leading region at
  * 60% alpha. [pinControl] adds a trailing [TreeRowControl], tagged [pinTestTag], reporting through
- * [onPinToggled]; its
- * [UnpinDisabled][TreePinControl.UnpinDisabled] form stays visible but sends nothing.
+ * [onPinToggled]; its [UnpinDisabled][TreePinControl.UnpinDisabled] form stays visible but sends nothing.
  */
 @Composable
 fun TreeConversationRow(
@@ -477,12 +475,12 @@ fun TreeConversationRow(
     val nameColor = if (disconnected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
     val suffixColor = if (disconnected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
     val boundedName = boundedRowText(conversationName)
-    val boundedHost = hostName?.let(::boundedRowText)
+    val suffix = hostName?.let { stringResource(R.string.tree_pinned_host_suffix, boundedRowText(it)) }
     val label =
-        remember(boundedName, boundedHost, suffixColor) {
+        remember(boundedName, suffix, suffixColor) {
             buildAnnotatedString {
                 append(boundedName)
-                if (boundedHost != null) withStyle(SpanStyle(color = suffixColor)) { append(HOST_SUFFIX_SEPARATOR + boundedHost) }
+                if (suffix != null) withStyle(SpanStyle(color = suffixColor)) { append(suffix) }
             }
         }
     val interactionSource = remember { MutableInteractionSource() }

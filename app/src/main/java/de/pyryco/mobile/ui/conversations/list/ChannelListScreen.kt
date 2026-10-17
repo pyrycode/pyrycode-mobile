@@ -998,7 +998,7 @@ private fun previewHostState(now: Instant): HostChannelListState {
                 listOf(
                     previewConversation("c1", "kitchenclaw refactor", brain, now - 12.minutes, true),
                     previewConversation("c2", "pyrycode discord integration", brain, now - 4.hours, true),
-                    previewConversation("c3", "rocd-thinking", mobile, now - 3.days, true),
+                    previewConversation("c3", "rocd-thinking", mobile, now - 3.days, true).copy(pinnedAt = now - 2.days),
                 ),
             chats =
                 listOf(
@@ -1011,7 +1011,7 @@ private fun previewHostState(now: Instant): HostChannelListState {
             serverId = "macbook",
             displayName = null,
             status = ConnectionStatus(RelayLinkStatus.Reconnecting(secondsRemaining = 12), PyrycodeLinkStatus.Down),
-            channels = listOf(previewConversation("c4", "Culinary Corner", brain, now - 9.days, true)),
+            channels = listOf(previewConversation("c4", "Culinary Corner", brain, now - 9.days, true).copy(pinnedAt = now - 5.days)),
             chats = listOf(previewConversation("d3", "Quick regex for log parsing", DEFAULT_SCRATCH_CWD, now - 9.days, false)),
         )
     return HostChannelListState(

@@ -237,10 +237,15 @@ class ConversationTreeRowsTest {
         }
     }
 
-    /** How many of the composition's pixels are exactly [color]; drawn by hand, as `captureToImage` never redraws here. */
+    /**
+     * How many of the composition's pixels are exactly [color], or with a [tolerance] within that much per RGB
+     * channel (anti-aliased glyph cores and the dot's interior); drawn by hand, as `captureToImage` never
+     * redraws here.
+     */
     private fun countPixels(
         view: View?,
         color: Color,
+        tolerance: Int = 0,
     ): Int =
         composeTestRule.runOnIdle {
             val root = checkNotNull(view)
@@ -248,8 +253,18 @@ class ConversationTreeRowsTest {
             root.draw(Canvas(bitmap))
             val pixels = IntArray(bitmap.width * bitmap.height)
             bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-            pixels.count { it == color.toArgb() }
+            val target = color.toArgb()
+            pixels.count { if (tolerance == 0) it == target else rgbWithin(it, target, tolerance) }
         }
+
+    private fun rgbWithin(
+        a: Int,
+        b: Int,
+        tolerance: Int,
+    ): Boolean =
+        kotlin.math.abs((a shr 16 and 0xFF) - (b shr 16 and 0xFF)) <= tolerance &&
+            kotlin.math.abs((a shr 8 and 0xFF) - (b shr 8 and 0xFF)) <= tolerance &&
+            kotlin.math.abs((a and 0xFF) - (b and 0xFF)) <= tolerance
 
     // #1523: under the static dark palette 15:8's Hover row (selected) is `primary-container`, its darker row
     // (pressed) `on-primary`.
@@ -904,24 +919,6 @@ class ConversationTreeRowsTest {
         assertEquals(0, disabledTaps)
     }
 
-    /** Pixels within [tolerance] per channel of [color]: anti-aliased glyph cores and the dot's interior. */
-    private fun countNear(
-        view: View?,
-        color: Color,
-        tolerance: Int = 2,
-    ): Int =
-        composeTestRule.runOnIdle {
-            val root = checkNotNull(view)
-            val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
-            root.draw(Canvas(bitmap))
-            val pixels = IntArray(bitmap.width * bitmap.height)
-            bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-            val target = color.toArgb()
-            pixels.count { pixel ->
-                listOf(16, 8, 0).all { shift -> kotlin.math.abs((pixel shr shift and 0xFF) - (target shr shift and 0xFF)) <= tolerance }
-            }
-        }
-
     @Config(qualifiers = "xxxhdpi")
     @Test
     fun pinnedRow_disconnectedHostDrawsErrorAtSixtyPercent_andAConnectedOneDrawsNoError() {
@@ -948,12 +945,12 @@ class ConversationTreeRowsTest {
         }
 
         val faded = error.copy(alpha = 0.60f).compositeOver(surface)
-        assertTrue("the dot and text draw error at 60%", countNear(view, faded) > 0)
-        assertEquals("nothing draws error at full strength", 0, countNear(view, error))
+        assertTrue("the dot and text draw error at 60%", countPixels(view, faded, tolerance = 2) > 0)
+        assertEquals("nothing draws error at full strength", 0, countPixels(view, error, tolerance = 2))
 
         disconnected.value = false
-        assertEquals("a connected host's row draws no error", 0, countNear(view, faded))
-        assertEquals(0, countNear(view, error))
+        assertEquals("a connected host's row draws no error", 0, countPixels(view, faded, tolerance = 2))
+        assertEquals(0, countPixels(view, error, tolerance = 2))
     }
 
     @Test

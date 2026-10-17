@@ -3130,6 +3130,7 @@ class HostChannelListViewModelTest {
             // Unknown hosts, chats and absent ids send nothing either.
             f.vm.setPinned(HostConversationTarget("HOST", "same"), pinned = false)
             runCurrent()
+            assertTrue(logs.count { "event=channel_pin_rejected code=unknown_host" in it } == 1)
             assertTrue(
                 f.a.repo.pins
                     .isEmpty(),
