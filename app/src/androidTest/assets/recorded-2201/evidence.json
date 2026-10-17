@@ -76,5 +76,32 @@
     "repaired/TEST-de.pyryco.mobile.recording.RecordedSuiteDocumentTest.xml": "b90f97d8f7b3a2aad071e5c3f7583162a8cd4487746bbd2622adbc0577af46a3",
     "repaired/native/dispatcher.xml": "5a8e56e0512b1466cb4b98c20af71e7574fc6453e9474aac9b7c4b7cc6f5213f"
   },
-  "requiredGate": "Complete scripted-all remains pending the separate #2198 repair; the prior 22-case gate had 1 inherited failure."
+  "requiredGate": "The inherited #2198 failure is repaired and its complete post-repair dispatcher gate passed. This candidate still receives normal dispatcher verification; historical failures remain failures.",
+  "resolvedScriptedGate": {
+    "issue": 2198,
+    "mergedAs": "a0c7db693",
+    "mergedIntoCandidateAs": "8ddba750930057af17fed10017afc414d63665f9",
+    "sourceRevision": "894bc402a13f6c66c2b5f11af76453ed3dbd27af",
+    "dispatcherRunId": "cfd334f0e38c9dd9ff98cd8990af82409a20d64befdc2bcf8a017ef70dd8635e",
+    "computer": "build-hp-1",
+    "os": "Linux",
+    "passedAt": "2026-10-16T23:53:14.328Z",
+    "command": "ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all",
+    "exit": 0,
+    "counts": {
+      "executed": 22,
+      "passed": 22,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "privateEvidenceRoot": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2201/resolved-2198-20261017",
+    "rawCountedXml": "logs/verifier-gate__2198_8.log",
+    "rawCountedXmlSha256": "5f726b6a36cc74dc9385d996cef4bbedc091a8231f2821b7ef2a521643267180",
+    "rawDiagnostics": "logs/verifier-gate__2198_8.stderr.log",
+    "manifest": "SHA256SUMS",
+    "manifestSha256": "bec5e35b34a3676f74c5930deb1f56f35fc3d686cfbb1318f75e0ae730894f9d",
+    "verifiedBundleFiles": 128,
+    "scope": "Complete post-repair dispatcher run for #2198; not a new run of feature/2201. All eight configured gates passed."
+  }
 }

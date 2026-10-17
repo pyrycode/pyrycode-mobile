@@ -48,6 +48,16 @@ Raw XML, phone logs, commands, source snapshots, the reproduction patch and veri
 
 Review finding 3 remains a separate gate dependency: #2198 is linked as a blocker. A fresh complete green scripted-all dispatcher result after its repair remains required; this ticket's 71-case recorded replay does not substitute for it.
 
+### 2026-10-17: inherited scripted gate resolved (review finding 3)
+
+#2198 is closed after PR #2199 merged as `a0c7db693`; merge `8ddba7509` brings that separate repair into this branch. No read handling, scenario assertion or timeout is changed by #2201.
+
+The post-repair #2198 dispatcher run at `894bc402a13f6c66c2b5f11af76453ed3dbd27af` passed all eight configured Linux gates at `2026-10-16T23:53:14.328Z`. Its complete `scripted-all` XML reports 22 executed/passed, zero failures, errors or skips, including both ping methods. This supplies the complete post-repair run requested by finding 3; it does not replace this candidate's normal dispatcher verification.
+
+Retrieved evidence bundle `cfd334f0e38c9dd9ff98cd8990af82409a20d64befdc2bcf8a017ef70dd8635e` is retained owner-only at `/work/Projects/pyrycode-mobile-agents/logs/evidence/2201/resolved-2198-20261017/`. All 128 bundle-file hashes verified. `logs/verifier-gate__2198_8.log` contains the complete counted XML; its adjacent stderr log retains scenario diagnostics and source identities. The pass marker and verifier verdict remain alongside them. The evidence index records the XML and manifest hashes. Earlier failed results remain preserved.
+
+This re-entry changes only the plan and evidence index, with no new types, signatures, lifecycle state or failure branches. No other in-flight feature branch touches either file. Rerun the recording unit selection and native recorded class, including the affected method, then the builder's final format, assembly and compile checks on the merged branch. The native class also covers main's intervening #2206 negative-observation setup change, which was absent from the earlier 71-case run. The dispatcher owns this candidate's full UI and scripted-all reruns; documentation remains pending with the documentation stage.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/recorded-tests.md`, replay contract and verified evidence: describe replay-only captured phone labels, current client versions, unchanged live identity and strict matching; link failed and repaired Linux evidence and the final disposition of #2198.
