@@ -78,3 +78,35 @@ fc65a114928b5f2a192ba44d706ab8986a94ce5ca74b40aa3247e6ca62ca2ef5  mobile/capture
 b3889a35c00ad59cccccfd44de0abca6a7346952c385ef8b07a50721d00d9f9c  mobile/execution.log
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  mobile/gate-0.xml
 7ea74dda0fe1f143e86a0a382654610a4c952420ff5a9b94cfb0c2ee254c9ca8  mobile/phases-0.jsonl
+
+Partly failed focused native rework check after the launcher repair (retrieved 2026-10-17)
+Task: 1d6ed25136523c7eca559348818315688ab62fb71e8b369883f46e8bede10576
+Recipe: mobile-scripted-evidence
+Capability: mobile-android
+Candidate: ac5ab7cba2e651ff274d30a9260a8784928e5405 (contains repair 5472a815f)
+Native run: a8fe5f421b7bd09393b94febd0539152f647d698fad4e874d6a71d1d3733d39e
+Computer: build-hp-1 (Linux, pixel2Api33Atd Android emulator)
+State: failed
+Command: python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py scripted reply-suggestion
+Method: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_replySuggestionLongPressSends
+Counts: 1 executed, 1 passed, 0 failed, 0 skipped; exit 0
+Command: python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py scripted selection-copy
+Exit: 1; Gradle could not start the device test because another process held the
+shared Gradle user-home journal cache lock (Timeout waiting to lock journal cache).
+Executed/passed test counts: 0/0; returned gate-1.xml is empty.
+Capture: complete=false; errors=[Malformed JUnit report]
+Mobile revision: ac5ab7cba2e651ff274d30a9260a8784928e5405
+Runner revision: c8edc37edbcc111bf769b93840beea0fe5e8c02f
+Daemon revision: c49aaf179ef7ade7d7e834a46904e57eb94ea957
+Relay revision: 9939bc1ff8afec5021c09862e6f14dadba33ad42
+Assessment: reply-suggestion passed on the repair; selection-copy is unverified
+because of host lock contention before any device test started, not an app assertion.
+Private raw artifacts and verified SHA256SUMS:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2169/builder-native-1d6ed2-20261017/
+Returned artifact hashes (SHA-256):
+b091b60f4ad4c4017af0475c4d0e3823b41987f129c400cf0db4c2a93ae002f0  mobile/capture.json
+584e48f64cdcba3edfb5937dd54b512768700963238cd6441c1d1eff84b46c86  mobile/execution.log
+6c62a88b855cb73ad708d749b2ae10bbd36af59fdeba63b269ee2b446d49904a  mobile/gate-0.xml
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  mobile/gate-1.xml
+63c91bdfe02df6dd2035c3a55bbaf746f98092b94142687752997c6110cb1c9b  mobile/phases-0.jsonl
+dcaeaab2a2b4192be13d9d25d1b640557e96944d811385c6449792d03063fcda  mobile/phases-1.jsonl
