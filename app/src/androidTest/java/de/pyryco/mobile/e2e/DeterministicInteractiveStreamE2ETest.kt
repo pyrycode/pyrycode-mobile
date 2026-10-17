@@ -1150,7 +1150,7 @@ class DeterministicInteractiveStreamE2ETest {
             assertTrue("scripted diagnostics require the admitted production route", route.support.value is de.pyryco.mobile.data.repository.ThreadSupport.Supported)
             val received = facts.items.sortedBy { it.order }
             val root = received.single { it.kind == "agent" && it.content.jsonObject["tool_use_id"]?.jsonPrimitive?.content == "agent1783" }
-            val origin = root.turn
+            val origin = requireNotNull(root.turn) { "launching Agent omitted its turn attribution" }
             val mainEnd = received.indexOfFirst { it.kind == "turn_end" && it.turn == origin }
             assertTrue("launching main turn must end", mainEnd >= 0)
             val lateTools =

@@ -191,7 +191,12 @@ class RemoteConversationRepository internal constructor(
 ) : ConversationRepository,
     ThreadSnapshotSource {
     internal val authoritativeRoute: AuthoritativeThreadRoute =
-        AuthoritativeThreadRoute(authoritativeHostId, authoritativeThreads, onRepair = { authoritativeQueries.repair(it) })
+        AuthoritativeThreadRoute(
+            authoritativeHostId,
+            authoritativeThreads,
+            onRepair = { authoritativeQueries.repair(it) },
+            onTurnCompleted = ::refreshAuthoritativeReadFacts,
+        )
 
     @Volatile private var authoritativeCommandsEnded = false
 
@@ -582,6 +587,14 @@ class RemoteConversationRepository internal constructor(
     private fun authoritativeLiveEnabled(): Boolean =
         authoritativeHostId.isNotEmpty() &&
             setOf(CAPABILITY_THREAD, CAPABILITY_INTERACTIVE).all { it in negotiatedCapabilities() }
+
+    private fun refreshAuthoritativeReadFacts() {
+        scope.launch {
+            if (authoritativeCommandsEnded || !authoritativeLiveEnabled()) return@launch
+            val sent = pump.send(listConversationsRequest())
+            RelayLog.i { "event=thread_summary_refresh code=${if (sent) "requested" else "refused"}" }
+        }
+    }
 
     /** Supplied transient progress, never a durable item or read checkpoint. */
     fun observeAuthoritativeToolProgress(conversationId: String): Flow<Map<String, Int>> =

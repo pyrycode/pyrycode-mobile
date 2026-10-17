@@ -293,6 +293,41 @@ class NegotiatedThreadActivationTest {
         batch(request, 20, listOf(item(2, 2)))
     }
 
+    @Test fun admittedTurnEndRefreshesDaemonReadFactsWithoutInventingAMark() =
+        runTest {
+            val host = host("h")
+            try {
+                host.coordinator.authoritativeThreads.reset("h", "c", "e")
+                val pump = host.connect()
+                pump.open(CAPABLE)
+                runCurrent()
+                val before = pump.sent.count { it.type == "list_conversations" }
+                val terminal = JsonObject(item(1, 1, 1).raw + mapOf("kind" to JsonPrimitive("turn_end"), "active" to JsonPrimitive(false)))
+                val update =
+                    Envelope(
+                        200,
+                        "thread_item_added",
+                        "2026-10-17T10:00:00Z",
+                        buildJsonObject {
+                            put("conversation_id", "c")
+                            put("epoch", "e")
+                            put("version", 1)
+                            put("item", terminal)
+                        },
+                    )
+                pump.push(update)
+                runCurrent()
+                assertEquals(before + 1, pump.sent.count { it.type == "list_conversations" })
+                assertTrue(pump.queries().isEmpty())
+                assertEquals(null, (host.coordinator.currentRepository.value as RemoteConversationRepository).currentReadMarks("c"))
+                pump.push(update)
+                runCurrent()
+                assertEquals(before + 1, pump.sent.count { it.type == "list_conversations" })
+            } finally {
+                host.coordinator.close()
+            }
+        }
+
     @Test fun productionProjectionRetiresProgressAcrossReconnect() =
         runTest {
             val host = host("h")
