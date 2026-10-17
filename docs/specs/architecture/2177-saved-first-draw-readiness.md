@@ -56,6 +56,27 @@ Pending for documentation: update `docs/knowledge/features/thread-screen-testing
 
 ## Revisions
 
+### 2026-10-17: resume after managed-image repair #2209
+
+#2209 is closed after agents PRs #190 and #191 deployed at
+`9aad4b5db84f2897c5eda3e8ed78a5ec9256ad71`. The runner now prepares an OS-only
+generation, qualifies sustained guest quietness before saving RAM/disk checkpoints,
+and verifies a read-only restore before installing Mobile. It preserves Play
+Services, the signer, shared admission and cleanup custody. This repairs the
+demonstrated lifecycle gap: Gradle's boot-plus-fixed-delay snapshot could retain
+startup work. The initiating Play Services operation remains unproved.
+
+Review the owner's retained unchanged-source Fractal comparison (reference 4/3/1,
+prepared 4/4/0; no skips), image qualification and source hashes. Then run this
+branch's unchanged four-method class and focused scripted ping, followed by the
+required builder checks. Retain fresh counted XML, all phone logs, per-opening
+readiness/draw phases, runner/generation identity and verified manifests. Do not
+repeat acceptance on failure or alter any measurement contract. Complete configured
+UI/scripted-all gates remain dispatcher-owned; the owner comparison and focused
+passes do not replace them. #2202 now records the historical latency disposition:
+failure retained, cause unresolved, not reproduced under recorded repaired-runner
+conditions; its closure does not attribute the old 1434/1436 ms misses.
+
 ### 2026-10-17: guest load still prevents current acceptance; wait on #2209
 
 After merging #2198, focused scripted ping passes: 2 executed, 2 passed, no
