@@ -96,3 +96,31 @@ Focused rework JVM/static checks:
 python3 scripts/gradle-gate.py spotlessApply testDebugUnitTest --tests de.pyryco.mobile.di.AppPreferencesTeardownTest lint assembleDebug compileDebugAndroidTestKotlin --console=plain
 Exit 0; teardown contract 1 executed/passed, 0 failed/errors/skipped.
 Formatting, lint, APK assembly and instrumented compilation pass.
+
+Complete Linux rework profile: rework-full-local-3f4703e08/
+Source: 3f4703e08ede017f69e19ba5109762bf94f88035
+Agents: 49cd6dd07c163a7d0e9583850aafb28378ec0b3c; Linux x86_64.
+UI_GATE_FULL=1 UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui
+Exit 0; 1694 unique selected/reported cases, 1692 executed/passed,
+0 failed/errors, 2 unchanged skips. Device Gradle phase: 20m25s.
+Shard 0: 883 selected/reported, 883 executed/passed, 0 skipped.
+Shard 1: 811 selected/reported, 809 executed/passed, 2 skipped.
+All 71 recorded scenarios, all 5 isolation methods and the three original failures
+pass. Selected counts, instrumentation identities/outcomes, both raw shard XMLs
+and joined XML reconcile exactly, without duplicates or missing cases. Compared
+with the initial complete profile, no method was removed; only the two new
+registry cleanup probes were added. The skip identities match the initial profile.
+All 1694 raw phone logs contain zero duplicate-DataStore errors. No inherited
+application failure was found. The progress counter's 813/811 again counts the
+two skips twice; raw shard-1 XML has exactly 811 unique cases.
+Raw XML, instrumentation textproto, phone logs, phases, exact source and hashes
+are private under the directory above; reconciliation.json records the counts
+and reconcile-full.py reproduces the identity/membership comparison.
+
+Managed launcher diagnostic, retained separately: rework-in-depth-3f4703e08/
+Task 95bc2120a91af20a7c8039a37547b408ea1bccad994c7e6b7a8a6a0cd021ae01
+failed during preparation with zero tests executed because mobile_capture omitted
+AGENTS_REPO_PATH from its cleaned environment. The complete local run above uses
+the documented gate and inherited path at the same pushed Mobile revision.
+Dispatcher repair: https://github.com/pyrycode/agent-dispatcher/issues/294
+Confirmed Backlog, priority:low. Mobile's forwarding wrapper is unchanged.
