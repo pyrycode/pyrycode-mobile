@@ -37,8 +37,8 @@ is still streaming: a final-body check can pass even if progressive display is b
 therefore holds two arrived deltas until the displayed-prefix checkpoint, then uses
 an explicit second enqueue to release completion. Require reply identity, repository
 settlement and idle phase before checking the final body; a blinking caret's absence
-is insufficient. The real-Claude word-reveal twin remains ignored and manual because
-its transient window cannot be fenced. Keep cadence and catch-up deadlines in local
+is insufficient. The real-Claude word-reveal method was removed on 2026-10-17: its
+transient window cannot be fenced, and immediate text is acceptable. Keep cadence and catch-up deadlines in local
 step tests. See the [scenario and manual evidence limits](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
 `app/src/test/.../components/StreamingRevealStepTest.kt` covers the pure
