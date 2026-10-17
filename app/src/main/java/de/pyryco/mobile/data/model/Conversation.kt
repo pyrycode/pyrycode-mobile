@@ -23,6 +23,8 @@ data class Conversation(
      * daemon recorded the time, or a stamp that did not parse. See [archiveKey].
      */
     val archivedAt: Instant? = null,
+    /** The host's confirmed pin time; null when unpinned or omitted by an older host. */
+    val pinnedAt: Instant? = null,
 )
 
 /** The instant the Archive screen orders and labels a row by: its archive time, else its last use. */

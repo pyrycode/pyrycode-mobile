@@ -1,7 +1,6 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
-import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayErrorException
@@ -51,8 +50,8 @@ import kotlinx.serialization.json.put
  *
  * Built on [requests], the connection's one request counter and reply waiters, so every frame takes its
  * envelope id from the same sequence as every other request. [negotiatedCapabilities] is the repository's
- * supplier, read at send time to gate the two reads on `interactive`. A confirmed [setSystemPrompt] folds
- * into [conversationList].
+ * supplier, read at send time to gate the two reads on `interactive`. A confirmed [setSystemPrompt] is
+ * published by the repository's inbound collector before this command resumes.
  *
  * One instance per repository, and a fresh repository per connection (#351), so [settingsRevision] is
  * connection-scoped exactly as it was when it lived in the repository. The last successful reply per
@@ -62,7 +61,6 @@ import kotlinx.serialization.json.put
 internal class SessionSettingsCommands(
     private val requests: RelayRequests,
     private val negotiatedCapabilities: () -> Set<String>,
-    private val conversationList: ConversationListProjection,
     private val readings: HostReadings,
 ) {
     /**
@@ -288,8 +286,7 @@ internal class SessionSettingsCommands(
                 ts = Clock.System.now().toString(),
                 payload = setSystemPromptPayload(conversationId, systemPrompt),
             )
-        val reply = requests.sendAndAwaitReply(request)
-        conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+        requests.sendAndAwaitConversation(request)
     }
 
     /** Host commands have no channel/session identity, capability gate or conversation fold. */
