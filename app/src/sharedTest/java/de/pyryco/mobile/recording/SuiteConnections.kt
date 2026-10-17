@@ -322,20 +322,23 @@ internal class SuiteConnections private constructor(
 
         override fun send(frame: InnerFrameV2): Boolean = live?.send(frame) ?: error("Raw transport use during application replay")
 
-        override fun close() {
-            if (localClose.get()) return
-            observePumpState()
-            if (!localClose.compareAndSet(false, true)) return
-            try {
-                lifecycle("close", owner)
-            } catch (error: Throwable) {
-                if (capture != null) throw error
-                // Report at the outer rule, after the scenario's own assertion and physical teardown.
-                failure.compareAndSet(null, error)
-            } finally {
-                if (live != null) live.close() else pumps[owner]?.localClosed()
+        override fun close() =
+            synchronized(this@SuiteConnections) {
+                // Publish closure and consume its lifecycle under the send lock. A second closer
+                // must not return while the first has hidden the tape's following refused request.
+                if (localClose.get()) return@synchronized
+                observePumpState()
+                if (!localClose.compareAndSet(false, true)) return@synchronized
+                try {
+                    lifecycle("close", owner)
+                } catch (error: Throwable) {
+                    if (capture != null) throw error
+                    // Report at the outer rule, after the scenario's own assertion and physical teardown.
+                    failure.compareAndSet(null, error)
+                } finally {
+                    if (live != null) live.close() else pumps[owner]?.localClosed()
+                }
             }
-        }
 
         fun remoteDown(
             code: Int?,
