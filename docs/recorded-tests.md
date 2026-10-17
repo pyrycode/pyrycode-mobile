@@ -112,6 +112,29 @@ The permission recording above remains separate. The complete suite inventories 
 annotated real-Claude method in `scripts/recorded-suite-inventory.py`. Its native runner
 calls each original scenario body through the real repository and Compose interface.
 Two workspace scenarios remain explicitly retired because their controls were removed.
+The current routine runner contains 68 recordings. Three further original methods are
+owned by the existing scripted suite because both versions execute the same assertions:
+
+| Original scenario | Retained scripted scenario | Shared assertions |
+| --- | --- | --- |
+| Session-error recovery | `session-error` | Retained and dropped backlog recovery, message identity and original-host restoration |
+| Finished reply selection | `selection-copy` | Real Android word selection, Copy menu and clipboard result |
+| Reply suggestion | `reply-suggestion` | Long-press send, one user echo and revisioned suggestion removal |
+
+The manifest names each exact scripted method. The inventory requires that annotated
+method and its original harness mapping to remain enabled. It accepts no other scripted
+exemptions. These three methods remain in the explicit live selection. Their recordings
+are no longer shipped or counted as successful captures. No other recording used them.
+The 73 original methods therefore comprise 68 recordings, three scripted owners and
+two obsolete workspace methods. Every scripted scenario remains in the normal gate.
+
+Recording capture, replay and strict compatibility commands below select the 68 retained
+recordings. Scripted ownership never supplies a capture or compatibility receipt.
+Missing recordings, changed contracts, package mismatches and incomplete counted
+evidence still fail. Historical 71-recording receipts below describe the earlier selection.
+Removing the repeated routine native executions accounts for 42.416 seconds in one
+retained Mac run. This is expected test work saved, not a measured whole-verifier gain.
+
 Missing recordings fail the inventory. They never count as converted scenarios.
 The normal Gradle `check` task enforces this inventory, including capture and replay hashes.
 
@@ -203,6 +226,48 @@ Checking the pump's close state and accepting a send share one lock. A sender qu
 before teardown cannot reuse an earlier open-state check after that connection closes.
 Recorded stream events retain cadence. Real push delivery, encryption, transport recovery
 and timing obligations retain their external checks.
+
+### Atomic transport close (#2219)
+
+`RecordedTransport.close` runs on the same hub monitor as `ReplayPump.send`, not only on
+the pump's own close-state lock above. Before this, `close` published `localClose` and ran
+its lifecycle transition without holding that monitor, so a send already inside the monitor
+could observe the transport as closed while the strict tape still required the close step
+itself to be consumed first. `hasEligibleRefusal` then saw no pending close and let the send
+bypass exact matching, so the tape's captured refused `request_attachment` and its
+`inbound_end` were never drained; the scenario's own retry and recovery still passed, and
+only the final teardown checkpoint hung for the full 30-second deadline. This produced the
+historical fail-then-pass on `interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile`:
+[#2213's Linux UI gate](https://github.com/pyrycode/pyrycode-mobile/issues/2213) failed the
+method with replay progress `matched=32 remaining=3` and exactly that close, refused request
+and `inbound_end` pending, then its focused rerun passed 1/1 in 6.65 seconds — evidence of the
+race, not proof of its absence. An earlier fail-then-pass of the same method occurred in
+[#2208](https://github.com/pyrycode/pyrycode-mobile/issues/2208). Serializing `close` on the hub monitor makes a second closer wait behind an unfinished
+first close, so the tape's close step is always consumed before any send can see the
+transport as closed.
+
+`SuiteConnectionsTest#aRacingCloseCannotHideTheCapturedRefusedAttachmentRequest` forces this
+overlap directly: it holds the hub monitor, starts a transport close on another thread,
+confirms that thread blocks on the monitor, then closes the pump and sends the refused
+request from the holder before releasing it, and asserts the tape still completes.
+`aCapturedRefusalStillRejectsAChangedAttachmentAfterClose` is the companion negative case —
+a changed attachment identity after close still fails strict matching and leaves the tape
+incomplete. Both join the existing `aSendWaitingBehindCloseCannotUseAnEarlierOpenState`.
+Against the pre-fix source (`bf1bf2ba0`) the racing-close regression failed twice, each one
+executed/one failed/zero skipped, both leaving precisely the refused attachment request and
+`inbound_end` unconsumed — the same shape as the historical gate failure. After the fix
+(`3c4ccf7f8`), `SuiteConnectionsTest` passed 15/15 and `RecordedSuiteTapeTest` passed 23/23,
+and the dispatcher's Linux UI gate executed and passed
+`interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile` with its original restart,
+link-cut, Retry and recovered-file assertions intact. The builder additionally ran five
+consecutive focused native executions of that method with no failures or skips (8.897,
+8.169, 8.624, 8.274 and 7.809 seconds), all against identical source hashes. The retained
+evidence index is
+[`recorded-close-2219/evidence.json`](../app/src/test/resources/verification/recorded-close-2219/evidence.json);
+raw XML, output, phone diagnostics and source snapshots were kept under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2219/atomic-close-20261017/` at review
+time and are pruned after 30 days, so the counted results above, not that path, are the
+durable record.
 
 ### Observation checkpoints and separate verification results
 
@@ -342,8 +407,9 @@ Earlier failed captures remain failures. macOS was outside this ticket's verific
 
 ## Complete-suite rollout evidence, 2026-10-16
 
-The inventory accounts for all 73 original native methods. All 71 active scenarios have
-reviewed genuine recordings. Two workspace scenarios remain explicitly retired.
+At rollout, the inventory accounted for all 73 original native methods. All 71 active
+scenarios had reviewed genuine recordings. Two workspace scenarios were explicitly retired.
+The current routine selection is described above and does not rewrite these historical results.
 
 | Check | Reported | Failed | Skipped |
 | --- | ---: | ---: | ---: |

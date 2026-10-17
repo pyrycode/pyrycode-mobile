@@ -108,6 +108,23 @@ other additive field in this cache (see `CachedAttachment` above). Adding a bool
 `Conversation` means updating this record and both mapping functions, not only the DTOs — check
 here first, before the wire layer, since a cache miss is the harder failure to notice.
 
+`CachedConversation.pinnedAt: String? = null` (#2213) mirrors `Conversation.pinnedAt` beside `muted`
+and `workspaceLabel`, following `lastUsedAt`'s exact-text convention rather than epoch millis:
+`Conversation.toRecord()` writes `pinnedAt?.toString()`, and `CachedConversation.toDomain()` restores it
+with `pinnedAt?.let(Instant::parse)`, so a pin round-trips to the nanosecond across a fresh cache
+instance. The host and conversation id stay the hashed-directory scope this cache already uses, so two
+hosts sharing a conversation id keep independent pins — there is no cross-host identity to collide on.
+The `= null` default keeps a document written before this field existed readable as unpinned, the same
+reasoning as `muted`'s own default; `readConversations` does not retroactively repair such a document,
+it only reads it as unpinned until the next write. A malformed stored `pinnedAt` (one that does not parse
+as an `Instant`) withholds the whole document under this cache's existing parse-failure behavior — see
+[Failure model — graceful reads, reporting mutations](conversation-cache-failure-model.md#failure-model--graceful-reads-reporting-mutations)
+— rather than rewriting or dropping only that field; `FileConversationCacheTest` pins that the stored bytes
+are left untouched. Unlike `agent` below, this field was added to the cache in the same ticket that added
+it to the DTOs, so there is no cold-start window where a restored row reads unpinned while the live list
+disagrees — `HostConversationSource`'s cold-start publish and the first live `conversations`/
+`conversation_updated` snapshot agree on the same field from the start.
+
 **Known gap, not yet fixed: `agent` ([#1108](https://github.com/pyrycode/pyrycode-mobile/issues/1108)).**
 `Conversation.agent` was added without touching this cache — deliberately out of that ticket's scope, since
 nothing renders the field yet and the mobile does not negotiate `multi_agent`, so the key never actually

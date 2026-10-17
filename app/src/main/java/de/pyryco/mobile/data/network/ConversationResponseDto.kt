@@ -25,8 +25,8 @@ import kotlinx.serialization.Serializable
  *
  * Both payloads are a **bare conversation object** at [Envelope.payload] — NOT object-wrapped
  * (contrast #316's `conversations`, which wraps an array). So [Envelope.payload] decodes directly
- * to this type. Neither payload carries `last_message_ts`; this DTO has exactly one timestamp,
- * `last_used_at`.
+ * to this type. Neither payload carries `last_message_ts`; this DTO retains `last_used_at`
+ * and the nullable host pin timestamp `pinned_at`.
  *
  * Snake_case wire names map to camelCase Kotlin via [SerialName] (the Go-interop contract, not
  * cosmetic). Always decode through [MobileJson]
@@ -67,6 +67,9 @@ data class ConversationResponseDto(
     // and [de.pyryco.mobile.data.repository.ConversationListProjection.upsertConversation] then keeps the
     // stored agent instead of reading Claude.
     val agent: String? = null,
+    @SerialName("pinned_at")
+    @Serializable(with = InstantIso8601Serializer::class)
+    val pinnedAt: Instant? = null,
 )
 
 /**
@@ -95,4 +98,5 @@ fun ConversationResponseDto.toConversation(): Conversation =
         archived = isArchived,
         muted = isMuted,
         agent = conversationAgentOf(agent),
+        pinnedAt = pinnedAt,
     )

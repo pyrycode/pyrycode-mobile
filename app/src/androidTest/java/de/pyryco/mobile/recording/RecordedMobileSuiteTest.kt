@@ -89,10 +89,6 @@ class RecordedMobileSuiteTest {
     @Test fun interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend() =
         original.interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend()
 
-    @Test fun interactiveTurn_finishedReply_systemCopyCopiesSelectedWord() =
-        original
-            .interactiveTurn_finishedReply_systemCopyCopiesSelectedWord()
-
     @Test
     fun interactiveTurn_hostSystemPrompt_editsResetsAndCancels() = original.interactiveTurn_hostSystemPrompt_editsResetsAndCancels()
 
@@ -197,9 +193,6 @@ class RecordedMobileSuiteTest {
         original.interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately()
 
     @Test
-    fun interactiveTurn_replySuggestion_longPressSends() = original.interactiveTurn_replySuggestion_longPressSends()
-
-    @Test
     fun interactiveTurn_saveAsChannel_promotesToChannelTier() = original.interactiveTurn_saveAsChannel_promotesToChannelTier()
 
     @Test fun interactiveTurn_scannerConfirm_waitsForHostThenOpensList() =
@@ -211,9 +204,6 @@ class RecordedMobileSuiteTest {
 
     @Test
     fun interactiveTurn_sendQueuedNow_reachesRunningTurn() = original.interactiveTurn_sendQueuedNow_reachesRunningTurn()
-
-    @Test fun interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog() =
-        original.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog()
 
     @Test fun interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes() =
         original.interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes()
