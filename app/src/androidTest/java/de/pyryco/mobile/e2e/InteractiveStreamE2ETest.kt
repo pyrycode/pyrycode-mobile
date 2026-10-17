@@ -5284,11 +5284,11 @@ class InteractiveStreamE2ETest {
                                     "owned_tools=${it.records.count { row -> row.message.role == Role.Tool && row.agentId == agent?.block && row.message.id != agent?.block }} " +
                                     "main_reply=${it.settledMainReply(it.owner, mainTurn) != null}",
                             )
-                            it.agentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn) != null
+                            it.heldAgentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn) != null
                         }
                     }
                 }.let {
-                    checkNotNull(it.agentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn)) {
+                    checkNotNull(it.heldAgentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn)) {
                         "the held Agent must supply its own paragraph"
                     }
                 }

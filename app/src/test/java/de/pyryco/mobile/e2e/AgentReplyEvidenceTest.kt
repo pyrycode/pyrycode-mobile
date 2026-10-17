@@ -128,6 +128,18 @@ class AgentReplyEvidenceTest {
         assertNull(evidence(split).settledMainReply(evidence(split).owner, "main"))
     }
 
+    @Test fun activeOwnedParagraphProvesHeldUiWithoutQualifyingSettlement() {
+        val held = evidence(agentReplySnapshot(child = authoritativeItem(2, parent = 1, active = true, status = "running", turn = "child")))
+        assertNull(held.reply())
+        assertNull(held.settledTurnReply(held.owner, "child", held.backgroundAgent("raw-task", "raw-agent")))
+        val proof = held.heldAgentReplyEvidence(held.owner, "raw-task", "raw-agent", "child", "main")
+        assertNotNull(proof)
+        assertEquals(2L, proof?.heldReply?.fact?.id)
+        assertNull(held.heldAgentReplyEvidence(evidence(agentReplySnapshot(), token = Any()).owner, "raw-task", "raw-agent", "child", "main"))
+        val unowned = evidence(agentReplySnapshot(child = authoritativeItem(2, active = true, status = "running", turn = "child")))
+        assertNull(unowned.heldAgentReplyEvidence(unowned.owner, "raw-task", "raw-agent", "child", "main"))
+    }
+
     @Test fun stopMainReplySettlesOnItsOwnTurnOnly() {
         val task =
             authoritativeItem(
