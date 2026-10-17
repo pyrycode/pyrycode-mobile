@@ -56,6 +56,34 @@ Pending for documentation: update `docs/knowledge/features/thread-screen-testing
 
 ## Revisions
 
+### 2026-10-17: fresh four-method acceptance after #2218 and the #2228 software bound
+
+#2218 is closed. Its repair is the operator's #2228 on main (`99b731b8a`), which
+supersedes this ticket's "no threshold relaxation" wording only under a software
+renderer: `SavedThreadFirstDrawDeviceTest` keeps the 1000 ms product bound, uses
+2000 ms when the guest GL renderer is SwiftShader, and holds the optional projection
+for bound + 100 ms (2100 ms there). This ticket changes neither; no Mobile test,
+helper, fixture or production source changed here. Readiness contract, cold
+construction, committed-frame endpoint and 3000 ms slow restore are unchanged.
+
+At Mobile `24a015e8b5f580a6933b45542ed01386c0b704f3` (main `46909f852` merged),
+agents `c8edc37edbcc111bf769b93840beea0fe5e8c02f`, reused managed generation
+`151a9dbd…`, on build-fractal-2 with renderer SwiftShader (logged `bound_ms=2000`),
+the focused class executes 4, passes 4, fails 0, no errors/skips, exit 0, after
+990 s waiting for admission. All 17 readiness barriers qualify over 77 windows,
+with 17 Probes and maximum acquisition/read 9/32 ms. Fragmented offline/held-newest
+first opens draw at 774/650 ms with projection held and 591/664 ms originally;
+every one of the 16 openings also meets the 1000 ms product target, so the software
+bound decided no outcome. The slow control is rejected at 3727 ms. The earlier
+bound-1000 Fractal run (4/2/2/0/0) stays failed, and the historical 1434/1436 ms
+misses keep #2202's disposition. No retry, warming or skip was used.
+
+Checked results and all 17 opening records are in
+`post-2218-{validation,openings}-20261017.*` under the evidence asset directory;
+raw XML, phone logs, gate phases, image identity and a verified manifest are under
+`$AGENTS_REPO_PATH/logs/evidence/2177/post-2218-class-20261017/`. Complete
+dispatcher UI/scripted-all gates and documentation remain pending.
+
 ### 2026-10-17: readiness succeeds; measured latency now blocks acceptance on #2218
 
 At Mobile `c8060639b8903a65b8e29641b8f812047cfcb9b0`, deployed agents
