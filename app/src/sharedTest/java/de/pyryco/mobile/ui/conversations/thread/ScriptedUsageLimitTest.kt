@@ -58,7 +58,7 @@ class ScriptedUsageLimitTest {
 
         harness.pushRateLimited(status = "allowed_warning", utilization = 0.94)
 
-        awaitDisplayed(label("allowed_warning"))
+        awaitDisplayed(label("allowed_warning", percent = 94))
         assertNoTextContaining("allowed_warning")
         composeRule.onNodeWithContentDescription(thinkingDescription).assertIsDisplayed()
     }
@@ -158,10 +158,12 @@ class ScriptedUsageLimitTest {
     private fun label(
         status: String,
         reset: UsageLimitReset? = null,
+        percent: Int? = null,
     ): String =
         buildString {
             append(string(if (status == "rejected") R.string.thread_usage_limit_reached else R.string.thread_usage_limit_nearly))
             append(string(R.string.thread_usage_limit_seven_day))
+            if (percent != null) append(string(R.string.thread_usage_limit_percent, percent))
             when {
                 reset == null -> Unit
                 reset.date == null -> append(string(R.string.thread_usage_limit_resets, reset.time))
