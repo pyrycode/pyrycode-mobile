@@ -42,7 +42,6 @@ class RecordedSuiteDocumentTest {
         val document = registeredDocument(listOf(step))
         val original = document.document
         val info = document.replayClientInfo(runnerInfo)
-        assertEquals(NoiseClientInfo("Android ATD built for arm64", "current-client"), info)
         val request =
             step.message!!.copy(
                 id = 20,
@@ -54,6 +53,7 @@ class RecordedSuiteDocumentTest {
         val tape = document.tape()
         tape.request(step.owner, request)
         tape.assertComplete()
+        assertEquals(NoiseClientInfo("Android ATD built for arm64", "current-client"), info)
         assertEquals(original, document.document)
     }
 
