@@ -4,6 +4,23 @@ Split from [Conversation cache](conversation-cache.md); this topic retains the s
 
 ## Layout
 
+Since #2161, `appModule` binds `MigratingConversationCache` through
+`openConversationCache(Context)`. Both thread families now live in Room at
+`<noBackupFilesDir>/conversation-cache.db`, including its sidecars. Lists and read
+positions still use `FileConversationCache` under `<noBackupFilesDir>/conversations`;
+settings and attachment storage are unchanged. The paths below describe those metadata
+files and the version-1 thread sources retained for migration and downgrade compatibility.
+
+Database version 3 adds `file_imports` through additive `AutoMigration(from = 2, to = 3)`;
+the complete upgrade chain is 1 → 2 → 3, with exported `1.json`, `2.json` and `3.json`
+schemas and no destructive fallback. The ledger's primary key is `(host, conversation,
+family)`, with static `outcome` values. Families are `legacy`, `authoritative` and `host`;
+a host-wide retirement uses family `host` and conversation `""`. Imported content/evidence
+and its completion marker commit in one transaction. Completed imports leave their source
+bytes intact until explicit conversation or host removal; the ledger prevents a leftover
+file from replacing a newer database save. See [import classification and write
+refusals](conversation-cache-contract.md#the-contract) and [durable retirement](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost).
+
 ```
 <root>/<sha256hex(serverId)>/conversations.json
 <root>/<sha256hex(serverId)>/threads/<sha256hex(conversationId)>.json   (#797)
@@ -54,7 +71,7 @@ the round-trip is exact to the nanosecond rather than truncated to millisecond p
 ### Indexed legacy Room layout (#2162)
 
 [ADR 0009](../decisions/0009-room-for-indexed-conversation-cache.md) records the approved
-SQLite/Room choice. `ConversationCacheDatabase` starts at schema version 1, using Room 2.8.4
+SQLite/Room choice. `ConversationCacheDatabase` originally shipped at schema version 1, using Room 2.8.4
 and KSP 2.3.6; the exported schema lives under `app/src/main/roomSchemas/`.
 `openConversationCacheDatabase(Context)` in `di/ConversationCacheDatabaseFactory.kt` opens
 `<noBackupFilesDir>/conversation-cache.db`. Its journal, WAL and SHM sidecars share that
@@ -88,8 +105,9 @@ save coordinator or background history download is introduced. See
 [the bounded contract](conversation-cache-contract.md#indexed-legacy-operations-and-pages-2162)
 for continuation and optional-evidence rules.
 
-This backend is independently callable and unbound: #2161 owns file import/application binding,
-\#2163 owns authoritative Room storage, and #2068 owns reader activation/owned partial writes.
+The backend is independently callable and is now used by the migration-aware application
+cache (#2161), alongside authoritative Room storage (#2163). #2068 owns bounded reader
+activation and owned partial writes.
 Legacy evidence cannot certify authoritative facts. Conversation lists, read positions, settings
 and attachment bytes retain their existing storage.
 
@@ -101,10 +119,11 @@ without altering or dropping any of the three legacy tables, so an existing on-d
 from #2162 opens and keeps every legacy row, header and evidence entry it already held. There
 is no destructive fallback. The exported schema for both versions lives under
 `app/src/main/roomSchemas/de.pyryco.mobile.data.cache.ConversationCacheDatabase/`
-(`1.json`, `2.json`); `AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence`
+(`1.json`, `2.json`, with `3.json` added by #2161).
+`AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence`
 builds a real on-disk version 1 database from the checked-in `1.json` schema, seeds legacy
-content, reopens it through Room's automatic migration, and asserts the legacy rows/evidence
-are unchanged before writing and reading back an authoritative replacement on the upgraded file.
+content, reopens it through Room's full 1 → 2 → 3 automatic migration chain, and asserts the
+legacy rows/evidence are unchanged before writing and reading back an authoritative replacement on the upgraded file.
 
 Two new tables, scoped and indexed the same way as the legacy three:
 
@@ -346,6 +365,10 @@ owns independent lazy views; accessing them does not add disk fields.
 pins these properties alongside existing signed/unsigned validation tests.
 
 ### The thread document's two writers (#1354)
+
+These describe the retained `FileConversationCache` compatibility writer. Since #2161,
+application thread writes use Room through the migration-aware cache; the repository's
+ordering and successful-baseline rules below still apply.
 
 Both writers rewrite one thread document under the file cache's `Mutex`, preserving the other
 half. Since #2018 they encode the same `CachedThread` serializer/configuration directly
