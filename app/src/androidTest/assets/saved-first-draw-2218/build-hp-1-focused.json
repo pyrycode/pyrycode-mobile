@@ -1,0 +1,410 @@
+{
+ "run": "fresh supported focused class, python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest",
+ "platform": "Linux/build-hp-1 (Intel Core i7-8700)",
+ "xml_timestamp": "2026-10-17T09:30:11",
+ "mobile": "10666ec436367745e706879f6c7726bda89667e2 (unchanged main)",
+ "agents": "c8edc37edbcc111bf769b93840beea0fe5e8c02f",
+ "generation": "151a9dbd74aea4118480cc270492d68ef7fd255ce0b03cfacf6db74537c098d8",
+ "generation_reused": true,
+ "launcher": {
+  "binary": "emulator wrapper -> emulator.hp-native",
+  "gpu": "swangle",
+  "hw.gpu.mode": "swiftshader"
+ },
+ "device": "pixel2Api33Atd_0, Android 13 Google ATD x86_64, 2048 MiB",
+ "exit": 0,
+ "counts": {
+  "executed": 4,
+  "failed": 0,
+  "errors": 0,
+  "skipped": 0,
+  "passed": 4
+ },
+ "tests": {
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#slowRestore_negativeControlRejectsTheSameFirstDrawBound": "passed",
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen": "passed",
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen": "passed",
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#heldCpuPipeCancelsAndClosesItsDescriptor": "passed"
+ },
+ "raw_xml_sha256": "916545d4144c74786c514126a8db2f5719845a16322c73ccd701e2a939ad64ee",
+ "source_sha256": {
+  "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "07b697f780bf83202a39e31b5730f4429d86c64764012575738bde2629a36295",
+  "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b76344d827dd69b4356d27e1620e21c120668af0cc8fa8d36e05a5c1c2a9b33b",
+  "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "df15f0d6c7f3114adab4e239a8a94c952c7c1d226333d01c24d06db7079d303f",
+  "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/FragmentedHistoryFixture.kt": "59f23bda2db97ddb8f40c768f642c39d917e06ff0f11aad90624cb83a50bace1",
+  "app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt": "fb55c52e9272635cb45e3c26645b254bd3829f357d8a02b8c0b852e5f784faa6",
+  "app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt": "49dad7519f2fbabb5ca716bd4a93dbf967fb1da83d0bda77fadcecc06c7c578a",
+  "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt": "3f0e3b2c968c2aa205c7fac27cbb33c98a104fa8debce4db8702baebd970c4cf",
+  "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt": "c3506277f37f6c5f13c25f0c800d1516208d399a0a90fb47f26a181114ba2626"
+ },
+ "source_matches_failing_run": true,
+ "readiness": {
+  "barriers": 17,
+  "windows": 85,
+  "idle_pct_range": [
+   13,
+   98
+  ],
+  "max_acquire_ms": 14,
+  "max_read_ms": 35,
+  "note": "Each barrier ended with four consecutive >=80% idle windows; busy windows reset the streak."
+ },
+ "slow_control_phases_ms": [
+  3067,
+  3370,
+  3407,
+  3494
+ ],
+ "openings": [
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "ordinary online=false opening=0",
+   "gc": [],
+   "phases_ms": [
+    79,
+    101,
+    108,
+    241
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "ordinary online=false opening=1",
+   "gc": [],
+   "phases_ms": [
+    30,
+    99,
+    102,
+    224
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "ordinary online=true opening=0",
+   "gc": [],
+   "phases_ms": [
+    66,
+    86,
+    105,
+    200
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "ordinary online=true opening=1",
+   "gc": [],
+   "phases_ms": [
+    53,
+    70,
+    80,
+    174
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "fragmented online=false opening=0",
+   "gc": [
+    {
+     "ended_ms": 542,
+     "kind": "young",
+     "total_ms": 161
+    }
+   ],
+   "row_decode": {
+    "read_ms": 11,
+    "decode_ms": 291,
+    "validate_ms": 24,
+    "logged_at_ms": 337
+   },
+   "history_decode": {
+    "metadata_ms": 522,
+    "proofs_ms": 314,
+    "logged_at_ms": 1173
+   },
+   "phases_ms": [
+    376,
+    377,
+    402,
+    555
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 1
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "fragmented online=false opening=1",
+   "gc": [],
+   "phases_ms": [
+    81,
+    99,
+    109,
+    232
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "fragmented online=true opening=0",
+   "gc": [
+    {
+     "ended_ms": 103,
+     "kind": "full",
+     "total_ms": 101
+    },
+    {
+     "ended_ms": 448,
+     "kind": "young",
+     "total_ms": 150
+    }
+   ],
+   "row_decode": {
+    "read_ms": 8,
+    "decode_ms": 249,
+    "validate_ms": 20,
+    "logged_at_ms": 279
+   },
+   "history_decode": {
+    "metadata_ms": 443,
+    "proofs_ms": 300,
+    "logged_at_ms": 1023
+   },
+   "phases_ms": [
+    294,
+    295,
+    308,
+    433
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 1,
+    "content_to_frame": 1
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+   "case": "fragmented online=true opening=1",
+   "gc": [],
+   "phases_ms": [
+    58,
+    75,
+    98,
+    191
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "ordinary online=false opening=0",
+   "gc": [],
+   "phases_ms": [
+    54,
+    63,
+    79,
+    157
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "ordinary online=false opening=1",
+   "gc": [],
+   "phases_ms": [
+    54,
+    63,
+    80,
+    174
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "ordinary online=true opening=0",
+   "gc": [],
+   "phases_ms": [
+    30,
+    39,
+    56,
+    129
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "ordinary online=true opening=1",
+   "gc": [],
+   "phases_ms": [
+    43,
+    51,
+    68,
+    137
+   ],
+   "rows": 20,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "fragmented online=false opening=0",
+   "gc": [],
+   "row_decode": {
+    "read_ms": 9,
+    "decode_ms": 251,
+    "validate_ms": 13,
+    "logged_at_ms": 280
+   },
+   "history_decode": {
+    "metadata_ms": 397,
+    "proofs_ms": 309,
+    "logged_at_ms": 987
+   },
+   "phases_ms": [
+    295,
+    296,
+    308,
+    407
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "fragmented online=false opening=1",
+   "gc": [
+    {
+     "ended_ms": 187,
+     "kind": "full",
+     "total_ms": 111
+    }
+   ],
+   "phases_ms": [
+    45,
+    60,
+    80,
+    181
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 1
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "fragmented online=true opening=0",
+   "gc": [],
+   "row_decode": {
+    "read_ms": 13,
+    "decode_ms": 255,
+    "validate_ms": 13,
+    "logged_at_ms": 289
+   },
+   "history_decode": {
+    "metadata_ms": 362,
+    "proofs_ms": 305,
+    "logged_at_ms": 958
+   },
+   "phases_ms": [
+    304,
+    305,
+    320,
+    420
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 0
+   },
+   "met_1000_ms": true
+  },
+  {
+   "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+   "case": "fragmented online=true opening=1",
+   "gc": [
+    {
+     "ended_ms": 240,
+     "kind": "full",
+     "total_ms": 153
+    }
+   ],
+   "phases_ms": [
+    49,
+    66,
+    76,
+    175
+   ],
+   "rows": 18000,
+   "gc_overlapping": {
+    "restore": 0,
+    "content_to_frame": 1
+   },
+   "met_1000_ms": true
+  }
+ ],
+ "raw_evidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2218/hp1-focused-20261017/ (SHA256SUMS f6699d40b96a69b64617f0bf7fb6c14d2dead9e2d0d6bc9ac064d3973f989c9e)",
+ "notes": [
+  "Same generation identity, launcher wrapper and renderer as the fractal-2 failing run; host hardware differs.",
+  "This pass shows host dependence. It does not attribute or clear the fractal-2 miss."
+ ]
+}
