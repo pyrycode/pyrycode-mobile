@@ -59,8 +59,13 @@ Missing or mismatched evidence returns null; callers wait within existing timeou
 
 ## Open Questions
 
-- Does the recorded replay exercise the legacy session as `""` throughout each turn? Resolve from the recorded run.
+- Does the recorded replay exercise the legacy session as `""` throughout each turn? Resolved: both recorded methods passed through the legacy binding, so each settled turn carried one session; no design change.
 
 ## Documentation handoff
 
 - Pending for the documentation stage: `docs/e2e-interactive-stream.md`: record the migrated scope of `interactiveTurn_backgroundAgent_replyStaysUnderAgent` and `interactiveTurn_stopBackgroundTask_completesThenRepliesAgain` (evidence observation, settlement, rendered identities), the named recorded results and counts this PR supplies, and that the route exercised is the legacy harness binding; these passes do not prove negotiated activation (#2175).
+
+## Revisions
+
+- 2026-10-17: The JVM and screen probes share their authoritative item builders, so they live in `app/src/sharedTest/java/de/pyryco/mobile/e2e/AgentReplyEvidenceFixtures.kt` (`agentReplyItem`, `agentReplyRoot`, `agentReplySnapshot`) rather than inside the JVM test. The existing `authoritativeItem` fixture records no `turn`, which settlement requires. No contract change.
+- 2026-10-17 (recorded native evidence): on macOS with the managed `pixel2Api33Atd` device at `dab5642d9`, `RecordedMobileSuiteTest#interactiveTurn_backgroundAgent_replyStaysUnderAgent` and `#interactiveTurn_stopBackgroundTask_completesThenRepliesAgain` each ran 1 executed, 1 passed, 0 failed, 0 skipped through the legacy harness binding. Raw XML and hashes are kept under the agents repository's `logs/evidence/2172/`. No recording changed.
