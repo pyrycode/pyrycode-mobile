@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Launch pipeline tools from the mobile agents checkout."""
 import os
+import runpy
 from pathlib import Path
 import sys
 
@@ -16,5 +17,7 @@ os.environ["PYRY_MOBILE_REPO"] = str(root)
 os.chdir(root)
 runtime = "bash" if name.endswith(".sh") else sys.executable
 if name in {"android-test-gate.py", "jvm-test-gate.py", "gradle-gate.py"}:
+    check = runpy.run_path(str(root / 'scripts/test-scope.py'))['check_selection']
+    check(root, {"android-test-gate.py": "android", "jvm-test-gate.py": "jvm", "gradle-gate.py": "gradle"}[name], sys.argv[2:])
     os.execvp(sys.executable, [sys.executable, str(root / "scripts/test-admission.py"), "--", runtime, str(script), *sys.argv[2:]])
 os.execvp(runtime, [runtime, str(script), *sys.argv[2:]])
