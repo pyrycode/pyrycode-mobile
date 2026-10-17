@@ -12,17 +12,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
@@ -809,5 +813,164 @@ class ConversationTreeRowsTest {
         assertDpEquals(28.dp, composeTestRule.onNode(hasText("Pyrybox")).getUnclippedBoundsInRoot().height)
         assertDpEquals(28.dp, composeTestRule.onNode(hasText("Second Brain")).getUnclippedBoundsInRoot().height)
         assertDpEquals(24.dp, composeTestRule.onNode(hasText("rocd-thinking")).getUnclippedBoundsInRoot().height)
+    }
+
+    // #2215: physical taps one pixel either side of each boundary in the compact band, so a hit region that
+    // overlapped its neighbour would fail where a semantic click could not.
+    @Test
+    fun pinControl_physicalTapsKeepTheRowAndControlRegionsApart_andNoneDrawsNothing() {
+        var opens = 0
+        var plainOpens = 0
+        var pins = 0
+        var disabledTaps = 0
+        var density = Density(1f)
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                density = LocalDensity.current
+                Column(modifier = Modifier.width(320.dp).testTag("rows")) {
+                    TreeConversationRow(
+                        conversationName = "pin me",
+                        selected = false,
+                        onClick = { opens++ },
+                        modifier = Modifier.testTag("pin-row"),
+                        pinControl = TreePinControl.Pin,
+                        onPinToggled = { pins++ },
+                        pinTestTag = "pin-control",
+                    )
+                    TreeConversationRow(
+                        conversationName = "plain",
+                        selected = false,
+                        onClick = { plainOpens++ },
+                        modifier = Modifier.testTag("plain-row"),
+                    )
+                    TreeConversationRow(
+                        conversationName = "offline",
+                        selected = false,
+                        onClick = {},
+                        hostName = "Macbook",
+                        disconnected = true,
+                        pinControl = TreePinControl.UnpinDisabled,
+                        onPinToggled = { disabledTaps++ },
+                        pinTestTag = "disabled-control",
+                    )
+                }
+            }
+        }
+
+        val control = composeTestRule.onNodeWithTag("pin-control").getUnclippedBoundsInRoot()
+        val row = composeTestRule.onNodeWithTag("pin-row").getUnclippedBoundsInRoot()
+        assertDpEquals(24.dp, row.height)
+        assertDpEquals(24.dp, control.height)
+        assertDpEquals(24.dp, control.right - control.left)
+        assertDpEquals(320.dp, control.right)
+        assertDpEquals(control.left, row.right)
+        composeTestRule.onNodeWithTag("pin-control").assert(hasContentDescription(string(R.string.cd_tree_pin_channel)))
+
+        val onePixel = with(density) { 1.toDp() }
+
+        fun tap(
+            x: Dp,
+            y: Dp,
+        ) = composeTestRule.onNodeWithTag("rows").performTouchInput {
+            click(Offset(with(density) { x.toPx() }, with(density) { y.toPx() }))
+        }
+        val middle = (row.top + row.bottom) / 2
+        tap(control.left + onePixel, middle)
+        assertEquals(1, pins)
+        assertEquals(0, opens)
+        tap(control.right - onePixel, middle)
+        assertEquals(2, pins)
+        tap(control.left - onePixel, middle)
+        assertEquals(1, opens)
+        assertEquals(2, pins)
+        assertEquals(0, plainOpens)
+
+        // None: no control node, and the band's trailing edge belongs to the row.
+        val plain = composeTestRule.onNodeWithTag("plain-row").getUnclippedBoundsInRoot()
+        assertDpEquals(320.dp, plain.right)
+        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_pin_channel))).assertCountEquals(1)
+        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_unpin_channel))).assertCountEquals(1)
+        tap(plain.right - onePixel, (plain.top + plain.bottom) / 2)
+        assertEquals(1, plainOpens)
+        assertEquals(2, pins)
+        assertEquals(1, opens)
+
+        // Disabled: visible, named, not enabled, and a tap sends nothing.
+        val disabled = composeTestRule.onNodeWithTag("disabled-control")
+        disabled.assertIsDisplayed().assertIsNotEnabled()
+        disabled.assert(hasContentDescription(string(R.string.cd_tree_unpin_channel)))
+        val disabledBounds = disabled.getUnclippedBoundsInRoot()
+        tap((disabledBounds.left + disabledBounds.right) / 2, (disabledBounds.top + disabledBounds.bottom) / 2)
+        assertEquals(0, disabledTaps)
+    }
+
+    /** Pixels within [tolerance] per channel of [color]: anti-aliased glyph cores and the dot's interior. */
+    private fun countNear(
+        view: View?,
+        color: Color,
+        tolerance: Int = 2,
+    ): Int =
+        composeTestRule.runOnIdle {
+            val root = checkNotNull(view)
+            val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+            root.draw(Canvas(bitmap))
+            val pixels = IntArray(bitmap.width * bitmap.height)
+            bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+            val target = color.toArgb()
+            pixels.count { pixel ->
+                listOf(16, 8, 0).all { shift -> kotlin.math.abs((pixel shr shift and 0xFF) - (target shr shift and 0xFF)) <= tolerance }
+            }
+        }
+
+    @Config(qualifiers = "xxxhdpi")
+    @Test
+    fun pinnedRow_disconnectedHostDrawsErrorAtSixtyPercent_andAConnectedOneDrawsNoError() {
+        val disconnected = mutableStateOf(true)
+        var error = Color.Unspecified
+        var surface = Color.Unspecified
+        var view: View? = null
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                error = MaterialTheme.colorScheme.error
+                surface = MaterialTheme.colorScheme.surface
+                view = LocalView.current
+                Box(modifier = Modifier.width(rowWidth).background(surface)) {
+                    TreeConversationRow(
+                        conversationName = "pinned",
+                        selected = false,
+                        onClick = {},
+                        hostName = "Macbook",
+                        disconnected = disconnected.value,
+                        pinControl = if (disconnected.value) TreePinControl.UnpinDisabled else TreePinControl.Unpin,
+                    )
+                }
+            }
+        }
+
+        val faded = error.copy(alpha = 0.60f).compositeOver(surface)
+        assertTrue("the dot and text draw error at 60%", countNear(view, faded) > 0)
+        assertEquals("nothing draws error at full strength", 0, countNear(view, error))
+
+        disconnected.value = false
+        assertEquals("a connected host's row draws no error", 0, countNear(view, faded))
+        assertEquals(0, countNear(view, error))
+    }
+
+    @Test
+    fun conversationRow_suffixTruncatesAndClampsAnOversizedHostName() {
+        setBoundedContent {
+            TreeConversationRow(conversationName = "short", selected = false, onClick = {}, hostName = oversizedName)
+        }
+
+        val node = composeTestRule.onNode(hasText("short", substring = true), useUnmergedTree = true)
+        val text =
+            node
+                .fetchSemanticsNode()
+                .config[SemanticsProperties.Text]
+                .joinToString("") { it.text }
+        assertEquals("short · " + "x".repeat(MAX_WORKSPACE_LABEL_CHARS), text)
+        val bounds = node.getUnclippedBoundsInRoot()
+        assertRightEdgeWithinRow(bounds.right, "pinned label")
+        assertSingleLine(bounds.height, "pinned label")
     }
 }

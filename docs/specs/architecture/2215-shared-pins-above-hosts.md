@@ -41,7 +41,7 @@ The Figma connector was not authenticated in this run, so the values above come 
 ### Rows (`ConversationTreeRows.kt`)
 
 - `enum class TreePinControl { None, Pin, Unpin, UnpinDisabled }`, which is stable for Compose. `None` draws nothing.
-- `TreeConversationRow` gains trailing parameters, all defaulted so existing callers are unchanged: `hostName: String? = null` (suffix), `disconnected: Boolean = false`, `pinControl: TreePinControl = TreePinControl.None`, `onPinToggled: () -> Unit = {}`, `pinModifier: Modifier = Modifier` (the control's test handle).
+- `TreeConversationRow` gains trailing parameters, all defaulted so existing callers are unchanged: `hostName: String? = null` (suffix), `disconnected: Boolean = false`, `pinControl: TreePinControl = TreePinControl.None`, `pinTestTag: String? = null` (the control's test handle; see Revisions), `onPinToggled: () -> Unit = {}`.
   - Text: one `Text` holding an `AnnotatedString` of name and, when `hostName != null`, `" · " + host`. The suffix span is `onSurfaceVariant`; when `disconnected` both spans are `error`. Both parts go through `boundedRowText`; `maxLines = 1` with ellipsis.
   - When `disconnected`, the leading region (dot and text) draws at `DISCONNECTED_ROW_ALPHA = 0.60f` and the dot is a solid `error` disc with no ring and no blink. The dot keeps its attention description.
   - Trailing `TreeRowControl` when `pinControl != None`: `ic_tree_pin` (11.29 × 16dp) labelled "Pin channel" for `Pin`, `ic_tree_unpin` (16 × 16dp) labelled "Unpin channel" otherwise, at height `ConversationBandHeight`. It is disabled for `UnpinDisabled`.
@@ -114,6 +114,10 @@ All JVM/Robolectric; no device test. Nothing needs a real IME, pixels saved to d
 ## Open Questions
 
 - Pinned-row start inset and the rule's spacing are not in the ticket, and Figma was unreachable. Resolved by reusing tree tokens (see Design source) and naming the choice in the PR.
+
+## Revisions
+
+- 2026-10-17: `TreeConversationRow` takes `pinTestTag: String?` instead of a second `pinModifier: Modifier`. Android Lint's composable parameter-order rule refuses a `Modifier` parameter after the defaulted ones. The contract is unchanged: the tag is applied to the trailing control only, and a null tag applies none.
 
 ## Security review
 

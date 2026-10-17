@@ -454,7 +454,8 @@ enum class TreePinControl { None, Pin, Unpin, UnpinDisabled }
  *
  * A non-null [hostName] appends the Pinned group's " · host" suffix in `onSurfaceVariant`. [disconnected]
  * is the owning host's disconnected accent: name, suffix and a solid dot in `error`, the leading region at
- * 60% alpha. [pinControl] adds a trailing [TreeRowControl] reporting through [onPinToggled]; its
+ * 60% alpha. [pinControl] adds a trailing [TreeRowControl], tagged [pinTestTag], reporting through
+ * [onPinToggled]; its
  * [UnpinDisabled][TreePinControl.UnpinDisabled] form stays visible but sends nothing.
  */
 @Composable
@@ -468,8 +469,8 @@ fun TreeConversationRow(
     hostName: String? = null,
     disconnected: Boolean = false,
     pinControl: TreePinControl = TreePinControl.None,
+    pinTestTag: String? = null,
     onPinToggled: () -> Unit = {},
-    pinModifier: Modifier = Modifier,
 ) {
     // Clamp daemon-authored text before layout, as the host row does; each part on its own, so a host
     // name can never make the joined label unbounded.
@@ -547,7 +548,7 @@ fun TreeConversationRow(
                 painter = painterResource(if (pin) R.drawable.ic_tree_pin else R.drawable.ic_tree_unpin),
                 contentDescription = stringResource(if (pin) R.string.cd_tree_pin_channel else R.string.cd_tree_unpin_channel),
                 onClick = onPinToggled,
-                modifier = pinModifier,
+                modifier = if (pinTestTag != null) Modifier.testTag(pinTestTag) else Modifier,
                 height = ConversationBandHeight,
                 // The thumbtack's own bounds at the 16dp glyph height; the slashed one is square.
                 glyphWidth = if (pin) 11.29412.dp else 16.dp,

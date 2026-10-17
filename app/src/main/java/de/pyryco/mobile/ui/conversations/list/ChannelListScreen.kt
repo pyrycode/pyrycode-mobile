@@ -721,7 +721,10 @@ private fun ConversationTree(
             val comparator = conversationLabelComparator(untitled)
             hostState.hosts.map { entry ->
                 SortedSections(
-                    channels = entry.host.channels.filter { selectionOnly || it.pinnedAt == null }.sortedWith(comparator),
+                    channels =
+                        entry.host.channels
+                            .filter { selectionOnly || it.pinnedAt == null }
+                            .sortedWith(comparator),
                     chats = entry.host.chats.sortedWith(comparator),
                 )
             }
@@ -784,7 +787,7 @@ private fun LazyListScope.treePinned(
                 disconnected = host.connectionStatus.relay.isDisconnected(),
                 pinControl = if (hostState.isHostConnected(host.serverId)) TreePinControl.Unpin else TreePinControl.UnpinDisabled,
                 onPinToggled = { onEvent(ChannelListEvent.TreePinToggled(target, pinned = false)) },
-                pinModifier = Modifier.testTag(treeConversationPinTestTag(host.serverId, row.conversation.id)),
+                pinTestTag = treeConversationPinTestTag(host.serverId, row.conversation.id),
             )
         }
     }
@@ -903,7 +906,7 @@ private fun LazyListScope.treeHost(
                             TreePinControl.None
                         },
                     onPinToggled = { onEvent(ChannelListEvent.TreePinToggled(target, pinned = true)) },
-                    pinModifier = Modifier.testTag(treeConversationPinTestTag(host.serverId, conversation.id)),
+                    pinTestTag = treeConversationPinTestTag(host.serverId, conversation.id),
                     // 15:8 draws no pen on a conversation row (#1563): a channel is edited from its thread's
                     // Edit (#1561), a chat renamed from its thread's Rename.
                 )

@@ -56,6 +56,7 @@ import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_WORKSPACE_NAME_FIELD_TAG
+import de.pyryco.mobile.ui.conversations.components.treeConversationPinTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostChannelAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostChatAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
@@ -1686,6 +1687,207 @@ class ChannelListScreenTest {
         composeTestRule.runOnIdle { state = state.copy(addWorkspace = state.addWorkspace?.copy(createFailed = false, startFailed = true)) }
         composeTestRule.onNode(hasText(string(R.string.add_workspace_start_failed))).assertIsDisplayed()
         composeTestRule.onNode(hasText("/w/created")).assertIsSelected()
+    }
+
+    // #2215: the shared Pinned group.
+    private fun pinned(
+        id: String,
+        name: String?,
+        at: String,
+    ) = conversation(id, name, "/w", true).copy(pinnedAt = Instant.parse(at))
+
+    private fun pinTag(
+        serverId: String,
+        conversationId: String,
+    ) = hasTestTag(treeConversationPinTestTag(serverId, conversationId))
+
+    @Test
+    fun pinnedGroupLeadsEveryHostAndSurvivesEveryFold() {
+        setTree(
+            entry(
+                "first",
+                "First",
+                channels = listOf(pinned("p1", "first pin", "2026-10-02T00:00:00Z"), conversation("c1", "first plain", "/w", true)),
+            ),
+            entry("second", "Second", channels = listOf(pinned("p2", "second pin", "2026-10-01T00:00:00Z"))),
+            entry("anon", null, channels = listOf(pinned("p3", null, "2026-10-03T00:00:00Z"))),
+        )
+
+        val heading = composeTestRule.onNode(hasText(string(R.string.tree_pinned_section)))
+        heading.assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Heading))
+        // Oldest pin first; each reads "channel · host", with the unnamed fallbacks.
+        assertEquals(
+            listOf(
+                "second pin · Second",
+                "first pin · First",
+                "${string(R.string.untitled_discussion)} · ${string(R.string.unnamed_host)}",
+            ),
+            drawnRows(TREE_PINNED_ROW_TEST_TAG),
+        )
+        // A pinned channel is drawn once: its host's Channels keeps only the unpinned one.
+        assertEquals(listOf("first plain"), drawnRows(TREE_CHANNEL_ROW_TEST_TAG))
+
+        val headingBounds = heading.getUnclippedBoundsInRoot()
+        val pinnedRows = composeTestRule.onAllNodes(hasTestTag(TREE_PINNED_ROW_TEST_TAG))
+        val rows = (0 until 3).map { pinnedRows[it].getUnclippedBoundsInRoot() }
+        val rule = composeTestRule.onNodeWithTag(TREE_PINNED_RULE_TEST_TAG).getUnclippedBoundsInRoot()
+        val firstHost =
+            composeTestRule
+                .onNode(
+                    hasContentDescription(string(R.string.cd_tree_row_collapse, "First")),
+                ).getUnclippedBoundsInRoot()
+        assertTrue(rows.all { it.top >= headingBounds.bottom })
+        assertTrue(rows.all { it.bottom <= rule.top })
+        assertTrue(rule.bottom <= firstHost.top)
+        assertDpEquals(1.dp, rule.bottom - rule.top)
+
+        // Folding a host and another host's Channels never hides Pinned.
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_row_collapse, "First"))).performClick()
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_row_collapse, "Channels on Second"))).performClick()
+        assertEquals(3, drawnRows(TREE_PINNED_ROW_TEST_TAG).size)
+        heading.assertIsDisplayed()
+        assertTrue(drawnRows(TREE_CHANNEL_ROW_TEST_TAG).isEmpty())
+    }
+
+    @Test
+    fun pinnedGroupIsAbsentWithoutPins_andAConnectedChannelOffersPinInThePenColumn() {
+        setTree(entry("pyry", "Pyry", channels = listOf(conversation("c1", "plain", "/w", true))))
+
+        composeTestRule.onAllNodes(hasText(string(R.string.tree_pinned_section))).assertCountEquals(0)
+        composeTestRule.onAllNodes(hasTestTag(TREE_PINNED_RULE_TEST_TAG)).assertCountEquals(0)
+        val pin = composeTestRule.onNode(pinTag("pyry", "c1"))
+        pin.assert(hasContentDescription(string(R.string.cd_tree_pin_channel)))
+        val pen = composeTestRule.onNodeWithTag(treeHostEditTestTag("pyry")).getUnclippedBoundsInRoot()
+        assertDpEquals(pen.right, pin.getUnclippedBoundsInRoot().right)
+        assertDpEquals(24.dp, pin.getUnclippedBoundsInRoot().run { bottom - top })
+        pin.performTouchInput { click() }
+        assertEquals(listOf<ChannelListEvent>(ChannelListEvent.TreePinToggled(HostConversationTarget("pyry", "c1"), pinned = true)), events)
+    }
+
+    @Test
+    fun pinnedRowsWithCollidingIdsOpenAndUnpinOnTheirOwnHost() {
+        setTree(
+            entry("first", "First", channels = listOf(pinned("same", "first same", "2026-10-01T00:00:00Z"))),
+            entry(
+                "second",
+                "Second",
+                channels = listOf(pinned("same", "second same", "2026-10-01T00:00:00Z"), conversation("other", "second plain", "/w", true)),
+            ),
+        )
+        val first = HostConversationTarget("first", "same")
+        val second = HostConversationTarget("second", "same")
+
+        composeTestRule.onNode(hasText("second same · Second")).performTouchInput { click() }
+        composeTestRule.onNode(hasText("second same · Second")).assertIsSelected()
+        composeTestRule.onNode(hasText("first same · First")).assertIsNotSelected()
+        composeTestRule.onNode(pinTag("first", "same")).performTouchInput { click() }
+        composeTestRule.onNode(hasText("first same · First")).performTouchInput { click() }
+        composeTestRule.onNode(pinTag("second", "same")).performTouchInput { click() }
+        composeTestRule.onNode(pinTag("second", "other")).performTouchInput { click() }
+
+        assertEquals(
+            listOf(
+                ChannelListEvent.TreeRowTapped(second),
+                ChannelListEvent.TreePinToggled(first, pinned = false),
+                ChannelListEvent.TreeRowTapped(first),
+                ChannelListEvent.TreePinToggled(second, pinned = false),
+                ChannelListEvent.TreePinToggled(HostConversationTarget("second", "other"), pinned = true),
+            ),
+            events,
+        )
+        composeTestRule.onNode(hasText("first same · First")).assertIsSelected()
+        composeTestRule.onNode(hasText("second same · Second")).assertIsNotSelected()
+    }
+
+    @Test
+    fun disconnectedPinnedRowIsErrorTintedWithADisabledUnpinUntilReconnect() {
+        val first =
+            entry(
+                "first",
+                "First",
+                channels = listOf(pinned("p1", "first pin", "2026-10-01T00:00:00Z"), conversation("c1", "first plain", "/a", true)),
+            )
+        val second = entry("second", "Second", channels = listOf(pinned("p2", "second pin", "2026-10-02T00:00:00Z")))
+
+        fun HostChannelListEntry.withRelay(relay: RelayLinkStatus) =
+            copy(host = host.copy(connectionStatus = ConnectionStatus(relay, PyrycodeLinkStatus.Connected)))
+        var state by mutableStateOf(HostChannelListState(listOf(first.withRelay(RelayLinkStatus.Offline), second)))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) { ChannelListScreen(hostState = state, onEvent = { events += it }) }
+        }
+        val list = composeTestRule.onNode(hasScrollAction())
+
+        // Offline: the pinned row stays, its unpin is drawn but disabled and sends nothing; the host's
+        // unpinned channel, scrolled into view first, draws no pin control.
+        composeTestRule
+            .onNode(pinTag("first", "p1"))
+            .assertIsDisplayed()
+            .assertIsNotEnabled()
+            .performTouchInput { click() }
+        list.performScrollToNode(hasText("first plain"))
+        composeTestRule.onAllNodes(pinTag("first", "c1")).assertCountEquals(0)
+        composeTestRule.onNode(pinTag("second", "p2")).assertIsEnabled()
+        // The row itself still opens its own host's channel.
+        list.performScrollToNode(hasText("first pin · First"))
+        composeTestRule.onNode(hasText("first pin · First")).performTouchInput { click() }
+        assertEquals(listOf<ChannelListEvent>(ChannelListEvent.TreeRowTapped(HostConversationTarget("first", "p1"))), events)
+
+        state = state.copy(hosts = listOf(first, second))
+        composeTestRule.waitForIdle()
+        composeTestRule.onNode(pinTag("first", "p1")).assertIsEnabled().performTouchInput { click() }
+        list.performScrollToNode(pinTag("first", "c1"))
+        composeTestRule.onNode(pinTag("first", "c1")).assertIsEnabled()
+        assertEquals(ChannelListEvent.TreePinToggled(HostConversationTarget("first", "p1"), pinned = false), events.last())
+    }
+
+    @Test
+    fun restoredPinsOfAnUnreachableHostRenderBeforeAnyLiveList() {
+        // A restart's cache restore: no accepted live list yet, the host still dialling or unreachable.
+        val restored =
+            HostChannelListEntry(
+                host =
+                    HostConversationSnapshot(
+                        serverId = "box",
+                        displayName = "Box",
+                        connectionStatus = ConnectionStatus(RelayLinkStatus.Reconnecting(secondsRemaining = 5), PyrycodeLinkStatus.Down),
+                        channels = listOf(pinned("p1", "cached pin", "2026-10-01T00:00:00Z")),
+                        rowsLoaded = false,
+                    ),
+                recentChats = emptyList(),
+                chatCount = 0,
+            )
+        setTree(restored)
+
+        assertEquals(listOf("cached pin · Box"), drawnRows(TREE_PINNED_ROW_TEST_TAG))
+        composeTestRule.onNode(pinTag("box", "p1")).assertIsNotEnabled().performTouchInput { click() }
+        assertTrue(events.none { it is ChannelListEvent.TreePinToggled })
+    }
+
+    @Test
+    fun selectionOnlyPickerKeepsHostGroupingWithNoPinnedGroupOrPinControls() {
+        val state =
+            HostChannelListState(
+                listOf(
+                    entry(
+                        "pyry",
+                        "Pyry",
+                        channels = listOf(pinned("p1", "pinned one", "2026-10-01T00:00:00Z"), conversation("c1", "plain", "/w", true)),
+                    ),
+                ),
+            )
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                ChannelListScreen(hostState = state, onEvent = { events += it }, shareHeader = {})
+            }
+        }
+
+        composeTestRule.onAllNodes(hasText(string(R.string.tree_pinned_section))).assertCountEquals(0)
+        composeTestRule.onAllNodes(hasTestTag(TREE_PINNED_ROW_TEST_TAG)).assertCountEquals(0)
+        assertEquals(listOf("pinned one", "plain"), drawnRows(TREE_CHANNEL_ROW_TEST_TAG))
+        composeTestRule.onAllNodes(pinTag("pyry", "p1")).assertCountEquals(0)
+        composeTestRule.onAllNodes(pinTag("pyry", "c1")).assertCountEquals(0)
+        composeTestRule.onNode(hasText("pinned one")).performTouchInput { click() }
+        assertEquals(listOf<ChannelListEvent>(ChannelListEvent.TreeRowTapped(HostConversationTarget("pyry", "p1"))), events)
     }
 
     private companion object {

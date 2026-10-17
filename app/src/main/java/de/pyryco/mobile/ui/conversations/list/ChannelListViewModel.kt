@@ -113,8 +113,11 @@ data class PinnedChannel(
  */
 internal fun pinnedChannels(hosts: List<HostChannelListEntry>): List<PinnedChannel> =
     hosts
-        .flatMap { entry -> entry.host.channels.filter { it.pinnedAt != null }.map { PinnedChannel(entry, it) } }
-        .sortedWith(compareBy({ it.conversation.pinnedAt }, { it.entry.host.serverId }, { it.conversation.id }))
+        .flatMap { entry ->
+            entry.host.channels
+                .filter { it.pinnedAt != null }
+                .map { PinnedChannel(entry, it) }
+        }.sortedWith(compareBy({ it.conversation.pinnedAt }, { it.entry.host.serverId }, { it.conversation.id }))
 
 /**
  * The Edit workspace modal's target and flags (#905), shaped like [HostEditorState].
