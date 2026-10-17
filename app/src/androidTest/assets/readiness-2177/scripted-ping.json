@@ -1,0 +1,21 @@
+{
+  "command": "PYRY_GATE_EVIDENCE_DIR=/tmp/builder-2177/scripted-ping timeout 1500 python3 scripts/android-test-gate.py scripted ping",
+  "mobile_revision": "e8a4508f23f1b99e0c22494656fad1fe4a9ecf7d",
+  "mobile_working_changes": "Investigation plan and content-free evidence assets only; no production, test or harness logic changes.",
+  "daemon_revision": "ef41c46842871700ed9ca3e4661634ceba4e4f63",
+  "agents_revision": "800e719515a91bf2040d9d26b0e0a802e931bca3",
+  "device": "pixel2Api33Atd",
+  "xml_timestamp": "2026-10-16T21:57:55",
+  "xml_sha256": "5ba3e78547924116510026a995053936086b92b11a3865bb5f14fefe0630eaf9",
+  "counts": { "executed": 2, "passed": 1, "failed": 1, "errors": 0, "skipped": 0 },
+  "exit": 1,
+  "tests": {
+    "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_durableGapCatchUp": "passed",
+    "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread": "failed: 90000 ms wait for observeReadMarks to reach the rendered reply checkpoint"
+  },
+  "diagnostic": "Rendered finished reply reached checkpoint 12 with receipt facts 1 through 12, no holes, unknown facts, gaps or unidentified content. The final focus snapshot follows activity teardown and does not establish a crash cause.",
+  "existing_main_failure": "https://github.com/pyrycode/pyrycode-mobile/issues/2198",
+  "dependency": "Verified native blocked-by link from #2177 to open #2198; no acceptance retry, skip or assertion change.",
+  "raw_evidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2177/scripted-ping-20261016/",
+  "complete_dispatcher_scripted_all": "pending; cannot claim a green complete gate while this existing main failure remains"
+}

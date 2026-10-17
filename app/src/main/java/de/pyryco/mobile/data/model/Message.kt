@@ -16,7 +16,8 @@ data class Message(
     /** Non-null exactly on an assistant row folded from `assistant_delta`s (#1350); see [AssistantSegment]. */
     val segment: AssistantSegment? = null,
     /** Assistant parent attribution, verbatim inert grouping data; never authority, a path or a log field.
-     * Empty for main/unknown/cache-only rows. Tool attribution stays on [ToolCall.parentToolUseId]. */
+     * Empty for main/unknown rows and rows restored from a cache document written before #2221. Tool attribution
+     * stays on [ToolCall.parentToolUseId]. */
     val parentToolUseId: String = "",
     /** Original ordinary-row id when [id] is a local collision alias; never inferred from alias text. */
     val reconciliationId: String? = null,
