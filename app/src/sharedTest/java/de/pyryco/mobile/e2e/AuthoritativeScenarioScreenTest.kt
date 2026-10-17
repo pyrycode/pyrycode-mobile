@@ -29,7 +29,10 @@ import org.robolectric.annotation.GraphicsMode
 class AuthoritativeScenarioScreenTest {
     @get:Rule val compose = createComposeRule()
 
-    private fun mount(items: List<ThreadItemDto>): ThreadEvidence {
+    private fun mount(
+        items: List<ThreadItemDto>,
+        collapseToolUses: Boolean = false,
+    ): ThreadEvidence {
         val snapshot: AuthoritativeThreadSnapshot = scenarioSnapshot(items)
         compose.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
@@ -44,6 +47,7 @@ class AuthoritativeScenarioScreenTest {
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
                     onRetry = {},
+                    collapseToolUses = collapseToolUses,
                 )
             }
         }
@@ -71,5 +75,20 @@ class AuthoritativeScenarioScreenTest {
         compose.onAllNodes(hasText("unmatched1827") and hasAnyAncestor(child), useUnmergedTree = true).assertCountEquals(0)
         list.performScrollToNode(hasTestTag("background-agent:${family.agentId}"))
         compose.onNode(hasTestTag("background-agent:${family.agentId}")).assertIsDisplayed()
+    }
+
+    @Test fun settledAgentRunNavigatesOpensAndClosesOverDaemonBuiltThread() {
+        val evidence = mount(finishedAgentScenarioItems(), collapseToolUses = true)
+        val family = requireNotNull(evidence.agentFamily(evidence.owner))
+        compose.verifyAgentRunNavigation(
+            agentId = family.agentId,
+            runId = requireNotNull(family.runId),
+            childIds = family.childIds,
+            ownedChild = hasText("child1827-after") and hasAnyAncestor(hasTestTag("background-agent-child:${family.agentId}")),
+            goLabel = "Go to agent ↓",
+            expandLabel = "Show tool uses",
+            collapseLabel = "Hide tool uses",
+            evidence = { println(it) },
+        )
     }
 }
