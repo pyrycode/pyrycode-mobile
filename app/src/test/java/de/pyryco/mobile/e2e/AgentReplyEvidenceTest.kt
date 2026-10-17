@@ -36,7 +36,8 @@ class AgentReplyEvidenceTest {
         token: Any = connection,
     ) = authoritativeThreadEvidence(host, "chat", token, snapshot)
 
-    private fun ThreadEvidence.reply(current: ThreadEvidenceOwner = owner) = agentReplyEvidence(current, "raw-task", "raw-agent", "child", "main")
+    private fun ThreadEvidence.reply(current: ThreadEvidenceOwner = owner) =
+        agentReplyEvidence(current, "raw-task", "raw-agent", "child", "main")
 
     @Test fun authoritativeAgentReplyUsesProjectedIdentities() {
         val snapshot = agentReplySnapshot()
@@ -145,7 +146,12 @@ class AgentReplyEvidenceTest {
                         put("task_link", buildJsonObject { put("task_type", "local_bash") })
                     },
             )
-        val snapshot = AuthoritativeThreadSnapshot(epoch = "epoch", generation = 3, items = listOf(task, agentReplyItem(2, turn = "launch"), agentReplyItem(5)))
+        val snapshot =
+            AuthoritativeThreadSnapshot(
+                epoch = "epoch",
+                generation = 3,
+                items = listOf(task, agentReplyItem(2, turn = "launch"), agentReplyItem(5)),
+            )
         val held = evidence(snapshot)
         assertEquals(5L, held.settledMainReply(held.owner, "main")?.fact?.id)
         assertEquals(2L, held.settledMainReply(held.owner, "launch")?.fact?.id)

@@ -53,10 +53,10 @@ class AgentReplyEvidenceScreenTest {
         }
         val reply = hasTestTag("assistant-reply:${evidence.heldReply.message.id}")
         val child = hasTestTag("background-agent-child:${evidence.agent.block}")
-        val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:${evidence.runId}"))
+        val run =
+            hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:${evidence.runId}"))
 
-        fun labelled(label: String) =
-            run and SemanticsMatcher(label) { it.config.getOrNull(SemanticsActions.OnClick)?.label == label }
+        fun labelled(label: String) = run and SemanticsMatcher(label) { it.config.getOrNull(SemanticsActions.OnClick)?.label == label }
         val list = compose.onNode(hasScrollToIndexAction())
         list.performScrollToNode(run)
         compose.onNode(labelled("Show tool uses")).assertExists()

@@ -5377,7 +5377,8 @@ class InteractiveStreamE2ETest {
             val reply = hasTestTag("assistant-reply:${evidence.heldReply.message.id}")
             val child = hasTestTag("background-agent-child:${evidence.agent.block}")
             // The root Agent stays separate; its owned paragraph and tools fold into this run.
-            val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:${evidence.runId}"))
+            val run =
+                hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:${evidence.runId}"))
             val expandLabel = string(R.string.tool_run_expand)
             val closedRun =
                 run and
@@ -5549,7 +5550,10 @@ class InteractiveStreamE2ETest {
             val reply =
                 runBlocking {
                     withTimeout(THREAD_TIMEOUT_MS) {
-                        liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { it.settledMainReply(it.owner, turnId) != null }
+                        liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) {
+                            it.settledMainReply(it.owner, turnId) !=
+                                null
+                        }
                     }
                 }.let { checkNotNull(it.settledMainReply(it.owner, turnId)) }
             val body = hasTestTag("assistant-reply:${reply.message.id}")

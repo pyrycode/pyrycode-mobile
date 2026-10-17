@@ -68,5 +68,12 @@ internal fun agentReplySnapshot(
 ) = AuthoritativeThreadSnapshot(
     epoch = "epoch",
     generation = 3,
-    items = listOf(root, child, agentReplyItem(3, "tool_call", parent = 1, turn = "child"), agentReplyItem(4, "tool_call", parent = 1, turn = "child"), main),
+    items =
+        listOf(
+            root,
+            child,
+            agentReplyItem(3, "tool_call", parent = 1, turn = "child"),
+            agentReplyItem(4, "tool_call", parent = 1, turn = "child"),
+            main,
+        ),
 )
