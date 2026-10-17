@@ -334,6 +334,11 @@ class StableConversationRepository(
         muted: Boolean,
     ): Unit = live.setMuted(conversationId, muted)
 
+    override suspend fun setPinned(
+        conversationId: String,
+        pinned: Boolean,
+    ): Unit = live.setPinned(conversationId, pinned)
+
     override fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> =
         switchToLive(null) { it.observeReadMarks(conversationId) }
 

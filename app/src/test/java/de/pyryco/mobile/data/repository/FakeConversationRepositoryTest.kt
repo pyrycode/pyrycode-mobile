@@ -457,6 +457,45 @@ class FakeConversationRepositoryTest {
             assertEquals(before, repo.observeConversations(ConversationFilter.All).first())
         }
 
+    // #2214: the fake stands in for the host — a repeat pin keeps the first time, unpin clears it.
+    @Test
+    fun setPinned_repeatPinKeepsTimestamp_unpinClears() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val channelId = "seed-channel-personal"
+
+            suspend fun row() =
+                repo
+                    .observeConversations(ConversationFilter.All)
+                    .first()
+                    .single { it.id == channelId }
+            val before = row()
+            assertNull(before.pinnedAt)
+
+            repo.setPinned(channelId, true)
+            val pinnedAt = requireNotNull(row().pinnedAt)
+            assertEquals(before.copy(pinnedAt = pinnedAt), row())
+
+            repo.setPinned(channelId, true)
+            assertEquals(pinnedAt, row().pinnedAt)
+
+            repo.setPinned(channelId, false)
+            assertEquals(before, row())
+        }
+
+    @Test
+    fun setPinned_onUnknownId_throwsAndChangesNothing() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val before = repo.observeConversations(ConversationFilter.All).first()
+
+            listOf(true, false).forEach { pinned ->
+                val thrown = runCatching { repo.setPinned("nope", pinned) }.exceptionOrNull()
+                assertTrue(thrown is IllegalArgumentException)
+            }
+            assertEquals(before, repo.observeConversations(ConversationFilter.All).first())
+        }
+
     @Test
     fun archive_isIdempotent() =
         runBlocking {

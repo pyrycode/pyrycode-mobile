@@ -394,6 +394,24 @@ interface ConversationRepository {
         muted: Boolean,
     ): Unit = error("setMuted is not implemented for this ConversationRepository")
 
+    /**
+     * Pin ([pinned] `true`) or unpin ([pinned] `false`) [conversationId] on its own host (#2214), one
+     * `set_conversation_pinned` per call. Nothing changes while the request is pending; on success
+     * [observeConversations] shows the host's confirmed [Conversation.pinnedAt] — a repeat pin keeps the
+     * host's original time — with no re-list.
+     *
+     * Failures match [setMuted]: [IllegalArgumentException] for an unknown conversation or a malformed
+     * reply, [de.pyryco.mobile.data.network.RelayErrorException] for any other refusal (an older host's
+     * `protocol.unknown_type`, `conversation.not_promoted`), [IllegalStateException] with no live session.
+     * None changes the list.
+     *
+     * Default throws, for implementations without the verb (inline test doubles), like [setMuted].
+     */
+    suspend fun setPinned(
+        conversationId: String,
+        pinned: Boolean,
+    ): Unit = error("setPinned is not implemented for this ConversationRepository")
+
     /** Live read facts only; absent before this connection reports them, never sourced from cache. */
     fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> = flowOf(null)
 
