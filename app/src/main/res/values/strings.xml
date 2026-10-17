@@ -36,6 +36,7 @@
     <string name="cd_tree_host_reconnect">Reconnect %1$s</string>
     <string name="cd_tree_host_update">Update Pyrycode to use %1$s</string>
     <string name="tree_host_update_required">Update Pyrycode to use this host.</string>
+    <string name="tree_host_thread_missing">Update this host\'s Pyrycode daemon to use it.</string>
     <string name="tree_host_update_required_version">Update Pyrycode to version %1$s or newer to use this host.</string>
     <!-- A workspace row's pencil (#905), in both sections; %1$s is the workspace's (clamped) shown name. -->
     <string name="cd_tree_workspace_edit">Edit workspace %1$s</string>

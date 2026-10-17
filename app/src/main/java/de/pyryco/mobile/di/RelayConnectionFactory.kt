@@ -89,6 +89,8 @@ class RelayConnectionBundle internal constructor(
     ioDispatcher: CoroutineDispatcher,
     messageTrail: MessageTrail,
     pumpFactory: RelaySessionPumpFactory,
+    /** Internal assembly seam for opt-in coordinators; the production factory keeps its existing configuration. */
+    createCoordinator: ((RelayConnectionSupervisor) -> RelayRepositoryCoordinator)? = null,
 ) {
     val supervisor = RelayConnectionSupervisor(transportFactory, pairedServerStore, dispatcher)
     val sessionFactory: NoiseSessionFactory =
@@ -101,7 +103,7 @@ class RelayConnectionBundle internal constructor(
             lastEventId = { coordinator.replayCursor.latest },
         )
     val coordinator: RelayRepositoryCoordinator =
-        RelayRepositoryCoordinator(
+        createCoordinator?.invoke(supervisor) ?: RelayRepositoryCoordinator(
             connections = supervisor.currentConnection,
             relayStatus = supervisor.relayStatus,
             // Each pump reports its own transport's app-too-old minimum to the supervisor that dialled it (#1008).

@@ -37,12 +37,18 @@ import kotlinx.coroutines.launch
 
 /** Owns every saved host; selection changes only the temporary single-host compatibility view. */
 @OptIn(ExperimentalCoroutinesApi::class)
-class RelayConnectionRegistry(
+class RelayConnectionRegistry internal constructor(
     private val store: ObservablePairedServerStore,
-    private val factory: RelayConnectionFactory,
-    dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val createConnection: (PairedServer) -> RelayConnectionBundle,
+    dispatcher: CoroutineDispatcher,
 ) : RelayConnectionController,
     ConnectionStateSource {
+    constructor(
+        store: ObservablePairedServerStore,
+        factory: RelayConnectionFactory,
+        dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    ) : this(store, factory::create, dispatcher)
+
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val entries = mutableMapOf<String, Pair<PairedServer, RelayConnectionBundle>>()
     private var foreground = false
@@ -127,7 +133,7 @@ class RelayConnectionRegistry(
         }
         saved.forEach { (record) ->
             if (record.serverId !in entries) {
-                val bundle = factory.create(record)
+                val bundle = createConnection(record)
                 entries[record.serverId] = record to bundle
                 if (foreground) bundle.supervisor.connect()
             }
@@ -203,7 +209,11 @@ class RelayConnectionRegistry(
             return
         }
         // Like compatibility retry, the supervisor's nonblocking call completes under this lock.
-        scope.launch(start = CoroutineStart.UNDISPATCHED) { expectedBundle.supervisor.retry() }
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            // A connected missing-thread host must redial to negotiate an updated daemon.
+            if (expectedBundle.coordinator.threadMissing.value) expectedBundle.supervisor.close()
+            expectedBundle.supervisor.retry()
+        }
         RelayLog.d { "event=host_retry_requested" }
     }
 
@@ -228,4 +238,13 @@ internal fun RelayRepositoryCoordinator.hostConversationConnection(
     serverId: String,
     displayName: String?,
 ): HostConversationConnection =
-    HostConversationConnection(serverId, displayName, currentRepository, connectionStatus, liveSessionEvents, hostModals, questionBatches)
+    HostConversationConnection(
+        serverId,
+        displayName,
+        currentRepository,
+        connectionStatus,
+        liveSessionEvents,
+        hostModals,
+        questionBatches,
+        threadMissing,
+    )

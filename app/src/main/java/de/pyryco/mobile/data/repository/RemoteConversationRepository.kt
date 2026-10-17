@@ -577,7 +577,8 @@ class RemoteConversationRepository internal constructor(
     }
 
     private fun authoritativeLiveEnabled(): Boolean =
-        authoritativeHostId.isNotEmpty() &&
+        !authoritativeCommandsEnded &&
+            authoritativeHostId.isNotEmpty() &&
             setOf(CAPABILITY_THREAD, CAPABILITY_INTERACTIVE).all { it in negotiatedCapabilities() }
 
     /** Supplied transient progress, never a durable item or read checkpoint. */
@@ -1455,6 +1456,7 @@ class RemoteConversationRepository internal constructor(
         cursor: String,
         limit: Int,
     ): HistoryPage {
+        refuseRetiredLegacyContent()
         val page = readHistoryPage(conversationId, cursor, limit)
         page.entries
             .asSequence()
@@ -1466,7 +1468,18 @@ class RemoteConversationRepository internal constructor(
     }
 
     /** Notification enrichment fetches one newest page without changing rows, coverage or read facts. */
-    internal suspend fun requestAttentionHistory(conversationId: String): HistoryPage = readHistoryPage(conversationId, "", 0)
+    internal suspend fun requestAttentionHistory(conversationId: String): HistoryPage {
+        refuseRetiredLegacyContent()
+        return readHistoryPage(conversationId, "", 0)
+    }
+
+    /** An opted-in host never requests legacy content, irrespective of its negotiated verdict. */
+    private fun refuseRetiredLegacyContent() {
+        if (authoritativeHostId.isNotEmpty()) {
+            RelayLog.d { "event=legacy_content_request_refused" }
+            throw IllegalStateException("legacy_content_request_refused")
+        }
+    }
 
     private suspend fun readHistoryPage(
         conversationId: String,
@@ -1580,7 +1593,11 @@ class RemoteConversationRepository internal constructor(
 
     override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
         flow {
-            pump.send(backfillSinceRequest(conversationId))
+            if (authoritativeHostId.isEmpty()) {
+                pump.send(backfillSinceRequest(conversationId))
+            } else {
+                RelayLog.d { "event=legacy_content_request_refused" }
+            }
             emitAll(threadProjection.observeSnapshot(conversationId))
         }
 
