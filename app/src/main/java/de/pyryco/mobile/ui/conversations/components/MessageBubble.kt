@@ -256,7 +256,7 @@ private fun AssistantMessage(
                 content = message.content,
                 initialRevealedLength = if (threadOpenedAt != null && message.timestamp < threadOpenedAt) message.content.length else 0,
                 onOpenMarkdownLink = onOpenMarkdownLink,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("assistant-reply:${message.id}"),
                 onPresented = { onContentPresented(message) },
             )
         } else if (!message.hasNoBody()) {
