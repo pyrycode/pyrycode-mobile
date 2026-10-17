@@ -343,7 +343,23 @@ chevron and pencil remain — a too-old host can still be edited or
 unpaired — even though the Figma frame omits the chevron; the row remains the fold control for every
 disconnected state, and dropping that affordance for one state was left out of scope.
 
-`TreeHostRow` reads `connectionStatus.relay.isDisconnected()` and, when true, draws the design's
+**Missing daemon thread support (#2244, opt-in).** `HostConversationSource` carries the coordinator's
+`threadMissing` verdict through its exact-bundle/generation guard into the host snapshot; `treeHost`
+passes it to `TreeHostRow`. Missing draws the same error-coloured `titleSmall` host name and server glyph
+even while connected. Its caption is “Update this host's Pyrycode daemon to use it.”
+(`tree_host_thread_missing`), using the existing name-aligned `bodySmall`/`onSurfaceVariant` layout.
+The caption and host-named “Reconnect %1$s” plug remain while folded; edit and unpair remain available.
+Missing survives disconnect and handshaking, and a later acknowledgement granting both required
+capabilities removes this treatment. See [connection-owned verdicts](remote-conversation-repository.md#opt-in-thread-negotiation-2244).
+
+Reconnect targets only that row's host. For Missing, registry `retryHost` closes that exact bundle's
+supervisor before `retry()`: retry alone cannot redial an already connected supervisor. Foreground,
+disposal and bundle-identity checks still apply, and ordinary failure supervision remains available.
+If `UpdateRequired` also applies, its app-update caption and Play Store action take priority over the
+daemon caption and plug; the app-too-old terminal behaviour is unchanged. Production activation is
+deferred to #2245, so this opt-in row contract does not yet advertise thread support in production.
+
+`TreeHostRow` reads `connectionStatus.relay.isDisconnected() || daemonUpdate` and, when true, draws the design's
 disconnected treatment. `FoldableTreeRow` gained an optional `accent: Color? = null` (default `null` keeps
 today's `onSurfaceVariant`/`onSurface` tints); the host row passes `colorScheme.error` for both the glyph
 and the name when disconnected. A `TreeRowControl` with `Icons.Filled.Power` is drawn before the pencil,
