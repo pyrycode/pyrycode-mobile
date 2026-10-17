@@ -93,6 +93,52 @@ This backend is independently callable and unbound: #2161 owns file import/appli
 Legacy evidence cannot certify authoritative facts. Conversation lists, read positions, settings
 and attachment bytes retain their existing storage.
 
+### The additive version 1 → 2 migration and authoritative tables (#2163)
+
+`ConversationCacheDatabase` raises its schema from version 1 to version 2 through Room's
+`AutoMigration(from = 1, to = 2)` — additive only: it adds the two authoritative tables below
+without altering or dropping any of the three legacy tables, so an existing on-disk database
+from #2162 opens and keeps every legacy row, header and evidence entry it already held. There
+is no destructive fallback. The exported schema for both versions lives under
+`app/src/main/roomSchemas/de.pyryco.mobile.data.cache.ConversationCacheDatabase/`
+(`1.json`, `2.json`); `AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence`
+builds a real on-disk version 1 database from the checked-in `1.json` schema, seeds legacy
+content, reopens it through Room's automatic migration, and asserts the legacy rows/evidence
+are unchanged before writing and reading back an authoritative replacement on the upgraded file.
+
+Two new tables, scoped and indexed the same way as the legacy three:
+
+- `authoritative_headers`: one row per exact host/conversation owner, holding the committed
+  epoch, a per-write replacement generation (a fresh UUID minted on every write, not a content
+  hash), `appliedVersion`, `checkpoint`, an optional serialized `SavedThreadCoverage` and the
+  item count written with it.
+- `authoritative_items`: one row per owner, epoch and item id, with a stable sorted `ordinal`
+  and the item's full raw JSON payload. A unique index over `(host, conversation, epoch,
+  ordinal)` keeps bounded reverse selection (`ORDER BY ordinal DESC LIMIT`) indexed for
+  `newestPage`/`beforePage`, the same shape `legacy_rows`' ordinal indexing already uses.
+
+Composite primary keys on both tables make epoch part of item and header identity, so two
+epochs for the same owner — or the same ids reused under a different owner — never collide.
+See [the authoritative contract](conversation-cache-contract.md#indexed-authoritative-room-storage-and-pages-2163)
+for the storage operations, validation, page/continuation and certification rules built on
+this schema.
+
+**Atomic scoped removal of both families.** `ConversationCacheDatabase.removeScope(host,
+conversation)` is the one place that deletes rows from all five tables — the three legacy
+plus the two authoritative — for an exact host or host/conversation, in a single Room
+transaction. `LegacyRoomStorage.removeConversation`/`removeHost` and
+`AuthoritativeRoomStorage.removeConversation`/`removeHost` all call this shared operation, so a
+scoped removal through either backend clears both families together; a conversation or host
+that still has rows in one family after a removal call indicates a bug, not a partial-removal
+contract. This is deliberately **not** used by ordinary replacement writes: `LegacyRoomStorage`'s
+`writeThread` keeps calling its own family-local row/evidence delete-then-insert, and
+`AuthoritativeRoomStorage.writeAuthoritativeThread` deletes and reinserts only the authoritative
+tables, so writing one family's facts never touches the other family's content for the same
+owner. `AuthoritativeRoomStorageTest.ownershipInvariant_familiesAndRemovalStayIsolated` pins
+both halves: a legacy write/removal leaves authoritative facts alone and an authoritative
+write/removal leaves legacy rows and evidence alone, for the same owner and across sibling
+owners that share an id under a different host, conversation or case.
+
 ### The cache-local record must mirror every `Conversation` field (#999)
 
 Being cache-local cuts both ways: nothing forces `CachedConversation` to track a field added to
