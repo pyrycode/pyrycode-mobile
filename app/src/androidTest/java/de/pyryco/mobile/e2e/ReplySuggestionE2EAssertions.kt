@@ -7,9 +7,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
-import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ConversationRepository
-import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.thread.REPLY_SUGGESTION_PLACEHOLDER_TAG
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -45,10 +43,10 @@ internal fun ComposeContentTestRule.assertReplySuggestionLongPress(
     val messages =
         runBlocking {
             withTimeout(timeoutMillis) {
-                repository.observeMessages(conversationId).first { it.suggestedReplyCount(text) == 1 }
+                harnessThreadEvidence(repository).observe(conversationId).first { it.userEchoCount(text) == 1 }
             }
         }
-    assertEquals(1, messages.suggestedReplyCount(text))
+    assertEquals(1, messages.userEchoCount(text))
     val clear =
         runBlocking {
             withTimeout(timeoutMillis) {
@@ -61,6 +59,3 @@ internal fun ComposeContentTestRule.assertReplySuggestionLongPress(
     assertTrue(clear.revision > suggestion.revision)
     waitUntil(timeoutMillis) { onAllNodesWithTag(REPLY_SUGGESTION_PLACEHOLDER_TAG, useUnmergedTree = true).fetchSemanticsNodes().isEmpty() }
 }
-
-private fun List<ThreadItem>.suggestedReplyCount(text: String): Int =
-    filterIsInstance<ThreadItem.MessageItem>().count { it.message.role == Role.User && it.message.content == text }
