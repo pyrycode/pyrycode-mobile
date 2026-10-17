@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
@@ -29,6 +30,11 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.CoroutineContext
 import kotlin.math.ceil
 import kotlin.random.Random
 
@@ -1104,6 +1110,35 @@ class RelayConnectionSupervisorTest {
             assertNull(supervisor.backoffState.value)
         }
 
+    // ---- #2219: close() has closed the live socket when it returns, even if the loop cleared it first --
+
+    @Test
+    fun close_closesTheLiveTransportBeforeReturning_whenTheCancelledLoopClearsItFirst() {
+        val loopEntered = CountDownLatch(1)
+        val releaseLoop = CountDownLatch(1)
+        val dispatcher = HandOffDispatcher(loopEntered)
+        val transport = LoopParkedTransport(dispatcher, loopEntered, releaseLoop)
+        val supervisor = RelayConnectionSupervisor(RelayTransportFactory { transport }, StubPairedServerStore(PAIRED), dispatcher, Random(SEED))
+        try {
+            supervisor.connect()
+            transport.emitUp()
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            while (supervisor.currentConnection.value !== transport && System.nanoTime() < deadline) Thread.yield()
+            assertSame(transport, supervisor.currentConnection.value)
+            dispatcher.drain() // The loop is suspended collecting events, so cancel() must dispatch its resume.
+            // The loop thread runs the cancelled loop's finally while close() is still inside cancel(): it clears
+            // liveConnection and parks before its own close, as a preempted Default thread can.
+            dispatcher.holdCaller = true
+            supervisor.close()
+            assertEquals(0L, loopEntered.count)
+            // An in-app link cut sends next on this thread, so the socket must already be closed here.
+            assertEquals("closes completed when close() returned", 1, transport.completedCloses.get())
+        } finally {
+            releaseLoop.countDown()
+            dispatcher.shutdown()
+        }
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private suspend fun RelayConnectionSupervisor.state(): ConnectionState = observe().first()
@@ -1145,6 +1180,75 @@ class RelayConnectionSupervisorTest {
                 relayUrl = "ws://localhost/relay-2",
                 serverStaticPublicKey = "key-2",
             )
+    }
+}
+
+/**
+ * A single loop thread for the #2219 close test. Once [holdCaller] is set, a caller other than the loop thread
+ * waits inside [dispatch] until its block finishes or the loop parks in the transport's close, so the cancelled
+ * loop's finally runs before `close()` reads `liveConnection`.
+ */
+private class HandOffDispatcher(
+    private val loopEntered: CountDownLatch,
+) : CoroutineDispatcher() {
+    @Volatile var loopThread: Thread? = null
+    @Volatile var holdCaller = false
+    private val executor = Executors.newSingleThreadExecutor { task -> Thread(task, "supervisor-loop").also { loopThread = it } }
+
+    override fun dispatch(
+        context: CoroutineContext,
+        block: Runnable,
+    ) {
+        val done = CountDownLatch(1)
+        executor.execute {
+            try {
+                block.run()
+            } finally {
+                done.countDown()
+            }
+        }
+        if (!holdCaller || Thread.currentThread() === loopThread) return
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (done.count > 0 && loopEntered.count > 0 && System.nanoTime() < deadline) Thread.yield()
+    }
+
+    fun drain() {
+        executor.submit {}.get(5, TimeUnit.SECONDS)
+    }
+
+    fun shutdown() {
+        executor.shutdown()
+        executor.awaitTermination(5, TimeUnit.SECONDS)
+    }
+}
+
+/** On the loop thread, [close] parks until [release]; any other caller completes its close at once. */
+private class LoopParkedTransport(
+    private val dispatcher: HandOffDispatcher,
+    private val loopEntered: CountDownLatch,
+    private val release: CountDownLatch,
+) : RelayTransport {
+    private val eventsChannel = Channel<TransportEvent>(Channel.UNLIMITED)
+    val completedCloses = AtomicInteger()
+
+    override val inbound: Flow<InnerFrameV2> = emptyFlow()
+    override val events: Flow<TransportEvent> = eventsChannel.receiveAsFlow()
+
+    override fun connect() = Unit
+
+    override fun send(frame: InnerFrameV2): Boolean = true
+
+    override fun close() {
+        if (Thread.currentThread() === dispatcher.loopThread) {
+            loopEntered.countDown()
+            release.await(5, TimeUnit.SECONDS)
+        }
+        completedCloses.incrementAndGet()
+        eventsChannel.close()
+    }
+
+    fun emitUp() {
+        eventsChannel.trySend(TransportEvent.Up)
     }
 }
 

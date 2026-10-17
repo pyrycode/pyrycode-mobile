@@ -67,3 +67,22 @@ The named native method stays device-only because it needs Activity restart, rea
 ## Documentation handoff
 
 Pending documentation stage: `docs/recorded-tests.md`, replay scheduling: a reply waits for every request its connection recorded before the answered one. Also record the first-failure field in teardown progress. Link this plan's regressions and the five focused runs.
+
+## Revisions
+
+### 2026-10-17: the cause is the supervisor's close, not reply order
+
+The open question was answered by a temporary, uncommitted match trace in one passing native run. The trace contradicted the design above.
+
+- Generation 1's list, MCP and context asks were matched on the main thread 258 ms before `request_history`. Normal runs give the reply-order race no window, and nothing showed the history ask overtaking.
+- The cut's `event=attachment_request` line ran on the main thread (tid 3351). The captured `close` was consumed on worker thread 3411, which is the cancelled supervisor loop's `finally`, not the cut's own `supervisor.close()`.
+
+`RelayConnectionSupervisor.close` cancels the loop before it reads `liveConnection`. The loop's `finally` first clears `liveConnection` and then closes its transport, unsynchronized with `close`. If that clear lands between the cancel and the read, `close` closes nothing and returns. The cut's thread then sends the retrieval request on a transport the loop has not closed yet. The tape fails on a request before its captured close, the app absorbs the failure as Unavailable, and generation 2's `connect` rethrows it. That is the #2173 signature.
+
+The same interleaving explains the interrupted-upload failure in that run. Its first failure, `phone/host-0/0:attachment_chunk, expected phone/host-0/0:close`, is the chunk after the cut reaching the tape before the loop's close. It is the same cause, not a separate one. The race needs the loop thread to run between two statements of `close`, and then the cut thread to win the hub monitor, which matches a heavily loaded full gate where both methods failed and passed on rerun. No prior test state is involved.
+
+New contract: `close` reads the live transport before cancelling, closes that transport (or one an `Up` published meanwhile) itself, and so returns only after the socket is torn down. This is a three-line change in `RelayConnectionSupervisor.close`. The reply hold is dropped from `RecordedSuiteTape.drain` and its two tape tests are removed, because no evidence supports it. The `first-failure` field in `progress` stays.
+
+Regression: `RelayConnectionSupervisorTest.close_closesTheLiveTransportBeforeReturning_whenTheCancelledLoopClearsItFirst`. A single-thread loop dispatcher holds `close()`'s caller inside the cancellation dispatch until the loop's `finally` has cleared `liveConnection` and parked in the transport's close. Before the fix, `close()` returned with zero completed closes: 38 executed, 1 failed, 0 skipped. After the fix, 38 of 38 passed. `SuiteConnectionsTest` (15 tests, including #2220's two) and `RecordedSuiteTapeTest` (23 tests) passed.
+
+The documentation handoff becomes: `docs/recorded-tests.md`, "Atomic transport close (#2219)". Add that the supervisor's `close` now closes the live transport itself before returning, so an in-app cut can no longer race the cancelled loop. Also record the teardown progress's `first-failure` field.
