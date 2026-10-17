@@ -88,6 +88,15 @@ The remaining open question is resolved by retaining the repaired focused result
 and a content-free evidence index at
 `app/src/test/resources/verification/recorded-close-2219/evidence.json`.
 
+Validation completed on pushed revision `3c4ccf7f8d938f0ac4600bbfc4afea5e168c40d6`:
+the harness class passed 15/15 and the strict tape class 23/23, with no skips.
+Five consecutive original native executions passed 1/1 each with no failures,
+errors or skips (8.897, 8.169, 8.624, 8.274 and 7.809 seconds). All five retain
+identical source hashes. The controlled pre-repair harness is byte-identical to
+the historical #2213 failing revision. Raw output, XML, source snapshots,
+revisions and phone diagnostics are retained privately beneath the evidence
+root named by the index. The configured full UI gate remains dispatcher-owned.
+
 ## Documentation handoff
 
 Pending documentation stage: `docs/recorded-tests.md`, replay scheduling and
