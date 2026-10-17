@@ -201,6 +201,16 @@ client process. Matching client/build JVM options avoid the detached single-use
 worker that --no-daemon alone can create. Kotlin compilation stays in that JVM.
 Build-cache reuse remains enabled.
 
+Every JVM unit test has a 180-second limit, Robolectric and `sharedTest` classes included.
+Unit tests run on the JUnit Platform's vintage engine, so `TestTimeoutWatchdog`, registered
+under `app/src/test/resources/META-INF/services`, sees each test start and finish. A test past
+the limit prints `TEST TIMEOUT` with the test name and a full thread dump to the Gradle log, and
+its thread is interrupted so the test fails and the run continues. A test still running 30 seconds
+later, one that passes despite the interrupt, or a second timeout in the same run halts the test
+JVM, so the gate fails within minutes instead of hanging (#2161). The slowest ordinary test took
+16 seconds. `-PtestTimeoutSeconds=N` changes the limit and `0` removes it. The Gradle task itself
+stops after 30 minutes, below the dispatcher's 60-minute limit.
+
 For filesystem tests that assert permission preservation, set the fixture's
 starting mode explicitly before exercising the code. `mkdir(mode=0o755)` is
 filtered by the inherited umask: under `077` it creates a `0700` directory, so a
