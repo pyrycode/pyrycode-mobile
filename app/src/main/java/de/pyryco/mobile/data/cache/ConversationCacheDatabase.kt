@@ -6,23 +6,29 @@ import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.withTransaction
+import kotlinx.coroutines.CancellationException
+import java.io.IOException
 
 /** Shared database shell. Legacy evidence cannot certify the authoritative storage family. */
 @Database(
     entities = [
         ConversationCacheDatabase.Header::class, ConversationCacheDatabase.Row::class, ConversationCacheDatabase.Evidence::class,
         ConversationCacheDatabase.AuthoritativeHeader::class, ConversationCacheDatabase.AuthoritativeItem::class,
+        ConversationCacheDatabase.FileImport::class,
     ],
-    version = 2,
-    autoMigrations = [AutoMigration(from = 1, to = 2)],
+    version = 3,
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
 )
 abstract class ConversationCacheDatabase : RoomDatabase() {
     internal abstract fun legacy(): LegacyDao
 
     internal abstract fun authoritative(): AuthoritativeDao
+
+    internal abstract fun imports(): FileImportDao
 
     /** Public backend removals share this transaction; family replacements use their own deletes. */
     internal suspend fun removeScope(
@@ -34,6 +40,33 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         legacy().deleteHeaders(host, conversation)
         authoritative().deleteItems(host, conversation)
         authoritative().deleteHeaders(host, conversation)
+    }
+
+    /** #2161: one file family's settled import or retirement; the host-wide row uses conversation "". */
+    @Entity(tableName = "file_imports", primaryKeys = ["host", "conversation", "family"])
+    internal data class FileImport(
+        val host: String,
+        val conversation: String,
+        val family: String,
+        val outcome: String,
+    ) {
+        override fun toString(): String = "FileImport(family=$family, outcome=$outcome)"
+    }
+
+    @Dao
+    internal interface FileImportDao {
+        @Query("SELECT * FROM file_imports WHERE host=:host AND (family='host' OR (conversation=:conversation AND family=:family))")
+        suspend fun settled(
+            host: String,
+            conversation: String,
+            family: String,
+        ): List<FileImport>
+
+        @Insert(onConflict = OnConflictStrategy.REPLACE)
+        suspend fun record(imports: List<FileImport>)
+
+        @Query("DELETE FROM file_imports WHERE host=:host")
+        suspend fun clearHost(host: String)
     }
 
     @Entity(tableName = "authoritative_headers", primaryKeys = ["host", "conversation"])
@@ -303,3 +336,43 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         )
     }
 }
+
+/** #2161: a Room cache transaction's value, or the static code of the classified failure it rolled back on. */
+internal sealed interface CacheTransaction<out T> {
+    class Committed<T>(
+        val value: T,
+    ) : CacheTransaction<T>
+
+    class Failed(
+        val code: String,
+    ) : CacheTransaction<Nothing>
+}
+
+/**
+ * #2161: the one transaction shape of the Room cache backends. [block] and then [beforeCommit], a test hold point,
+ * run in one transaction. A classified failure rolls both back and returns its static code; cancellation and
+ * unclassified programming errors propagate.
+ */
+internal suspend fun <T> ConversationCacheDatabase.classifiedTransaction(
+    beforeCommit: suspend () -> Unit = {},
+    block: suspend () -> T,
+): CacheTransaction<T> =
+    try {
+        CacheTransaction.Committed(withTransaction { block().also { beforeCommit() } })
+    } catch (error: Exception) {
+        CacheTransaction.Failed(failureCode(error) ?: throw error)
+    }
+
+private fun ConversationCacheDatabase.failureCode(error: Exception): String? =
+    when {
+        error is CancellationException -> null
+        error is SecurityException -> "denied"
+        error is IOException -> "io"
+        error is IllegalArgumentException -> "invalid_data"
+        error is IllegalStateException && !isOpen -> "io"
+        // Platform SQLite failures are classified without an Android dependency in the data contract.
+        generateSequence<Class<*>>(error.javaClass) { it.superclass }.any {
+            it.name == "android.database.SQLException" || it.name == "androidx.sqlite.SQLiteException"
+        } -> "io"
+        else -> null
+    }

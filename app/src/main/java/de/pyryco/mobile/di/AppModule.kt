@@ -12,7 +12,6 @@ import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
-import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.KeystoreDeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.KeystorePairedServerStore
@@ -98,8 +97,9 @@ val appModule =
             )
         }
         single { AppPreferences(get()) }
-        // #796: the cache's only binding. A `single` because FileConversationCache's Mutex is per
-        // instance, so two instances over one root would lose an update against each other.
+        // #796: the cache's only binding. A `single` because the cache's Mutex is per instance, so two
+        // instances over one root would lose an update against each other. #2161: thread families
+        // now import from the file root into Room (openConversationCache); lists stay in files.
         //
         // The root is noBackupFilesDir, never filesDir. The manifest ships allowBackup="true" with
         // empty backup and data-extraction rules, so anything under filesDir rides cloud backup and
@@ -108,7 +108,7 @@ val appModule =
         // cwds on a device that never paired the host and cannot reach it. noBackupFilesDir is
         // excluded from both paths by definition, keeping the cache exactly as transferable as the
         // credentials it belongs to. ConversationCacheBindingInstrumentedTest holds this.
-        single<ConversationCache> { FileConversationCache(File(androidContext().noBackupFilesDir, "conversations")) }
+        single<ConversationCache> { openConversationCache(androidContext()) }
         // #899: retrieved attachments, kept per host under noBackupFilesDir for the reason above. A `single`
         // because its one-fetch-per-file bookkeeping is per instance.
         single { AttachmentStore(File(androidContext().noBackupFilesDir, "attachments")) }
@@ -118,9 +118,11 @@ val appModule =
         // opens the Edit host modal carries a draft-store or cache dependency it does not otherwise use,
         // and so any future removal path inherits the eviction. `save` and `setDisplayName` deliberately
         // do not evict: re-pairing the same id and renaming a host both keep their drafts and content.
+        // #2161: `save` re-admits the host's cache thread writes that the removal fenced.
         single {
             ObservablePairedServerStore(
                 KeystorePairedServerStore(get()),
+                admitSavedHost(lazy { get() }),
                 forgetRemovedHost(get(), get(), lazy { get() }, lazy { get() }) { get<SharingShortcuts>().removeHost(it) },
             )
         } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
