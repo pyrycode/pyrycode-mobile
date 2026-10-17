@@ -67,6 +67,15 @@ The build-hp-1 focused class used generation `151a9dbd…`, the same as the fail
 
 Identical source and generation therefore pass on build-hp-1 with at least 445 ms of headroom. The same cold decode takes 1.4 to 3.2 times longer on fractal-2, which fits the localization above.
 
+After the 2026-10-17 revision, a fresh focused class ran on Linux/build-hp-1 at `e3c1afaa`, which includes #2228, with the same generation and wrapper. It recorded 4/4/0/0/0, exit 0, XML timestamp 2026-10-17T10:42:22.
+
+- Every installed class logged `event=first_draw_bound bound_ms=2000` with the SwiftShader renderer, and the projection twin held for 2100 ms.
+- Fragmented first draws were 614, 441, 415 and 416 ms. Ordinary draws were 118–258 ms, so every opening also met 1000 ms.
+- The slow control drew at 3473 ms and was rejected.
+- Readiness ran 17 barriers over 83 windows, with maximum acquire/read of 10/37 ms.
+
+The summary is in `build-hp-1-software-bound.json`. The fractal-2 failing run stays failed.
+
 ## Open Questions
 
 - Is the fractal-2 SwANGLE launcher intended? This is answered by the native blocker, not by Mobile. Resolved on #2222: yes, see Revisions.
@@ -81,4 +90,4 @@ Identical source and generation therefore pass on build-hp-1 with at least 445 m
 
 ## Documentation handoff
 
-Pending for the documentation stage: `docs/knowledge/features/thread-screen-testing-saved-first-draw.md`. Add the localized costs above (decode share, content-to-frame on the ordinary fixture, history and garbage-collection overlap), the same-host launcher comparison, counted results for all three runs, and the attribution limits. Keep readiness evidence separate from elapsed-draw evidence, and keep closed #2202's historical disposition.
+Pending for the documentation stage: `docs/knowledge/features/thread-screen-testing-saved-first-draw.md`. Add the localized costs above (decode share, content-to-frame on the ordinary fixture, history and garbage-collection overlap), the same-host launcher comparison, counted results for all four runs (the last is the first device run of #2228's software bound), the operator's #2222 attribution to Fractal's processor under software rendering, and the attribution limits. Keep readiness evidence separate from elapsed-draw evidence, and keep closed #2202's historical disposition.

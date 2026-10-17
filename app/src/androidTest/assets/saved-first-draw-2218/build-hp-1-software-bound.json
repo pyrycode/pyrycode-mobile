@@ -1,0 +1,78 @@
+{
+ "run": "fresh supported focused class, python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest",
+ "platform": "Linux/build-hp-1 (Intel Core i7-8700)",
+ "xml_timestamp": "2026-10-17T10:42:22",
+ "mobile": "e3c1afaa325e1d5fe7be43a846b8e12bc41408aa (feature/2218 with main 51954f1d, including #2228)",
+ "agents": "c8edc37edbcc111bf769b93840beea0fe5e8c02f",
+ "generation": "151a9dbd74aea4118480cc270492d68ef7fd255ce0b03cfacf6db74537c098d8",
+ "generation_reused": true,
+ "launcher": {"binary": "emulator wrapper -> emulator.hp-native", "gpu": "swangle", "hw.gpu.mode": "swiftshader"},
+ "device": "pixel2Api33Atd_0, Android 13 Google ATD x86_64, 2048 MiB",
+ "exit": 0,
+ "counts": {"executed": 4, "failed": 0, "errors": 0, "skipped": 0, "passed": 4},
+ "tests": {
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#slowRestore_negativeControlRejectsTheSameFirstDrawBound": "passed",
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen": "passed",
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen": "passed",
+  "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#heldCpuPipeCancelsAndClosesItsDescriptor": "passed"
+ },
+ "raw_xml_sha256": "07195b9edf05ef20a465d728c8e24101d78f7d605a28ee6e2419ba792c02f90a",
+ "applied_bound_ms": 2000,
+ "renderer": "Android Emulator OpenGL ES Translator (ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0))",
+ "source_sha256": {
+  "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "1153149d4d3e205e80168568a1457948a010355048ebdf4dafd3e2e28eb6c826",
+  "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b76344d827dd69b4356d27e1620e21c120668af0cc8fa8d36e05a5c1c2a9b33b",
+  "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "df15f0d6c7f3114adab4e239a8a94c952c7c1d226333d01c24d06db7079d303f",
+  "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/FragmentedHistoryFixture.kt": "59f23bda2db97ddb8f40c768f642c39d917e06ff0f11aad90624cb83a50bace1",
+  "app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt": "0771ca82b27994812531da90c1c175940f954911bd79456a1d4c6df80cab2261",
+  "app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt": "49dad7519f2fbabb5ca716bd4a93dbf967fb1da83d0bda77fadcecc06c7c578a",
+  "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt": "3f0e3b2c968c2aa205c7fac27cbb33c98a104fa8debce4db8702baebd970c4cf",
+  "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt": "c3506277f37f6c5f13c25f0c800d1516208d399a0a90fb47f26a181114ba2626"
+ },
+ "source_vs_earlier_runs": {
+  "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "changed",
+  "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "same",
+  "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "same",
+  "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/FragmentedHistoryFixture.kt": "same",
+  "app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt": "changed",
+  "app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt": "same",
+  "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt": "same",
+  "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt": "same"
+ },
+ "source_change_notes": [
+  "SavedThreadFirstDrawDeviceTest.kt: #2228 renderer-selected bound (2000 ms under SwiftShader, else 1000 ms) and projection hold of bound + 100 ms.",
+  "FileConversationCache.kt: #2213 adds pinnedAt to the conversation-list record (CachedConversation); the thread row and history decode is unchanged."
+ ],
+ "readiness": {"barriers": 17, "windows": 83, "idle_pct_range": [21, 100], "max_acquire_ms": 10, "max_read_ms": 37, "projection_hold_ms": [0, 2100], "note": "Each barrier ended with four consecutive >=80% idle windows; busy windows reset the streak."},
+ "slow_control_phases_ms": [3085, 3348, 3381, 3473],
+ "fragmented_first_opens_ms": {
+  "fractal-2 swangle failing (#2177, bound 1000 ms, 4/2/2/0/0)": {"delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen fragmented online=false opening=0": [935, 936, 985, 1314], "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen fragmented online=true opening=0": [710, 713, 749, 1032], "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen fragmented online=false opening=0": [791, 792, 816, 1026], "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen fragmented online=true opening=0": [451, 453, 473, 619]},
+  "build-hp-1 earlier (bound 1000 ms, 4/4/0/0/0)": {"delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen fragmented online=false opening=0": [376, 377, 402, 555], "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen fragmented online=true opening=0": [294, 295, 308, 433], "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen fragmented online=false opening=0": [295, 296, 308, 407], "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen fragmented online=true opening=0": [304, 305, 320, 420]},
+  "build-hp-1 this run (bound 2000 ms, 4/4/0/0/0)": {"delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen fragmented online=false opening=0": [427, 428, 452, 614], "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen fragmented online=true opening=0": [311, 311, 322, 441], "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen fragmented online=false opening=0": [285, 286, 295, 415], "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen fragmented online=true opening=0": [300, 301, 320, 416]}
+ },
+ "openings": [
+  {"method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen", "case": "ordinary online=false opening=0", "gc": [], "phases_ms": [91, 111, 130, 258], "rows": 20, "gc_overlapping": {"restore": 0, "content_to_frame": 0}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen", "case": "ordinary online=false opening=1", "gc": [], "phases_ms": [71, 87, 108, 221], "rows": 20, "gc_overlapping": {"restore": 0, "content_to_frame": 0}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen", "case": "ordinary online=true opening=0", "gc": [], "phases_ms": [53, 71, 83, 180], "rows": 20, "gc_overlapping": {"restore": 0, "content_to_frame": 0}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen", "case": "ordinary online=true opening=1", "gc": [], "phases_ms": [58, 68, 85, 182], "rows": 20, "gc_overlapping": {"restore": 0, "content_to_frame": 0}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen", "case": "fragmented online=false opening=0", "gc": [{"ended_ms": 642, "kind": "full", "total_ms": 168}], "row_decode": {"read_ms": 10, "decode_ms": 318, "validate_ms": 35, "logged_at_ms": 386}, "history_decode": {"metadata_ms": 504, "proofs_ms": 287, "logged_at_ms": 1178}, "phases_ms": [427, 428, 452, 614], "rows": 18000, "gc_overlapping": {"restore": 0, "content_to_frame": 1}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen", "case": "fragmented online=false opening=1", "gc": [], "phases_ms": [75, 90, 117, 232], "rows": 18000, "gc_overlapping": {"restore": 0, "content_to_frame": 0}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen", "case": "fragmented online=true opening=0", "gc": [{"ended_ms": 466, "kind": "young", "total_ms": 133}], "row_decode": {"read_ms": 17, "decode_ms": 247, "validate_ms": 23, "logged_at_ms": 296}, "history_decode": {"metadata_ms": 385, "proofs_ms": 292, "logged_at_ms": 974}, "phases_ms": [311, 311, 322, 441], "rows": 18000, "gc_overlapping": {"restore": 0, "content_to_frame": 1}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen", "case": "fragmented online=true opening=1", "gc": [], "phases_ms": [54, 68, 83, 181], "rows": 18000, "gc_overlapping": {"restore": 0, "content_to_frame": 0}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen", "case": "ordinary online=false opening=0", "gc": [], "phases_ms": [57, 65, 82, 162], "rows": 20, "gc_overlapping": {"restore": 0, "content_to_frame": 0}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen", "case": "ordinary online=false opening=1", "gc": [], "phases_ms": [60, 68, 71, 137], "rows": 20, "gc_overlapping": {"restore": 0, "content_to_frame": 0}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen", "case": "ordinary online=true opening=0", "gc": [], "row_decode": {"read_ms": 0, "decode_ms": 0, "validate_ms": 0, "logged_at_ms": 17}, "history_decode": {"metadata_ms": 0, "proofs_ms": 0, "logged_at_ms": 18}, "phases_ms": [36, 37, 54, 118], "rows": 20, "gc_overlapping": {"restore": 0, "content_to_frame": 0}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen", "case": "ordinary online=true opening=1", "gc": [], "phases_ms": [29, 37, 54, 124], "rows": 20, "gc_overlapping": {"restore": 0, "content_to_frame": 0}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen", "case": "fragmented online=false opening=0", "gc": [], "row_decode": {"read_ms": 3, "decode_ms": 249, "validate_ms": 16, "logged_at_ms": 270}, "history_decode": {"metadata_ms": 383, "proofs_ms": 310, "logged_at_ms": 964}, "phases_ms": [285, 286, 295, 415], "rows": 18000, "gc_overlapping": {"restore": 0, "content_to_frame": 0}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen", "case": "fragmented online=false opening=1", "gc": [{"ended_ms": 235, "kind": "full", "total_ms": 136}], "phases_ms": [49, 67, 77, 162], "rows": 18000, "gc_overlapping": {"restore": 0, "content_to_frame": 1}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen", "case": "fragmented online=true opening=0", "gc": [], "row_decode": {"read_ms": 3, "decode_ms": 264, "validate_ms": 17, "logged_at_ms": 285}, "history_decode": {"metadata_ms": 388, "proofs_ms": 292, "logged_at_ms": 967}, "phases_ms": [300, 301, 320, 416], "rows": 18000, "gc_overlapping": {"restore": 0, "content_to_frame": 0}, "met_1000_ms": true, "met_applied_bound": true},
+  {"method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen", "case": "fragmented online=true opening=1", "gc": [{"ended_ms": 208, "kind": "full", "total_ms": 128}], "phases_ms": [47, 65, 75, 168], "rows": 18000, "gc_overlapping": {"restore": 0, "content_to_frame": 1}, "met_1000_ms": true, "met_applied_bound": true}
+ ],
+ "raw_evidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2218/hp1-software-bound-20261017/",
+ "notes": [
+  "First device run of the #2228 renderer bound: every installed class logged event=first_draw_bound bound_ms=2000 with the SwiftShader renderer, and the optional-projection twin held projection for 2100 ms.",
+  "Every opening also drew within the 1000 ms hardware bound (max 614 ms), so on build-hp-1 the software bound changed no outcome.",
+  "The slow control drew at 3473 ms and its identical bound assertion rejected it.",
+  "The fractal-2 failing run stays failed. Its draws fall under 2000 ms only by arithmetic on retained values; build-fractal-2 was not run by this ticket."
+ ]
+}
