@@ -118,6 +118,7 @@ All JVM/Robolectric; no device test. Nothing needs a real IME, pixels saved to d
 ## Revisions
 
 - 2026-10-17: `TreeConversationRow` takes `pinTestTag: String?` instead of a second `pinModifier: Modifier`. Android Lint's composable parameter-order rule refuses a `Modifier` parameter after the defaulted ones. The contract is unchanged: the tag is applied to the trailing control only, and a null tag applies none.
+- 2026-10-17 (verifier FAIL on `fec2fd42a`): the existing device-only `SidebarTreeCaptureTest.capture` (real pixels saved as screenshots) tapped the selected c3 row's trailing edge in the host pen's column and expected it to open the row (#1563). That column is now c3's Pin control, so the tap expects `TreePinToggled(pyry/c3, pinned = true)`. The same test now proves the compact band's regions apart where fold rows exist. It taps one pixel either side of the pin's start edge, and one pixel inside each region where the Channels and Chats section rows meet the first and last channel rows: fold region against row, and section plus against pin. The plan's "no device test" holds for new tests; this is an existing class kept current. Also from review nits: `setPinned` logs a host missing from the snapshot as `code=unknown_host`, as `createChat` does, so the refusal codes are `unknown_host|disconnected|unknown_channel|unavailable`. The " · host" suffix is the string resource `tree_pinned_host_suffix`.
 
 ## Security review
 
