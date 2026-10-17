@@ -409,29 +409,10 @@ gesture cancellation and haptic counts belong to focused shared tests. A
 successful scripted twin proves the controlled native-suggestion path, while the
 real daemon/Claude offer requires its own named live result.
 
-**Word-reveal observation (#1765, manual).**
-`InteractiveStreamE2ETest.interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply`
-uses one tool-free plain-paragraph reply. Its matcher comes from the assistant row,
-not the prompt. It observes nonempty arrived text displayed in a bubble, rechecks
-that the same reply is streaming with a non-idle turn, then awaits that reply's
-settlement and idle phase before checking its complete final body without a caret.
-Presence checks use generous timeouts; word cadence and the 500 ms catch-up bound
-belong to `StreamingRevealStepTest`, not live delta timing assertions.
-
-The method remains `@Ignore`-gated and outside the curated live selector: Claude
-can finish before the display checkpoint. Routine live-gate success does not
-execute this observation. For an operator's manual attempt, remove only this
-method's `@Ignore`, run the named method through the isolated harness, then restore
-its `@Ignore` afterward:
-
-```bash
-python3 scripts/android-test-gate.py live --tests 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply'
-```
-
-Keep the fresh named-method XML and executed/passed/failed/skipped counts separate
-from automated suite results. Missing the transient window is a failed observation;
-a skipped run supplies no evidence. No manual execution has been supplied for #1765.
-Its held rung-4 twin is
+**Word-reveal observation (#1765), removed 2026-10-17.** The real-Claude method and
+its recording were removed at Juhana's request: text appearing at once is acceptable,
+and Claude, or the faster recorded replay, could finish the reply before the display
+checkpoint. The held rung-4 check remains in
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
 (`stream`); see [scripted coverage](#scenarios-454).
 
@@ -3538,7 +3519,7 @@ the context notice is gone. No live rung-3 twin is possible: real Claude cannot 
 
 **`stream`** —
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
-is the held twin of the manual word-reveal observation. `stream.jsonl` emits two
+is the held word-reveal check. Its real-Claude counterpart was removed on 2026-10-17. `stream.jsonl` emits two
 arrivals forming a multi-word prefix without a terminal record. The test observes `Hello, streamed`
 in a displayed bubble and verifies the assistant row is still streaming and the
 turn non-idle. Only after the held display/copy/reply checkpoints does
@@ -6757,11 +6738,9 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 - **Word reveal (#1765):** the held `stream` twin,
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`,
-  passed in `scripted-all`. The rung-3
-  `InteractiveStreamE2ETest.interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply`
-  remains ignored and manual/unproven; the full live pass does not close that observation gap.
-  Follow the [named manual procedure](#what-rung-3-is-made-of) and record any future manual
-  evidence separately. The pre-ship command stays `python3 scripts/android-test-gate.py live`.
+  passed in `scripted-all`. The rung-3 real-Claude word-reveal method was removed on
+  2026-10-17 because immediate text is acceptable. The pre-ship command stays
+  `python3 scripts/android-test-gate.py live`.
 
 - **Recent-conversation Direct Share (#1729):**
   `InteractiveStreamE2ETest.interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes` passed in

@@ -12,19 +12,19 @@ spec.loader.exec_module(inventory)
 
 
 class SuiteInventoryTest(unittest.TestCase):
-    def test_current_inventory_accounts_for_68_recordings_three_scripted_owners_and_two_obsolete_methods(self):
+    def test_current_inventory_accounts_for_67_recordings_three_scripted_owners_and_two_obsolete_methods(self):
         manifest = json.loads(inventory.MANIFEST.read_text())
         actual = inventory.methods(inventory.SOURCE.read_text())
         live = inventory.curated(inventory.HARNESS.read_text())
         report = inventory.audit(manifest, actual, live, inventory.MANIFEST.parent)
-        self.assertEqual((report['total'], report['liveSelected'], report['recorded']), (73, 65, 68))
+        self.assertEqual((report['total'], report['liveSelected'], report['recorded']), (72, 65, 67))
         self.assertEqual(set(report['scripted']), set(inventory.SCRIPTED_OWNERS))
         self.assertTrue(set(report['scripted']) <= live)
         self.assertEqual(len(report['retired']), 2)
         self.assertEqual(report['pending'], [])
         inventory.audit_runner((inventory.ROOT / 'app/src/androidTest/java/de/pyryco/mobile/recording/RecordedMobileSuiteTest.kt').read_text(),
                                actual, set(report['retired']) | set(report['scripted']))
-        self.assertEqual(len(inventory.recorded_rows(manifest)), 68)
+        self.assertEqual(len(inventory.recorded_rows(manifest)), 67)
     def test_only_reviewed_scripted_owners_replace_routine_recordings_without_claiming_captures(self):
         method = 'interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog'
         owner = {'scenario': 'session-error',
