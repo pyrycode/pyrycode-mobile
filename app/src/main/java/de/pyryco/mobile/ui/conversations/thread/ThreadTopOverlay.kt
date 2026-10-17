@@ -34,6 +34,7 @@ import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.components.boundMcpText
 import de.pyryco.mobile.ui.conversations.components.usageLimitIsWarning
 import de.pyryco.mobile.ui.conversations.components.usageLimitLabel
+import de.pyryco.mobile.ui.conversations.components.usageLimitShouldShow
 
 // Figma 541:2446: the pills stack 12dp apart.
 private val OverlayPillGap = 12.dp
@@ -44,11 +45,13 @@ private val OverlayPillGap = 12.dp
  * rather than in the status row, so they never hide what the running turn is doing.
  *
  * Top to bottom: other-conversation attention, the usage-limit report, a failed MCP server,
- * a pairing error or offline retry, then a session error. The attention pill has no X. The
- * report is a Default pill with an X only when [usageLimitIsWarning] says so, and it is left out once
- * [usageLimitDismissed]; any other reading is an Error pill that cannot be hidden. Pairing failure takes
- * precedence over the offline pill because a network retry cannot repair a rejected pairing. With none of
- * them, nothing is emitted. Session errors and stopped-turn recovery advice follow these persistent
+ * a pairing error or offline retry, then a session error. The attention pill has no X. The usage-limit
+ * report draws at all only when [usageLimitShouldShow] says so — a `rejected` reading always qualifies,
+ * but any other status needs more than 75% of the window spent, so a comfortable window stays silent.
+ * When it draws, it is a Default pill with an X only when [usageLimitIsWarning] says so, and it is left
+ * out once [usageLimitDismissed]; any other reading is an Error pill that cannot be hidden. Pairing failure
+ * takes precedence over the offline pill because a network retry cannot repair a rejected pairing. With
+ * none of them, nothing is emitted. Session errors and stopped-turn recovery advice follow these persistent
  * notices; [transientError] follows all persistent notices and expires independently under the screen's queue.
  * [confirmation] follows every other notice, with its own occurrence and independent screen-local queue.
  *
@@ -78,7 +81,7 @@ internal fun ThreadTopOverlay(
     confirmationOccurrence: Long = 0L,
 ) {
     val navigationError = LocalNavigationErrorNotice.current?.currentMessage
-    val usage = usageLimit?.takeUnless { usageLimitDismissed }
+    val usage = usageLimit?.takeIf(::usageLimitShouldShow)?.takeUnless { usageLimitDismissed }
     val showOffline = connectionState == ConnectionState.Offline && !showRePair
     val mcp = mcpFailure?.takeUnless { showRePair || showOffline }
     if (attentionPill == null &&
