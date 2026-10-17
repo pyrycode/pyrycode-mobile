@@ -73,7 +73,9 @@ internal fun authoritativeAgent(
     shown = shown,
     content = """{"name":"Agent","input_summary":"agent-$id","input":{"description":"agent-$id"}${task?.let {
         ",\"task_id\":\"$it\",\"task_link\":{\"task_type\":\"local_agent\",\"description\":\"agent-$id\"}"
-    }.orEmpty()}${toolUse?.let { ",\"tool_use_id\":\"$it\"" }.orEmpty()},"result":{"result_summary":"instant launch result"},"ending":{"cause":"idle_sleep"}}""",
+    }.orEmpty()}${toolUse?.let {
+        ",\"tool_use_id\":\"$it\""
+    }.orEmpty()},"result":{"result_summary":"instant launch result"},"ending":{"cause":"idle_sleep"}}""",
     turn = turn,
 )
 
