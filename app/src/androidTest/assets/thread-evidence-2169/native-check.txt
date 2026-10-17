@@ -48,3 +48,33 @@ f57b7601805ee986f4420ed0da18204d21af812af10841ac900a7c82b57e470f  mobile/executi
 5839ed80cfa059f005f088c15c5572922d1f957956ba97f27d8282ec9d138b75  mobile/gate-1.xml
 b7ef3f7c035bd9baa87b35a5b005bc817b9b7cd11e88b2c13c179a4df110eba1  mobile/phases-0.jsonl
 9961d537cc963cba5a7af8457120c4beac1efc2a4cc29f81c1fd9aa9979735fe  mobile/phases-1.jsonl
+
+Failed focused native rework check (retrieved 2026-10-17)
+Task: 434c643e69ff0186e7a61051af900cd42d092ccea5bc3d6a29802a0b580e2bde
+Recipe: mobile-scripted-evidence
+Capability: mobile-android
+Candidate: 5472a815fd3fab55a29b00829b8fbaab701cb73f
+Native run: f1b04af9887772f1c4a5c22c17e29535ff6d42bd4f2ce58cba7eab1cac3d4a37
+Computer: build-hp-1 (Linux)
+State: failed
+Command: python3 /work/Projects/pyrycode-mobile-agents/scripts/android-test-gate.py scripted reply-suggestion
+Exit: 1, during APK preparation; no device test started
+Executed/passed test counts: 0/0; returned gate-0.xml is empty
+The selection-copy command was not reached.
+Diagnostic: Install pyrycode-mobile-agents beside this checkout or set AGENTS_REPO_PATH.
+Capture: complete=false; errors=[Malformed JUnit report]
+Mobile revision: 5472a815fd3fab55a29b00829b8fbaab701cb73f
+Runner revision: 9aad4b5db84f2897c5eda3e8ed78a5ec9256ad71
+Daemon revision: c49aaf179ef7ade7d7e834a46904e57eb94ea957
+Relay revision: 9939bc1ff8afec5021c09862e6f14dadba33ad42
+Assessment: failed launcher preparation, not a passing scenario or an app assertion failure.
+Known open dependency: https://github.com/pyrycode/agent-dispatcher/issues/294
+Both focused scripted checks remain unverified for this repair until that launcher is fixed.
+The earlier counted native pass remains historical; all failed attempts remain failed.
+Private raw artifacts and verified SHA256SUMS:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2169/builder-native-434c643e-20261017/
+Returned artifact hashes (SHA-256):
+fc65a114928b5f2a192ba44d706ab8986a94ce5ca74b40aa3247e6ca62ca2ef5  mobile/capture.json
+b3889a35c00ad59cccccfd44de0abca6a7346952c385ef8b07a50721d00d9f9c  mobile/execution.log
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  mobile/gate-0.xml
+7ea74dda0fe1f143e86a0a382654610a4c952420ff5a9b94cfb0c2ee254c9ca8  mobile/phases-0.jsonl
