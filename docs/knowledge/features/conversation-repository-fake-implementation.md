@@ -48,6 +48,13 @@ build mode. See [build commands](../../../README.md#build) and
   "nothing folds on a refusal" contract (#1001 tests against this shape). No precondition on the current
   `muted` value, no `lastUsedAt` bump, no `bumpWorkspace` — same non-effects as `archive`/`unarchive`, since
   mute is a flag flip, not a usage or workspace event.
+- **`setPinned(conversationId, pinned)`** (#2214) stands in for the host's own pin, so it diverges from
+  `setMuted`'s plain flip in one place: `pinned = true` keeps an existing `Conversation.pinnedAt` rather
+  than overwriting it (`record.conversation.pinnedAt ?: Clock.System.now()`) — a repeat pin on an already-
+  pinned conversation must not slide its timestamp forward, mirroring the host, which returns the original
+  `pinned_at` on a redundant pin rather than re-stamping it. `pinned = false` sets `pinnedAt = null`. Same
+  `state.update` shape as `setMuted` otherwise: unknown id throws `unknown(id)` before any write, no
+  `lastUsedAt` bump, no `bumpWorkspace`.
 - **DI binding:** `appModule` registers the fake and the [`StableConversationRepository`](stable-conversation-repository.md) facade by concrete type. `conversationRepositoryModule(useRelay = BuildConfig.USE_RELAY_REPOSITORY)` alone binds the interface, resolving one of those existing singletons. Since #631 the generated flag defaults to `true` (facade); demo builds explicitly set `useRelayRepository=false`. Constructor-inject the interface so consumers stay unchanged across the selection. See [Dependency injection](dependency-injection.md).
 
 - **`requestSystemPrompt(conversationId)` / `setSystemPrompt(conversationId, systemPrompt)`** (#823) hold

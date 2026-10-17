@@ -1845,6 +1845,12 @@ class RemoteConversationRepository internal constructor(
         muted: Boolean,
     ): Unit = conversationCommands.setMuted(conversationId, muted)
 
+    /** Pin or unpin over `set_conversation_pinned` (#2214); see [ConversationCommands.setPinned]. */
+    override suspend fun setPinned(
+        conversationId: String,
+        pinned: Boolean,
+    ): Unit = conversationCommands.setPinned(conversationId, pinned)
+
     override fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> =
         conversationListProjection.observeReadMarks(conversationId)
 
@@ -2002,6 +2008,9 @@ class RemoteConversationRepository internal constructor(
 
         /** Request: set or clear a conversation's mute flag (#1000, pyrycode#2572). Reply is `conversation_updated`, also pushed uncorrelated. */
         const val TYPE_SET_CONVERSATION_MUTED = "set_conversation_muted"
+
+        /** Request: pin or unpin a conversation on its host (#2214, pyrycode#3538). Reply is `conversation_updated`, also pushed uncorrelated. */
+        const val TYPE_SET_CONVERSATION_PINNED = "set_conversation_pinned"
 
         /** Request: permanently delete an existing conversation (#532, #822 `DeleteConversationPayload`). */
         const val TYPE_DELETE_CONVERSATION = "delete_conversation"
