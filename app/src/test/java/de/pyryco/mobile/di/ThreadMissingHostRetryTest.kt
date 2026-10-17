@@ -1,19 +1,18 @@
 package de.pyryco.mobile.di
 
-import de.pyryco.mobile.data.crypto.PairedServer
-import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyPair
-import de.pyryco.mobile.data.diagnostics.MessageTrail
-import de.pyryco.mobile.data.network.NoiseClientInfo
+import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
+import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.diagnostics.MessageTrail
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.InnerFrameV2
+import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.PumpState
-import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RelayTransport
 import de.pyryco.mobile.data.network.RelayTransportFactory
@@ -200,16 +199,20 @@ class ThreadMissingHostRetryTest {
         val pumps = mutableListOf<Pump>()
         val bundle =
             RelayConnectionBundle(
-                deviceStaticKeyStore = object : DeviceStaticKeyStore {
-                    override suspend fun loadOrCreate(serverId: String): DeviceStaticKeyPair = error("fake pump uses no keys")
-                    override suspend fun publicKey(serverId: String): ByteArray? = null
-                },
+                deviceStaticKeyStore =
+                    object : DeviceStaticKeyStore {
+                        override suspend fun loadOrCreate(serverId: String): DeviceStaticKeyPair = error("fake pump uses no keys")
+
+                        override suspend fun publicKey(serverId: String): ByteArray? = null
+                    },
                 transportFactory = RelayTransportFactory { Transport().also { transports += it } },
                 clientInfo = NoiseClientInfo("test", "test"),
-                pairedServerStore = object : PairedServerStore {
-                    override suspend fun load() = record
-                    override suspend fun save(record: PairedServer) = Unit
-                },
+                pairedServerStore =
+                    object : PairedServerStore {
+                        override suspend fun load() = record
+
+                        override suspend fun save(record: PairedServer) = Unit
+                    },
                 pushTokens = flowOf(null),
                 dispatcher = dispatcher,
                 ioDispatcher = dispatcher,
