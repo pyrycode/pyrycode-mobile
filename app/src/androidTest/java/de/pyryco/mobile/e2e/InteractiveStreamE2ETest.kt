@@ -5412,7 +5412,7 @@ class InteractiveStreamE2ETest {
                     !peer.field(it, "status").isNullOrEmpty()
             }
             if (restart) {
-                composeTestRule.proveNegotiatedAgentRestart(serverId, chat, agentId, restart = ::restartApp, openThread = {
+                composeTestRule.proveNegotiatedAgentRestart(serverId, chat, agentId, task.taskId, restart = ::restartApp, openThread = {
                     awaitChannelList()
                     awaitConnected()
                     openChatRow(name)

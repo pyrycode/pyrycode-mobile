@@ -5,14 +5,17 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.ui.conversations.thread.ThreadRow
 import de.pyryco.mobile.ui.conversations.thread.foldBackgroundAgentBlocks
 import de.pyryco.mobile.ui.conversations.thread.foldQueuedRows
 import de.pyryco.mobile.ui.conversations.thread.foldToolRuns
 import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -150,6 +153,20 @@ internal class ThreadEvidenceSource private constructor(
         ) = ThreadEvidenceSource(ThreadEvidenceKind.Authoritative) { conversation ->
             observe(conversation).map { authoritativeThreadEvidence(host, conversation, connection, it) }
         }
+
+        fun negotiated(route: NegotiatedThread) =
+            ThreadEvidenceSource(ThreadEvidenceKind.Authoritative) { conversation ->
+                combine(route.support, route.observe(conversation)) { support, snapshot ->
+                    val connection =
+                        when (support) {
+                            is ThreadSupport.Supported -> support.connection
+                            is ThreadSupport.Missing -> support.connection
+                            ThreadSupport.Unverified -> route
+                        }
+                    val evidence = authoritativeThreadEvidence(route.host, conversation, connection, snapshot)
+                    if (support is ThreadSupport.Missing) ThreadEvidence(evidence.owner, emptyList(), admitted = false) else evidence
+                }
+            }
     }
 }
 
@@ -160,7 +177,7 @@ internal class ThreadEvidenceSource private constructor(
  */
 internal fun harnessThreadEvidence(repository: ConversationRepository): ThreadEvidenceSource {
     repository.negotiatedThread?.let { route ->
-        return ThreadEvidenceSource.authoritative(route.host, repository, route::observe)
+        return ThreadEvidenceSource.negotiated(route)
     }
     if (repository is RemoteConversationRepository && repository.authoritativeHost.isNotEmpty()) {
         return ThreadEvidenceSource.authoritative(repository.authoritativeHost, repository, repository::observeAuthoritativeThread)

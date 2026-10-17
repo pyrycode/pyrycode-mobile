@@ -28,8 +28,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -40,6 +40,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
     host: String,
     conversation: String,
     rawAgent: String,
+    taskId: String,
     restart: () -> AutoCloseable,
     openThread: () -> Unit,
     send: () -> Unit,
@@ -59,22 +60,24 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
         }
     val finished =
         evidence { snapshot ->
-            val family = snapshot.renderedAgent(rawAgent)
-            val root = snapshot.records.singleOrNull { it.message.id == family?.agentId }
-            root?.fact?.active == false && family?.children?.any { it.message.role == Role.Tool } == true
+            val agent = snapshot.backgroundAgent(taskId, rawAgent)
+            val root = snapshot.records.singleOrNull { it.message.id == agent?.block }
+            root?.fact?.active == false &&
+                snapshot.records.any { it.agentId == agent?.block && it.message.id != agent?.block && it.message.role == Role.Tool }
         }
-    val family = requireNotNull(finished.renderedAgent(rawAgent))
-    val root = finished.records.single { it.message.id == family.agentId }
+    val agent = requireNotNull(finished.backgroundAgent(taskId, rawAgent))
+    val children = finished.records.filter { it.agentId == agent.block && it.message.id != agent.block }
+    val root = finished.records.single { it.message.id == agent.block }
     val rootId = requireNotNull(root.fact).id
     val session = requireNotNull(root.session)
     val toolIds =
-        family.children
+        children
             .filter { it.message.role == Role.Tool }
             .map { requireNotNull(it.fact).id }
             .toSet()
     assertTrue(
         "daemon must supply parent links for the Agent's own tools",
-        family.children.filter { it.message.role == Role.Tool }.all {
+        children.filter { it.message.role == Role.Tool }.all {
             (
                 it.fact?.parent
                     ?: 0
@@ -168,13 +171,11 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                 ) { route.support.first { it is ThreadSupport.Supported && it.connection !== oldConnection } }
             }
 
-            fun ThreadEvidenceRecord.matchesSend() =
-                fact
-                    ?.content
-                    ?.jsonObject
-                    ?.get("message_id")
-                    ?.jsonPrimitive
-                    ?.content == messageId
+            fun ThreadEvidenceRecord.matchesSend(): Boolean {
+                if (fact?.kind != "user_message") return false
+                val fields = fact.content as? JsonObject ?: return false
+                return (fields["message_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content == messageId
+            }
             val settled =
                 evidence { snapshot ->
                     snapshot.records.any {
@@ -184,7 +185,16 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                     }
                 }
             assertEquals("recovered send settles once", 1, settled.records.count { it.matchesSend() })
-            assertNotEquals("the recovered send belongs to the new session", session, settled.records.single { it.matchesSend() }.session)
+            assertNotEquals(
+                "the recovered send belongs to the new session",
+                session,
+                requireNotNull(
+                    settled.records
+                        .single {
+                            it.matchesSend()
+                        }.session,
+                ),
+            )
             for (tool in settled.records.filter { it.fact?.kind == "tool_call" && it.agentId != null }) {
                 val agent = settled.records.single { it.message.id == tool.agentId }
                 assertEquals("each tool retains its own Agent's session", agent.session, tool.session)
