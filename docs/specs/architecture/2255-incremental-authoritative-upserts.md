@@ -78,3 +78,17 @@ None.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-17
+
+## Revisions
+
+### 2026-10-17: retention and certificate repetition
+
+The owned mutation also carries `certify`, indicating that the store's checkpoint/coverage changed since the last successful candidate. A partial held view can retain an old certificate after Room trims an unloaded fact. Repeating that unchanged certificate on an item revision must preserve Room's cleared certification. New store-authored certification remains eligible only alongside already durable or atomically included facts. The retention probe performs a second revision after trimming to guard this boundary. Captures apply the existing ordered-tail cap without decoding the whole view; storage retains validation at the actual changed-fact boundary.
+
+The initial deterministic Room executor prevented the held-transaction scheduler from progressing. Probes use normal Room executors, explicit restore readiness and transaction deferreds instead. The corrected single-method red run executed one test, failed once with 18000 expected versus 200 restored, and skipped none. Raw XML is retained under `/tmp/builder-2255/evidence/red-behaviour/` (production baseline `4fa383e36`, plan `e3e10860f`).
+
+### 2026-10-17: repeated order moves and equal-order ties
+
+Reviewing repeated order changes showed that a permanently fixed insertion ordinal can disagree with the store's stable sort after a fact moves away and later joins an equal-order tie. Ordinary revisions still preserve their ordinal. A changed order reserves an ordinal below the current minimum when joining a group from below, or above the maximum when joining from above. Multiple movers reserve a block in candidate order. Only changed facts move; signed ordinals are local tie keys, while continuations remain generation-bound ranks. `orderingInvariant_repeatedMovesIntoTiesOnlyRewriteMovedFacts` checks repeated moves, reversed batch input, explicit zero-order normalization and unchanged unrelated ordinals through fresh instances. No schema or consumer signature change is required.
+
+Additional Room lifecycle probes: `atomicInvariant_postCommitCancellationPublishesBaselineBeforeFinalFlush` and `retirementInvariant_resetWhileFinalFlushWaitsForWriteLock` retain the mutation/bookkeeping and lock-wait boundaries on the incremental backend itself. The security review's concurrency findings apply unchanged: both still run under the existing writer lock and cancellation guard.

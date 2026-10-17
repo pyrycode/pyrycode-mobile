@@ -67,11 +67,11 @@ data class SavedThreadCoverage(
 internal fun AuthoritativeThreadSnapshot.toSavedAuthoritativeThread(): SavedAuthoritativeThread =
     SavedAuthoritativeThread(
         epoch = requireNotNull(epoch),
-        items = items.map { it.raw },
+        items = items.takeLast(MAX_CACHED_THREAD_ROWS).map { it.raw },
         appliedVersion = completedVersion,
-        checkpoint = checkpoint,
+        checkpoint = if (items.size > MAX_CACHED_THREAD_ROWS) 0 else checkpoint,
         coverage =
-            coverage?.let {
+            coverage?.takeIf { items.size <= MAX_CACHED_THREAD_ROWS }?.let {
                 SavedThreadCoverage(
                     it.lowerOrder.toLong(),
                     it.upperOrder.toLong(),
@@ -79,6 +79,6 @@ internal fun AuthoritativeThreadSnapshot.toSavedAuthoritativeThread(): SavedAuth
                     it.olderExists,
                 )
             },
-    ).retained()
+    )
 
 private const val MAX_THREAD_NUMBER = 9007199254740991L

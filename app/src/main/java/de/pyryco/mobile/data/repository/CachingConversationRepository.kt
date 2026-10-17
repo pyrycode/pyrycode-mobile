@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.cache.AttachmentStore
+import de.pyryco.mobile.data.cache.AuthoritativeUpsertCache
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.SavedAuthoritativeThread
 import de.pyryco.mobile.data.cache.cacheableThreadRows
@@ -122,6 +123,7 @@ class CachingConversationRepository(
         val ready: CompletableDeferred<Unit> = CompletableDeferred(),
         val authoritative: SavedAuthoritativeThread? = null,
         val storeGeneration: Long = 0,
+        val authoritativeBaseline: SavedAuthoritativeThread? = null,
     )
 
     private inner class ThreadWriter(
@@ -179,7 +181,13 @@ class CachingConversationRepository(
             }
             retry.set(false)
             val candidate =
-                CacheCandidate(DrawnThread(emptyList(), capture), emptyList(), authoritative = saved, storeGeneration = snapshot.generation)
+                CacheCandidate(
+                    DrawnThread(emptyList(), capture),
+                    emptyList(),
+                    authoritative = saved,
+                    storeGeneration = snapshot.generation,
+                    authoritativeBaseline = initialAuthoritative,
+                )
             schedule(candidate, immediate = snapshot.generation > (previous?.storeGeneration ?: 0))
         }
 
@@ -287,10 +295,23 @@ class CachingConversationRepository(
             val result =
                 withContext(NonCancellable) {
                     val result =
-                        if (saved == persisted?.authoritative) {
+                        if (saved == persisted?.authoritative && selected.storeGeneration == persisted?.storeGeneration) {
                             Result.success(Unit)
                         } else {
-                            cache.writeAuthoritativeThread(serverId, conversationId, saved)
+                            val owned = cache as? AuthoritativeUpsertCache
+                            if (owned == null) {
+                                cache.writeAuthoritativeThread(serverId, conversationId, saved)
+                            } else {
+                                val reset = selected.storeGeneration > (persisted?.storeGeneration ?: 0)
+                                val baseline =
+                                    (persisted?.authoritative ?: selected.authoritativeBaseline)
+                                        ?.takeIf { !reset && it.epoch == saved.epoch }
+                                val previous = baseline?.items?.associateBy { it["id"] }.orEmpty()
+                                val changed = saved.items.filter { it != previous[it["id"]] }
+                                val certify =
+                                    baseline == null || saved.checkpoint != baseline.checkpoint || saved.coverage != baseline.coverage
+                                owned.upsertAuthoritativeThread(serverId, conversationId, saved.copy(items = changed), reset, certify)
+                            }
                         }
                     if (result.isSuccess) persistedAuthoritative[conversationId] = selected
                     result
