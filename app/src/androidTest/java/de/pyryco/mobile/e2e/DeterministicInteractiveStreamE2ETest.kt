@@ -1115,8 +1115,8 @@ class DeterministicInteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_seededChannel_backgroundAgentMovesAndSettles() {
         arriveInSeededThread()
-        val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
-        val repository = requireNotNull(coordinator.currentRepository.value)
+        val host = requireNotNull(InstrumentationRegistry.getArguments().getString(E2eTestApplication.ARG_SERVER_ID))
+        val repository = GlobalContext.get().get<de.pyryco.mobile.di.ThreadDestinationFactory>().repository(host)
         val conversationId =
             runBlocking {
                 repository
@@ -1259,7 +1259,6 @@ class DeterministicInteractiveStreamE2ETest {
             )
             // #2175: the same native restart/settlement proof as the genuine scenario, after every
             // retained scripted lifecycle, placement and nested-tool assertion above has executed.
-            val host = requireNotNull(InstrumentationRegistry.getArguments().getString(E2eTestApplication.ARG_SERVER_ID))
             composeTestRule.proveNegotiatedAgentRestart(host, conversationId, "agent1783", "task1783", restart = {
                 val instrumentation = InstrumentationRegistry.getInstrumentation()
                 composeTestRule.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.DESTROYED)
