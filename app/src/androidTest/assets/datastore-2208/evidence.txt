@@ -1,0 +1,63 @@
+Ticket #2208 — Linux DataStore ownership repair
+
+Tested source: 7426bb4613ff0a9da79c8580937bc5d00312bc50
+Main baseline: a0c7db693245cce59d67377f672d2bec4c7dca65
+Later evidence/plan-only commits do not change the tested Kotlin sources.
+Private evidence root: /work/Projects/pyrycode-mobile-agents/logs/evidence/2208/
+Every retained run has an owner-only SHA256SUMS manifest.
+
+Baseline: main-a0c7db693/
+The fresh dispatcher main sweep reproduced 113 executed, 110 passed, 3 failed.
+Background-agent and footer failed in replay setup while reading the paired store:
+the initial application graph's DataStore was still active, but an ordinary isolated
+Koin graph had cleared appModule's shared singleton factory. The subsequent global
+lookup created a second store over app_prefs. Both instrumentation shards crashed.
+Delete's empty failure is a process-crash interruption, not a product assertion.
+Its unchanged original scenario passes in both repaired runs below.
+
+Controlled pre-repair regression: controlled-red/
+python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.recording.RecordedSuiteIsolationDeviceTest#ordinaryGraphClosurePreservesApplicationPreferences
+Exit 1; 1 executed, 0 passed, 1 failed, 0 skipped.
+The assertion proves that closing an isolated graph replaces the application's
+already-initialized DataStore. The retained source.txt identifies the test patch hash.
+
+Focused repair: focused-green/
+python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.recording.RecordedSuiteIsolationDeviceTest,de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_backgroundAgent_followsBottomUntilFinished,de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_pingPrompt_footerShowsContextUsage,de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_deleteConversation_removesFromListAndClosesThread'
+Exit 0; 6 executed/passed, 0 failed/errors/skipped.
+All three reported scenarios pass. Isolation coverage checks an ordinary graph
+closing before replay, successive incomplete replay sessions, and successful
+original ping replay. Preferences, pairing credentials and local host names restore.
+
+Complete profile: full-green-7426bb461/
+UI_GATE_FULL=1 UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui
+Exit 0; 1692 unique XML cases, 1690 executed/passed, 0 failed/errors, 2 skipped.
+Shard 0: 882 reported, 882 passed, 0 skipped.
+Shard 1: 810 reported, 808 passed, 2 skipped.
+All 71 RecordedMobileSuiteTest scenarios and all 3 isolation tests pass.
+The progress counter's 812/810 includes the two skips twice; raw XML has exactly
+810 unique shard-1 cases and no duplicate identities across either shard.
+The existing skips are RenameDialogCaptureTest#renameAtFigmaViewport and
+ComposerPasteTest#pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty.
+The latter is explicitly Robolectric-only; ComposerImagePasteDeviceTest covers
+real device image paste. No skips, retries or time-limit increases were added.
+All retained phone logs were scanned: zero "multiple DataStores active" errors.
+Host admission wait: 1003 seconds; device Gradle phase: 20m21s.
+
+These are offline recorded scenarios: no Claude or real daemon launch is required.
+Production appModule and its after-graph-close initialization contract are unchanged.
+
+Focused JVM and static/build checks:
+python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.di.AppPreferencesTeardownTest lint assembleDebug compileDebugAndroidTestKotlin --console=plain
+Exit 0; teardown contract 1 executed/passed, 0 failed/errors/skipped.
+Lint, APK assembly and instrumented Kotlin compilation pass.
+
+Scripted relay startup: scripted-and-jvm-green/
+python3 scripts/android-test-gate.py scripted ping
+Exit 0; 2 executed/passed, 0 failed/errors/skipped:
+DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread
+DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_durableGapCatchUp
+Mobile Kotlin source revision: 7426bb4613ff0a9da79c8580937bc5d00312bc50
+Daemon revision: 0917625fc6e91eeb2a16556f09e5ba0bbf62aabf
+Backend: scripted fakeclaude; zero real Claude turns.
+Isolated daemon/relay diagnostics were retained by the harness under
+the evidence root's harness/fault-068f020b0f61d889b52cb80b16c30ce0/ directory.

@@ -49,7 +49,7 @@ Reproduce the complete in-depth Linux command on unchanged main. Add a native re
 ## Open Questions
 
 - Resolved: the controlled native regression fails because isolated graph closure replaces the application's DataStore. The fresh main sweep reports instrumentation process crashes after duplicate-store exceptions; delete has an empty crash record, not a product assertion failure. The original delete scenario must pass after repair.
-- Record full-profile inventory, completion and any independently established inherited failures in the PR and evidence summary.
+- Resolved: the full profile reports all 1692 unique selected XML cases: 1690 executed/passed, zero failures, and two existing skips. All 71 recorded scenarios and the three isolation tests pass. Evidence and count reconciliation are in `app/src/androidTest/assets/datastore-2208/evidence.txt`; no inherited failure was found.
 
 ## Documentation handoff
 
@@ -59,3 +59,4 @@ Reproduce the complete in-depth Linux command on unchanged main. Add a native re
 ## Revisions
 
 - 2026-10-17: Confirmed the planned ownership cause with one executed/failed native regression before the fixture change. The fresh dispatcher sweep at `a0c7db693245cce59d67377f672d2bec4c7dca65` reproduces all three failures (113 executed, 110 passed, 3 failed), with explicit instrumentation process-crash diagnostics. The existing after-graph-close production contract remains unchanged. Rebuild coverage uses the isolation regression and recorded restart scenarios, which run in the non-live UI profile, rather than the separately packaged e2e peer test.
+- 2026-10-17: The focused six-test selection and complete two-shard Linux profile pass at pushed candidate `7426bb4613ff0a9da79c8580937bc5d00312bc50`. The final raw XML reconciles both shards without duplicate or missing cases; the two pre-existing skips explain the progress counter's apparent overrun. Durable raw evidence and source revisions are recorded in the committed evidence summary.
