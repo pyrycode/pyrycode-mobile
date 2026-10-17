@@ -3977,6 +3977,169 @@ retaining reserved placement and renderer ownership. See
 [assistant continuity](knowledge/features/remote-conversation-repository-assistant-reply-segments.md)
 and [queue history](knowledge/features/queued-backlog.md#queued-display-metadata-and-history).
 
+### Queue, recovery and agent evidence migration (#2174)
+
+`DeterministicInteractiveStreamE2ETest`'s
+`interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply`,
+`interactiveTurn_seededChannel_sendQueuedNow_placesAfterToolResult`,
+`interactiveTurn_seededChannel_backgroundAgentMovesAndSettles` and
+`interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect`
+no longer read `observeMessages` directly (six sites) or join raw
+`agent1783`/`child1783`/`parentToolUseId`/`runId` peer IDs (three sites).
+All four now go through #2169's `harnessThreadEvidence` binding, which
+still selects the current legacy source; no production route, capability
+or fixture changed. New shared predicates in
+`app/src/sharedTest/java/de/pyryco/mobile/e2e/QueueRecoveryAgentEvidence.kt`:
+`heldOpenReply`/`holdsOpen`/`settledHeldReply` back the queued-prompt
+method — the queued check now waits for the held item's completed text
+and asserts integrity on that same snapshot, because waiting for a
+"settled and alone" predicate let a transient split row be waited out;
+`sendNowPlacementFailure` backs the send-now method, requiring exactly
+one delivered user echo and tool-before-user-before-reply order, in
+record order and (on daemon facts) in admitted `order` too;
+`hasCompletedReplay`/`authoritativeReplayFailure`/`assertOrderedReplay`
+back the reconnect method, admitting only an ordered, strictly
+increasing-`order`, fully settled family with exact joined text and no
+invented deltas; and `agentFamily`/`AgentFamilyEvidence.ownsSingleProse`/
+`holdsOutsideAgent`/`settledAgentPrecedes` back the background-agent
+method, deriving the header tag, child tag and run matchers passed to
+`verifyAgentRunNavigation` from the rendered block's own identity rather
+than the raw joins. The background-agent method settled the plan's open
+question: the legacy root and every owned child row already carry the
+rendered block ID the header tag uses, so `agentFamily` matches the old
+raw family unchanged. An earlier probe expected owned prose between
+tools to split the folded run; that was a wrong expectation — inside an
+Agent block the folded run covers the block's owned prose too, so
+`settledAgentPrecedes` keeps its one-run check without that split.
+
+`QueueRecoveryAgentEvidenceTest`
+(`app/src/test/java/de/pyryco/mobile/e2e/QueueRecoveryAgentEvidenceTest.kt`)
+covers `queuedFollowUpNeverSplitsOrSettlesTheHeldReply`,
+`newerRevisionsSurviveRecoveryForEveryScenario`,
+`wrongHostCollidingIdsSatisfyNoScenario`,
+`sendNowNeedsDeliveredEchoAfterCompletedTool`,
+`replayRecoveryRequiresCompleteOrderedSettledItems`,
+`agentFamilyUsesRenderedIdentitiesNotRawJoins`,
+`activeOrIncompleteAgentEvidenceNeverSettles` and
+`legacyEvidenceKeepsExistingChecks` (8 executed, 0 failed, 0 skipped at
+`1df385e40`). A Robolectric screen probe,
+`app/src/sharedTest/java/de/pyryco/mobile/e2e/AuthoritativeScenarioScreenTest.kt`,
+mounts daemon replay and finished-agent snapshots in `ThreadScreen` and
+covers `recoveredReplayRendersAndSettlesInDaemonOrder`,
+`reorderedRecoveredReplayFailsTheMigratedAssertion` and
+`settledAgentHeaderAndUnmatchedProseFollowRenderedFamilyIdentities` (3
+executed, 0 failed, 0 skipped). That third probe only asserts the
+family-derived header tag and unmatched prose outside the block: a
+diagnostic run of `verifyAgentRunNavigation` over a daemon-rendered Agent
+failed, because `ThreadScreen` renders `authoritative.rows` without
+`foldToolRuns`, so a daemon-built Agent's owned tools never fold into a
+run with a collapse control to navigate. That is production presentation
+outside this test-only ticket, filed as
+[#2238](https://github.com/pyrycode/pyrycode-mobile/issues/2238). On
+daemon facts the collapse and navigation proof waits for #2238; on the
+current legacy route the device method keeps it, backed by
+`agentFamilyUsesRenderedIdentitiesNotRawJoins` on the JVM side.
+
+[PR #2237](https://github.com/pyrycode/pyrycode-mobile/pull/2237), at
+`fe2ab984863bcb7353b16480dd4e9a34ae06dba6`, supplies the counted scripted
+evidence. All four methods ran at `1df385e404caf6d61e606dd35674f2474774a760`
+(the only later commit edits the plan), each report tests=1,
+failures=0, errors=0, skipped=0:
+
+| Method | Runner | Executed | Passed | Failed | Skipped |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `interactiveTurn_seededChannel_sendQueuedNow_placesAfterToolResult` | `python3 scripts/android-test-gate.py scripted send-now` | 1 | 1 | 0 | 0 |
+| `interactiveTurn_seededChannel_backgroundAgentMovesAndSettles` | `python3 scripts/android-test-gate.py scripted background-agent` | 1 | 1 | 0 | 0 |
+| `interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect` | `python3 scripts/android-test-gate.py scripted replay-order` | 1 | 1 | 0 | 0 |
+| `interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply` | isolated `DETERMINISTIC=1 SCENARIO=stream-queued-echo PYRY_FORCE_TEST_RUN=1 bash scripts/e2e-emulator.sh` | 1 | 1 | 0 | 0 |
+
+The first three ran inside the dispatcher's verifier gate 8
+(`android-test-gate.py scripted-all`, 22 executed/22 passed, 0 failed, 0
+skipped). The queued method cannot: the agents repository's
+`android-test-gate.py` `SCENARIOS` tuple omits `stream-queued-echo` (the
+same gap #2078 worked around), so it ran only through the isolated
+harness command this document already records for #2078, above, and the
+verifier accepted that separate run rather than one from the dispatcher's
+own gate. Raw XML, logcat, gate and harness output and a SHA256SUMS
+manifest are retained at
+`$AGENTS_REPO_PATH/logs/evidence/2174/builder-20261017T1530Z-1df385e404ca/`
+(pruned after 30 days). Verifier gate 5 (`jvm-test-gate.py`, 5846
+executed/5846 passed, 0 failed, 0 skipped) covers the new JVM and screen
+probes above. All four counted passes exercise only the current legacy
+route selected by `harnessThreadEvidence`; they do not prove negotiated
+production activation — [#2175](https://github.com/pyrycode/pyrycode-mobile/issues/2175)
+owns that. A follow-up to add `stream-queued-echo` to the agents
+repository's gate scenario list landed as duplicate issues
+pyrycode-mobile-agents#193–#198; one is to be kept and the rest closed.
+
+### Background-agent following evidence migration (#2173)
+
+`interactiveTurn_backgroundAgent_followsBottomUntilFinished`'s four thread
+observations (newer reply, later reply, owned child reply, the final
+later-user read), its two raw `toolCall.parentToolUseId`/`runId` joins and its
+raw `agentId` used in the header tag, marker lazy key, child tag and final
+`msg:` index now go through #2169's `harnessThreadEvidence` binding instead of
+reading the repository directly and keying rendered rows by raw peer IDs.
+That binding still selects the current legacy source; no production route,
+capability or fixture changed. New shared predicates in
+`app/src/sharedTest/java/de/pyryco/mobile/e2e/BackgroundAgentEvidence.kt`:
+`ThreadEvidenceRecord.rawToolUseId()` correlates a wire `tool_use_id` to an
+admitted item only (`ordinaryId` on legacy rows, `content.tool_use_id` on
+authoritative facts) and is never used as a rendering key;
+`ThreadEvidence.settledTurnReply(turn, rawAgent = "")` settles one turn's
+assistant family (main or, through `renderedAgent(rawAgent)`, a resolved
+Agent's) without a caller-supplied session, failing instead of guessing when
+the turn's assistant records span zero or several sessions;
+`ThreadEvidence.renderedAgent(rawAgent)` returns a `RenderedAgentFamily(owner,
+agentId, children)` — the admitted root tool record owning its own block,
+with `childIds`, `runId` (the projected `toolRunId` of its first child tool)
+and `ownsTools(rawIds)` — or null when unadmitted or unmatched; and
+`ThreadEvidence.deliveredUser(text)` finds the single delivered user record
+with that full text. `verifyAgentRunNavigation` now receives the family's
+rendered `agentId`, `runId` and `childIds` rather than raw peer IDs, and the
+header tag, marker lazy key, child tag and final `msg:` index all use
+`renderedAgent`'s rendered `agentId`. `ThreadEvidence.admitted` is now
+readable outside the class, the same one-line edit #2170 and #2171 make.
+Rendered identities are always read from the snapshot each step observes and
+never carried into a later step's keys, because an authoritative epoch or
+generation change re-scopes every row ID. The existing running/final
+navigation, bottom-following, later-reply ordering, nested child
+visibility/collapse, terminal settlement, prompt handling, fixture release and
+cleanup assertions are unchanged; only the evidence source and the keys moved.
+
+`BackgroundAgentEvidenceTest`
+(`app/src/test/java/de/pyryco/mobile/e2e/BackgroundAgentEvidenceTest.kt`)
+covers authoritative families built from scoped facts with active-to-terminal
+child revisions against `projectAuthoritativeThread`/`foldToolRuns`, a child
+reply that settles only on its own terminal revision while its parent Agent
+is still running, same raw tool IDs on another host, retired evidence
+(missing epoch, repair, reset), a retired source settling after connection
+replacement, a turn split across two sessions, the legacy aliased family (a
+collision alias on root and children correlated by raw ID, keyed by the
+rendered block), and the single delivered later-user echo.
+
+[PR #2236](https://github.com/pyrycode/pyrycode-mobile/pull/2236), merged at
+`b600c1994`, supplies the counted evidence: `testDebugUnitTest` for the new
+`BackgroundAgentEvidenceTest` (7 executed, 7 passed, 0 failed, 0 skipped — a
+mutation check using rendered IDs as raw joins and keying the legacy family by
+the rendered block failed 2 of the 7 as expected before the helper was
+restored) and for the unchanged `ThreadEvidenceTest` (17 executed, 17 passed,
+0 failed, 0 skipped). The recorded native run,
+`python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_backgroundAgent_followsBottomUntilFinished'`
+at that commit, exited 0 with **1 executed, 1 passed, 0 failed, 0 skipped**
+(51.5 s); the logcat contains the full `AgentRunProof` sequence (8
+`agent_run_proof` stages, `late_agent_tools`). Raw XML, logcat, phases and a
+SHA-256 manifest are retained at
+`$AGENTS_REPO_PATH/logs/evidence/2173/builder-recorded-b600c19-20261017/`
+(pruned after 30 days). The dispatcher's own verifier gate 7
+(`android-test-gate.py ui`, 335 executed/333 passed, 2 failed, 1 skipped)
+separately recorded this named method passing, and verifier gate 5
+(`jvm-test-gate.py`, 5842 executed/5842 passed, 0 failed, 0 skipped) covers
+the new JVM probes. The recorded fixture and baseline are unchanged because
+no outgoing request changed. These passes cover only the current legacy route
+exercised by `harnessThreadEvidence`; they do not prove negotiated production
+activation — #2175 owns that.
+
 ### Scripted streaming and reopen source-bound migration (#2171)
 
 The nine `ConversationRepository.observeMessages` reads inside

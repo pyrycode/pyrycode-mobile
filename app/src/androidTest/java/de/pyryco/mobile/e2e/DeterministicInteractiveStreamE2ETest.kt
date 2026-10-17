@@ -39,7 +39,6 @@ import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.LiveSessionEvent
-import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
@@ -961,16 +960,9 @@ class DeterministicInteractiveStreamE2ETest {
                             .id
                     checkpoint = "held prefix"
                     repository.sendMessage(conversationId, SEND_PROMPT)
-                    val held =
-                        repository
-                            .observeMessages(conversationId)
-                            .first { rows ->
-                                rows.filterIsInstance<ThreadItem.MessageItem>().any {
-                                    it.message.content.trimEnd() == STREAMED_PREFIX && it.message.isStreaming
-                                }
-                            }.filterIsInstance<ThreadItem.MessageItem>()
-                            .single { it.message.role == Role.Assistant }
-                            .message
+                    val evidence = harnessThreadEvidence(repository)
+                    val start = evidence.observe(conversationId).first { it.heldOpenReply(it.owner, STREAMED_PREFIX) != null }
+                    val held = requireNotNull(start.heldOpenReply(start.owner, STREAMED_PREFIX))
                     val prefix = hasText(STREAMED_PREFIX, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
                     composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
                         composeTestRule.onAllNodes(prefix, useUnmergedTree = true).fetchSemanticsNodes().size == 1
@@ -980,29 +972,24 @@ class DeterministicInteractiveStreamE2ETest {
                     val sent = repository.sendMessage(conversationId, SECOND_PROMPT)
                     val queued = repository.observeQueue(conversationId).first { rows -> rows.any { it.text == SECOND_PROMPT } }
                     assertTrue("the queued entry did not retain the phone-owned echo id", queued.any { it.messageId == sent.id })
-                    repository.observeMessages(conversationId).first { rows ->
-                        rows.filterIsInstance<ThreadItem.MessageItem>().any { it.message.id == held.id && it.message.isStreaming }
-                    }
+                    evidence.observe(conversationId).first { it.holdsOpen(start.owner, held) }
                     checkpoint = "same reply completion"
                     DaemonFaultControl().releaseStream()
                     val finished =
-                        repository.observeMessages(conversationId).first { rows ->
+                        evidence.observe(conversationId).first { current ->
                             snapshotShape =
-                                rows.filterIsInstance<ThreadItem.MessageItem>().joinToString { row ->
-                                    val message = row.message
-                                    "${message.role}:${message.content.length}:${message.segment?.firstSeq}:${message.segment?.lastSeq}:" +
-                                        "${message.isStreaming}:${message.id == held.id}"
+                                current.records.joinToString { record ->
+                                    val message = record.message
+                                    "${message.role}:${record.fullText.length}:${message.segment?.firstSeq}:${message.segment?.lastSeq}:" +
+                                        "${message.isStreaming}:${message.id == held.message.id}:${record.fact?.rev}"
                                 }
-                            rows.filterIsInstance<ThreadItem.MessageItem>().any {
-                                it.message.id == held.id && !it.message.isStreaming && it.message.content == STREAMED_REPLY
-                            }
+                            !current.holdsOpen(start.owner, held) &&
+                                current.records.any { it.message.id == held.message.id && it.fullText == STREAMED_REPLY }
                         }
-                    assertEquals(
-                        listOf(held.id),
-                        finished
-                            .filterIsInstance<ThreadItem.MessageItem>()
-                            .filter { it.message.segment?.turnId == held.segment?.turnId }
-                            .map { it.message.id },
+                    // The held item's one settled form, alone in its turn: no suffix row split it.
+                    assertNotNull(
+                        "the held reply must settle alone; shape=$snapshotShape",
+                        finished.settledHeldReply(start.owner, held, STREAMED_REPLY),
                     )
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
@@ -1084,17 +1071,11 @@ class DeterministicInteractiveStreamE2ETest {
         }
         composeTestRule.onAllNodes(queued).assertCountEquals(0)
         composeTestRule.onAllNodesWithText(SECOND_PROMPT, useUnmergedTree = true).assertCountEquals(1)
-        val rows =
-            runBlocking { repo.observeMessages(conversationId).first() }
-                .filterIsInstance<de.pyryco.mobile.data.repository.ThreadItem.MessageItem>()
-        val tool = rows.indexOfFirst { it.message.role == de.pyryco.mobile.data.model.Role.Tool }
-        val user = rows.indexOfFirst { it.message.content == SECOND_PROMPT }
-        val reply = rows.indexOfFirst { "send-now-marker" in it.message.content }
-        assertTrue(
-            "user delivery must follow tool result and precede final reply (tool=$tool, user=$user, reply=$reply)",
-            tool >= 0 && tool < user && user < reply,
+        val evidence = runBlocking { harnessThreadEvidence(repo).observe(conversationId).first() }
+        assertNull(
+            "user delivery must follow tool result and precede final reply",
+            evidence.sendNowPlacementFailure(SECOND_PROMPT, "send-now-marker"),
         )
-        assertEquals(1, rows.count { it.message.content == SECOND_PROMPT })
     }
 
     /** #1830: only a phone Stop tap releases the scripted held task; no second message fence. */
@@ -1153,17 +1134,8 @@ class DeterministicInteractiveStreamE2ETest {
             val finished = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_finished)
             val go = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_go_to)
             val marker = hasText(go) and hasClickAction()
-            val header = hasTestTag("background-agent:agent1783")
-            val child = hasTestTag("background-agent-child:agent1783")
             val prose = hasText("child1827-before")
-            // The fixture's child1783 tool owns the run identity; the Agent root stays separate.
-            val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:child1783"))
             val expandLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_expand)
-            val closedRun =
-                run and
-                    SemanticsMatcher("closed owned Agent run") {
-                        it.config.getOrNull(SemanticsActions.OnClick)?.label == expandLabel
-                    }
             val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(running).fetchSemanticsNodes().isNotEmpty() }
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
@@ -1181,6 +1153,37 @@ class DeterministicInteractiveStreamE2ETest {
             assertEquals(listOf("late1951-one", "late1951-two"), lateTools.map { it.toolUseId })
             assertTrue("late children retain launching attribution", lateTools.all { it.turnId == origin })
             assertEquals("child activity must not open another main turn", 1, received.filterIsInstance<LiveSessionEvent.TurnEnd>().size)
+            // Raw live events above diagnose attribution; the rendered block and run identities prove the phone's content.
+            val conversationId =
+                runBlocking {
+                    repository
+                        .observeConversations(ConversationFilter.All)
+                        .first()
+                        .single { it.name == SEED_CHANNEL_NAME }
+                        .id
+                }
+            val evidence = harnessThreadEvidence(repository)
+            val launched =
+                runBlocking {
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        evidence.observe(conversationId).first { it.agentFamily(it.owner)?.tools?.size == 1 + lateTools.size }
+                    }
+                }
+            val family = requireNotNull(launched.agentFamily(launched.owner))
+            assertTrue("unmatched prose must stay outside the Agent", launched.holdsOutsideAgent("unmatched1827", family))
+            assertTrue("owned prose must belong once to the Agent", family.ownsSingleProse("child1827-before"))
+            val header = hasTestTag("background-agent:${family.agentId}")
+            val child = hasTestTag("background-agent-child:${family.agentId}")
+            // The first owned tool names the run; the Agent root stays separate.
+            val run =
+                hasText("Using tools:", substring = true) and
+                    hasClickAction() and
+                    hasAnyAncestor(hasTestTag("tool-run:${requireNotNull(family.runId)}"))
+            val closedRun =
+                run and
+                    SemanticsMatcher("closed owned Agent run") {
+                        it.config.getOrNull(SemanticsActions.OnClick)?.label == expandLabel
+                    }
             list.performScrollToNode(hasText("unmatched1827"))
             composeTestRule.onNodeWithText("unmatched1827").assertIsDisplayed()
             composeTestRule.onAllNodes(hasText("unmatched1827") and hasAnyAncestor(child), useUnmergedTree = true).assertCountEquals(0)
@@ -1214,37 +1217,20 @@ class DeterministicInteractiveStreamE2ETest {
             assertTrue("terminal block must settle before the following reply", agent.bottom <= after.top)
             // Navigation preserves collapse state; explicitly open the owned run to inspect its reply.
             composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(0)
-            val conversationId =
+            val settled =
                 runBlocking {
-                    repository
-                        .observeConversations(ConversationFilter.All)
-                        .first()
-                        .single { it.name == SEED_CHANNEL_NAME }
-                        .id
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        evidence.observe(conversationId).first { it.settledAgentPrecedes(launched.owner, family, "after1783") }
+                    }
                 }
-            val ownedMessages =
-                runBlocking { repository.observeMessages(conversationId).first() }
-                    .filterIsInstance<ThreadItem.MessageItem>()
-                    .map { it.message }
-                    .filter {
-                        it.role == Role.Tool &&
-                            it.toolCall?.parentToolUseId == "agent1783" ||
-                            it.role == Role.Assistant &&
-                            it.parentToolUseId == "agent1783"
-                    }
-            assertTrue(
-                "every late received tool must be retained in the owned family",
-                lateTools.all { late ->
-                    ownedMessages.any {
-                        it.id ==
-                            late.toolUseId
-                    }
-                },
-            )
+            val owned = requireNotNull(settled.agentFamily(launched.owner))
+            assertEquals("every late received tool must be retained in the owned run", 1 + lateTools.size, owned.tools.size)
+            assertTrue("owned prose must belong once to the Agent", owned.ownsSingleProse("child1827-after"))
+            assertTrue("unmatched prose must stay outside the Agent", settled.holdsOutsideAgent("unmatched1827", owned))
             composeTestRule.verifyAgentRunNavigation(
-                agentId = "agent1783",
-                runId = ownedMessages.first { it.role == Role.Tool }.id,
-                childIds = ownedMessages.map { it.id },
+                agentId = owned.agentId,
+                runId = requireNotNull(owned.runId),
+                childIds = owned.childIds,
                 ownedChild = hasText("child1827-after") and hasAnyAncestor(child),
                 goLabel = go,
                 expandLabel = expandLabel,
@@ -1523,8 +1509,8 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.renderedReplyText(ORDERED_REPLY_SUBSTRING) == ORDERED_REPLY_SUBSTRING
         }
-        // Prove exact text and per-delta identity too: a duplicated sequence within one row must fail.
-        val rows =
+        // Prove exact text and the source's own identity too: a duplicated sequence within one row must fail.
+        val evidence =
             runBlocking {
                 withTimeout(THREAD_TIMEOUT_MS) {
                     val repository =
@@ -1540,10 +1526,10 @@ class DeterministicInteractiveStreamE2ETest {
                             .first { conversations -> conversations.any { it.name == SEED_CHANNEL_NAME } }
                             .single { it.name == SEED_CHANNEL_NAME }
                             .id
-                    repository.observeMessages(conversationId).first { it.hasCompletedReplay(ORDERED_REPLY_SUBSTRING) }
+                    harnessThreadEvidence(repository).observe(conversationId).first { it.hasCompletedReplay(ORDERED_REPLY_SUBSTRING) }
                 }
             }
-        composeTestRule.assertOrderedReplay(rows, ORDERED_REPLY_SUBSTRING, SEND_PROMPT)
+        composeTestRule.assertOrderedReplay(evidence, ORDERED_REPLY_SUBSTRING, SEND_PROMPT)
     }
 
     /**
