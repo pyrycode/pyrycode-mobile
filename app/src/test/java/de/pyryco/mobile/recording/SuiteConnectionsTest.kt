@@ -14,6 +14,7 @@ import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -346,6 +347,60 @@ class SuiteConnectionsTest {
             }
         }
 
+    @Test fun replayScalesCapturedGapsWithAFloorThatNeverExceedsTheCapture() {
+        assertEquals(0L, SuiteConnections.replayDelayMs(0))
+        assertEquals(1L, SuiteConnections.replayDelayMs(1))
+        assertEquals(20L, SuiteConnections.replayDelayMs(20))
+        assertEquals(20L, SuiteConnections.replayDelayMs(150))
+        assertEquals(50L, SuiteConnections.replayDelayMs(500))
+        assertEquals(2697L, SuiteConnections.replayDelayMs(26975))
+    }
+
+    @Test fun everyOriginalSpeedScenarioNamesAShippedRecording() {
+        assertTrue(SuiteConnections.ORIGINAL_SPEED_SCENARIOS.isNotEmpty())
+        SuiteConnections.ORIGINAL_SPEED_SCENARIOS.forEach { scenario ->
+            assertTrue(scenario, java.io.File("src/androidTest/assets/recorded/suite/$scenario.json").isFile)
+        }
+    }
+
+    @Test fun anOriginalSpeedScenarioKeepsItsExactRecordedGaps() =
+        runTest {
+            val entries =
+                listOf(
+                    SuiteStep("connect", "phone"),
+                    SuiteStep("open", "phone"),
+                    SuiteStep("client", "phone", frame(1, "send_message")),
+                    SuiteStep("daemon", "phone", frame(2, "turn_state")),
+                    SuiteStep("daemon", "phone", frame(3, "turn_end"), delayMs = 500),
+                    SuiteStep("close", "phone"),
+                )
+            val scenario = SuiteConnections.ORIGINAL_SPEED_SCENARIOS.first()
+            val hub =
+                SuiteConnections.replaying(
+                    backgroundScope,
+                    RecordedSuiteTape(entries),
+                    originalSpeed = scenario in SuiteConnections.ORIGINAL_SPEED_SCENARIOS,
+                )
+            val transport = hub.transport("phone") { error("Live transport started") }
+            transport.connect()
+            val pump = hub.pump(transport) { error("Live pump started") }
+            pump.start()
+            runCurrent()
+            pump.send(frame(20, "send_message"))
+            runCurrent()
+            assertEquals("turn_state", pump.inbound.first().type)
+            val finished = async { pump.inbound.first() }
+            advanceTimeBy(499)
+            runCurrent()
+            assertFalse(finished.isCompleted)
+            advanceTimeBy(1)
+            runCurrent()
+            assertEquals("turn_end", finished.await().type)
+            pump.close()
+            hub.assertComplete()
+            hub.close()
+        }
+
     @Test fun recordedCadencePreservesIntermediateObservations() =
         runTest {
             val entries =
@@ -367,7 +422,8 @@ class SuiteConnectionsTest {
             runCurrent()
             assertEquals("turn_state", pump.inbound.first().type)
             val finished = async { pump.inbound.first() }
-            advanceTimeBy(499)
+            // The captured 500 ms gap replays scaled to 50 ms; order and the intermediate state remain.
+            advanceTimeBy(49)
             runCurrent()
             assertFalse(finished.isCompleted)
             advanceTimeBy(1)

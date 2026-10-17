@@ -401,7 +401,11 @@ internal object RecordedSuiteNative {
             if (tape == null) {
                 SuiteConnections.recording(scope)
             } else {
-                SuiteConnections.replaying(scope, tape) { event ->
+                SuiteConnections.replaying(
+                    scope,
+                    tape,
+                    originalSpeed = document?.scenario in SuiteConnections.ORIGINAL_SPEED_SCENARIOS,
+                ) { event ->
                     when (
                         event.detail
                             .getValue("event")
