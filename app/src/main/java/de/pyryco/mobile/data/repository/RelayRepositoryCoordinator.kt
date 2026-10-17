@@ -375,11 +375,24 @@ class RelayRepositoryCoordinator(
                 override val support: StateFlow<ThreadSupport> get() = threadSupport
                 override val store: AuthoritativeThreadStore get() = authoritativeThreads
 
-                override fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot> = authoritativeThreads.observe(host, conversationId)
+                override fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot> =
+                    authoritativeThreads.observe(host, conversationId)
 
-                override suspend fun open(conversationId: String): Boolean = verifiedRepository()?.openAuthoritativeThread(conversationId) == true
+                override fun progress(
+                    conversationId: String,
+                    connection: Any,
+                ): Flow<AuthoritativeLiveProgress> {
+                    val repository = verifiedRepository()?.takeIf { it === connection } ?: return flowOf(AuthoritativeLiveProgress())
+                    return repository.observeAuthoritativeProgress(conversationId).map { reading ->
+                        if (verifiedRepository() === repository) reading else AuthoritativeLiveProgress()
+                    }
+                }
 
-                override fun older(conversationId: String): Boolean = verifiedRepository()?.requestOlderAuthoritativeThread(conversationId) == true
+                override suspend fun open(conversationId: String): Boolean =
+                    verifiedRepository()?.openAuthoritativeThread(conversationId) == true
+
+                override fun older(conversationId: String): Boolean =
+                    verifiedRepository()?.requestOlderAuthoritativeThread(conversationId) == true
 
                 override fun cancel(conversationId: String) {
                     (activeConnection.value?.repo)?.cancelAuthoritativeThread(conversationId)

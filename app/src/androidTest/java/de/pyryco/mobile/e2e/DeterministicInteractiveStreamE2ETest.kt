@@ -1236,6 +1236,16 @@ class DeterministicInteractiveStreamE2ETest {
                 expandLabel = expandLabel,
                 collapseLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_collapse),
             )
+            // #2175: the same native restart/settlement proof as the genuine scenario, after every
+            // retained scripted lifecycle, placement and nested-tool assertion above has executed.
+            val host = requireNotNull(InstrumentationRegistry.getArguments().getString(E2eTestApplication.ARG_SERVER_ID))
+            composeTestRule.proveNegotiatedAgentRestart(host, conversationId, "agent1783", restart = {
+                val instrumentation = InstrumentationRegistry.getInstrumentation()
+                composeTestRule.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.DESTROYED)
+                instrumentation.runOnMainSync { (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph() }
+                androidx.test.core.app.ActivityScenario
+                    .launch(MainActivity::class.java)
+            }, openThread = ::arriveInSeededThread, send = { typeAndSend("settlement2175") })
         } finally {
             eventScope.cancel()
         }

@@ -217,7 +217,12 @@ class MobileWireCodecTest {
             listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT, CAPABILITY_STOP_BACKGROUND_TASK, CAPABILITY_THREAD),
             hello.capabilities,
         )
-        assertTrue(MobileJson.encodeToString(hello).contains("\"capabilities\":[\"interactive\",\"multi_agent\",\"stop_background_task\",\"thread\"]"))
+        assertTrue(
+            MobileJson
+                .encodeToString(
+                    hello,
+                ).contains("\"capabilities\":[\"interactive\",\"multi_agent\",\"stop_background_task\",\"thread\"]"),
+        )
         // toString surfaces the (non-secret) capabilities while the token stays redacted.
         assertTrue(hello.toString().contains("capabilities=[interactive, multi_agent, stop_background_task, thread]"))
         assertTrue(hello.toString().contains("token=***"))

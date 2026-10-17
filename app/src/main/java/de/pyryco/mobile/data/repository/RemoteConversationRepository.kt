@@ -304,10 +304,10 @@ class RemoteConversationRepository internal constructor(
             retireAuthoritativeConnection,
         )
 
-    /** The cache may borrow this supplied store only for its exact host namespace. */
     /** The exact host this connection's thread route serves, or empty on the legacy test entry (#2175). */
     internal val authoritativeHost: String get() = authoritativeHostId
 
+    /** The cache may borrow this supplied store only for its exact host namespace. */
     internal fun authoritativeStoreFor(host: String): AuthoritativeThreadStore? =
         authoritativeThreads.takeIf { host == authoritativeHostId }
 

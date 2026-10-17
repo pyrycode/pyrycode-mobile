@@ -5238,6 +5238,16 @@ class InteractiveStreamE2ETest {
     /** #1827: attributed prose belongs only to the real background Agent's collapsible block. */
     @Test
     fun interactiveTurn_backgroundAgent_replyStaysUnderAgent() {
+        backgroundAgentReplyProof(restart = false)
+    }
+
+    /** #2175: genuine historical Agent, native graph restart and reconnect while a new-session send settles. */
+    @Test
+    fun interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect() {
+        backgroundAgentReplyProof(restart = true)
+    }
+
+    private fun backgroundAgentReplyProof(restart: Boolean) {
         val fixture = twoHostArg("backgroundAgentFixtureUrl")
         require(fixture.matches(Regex("http://127\\.0\\.0\\.1:[0-9]+"))) { "invalid background Agent fixture" }
         val peer = runningToolPeer()
@@ -5400,6 +5410,13 @@ class InteractiveStreamE2ETest {
                 it.type == "background_task_updated" &&
                     peer.field(it, "task_id") == task.taskId &&
                     !peer.field(it, "status").isNullOrEmpty()
+            }
+            if (restart) {
+                composeTestRule.proveNegotiatedAgentRestart(serverId, chat, agentId, restart = ::restartApp, openThread = {
+                    awaitChannelList()
+                    awaitConnected()
+                    openChatRow(name)
+                }, send = { sendFromPhone("Reply briefly to this new-session settlement check.") })
             }
         } finally {
             try {

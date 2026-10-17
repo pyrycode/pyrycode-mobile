@@ -23,6 +23,7 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
+import de.pyryco.mobile.data.repository.AuthoritativeLiveProgress
 import de.pyryco.mobile.data.repository.ConnectionReading
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ContextUsage
@@ -49,9 +50,9 @@ import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadReadEvidence
 import de.pyryco.mobile.data.repository.ThreadSnapshot
+import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.data.repository.projectDisplay
-import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.data.repository.threadSnapshots
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
@@ -733,8 +734,8 @@ class ThreadViewModel(
         }
         viewModelScope.launch {
             combine(
-                backgroundTasks(conversationId).onStart { emit(null) },
-                backgroundTaskCount(conversationId).onStart { emit(0) },
+                (if (negotiated == null) backgroundTasks(conversationId) else flowOf(null)).onStart { emit(null) },
+                (if (negotiated == null) backgroundTaskCount(conversationId) else flowOf(0)).onStart { emit(0) },
                 backgroundTaskStopSupported.onStart { emit(false) },
             ) { roster, count, supported -> Triple(roster, count, supported) }.collect { (roster, count, supported) ->
                 synchronized(taskControlLock) {
@@ -1008,7 +1009,7 @@ class ThreadViewModel(
             emitAll(
                 combine(
                     threadItems,
-                    repository.observeQueue(conversationId),
+                    if (negotiated == null) repository.observeQueue(conversationId) else flowOf(emptyList()),
                     historyDemand,
                     hostAvailable,
                     flow<HistoryCoverage?> {
@@ -1079,15 +1080,25 @@ class ThreadViewModel(
      * The negotiated thread's screen presentation (#2175): restored or synchronized facts for this exact host and
      * conversation. A missing-thread verdict draws nothing, even from cache; saved facts never claim support.
      */
+    @OptIn(ExperimentalCoroutinesApi::class)
     private val negotiatedPresentation: Flow<AuthoritativeThreadPresentation?> =
         negotiated?.let { route ->
-            combine(route.support, route.observe(conversationId)) { support, snapshot ->
-                if (support is ThreadSupport.Missing || snapshot.epoch == null) null else snapshot
-            }.distinctUntilChanged()
-                .map { snapshot ->
-                    snapshot?.let {
-                        withContext(contentScheduling?.worker ?: Dispatchers.Main.immediate) {
-                            projectAuthoritativeThread(route.host, conversationId, it)
+            route.support
+                .flatMapLatest { support ->
+                    if (support is ThreadSupport.Missing) return@flatMapLatest flowOf(null)
+                    val progress =
+                        if (support is ThreadSupport.Supported) {
+                            route.progress(conversationId, support.connection)
+                        } else {
+                            flowOf(AuthoritativeLiveProgress())
+                        }
+                    combine(route.observe(conversationId), progress) { snapshot, reading ->
+                        if (snapshot.epoch == null) {
+                            null
+                        } else {
+                            withContext(contentScheduling?.worker ?: Dispatchers.Main.immediate) {
+                                projectAuthoritativeThread(route.host, conversationId, snapshot, reading)
+                            }
                         }
                     }
                 }.onStart { emit(null) }

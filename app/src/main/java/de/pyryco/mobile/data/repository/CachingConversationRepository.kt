@@ -113,6 +113,11 @@ class CachingConversationRepository(
 
                 override fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot> = observeAuthoritativeThread(conversationId)
 
+                override fun progress(
+                    conversationId: String,
+                    connection: Any,
+                ): Flow<AuthoritativeLiveProgress> = route.progress(conversationId, connection)
+
                 override suspend fun open(conversationId: String): Boolean = openAuthoritativeThread(conversationId)
 
                 override fun older(conversationId: String): Boolean = conversationId !in deleted && route.older(conversationId)

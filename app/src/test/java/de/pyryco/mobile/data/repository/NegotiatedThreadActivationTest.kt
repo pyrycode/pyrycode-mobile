@@ -1,5 +1,8 @@
 package de.pyryco.mobile.data.repository
 
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModelStore
+import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.CAPABILITY_THREAD
@@ -13,6 +16,9 @@ import de.pyryco.mobile.data.network.RelayTransport
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.network.TransportEvent
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.item
+import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
+import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -23,8 +29,10 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -38,18 +46,24 @@ import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 /** #2175: production negotiation, verdict ownership and request suppression through real coordinators. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class NegotiatedThreadActivationTest {
     private val oldSink = RelayLog.sink
 
+    @get:Rule val temporary = TemporaryFolder()
+
     @Before fun quietLogs() {
+        Dispatchers.setMain(StandardTestDispatcher())
         RelayLog.sink = { _, _, _ -> }
     }
 
     @After fun restoreLogs() {
+        Dispatchers.resetMain()
         RelayLog.sink = oldSink
     }
 
@@ -148,7 +162,8 @@ class NegotiatedThreadActivationTest {
         runTest {
             val host = host("h")
             try {
-                val facade = StableConversationRepository(host.coordinator.currentRepository, negotiatedThread = host.coordinator.negotiatedThread)
+                val facade =
+                    StableConversationRepository(host.coordinator.currentRepository, negotiatedThread = host.coordinator.negotiatedThread)
                 val pump = host.connect()
                 backgroundScope.launch { facade.observeThreadSnapshot("c").collect {} }
                 runCurrent()
@@ -170,7 +185,8 @@ class NegotiatedThreadActivationTest {
             val host = host("h")
             try {
                 host.coordinator.authoritativeThreads.reset("h", "c", "e")
-                val facade = StableConversationRepository(host.coordinator.currentRepository, negotiatedThread = host.coordinator.negotiatedThread)
+                val facade =
+                    StableConversationRepository(host.coordinator.currentRepository, negotiatedThread = host.coordinator.negotiatedThread)
                 val pump = host.connect()
                 pump.open(CAPABLE)
                 runCurrent()
@@ -204,8 +220,21 @@ class NegotiatedThreadActivationTest {
                 pumpA.push(batch(request, 10, listOf(item(1, 2, 1))))
                 pumpA.push(window(request, 10, 1, 2, false))
                 runCurrent()
-                assertEquals(listOf(1L), routeA.observe("c").first().items.map { it.id })
-                assertTrue(routeB.observe("c").first().items.isEmpty())
+                assertEquals(
+                    listOf(1L),
+                    routeA
+                        .observe("c")
+                        .first()
+                        .items
+                        .map { it.id },
+                )
+                assertTrue(
+                    routeB
+                        .observe("c")
+                        .first()
+                        .items
+                        .isEmpty(),
+                )
                 assertFalse(a.coordinator.threadMissing.value)
                 assertTrue(b.coordinator.threadMissing.value)
                 assertTrue(pumpB.queries().isEmpty())
@@ -237,7 +266,7 @@ class NegotiatedThreadActivationTest {
                 route.open("c")
                 val catchUp = second.queries().single()
                 assertEquals(certified.toString(), field(catchUp, "version"))
-                second.push(batch(catchUp, 20, listOf(item(1, 3, 1, text = "older"), item(2, 1, 2))))
+                second.push(batch(catchUp, 20, listOf(item(1, 3, 1, text = "older"), item(2, 2, 2))))
                 runCurrent()
                 host.connections.value = null
                 runCurrent()
@@ -255,6 +284,103 @@ class NegotiatedThreadActivationTest {
                 host.coordinator.close()
             }
         }
+
+    @Test fun batchFixturesRejectInvalidIdentitiesBeforeDelivery() {
+        val request = Envelope(1, "thread_catch_up", "2026-10-17T10:00:00Z", buildJsonObject { put("conversation_id", "c") })
+        for (invalid in listOf(item(2, 1), item(1, 21), item(0, 2))) {
+            assertTrue(runCatching { batch(request, 20, listOf(invalid)) }.exceptionOrNull() is IllegalArgumentException)
+        }
+        batch(request, 20, listOf(item(2, 2)))
+    }
+
+    @Test fun productionProjectionRetiresProgressAcrossReconnect() =
+        runTest {
+            val host = host("h")
+            val owner = ViewModelStore()
+            try {
+                host.coordinator.authoritativeThreads.reset("h", "c", "e")
+                val facade =
+                    StableConversationRepository(host.coordinator.currentRepository, negotiatedThread = host.coordinator.negotiatedThread)
+                val repository =
+                    CachingConversationRepository(
+                        facade,
+                        FileConversationCache(temporary.root, StandardTestDispatcher(testScheduler)),
+                        "h",
+                        processingDispatcher = StandardTestDispatcher(testScheduler),
+                    )
+                val vm =
+                    ThreadViewModel(
+                        SavedStateHandle(mapOf("serverId" to "h", "conversationId" to "c")),
+                        repository,
+                        FakeConnectionStateSource(),
+                        ComposerDraftStore(),
+                    )
+                owner.put("thread", vm)
+                backgroundScope.launch { vm.state.collect {} }
+                val first = host.connect()
+                first.open(CAPABLE)
+                runCurrent()
+                val query = first.queries().single()
+                first.push(
+                    batch(
+                        query,
+                        10,
+                        listOf(
+                            item(
+                                kind = "tool_call",
+                                extra = "\"session\":\"s\",",
+                                content = """{"name":"Read","tool_use_id":"tool","input_summary":"file"}""",
+                            ),
+                        ),
+                    ),
+                )
+                first.push(window(query, 10, 1, 2, false))
+                first.push(progress(clear = true))
+                first.push(progress(seconds = 7))
+                runCurrent()
+
+                fun elapsed() =
+                    vm.state.value.authoritativeThread
+                        ?.items
+                        ?.filterIsInstance<ThreadItem.MessageItem>()
+                        ?.single()
+                        ?.message
+                        ?.toolCall
+                        ?.elapsedSeconds
+                assertEquals(7, elapsed())
+                host.connections.value = null
+                runCurrent()
+                assertTrue(requireNotNull(vm.state.value.authoritativeThread).rows.isNotEmpty())
+                assertEquals(null, elapsed())
+                val replacement = host.connect()
+                first.state.value = PumpState.Open("stale", CAPABLE)
+                runCurrent()
+                assertEquals(null, elapsed())
+                replacement.open(CAPABLE)
+                runCurrent()
+                assertEquals(null, elapsed())
+                replacement.push(progress(clear = true))
+                replacement.push(progress(seconds = 9))
+                runCurrent()
+                assertEquals(9, elapsed())
+                replacement.push(progress(clear = true, session = "next"))
+                replacement.push(progress(seconds = 12))
+                runCurrent()
+                assertEquals(null, elapsed())
+            } finally {
+                owner.clear()
+                host.coordinator.close()
+            }
+        }
+
+    private fun progress(
+        seconds: Int = 0,
+        clear: Boolean = false,
+        session: String = "s",
+    ): Envelope =
+        MobileJson.decodeFromString(
+            """{"id":90,"type":"tool_progress","ts":"2026-10-17T10:00:00Z","conversation_id":"c","session_id":"$session","session_state_cleared":$clear,"payload":${if (clear) "{}" else """{"conversation_id":"c","turn_id":"turn","tool_use_id":"tool","elapsed_seconds":$seconds}"""}}""",
+        )
 
     private fun TestScope.host(id: String): Host {
         val connections = MutableStateFlow<RelayTransport?>(null)
@@ -338,16 +464,20 @@ class NegotiatedThreadActivationTest {
         request: Envelope,
         version: Long,
         items: List<ThreadItemDto>,
-    ) = reply(
-        request,
-        buildJsonObject {
-            put("conversation_id", field(request, "conversation_id"))
-            put("epoch", "e")
-            put("version", version)
-            put("items", JsonArray(items.map { it.raw }))
-            put("final", false)
-        },
-    )
+    ): Envelope {
+        require(items.all { it.id > 0 && it.rev >= it.id && it.rev <= version }) { "Invalid activation batch identity/revision" }
+        require(items.map { it.id }.distinct().size == items.size) { "Duplicate activation batch identity" }
+        return reply(
+            request,
+            buildJsonObject {
+                put("conversation_id", field(request, "conversation_id"))
+                put("epoch", "e")
+                put("version", version)
+                put("items", JsonArray(items.map { it.raw }))
+                put("final", false)
+            },
+        )
+    }
 
     private fun window(
         request: Envelope,

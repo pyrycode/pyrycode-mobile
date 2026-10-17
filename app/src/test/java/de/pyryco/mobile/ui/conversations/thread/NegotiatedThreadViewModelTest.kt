@@ -52,7 +52,17 @@ class NegotiatedThreadViewModelTest {
     @Test fun offlineCachedThreadReadsUntilAMissingVerdictSuppressesIt() =
         runTest {
             val route = Route("host")
-            route.store.restore("host", "c", AuthoritativeThreadSnapshot(epoch = "e", items = listOf(item(1, 2, 1, text = "held")), completedVersion = 10, checkpoint = 10), 0)
+            route.store.restore(
+                "host",
+                "c",
+                AuthoritativeThreadSnapshot(
+                    epoch = "e",
+                    items = listOf(item(1, 2, 1, text = "held")),
+                    completedVersion = 10,
+                    checkpoint = 10,
+                ),
+                0,
+            )
             val owner = ViewModelStore()
             val vm = viewModel(owner, Legacy(), route)
             backgroundScope.launch { vm.state.collect {} }
@@ -109,8 +119,13 @@ class NegotiatedThreadViewModelTest {
             runCurrent()
             assertEquals(0, legacy.observed)
             assertEquals(0, legacy.historyAsks)
+            assertEquals(0, legacy.queueObservations)
+            assertEquals(0, legacy.taskObservations)
             assertEquals(2, route.olderAsks)
-            assertTrue(vm.state.value.items.isEmpty())
+            assertTrue(
+                vm.state.value.items
+                    .isEmpty(),
+            )
             owner.clear()
         }
 
@@ -144,6 +159,10 @@ class NegotiatedThreadViewModelTest {
                         repository,
                         FakeConnectionStateSource(),
                         ComposerDraftStore(),
+                        backgroundTasks = {
+                            legacy.taskObservations++
+                            kotlinx.coroutines.flow.flowOf(null)
+                        },
                     ) as T
             }
         return ViewModelProvider(owner, factory)[ThreadViewModel::class.java]
@@ -155,6 +174,13 @@ class NegotiatedThreadViewModelTest {
     ) : ConversationRepository by fake {
         var observed = 0
         var historyAsks = 0
+        var queueObservations = 0
+        var taskObservations = 0
+
+        override fun observeQueue(conversationId: String): Flow<List<de.pyryco.mobile.data.repository.QueuedMessage>> {
+            queueObservations++
+            return fake.observeQueue(conversationId)
+        }
 
         override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> {
             observed++
