@@ -6,7 +6,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/** Supplied contract only: deliberately absent from production hello advertisement. */
+/** Advertised in every production hello; support is selected only from that connection's ack (#2175). */
 internal const val CAPABILITY_THREAD = "thread"
 internal const val TYPE_THREAD_ITEM_ADDED = "thread_item_added"
 internal const val TYPE_THREAD_ITEM_CHANGED = "thread_item_changed"

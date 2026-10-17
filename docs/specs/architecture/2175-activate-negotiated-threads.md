@@ -20,7 +20,7 @@
 - `docs/knowledge/features/dependency-injection-host-conversation-source.md`: cached fields never negotiate current support; exact-host lookups.
 - `../pyrycode/docs/protocol-mobile.md`, capability negotiation, thread and query messages: wire authority.
 
-Overlapping in-flight branches: none found by the remote-branch scan at plan time.
+Overlapping in-flight branches (build through, additive edits only): #1947 (`ThreadViewModel.kt`, `RemoteConversationRepository.kt`), #2098 (`HostConversationSource.kt`), #2161 (`AppModule.kt`).
 
 ## Design source
 
@@ -123,3 +123,9 @@ Pending for the documentation stage:
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-17
+
+## Revisions
+
+- 2026-10-17: Open question on reconnect resolved. `RelayConnectionSupervisor.retry` is a no-op while the loop is connected, so the host row's tap would not renegotiate. `RelayConnectionRegistry.retryHost` now closes the supervisor first when the host's verdict is `Missing`, then retries, so the tap redials that host only; other hosts and the disconnected-host retry are unchanged.
+- 2026-10-17: Live tool-progress counters are not joined to the projection; the presentation uses the progress-free `projectAuthoritativeThread` overload, which also keeps offline reading from claiming current transient progress.
+- 2026-10-17: Test names settled during implementation. The integrated production-route probe is `NegotiatedThreadActivationTest.interruptedCatchUpAcrossReconnectKeepsNewerRevisionsAndPriorCheckpoint`; lost-acknowledgement settlement stays covered by `AuthoritativeSendReconciliationTest`, which already drives the repository's send registration that the production host id now enables. Added `capableHostReplacesLegacyBackfillWithAThreadQuery`, `NegotiatedThreadViewModelTest.anotherHostsRouteIsNotThisDestinationsProducer`, `TreeHostRowThreadMissingTest` and `HarnessThreadEvidenceBindingTest`.

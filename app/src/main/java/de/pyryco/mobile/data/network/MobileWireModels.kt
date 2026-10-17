@@ -127,7 +127,8 @@ data class HelloClientPayload(
     @SerialName("client_version") val clientVersion: String,
     @SerialName("protocol_versions") val protocolVersions: List<String> = listOf("v2"),
     val token: String,
-    val capabilities: List<String> = listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT, CAPABILITY_STOP_BACKGROUND_TASK),
+    val capabilities: List<String> =
+        listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT, CAPABILITY_STOP_BACKGROUND_TASK, CAPABILITY_THREAD),
     @SerialName("last_event_id") val lastEventId: Long? = null,
     @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("client_features") val clientFeatures: String = "",
 ) {

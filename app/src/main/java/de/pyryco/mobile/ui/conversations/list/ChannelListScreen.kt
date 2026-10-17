@@ -839,6 +839,7 @@ private fun LazyListScope.treeHost(
                     { onEvent(ChannelListEvent.TreeHostEditTapped(host.serverId)) }
                 },
             modifier = Modifier.padding(top = if (index == 0) 0.dp else TreeHostGap),
+            threadMissing = host.threadMissing,
             onReconnectTapped = {
                 onEvent(
                     when (host.connectionStatus.relay) {

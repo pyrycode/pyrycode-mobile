@@ -27,6 +27,9 @@ interface ConversationRepository {
     /** Decorators forward this optional provider; existing repositories retain their ordinary reads. */
     val runConfigurationReadings: RunConfigurationReadings? get() = null
 
+    /** The exact host's negotiated thread route (#2175), forwarded like [runConfigurationReadings]; null is legacy. */
+    val negotiatedThread: NegotiatedThread? get() = null
+
     suspend fun actOnAuthoritativeQueue(
         target: AuthoritativeQueueTarget,
         sendNow: Boolean,

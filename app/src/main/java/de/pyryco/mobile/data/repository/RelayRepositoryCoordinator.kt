@@ -13,7 +13,9 @@ import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.model.batchFor
 import de.pyryco.mobile.data.model.reconnected
 import de.pyryco.mobile.data.model.reduce
+import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.CAPABILITY_STOP_BACKGROUND_TASK
+import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RelayTransport
@@ -324,6 +326,72 @@ class RelayRepositoryCoordinator(
                     state is PumpState.Open && CAPABILITY_STOP_BACKGROUND_TASK in state.capabilities
                 } ?: flowOf(false)
             }.stateIn(scope, SharingStarted.Eagerly, false)
+
+    private val threadSupportState = MutableStateFlow<ThreadSupport>(ThreadSupport.Unverified)
+
+    /**
+     * This host's thread verdict (#2175), from the current connection's own `hello_ack` only. A capable
+     * connection that ends retires to [ThreadSupport.Unverified]; a missing verdict stays until a later ack
+     * replaces it. One collector, switched with `collectLatest`, so a retired connection cannot write it.
+     */
+    val threadSupport: StateFlow<ThreadSupport> = threadSupportState.asStateFlow()
+
+    /** Whether this host's daemon lacks threads, for the host row's daemon-update treatment (#2175). */
+    val threadMissing: StateFlow<Boolean> =
+        threadSupportState.map { it is ThreadSupport.Missing }.stateIn(scope, SharingStarted.Eagerly, false)
+
+    init {
+        if (authoritativeHostId.isNotEmpty()) {
+            scope.launch {
+                activeConnection.collectLatest { connection ->
+                    if (connection == null) {
+                        retireThreadVerdict()
+                        return@collectLatest
+                    }
+                    connection.pump.state.collect { state ->
+                        if (state is PumpState.Open) {
+                            val supported = CAPABILITY_THREAD in state.capabilities && CAPABILITY_INTERACTIVE in state.capabilities
+                            threadSupportState.value =
+                                if (supported) ThreadSupport.Supported(connection.repo) else ThreadSupport.Missing(connection.repo)
+                            RelayLog.d { "event=thread_negotiation verdict=${if (supported) "supported" else "missing"}" }
+                        } else {
+                            retireThreadVerdict()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun retireThreadVerdict() {
+        threadSupportState.update { if (it is ThreadSupport.Supported) ThreadSupport.Unverified else it }
+    }
+
+    /** The exact host's thread route over the store shared by its connections; null on the legacy test entry. */
+    val negotiatedThread: NegotiatedThread? =
+        authoritativeHostId.takeIf { it.isNotEmpty() }?.let { host ->
+            object : NegotiatedThread {
+                override val host: String = host
+                override val support: StateFlow<ThreadSupport> get() = threadSupport
+                override val store: AuthoritativeThreadStore get() = authoritativeThreads
+
+                override fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot> = authoritativeThreads.observe(host, conversationId)
+
+                override suspend fun open(conversationId: String): Boolean = verifiedRepository()?.openAuthoritativeThread(conversationId) == true
+
+                override fun older(conversationId: String): Boolean = verifiedRepository()?.requestOlderAuthoritativeThread(conversationId) == true
+
+                override fun cancel(conversationId: String) {
+                    (activeConnection.value?.repo)?.cancelAuthoritativeThread(conversationId)
+                }
+            }
+        }
+
+    /** The live repository only while it is the very connection the current supported verdict names. */
+    private fun verifiedRepository(): RemoteConversationRepository? {
+        val live = liveRepository() as? RemoteConversationRepository ?: return null
+        return live.takeIf { (threadSupport.value as? ThreadSupport.Supported)?.connection === it }
+    }
 
     /** Subscription follows this host across reconnects; no old connection events are replayed. */
     @OptIn(ExperimentalCoroutinesApi::class)

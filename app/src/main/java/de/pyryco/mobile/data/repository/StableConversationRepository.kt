@@ -59,6 +59,8 @@ class StableConversationRepository(
     private val currentRepository: StateFlow<ConversationRepository?>,
     private val heldReadings: HostReadings? = null,
     private val readRetries: ReadCheckpointRetries? = null,
+    /** The host coordinator's negotiated thread route (#2175); it outlives connection churn like this facade. */
+    override val negotiatedThread: NegotiatedThread? = null,
 ) : ConversationRepository,
     ThreadSnapshotSource {
     override val runConfigurationReadings: RunConfigurationReadings =

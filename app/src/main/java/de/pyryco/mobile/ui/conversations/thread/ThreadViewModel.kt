@@ -51,6 +51,7 @@ import de.pyryco.mobile.data.repository.ThreadReadEvidence
 import de.pyryco.mobile.data.repository.ThreadSnapshot
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.data.repository.projectDisplay
+import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.data.repository.threadSnapshots
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
@@ -82,6 +83,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -222,6 +224,12 @@ class ThreadViewModel(
     // `HostDestination` rejects an unresolvable owner, so this is never blank in production.
     private val serverId: String =
         savedStateHandle.get<String>("serverId").orEmpty()
+
+    /**
+     * This exact host's negotiated thread route (#2175). When present it is the only content producer:
+     * legacy rows, deltas, history walks and cached legacy rows feed nothing. Null keeps the legacy demo route.
+     */
+    private val negotiated = repository.negotiatedThread?.takeIf { it.host == serverId }
 
     /**
      * This chat's unsent composer text (#789), `""` when it has none. Read from the app-scoped
@@ -927,8 +935,7 @@ class ThreadViewModel(
 
     // One receipt subscription feeds both the rows and their read evidence, so opening a thread backfills once.
     private val receivedThread =
-        repository
-            .threadSnapshots(conversationId)
+        (if (negotiated == null) repository.threadSnapshots(conversationId) else emptyFlow())
             .shareIn(viewModelScope, SharingStarted.WhileSubscribed(replayExpirationMillis = 0), replay = 1)
 
     /**
@@ -947,6 +954,7 @@ class ThreadViewModel(
             var fold = ThreadFold(emptyList(), null)
             var evidence = ThreadReadEvidence()
             emit(FoldedThread(emptyList(), evidence))
+            if (negotiated != null) return@flow
             merge(
                 receivedThread.map {
                     // Boundary effects stay on main at receipt, before a worker backlog can delay them.
@@ -1067,6 +1075,42 @@ class ThreadViewModel(
         }.distinctUntilChanged()
             .paceThreadContent(contentScheduling)
 
+    /**
+     * The negotiated thread's screen presentation (#2175): restored or synchronized facts for this exact host and
+     * conversation. A missing-thread verdict draws nothing, even from cache; saved facts never claim support.
+     */
+    private val negotiatedPresentation: Flow<AuthoritativeThreadPresentation?> =
+        negotiated?.let { route ->
+            combine(route.support, route.observe(conversationId)) { support, snapshot ->
+                if (support is ThreadSupport.Missing || snapshot.epoch == null) null else snapshot
+            }.distinctUntilChanged()
+                .map { snapshot ->
+                    snapshot?.let {
+                        withContext(contentScheduling?.worker ?: Dispatchers.Main.immediate) {
+                            projectAuthoritativeThread(route.host, conversationId, it)
+                        }
+                    }
+                }.onStart { emit(null) }
+        } ?: flowOf(null)
+
+    init {
+        // #2175: synchronize once per supported connection, re-evaluated on every acknowledgement.
+        negotiated?.let { route ->
+            viewModelScope.launch {
+                route.support.collectLatest { support ->
+                    if (support is ThreadSupport.Supported && route.open(conversationId)) {
+                        RelayLog.d { "event=thread_route_opened" }
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onCleared() {
+        negotiated?.cancel(conversationId)
+        super.onCleared()
+    }
+
     val state: StateFlow<ThreadUiState> =
         combine(
             conversations,
@@ -1139,6 +1183,8 @@ class ThreadViewModel(
             )
         }.combine(repository.observeReadMarks(conversationId)) { uiState, marks ->
             uiState.copy(readUpTo = marks?.readUpTo, readMarks = marks)
+        }.combine(negotiatedPresentation) { uiState, presentation ->
+            if (negotiated == null) uiState else uiState.copy(authoritativeThread = presentation)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(),
@@ -2112,6 +2158,10 @@ class ThreadViewModel(
      * rather than queuing it.
      */
     fun onDemandOlderHistory() {
+        if (negotiated != null) {
+            negotiated.older(conversationId)
+            return
+        }
         if (!historySeed.isCompleted) {
             // Prefetch is movement-gated: completing the seed cannot replay an earlier movement.
             RelayLog.d { "event=history_ask_skipped reason=seeding" }
@@ -2133,6 +2183,10 @@ class ThreadViewModel(
      * keeping every loaded row and the walk's position across both the failure and the retry.
      */
     fun onRetryOlderHistory() {
+        if (negotiated != null) {
+            negotiated.older(conversationId)
+            return
+        }
         if (!hostAvailable.value) return
         val claimed = claimHistorySlot { if (it.canRetry) it.asking() else null } ?: return
         launchHistoryAsk(claimed)
@@ -2148,6 +2202,8 @@ class ThreadViewModel(
      * pull's would; otherwise the walk's cursor, saved position and stop reason are left as they were.
      */
     private fun askForNewestPage(reconnect: Boolean) {
+        // #2175: a negotiated thread catches up through its own query on each supported connection.
+        if (negotiated != null) return
         if (reconnect) RelayLog.d { "event=history_newest_ask reason=reconnect" }
         pendingNewest++
         drainNewestPages()
@@ -2266,7 +2322,7 @@ class ThreadViewModel(
     }
 
     fun onDemandUnsignedHistoryGap(anchor: ULong) {
-        if (!historySeed.isCompleted || !hostAvailable.value) return
+        if (negotiated != null || !historySeed.isCompleted || !hostAvailable.value) return
         val coverage = historyCoverage.value
         if (anchor == 0uL &&
             coverage.unsignedUnknownEdge == null ||

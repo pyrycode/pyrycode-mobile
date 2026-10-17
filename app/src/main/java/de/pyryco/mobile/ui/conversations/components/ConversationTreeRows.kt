@@ -210,12 +210,15 @@ fun TreeHostRow(
     onEditTapped: (() -> Unit)?,
     modifier: Modifier = Modifier,
     onReconnectTapped: () -> Unit = {},
+    threadMissing: Boolean = false,
 ) {
     // Clamped once here and reused for the row's own name and for every control label, so no path can
     // format an unbounded daemon-authored name into a content description.
     val bounded = boundedRowText(hostName)
-    val disconnected = connectionStatus.relay.isDisconnected()
     val update = connectionStatus.relay as? RelayLinkStatus.UpdateRequired
+    // #2175: a connected host whose daemon lacks threads takes the error treatment and keeps the reconnect plug.
+    val daemonUpdate = threadMissing && update == null
+    val disconnected = connectionStatus.relay.isDisconnected() || daemonUpdate
     Column(modifier = modifier) {
         FoldableTreeRow(
             glyph = painterResource(R.drawable.ic_tree_server),
@@ -259,12 +262,16 @@ fun TreeHostRow(
                 )
             }
         }
-        if (update != null) {
+        if (update != null || daemonUpdate) {
             // Inside the host's own item, so folding the host, which drops only the rows below it, keeps it.
             Text(
                 text =
-                    update.minClientVersion?.let { stringResource(R.string.tree_host_update_required_version, it) }
-                        ?: stringResource(R.string.tree_host_update_required),
+                    if (update == null) {
+                        stringResource(R.string.tree_host_thread_missing)
+                    } else {
+                        update.minClientVersion?.let { stringResource(R.string.tree_host_update_required_version, it) }
+                            ?: stringResource(R.string.tree_host_update_required)
+                    },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier =

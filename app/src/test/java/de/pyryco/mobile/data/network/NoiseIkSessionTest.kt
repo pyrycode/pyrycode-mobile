@@ -238,7 +238,10 @@ class NoiseIkSessionTest {
         val envelope = MobileJson.decodeFromString<Envelope>(helloJson)
         val hello = MobileJson.decodeFromJsonElement<HelloClientPayload>(envelope.payload)
         // #1119: multi_agent rides after interactive, so the daemon shows this phone Codex conversations.
-        assertEquals(listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT, CAPABILITY_STOP_BACKGROUND_TASK), hello.capabilities)
+        assertEquals(
+            listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT, CAPABILITY_STOP_BACKGROUND_TASK, CAPABILITY_THREAD),
+            hello.capabilities,
+        )
     }
 
     @Test

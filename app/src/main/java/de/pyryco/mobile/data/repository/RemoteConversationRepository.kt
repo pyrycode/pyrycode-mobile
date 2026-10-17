@@ -178,7 +178,7 @@ class RemoteConversationRepository internal constructor(
      * before `Open`. Never the full `conn_id`.
      */
     connToken: () -> String? = { null },
-    /** Supplied authoritative route only; production activation supplies the source in #1988. */
+    /** The exact host's thread route (#2175); non-empty retires every legacy content request. */
     private val authoritativeHostId: String = "",
     internal val authoritativeThreads: AuthoritativeThreadStore = AuthoritativeThreadStore(),
     private val authoritativeNowMillis: () -> Long = { System.nanoTime() / 1000000 },
@@ -305,6 +305,9 @@ class RemoteConversationRepository internal constructor(
         )
 
     /** The cache may borrow this supplied store only for its exact host namespace. */
+    /** The exact host this connection's thread route serves, or empty on the legacy test entry (#2175). */
+    internal val authoritativeHost: String get() = authoritativeHostId
+
     internal fun authoritativeStoreFor(host: String): AuthoritativeThreadStore? =
         authoritativeThreads.takeIf { host == authoritativeHostId }
 
@@ -1455,6 +1458,7 @@ class RemoteConversationRepository internal constructor(
         cursor: String,
         limit: Int,
     ): HistoryPage {
+        refuseRetiredLegacyContent()
         val page = readHistoryPage(conversationId, cursor, limit)
         page.entries
             .asSequence()
@@ -1466,7 +1470,21 @@ class RemoteConversationRepository internal constructor(
     }
 
     /** Notification enrichment fetches one newest page without changing rows, coverage or read facts. */
-    internal suspend fun requestAttentionHistory(conversationId: String): HistoryPage = readHistoryPage(conversationId, "", 0)
+    internal suspend fun requestAttentionHistory(conversationId: String): HistoryPage {
+        refuseRetiredLegacyContent()
+        return readHistoryPage(conversationId, "", 0)
+    }
+
+    /**
+     * #2175: a host with a negotiated thread route sends no history, backfill or replay request on any
+     * connection: capable connections use thread queries, and missing-thread or unacknowledged ones get no content.
+     */
+    private fun refuseRetiredLegacyContent() {
+        if (authoritativeHostId.isNotEmpty()) {
+            RelayLog.d { "event=legacy_content_request_refused" }
+            throw IllegalStateException("legacy history retired")
+        }
+    }
 
     private suspend fun readHistoryPage(
         conversationId: String,
@@ -1580,7 +1598,11 @@ class RemoteConversationRepository internal constructor(
 
     override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
         flow {
-            pump.send(backfillSinceRequest(conversationId))
+            if (authoritativeHostId.isEmpty()) {
+                pump.send(backfillSinceRequest(conversationId))
+            } else {
+                RelayLog.d { "event=legacy_content_request_refused" }
+            }
             emitAll(threadProjection.observeSnapshot(conversationId))
         }
 

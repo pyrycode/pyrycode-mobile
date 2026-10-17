@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.thread.ThreadRow
 import de.pyryco.mobile.ui.conversations.thread.foldBackgroundAgentBlocks
@@ -152,9 +153,20 @@ internal class ThreadEvidenceSource private constructor(
     }
 }
 
-/** Single future negotiation seam. Legacy stays explicit until production activation. */
-internal fun harnessThreadEvidence(repository: ConversationRepository): ThreadEvidenceSource =
-    ThreadEvidenceSource.legacy(null, repository, repository::observeMessages)
+/**
+ * The single negotiation seam (#2175), bound to the production selection: a host repository carrying the
+ * negotiated route, or a live connection serving one, yields only authoritative evidence. Only the legacy
+ * demo/fake route, which has neither, yields legacy evidence, so an authoritative run cannot pass on it.
+ */
+internal fun harnessThreadEvidence(repository: ConversationRepository): ThreadEvidenceSource {
+    repository.negotiatedThread?.let { route ->
+        return ThreadEvidenceSource.authoritative(route.host, repository, route::observe)
+    }
+    if (repository is RemoteConversationRepository && repository.authoritativeHost.isNotEmpty()) {
+        return ThreadEvidenceSource.authoritative(repository.authoritativeHost, repository, repository::observeAuthoritativeThread)
+    }
+    return ThreadEvidenceSource.legacy(null, repository, repository::observeMessages)
+}
 
 internal fun legacyThreadEvidence(
     host: String?,
