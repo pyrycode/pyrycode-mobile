@@ -99,7 +99,7 @@ import kotlinx.serialization.json.encodeToJsonElement
  */
 class RemoteConversationRepository internal constructor(
     private val pump: SessionPump,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     /**
      * The connection-level device name sent as `register_push_token`'s `device_name` (#359) — the
      * same value [de.pyryco.mobile.data.network.NoiseClientInfo.deviceName] puts in the `hello`
