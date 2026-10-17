@@ -56,6 +56,42 @@ Pending for documentation: update `docs/knowledge/features/thread-screen-testing
 
 ## Revisions
 
+### 2026-10-17: readiness succeeds; measured latency now blocks acceptance on #2218
+
+At Mobile `c8060639b8903a65b8e29641b8f812047cfcb9b0`, deployed agents
+`9aad4b5db84f2897c5eda3e8ed78a5ec9256ad71`, the fresh complete focused class
+executes 4, passes 2, fails 2, with no errors/skips, exit 1. Both controls pass;
+the slow control rejects the unchanged bound at 3928 ms. Every opening qualifies
+readiness: 17 barriers, 98 responsive windows, four qualifying final windows each,
+17 installed Probes, maximum acquisition/read 22/80 ms. Both positive methods
+retain all eight openings. The held-projection fragmented offline/held-newest first
+opens draw at 1314/1032 ms (restore/snapshot/content 935/936/985 and 710/713/749 ms).
+The original fragmented offline first open draws at 1026 ms (791/792/816 ms);
+held newest passes at 619 ms. These are measured bound failures, not readiness
+timeouts. No acceptance retry or assertion change is permitted or used.
+
+Independently verified #2209 owner's 88-file original-host comparison: unchanged
+Mobile `5e3e4471733f63e97ccb6c4fc5f054d8107f9445`, reference 4/3/1/0/0 and
+prepared 4/4/0/0/0. Current and owner generation inputs differ only in the recorded
+launcher identity: current swangle/SwiftShader versus owner auto-no-window/lavapipe.
+Current OS preparation/restore final 40-window idle minima are 82.46/83.64%.
+All eight measurement-source hashes match. This demonstrates the readiness repair
+under the recorded conditions but does not explain the new draws or historical
+1434/1436 ms misses. Thirty-six read-only host/process/guest observations add
+diagnostic overhead; five-second guest intervals include up to 16.17% steal across
+preparation/timed work. They cannot attribute individual draws. The pending search
+process records zero additional ticks during observation.
+
+Following the planned residual-latency seam, filed and verified open #2218 in
+Backlog at priority:low and read back its native blocked-by link from #2177.
+Its independent repair must precede this ticket's required fresh four-method green
+acceptance. No Mobile logic defect is established, and no renderer/process setting
+was changed. Fresh ping passes 2/2. Checked counts, all 51 comparison opening
+records and identities are in the managed-image evidence assets; raw XML, every
+phone log, numeric CPU observations, image qualification records and verified
+manifests are durable under this ticket's evidence root. Complete configured
+dispatcher UI/scripted-all gates and the documentation update remain pending.
+
 ### 2026-10-17: resume after managed-image repair #2209
 
 #2209 is closed after agents PRs #190 and #191 deployed at

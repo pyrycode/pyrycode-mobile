@@ -1,11 +1,11 @@
 # Saved first-draw readiness investigation (#2177)
 
-**Current status, 2026-10-17:** waiting on verified external runner/device blocker
-[#2209](https://github.com/pyrycode/pyrycode-mobile/issues/2209). The fresh complete
-focused class is **4 executed / 3 passed / 1 failed / 0 skipped**. Its first slow
-control exhausts readiness without a Probe. Earlier passing comparisons below
-remain historical evidence; they do not establish current acceptance. Scripted
-ping now passes **2/2**, after #2198 merged. See the resumption section below.
+**Current status, 2026-10-17:** #2209's managed-image repair is deployed. All 17
+readiness barriers now qualify, but fresh measured draw misses require verified
+open blocker [#2218](https://github.com/pyrycode/pyrycode-mobile/issues/2218).
+The complete focused class is **4 executed / 2 passed / 2 failed / 0 errors /
+0 skipped**; both controls pass. Scripted ping passes **2/2**. No acceptance retry
+was run. Earlier readiness failures and passing comparisons remain preserved below.
 
 This is development evidence from Linux/build-fractal-2, not a completed
 dispatcher UI or scripted-all gate. Raw phone logs remain private. The exact
@@ -91,7 +91,8 @@ historical failures. Fresh valid 841/678 and 839/687 ms results do not attribute
 prove repair of those older measurements. The retrieved original verifier bundle
 has counted XML and its verdict, without enough contemporaneous CPU/phase evidence
 to establish cause. Separate [latency follow-up #2202](https://github.com/pyrycode/pyrycode-mobile/issues/2202)
-is open in Backlog with low priority; it does not block restored readiness here.
+was filed in Backlog with low priority. Its later bounded investigation closed
+with the historical cause unresolved; the new measured failures belong to #2218.
 
 Raw XML, four phone logs per run, CPU samples, revisions, gate phases, analysis
 scripts and verified manifests survive under
@@ -176,3 +177,67 @@ ping harness diagnostics and CPU records survive in the three `resume-*` evidenc
 directories named in the JSON. All manifests were checked after copying. Update
 the documentation handoff with this renewed guest-load failure as well as actual
 later dispatcher gate results; do not replace either earlier failure history.
+
+## Managed-image repair and current latency blocker (2026-10-17)
+
+External #2209 closed after agents PRs #190/#191 deployed at
+`9aad4b5db84f2897c5eda3e8ed78a5ec9256ad71`. Gradle's boot-plus-fixed-delay snapshot
+could preserve startup work. The runner now prepares an OS-only generation,
+requires sustained guest quietness, verifies changed RAM/named disk checkpoints,
+and qualifies a read-only restore before installing Mobile. Play Services, the
+original signer, admission and owned cleanup remain intact. The initiating guest
+operation remains unproved. No Mobile logic repair is evidenced.
+
+The owner's complete 88-file Fractal comparison was independently hash-verified
+and retained under this ticket. Unchanged Mobile `5e3e4471733f63e97ccb6c4fc5f054d8107f9445`
+with reference agents `49cd6dd07c163a7d0e9583850aafb28378ec0b3c` reports
+**4/3/1/0/0** (executed/passed/failed/errors/skipped). Its negative control fails
+before a Probe after 109 responsive windows at 0–52% idle. Repaired conditions
+report **4/4/0/0/0**, all 17 Probes, and slow-bound rejection at **3630 ms**.
+The owner's controlled runner regressions are external evidence, not tests rerun here.
+
+This branch's fresh supported class at `c8060639b8903a65b8e29641b8f812047cfcb9b0`
+reports **4/2/2/0/0**, exit 1, XML timestamp **2026-10-17T07:50:49**. Both positive
+methods complete all eight openings but fail their aggregate committed-frame
+assertions. All **17 readiness barriers** succeed across **98 windows**, each
+ending with four qualifying windows; maximum acquisition/read are **22/80 ms**.
+All 17 Probes are installed. The slow control rejects the identical 1000 ms bound
+at **3928 ms**, and held-pipe cancellation/descriptor closure pass.
+
+Cumulative restore/snapshot/complete-content/committed-frame milliseconds for
+fragmented first opens:
+
+| Method | Offline | Held newest |
+| --- | --- | --- |
+| Original | 791/792/816/**1026** | 451/453/473/619 |
+| 1100 ms held projection | 935/936/985/**1314** | 710/713/749/**1032** |
+
+These are valid measured misses. They neither establish the cause of the earlier
+1434/1436 ms failures nor supply green acceptance. #2202 retains the historical
+disposition; new Backlog/priority:low issue #2218 is natively linked as this ticket's
+required latency-repair blocker. No assertions were ignored, and no acceptance
+retry, warming, threshold change or renderer/process change was made here.
+
+The current generation is `151a9dbd74aea4118480cc270492d68ef7fd255ce0b03cfacf6db74537c098d8`;
+its preparation/restore final 40-window minima are **82.46/83.64% idle** before
+Mobile installation. Compared with the owner's generation `07867931…`, only the
+recorded launcher identity input differs: current `emulator.hp-native`/`swangle`
+records `swiftshader`; owner `emulator`/`auto-no-window` records `lavapipe`.
+Both record x86_64, two cores, 2048 MiB, 1080x1920 and density 420. These differences
+do not prove a renderer cause. Eight measurement-source hashes still match.
+
+Thirty-six bounded read-only samples add observation overhead. Five-second guest
+intervals include preparation and measured work, with up to **16.17% steal**;
+they cannot attribute an individual draw. The search process adds **zero CPU ticks**
+during observation; its lifetime average is not current-load evidence.
+
+`managed-image-validation-20261017.json` and `managed-image-openings-20261017.jsonl`
+retain counts, source/image identities, XML/manifest hashes, environment differences
+and all **51** opening records across reference, repaired-owner and current runs.
+Fresh ping reports **2/2/0/0/0**, exit 0, XML timestamp **2026-10-17T07:54:33**.
+Raw reports, phone/worker logs, CPU samples, OS preparation records and verified
+manifests are under `$AGENTS_REPO_PATH/logs/evidence/2177/` in
+`managed-image-owner-comparison-20261017/` (88 files),
+`repaired-image-class-20261017/` (29 files) and `repaired-image-ping-20261017/`
+(9 files, including isolated harness diagnostics). Complete dispatcher UI/scripted-all
+gates and documentation remain pending. Resume green acceptance after #2218's repair.
