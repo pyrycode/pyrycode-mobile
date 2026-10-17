@@ -1779,7 +1779,11 @@ class RelayConnectionFactoryTest {
                             ?.jsonPrimitive
                             ?.content
                             ?.toLongOrNull() ?: 0
-                    val upper = request.payload.jsonObject["before_order"]?.jsonPrimitive?.content?.toLongOrNull() ?: 10
+                    val upper =
+                        request.payload.jsonObject["before_order"]
+                            ?.jsonPrimitive
+                            ?.content
+                            ?.toLongOrNull() ?: 10
                     val coverage =
                         if (request.type == "thread_catch_up" &&
                             cursor > 0
