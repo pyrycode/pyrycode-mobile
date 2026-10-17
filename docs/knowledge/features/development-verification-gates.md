@@ -60,6 +60,16 @@ fresh worktree, Gradle may need `ANDROID_HOME` set because `local.properties` is
 ignored. Preserve the command's exit status when inspecting output; piping Gradle
 through `tail` can hide a failure.
 
+Script fixtures for installed-APK rejection must own the bytes they compare (#2196).
+`SuiteDriverTest.test_wrong_installed_apk_is_rejected_before_native_execution`
+uses a temporary `ROOT` with controlled app APK bytes, a validated recording and a
+deliberately different installed digest supplied by mocked adb. Assert the exact
+digest-mismatch error, the package-path and SHA-256 queries, and that instrumentation
+was never invoked. Depending on checkout assembly outputs instead can fail with
+`FileNotFoundError` before exercising rejection, or pass only after an unrelated
+build. This control needs no real APK assembly or device; runtime installed-byte
+validation remains strict.
+
 The verifier keeps static checks, JVM execution, APK assembly, UI execution and
 scripted execution as independently retained gates. The static invocation is
 `./gradlew check -x :app:testDebugUnitTest`. Its excluded task runs immediately
