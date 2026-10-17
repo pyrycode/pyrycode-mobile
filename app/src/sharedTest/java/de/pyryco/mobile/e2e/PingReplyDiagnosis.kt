@@ -83,7 +83,7 @@ internal fun followUpPingReplyRecorded(
 internal fun holdsPingReply(items: List<ThreadItem>): Boolean =
     items.any { it is ThreadItem.MessageItem && it.message.role == Role.Assistant && it.message.content.isPingReply() }
 
-private fun String.isPingReply(): Boolean = trim().equals("ping", ignoreCase = true)
+internal fun String.isPingReply(): Boolean = trim().equals("ping", ignoreCase = true)
 
 // A diagnostic read must not throw over a malformed frame, so a non-primitive field reads as absent.
 private fun Envelope.field(name: String): String? = ((payload as? JsonObject)?.get(name) as? JsonPrimitive)?.contentOrNull
