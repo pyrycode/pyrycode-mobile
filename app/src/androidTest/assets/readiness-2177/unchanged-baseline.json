@@ -1,0 +1,81 @@
+{
+  "ticket": 2177,
+  "machine": "build-fractal-2",
+  "baseline_revision": "4b21cef23ef9d395f667694ab2a6df97c380deaf",
+  "execution_revision": "e63eb2c52",
+  "execution_revision_changes": "Investigation plan only; all production and test source unchanged from baseline.",
+  "test_source_sha256": "07b697f780bf83202a39e31b5730f4429d86c64764012575738bde2629a36295",
+  "helper_source_sha256": "b76344d827dd69b4356d27e1620e21c120668af0cc8fa8d36e05a5c1c2a9b33b",
+  "unit_source_sha256": "df15f0d6c7f3114adab4e239a8a94c952c7c1d226333d01c24d06db7079d303f",
+  "configuration": {
+    "device": "pixel2Api33Atd",
+    "class": "de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest",
+    "selection": "Complete focused class, excluding de.pyryco.mobile.e2e",
+    "animations_disabled": true,
+    "kotlin_compiler": "in-process",
+    "gradle_jvm": "-Xmx4g -XX:MaxMetaspaceSize=1g",
+    "device_queue": "Direct documented Gradle command; did not acquire the shared gate hold.",
+    "overlap": "emulator-5554 belonged to verifier-2169 UI gate; this run started emulator-5556."
+  },
+  "counts": { "executed": 4, "passed": 1, "failed": 3, "errors": 0, "skipped": 0, "exit": 1 },
+  "readiness_failures": [
+    {
+      "method": "slowRestore_negativeControlRejectsTheSameFirstDrawBound",
+      "case": "negative-control",
+      "windows": 102,
+      "idle_percent_min": 1,
+      "idle_percent_max": 55,
+      "windows_at_least_80_percent_idle": 0,
+      "installed_openings": 0
+    },
+    {
+      "method": "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen",
+      "case": "ordinary online=false opening=0 projection_hold_ms=1100",
+      "windows": 102,
+      "idle_percent_min": 1,
+      "idle_percent_max": 40,
+      "windows_at_least_80_percent_idle": 0,
+      "installed_openings": 0
+    },
+    {
+      "method": "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen",
+      "case": "ordinary online=false opening=0 projection_hold_ms=0",
+      "windows": 99,
+      "idle_percent_min": 0,
+      "idle_percent_max": 36,
+      "windows_at_least_80_percent_idle": 0,
+      "installed_openings": 0
+    }
+  ],
+  "passed_control": "heldCpuPipeCancelsAndClosesItsDescriptor",
+  "host_evidence": {
+    "samples": 36,
+    "start_utc": "2026-10-15T21:20:52Z",
+    "end_utc": "2026-10-15T21:23:48Z",
+    "logical_cpus": 8,
+    "load_1m_range": [12.3427734375, 19.337890625],
+    "aggregate_busy_percent_approx": 95.7,
+    "aggregate_iowait_percent_approx": 0.1,
+    "kotlin_daemon_pid": 4425,
+    "kotlin_daemon_working_directory": "/home/ubuntu/.kotlin/daemon",
+    "subsequent_one_second_cpu_percent_samples": [643.2, 661.0, 648.0, 624.2, 587.0],
+    "gc_thread_count": 8,
+    "gc_cpu_delta_ms": 163263.68,
+    "gc_wall_delta_seconds": 28.67,
+    "thread_dump_utc": ["2026-10-15T21:26:15Z", "2026-10-15T21:26:44Z"],
+    "old_generation_used_kib": 1398176,
+    "old_generation_total_kib": 1398272,
+    "device_top_host_percent_of_two_cores": 79,
+    "device_top_idle_percent_of_two_cores": 83,
+    "device_top_gms_persistent_cpu_percent": 37.9
+  },
+  "serialized_comparison": {
+    "status": "Cancelled while queued behind verifier-2169, before acquiring the device or launching Gradle.",
+    "executed": 0,
+    "process_exit": 130,
+    "test_result": "None; queue cancellation is not a test failure or pass."
+  },
+  "external_blocker": "https://github.com/pyrycode/pyrycode-mobile/issues/2178",
+  "private_evidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2177/unchanged-concurrent-baseline/",
+  "disposition": "Current host compiler/GC pressure and guest steal are demonstrated; the compiler's initiating defect and the exact cause of the earlier #2163 readiness/draw failures remain unestablished. No draw measurement, valid repaired comparison, or complete dispatcher gate result is claimed. Resume after the external runner repair."
+}
