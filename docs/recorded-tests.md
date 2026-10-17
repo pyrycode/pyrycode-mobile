@@ -237,11 +237,35 @@ bounded model above. The shared guarantees are exact actions, request correlatio
 connection termination after required work, observation boundaries and complete consumption.
 Do not interpret copying Desktop's checkpoints as copying its entire scheduler.
 
-Replay restores the instrumentation arguments, prior pairings and preferences, and the
-ordinary application graph after each case, including failures. Recorded mode must not
-leak into another device test or make its ordinary-mode check silently skip. A device
-regression enters an incomplete replay, requires that replay to fail, then checks that
-the arguments and ordinary repository binding are restored.
+### Replay isolation
+
+`E2eTestApplication` owns one preference DataStore for the instrumentation process.
+Both startup paths and every graph rebuild bind that same instance through a fresh
+override module. An ordinary isolated Koin graph can close without discarding the
+Application's preference factory or opening a competing owner of `app_prefs`.
+Replay isolates values in that store; it does not isolate cases in separate processes
+or preference files. The store remains active until process exit.
+
+Replay restores the instrumentation arguments, prior pairings and preferences, then
+rebuilds the ordinary application graph after each case, including failures. Rebuilds
+run on main with no Activity alive, unregister the old lifecycle observer and dispose
+the old registry and host sources. Recorded mode must not leak into another device
+test or make its ordinary-mode check silently skip.
+
+A seeded fixture must also restore its own original snapshot and rebuild the ordinary
+graph in `finally`. Direct snapshot restoration bypasses the observable pairing-store
+revision, so the registry created after replay can otherwise retain a synthetic host
+connection after its persisted pairing disappears. Cleanup must release that connection
+and restore exactly the original registry hosts as well as persisted state, even when
+the seeded assertion fails.
+
+`RecordedSuiteIsolationDeviceTest` covers ordinary graph closure with real file I/O,
+two successive incomplete replays with ordinary graph closure between them, and a
+successful original ping scenario. Two additional probes await synthetic registry
+ownership before checking cleanup after normal return and deliberate assertion failure.
+See [Device gate evidence for #2208](knowledge/features/development-verification-gates.md#linux-ownership-repair-evidence-2208)
+for counted Linux results. These checks remain offline; they do not establish fresh
+Claude compatibility, encrypted transport, real push delivery or live timing.
 
 Failed runs can export separately named private application traces. Their format cannot
 be loaded as a successful recording. Compressed diagnostic archives are excluded from
