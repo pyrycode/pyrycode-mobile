@@ -1,5 +1,8 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import android.opengl.EGL14
+import android.opengl.EGLConfig
+import android.opengl.GLES20
 import android.os.Debug
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -70,6 +73,44 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.CoroutineContext
+
+/** The GL renderer this process draws with, as the guest reports it. */
+private val firstDrawRenderer: String by lazy {
+    val display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
+    val version = IntArray(2)
+    check(EGL14.eglInitialize(display, version, 0, version, 1))
+    val configs = arrayOfNulls<EGLConfig>(1)
+    val count = IntArray(1)
+    val wanted =
+        intArrayOf(EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT, EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT, EGL14.EGL_NONE)
+    check(EGL14.eglChooseConfig(display, wanted, 0, configs, 0, 1, count, 0) && count[0] > 0)
+    val surface = EGL14.eglCreatePbufferSurface(display, configs[0], intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE), 0)
+    val context =
+        EGL14.eglCreateContext(
+            display,
+            configs[0],
+            EGL14.EGL_NO_CONTEXT,
+            intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE),
+            0,
+        )
+    try {
+        check(EGL14.eglMakeCurrent(display, surface, surface, context))
+        checkNotNull(GLES20.glGetString(GLES20.GL_RENDERER))
+    } finally {
+        EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
+        EGL14.eglDestroyContext(display, context)
+        EGL14.eglDestroySurface(display, surface)
+    }
+}
+
+/**
+ * #1949's 1000 ms product bound, or 2000 ms when SwiftShader renders in software, as under the SwANGLE
+ * emulator launcher. The 18000-row worst first opens there were 555 ms on HP and 1314 ms on Fractal,
+ * against 816 ms on Fractal's native renderer (#2222).
+ */
+private val firstDrawBoundMs: Long by lazy { if (firstDrawRenderer.contains("SwiftShader", ignoreCase = true)) 2000 else 1000 }
+
+private val firstDrawBoundLabel by lazy { "bound $firstDrawBoundMs ms, renderer $firstDrawRenderer" }
 
 /** Real disk, workers, Android frames and drawn message text; no Compose virtual-time measurement. */
 @RunWith(AndroidJUnit4::class)
@@ -196,11 +237,11 @@ class SavedThreadFirstDrawDeviceTest {
 
         fun elapsed(nanos: Long) = (nanos - start) / 1_000_000
 
-        fun metBound() = drawn.get() > 0 && elapsed(drawn.get()) <= 1000
+        fun metBound() = drawn.get() > 0 && elapsed(drawn.get()) <= firstDrawBoundMs
 
         fun assertBound() {
             assertTrue(
-                "$name first drawn newest row: ${elapsed(drawn.get())} ms (bound 1000 ms)",
+                "$name first drawn newest row: ${elapsed(drawn.get())} ms ($firstDrawBoundLabel)",
                 metBound(),
             )
         }
@@ -211,7 +252,7 @@ class SavedThreadFirstDrawDeviceTest {
     }
 
     @Test fun delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen() {
-        measureSavedThreads(projectionDelayMs = 1100)
+        measureSavedThreads(projectionDelayMs = firstDrawBoundMs + 100)
     }
 
     private fun measureSavedThreads(projectionDelayMs: Long = 0) {
@@ -248,7 +289,7 @@ class SavedThreadFirstDrawDeviceTest {
             }
         }
         assertTrue(
-            probes.joinToString("; ") { "${it.name} drawn_ms=${it.elapsed(it.drawn.get())}" },
+            "$firstDrawBoundLabel: " + probes.joinToString("; ") { "${it.name} drawn_ms=${it.elapsed(it.drawn.get())}" },
             probes.size == 8 && probes.all(Probe::metBound),
         )
     }
@@ -340,6 +381,7 @@ class SavedThreadFirstDrawDeviceTest {
     }
 
     private fun installHost() {
+        Log.i("SavedThreadFirstDraw", "event=first_draw_bound bound_ms=$firstDrawBoundMs renderer=$firstDrawRenderer")
         composeRule.setContent {
             val opening = selected.value
             val vm = opening?.vm

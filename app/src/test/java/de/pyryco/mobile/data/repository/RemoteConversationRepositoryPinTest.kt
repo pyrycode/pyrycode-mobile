@@ -7,10 +7,12 @@ import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.di.HostConversationConnection
 import de.pyryco.mobile.di.HostConversationSource
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -320,10 +322,219 @@ class RemoteConversationRepositoryPinTest {
             }
         }
 
+    // #2214: the daemon refuses a missing or null `pinned`, so unpin must put an explicit false on the wire.
+    @Test
+    fun setPinned_sendsExactVerbAndExplicitBoolean() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+            pump.push(snapshot(row()))
+            runCurrent()
+
+            listOf(true to JsonPrimitive(PIN), false to JsonNull).forEach { (pinned, pin) ->
+                val write = startPin(repo, pinned)
+                runCurrent()
+                pump.push(update(row(pin), pinFrame(pump).id))
+                runCurrent()
+                write.result().getOrThrow()
+                assertEquals(if (pinned) Instant.parse(PIN) else null, single(repo).pinnedAt)
+            }
+
+            assertEquals(
+                listOf(
+                    MobileJson.parseToJsonElement("""{"conversation_id":"channel","pinned":true}"""),
+                    MobileJson.parseToJsonElement("""{"conversation_id":"channel","pinned":false}"""),
+                ),
+                pump.sent.filter { it.type == "set_conversation_pinned" }.map { it.payload },
+            )
+        }
+
+    // Invariant: only a decoded host record changes pin state; the request itself moves nothing.
+    @Test
+    fun setPinned_pendingRequestLeavesConfirmedStateUntilReplyArrives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+            val observed = mutableListOf<List<Conversation>>()
+            backgroundScope.launch { repo.observeConversations(ConversationFilter.All).collect { observed += it } }
+            pump.push(snapshot(richRow()))
+            runCurrent()
+            val held = single(repo)
+            val emissions = observed.size
+
+            val write = startPin(repo, true)
+            runCurrent()
+            assertTrue(write.job.isActive)
+            assertEquals(emissions, observed.size)
+            assertEquals(held, single(repo))
+
+            pump.push(update(richRow(JsonPrimitive(PIN)), pinFrame(pump).id))
+            runCurrent()
+            write.result().getOrThrow()
+            assertEquals(held.copy(pinnedAt = Instant.parse(PIN)), single(repo))
+        }
+
+    // Invariant: reply and broadcast for one write upsert one row; a repeat pin keeps the host's time.
+    @Test
+    fun setPinned_replyAndDuplicatePushInEitherOrderKeepOneRowAndHostTimestamp() =
+        runTest {
+            listOf(false, true).forEach { pushFirst ->
+                val pump = FakeSessionPump()
+                val repo = repo(pump)
+                pump.push(snapshot(row()))
+                runCurrent()
+
+                repeat(2) { attempt ->
+                    val write = startPin(repo, true)
+                    runCurrent()
+                    val deliveries = listOf(update(row(JsonPrimitive(PIN)), pinFrame(pump).id), update(row(JsonPrimitive(PIN))))
+                    (if (pushFirst) deliveries.reversed() else deliveries).forEach { envelope ->
+                        pump.push(envelope)
+                        runCurrent()
+                        val rows = repo.observeConversations(ConversationFilter.All).first()
+                        assertEquals("pushFirst=$pushFirst attempt=$attempt", listOf("channel"), rows.map { it.id })
+                        assertEquals(Instant.parse(PIN), rows.single().pinnedAt)
+                    }
+                    write.result().getOrThrow()
+                }
+            }
+        }
+
+    // Invariant: refusals and malformed replies keep the confirmed record; a later snapshot refreshes it.
+    @Test
+    fun setPinned_refusalsAndMalformedReplyPreserveConfirmedRecordUntilSnapshot() =
+        runTest {
+            listOf("protocol.unknown_type", "conversation.not_promoted", "conversation.not_found", MALFORMED).forEach { case ->
+                val pump = FakeSessionPump()
+                val repo = repo(pump)
+                pump.push(snapshot(richRow(JsonPrimitive(PIN))))
+                runCurrent()
+                val held = single(repo)
+
+                val write = startPin(repo, pinned = case == "protocol.unknown_type" || case == "conversation.not_promoted")
+                runCurrent()
+                val request = pinFrame(pump)
+                pump.push(
+                    if (case == MALFORMED) {
+                        update(richRow(JsonPrimitive("yesterday")), request.id)
+                    } else {
+                        error(request.id, case)
+                    },
+                )
+                runCurrent()
+
+                val thrown = write.result().exceptionOrNull()
+                when (case) {
+                    "conversation.not_found", MALFORMED -> assertTrue(case, thrown is IllegalArgumentException)
+                    else -> assertEquals(case, case, (thrown as RelayErrorException).code)
+                }
+                assertEquals(case, held, single(repo))
+
+                pump.push(snapshot(richRow(JsonPrimitive(REPIN))))
+                runCurrent()
+                assertEquals(case, held.copy(pinnedAt = Instant.parse(REPIN)), single(repo))
+            }
+            assertTrue(logs.none { it.contains("yesterday") || it.contains(PIN) })
+        }
+
+    @Test
+    fun setPinned_disconnectedSessionFailsAndKeepsConfirmedRecord() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+            pump.push(snapshot(richRow(JsonPrimitive(PIN))))
+            runCurrent()
+            val held = single(repo)
+
+            pump.open = false
+            assertTrue(runCatching { repo.setPinned("channel", false) }.exceptionOrNull() is IllegalStateException)
+            assertTrue(pump.sent.none { it.type == "set_conversation_pinned" })
+            assertEquals(held, single(repo))
+
+            pump.open = true
+            val write = startPin(repo, false)
+            runCurrent()
+            assertEquals(1, pump.sent.count { it.type == "set_conversation_pinned" })
+            pump.close()
+            runCurrent()
+            assertTrue(write.result().exceptionOrNull() is IllegalStateException)
+            assertEquals(held, single(repo))
+
+            // A reconnect is a fresh repository; its snapshot carries the host's current pin.
+            val nextPump = FakeSessionPump()
+            val next = repo(nextPump)
+            nextPump.push(snapshot(richRow(JsonPrimitive(REPIN))))
+            runCurrent()
+            assertEquals(held.copy(pinnedAt = Instant.parse(REPIN)), single(next))
+        }
+
+    // Host-scoped dispatch: a write goes to its own connection only, even when another host shares the id.
+    @Test
+    fun setPinned_onOneHostLeavesTheOtherHostsSameIdUntouched() =
+        runTest {
+            val pumpA = FakeSessionPump()
+            val pumpB = FakeSessionPump()
+            val repoA = repo(pumpA)
+            val repoB = repo(pumpB)
+            pumpA.push(snapshot(row()))
+            pumpB.push(snapshot(row(JsonPrimitive(REPIN))))
+            runCurrent()
+
+            val write = startPin(repoA, true)
+            runCurrent()
+            assertTrue(pumpB.sent.none { it.type == "set_conversation_pinned" })
+            pumpA.push(update(row(JsonPrimitive(PIN)), pinFrame(pumpA).id))
+            pumpA.push(update(row(JsonPrimitive(PIN))))
+            runCurrent()
+            write.result().getOrThrow()
+
+            assertEquals(Instant.parse(PIN), single(repoA).pinnedAt)
+            assertEquals(Instant.parse(REPIN), single(repoB).pinnedAt)
+        }
+
     private fun TestScope.repo(pump: FakeSessionPump) =
         RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
 
     private suspend fun single(repo: RemoteConversationRepository) = repo.observeConversations(ConversationFilter.All).first().single()
+
+    private class PendingWrite(
+        val job: Job,
+        private val outcome: () -> Result<Unit>?,
+    ) {
+        fun result(): Result<Unit> = requireNotNull(outcome()) { "write has not completed" }
+    }
+
+    private fun TestScope.startPin(
+        repo: RemoteConversationRepository,
+        pinned: Boolean,
+    ): PendingWrite {
+        var outcome: Result<Unit>? = null
+        val job = backgroundScope.launch { outcome = runCatching { repo.setPinned("channel", pinned) } }
+        return PendingWrite(job) { outcome }
+    }
+
+    /** The latest pin frame; the repository also sends its own `list_conversations` requests. */
+    private fun pinFrame(pump: FakeSessionPump): Envelope = pump.sent.last { it.type == "set_conversation_pinned" }
+
+    /** A row whose unrelated fields (mute, archive stamp, label, agent) must survive every pin outcome. */
+    private fun richRow(pin: JsonElement? = null) =
+        JsonObject(
+            row(pin).toMutableMap().apply {
+                put("agent", JsonPrimitive("codex"))
+                put("archived_at", JsonPrimitive(TS))
+            },
+        )
+
+    private fun error(
+        inReplyTo: Long,
+        code: String,
+    ) = Envelope(
+        id = 99L,
+        type = "error",
+        ts = TS,
+        payload = MobileJson.parseToJsonElement("""{"code":"$code","message":"fixed","retryable":false}"""),
+        inReplyTo = inReplyTo,
+    )
 
     private fun row(
         pin: JsonElement? = null,
@@ -373,6 +584,7 @@ class RemoteConversationRepositoryPinTest {
             "archive" -> repo.archive("channel")
             "unarchive" -> repo.unarchive("channel")
             "setMuted" -> repo.setMuted("channel", false)
+            "setPinned" -> repo.setPinned("channel", true)
             "setSystemPrompt" -> repo.setSystemPrompt("channel", null)
             "changeWorkspace" -> repo.changeWorkspace("channel", "/p")
             else -> error("Unknown test command")
@@ -382,8 +594,10 @@ class RemoteConversationRepositoryPinTest {
         private val channel = Channel<Envelope>(Channel.UNLIMITED)
         override val inbound: Flow<Envelope> = channel.receiveAsFlow()
         val sent = mutableListOf<Envelope>()
+        var open = true
 
         override fun send(envelope: Envelope): Boolean {
+            if (!open) return false
             sent += envelope
             return true
         }
@@ -407,10 +621,12 @@ class RemoteConversationRepositoryPinTest {
                 "archive",
                 "unarchive",
                 "setMuted",
+                "setPinned",
                 "setSystemPrompt",
                 "changeWorkspace",
             )
         const val TS = "2026-05-08T10:00:00Z"
+        const val MALFORMED = "malformed reply"
         const val PIN = "2026-05-08T10:30:00.123456789Z"
         const val REPIN = "2026-05-08T10:31:00.987654321Z"
     }

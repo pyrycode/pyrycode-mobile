@@ -227,6 +227,48 @@ before teardown cannot reuse an earlier open-state check after that connection c
 Recorded stream events retain cadence. Real push delivery, encryption, transport recovery
 and timing obligations retain their external checks.
 
+### Atomic transport close (#2219)
+
+`RecordedTransport.close` runs on the same hub monitor as `ReplayPump.send`, not only on
+the pump's own close-state lock above. Before this, `close` published `localClose` and ran
+its lifecycle transition without holding that monitor, so a send already inside the monitor
+could observe the transport as closed while the strict tape still required the close step
+itself to be consumed first. `hasEligibleRefusal` then saw no pending close and let the send
+bypass exact matching, so the tape's captured refused `request_attachment` and its
+`inbound_end` were never drained; the scenario's own retry and recovery still passed, and
+only the final teardown checkpoint hung for the full 30-second deadline. This produced the
+historical fail-then-pass on `interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile`:
+[#2213's Linux UI gate](https://github.com/pyrycode/pyrycode-mobile/issues/2213) failed the
+method with replay progress `matched=32 remaining=3` and exactly that close, refused request
+and `inbound_end` pending, then its focused rerun passed 1/1 in 6.65 seconds — evidence of the
+race, not proof of its absence. An earlier fail-then-pass of the same method occurred in
+[#2208](https://github.com/pyrycode/pyrycode-mobile/issues/2208). Serializing `close` on the hub monitor makes a second closer wait behind an unfinished
+first close, so the tape's close step is always consumed before any send can see the
+transport as closed.
+
+`SuiteConnectionsTest#aRacingCloseCannotHideTheCapturedRefusedAttachmentRequest` forces this
+overlap directly: it holds the hub monitor, starts a transport close on another thread,
+confirms that thread blocks on the monitor, then closes the pump and sends the refused
+request from the holder before releasing it, and asserts the tape still completes.
+`aCapturedRefusalStillRejectsAChangedAttachmentAfterClose` is the companion negative case —
+a changed attachment identity after close still fails strict matching and leaves the tape
+incomplete. Both join the existing `aSendWaitingBehindCloseCannotUseAnEarlierOpenState`.
+Against the pre-fix source (`bf1bf2ba0`) the racing-close regression failed twice, each one
+executed/one failed/zero skipped, both leaving precisely the refused attachment request and
+`inbound_end` unconsumed — the same shape as the historical gate failure. After the fix
+(`3c4ccf7f8`), `SuiteConnectionsTest` passed 15/15 and `RecordedSuiteTapeTest` passed 23/23,
+and the dispatcher's Linux UI gate executed and passed
+`interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile` with its original restart,
+link-cut, Retry and recovered-file assertions intact. The builder additionally ran five
+consecutive focused native executions of that method with no failures or skips (8.897,
+8.169, 8.624, 8.274 and 7.809 seconds), all against identical source hashes. The retained
+evidence index is
+[`recorded-close-2219/evidence.json`](../app/src/test/resources/verification/recorded-close-2219/evidence.json);
+raw XML, output, phone diagnostics and source snapshots were kept under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2219/atomic-close-20261017/` at review
+time and are pruned after 30 days, so the counted results above, not that path, are the
+durable record.
+
 ### Observation checkpoints and separate verification results
 
 New captures record explicit checkpoints before a phone send and after the original
