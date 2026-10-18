@@ -22,9 +22,16 @@ fun MarkdownText(
 
 `MarkdownTextStyle` carries `body`, `blockSpacing`, `listItemSpacing`, optional `code`, and
 `presentation` (default `MarkdownPresentation.Thread`). Finished and streaming
-[`MessageBubble`](message-bubble.md) use M3 `bodyMedium` (14sp/20sp), 12dp block gaps and
+[`MessageBubble`](message-bubble.md) use M3 `bodyMedium` (14sp/20sp), 16dp block gaps and
 4dp sibling-item gaps. The [reader](markdown-reader-screen.md#what-it-does) selects
 `MarkdownPresentation.Reader`, `bodyLarge` (16sp/24sp), 12dp/6dp gaps and 13sp/20sp code.
+
+The 16dp thread gap also separates blocks inside list items and quotes (#2273).
+Column arrangements add gaps only between blocks, with no space before the first or
+after the last. User paragraphs, attachment/metadata gaps and bubble padding belong
+to [MessageBubble](message-bubble.md) and retain their independent values.
+Heading-specific spacing remains assigned to #2274. See the
+[bounds-test guidance](message-bubble-testing.md#testing) for settled and streaming coverage.
 
 The reader uses untrimmed line-height boxes for headings and prose, including nested list and quote
 text; Android's default trimmed boxes otherwise shorten the Figma paragraph and list. Thread line
