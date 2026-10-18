@@ -318,7 +318,7 @@ class AuthoritativeRoomStorage internal constructor(
         val kept =
             saved
                 .copy(
-            items = incoming.items.filterNot { it.id in fences }.map { it.raw },
+                    items = incoming.items.filterNot { it.id in fences }.map { it.raw },
                     retirements = fences,
                     checkpoint = if (fences.isEmpty()) saved.checkpoint else 0,
                     coverage = saved.coverage.takeIf { fences.isEmpty() },
