@@ -35,3 +35,25 @@ holds publication of the final snapshot inside its collector. In each case, a sc
 drain cannot establish writer acceptance. The repair observes `Source.afterEmission`
 after releasing the respective hold: returning from the source emission means the
 repository has finished `ThreadWriter.accept`.
+
+At controlled-red revision `e5a22b25243caa8debec1a81d11532086d357fef`, both
+methods fail: the intent assertion finds no accepted key, and final disk verification
+finds row 2 still present after cancellation before acceptance. These reproduce the
+shared test defect; they do not reconstruct the unavailable historical assertions.
+
+At repaired revision `0ce36236b2ee3bd507705922ef6e38517781778b`:
+
+| Selection | Executed/passed | Failures/errors/skips |
+| --- | ---: | ---: |
+| Exact assigned pair | 2 | 0/0/0 |
+| Entire affected concurrency class | 9 | 0/0/0 |
+
+The pair command also passes lint and debug assembly. Both revision-probe branches
+remain active: evidence failure and cancellation during the held non-cancellable
+commit. Final publication is deliberately held in both; acceptance follows release
+and precedes cancellation/final flush. The intent retry uses an empty live capture,
+so exact restored content must come from its retained pending intent. Every changed
+probe releases held work and joins its readers/saves before closing Room.
+
+macOS is outside this Linux ticket's verification scope. No device or live scenario
+is required. Complete configured acceptance remains pending for the dispatcher.

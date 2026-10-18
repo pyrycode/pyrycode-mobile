@@ -67,3 +67,9 @@ Retain source revisions, commands, failure signatures, raw output/XML and hashes
 ### 2026-10-18: controlled diagnosis
 
 Both red probes fail at the expected contract assertions while held before acceptance. Keep both tests together and repair only their observation ordering. The intent retry now captures an empty live snapshot, so successful persistence must consume the retained exact pending row rather than receiving it again from the source. The existing post-emission acknowledgement is sufficient; no product change or new harness is needed.
+
+### 2026-10-18: focused verification and scope recheck
+
+Repaired source `0ce36236b2ee3bd507705922ef6e38517781778b` passes the exact assigned pair (2 executed/passed) and the full affected class (9 executed/passed), each with 0 failures/errors/skips on Linux. The pair command also passes lint and debug assembly. Raw console captures, complete compressed XML, source revisions, commands and hashes are retained under `app/src/test/resources/verification/owned-acceptance-2291/`. The cold red capture explicitly marks one truncated compiler-warning chunk; its test-result output and complete XML are intact. Green captures are complete. Original failure details remain unknown beyond their retained classification.
+
+Final scope remains one behaviour with no production changes, exported types, consumer updates or new reject branches. Approximately 1100 written lines including retained console evidence (most of the increase over the 450-line forecast is compiler-warning capture), below the 1600-line ceiling. Full configured gates remain dispatcher-owned; other operating systems are outside this ticket's verification scope.

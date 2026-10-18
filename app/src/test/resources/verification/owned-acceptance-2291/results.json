@@ -27,5 +27,105 @@
         "failure": "java.lang.AssertionError: final accepted snapshot must remove row 2 (cancel=false) expected:<[MessageItem(message=Message(id=id-1, sessionId=s, role=User, content=text-1, timestamp=1970-01-01T00:00:01Z, isStreaming=false, toolCall=null, attachments=[], segment=null, parentToolUseId=, reconciliationId=null))]> but was:<[MessageItem(message=Message(id=id-1, sessionId=s, role=User, content=text-1, timestamp=1970-01-01T00:00:01Z, isStreaming=false, toolCall=null, attachments=[], segment=null, parentToolUseId=, reconciliationId=null)), MessageItem(message=Message(id=id-2, sessionId=s, role=User, content=text-2, timestamp=1970-01-01T00:00:02Z, isStreaming=false, toolCall=null, attachments=[], segment=null, parentToolUseId=, reconciliationId=null))]>"
       }
     ]
+  },
+  {
+    "stage": "green-pair",
+    "revision": "0ce36236b2ee3bd507705922ef6e38517781778b",
+    "os": "Linux",
+    "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest.intentInvariant_rowFailureKeepsRetryableWork --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest.revisionInvariant_rowSuccessSurvivesEvidenceFailureAndCancellation lint assembleDebug --console=plain",
+    "tests": 2,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "xml": "green-pair.xml.gz",
+    "xmlSha256": "150a741f3f7377338ddf6fd819bb1cb202e6092e8c877635ea924fc2d6e8e336",
+    "compressedSha256": "f3c017cd63099321bc41efa28bc8e7802a55e3f1e15b4dc990dfda7ffda4cbdf",
+    "stdout": "green-pair.stdout.log",
+    "stdoutSha256": "681a7136c25c75f2f03ab1a838951b523b394dd72ba96ee7810f6d72669f044e",
+    "cases": [
+      {
+        "name": "intentInvariant_rowFailureKeepsRetryableWork",
+        "failed": false,
+        "skipped": false,
+        "failure": null
+      },
+      {
+        "name": "revisionInvariant_rowSuccessSurvivesEvidenceFailureAndCancellation",
+        "failed": false,
+        "skipped": false,
+        "failure": null
+      }
+    ]
+  },
+  {
+    "stage": "green-class",
+    "revision": "0ce36236b2ee3bd507705922ef6e38517781778b",
+    "os": "Linux",
+    "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest --console=plain",
+    "tests": 9,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "xml": "green-class.xml.gz",
+    "xmlSha256": "19354254e89483fccc211e92d75cb66eaf47dcede1ef53b23efb9cf00248efea",
+    "compressedSha256": "154e6ddacfdee23ce2270f7a0053d8f2942b59f7e0c6d70a9c4f3c0a931c2115",
+    "stdout": "green-class.stdout.log",
+    "stdoutSha256": "3ed0d748de7de7d59915afb4b49fc00dd41ef1bd53306fb40219bffa564f6e3c",
+    "cases": [
+      {
+        "name": "captureInvariant_delayedCoverageCannotUndoNewerRows",
+        "failed": false,
+        "skipped": false,
+        "failure": null
+      },
+      {
+        "name": "captureInvariant_firstSnapshotCleanupCannotRenewOldCoverage",
+        "failed": false,
+        "skipped": false,
+        "failure": null
+      },
+      {
+        "name": "intentInvariant_rowFailureKeepsRetryableWork",
+        "failed": false,
+        "skipped": false,
+        "failure": null
+      },
+      {
+        "name": "intentInvariant_successPrunesOnlySatisfiedRows",
+        "failed": false,
+        "skipped": false,
+        "failure": null
+      },
+      {
+        "name": "revisionInvariant_rowSuccessSurvivesEvidenceFailureAndCancellation",
+        "failed": false,
+        "skipped": false,
+        "failure": null
+      },
+      {
+        "name": "retirementInvariant_coverageCannotResurrectRemovedOwners",
+        "failed": false,
+        "skipped": false,
+        "failure": null
+      },
+      {
+        "name": "intentInvariant_concurrentAcceptanceSurvivesOlderSuccess",
+        "failed": false,
+        "skipped": false,
+        "failure": null
+      },
+      {
+        "name": "heldInvariant_coverageIncludesNewerAcceptedRowsBeforeSatisfyingTheirCapture",
+        "failed": false,
+        "skipped": false,
+        "failure": null
+      },
+      {
+        "name": "metadataInvariant_clearFencesDelayedReadWithoutDeletingRows",
+        "failed": false,
+        "skipped": false,
+        "failure": null
+      }
+    ]
   }
 ]
