@@ -1,0 +1,37 @@
+Reader coordinate rounding (#2292), Linux x86_64, 2026-10-18
+
+Selection:
+de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest#referencePlacesBarRuleAndBodyAtFigmaCoordinates
+Command:
+python3 scripts/android-test-gate.py ui --tests '<selection above>'
+Managed Android 13 Google ATD, pixel2Api33Atd, density 2.625.
+
+Unchanged red:
+Test sources: 74e2340deddd31c05d112811ca2184deb56d7247
+Retained revision: d069c285d592d000591cce0c179e7b1dd7815b8d (plan only added).
+1 executed, 0 passed, 1 failed, 0 skipped; command exit 1.
+Failure: subheading below paragraph expected 76dp, actual 76.57144dp.
+
+Diagnostic red:
+Revision: 5038a3488394662aa8e0f21abe4a0ca60a4674ab
+1 executed, 0 passed, 1 failed, 0 skipped; command exit 1, same assertion.
+Paragraph: 3 lines, each 53px; total 60.57144dp, then an exact 16dp gap.
+List: 3 single-line items, each 53px, with two 16px sibling gaps;
+the following code gap is exactly 16dp.
+Nominal 20sp lines are 52.5px; nominal 6dp item gaps are 15.75px.
+The paragraph interval accumulates 1.5px; the list interval accumulates 2px.
+The diagnostic log was removed from the final test.
+
+Private raw XML, per-test phone logs, managed-image identity, revisions and
+verified SHA256SUMS are retained beneath:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2292/builder-20261018/
+  red-d069c285d/
+  diagnostic-red-5038a3488/
+
+Focused Robolectric green:
+python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest'
+17 executed/passed, 0 failed/errors/skipped; command exit 0.
+Includes the named coordinate method, constituent checks, and strict boundary
+controls at density 1. Native green evidence will be appended after execution.
+Complete gates and the next post-merge Linux main sweep remain dispatcher-owned.
+macOS is outside this ticket's verification scope.

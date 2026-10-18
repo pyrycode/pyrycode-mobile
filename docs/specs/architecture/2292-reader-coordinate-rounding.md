@@ -27,3 +27,9 @@ Forecast: approximately 130 written lines across this plan, the design test and 
 - Rerun the named device method after repair and the focused Robolectric `MarkdownReaderDesignTest` class, including boundary controls; inspect XML executed/passed/failed/skipped counts.
 - Run lint, APK assembly, instrumented Kotlin compilation and changed-file formatting. After the final main merge, push and run APK assembly plus `scripts/pre-verify.py --gradle`.
 - Retain raw reports, revisions and hashes on the persistent agents evidence volume and a content-free index under `app/src/androidTest/assets/reader-rounding-2292/`. Complete gates and the post-merge Linux main sweep belong to the dispatcher; macOS is outside this ticket's scope.
+
+## Revisions
+
+2026-10-18: The unchanged method failed at the #2285 distance of 76dp with 76.57144dp observed (one executed/failed). Diagnostic revision `5038a3488` reproduced it and measured density 2.625: three paragraph line boxes of 53px rather than 52.5px, height 60.57144dp and an exact 16dp following gap. Each list item is also 53px; its two 6dp gaps are 16px instead of 15.75px, and the final 16dp gap is exact. Therefore allow two pixels only for paragraph-to-subheading and first-item-to-code totals (1.5px and 2px measured drift). Check paragraph line count, individual line/item heights and each gap separately with the default one-pixel tolerance; the paragraph's total height needs two pixels. Boundary controls accept both signs of two pixels, reject three pixels, reject a two-pixel change with the unchanged default, and reject subpixel drift at density 1. No production or nominal-coordinate changes.
+
+The boundary controls use the same private allowance constant as the real coordinate comparisons, so increasing it beyond two pixels fails the controls.
