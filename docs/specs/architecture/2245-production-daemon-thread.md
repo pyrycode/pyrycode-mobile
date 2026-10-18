@@ -2,6 +2,9 @@
 
 ## Files read
 
+- `data/repository/ReadCheckpointRetries.kt`, `Host.qualify` and `Host.confirm`: keep connection-owned authoritative proof separate from legacy host-owned retry numbers.
+- `data/repository/AuthoritativeThreadQueries.kt`, `open`, `cancel`, `refresh` and `acquire`: retain synchronization until the last destination lease is released.
+- `app/src/test/java/de/pyryco/mobile/ui/conversations/thread/AuthoritativeReadSightTest.kt`: exact revision/binding qualification and fresh sight after reconnect.
 - `data/network/MobileWireModels.kt`, `HelloClientPayload`, and `NoiseIkSession.kt`, `buildHello`: capability defaults and explicit legacy test configuration.
 - `di/RelayConnectionFactory.kt`, `create` and `RelayConnectionBundle`: saved-host identity, device registration and hello cursor assembly.
 - `data/repository/RelayRepositoryCoordinator.kt`, `threadSupport`, `updateThreadVerdict`, `liveRepository`, `teardownActive`: preserve #2244's synchronous transport and child-scope fences.
@@ -49,6 +52,8 @@ After `AuthoritativeThreadRoute` applies an admitted live `turn_end`, request co
 
 ## State and concurrency model
 
+`ReadCheckpointRetries` retains the existing application-owned `Dispatchers.Main.immediate` actor configured by `AppModule`. ViewModel qualification and pending-proof bookkeeping stay on that actor; the owning connection is rechecked synchronously before each command. No new scope or dispatcher is introduced for retries.
+
 Coordinator state and its shared store outlive one socket; each repository/query/progress collector belongs to its connection child scope. Retain synchronous current-transport checks even before switched collectors run. ViewModel `collectLatest` opens once per supported connection; cancellation and `onCleared` end its work. Projection uses the existing injected content worker. Cache restoration and persistence retain existing mutex ordering and atomic storage transactions; no new background scope or dispatcher is introduced. Lifecycle background close retires support and progress without discarding certified facts.
 
 ## State transitions and identity reuse
@@ -82,6 +87,8 @@ Carry the scoped integrated probes first and observe red before implementation. 
 None. Validate salvage against current fences and owned cache writes instead of replacing older files wholesale.
 
 ## Revisions
+
+2026-10-18 (final probe resolution): All 29 production factory probes pass, including survivor paging/completion certification and queued generation retirement. The lease fixture's remaining null presentation came from omitting the daemon's conversation summary response; supplying that existing response lets the real ViewModel publish its state. Keep the opening/page/checkpoint assertions. No production certification rule changed. The focused Linux JVM/shared run on repair `6f97d1f23` executed and passed 329 tests, with zero failures or skips, across the factory, retries, exact sight, query scheduler, negotiated ViewModel/activation/screen, legacy ViewModel and authoritative Remote classes.
 
 2026-10-18 (repair scope recheck): After formatting, the branch measures 2,756 written lines (2,564 inserted and 192 deleted across 35 files, including this entry). Retain `needs-human:sizing`: the repairs preserve the same required-thread activation and exact ownership invariant, and cannot ship separately from activation. There is still one new exported provider type; the changed presentation constructor has one caller and the new defaulted read entry leaves unrelated consumers source-compatible. The existing grandchild depth/floor outcome applies; no further split is proposed.
 
