@@ -130,11 +130,12 @@ class MarkdownReaderDesignTest {
         val body =
             listOf(
                 "heading" to (heading.top to 97f),
-                "paragraph" to (paragraph.top to 141f),
-                "subheading" to (subheading.top to 225f),
-                "first item" to (firstItem.top to 265f),
-                "code" to (code.top to 385f),
-                "quote" to (quote.top to 461f),
+                // #2277: heading scale uses 28sp H1 and 26sp H2 line boxes; gaps stay unchanged.
+                "paragraph" to (paragraph.top to 137f),
+                "subheading" to (subheading.top to 221f),
+                "first item" to (firstItem.top to 259f),
+                "code" to (code.top to 379f),
+                "quote" to (quote.top to 455f),
             )
         for (index in 1 until body.size) {
             val (name, block) = body[index]

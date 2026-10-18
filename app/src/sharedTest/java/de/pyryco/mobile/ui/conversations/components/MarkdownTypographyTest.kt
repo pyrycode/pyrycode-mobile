@@ -175,7 +175,7 @@ class MarkdownTypographyTest {
     }
 
     private fun assertSpecialStyles(codeSize: Int = 14) {
-        for ((text, size, height) in listOf(Triple("Heading", 24, 32), Triple("Cell", 14, 20), Triple("val x = 1", codeSize, 20))) {
+        for ((text, size, height) in listOf(Triple("Heading", 20, 28), Triple("Cell", 14, 20), Triple("val x = 1", codeSize, 20))) {
             val style =
                 rule
                     .onNodeWithText(text, useUnmergedTree = true)

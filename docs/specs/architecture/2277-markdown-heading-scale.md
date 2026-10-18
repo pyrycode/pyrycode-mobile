@@ -18,6 +18,8 @@
 
 The inspected screenshot stacks six heading/body samples on the assistant background. H1 and H2 step down to the existing title-medium H3, while H4–H6 share bold body-sized text. All headings use `onSecondaryContainer`; spacing in the reference belongs to a separate child of #2274.
 
+Figma variable values: `Schemes/On Secondary Container` is `#d6e4f7`, on `Schemes/Primary Container` `#134a74` in the dark reference. Bind the existing semantic colour role so other active themes retain their own values. The typography style definitions confirm the metrics in Design below.
+
 ## Context
 
 One observable behaviour: apply the heading scale consistently through the shared renderer. Exact content, inline styling, routing and streaming transitions are its verification floor, not separate deliverables. No decision record is needed.
@@ -40,9 +42,9 @@ No new state, jobs, flows or dispatchers. Existing parsing memoisation, streamin
 
 | Event | Coverage |
 | --- | --- |
-| Trailing heading grows, including incomplete inline content | New heading-scale streaming metric tests; extended pending-inline test |
-| Heading completes before a following paragraph grows | Heading-scale streaming metric tests and existing frozen-block reuse test |
-| Caret blinks and stream settles | Heading-scale metric checks and existing caret / settlement parity tests |
+| Trailing heading grows, including incomplete inline content | `MarkdownHeadingScaleTest.darkThreadHeadingsKeepTheirScaleThroughStreamingAndSettlement`, `darkReaderHeadingsKeepTheirScaleThroughStreamingAndSettlement` and their light-theme counterparts; `StreamingMarkdownTextTest.allHeadingLevels_keepPendingInlineContentAndTheCaret_thenSettleExactly` |
+| Heading completes before a following paragraph grows | The four heading-scale methods above; `StreamingMarkdownTextTest.completedBlocks_areNeitherReparsedNorRecomposed_whileTheTailGrowsAndTheCaretBlinks` |
+| Caret blinks and stream settles | The four heading-scale methods above; `StreamingMarkdownTextTest.caret_followsTheTrailingText_andNeverEntersCodeOrALink` |
 
 No lifecycle or routing identity is introduced; process, socket and screen lifecycles remain outside this presentation change.
 
@@ -59,3 +61,9 @@ Run focused affected renderer, typography, streaming, link and parsing tests, pl
 ## Open Questions
 
 None.
+
+## Revisions
+
+2026-10-18: Existing `MarkdownReaderDesignTest.referencePlacesBarRuleAndBodyAtFigmaCoordinates` encodes the old H1/H2 line boxes in downstream block positions. Preserve its gap assertions and update the expected positions for H1 32→28 and H2 28→26. This is maintenance of existing coverage; Reader integration additions remain with #2276.
+
+2026-10-18: Rendered metric regressions found that this Compose version's `titleMedium` has 0.2sp tracking, whereas Figma's title/medium requires 0.15sp. Derive H3 from the theme role through `MarkdownTypography.h3`, overriding family and tracking locally; leave shared `AppTypography` unchanged.

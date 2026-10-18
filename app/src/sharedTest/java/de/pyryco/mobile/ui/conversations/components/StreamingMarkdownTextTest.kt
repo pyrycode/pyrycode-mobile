@@ -316,6 +316,22 @@ class StreamingMarkdownTextTest {
     }
 
     @Test
+    fun allHeadingLevels_keepPendingInlineContentAndTheCaret_thenSettleExactly() {
+        renderBoth()
+        composeTestRule.runOnIdle { caret.value = true }
+        for (level in 1..6) {
+            val marker = "#".repeat(level)
+            for ((pending, expected) in listOf("**bold" to "bold", "`code" to "code", "[link](https://exam" to "link")) {
+                val text = streamedText("$marker $pending")
+                assertEquals("H$level", expected + STREAMING_CARET_GLYPH, text.text)
+                assertTrue("H$level pending content stays plain", text.hasNoFormatting())
+            }
+            val source = "$marker `code`  and **bold** and [link](https://example.com)\n\nFollowing paragraph\n"
+            assertSettlesUnchanged("H$level completed heading", source)
+        }
+    }
+
+    @Test
     fun pendingTableHeader_showsItsCellsPlain_untilTheRealTableArrives() {
         renderBoth()
         listOf("| A | B |", "| A | B |\n", "| A | B |\n| -", "| A | B |\n---", "| A | B |\n| --- | --- | -").forEach { source ->

@@ -372,11 +372,14 @@ class MarkdownTextTest {
      */
     @Test
     fun atx_headings_render_without_the_marker_whitespace() {
-        render("# One\n\n## Two\n\n### Three\n\n## Trailing ##\n")
+        render("# One\n\n## Two\n\n### Three\n\n#### Four\n\n##### Five\n\n###### Six\n\n## Trailing ##\n")
 
         composeTestRule.onNodeWithText("One").assertIsDisplayed()
         composeTestRule.onNodeWithText("Two").assertIsDisplayed()
         composeTestRule.onNodeWithText("Three").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Four").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Five").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Six").assertIsDisplayed()
         // The closed form pads the content at BOTH ends — the space before the closing marker is
         // inside `ATX_CONTENT` too — so both edges come off together.
         composeTestRule.onNodeWithText("Trailing").assertIsDisplayed()
@@ -389,18 +392,22 @@ class MarkdownTextTest {
      */
     @Test
     fun a_heading_keeps_its_inline_markup_and_its_interior_spacing() {
-        render("## `code` and **bold** and [link](https://example.com)")
+        render(
+            (1..6).joinToString("\n\n") { "${"#".repeat(it)} `code$it`  and **bold** and [link](https://example.com) ${"#".repeat(it)}" },
+        )
 
-        val annotated = annotatedTextOf("code and bold and link")
-        assertEquals(
-            listOf("code"),
-            annotated.substringsStyled { it.fontFamily == FontFamily.Monospace },
-        )
-        assertEquals(
-            listOf("bold"),
-            annotated.substringsStyled { it.fontWeight == FontWeight.Bold },
-        )
-        assertEquals(1, annotated.getLinkAnnotations(0, annotated.text.length).size)
+        for (level in 1..6) {
+            val annotated = annotatedTextOf("code$level  and bold and link")
+            assertEquals(
+                listOf("code$level"),
+                annotated.substringsStyled { it.fontFamily == FontFamily.Monospace },
+            )
+            assertEquals(
+                listOf("bold"),
+                annotated.substringsStyled { it.fontWeight == FontWeight.Bold },
+            )
+            assertEquals(1, annotated.getLinkAnnotations(0, annotated.text.length).size)
+        }
     }
 
     /**
@@ -409,9 +416,10 @@ class MarkdownTextTest {
      */
     @Test
     fun a_marker_only_heading_renders_without_throwing() {
-        render("##\n\nAfter the empty heading\n")
+        render((1..6).joinToString("\n\n") { "#".repeat(it) } + "\n\nAfter the empty heading\n")
 
         composeTestRule.onNodeWithText("After the empty heading").assertIsDisplayed()
+        for (level in 1..6) composeTestRule.onNodeWithText("#".repeat(level)).assertDoesNotExist()
     }
 
     // ------------------------------------------------------------------ #657 — code blocks
