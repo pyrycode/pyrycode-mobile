@@ -449,6 +449,91 @@ class AuthoritativeOwnedUpsertTest {
 
     @Test fun orderingInvariant_partialRestoreUnchangedOrderPreservesFinalTie() = runTest { assertPartialRestoreTie(initialOrder = 20) }
 
+    @Test fun orderingInvariant_liveBeforeRestorePreservesAcceptedTie() =
+        runTest {
+            val cache = open()
+            val peer = raw(1, order = 20)
+            val later = (3..201).map { raw(it, order = it + 100) }
+            cache.writeAuthoritativeThread("host", "c", saved(listOf(peer, raw(2, order = 20)) + later)).getOrThrow()
+            val before = ordinals()
+            val captured = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val heldRead =
+                object : ConversationCache by cache, AuthoritativeUpsertCache by cache {
+                    override suspend fun readAuthoritativeThread(
+                        serverId: String,
+                        conversationId: String,
+                    ): SavedAuthoritativeThread? {
+                        val saved = cache.readAuthoritativeThread(serverId, conversationId)
+                        captured.complete(Unit)
+                        release.await()
+                        return saved
+                    }
+                }
+            val repo = wrapper(heldRead)
+            val ready = CompletableDeferred<Unit>()
+            val observer = backgroundScope.launch { repo.observeAuthoritativeThread("c").collect { ready.complete(Unit) } }
+            captured.await()
+            assertTrue(
+                repo.authoritativeThreads
+                    .current("host", "c")
+                    .items
+                    .isEmpty(),
+            )
+            apply(repo, 21_000, raw(2, 21_000, 20))
+            release.complete(Unit)
+            ready.await()
+            runCurrent()
+            val fullReads = cache.authoritativeFullReads
+            val replacements = cache.authoritativeReplacements
+            var placed: Map<Long, Int>? = null
+            for (revision in 21_000..21_001) {
+                if (revision > 21_000) {
+                    // Re-reading the complete family adds no peers and must retain the accepted placement.
+                    assertFalse(repo.openAuthoritativeThread("c"))
+                    apply(repo, revision, raw(2, revision, 20))
+                    runCurrent()
+                }
+                val expected = listOf(raw(2, revision, 20), peer) + later
+                assertEquals(
+                    expected,
+                    repo.authoritativeThreads
+                        .current("host", "c")
+                        .items
+                        .map { it.raw },
+                )
+                advanceTimeBy(101)
+                runCurrent()
+                requireNotNull(cache.newestAuthoritativePage("host", "c", 1))
+                assertWork(cache, 1, 1)
+                assertEquals(fullReads + (revision - 21_000), cache.authoritativeFullReads)
+                assertEquals(replacements, cache.authoritativeReplacements)
+                val currentOrdinals = ordinals()
+                assertEquals(before.filterKeys { it != 2L }, currentOrdinals.filterKeys { it != 2L })
+                placed?.let { assertEquals(it, currentOrdinals) }
+                placed = currentOrdinals
+                val reopened = requireNotNull(fresh())
+                assertEquals(expected.take(2).map { it["id"] }, reopened.items.take(2).map { it["id"] })
+                assertEquals(saved(expected).copy(appliedVersion = revision.toLong()), reopened)
+                var page = requireNotNull(cache.newestAuthoritativePage("host", "c", 1))
+                var walked = page.items
+                while (page.continuation != null) {
+                    page = requireNotNull(cache.beforeAuthoritativePage("host", "c", requireNotNull(page.continuation), 1))
+                    walked = page.items + walked
+                }
+                assertEquals(expected, walked)
+            }
+            observer.cancelAndJoin()
+            assertEquals(
+                listOf(raw(2, 21_001, 20), peer) + later,
+                wrapper(open())
+                    .observeAuthoritativeThread("c")
+                    .first()
+                    .items
+                    .map { it.raw },
+            )
+        }
+
     private suspend fun TestScope.assertPartialRestoreTie(initialOrder: Int) {
         val cache = open()
         val later = (3..201).map { raw(it, order = it + 100) }

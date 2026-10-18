@@ -137,6 +137,7 @@ internal class AuthoritativeThreadStore {
                 coverage = if (adoptCertification && current.coverage == null) saved.coverage else current.coverage,
                 repairNeeded = current.repairNeeded || completedVersion > checkpoint,
             ),
+            restoring = true,
         )
         RelayLog.i { "event=thread_store code=restored" }
         return AuthoritativeThreadOutcome.Applied
@@ -435,11 +436,18 @@ internal class AuthoritativeThreadStore {
         host: String,
         conversation: String,
         snapshot: AuthoritativeThreadSnapshot,
+        restoring: Boolean = false,
     ) {
         val previous = current(host, conversation)
         val sameGeneration = previous.generation == snapshot.generation && previous.epoch == snapshot.epoch
         val held = if (sameGeneration) previous.items.associateBy { it.id } else emptyMap()
         val moves = if (sameGeneration) previous.orderMoves.toMutableMap() else mutableMapOf()
+        val restoredOrders =
+            if (restoring) {
+                snapshot.items.filter { it.id !in held }.mapTo(mutableSetOf()) { it.order?.takeIf { order -> order > 0 } ?: Long.MAX_VALUE }
+            } else {
+                emptySet()
+            }
         snapshot.items.forEach { item ->
             val old = held[item.id]
             if (old == null) {
@@ -448,7 +456,10 @@ internal class AuthoritativeThreadStore {
             } else {
                 val oldOrder = old.order?.takeIf { it > 0 } ?: Long.MAX_VALUE
                 val newOrder = item.order?.takeIf { it > 0 } ?: Long.MAX_VALUE
-                if (oldOrder != newOrder) moves[item.id] = AuthoritativeOrderMove(item.rev, before = newOrder > oldOrder)
+                // Restore appends saved peers behind live facts, superseding their earlier entry/move hints.
+                if (newOrder in restoredOrders || oldOrder != newOrder) {
+                    moves[item.id] = AuthoritativeOrderMove(item.rev, before = newOrder in restoredOrders || newOrder > oldOrder)
+                }
             }
         }
         val unresolved = snapshot.pendingSends.filterNot { pending -> snapshot.items.any { it.matchesPending(pending) } }

@@ -38,6 +38,7 @@ No new jobs, scopes or flows. Cold collectors own the existing writer and timer.
 | --- | --- |
 | 18000 stored facts, 200 owned, revision/add and metadata-only completion, fresh reopen | `AuthoritativeOwnedUpsertTest.boundedInvariant_ownedRevisionAndCertificationPreserveUnloadedFacts` |
 | Reordered input, replay, equal-order ties, parent extras and explicit clears | `AuthoritativeOwnedUpsertTest.identityInvariant_revisionsAndTiesSurviveRestart` |
+| Live revision during held initial restore, then repeated restore and ordinary revision | `AuthoritativeOwnedUpsertTest.orderingInvariant_liveBeforeRestorePreservesAcceptedTie` |
 | Newer live revision while old commit held; cancellation and retry after failed commit | `AuthoritativeOwnedUpsertTest.atomicInvariant_heldFailureAndFinalFlushKeepNewestFacts` |
 | Reset during held work or final-flush I/O, including reused epoch | `AuthoritativeOwnedUpsertTest.retirementInvariant_resetDuringFinalIoRetiresReusedEpoch` and retained #2149 tests |
 | Reset while final flush waits for lock; older collector or cancelled result delivery | retained `AuthoritativeThreadCacheTest` final-retirement, post-commit and older-collector regressions |
@@ -113,3 +114,15 @@ Finding 1 identifies another case of the existing stable-order invariant: absenc
 Security re-review: PASS. Runtime placement hints remain generation-bound, immutable capture evidence; they grant no certification or connected capability. All incoming payload validation, exact owner/epoch predicates, transaction boundaries, cancellation fences and redacted diagnostics remain unchanged. Newly restored hints are filtered against the restored successful baseline before any delta write.
 
 Both regressions failed against production baseline `06ae7d38a` with expected identities `[2, 1]` versus durable `[1, 2]`: 2 executed, 2 failed, 0 errors/skips. Raw XML, baseline revision and the test-only patch are retained under `/tmp/builder-2255/evidence/rework2-red/`. The first fixture run checked counters before asynchronous Room completion; a bounded page read now joins the writer through the existing cache mutex before inspecting counters or durable state.
+
+### 2026-10-18: verifier rework — live insertion before restoration
+
+Finding 1 repairs the same accepted stable-order invariant. Restoration can append saved peers behind a live fact without changing that fact's revision or numeric order. `restore` marks its publication as restoration; `publish` reconciles retained live placement hints to before-tie when newly restored peers join that order. A repeated restore adding no peers preserves the existing hint. Normal entry/move handling and successful-baseline revision filtering remain unchanged, so only the changed live payload and its placement cross the owned-write boundary.
+
+`orderingInvariant_liveBeforeRestorePreservesAcceptedTie` holds the initial disk-backed read after capture, applies a newer full live revision to the empty runtime store, then releases restoration. It compares accepted store order, exact metadata/facts, one-item pages and a fresh repository. Numeric work counters require one fact read/decode/serialization/write and one header, no extra full read/replacement, and unchanged unrelated ordinals. A repeated full restore followed by an ordinary revision retains the assigned ordinal. Existing partial-restore, coalesced-order and writer retirement probes remain required.
+
+Scope reassessment under `behaviour-slices-v1`: this fix and its regression are one inseparable repair, with no new exported declarations, state machine, jobs or scope. The branch currently has 1196 inserted and 17 deleted lines; the repair adds about 100 written lines, remaining below 1600. No in-flight feature branch changes either repair file.
+
+Security re-review: PASS. The restoration flag and reconciled hints are runtime placement evidence only, bound to the existing exact host/conversation, epoch and runtime generation. They cannot certify facts, authorize a route or change storage custody. Payload validation, metadata prerequisites inside the Room transaction, mutation/baseline locking, reset/deletion fences and redacted diagnostics remain unchanged. No new I/O, paths, secrets, network or Android surface is introduced.
+
+The regression failed against production `23c69e6c93d822e0712bb1fbe6b36b2b608d5ff9`: 1 executed, 1 failed, 0 errors/skips, expected identities `[2, 1]` versus durable `[1, 2]`. Raw XML, revision and test-only patch are retained at `/tmp/builder-2255/evidence/rework3-red/`. Its earlier run failed on the same fresh-record comparison with the record's redacted representation; that XML is retained in the `initial/` subdirectory.
