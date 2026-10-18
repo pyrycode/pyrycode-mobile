@@ -23,9 +23,27 @@ exhausted the Gradle heap in compileDebugUnitTestKotlin and compileDebugAndroidT
 It executed no green tests. The standalone link-class rerun above compiled and passed.
 The earlier red XML was not counted as fresh passing evidence after that failure.
 
-Pending at this evidence checkpoint:
-Existing MarkdownTextTest (including the unchanged bare-URL test), MarkdownConversionsTest,
-MarkdownLinkRoutingTest, StreamingMarkdownTextTest, StreamingMarkdownTest and
-MarkdownTextParsingTest; standalone lint/instrumented compilation; final main merge,
-assembly, forced Spotless and pre-verify. Complete acceptance stays dispatcher-owned.
+Existing rendering controls:
+Source: a7bd8fe9656c4c4e37ff6f78fb5440fac4d1c40a (only raw XML added during the run).
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.components.MarkdownTextTest' --console=plain
+Executed/passed 25; failed/errors/skipped 0. Raw result: MarkdownTextTest.xml
+Includes a_bare_url_renders_as_text_and_is_not_a_link, unchanged and passing.
+
+Remaining focused classes:
+Code/test source: a3e56e450bd87b96c81a08b699210f11fde1d83d (only raw XML added during these runs).
+Production and Kotlin test sources are unchanged from a7bd8fe9656c4c4e37ff6f78fb5440fac4d1c40a.
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.components.MarkdownConversionsTest' --console=plain
+Executed/passed 11; failed/errors/skipped 0. Raw result: MarkdownConversionsTest.xml
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest' --console=plain
+Executed/passed 5; failed/errors/skipped 0. Raw result: MarkdownLinkRoutingTest.xml
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTextTest' --console=plain
+Executed/passed 11; failed/errors/skipped 0. Raw result: StreamingMarkdownTextTest.xml
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest' --console=plain
+Executed/passed 15; failed/errors/skipped 0. Raw result: StreamingMarkdownTest.xml
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest' --console=plain
+Executed/passed 28; failed/errors/skipped 0. Raw result: MarkdownTextParsingTest.xml
+
+Focused total: executed 106; passed 106; failed 0; errors 0; skipped 0.
+Final build/format/pre-verify results are recorded in the pull request.
+Complete acceptance stays dispatcher-owned.
 macOS is outside this ticket's verification scope.
