@@ -48,3 +48,9 @@ Run focused JVM tests, lint, debug assembly, changed-file formatting, forced for
 ## Open Questions
 
 None.
+
+## Revisions
+
+### 2026-10-18: failure-path proof and evidence sizing
+
+The non-completion probe now awaits the enclosing cleanup coroutine while the child's release gate remains held. This proves failure returns without an implicit parent wait; releasing the gate before checking the caller would miss that defect. Retaining the separate red captures, green runs and historical evidence raises the forecast to approximately 450 written lines, still one behavior slice within every ceiling. The production cache and existing import assertions remain unchanged.
