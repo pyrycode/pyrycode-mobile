@@ -110,8 +110,35 @@ keeps commands and revisions. Raw XML, phone diagnostics and source identities w
 `/work/Projects/pyrycode-mobile-agents/logs/evidence/2292/builder-20261018/`
 at review time (`red-d069c285d/`, `diagnostic-red-5038a3488/`,
 `native-green-c75eab30b/`, `jvm-green-43711d802/`); raw captures are subject to retention.
-The next post-merge Linux main sweep remains dispatcher-owned and is not recorded
-as passed here. macOS is outside this ticket's verification scope.
+macOS is outside this ticket's verification scope.
+
+The [accepted #2298 confirmation](https://github.com/pyrycode/pyrycode-mobile/pull/2299#issuecomment-6255858638)
+records fresh Linux evidence on 2026-10-18 at
+`3d6999fe647f29f3b2ccd92b30456af6fb1b5919`, containing merged #2297 at
+`e02920bf71c18c9ce3ece6f11b18ee57ffaf1cbd`. Production rendering, test sources,
+nominal geometry, constituent checks and tolerances were unchanged:
+
+- Focused managed Android 13 Pixel 2, density 2.625: the coordinate method and
+  `adjacentBlockRoundingAllowanceKeepsItsPixelBoundary` both passed;
+  **2 executed/passed, 0 failed, 0 errors, 0 skipped**.
+- Focused Robolectric `MarkdownReaderDesignTest`: **17 executed/passed,
+  0 failed, 0 errors, 0 skipped**, including both named methods.
+- Configured dispatcher gates passed at `1876d9b6795e71d47ccca7b0985f78adfdaab805`:
+  JVM **5,995 executed/passed, 0 failed, 0 skipped**; UI **334 executed/passed,
+  0 failed, 1 skipped**; scripted **22 executed/passed, 0 failed, 0 skipped**.
+  Both reader methods passed in the JVM gate; their native proof is the focused
+  run above, since neither ran in the full device gates.
+  `renameAtFigmaViewport` was skipped, not passed.
+
+The [#2298 evidence index](../../../app/src/androidTest/assets/reader-sweep-2298/evidence.txt)
+links the accepted #2292 repair and retains the focused commands and source revision.
+Raw XML, phone logs, image identity and source records were at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2298/builder-20261018/`
+(`native-3d6999fe6/`, `jvm-3d6999fe6/`) at review time, subject to retention.
+The original `f8a397b` in-depth sweep remains failed: **1,726 executed,
+1,725 passed, 1 failed**. The next in-depth Linux main sweep remains
+dispatcher-owned and pending; neither focused confirmation nor the configured
+gates establish that sweep passed. macOS is outside this Linux ticket's scope.
 
 ### Native memory regression evidence (#1759)
 
