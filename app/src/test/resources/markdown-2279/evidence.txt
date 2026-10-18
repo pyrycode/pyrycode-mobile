@@ -44,6 +44,7 @@ Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mob
 Executed/passed 28; failed/errors/skipped 0. Raw result: MarkdownTextParsingTest.xml
 
 Focused total: executed 106; passed 106; failed 0; errors 0; skipped 0.
-Final build/format/pre-verify results are recorded in the pull request.
+These XML reports cover focused tests only; final build/format/pre-verify results
+belong in the pull request's Testing section when published.
 Complete acceptance stays dispatcher-owned.
 macOS is outside this ticket's verification scope.
