@@ -431,14 +431,17 @@ class OwnedLegacyCoverageTest {
                     var cache = open(name)
                     val rows = (1..size).map { row(it) }
                     val keys = rows.take(2).map { it.historyKeys().first() }
-                    val rest = coverage(rows)
-                    val spans = listOf(UnsignedHistorySpan(1u, 2u)) + rest.unsignedSpans.drop(2)
+                    val order = rows.mapIndexed { index, row -> row.historyKeys().first() to (index + 1).toULong() * 2u }.toMap()
+                    val spans = listOf(UnsignedHistorySpan(1u, 2u)) + order.values.drop(2).map { UnsignedHistorySpan(it, it) }
                     val evidence =
-                        rest.copy(
+                        HistoryCoverage(
                             unsignedSpans = spans,
                             unsignedGaps = spans.zipWithNext { a, b -> UnsignedHistoryGap(a.last, b.first) },
-                            unsignedRowOrder = rest.unsignedRowOrder + keys.associateWith { 1uL },
-                            unsignedRowEntries = rest.unsignedRowEntries + mapOf(keys[0] to setOf(1uL), keys[1] to setOf(1uL, 2uL)),
+                            unsignedRowOrder = order + keys.associateWith { 1uL },
+                            unsignedRowEntries =
+                                order.mapValues { setOf(it.value) } +
+                                    mapOf(keys[0] to setOf(1uL), keys[1] to setOf(1uL, 2uL)),
+                            proofs = historyRowProofs(rows),
                             unsignedUnknown = false,
                         )
                     val initial = HistoryPosition("saved", true, evidence)
@@ -563,7 +566,9 @@ class OwnedLegacyCoverageTest {
                     assertEquals(setOf(keys[0]), committed.proofs.keys)
                     assertEquals(listOf(UnsignedHistorySpan(3u, 3u)), committed.unsignedSpans)
                 } else {
-                    assertEquals(next, saved)
+                    assertEquals(next.coverage, committed)
+                    assertEquals(next.copy(atStart = false), saved)
+                    assertTrue(committed.unsignedIncomplete)
                 }
             }
         }
