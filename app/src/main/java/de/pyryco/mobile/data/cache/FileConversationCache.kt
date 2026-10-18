@@ -217,12 +217,58 @@ class FileConversationCache(
         serverId: String,
         conversationId: String,
         saved: SavedAuthoritativeThread,
+    ): Result<Unit> = replaceAuthoritative(serverId, conversationId, saved, reset = false)
+
+    override suspend fun resetAuthoritativeThread(
+        serverId: String,
+        conversationId: String,
+        saved: SavedAuthoritativeThread,
+    ): Result<Unit> = replaceAuthoritative(serverId, conversationId, saved, reset = true)
+
+    private suspend fun replaceAuthoritative(
+        serverId: String,
+        conversationId: String,
+        saved: SavedAuthoritativeThread,
+        reset: Boolean,
     ): Result<Unit> =
-        mutate("write_authoritative") {
-            writeAtomically(
-                authoritativeDocumentFor(serverId, conversationId),
-                MobileJson.encodeToString(CachedAuthoritativeThread(VERSION, serverId, conversationId, saved.retained())),
-            )
+        authoritativeWrites.withLock {
+            mutate("write_authoritative") {
+                val incoming = saved.toSnapshot()
+                val document = authoritativeDocumentFor(serverId, conversationId)
+                val previous =
+                    if (reset) {
+                        null
+                    } else {
+                        try {
+                            decodeAuthoritative(Files.readAllBytes(document.toPath()).toString(Charsets.UTF_8), serverId, conversationId)
+                        } catch (_: java.nio.file.NoSuchFileException) {
+                            null
+                        }
+                    }
+                require(previous == null || previous.incarnation == saved.incarnation)
+                require(previous == null || previous.epoch == saved.epoch || previous.retirements.isEmpty())
+                val held = previous?.takeIf { it.epoch == saved.epoch }
+                held?.toSnapshot()?.let { durable ->
+                    for (item in durable.items) {
+                        val revision = saved.retirements[item.id] ?: continue
+                        if (item.id !in durable.retirements && item.rev > revision) throw AuthoritativeRemovalRejected(item)
+                    }
+                }
+                val retired = saved.retirements + held?.retirements.orEmpty()
+                val kept =
+                    saved
+                        .copy(
+                            items = incoming.items.filterNot { it.id in retired }.map { it.raw },
+                            appliedVersion = maxOf(saved.appliedVersion, held?.appliedVersion ?: 0),
+                            retirements = retired,
+                            checkpoint = if (retired.isEmpty()) saved.checkpoint else 0,
+                            coverage = saved.coverage.takeIf { retired.isEmpty() },
+                        ).retained()
+                writeAtomically(
+                    document,
+                    MobileJson.encodeToString(CachedAuthoritativeThread(VERSION, serverId, conversationId, kept)),
+                )
+            }
         }
 
     override suspend fun writeThread(
@@ -598,11 +644,19 @@ class FileConversationCache(
                     RelayLog.d { "conversation_cache operation=$operation status=ok" }
                     Result.success(Unit)
                 } catch (error: Exception) {
-                    val code = failureCode(error) ?: throw error
+                    val code = if (error is AuthoritativeRemovalRejected) "stale_removal" else failureCode(error) ?: throw error
                     RelayLog.d { "conversation_cache operation=$operation status=failed code=$code" }
                     // A serialization or IO message can embed a conversation name or cwd, and a crash
                     // reporter prints causes: the code travels, the cause never does.
-                    Result.failure(ConversationCacheException("conversation cache $operation failed: $code"))
+                    Result.failure(
+                        if (error is AuthoritativeRemovalRejected) {
+                            error
+                        } else {
+                            ConversationCacheException(
+                                "conversation cache $operation failed: $code",
+                            )
+                        },
+                    )
                 }
             }
         }
@@ -640,6 +694,7 @@ class FileConversationCache(
             .joinToString("") { "%02x".format(it) }
 
     private companion object {
+        val authoritativeWrites = Mutex()
         const val DOCUMENT_NAME = "conversations.json"
         const val THREADS_DIRECTORY = "threads"
         const val POSITIONS_DOCUMENT_NAME = "read-positions.json"

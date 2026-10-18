@@ -98,7 +98,7 @@ class AuthoritativeOwnedUpsertTest {
             conversationId: String,
         ): SavedAuthoritativeThread? =
             actual.newestAuthoritativePage(serverId, conversationId, 200)?.let {
-                SavedAuthoritativeThread(it.epoch, it.items, it.appliedVersion, it.checkpoint, it.coverage)
+                SavedAuthoritativeThread(it.epoch, it.items, it.appliedVersion, it.checkpoint, it.coverage, it.incarnation, it.retirements)
             }
     }
 
@@ -239,14 +239,33 @@ class AuthoritativeOwnedUpsertTest {
             val cache = open { hook() }
             val prior = saved(listOf(raw(1), raw(2)))
             cache.writeAuthoritativeThread("host", "c", prior).getOrThrow()
-            val repo = wrapper(cache)
+            val rolledBack = CompletableDeferred<Unit>()
+            val allowRetry = CompletableDeferred<Unit>()
+            var attempts = 0
+            val controlled =
+                object : ConversationCache by cache, AuthoritativeUpsertCache {
+                    override suspend fun upsertAuthoritativeThread(
+                        serverId: String,
+                        conversationId: String,
+                        saved: SavedAuthoritativeThread,
+                        reset: Boolean,
+                        baseline: SavedAuthoritativeThread?,
+                        orderMoves: Map<Long, Boolean>,
+                    ): Result<Unit> {
+                        // Hold retry before Room admission, leaving the committed snapshot readable.
+                        if (++attempts > 1) allowRetry.await()
+                        return cache.upsertAuthoritativeThread(serverId, conversationId, saved, reset, baseline, orderMoves).also {
+                            if (it.isFailure) rolledBack.complete(Unit)
+                        }
+                    }
+                }
+            val repo = wrapper(controlled)
             val ready = CompletableDeferred<Unit>()
             val observer = backgroundScope.launch { repo.observeAuthoritativeThread("c").collect { ready.complete(Unit) } }
             ready.await()
             runCurrent()
             val entered = CompletableDeferred<Unit>()
             val release = CompletableDeferred<Unit>()
-            val allowRetry = CompletableDeferred<Unit>()
             var firstAttempt = true
             hook = {
                 if (firstAttempt) {
@@ -254,8 +273,6 @@ class AuthoritativeOwnedUpsertTest {
                     entered.complete(Unit)
                     release.await()
                     throw IOException("private failure")
-                } else {
-                    allowRetry.await()
                 }
             }
             apply(repo, 21_000, raw(1, 21_000))
@@ -266,7 +283,7 @@ class AuthoritativeOwnedUpsertTest {
             apply(repo, 22_000, raw(1, 22_000), raw(3, 22_000))
             runCurrent()
             release.complete(Unit)
-            runCurrent()
+            rolledBack.await()
             assertEquals(prior, fresh())
             allowRetry.complete(Unit)
             observer.cancelAndJoin()
@@ -831,7 +848,7 @@ class AuthoritativeOwnedUpsertTest {
             release.complete(Unit)
             first.join()
             second.join()
-            assertEquals(SavedAuthoritativeThread("e", emptyList(), 0, 0), fresh())
+            assertEquals(SavedAuthoritativeThread("e", emptyList(), 0, 0), fresh()?.copy(incarnation = ""))
         }
 
     @Test fun admissionInvariant_deferredImportCannotBeOverwrittenByOwnedSaves() =
@@ -862,6 +879,8 @@ class AuthoritativeOwnedUpsertTest {
             for (epoch in listOf("e", "new")) {
                 var hook: suspend () -> Unit = {}
                 val cache = open { hook() }
+                // Keep the epoch cases independent of the prior case's durable incarnation.
+                cache.removeConversation("host", "c").getOrThrow()
                 cache.writeAuthoritativeThread("host", "c", saved(listOf(raw(1)))).getOrThrow()
                 val repo = wrapper(cache)
                 val ready = CompletableDeferred<Unit>()
@@ -895,7 +914,7 @@ class AuthoritativeOwnedUpsertTest {
                 releaseRetirement.complete(Unit)
                 runCurrent()
                 observer.join()
-                assertEquals(SavedAuthoritativeThread(epoch, emptyList(), 0, 0), fresh())
+                assertEquals(SavedAuthoritativeThread(epoch, emptyList(), 0, 0), fresh()?.copy(incarnation = ""))
             }
         }
 

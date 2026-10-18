@@ -15,11 +15,16 @@ data class SavedAuthoritativeThread(
     val appliedVersion: Long,
     val checkpoint: Long,
     val coverage: SavedThreadCoverage? = null,
+    val incarnation: String = "",
+    val retirements: Map<Long, Long> = emptyMap(),
 ) {
     override fun toString(): String = "SavedAuthoritativeThread(content=***)"
 
     internal fun toSnapshot(): AuthoritativeThreadSnapshot {
         require(epoch.isNotEmpty() && appliedVersion in 0..MAX_THREAD_NUMBER && checkpoint in 0..appliedVersion)
+        require(incarnation.length <= 64)
+        require(retirements.all { (id, revision) -> id in 1..MAX_THREAD_NUMBER && revision in id..appliedVersion })
+        require(retirements.isEmpty() || (checkpoint == 0L && coverage == null))
         val decoded =
             items.map { raw ->
                 require(validThreadJson(raw))
@@ -28,6 +33,7 @@ data class SavedAuthoritativeThread(
                 }
             }
         require(decoded.distinctBy { it.id }.size == decoded.size)
+        require(decoded.none { it.id in retirements })
         return AuthoritativeThreadSnapshot(
             epoch = epoch,
             items = decoded.sortedBy { it.order?.takeIf { order -> order > 0 } ?: Long.MAX_VALUE },
@@ -35,6 +41,8 @@ data class SavedAuthoritativeThread(
             checkpoint = checkpoint,
             repairNeeded = appliedVersion > checkpoint,
             coverage = coverage?.toDomain(),
+            incarnation = incarnation,
+            retirements = retirements,
         )
     }
 
@@ -69,6 +77,8 @@ internal fun AuthoritativeThreadSnapshot.toSavedAuthoritativeThread(): SavedAuth
         epoch = requireNotNull(epoch),
         items = items.takeLast(MAX_CACHED_THREAD_ROWS).map { it.raw },
         appliedVersion = completedVersion,
+        incarnation = incarnation,
+        retirements = retirements,
         checkpoint = if (items.size > MAX_CACHED_THREAD_ROWS) 0 else checkpoint,
         coverage =
             coverage?.takeIf { items.size <= MAX_CACHED_THREAD_ROWS }?.let {

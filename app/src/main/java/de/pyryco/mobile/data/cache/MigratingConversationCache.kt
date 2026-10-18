@@ -126,6 +126,15 @@ internal class MigratingConversationCache(
             authoritative.writeAuthoritativeThread(serverId, conversationId, saved)
         }
 
+    override suspend fun resetAuthoritativeThread(
+        serverId: String,
+        conversationId: String,
+        saved: SavedAuthoritativeThread,
+    ): Result<Unit> =
+        write(serverId, conversationId, AUTHORITATIVE, "reset_authoritative") {
+            authoritative.upsertAuthoritativeThread(serverId, conversationId, saved, true, null, emptyMap())
+        }
+
     internal val authoritativeWriteCounts get() = authoritative.lastWriteCounts
     internal val authoritativeFullReads get() = authoritative.fullReads
     internal val authoritativeReplacements get() = authoritative.replacements
