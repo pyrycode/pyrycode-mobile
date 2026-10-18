@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-10-18T00:44:22.540Z" hostname="023c096c208b" time="9.93">
+  <properties/>
+  <testcase name="ownershipInvariant_invalidOptionalHistoryImportsRowsWithoutCertification" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="3.068"/>
+  <testcase name="idempotenceInvariant_committedImportIsNeverRepeatedOrOverwritten" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="0.155"/>
+  <testcase name="retirementInvariant_deletionWinsOverHeldWorkAndRestart" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="0.208"/>
+  <testcase name="classificationInvariant_unreadableSourceIsRetriedAndBlocksWrites" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="0.085"/>
+  <testcase name="certificationInvariant_importAndPagesKeepSavedCheckpoint" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="0.256"/>
+  <testcase name="classificationInvariant_inaccessibleSourceParentIsRetriedAcrossRestart" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="0.078"/>
+  <testcase name="repositoryInvariant_restoreSaveAndDeleteUseRoomStorage" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="0.208"/>
+  <testcase name="classificationInvariant_rejectedSourcesArePreservedNeverEmptyReplaced" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="0.054"/>
+  <testcase name="retirementInvariant_hostForgettingFencesSavesAndRestart" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="0.133"/>
+  <testcase name="ownershipInvariant_bothFamiliesMigrateExactlyAndStayIsolated" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="0.111"/>
+  <testcase name="boundedInvariant_fragmentedFixtureMigratesAndPagesWithinBounds" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="4.85"/>
+  <testcase name="classificationInvariant_deferredImportIsNeverReplacedByAnUnobservedWrite" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="0.063"/>
+  <testcase name="classificationInvariant_cancelledCommittedImportCannotReadmitUnobservedWrites" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="0.098"/>
+  <testcase name="atomicityInvariant_interruptedImportKeepsSourceAndRetries" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="0.052"/>
+  <testcase name="ownershipInvariant_historyOnlyRoomRejectsImportsRowsWithoutCertification" classname="de.pyryco.mobile.data.cache.MigratingConversationCacheTest" time="0.035"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

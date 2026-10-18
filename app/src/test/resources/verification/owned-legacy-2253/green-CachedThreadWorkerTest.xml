@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.repository.CachedThreadWorkerTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-18T00:45:19.072Z" hostname="023c096c208b" time="0.76">
+  <properties/>
+  <testcase name="identityInvariant_overlapReplayAndReconnectKeepCacheOnlyNeighbours" classname="de.pyryco.mobile.data.repository.CachedThreadWorkerTest" time="0.167"/>
+  <testcase name="cachePolicyInvariant_100000LiveRowsAreFilteredOnlyAfterMainDelivery" classname="de.pyryco.mobile.data.repository.CachedThreadWorkerTest" time="0.07"/>
+  <testcase name="boundaryInvariant_suppressionAndDisconnectKeepUnsignedOrder" classname="de.pyryco.mobile.data.repository.CachedThreadWorkerTest" time="0.015"/>
+  <testcase name="processingInvariant_100000RowsRunOnHeldWorker_mainAndDeliveryProgress" classname="de.pyryco.mobile.data.repository.CachedThreadWorkerTest" time="0.471"/>
+  <testcase name="readableRowsDoNotWaitForOptionalHistoryButLiveMergeDoes" classname="de.pyryco.mobile.data.repository.CachedThreadWorkerTest" time="0.005"/>
+  <testcase name="snapshotInvariant_heldGenerationKeepsRowsSuppressionOrderAndEvidenceTogether" classname="de.pyryco.mobile.data.repository.CachedThreadWorkerTest" time="0.004"/>
+  <testcase name="equalityInvariant_listObserverWaitsForWorkerAndSuppressesUnchangedRows" classname="de.pyryco.mobile.data.repository.CachedThreadWorkerTest" time="0.005"/>
+  <testcase name="initialRowsOnlySnapshotReusesValidatedRowsAndKeepsReceiptMetadataOnRecollection" classname="de.pyryco.mobile.data.repository.CachedThreadWorkerTest" time="0.005"/>
+  <testcase name="cancellationInvariant_heldWorkerCannotPublishOrWriteAfterExit" classname="de.pyryco.mobile.data.repository.CachedThreadWorkerTest" time="0.004"/>
+  <testcase name="repeatedRowsOnlyOpenKeepsSuppressionAndCancelsPendingOrderRead" classname="de.pyryco.mobile.data.repository.CachedThreadWorkerTest" time="0.005"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

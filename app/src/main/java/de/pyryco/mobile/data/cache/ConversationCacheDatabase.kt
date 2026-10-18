@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.cache
 
 import androidx.room.AutoMigration
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -10,7 +11,9 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Upsert
+import androidx.room.migration.AutoMigrationSpec
 import androidx.room.withTransaction
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.CancellationException
 import java.io.IOException
 
@@ -21,10 +24,46 @@ import java.io.IOException
         ConversationCacheDatabase.AuthoritativeHeader::class, ConversationCacheDatabase.AuthoritativeItem::class,
         ConversationCacheDatabase.FileImport::class,
     ],
-    version = 3,
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
+    version = 4,
+    autoMigrations = [
+        AutoMigration(
+            from = 1,
+            to = 2,
+        ), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4, spec = ConversationCacheDatabase.OwnedRowsMigration::class),
+    ],
 )
 abstract class ConversationCacheDatabase : RoomDatabase() {
+    class OwnedRowsMigration : AutoMigrationSpec {
+        override fun onPostMigrate(db: SupportSQLiteDatabase) {
+            // Migration is the only backfill. Ordinary mutations never scan the saved thread.
+            db.execSQL("UPDATE legacy_rows SET ordinal=-ordinal-1")
+            db.query("SELECT host,conversation,ordinal,payload FROM legacy_rows WHERE ordinal<0").use { cursor ->
+                while (cursor.moveToNext()) {
+                    val identity =
+                        try {
+                            decodeLegacyRows(listOf(cursor.getString(3))).single().legacyRowKey()
+                        } catch (_: IllegalArgumentException) {
+                            null // Preserve invalid bytes: readers still withhold them without repairing disk.
+                        }
+                    db.execSQL(
+                        "UPDATE legacy_rows SET ordinal=?,identity=? WHERE host=? AND conversation=? AND ordinal=?",
+                        arrayOf<Any?>(
+                            (-cursor.getLong(2)) * LEGACY_ORDINAL_STEP,
+                            identity,
+                            cursor.getString(0),
+                            cursor.getString(1),
+                            cursor.getLong(2),
+                        ),
+                    )
+                }
+            }
+            db.execSQL("UPDATE legacy_evidence SET ordinal=(ordinal+1)*4294967296 WHERE ordinal>=0")
+            db.execSQL(
+                "UPDATE legacy_headers SET rowCount=(SELECT COUNT(*) FROM legacy_rows r WHERE r.host=legacy_headers.host AND r.conversation=legacy_headers.conversation)",
+            )
+        }
+    }
+
     internal abstract fun legacy(): LegacyDao
 
     internal abstract fun authoritative(): AuthoritativeDao
@@ -195,16 +234,22 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         val cursor: String?,
         val atStart: Boolean,
         val coverageHeader: String?,
+        @ColumnInfo(defaultValue = "0") val rowCount: Int = 0,
     ) {
         override fun toString(): String = "LegacyHeader(redacted)"
     }
 
-    @Entity(tableName = "legacy_rows", primaryKeys = ["host", "conversation", "ordinal"])
+    @Entity(
+        tableName = "legacy_rows",
+        primaryKeys = ["host", "conversation", "ordinal"],
+        indices = [Index(value = ["host", "conversation", "identity"], unique = true)],
+    )
     internal data class Row(
         val host: String,
         val conversation: String,
-        val ordinal: Int,
+        val ordinal: Long,
         val payload: String,
+        @ColumnInfo(defaultValue = "NULL") val identity: String? = null,
     ) {
         override fun toString(): String = "LegacyRow(redacted)"
     }
@@ -226,7 +271,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         val kind: String,
         val key: String,
         val part: Int,
-        val ordinal: Int,
+        val ordinal: Long,
         val low: String,
         val high: String,
         val payload: String,
@@ -236,6 +281,79 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
 
     @Dao
     internal interface LegacyDao {
+        @Query("SELECT * FROM legacy_rows WHERE host=:host AND conversation=:conversation AND identity=:identity")
+        suspend fun ownedRow(
+            host: String,
+            conversation: String,
+            identity: String,
+        ): Row?
+
+        @Query("SELECT ordinal FROM legacy_rows WHERE host=:host AND conversation=:conversation AND identity=:identity")
+        suspend fun ownedOrdinal(
+            host: String,
+            conversation: String,
+            identity: String,
+        ): Long?
+
+        @Query(
+            "SELECT ordinal FROM legacy_rows WHERE host=:host AND conversation=:conversation AND ordinal>:after ORDER BY ordinal LIMIT 1",
+        )
+        suspend fun nextOrdinal(
+            host: String,
+            conversation: String,
+            after: Long,
+        ): Long?
+
+        @Query("SELECT * FROM legacy_rows WHERE host=:host AND conversation=:conversation ORDER BY ordinal LIMIT :limit")
+        suspend fun oldestRows(
+            host: String,
+            conversation: String,
+            limit: Int,
+        ): List<Row>
+
+        @Query("UPDATE legacy_rows SET payload=:payload WHERE host=:host AND conversation=:conversation AND ordinal=:ordinal")
+        suspend fun updateRow(
+            host: String,
+            conversation: String,
+            ordinal: Long,
+            payload: String,
+        )
+
+        @Query("DELETE FROM legacy_rows WHERE host=:host AND conversation=:conversation AND ordinal=:ordinal")
+        suspend fun removeRow(
+            host: String,
+            conversation: String,
+            ordinal: Long,
+        )
+
+        @Query("SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='rowEntries' AND low=:entry")
+        suspend fun producingClaims(
+            host: String,
+            conversation: String,
+            entry: String,
+        ): List<Evidence>
+
+        @Query(
+            "DELETE FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND key=:key AND kind IN ('rowOrder','rowEntries','proofs','legacyKeys','legacyOffsets','deltaLengths','deltaHashes','deltaText')",
+        )
+        suspend fun removeClaim(
+            host: String,
+            conversation: String,
+            key: String,
+        )
+
+        @Query("DELETE FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind=:kind AND key=:key AND part=:part")
+        suspend fun removeCell(
+            host: String,
+            conversation: String,
+            kind: String,
+            key: String,
+            part: Int,
+        )
+
+        @Insert(onConflict = OnConflictStrategy.REPLACE)
+        suspend fun updateHeader(header: Header)
+
         @Query("SELECT * FROM legacy_headers WHERE host=:host AND conversation=:conversation")
         suspend fun header(
             host: String,
@@ -248,7 +366,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         suspend fun rows(
             host: String,
             conversation: String,
-            before: Int,
+            before: Long,
             limit: Int,
         ): List<Row>
 
@@ -258,8 +376,8 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         suspend fun probe(
             host: String,
             conversation: String,
-            before: Int,
-        ): List<Int>
+            before: Long,
+        ): List<Long>
 
         @Query("SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation ORDER BY kind, key, part")
         suspend fun allEvidence(
@@ -273,8 +391,8 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         suspend fun rowEvidence(
             host: String,
             conversation: String,
-            first: Int,
-            last: Int,
+            first: Long,
+            last: Long,
         ): List<Evidence>
 
         // Closed intervals need the strict predecessor as well as intervals starting at first.

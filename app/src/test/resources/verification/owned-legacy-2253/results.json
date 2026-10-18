@@ -1,0 +1,321 @@
+{
+  "ticket": 2253,
+  "operatingSystem": "Linux",
+  "productionRevision": "74bc7a5c1cfdbad50263ab2100a849ce2c20abc0",
+  "finalFixtureRevision": "f92113bc4f9693bc3009af71316203b3c820901a",
+  "scope": "Focused selections; complete configured JVM, UI and scripted gates pending dispatcher",
+  "commandTemplate": "python3 scripts/gradle-gate.py testDebugUnitTest --tests <selected> --console=plain",
+  "totals": {
+    "executed": 125,
+    "passed": 125,
+    "failed": 0,
+    "skipped": 0
+  },
+  "finalResults": [
+    {
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyWritesTest",
+      "selected": "de.pyryco.mobile.data.cache.OwnedLegacyWritesTest",
+      "executed": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T00:51:17.761Z",
+      "sourceRevision": "f92113bc4f9693bc3009af71316203b3c820901a",
+      "sha256": "417f0e883df6a462ecfcce5413cbf53e122b699228c83fa2dcd10da52b5a771c",
+      "report": "green-OwnedLegacyWritesTest.xml"
+    },
+    {
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest",
+      "selected": "de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T00:39:51.576Z",
+      "sourceRevision": "74bc7a5c1cfdbad50263ab2100a849ce2c20abc0",
+      "sha256": "a134dfbc731a5712fdc3a5eafcbd85af630e72a5855ba69e46587a83459575da",
+      "uncommittedSourceChanges": [
+        "app/src/test/java/de/pyryco/mobile/data/cache/OwnedLegacyWritesTest.kt"
+      ],
+      "sourcePatch": "fixture-development.patch",
+      "report": "green-OwnedLegacyMigrationTest.xml"
+    },
+    {
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyConcurrencyTest",
+      "selected": "de.pyryco.mobile.data.cache.OwnedLegacyConcurrencyTest",
+      "executed": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T00:43:39.678Z",
+      "sourceRevision": "74bc7a5c1cfdbad50263ab2100a849ce2c20abc0",
+      "sha256": "95e8a8de8f959603b7f30cdbc907a0a64003599afb46946670e3dad51bd0063a",
+      "uncommittedSourceChanges": [
+        "app/src/test/java/de/pyryco/mobile/data/cache/OwnedLegacyWritesTest.kt"
+      ],
+      "sourcePatch": "fixture-development.patch",
+      "report": "green-OwnedLegacyConcurrencyTest.xml"
+    },
+    {
+      "class": "de.pyryco.mobile.data.cache.LegacyRoomStorageTest",
+      "selected": "de.pyryco.mobile.data.cache.LegacyRoomStorageTest",
+      "executed": 18,
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T00:43:54.890Z",
+      "sourceRevision": "74bc7a5c1cfdbad50263ab2100a849ce2c20abc0",
+      "sha256": "ce9f77336cf7e2c35ef9288d19e7c31e490f8ee82e4326ca3db1467a78aefe3a",
+      "uncommittedSourceChanges": [
+        "app/src/test/java/de/pyryco/mobile/data/cache/OwnedLegacyWritesTest.kt"
+      ],
+      "sourcePatch": "fixture-development.patch",
+      "report": "green-LegacyRoomStorageTest.xml"
+    },
+    {
+      "class": "de.pyryco.mobile.data.cache.MigratingConversationCacheTest",
+      "selected": "de.pyryco.mobile.data.cache.MigratingConversationCacheTest",
+      "executed": 15,
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T00:44:22.540Z",
+      "sourceRevision": "74bc7a5c1cfdbad50263ab2100a849ce2c20abc0",
+      "sha256": "430ae3ac3275d3d2e20719e7eb96381febc3ce7c6508cc30f709634141485f2e",
+      "uncommittedSourceChanges": [
+        "app/src/test/java/de/pyryco/mobile/data/cache/OwnedLegacyWritesTest.kt"
+      ],
+      "sourcePatch": "fixture-development.patch",
+      "report": "green-MigratingConversationCacheTest.xml"
+    },
+    {
+      "class": "de.pyryco.mobile.data.repository.CoalescedThreadWritesTest",
+      "selected": "de.pyryco.mobile.data.repository.CoalescedThreadWritesTest",
+      "executed": 41,
+      "passed": 41,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T00:44:43.692Z",
+      "sourceRevision": "74bc7a5c1cfdbad50263ab2100a849ce2c20abc0",
+      "sha256": "9120201ab3a1aeaabad0e32b1a6701641db198475c281cdbfc6d6c88a7446803",
+      "uncommittedSourceChanges": [
+        "app/src/test/java/de/pyryco/mobile/data/cache/OwnedLegacyWritesTest.kt"
+      ],
+      "sourcePatch": "fixture-development.patch",
+      "report": "green-CoalescedThreadWritesTest.xml"
+    },
+    {
+      "class": "de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest",
+      "selected": "de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest",
+      "executed": 11,
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T00:44:55.996Z",
+      "sourceRevision": "74bc7a5c1cfdbad50263ab2100a849ce2c20abc0",
+      "sha256": "ec7fa992fda4bfef94f357183febfe699b25e48c8bb2c585e1ed08b6c1cd27fc",
+      "uncommittedSourceChanges": [
+        "app/src/test/java/de/pyryco/mobile/data/cache/OwnedLegacyWritesTest.kt"
+      ],
+      "sourcePatch": "fixture-development.patch",
+      "report": "green-UnsignedHistoryCacheTest.xml"
+    },
+    {
+      "class": "de.pyryco.mobile.data.repository.HistoryMessageIdentityTest",
+      "selected": "de.pyryco.mobile.data.repository.HistoryMessageIdentityTest",
+      "executed": 17,
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T00:45:07.490Z",
+      "sourceRevision": "74bc7a5c1cfdbad50263ab2100a849ce2c20abc0",
+      "sha256": "f2d6af0d3ea77f5c69e0cf8b20b845c451f135d3026bc07802c8d511fd60020a",
+      "uncommittedSourceChanges": [
+        "app/src/test/java/de/pyryco/mobile/data/cache/OwnedLegacyWritesTest.kt"
+      ],
+      "sourcePatch": "fixture-development.patch",
+      "report": "green-HistoryMessageIdentityTest.xml"
+    },
+    {
+      "class": "de.pyryco.mobile.data.repository.CachedThreadWorkerTest",
+      "selected": "de.pyryco.mobile.data.repository.CachedThreadWorkerTest",
+      "executed": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T00:45:19.072Z",
+      "sourceRevision": "74bc7a5c1cfdbad50263ab2100a849ce2c20abc0",
+      "sha256": "da00b63883e5184244f3e8f3ecbbef06e14f50558f08b7262dfd76bf5491af33",
+      "uncommittedSourceChanges": [
+        "app/src/test/java/de/pyryco/mobile/data/cache/OwnedLegacyWritesTest.kt"
+      ],
+      "sourcePatch": "fixture-development.patch",
+      "report": "green-CachedThreadWorkerTest.xml"
+    },
+    {
+      "class": "de.pyryco.mobile.data.cache.AuthoritativeRoomStorageTest",
+      "selected": "de.pyryco.mobile.data.cache.AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T00:45:31.431Z",
+      "sourceRevision": "74bc7a5c1cfdbad50263ab2100a849ce2c20abc0",
+      "sha256": "04c5a87b65b58f8937458a98d1c93bf03cb759ff942bcaa52caba94b5259e65a",
+      "uncommittedSourceChanges": [
+        "app/src/test/java/de/pyryco/mobile/data/cache/OwnedLegacyWritesTest.kt"
+      ],
+      "sourcePatch": "fixture-development.patch",
+      "report": "green-AuthoritativeRoomStorageTest.xml"
+    }
+  ],
+  "mutationProbe": {
+    "measurementBoundary": "Initial import/restoration/coverage save excluded; production repository writer through migration-aware on-disk Room",
+    "cases": [
+      {
+        "savedRows": 20,
+        "producingClaims": 20,
+        "rowReads": 1,
+        "rowDecodes": 1,
+        "rowSerializations": 1,
+        "rowWrites": 1,
+        "evidenceCellsRead": 8,
+        "evidenceDecodes": 1,
+        "evidenceMutationStatements": 3,
+        "sqlStatements": 46
+      },
+      {
+        "savedRows": 18000,
+        "producingClaims": 18000,
+        "rowReads": 1,
+        "rowDecodes": 1,
+        "rowSerializations": 1,
+        "rowWrites": 1,
+        "evidenceCellsRead": 8,
+        "evidenceDecodes": 1,
+        "evidenceMutationStatements": 3,
+        "sqlStatements": 46
+      }
+    ],
+    "partialView": {
+      "savedRows": 18000,
+      "ownedRows": 200,
+      "unloadedRowsPreserved": 17800,
+      "unloadedRowBoundEvidenceCellsCompared": 53400,
+      "hostIsolation": "Host and host with colliding ids",
+      "restart": true,
+      "staleTokenRejected": true,
+      "freshTraversalComplete": true
+    }
+  },
+  "checks": [
+    {
+      "command": "python3 scripts/gradle-gate.py lint",
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/gradle-gate.py assembleDebug",
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/gradle-gate.py spotlessApply",
+      "result": "passed"
+    }
+  ],
+  "historicalFailures": [
+    {
+      "report": "initial-red.xml",
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyWritesTest",
+      "timestamp": "2026-10-17T23:30:27.192Z",
+      "executed": 2,
+      "passed": 0,
+      "failed": 2,
+      "skipped": 0,
+      "sha256": "4dbc56d5675007c695982d2b31419f1a56d02712a295f4423869e6a7068a84a2",
+      "baseRevision": "908b53bde",
+      "state": "Plan commit plus uncommitted initial tests; before implementation",
+      "reason": "Full row replacement and unsettled-row loss"
+    },
+    {
+      "report": "placement-red.xml",
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest",
+      "timestamp": "2026-10-17T23:52:49.281Z",
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "sha256": "6283763f327a41e5609fe0b48e2d3a3e89c153bfaa8f4c1b0eb36d7d5506873f",
+      "baseRevision": "908b53bde",
+      "state": "Uncommitted implementation and migration probe",
+      "reason": "Second insertion exhausted ordinal gap"
+    },
+    {
+      "report": "prefix-red.xml",
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyWritesTest",
+      "timestamp": "2026-10-18T00:12:14.927Z",
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "sha256": "a813874c6984e6630628736b4006eb76817ef34dc3bc06f591f870e4609b1498",
+      "baseRevision": "94fb202806578b7467e8c56a52c02bc6137a03a9",
+      "state": "Committed implementation plus uncommitted prepend probe",
+      "reason": "Negative held positions admitted global evidence sentinel into page range"
+    },
+    {
+      "report": "reconnect-red.xml",
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyConcurrencyTest",
+      "timestamp": "2026-10-17T23:40:11.176Z",
+      "executed": 5,
+      "passed": 4,
+      "failed": 1,
+      "skipped": 0,
+      "sha256": "2b0de1ea287f2646aeeb6085a17cdbbee4f9cac74d6cd3eec069a904501f34b8",
+      "baseRevision": "908b53bde",
+      "state": "Uncommitted implementation and concurrency probes",
+      "reason": "Later capture renewed stale collector content"
+    },
+    {
+      "report": "settlement-red.xml",
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyWritesTest",
+      "timestamp": "2026-10-17T23:41:43.444Z",
+      "executed": 4,
+      "passed": 3,
+      "failed": 1,
+      "skipped": 0,
+      "sha256": "c6c5866251784224089a74787d6c3d6363c937ce4f3707c8221fcb0de502ce86",
+      "baseRevision": "908b53bde",
+      "state": "Uncommitted implementation and strengthened settlement probe",
+      "reason": "Unsettled disappearance removed a saved settled row"
+    },
+    {
+      "report": "shared-evidence-red.xml",
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyWritesTest",
+      "timestamp": "2026-10-17T23:56:01.737Z",
+      "executed": 5,
+      "passed": 4,
+      "failed": 1,
+      "skipped": 0,
+      "sha256": "33fb029abad5b4606f704225c2621227a8ab31635031a3bea8515ec90cafa42a",
+      "sourceRevision": "a36ad3d91d93688b90f4fb19fe672c9f25da5ea2",
+      "reason": "Quoted unsigned interval ids failed canonical decoding"
+    },
+    {
+      "report": "worker-red.xml",
+      "class": "de.pyryco.mobile.data.repository.CachedThreadWorkerTest",
+      "timestamp": "2026-10-18T00:05:57.731Z",
+      "executed": 10,
+      "passed": 9,
+      "failed": 1,
+      "skipped": 0,
+      "sha256": "77d3a8bd24d38711b3bb72d3d389c02eadcec247226401b55ba859aa191b0f89",
+      "sourceRevision": "94fb202806578b7467e8c56a52c02bc6137a03a9",
+      "reason": "Replacement-cache processing traversed live rows twice"
+    }
+  ],
+  "provenanceNotes": [
+    "Uncommitted development reds are explicitly identified; their base revision alone is not the tested tree.",
+    "Other final classes ran with production revision 74bc7a5 and the unrelated dense fixture patch retained in fixture-development.patch. The changed class itself was rerun on the committed, formatted final fixture revision.",
+    "Raw XML hashes refer to the retained bytes. Final formatting/compile and pre-verify checks are reported in the PR."
+  ]
+}

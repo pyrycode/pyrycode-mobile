@@ -8,6 +8,8 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.HistoryCoverage
 import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.UnsignedHistoryGap
+import de.pyryco.mobile.data.repository.UnsignedHistorySpan
 import de.pyryco.mobile.data.repository.historyKeys
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +43,7 @@ class LegacyThreadPage internal constructor(
         internal val host: String,
         internal val conversation: String,
         internal val generation: String,
-        internal val before: Int,
+        internal val before: Long,
     ) {
         override fun toString(): String = "LegacyContinuation(redacted)"
     }
@@ -129,12 +131,219 @@ class LegacyRoomStorage internal constructor(
     internal var lastReadCounts = ReadCounts()
         private set
 
+    internal data class MutationCounts(
+        val rowReads: Int = 0,
+        val rowDecodes: Int = 0,
+        val rowSerializations: Int = 0,
+        val rowWrites: Int = 0,
+        val evidenceReads: Int = 0,
+        val evidenceDecodes: Int = 0,
+        val evidenceWrites: Int = 0,
+    )
+
+    internal var lastMutationCounts = MutationCounts()
+        private set
+
+    internal suspend fun mutateRows(
+        host: String,
+        conversation: String,
+        upserts: List<OwnedLegacyRow>,
+        removed: Set<String>,
+    ): Result<Unit> =
+        mutate("mutate_rows") {
+            lastMutationCounts = MutationCounts()
+            val payloads = upserts.map { encodeLegacyRow(it.row) }
+            require(cacheableThreadRows(upserts.map { it.row }) == upserts.map { it.row })
+            decodeLegacyRows(payloads)
+            lastMutationCounts = lastMutationCounts.copy(rowDecodes = payloads.size, rowSerializations = payloads.size)
+            val header = dao.header(host, conversation) ?: Header(host, conversation, "", null, false, null)
+            var count = header.rowCount
+            val affected = HashSet<Long>()
+            for (key in removed) {
+                val old = ownedRow(host, conversation, key) ?: continue
+                affected += old.ordinal
+                dao.removeRow(host, conversation, old.ordinal)
+                count--
+                lastMutationCounts = lastMutationCounts.copy(rowWrites = lastMutationCounts.rowWrites + 1)
+            }
+            val remaining = upserts.groupingBy { it.before }.eachCount().toMutableMap()
+            upserts.zip(payloads).forEach { (change, payload) ->
+                val reserve = remaining.getValue(change.before)
+                remaining[change.before] = reserve - 1
+                val key = change.row.legacyRowKey()
+                require(key !in removed)
+                val old = ownedRow(host, conversation, key)
+                if (old?.payload == payload) return@forEach
+                if (old != null) {
+                    affected += old.ordinal
+                    dao.updateRow(host, conversation, old.ordinal, payload)
+                } else {
+                    val after = change.after?.let { dao.ownedOrdinal(host, conversation, it) }
+                    val before = change.before?.let { dao.ownedOrdinal(host, conversation, it) }
+                    val ordinal =
+                        when {
+                            after != null -> {
+                                val next = dao.nextOrdinal(host, conversation, after)
+                                require(before == null || after < before)
+                                val edge = listOfNotNull(next, before).minOrNull()
+                                if (edge == null) {
+                                    Math.addExact(after, LEGACY_ORDINAL_STEP)
+                                } else {
+                                    require(edge - after > reserve)
+                                    after + (edge - after) / (reserve + 1)
+                                }
+                            }
+                            before != null -> {
+                                val previous = dao.probe(host, conversation, before).singleOrNull()
+                                if (previous == null) {
+                                    // Global evidence occupies -1; held rows use positive positions.
+                                    require(before > reserve)
+                                    before / (reserve + 1)
+                                } else {
+                                    require(before - previous > reserve)
+                                    previous + (before - previous) / (reserve + 1)
+                                }
+                            }
+                            else -> Math.addExact(dao.probe(host, conversation, Long.MAX_VALUE).singleOrNull() ?: 0L, LEGACY_ORDINAL_STEP)
+                        }
+                    dao.insertRows(listOf(Row(host, conversation, ordinal, payload, key)))
+                    count++
+                }
+                lastMutationCounts = lastMutationCounts.copy(rowWrites = lastMutationCounts.rowWrites + 1)
+            }
+            val trimmed = count > MAX_CACHED_THREAD_ROWS
+            if (trimmed) {
+                val discarded = dao.oldestRows(host, conversation, count - MAX_CACHED_THREAD_ROWS)
+                lastMutationCounts = lastMutationCounts.copy(rowReads = lastMutationCounts.rowReads + discarded.size)
+                for (row in discarded) {
+                    affected += row.ordinal
+                    dao.removeRow(host, conversation, row.ordinal)
+                }
+                count -= discarded.size
+                lastMutationCounts = lastMutationCounts.copy(rowWrites = lastMutationCounts.rowWrites + discarded.size)
+            }
+            val invalidated = invalidateOwnedEvidence(host, conversation, affected)
+            val scalars =
+                header.coverageHeader?.let { encoded ->
+                    if (!invalidated && !trimmed) {
+                        encoded
+                    } else {
+                        lastMutationCounts = lastMutationCounts.copy(evidenceDecodes = lastMutationCounts.evidenceDecodes + 1)
+                        val fields = MobileJson.parseToJsonElement(encoded).jsonObject.toMutableMap()
+                        fields["unknown"] = JsonPrimitive(true)
+                        val first = dao.newerSpan(host, conversation, 0uL.position()).firstOrNull()
+                        lastMutationCounts =
+                            lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + if (first == null) 0 else 1)
+                        if (first ==
+                            null
+                        ) {
+                            fields.remove("savedUnknownEdge")
+                        } else {
+                            fields["savedUnknownEdge"] =
+                                JsonPrimitive(first.low.toULong().toString())
+                        }
+                        JsonObject(fields).toString()
+                    }
+                }
+            dao.updateHeader(
+                header.copy(
+                    generation = UUID.randomUUID().toString(),
+                    rowCount = count,
+                    cursor = if (trimmed) scalars?.let { "" } else header.cursor,
+                    atStart = header.atStart && !invalidated && !trimmed,
+                    coverageHeader = scalars,
+                ),
+            )
+        }
+
+    private suspend fun ownedRow(
+        host: String,
+        conversation: String,
+        key: String,
+    ): Row? =
+        dao.ownedRow(host, conversation, key).also {
+            lastMutationCounts = lastMutationCounts.copy(rowReads = lastMutationCounts.rowReads + if (it == null) 0 else 1)
+        }
+
+    /** Remove only claims affected by changed content, including fragments bound to the same held ordinal. */
+    private suspend fun invalidateOwnedEvidence(
+        host: String,
+        conversation: String,
+        ordinals: Set<Long>,
+    ): Boolean {
+        val cells = ordinals.flatMap { dao.rowEvidence(host, conversation, it, it) }
+        lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + cells.size)
+        val keys = cells.filter { it.kind == "proofs" || it.kind == "rowEntries" || it.kind == "rowOrder" }.mapTo(HashSet()) { it.key }
+        val entries = cells.filter { it.kind == "rowEntries" || it.kind == "rowOrder" }.mapTo(sortedSetOf()) { it.low.toULong() }
+        for (entry in entries) {
+            val dependents = dao.producingClaims(host, conversation, entry.position())
+            lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + dependents.size)
+            keys += dependents.map { it.key }
+        }
+        keys.forEach { dao.removeClaim(host, conversation, it) }
+        lastMutationCounts = lastMutationCounts.copy(evidenceWrites = lastMutationCounts.evidenceWrites + keys.size)
+        for (entry in entries) subtractEntry(host, conversation, entry)
+        return keys.isNotEmpty()
+    }
+
+    /** Split a producing interval without reading or rewriting unrelated intervals or row ordinals. */
+    private suspend fun subtractEntry(
+        host: String,
+        conversation: String,
+        entry: ULong,
+    ) {
+        val spans = dao.intervals(host, conversation, "spans", entry.position(), entry.position())
+        lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + spans.size)
+        for (span in spans) {
+            val older = dao.olderSpan(host, conversation, span.low).singleOrNull()
+            val newer = dao.newerSpan(host, conversation, span.high).singleOrNull()
+            val gaps = dao.intervals(host, conversation, "gaps", span.low, span.high)
+            lastMutationCounts =
+                lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + gaps.size + listOfNotNull(older, newer).size)
+            for (gap in gaps) {
+                dao.removeCell(host, conversation, gap.kind, gap.key, gap.part)
+                dao.removeCell(host, conversation, "walks", gap.low.toULong().toString(), 0)
+            }
+            dao.removeCell(host, conversation, "spans", span.key, span.part)
+            val low = span.low.toULong()
+            val high = span.high.toULong()
+            val pieces =
+                buildList {
+                    if (low < entry) add(low to entry - 1u)
+                    if (entry < high) add(entry + 1u to high)
+                }
+            val inserted = pieces.map { (first, last) -> intervalCell(host, conversation, "spans", first, last) }
+            dao.insertEvidence(inserted)
+            val neighbours = listOfNotNull(older) + inserted + listOfNotNull(newer)
+            val repaired = neighbours.zipWithNext { a, b -> intervalCell(host, conversation, "gaps", a.high.toULong(), b.low.toULong()) }
+            dao.insertEvidence(repaired)
+            lastMutationCounts =
+                lastMutationCounts.copy(evidenceWrites = lastMutationCounts.evidenceWrites + gaps.size + 1 + inserted.size + repaired.size)
+        }
+    }
+
+    private fun intervalCell(
+        host: String,
+        conversation: String,
+        kind: String,
+        low: ULong,
+        high: ULong,
+    ): Evidence {
+        val payload =
+            if (kind == "spans") {
+                MobileJson.encodeToJsonElement(UnsignedHistorySpan(low, high))
+            } else {
+                MobileJson.encodeToJsonElement(UnsignedHistoryGap(low, high))
+            }
+        return Evidence(host, conversation, kind, low.position(), 0, -1L, low.position(), high.position(), payload.toString())
+    }
+
     suspend fun readThread(
         serverId: String,
         conversationId: String,
     ): List<ThreadItem> =
         read("read_thread", emptyList()) {
-            decodeRows(dao.rows(serverId, conversationId, Int.MAX_VALUE, MAX_CACHED_THREAD_ROWS + 1).asReversed())
+            decodeRows(dao.rows(serverId, conversationId, Long.MAX_VALUE, MAX_CACHED_THREAD_ROWS + 1).asReversed())
         }
 
     /** Metadata reads never decode row payloads; committed writes bind evidence to those payloads. */
@@ -191,7 +400,14 @@ class LegacyRoomStorage internal constructor(
         kept: List<ThreadItem>,
     ) {
         remove(serverId, conversationId)
-        dao.insertRows(payloads.mapIndexed { ordinal, payload -> Row(serverId, conversationId, ordinal, payload) })
+        dao.insertRows(
+            payloads.mapIndexed {
+                ordinal,
+                payload,
+                ->
+                Row(serverId, conversationId, (ordinal + 1L) * LEGACY_ORDINAL_STEP, payload, kept[ordinal].legacyRowKey())
+            },
+        )
         storeHistory(serverId, conversationId, history, kept)
     }
 
@@ -203,12 +419,26 @@ class LegacyRoomStorage internal constructor(
         mutate("write_history") {
             val header = dao.header(serverId, conversationId)
             if (header == null && position == null) return@mutate
-            val rows = decodeRows(dao.rows(serverId, conversationId, Int.MAX_VALUE, MAX_CACHED_THREAD_ROWS + 1).asReversed())
+            val records = dao.rows(serverId, conversationId, Long.MAX_VALUE, MAX_CACHED_THREAD_ROWS + 1).asReversed()
+            val rows = decodeRows(records)
             val bound = position?.copy(coverage = position.coverage?.retainedBy(rows)?.boundTo(rows))
             bound?.coverage?.validated(rows)
             dao.deleteHeaders(serverId, conversationId)
             dao.deleteEvidence(serverId, conversationId)
-            storeHistory(serverId, conversationId, bound, rows)
+            storeHistory(
+                serverId,
+                conversationId,
+                bound,
+                rows,
+                rows
+                    .zip(records)
+                    .flatMap { (row, record) ->
+                        row.historyKeys().map {
+                            it to
+                                record.ordinal
+                        }
+                    }.toMap(),
+            )
         }
 
     suspend fun removeConversation(
@@ -245,9 +475,9 @@ class LegacyRoomStorage internal constructor(
             ) {
                 return@read null
             }
-            val records = dao.rows(host, conversation, token?.before ?: Int.MAX_VALUE, minOf(size, MAX_CACHED_THREAD_ROWS)).asReversed()
+            val records = dao.rows(host, conversation, token?.before ?: Long.MAX_VALUE, minOf(size, MAX_CACHED_THREAD_ROWS)).asReversed()
             val rows = decodeRows(records)
-            val first = records.firstOrNull()?.ordinal ?: 0
+            val first = records.firstOrNull()?.ordinal ?: 0L
             val probe = dao.probe(host, conversation, first)
             lastReadCounts = lastReadCounts.copy(ordinalReads = probe.size)
             val evidence =
@@ -256,7 +486,7 @@ class LegacyRoomStorage internal constructor(
                 } else {
                     optionalHistory {
                         val scalars = decodeHeader(header.coverageHeader)
-                        val selected = readEvidence(dao.rowEvidence(host, conversation, first, records.lastOrNull()?.ordinal ?: -1))
+                        val selected = readEvidence(dao.rowEvidence(host, conversation, first, records.lastOrNull()?.ordinal ?: -1L))
                         val entries = selected.filter { it.kind == "rowEntries" || it.kind == "rowOrder" }
                         val low =
                             entries.minOfOrNull { it.low } ?: scalars["savedUnknownEdge"]
@@ -336,10 +566,13 @@ class LegacyRoomStorage internal constructor(
         conversation: String,
         position: HistoryPosition?,
         rows: List<ThreadItem>,
+        heldOrdinals: Map<String, Long>? = null,
     ) {
         val coverage = position?.coverage?.validated(rows)
         val json = coverage?.let { MobileJson.encodeToJsonElement(it).jsonObject }
-        val ordinals = rows.flatMapIndexed { ordinal, row -> row.historyKeys().map { it to ordinal } }.toMap()
+        val ordinals =
+            heldOrdinals
+                ?: rows.flatMapIndexed { ordinal, row -> row.historyKeys().map { it to (ordinal + 1L) * LEGACY_ORDINAL_STEP } }.toMap()
         val cells =
             buildList {
                 json?.forEach { (kind, value) ->
@@ -358,7 +591,7 @@ class LegacyRoomStorage internal constructor(
                                 kind,
                                 key,
                                 part,
-                                ordinals[key] ?: ordinals[alias] ?: -1,
+                                ordinals[key] ?: ordinals[alias] ?: -1L,
                                 low.position(),
                                 high.position(),
                                 payload.toString(),
@@ -418,6 +651,7 @@ class LegacyRoomStorage internal constructor(
                         ?.let {
                             JsonObject(it).toString()
                         },
+                    rows.size,
                 ),
             )
         dao.insertEvidence(cells)
