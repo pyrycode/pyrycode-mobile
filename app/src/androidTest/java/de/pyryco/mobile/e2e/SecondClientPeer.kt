@@ -78,7 +78,9 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class SecondClientPeer(
     private val pairing: PairedServer,
+    private val threadEnabled: Boolean = false,
 ) : AutoCloseable {
+    private val clientInfo = if (threadEnabled) CLIENT_INFO.copy(capabilities = CLIENT_INFO.capabilities + "thread") else CLIENT_INFO
     internal val keyStore: DeviceStaticKeyStore = PeerDeviceKeyStore(pairing)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val received = MutableStateFlow<List<Envelope>>(emptyList())
@@ -552,11 +554,11 @@ class SecondClientPeer(
      */
     private suspend fun dialLink(): Link? {
         val transport =
-            RecordedSuiteNative.peerTransport(pairing, CLIENT_INFO)
-                ?: OkHttpRelayTransport(pairing, CLIENT_INFO, OkHttpRelayTransport.defaultClient())
+            RecordedSuiteNative.peerTransport(pairing, clientInfo)
+                ?: OkHttpRelayTransport(pairing, clientInfo, OkHttpRelayTransport.defaultClient())
         val pump =
             RecordedSuiteNative.pump(transport) {
-                NoiseSessionPump(transport, NoiseSessionFactory(keyStore, SinglePairingStore(pairing), CLIENT_INFO))
+                NoiseSessionPump(transport, NoiseSessionFactory(keyStore, SinglePairingStore(pairing), clientInfo))
             }
         var settled: Link? = null
         try {
@@ -567,7 +569,8 @@ class SecondClientPeer(
                     transport.connect()
                     if (transport.events.first() !is TransportEvent.Up) return@withTimeoutOrNull null
                     pump.start()
-                    if (pump.state.first { it !is PumpState.Handshaking } !is PumpState.Open) return@withTimeoutOrNull null
+                    val opened = pump.state.first { it !is PumpState.Handshaking } as? PumpState.Open ?: return@withTimeoutOrNull null
+                    if (threadEnabled && !setOf("thread", "interactive").all { it in opened.capabilities }) return@withTimeoutOrNull null
                     val dialed = Link(pump, scope.launch { pump.inbound.collect(::record) })
                     val probe = attempt(dialed, "list_conversations", JsonObject(emptyMap())) { id -> inReplyTo == id }
                     dialed.takeIf { probe is RedialingLink.Attempt.Answered }

@@ -43,9 +43,7 @@ import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
-import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.threadSnapshots
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.NotificationTap
@@ -63,9 +61,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -452,49 +447,61 @@ class DeterministicInteractiveStreamE2ETest {
             .onFirst()
             .assertIsDisplayed()
         // #1912: the scripted reply must be confirmed as read after it is rendered in the foreground.
-        val repository =
-            StableConversationRepository(
-                GlobalContext
-                    .get()
-                    .get<RelayRepositoryCoordinator>()
-                    .currentRepository,
-            )
-        val (conversationId, checkpoint) =
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = requireNotNull(args.getString("serverId"))
+        val registry = GlobalContext.get().get<de.pyryco.mobile.di.RelayConnectionRegistry>()
+        val coordinator = requireNotNull(registry.connectionFor(serverId)).coordinator
+        val repository = requireNotNull(coordinator.currentRepository.value)
+        val destinations = GlobalContext.get().get<de.pyryco.mobile.di.ThreadDestinationFactory>()
+        val route = requireNotNull(destinations.repository(serverId).negotiatedThread)
+
+        fun ownsConnection() = (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === repository
+        assertTrue("read proof requires the negotiated connection", ownsConnection())
+        val evidence = harnessThreadEvidence(repository)
+        assertEquals(ThreadEvidenceKind.Authoritative, evidence.kind)
+        val conversationId =
             runBlocking {
-                val conversationId =
-                    withTimeout(THREAD_TIMEOUT_MS) {
-                        repository
-                            .observeConversations(ConversationFilter.All)
-                            .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
-                            .single { it.name == SEED_CHANNEL_NAME }
-                            .id
-                    }
-                val checkpoint =
-                    withTimeoutOrNull(REPLY_TIMEOUT_MS) {
-                        awaitScriptedReplyReadCheckpoint(repository.threadSnapshots(conversationId), PING) {
-                            android.util.Log.i("ScriptedReadProof", "event=reply_proof_qualified classification=starting")
-                            repository.requestHistory(conversationId).entries
-                        }.also {
-                            val marks = repository.observeReadMarks(conversationId).first()
-                            android.util.Log.i(
-                                "ScriptedReadProof",
-                                "event=reply_checkpoint checkpoint=$it thread_supported=${marks?.threadSupported}",
-                            )
-                        }
-                    }
-                if (checkpoint == null) {
-                    val evidence = repository.threadSnapshots(conversationId).first().readEvidence
-                    error(
-                        "No reply checkpoint: versions=${evidence.versions.size}, barriers=${evidence.facts.values.count {
-                            it == null
-                        }}, unidentified=${evidence.unidentified.size}",
-                    )
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    repository
+                        .observeConversations(ConversationFilter.All)
+                        .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                        .single { it.name == SEED_CHANNEL_NAME }
+                        .id
                 }
-                conversationId to checkpoint
             }
+        val reply =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    evidence.observe(conversationId).first { it.loadedMainReply()?.content?.contains(PING, ignoreCase = true) == true }
+                }
+            }
+        val checkpoint = requireNotNull(reply.records.single { it.message.id == reply.loadedMainReply()?.id }.fact).rev.toULong()
+        runBlocking {
+            withTimeout(REPLY_TIMEOUT_MS) {
+                route.observe(conversationId).first {
+                    ownsConnection() &&
+                        it.epoch == reply.owner.epoch &&
+                        it.generation == reply.owner.generation &&
+                        it.checkpoint.toULong() >= checkpoint
+                }
+            }
+        }
         // Keep driving Compose frames while layout/reveal qualification catches up with receipt.
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            runBlocking { (repository.observeReadMarks(conversationId).first()?.readUpTo ?: 0uL) >= checkpoint }
+            runBlocking {
+                val marks = repository.observeReadMarks(conversationId).first()
+                val shown = marks?.lastShownVersion
+                ownsConnection() &&
+                    evidence
+                        .observe(conversationId)
+                        .first()
+                        .owner
+                        .matches(reply.owner) &&
+                    marks?.threadSupported == true &&
+                    shown != null &&
+                    shown >= checkpoint &&
+                    (marks.readUpTo ?: 0uL) >= shown
+            }
         }
 
         // #1883 rung 4: a new durable post stays unread until a peer reads it, with no phone reopen.
@@ -505,25 +512,23 @@ class DeterministicInteractiveStreamE2ETest {
         // The owned post control admits only the existing e2e1833 fixture prefix.
         DaemonFaultControl().posts(SEED_CHANNEL_NAME, "e2e1833-attention-read", 1)
         val postText = "e2e1833-attention-read-000"
-        runBlocking {
-            withTimeout(REPLY_TIMEOUT_MS) {
-                repository.threadSnapshots(conversationId).first { snapshot ->
-                    snapshot.rows.filterIsInstance<ThreadItem.MessageItem>().any {
-                        it.message.content == postText && !it.message.isStreaming
+        val post =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    evidence.observe(conversationId).first { held ->
+                        held.records.any { it.fullText == postText && !it.message.isStreaming }
                     }
                 }
             }
-            // Channel-post pushes omit durable ids. After receipt proves the append completed, a
-            // fresh list subscription requests latest_entry_id without reopening or reading the post.
-            repository.observeConversations(ConversationFilter.All).first()
-        }
+        assertTrue("post evidence belongs to the same connection", ownsConnection() && post.owner.matches(reply.owner))
+        val postVersion = requireNotNull(post.records.single { it.fullText == postText }.fact).rev.toULong()
+        runBlocking { repository.observeConversations(ConversationFilter.All).first() }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val row = hasText(SEED_CHANNEL_NAME) and hasTestTag(de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG)
         val unread = context.getString(R.string.cd_conversation_attention_unread)
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.onAllNodes(row and hasContentDescription(unread)).fetchSemanticsNodes().isNotEmpty()
         }
-        val args = InstrumentationRegistry.getArguments()
         SecondClientPeer(
             PairedServer(
                 requireNotNull(args.getString("serverId")),
@@ -531,21 +536,11 @@ class DeterministicInteractiveStreamE2ETest {
                 requireNotNull(args.getString("relayUrl")),
                 requireNotNull(args.getString("serverStaticPublicKey")),
             ),
+            threadEnabled = true,
         ).use { peer ->
             runBlocking {
                 peer.open(CONNECT_TIMEOUT_MS)
-                val history = peer.history(conversationId, THREAD_TIMEOUT_MS)
-                val durablePost =
-                    history.singleOrNull {
-                        val text =
-                            it.payload.jsonObject["text"]
-                                ?.jsonPrimitive
-                                ?.content
-                        it.type == "assistant_delta" && text == postText
-                    }
-                assertTrue("peer received the durable post", durablePost != null)
-                val latest = requireNotNull(durablePost).id
-                assertTrue("peer read confirmed", peer.markRead(conversationId, latest, THREAD_TIMEOUT_MS) >= latest)
+                assertTrue("peer read confirmed", peer.markRead(conversationId, postVersion, THREAD_TIMEOUT_MS) >= postVersion)
             }
             val idle = context.getString(R.string.cd_conversation_attention_idle)
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
