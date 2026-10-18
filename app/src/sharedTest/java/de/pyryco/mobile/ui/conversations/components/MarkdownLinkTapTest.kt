@@ -2,14 +2,24 @@ package de.pyryco.mobile.ui.conversations.components
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Surface
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performFirstLinkClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
@@ -18,6 +28,7 @@ import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreen
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -33,6 +44,7 @@ class MarkdownLinkTapTest {
 
     private val paths = mutableListOf<String>()
     private val opened = mutableListOf<String>()
+    private var linkColor = Color.Unspecified
 
     private val uriHandler =
         object : UriHandler {
@@ -44,6 +56,7 @@ class MarkdownLinkTapTest {
     private fun show(content: @Composable () -> Unit) =
         composeTestRule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
+                linkColor = MaterialTheme.colorScheme.primary
                 CompositionLocalProvider(LocalUriHandler provides uriHandler) {
                     Surface { Column { content() } }
                 }
@@ -62,6 +75,102 @@ class MarkdownLinkTapTest {
             runCatching { composeTestRule.onNodeWithText(text, substring = true).performFirstLinkClick() }.isSuccess
         }
         composeTestRule.waitForIdle()
+    }
+
+    private fun annotated(text: String): AnnotatedString =
+        composeTestRule.onNodeWithText(text).fetchSemanticsNode().config[SemanticsProperties.Text].single()
+
+    private fun assertInert(text: String) {
+        val rendered = annotated(text)
+        assertTrue(rendered.getLinkAnnotations(0, rendered.length).isEmpty())
+        assertTrue(rendered.spanStyles.none { it.item.color == linkColor || it.item.textDecoration == TextDecoration.Underline })
+        composeTestRule.onNodeWithText(text).performTouchInput { click(center) }
+        composeTestRule.waitForIdle()
+    }
+
+    @Test
+    fun finishedExplicitLinks_agreeWithRoutingAndHtml() = assertExplicitLinks(isStreaming = false)
+
+    @Test
+    fun streamingExplicitLinks_agreeWithRoutingAndHtml() = assertExplicitLinks(isStreaming = true)
+
+    private fun assertExplicitLinks(isStreaming: Boolean) {
+        val admitted = listOf("http://example.com/a", "HTTPS://example.com/A%20B?q=1#Top", "mailto:a@example.com")
+        val rejected = listOf("obsidian://open?vault=x", "JaVaScRiPt:alert(1)", "data:text/html,x", "file:///tmp/a.md", "content://x/a.md", "unknown:x")
+        val targets = admitted + rejected
+        val source = targets.mapIndexed { index, target -> "Before [label$index]($target) after" }.joinToString("\n\n") + "\n\nEnd."
+        show { MessageBubble(message(Role.Assistant, source, isStreaming), onOpenMarkdownLink = { paths += it }) }
+        composeTestRule.waitUntil(TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText("End.", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        admitted.forEachIndexed { index, target ->
+            val text = "Before label$index after"
+            val rendered = annotated(text)
+            val range = rendered.getLinkAnnotations(0, rendered.length).single()
+            assertEquals(7, range.start)
+            assertEquals(7 + "label$index".length, range.end)
+            val link = range.item as LinkAnnotation.Url
+            assertEquals(target, link.url)
+            assertEquals(linkColor, link.styles?.style?.color)
+            assertEquals(TextDecoration.Underline, link.styles?.style?.textDecoration)
+            tapLink(text)
+            assertEquals(admitted.take(index + 1), opened)
+            assertTrue(markdownHtml("[label$index]($target)").contains("<a href=\"$target\">label$index</a>"))
+        }
+        rejected.forEachIndexed { offset, target ->
+            val index = offset + admitted.size
+            assertInert("Before label$index after")
+            val html = markdownHtml("[label$index]($target)")
+            assertTrue(html, html.contains("label$index") && !html.contains("href="))
+        }
+        assertEquals(admitted, opened)
+        assertEquals(emptyList<String>(), paths)
+    }
+
+    @Test
+    fun workspaceOptInChanges_refreshAnnotationsAndUseTheCurrentCallback() {
+        val callback = mutableStateOf<((String) -> Unit)?>(null)
+        val replacementPaths = mutableListOf<String>()
+        show { MarkdownText("[Plan](notes/Plan.md:12#top)", onOpenMarkdownPath = callback.value) }
+        assertInert("Plan")
+
+        composeTestRule.runOnIdle { callback.value = { paths += it } }
+        val retained = annotated("Plan").getLinkAnnotations(0, 4).single().item as LinkAnnotation.Url
+        assertEquals("notes/Plan.md:12#top", retained.url)
+        tapLink("Plan")
+        assertEquals(listOf("notes/Plan.md"), paths)
+        composeTestRule.runOnIdle { callback.value = { replacementPaths += it } }
+        tapLink("Plan")
+        assertEquals(listOf("notes/Plan.md"), replacementPaths)
+        assertEquals(listOf("notes/Plan.md"), paths)
+
+        composeTestRule.runOnIdle { callback.value = null }
+        assertInert("Plan")
+        composeTestRule.runOnIdle { retained.linkInteractionListener?.onClick(retained) }
+        assertEquals(listOf("notes/Plan.md"), replacementPaths)
+        assertEquals(listOf("notes/Plan.md"), paths)
+        assertEquals(emptyList<String>(), opened)
+    }
+
+    @Test
+    fun aStreamingDestination_becomesInertWhenRejected_andStaysInertOnSettlement() {
+        val reply = mutableStateOf(message(Role.Assistant, "[label](javascript:aler", isStreaming = true))
+        show { MessageBubble(reply.value, onOpenMarkdownLink = { paths += it }) }
+        composeTestRule.waitUntil(TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText("label", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        val pending = composeTestRule.onNodeWithText("label", substring = true).fetchSemanticsNode().config[SemanticsProperties.Text].single()
+        assertTrue(pending.getLinkAnnotations(0, pending.length).isEmpty())
+        composeTestRule.runOnIdle { reply.value = reply.value.copy(content = "[label](javascript:alert(1))\n\nEnd.") }
+        composeTestRule.waitUntil(TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText("End.", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        assertInert("label")
+        composeTestRule.runOnIdle { reply.value = reply.value.copy(isStreaming = false) }
+        assertInert("label")
+        assertEquals(emptyList<String>(), opened)
+        assertEquals(emptyList<String>(), paths)
     }
 
     @Test
@@ -98,7 +207,7 @@ class MarkdownLinkTapTest {
     fun withoutTheOptIn_aNotesLinkStaysInert() {
         show { MarkdownText("[Plan](notes/Plan.md)") }
 
-        tapLink("Plan")
+        assertInert("Plan")
 
         assertEquals(emptyList<String>(), opened)
     }
@@ -111,7 +220,7 @@ class MarkdownLinkTapTest {
                 onBack = {},
             )
         }
-        tapLink("Plan")
+        assertInert("Plan")
         assertEquals(emptyList<String>(), opened)
         tapLink("site")
         assertEquals(listOf("https://example.com/a.md"), opened)

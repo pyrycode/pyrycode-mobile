@@ -56,7 +56,10 @@ class MarkdownLinkRoutingTest {
     fun otherLinks_keepTodaysSchemeAllowlist_withOrWithoutACallback() {
         listOf<((String) -> Unit)?>(null, { error("not a markdown path: $it") }).forEach { callback ->
             val opened = mutableListOf<String>()
-            listOf("https://example.com/a.md", "http://h", "mailto:a@b.c", "javascript:alert(1)", "file:a.md", "intent:x")
+            listOf(
+                "https://example.com/a.md", "http://h", "mailto:a@b.c", "javascript:alert(1)", "file:a.md", "intent:x",
+                "obsidian://open?vault=x", "content://x/a.md", "data:text/html,x", "unknown:x",
+            )
                 .forEach { routeMarkdownLink(it, callback) { uri -> opened += uri } }
             assertEquals(listOf("https://example.com/a.md", "http://h", "mailto:a@b.c"), opened)
         }
