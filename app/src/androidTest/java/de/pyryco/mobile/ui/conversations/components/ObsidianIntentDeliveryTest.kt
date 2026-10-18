@@ -6,7 +6,9 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
@@ -22,6 +24,7 @@ import java.util.concurrent.TimeUnit
 class ObsidianIntentDeliveryTest {
     @Test
     fun actionView_reachesControlledHandler_withUnchangedUri() {
+        Log.i("ObsidianIntentDelivery", "sdk=${Build.VERSION.SDK_INT} model=${Build.MODEL} fingerprint=${Build.FINGERPRINT}")
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val targetContext = instrumentation.targetContext
         val testPackage = instrumentation.context.packageName

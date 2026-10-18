@@ -100,6 +100,7 @@ class ThreadTransientErrorTest {
                                                         Role.Assistant,
                                                         "[note](obsidian://open?vault=x&file=Plan)",
                                                         Instant.parse("2026-10-18T12:00:00Z"),
+                                                        isStreaming = false,
                                                     ),
                                                 ),
                                             )

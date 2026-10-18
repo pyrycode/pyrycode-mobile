@@ -74,7 +74,7 @@ None. Desktop's implementation and merged #2279 resolve the contract and integra
 
 **Verdict:** PASS
 
-- [Trust boundaries] MUST FIX addressed in design: shared raw-target admission guards rendering, HTML and activation. Duplicate parameters and malformed UTF-8 cannot hide an unsafe last occurrence. Launch rechecks admission.
+- [Trust boundaries] MUST FIX addressed in design: shared raw-target admission guards rendering, HTML and activation. Duplicate parameters and malformed UTF-8 cannot hide an unsafe last occurrence. Launch rechecks admission. Scheme comparison must reject Unicode lookalikes; use a lowercased string compared exactly with the ASCII scheme, rather than Kotlin's broader `ignoreCase` equivalence.
 - [Tokens] No credentials or new storage; query values never enter notices or logs.
 - [Files/storage] No local file access. Colon, unsafe last-segment extensions and separator tricks are rejected; normalization is validation-only.
 - [Android attack surface] Only admitted `open` intents leave the app; no production exported components or package queries. Controlled exported handler exists only in the test APK.
@@ -86,3 +86,7 @@ None. Desktop's implementation and merged #2279 resolve the contract and integra
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-18
+
+## Revisions
+
+- 2026-10-18: Adversarial inspection found that Kotlin's `ignoreCase` accepts Unicode scheme lookalikes that Desktop's URL parser rejects. Admission now compares the lowercased scheme string with ASCII `obsidian`; `schemeCaseFolding_neverAdmitsUnicodeLookalikes` guards dotless i, dotted I and long s. HTML reads inline and reference destinations from their authored AST nodes before normalization, preserving the same raw-target contract.

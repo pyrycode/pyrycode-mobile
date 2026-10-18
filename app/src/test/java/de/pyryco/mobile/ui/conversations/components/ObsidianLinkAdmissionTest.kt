@@ -153,4 +153,11 @@ class ObsidianLinkAdmissionTest {
             assertTrue(it, isSafeLinkScheme(it))
         }
     }
+
+    @Test
+    fun schemeCaseFolding_neverAdmitsUnicodeLookalikes() {
+        listOf("obsıdian://open", "obſidian://open", "obsİdian://open").forEach {
+            assertFalse(it, isSafeLinkScheme(it))
+        }
+    }
 }

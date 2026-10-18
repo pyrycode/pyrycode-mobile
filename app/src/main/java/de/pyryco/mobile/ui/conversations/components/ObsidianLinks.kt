@@ -19,7 +19,8 @@ private val EncodedObsidianSeparator = Regex("%(26|23)", RegexOption.IGNORE_CASE
 
 /** Desktop's read-only Obsidian rule. Validation never rewrites the target handed to Android. */
 internal fun isSafeObsidianLink(target: String): Boolean {
-    if (!target.substringBefore(':').equals("obsidian", ignoreCase = true)) return false
+    // String ignoreCase also equates Unicode lookalikes (for example dotless i) with ASCII letters.
+    if (target.substringBefore(':').lowercase() != "obsidian") return false
     if (target.substringBefore('?').substringAfter(':') != "//open" || '#' in target) return false
     val query = target.substringAfter('?', "")
     if (EncodedObsidianSeparator.containsMatchIn(query)) return false
