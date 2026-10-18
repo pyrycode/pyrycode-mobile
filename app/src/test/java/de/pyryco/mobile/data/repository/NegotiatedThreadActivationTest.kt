@@ -634,7 +634,12 @@ class NegotiatedThreadActivationTest {
                 pump.push(window(opening))
                 runCurrent()
                 assertEquals(2, pump.queries().size)
-                assertEquals(0L, host.coordinator.authoritativeThreads.current("h", "c").checkpoint)
+                assertEquals(
+                    0L,
+                    host.coordinator.authoritativeThreads
+                        .current("h", "c")
+                        .checkpoint,
+                )
                 assertEquals("0", field(pump.queries().last(), "version").toString())
                 val retired = host.repo()
                 host.connections.value = null
