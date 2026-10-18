@@ -68,7 +68,7 @@ class MarkdownLinkRoutingTest {
                 "data:text/html,x",
                 "unknown:x",
             ).forEach { routeMarkdownLink(it, callback) { uri -> opened += uri } }
-            assertEquals(listOf("https://example.com/a.md", "http://h", "mailto:a@b.c"), opened)
+            assertEquals(listOf("https://example.com/a.md", "http://h", "mailto:a@b.c", "obsidian://open?vault=x"), opened)
         }
     }
 }

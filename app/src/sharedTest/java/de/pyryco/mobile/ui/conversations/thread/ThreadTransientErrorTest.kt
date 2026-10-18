@@ -1,5 +1,8 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import android.content.ActivityNotFoundException
+import android.content.ContextWrapper
+import android.content.Intent
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -7,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.AccessibilityManager
 import androidx.compose.ui.platform.LocalAccessibilityManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -21,6 +25,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performFirstLinkClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
@@ -28,11 +33,15 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Rule
@@ -50,22 +59,54 @@ class ThreadTransientErrorTest {
     private val sends = Channel<AttachmentSendFailure>(Channel.UNLIMITED)
     private var visible by mutableStateOf(true)
     private var retryTaps = 0
+    private var linkLaunchFailure: Exception = ActivityNotFoundException()
 
     private fun show(
         persistent: Boolean = false,
         accessibility: AccessibilityManager? = null,
         dismissedElsewhere: Boolean = false,
         offline: Boolean = false,
+        obsidianLink: Boolean = false,
     ) {
         val flows = errors.map { it.receiveAsFlow() }
         val refusalFlow = refusals.receiveAsFlow()
         val sendFlow = sends.receiveAsFlow()
         rule.setContent {
-            CompositionLocalProvider(LocalAccessibilityManager provides accessibility) {
+            val baseContext = LocalContext.current
+            val context =
+                if (obsidianLink) {
+                    object : ContextWrapper(baseContext) {
+                        override fun startActivity(intent: Intent): Unit = throw linkLaunchFailure
+                    }
+                } else {
+                    baseContext
+                }
+            CompositionLocalProvider(LocalAccessibilityManager provides accessibility, LocalContext provides context) {
                 PyrycodeMobileTheme(darkTheme = true) {
                     if (visible) {
                         ThreadScreen(
-                            state = ThreadUiState("c1", "Thread"),
+                            state =
+                                ThreadUiState(
+                                    "c1",
+                                    "Thread",
+                                    hasMessages = obsidianLink,
+                                    items =
+                                        if (obsidianLink) {
+                                            listOf(
+                                                ThreadItem.MessageItem(
+                                                    Message(
+                                                        "m1",
+                                                        "s1",
+                                                        Role.Assistant,
+                                                        "[note](obsidian://open?vault=x&file=Plan)",
+                                                        Instant.parse("2026-10-18T12:00:00Z"),
+                                                    ),
+                                                ),
+                                            )
+                                        } else {
+                                            emptyList()
+                                        },
+                                ),
                             onBack = {},
                             onSendMessage = {},
                             connectionState = if (offline) ConnectionState.Offline else ConnectionState.Connected,
@@ -108,6 +149,29 @@ class ThreadTransientErrorTest {
 
     private fun expire() {
         rule.mainClock.advanceTimeBy(4_100)
+    }
+
+    @Test
+    fun obsidianLaunchFailures_shareTheExistingErrorQueue_andEachFullTimeout() {
+        show(obsidianLink = true)
+        rule.runOnIdle { errors[4].trySend(Unit) }
+        assertPill("Couldn't open file")
+        repeat(2) { rule.onNodeWithText("note").performFirstLinkClick() }
+        rule.runOnIdle { linkLaunchFailure = SecurityException("untrusted URL must stay private") }
+        rule.onNodeWithText("note").performFirstLinkClick()
+        assertPill("Couldn't open file")
+        expire()
+        assertPill("Obsidian is not installed")
+        val first = rule.onNodeWithTag("transient_error_notice").fetchSemanticsNode().id
+        rule.mainClock.advanceTimeBy(3_000)
+        assertPill("Obsidian is not installed")
+        rule.mainClock.advanceTimeBy(1_100)
+        assertPill("Obsidian is not installed")
+        assertNotEquals(first, rule.onNodeWithTag("transient_error_notice").fetchSemanticsNode().id)
+        expire()
+        assertPill("Could not open link")
+        expire()
+        rule.onNodeWithTag("transient_error_notice").assertDoesNotExist()
     }
 
     @GraphicsMode(GraphicsMode.Mode.NATIVE)

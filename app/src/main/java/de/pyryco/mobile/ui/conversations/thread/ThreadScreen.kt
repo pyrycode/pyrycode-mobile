@@ -117,8 +117,10 @@ import de.pyryco.mobile.ui.conversations.components.CompactingIndicator
 import de.pyryco.mobile.ui.conversations.components.CompactionBoundaryDivider
 import de.pyryco.mobile.ui.conversations.components.ConnectionStatusIndicator
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
+import de.pyryco.mobile.ui.conversations.components.LocalMarkdownLinkFailure
 import de.pyryco.mobile.ui.conversations.components.LocalToolCallExpansion
 import de.pyryco.mobile.ui.conversations.components.MEMORY_PLUGIN_DOCS_URL
+import de.pyryco.mobile.ui.conversations.components.MarkdownLinkNotice
 import de.pyryco.mobile.ui.conversations.components.MessageAreaRowSpacing
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
 import de.pyryco.mobile.ui.conversations.components.MessageContentGutter
@@ -478,6 +480,9 @@ fun ThreadScreen(
     // #985: a ready message attachment opens in another app or saves to a picked document; each outcome the
     // user should hear about is one static sentence, never a name, URI or path.
     val noticeScope = rememberCoroutineScope()
+    val onMarkdownLinkFailure: (MarkdownLinkNotice) -> Unit = { notice ->
+        errorNotices.enqueue(noticeScope, resources.getString(notice.message))
+    }
     val attachmentActions =
         rememberAttachmentActions(attachmentStates, onOpenMarkdownAttachment) { notice ->
             val text = resources.getString(notice.message)
@@ -1031,53 +1036,57 @@ fun ThreadScreen(
                                                 if (row.summaryText != null) {
                                                     AuthoritativeSummaryRow(row.summaryText)
                                                 } else {
-                                                    MessageBubble(
-                                                        message = item.message,
-                                                        onContentPresented = { candidate?.revealed = true },
-                                                        onContentTrailingEdge =
-                                                            candidate?.let { tracked ->
-                                                                { _, bottom -> tracked.trailingEdge = bottom }
-                                                            },
-                                                        onReply = { pendingReplyDraft = onReplyToMessage(it) },
-                                                        modifier =
-                                                            if (row.agentBlockId ==
-                                                                item.message.id
-                                                            ) {
-                                                                Modifier.testTag("background-agent:${item.message.id}")
-                                                            } else if (row.agentBlockId != null && item.message.role == Role.Assistant) {
-                                                                Modifier
-                                                                    .padding(
-                                                                        start =
-                                                                            MessageAreaRowSpacing *
-                                                                                ((toolDepths[item.message.parentToolUseId] ?: 0) + 1),
-                                                                    ).testTag("background-agent-child:${row.agentBlockId}")
-                                                            } else {
-                                                                Modifier
-                                                            },
-                                                        threadOpenedAt = threadOpenedAt,
-                                                        toolNestingDepth = toolDepths[item.message.id] ?: 0,
-                                                        joinsNextToolRow = row.joinsToolRow(nextRow),
-                                                        attachmentStates = attachmentStates,
-                                                        onAttachmentShown = if (measuring) ({ _ -> }) else onAttachmentShown,
-                                                        onRetryAttachment = onRetryAttachment,
-                                                        onOpenAttachment = attachmentActions.open,
-                                                        onSaveAttachment = attachmentActions.save,
-                                                        onRequestAttachment = onRequestAttachment,
-                                                        onOpenMarkdownLink = onOpenMarkdownLink,
-                                                        // A streaming reply keeps its row hidden and takes no tap, so
-                                                        // the first tap after it finishes is the one that shows it.
-                                                        metaRowVisible =
-                                                            !item.message.isStreaming && metaRowMessageId == item.message.id,
-                                                        onToggleMetaRow =
-                                                            if (item.message.isStreaming) {
-                                                                null
-                                                            } else {
-                                                                {
-                                                                    val id = item.message.id
-                                                                    metaRowMessageId = if (metaRowMessageId == id) null else id
-                                                                }
-                                                            },
-                                                    )
+                                                    CompositionLocalProvider(LocalMarkdownLinkFailure provides onMarkdownLinkFailure) {
+                                                        MessageBubble(
+                                                            message = item.message,
+                                                            onContentPresented = { candidate?.revealed = true },
+                                                            onContentTrailingEdge =
+                                                                candidate?.let { tracked ->
+                                                                    { _, bottom -> tracked.trailingEdge = bottom }
+                                                                },
+                                                            onReply = { pendingReplyDraft = onReplyToMessage(it) },
+                                                            modifier =
+                                                                if (row.agentBlockId ==
+                                                                    item.message.id
+                                                                ) {
+                                                                    Modifier.testTag("background-agent:${item.message.id}")
+                                                                } else if (
+                                                                    row.agentBlockId != null && item.message.role == Role.Assistant
+                                                                ) {
+                                                                    Modifier
+                                                                        .padding(
+                                                                            start =
+                                                                                MessageAreaRowSpacing *
+                                                                                    ((toolDepths[item.message.parentToolUseId] ?: 0) + 1),
+                                                                        ).testTag("background-agent-child:${row.agentBlockId}")
+                                                                } else {
+                                                                    Modifier
+                                                                },
+                                                            threadOpenedAt = threadOpenedAt,
+                                                            toolNestingDepth = toolDepths[item.message.id] ?: 0,
+                                                            joinsNextToolRow = row.joinsToolRow(nextRow),
+                                                            attachmentStates = attachmentStates,
+                                                            onAttachmentShown = if (measuring) ({ _ -> }) else onAttachmentShown,
+                                                            onRetryAttachment = onRetryAttachment,
+                                                            onOpenAttachment = attachmentActions.open,
+                                                            onSaveAttachment = attachmentActions.save,
+                                                            onRequestAttachment = onRequestAttachment,
+                                                            onOpenMarkdownLink = onOpenMarkdownLink,
+                                                            // A streaming reply keeps its row hidden and takes no tap, so
+                                                            // the first tap after it finishes is the one that shows it.
+                                                            metaRowVisible =
+                                                                !item.message.isStreaming && metaRowMessageId == item.message.id,
+                                                            onToggleMetaRow =
+                                                                if (item.message.isStreaming) {
+                                                                    null
+                                                                } else {
+                                                                    {
+                                                                        val id = item.message.id
+                                                                        metaRowMessageId = if (metaRowMessageId == id) null else id
+                                                                    }
+                                                                },
+                                                        )
+                                                    }
                                                 }
                                             is ThreadItem.SessionBoundary ->
                                                 SessionBoundaryDelimiter(boundary = item)

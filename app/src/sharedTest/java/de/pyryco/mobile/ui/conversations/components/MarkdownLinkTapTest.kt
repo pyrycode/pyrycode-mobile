@@ -1,5 +1,8 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import android.content.ActivityNotFoundException
+import android.content.ContextWrapper
+import android.content.Intent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -7,10 +10,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -50,6 +55,7 @@ class MarkdownLinkTapTest {
     private val paths = mutableListOf<String>()
     private val opened = mutableListOf<String>()
     private var linkColor = Color.Unspecified
+    private var launchFailure: Exception? = null
 
     private val uriHandler =
         object : UriHandler {
@@ -62,7 +68,16 @@ class MarkdownLinkTapTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
                 linkColor = MaterialTheme.colorScheme.primary
-                CompositionLocalProvider(LocalUriHandler provides uriHandler) {
+                val baseContext = LocalContext.current
+                val context =
+                    object : ContextWrapper(baseContext) {
+                        override fun startActivity(intent: Intent) {
+                            launchFailure?.let { throw it }
+                            assertEquals(Intent.ACTION_VIEW, intent.action)
+                            opened += requireNotNull(intent.dataString)
+                        }
+                    }
+                CompositionLocalProvider(LocalUriHandler provides uriHandler, LocalContext provides context) {
                     Surface { Column { content() } }
                 }
             }
@@ -103,11 +118,46 @@ class MarkdownLinkTapTest {
     @Test
     fun streamingExplicitLinks_agreeWithRoutingAndHtml() = assertExplicitLinks(isStreaming = true)
 
+    @Test
+    fun retainedObsidianLink_usesTheCurrentFailureSink() {
+        val first = mutableListOf<MarkdownLinkNotice>()
+        val second = mutableListOf<MarkdownLinkNotice>()
+        val sink = mutableStateOf<(MarkdownLinkNotice) -> Unit>({ first += it })
+        launchFailure = ActivityNotFoundException()
+        show {
+            CompositionLocalProvider(LocalMarkdownLinkFailure provides sink.value) {
+                MarkdownText("[note](obsidian://open)")
+            }
+        }
+        val retained = annotated("note").getLinkAnnotations(0, 4).single().item as LinkAnnotation.Url
+        tapLink("note")
+        composeTestRule.runOnIdle { sink.value = { second += it } }
+        composeTestRule.runOnIdle { retained.linkInteractionListener?.onClick(retained) }
+        assertEquals(listOf(MarkdownLinkNotice.OBSIDIAN_NOT_INSTALLED), first)
+        assertEquals(listOf(MarkdownLinkNotice.OBSIDIAN_NOT_INSTALLED), second)
+    }
+
+    @Test
+    fun readerObsidianLaunchFailure_usesItsExistingErrorPill() {
+        launchFailure = ActivityNotFoundException()
+        show { MarkdownReaderScreen(MarkdownDocument("Links.md", "[note](obsidian://open)"), onBack = {}) }
+        tapLink("note")
+        composeTestRule.onNodeWithText("Obsidian is not installed").assertIsDisplayed()
+    }
+
     private fun assertExplicitLinks(isStreaming: Boolean) {
-        val admitted = listOf("http://example.com/a", "HTTPS://example.com/A%20B?q=1#Top", "mailto:a@example.com")
+        val admitted =
+            listOf(
+                "http://example.com/a",
+                "HTTPS://example.com/A%20B?q=1#Top",
+                "mailto:a@example.com",
+                "ObSiDiAn://open?vault=Second%20brain&file=A%2fPlan.MD&paneType=tab",
+            )
         val rejected =
             listOf(
-                "obsidian://open?vault=x",
+                "obsidian://open?vault=x&append=text",
+                "obsidian://open?file=x.hta",
+                "obsidian://open?file=%ED%A0%80",
                 "JaVaScRiPt:alert(1)",
                 "data:text/html,x",
                 "file:///tmp/a.md",
@@ -135,7 +185,7 @@ class MarkdownLinkTapTest {
             assertEquals(TextDecoration.Underline, link.styles?.style?.textDecoration)
             tapLink(text)
             assertEquals(admitted.take(index + 1), opened)
-            assertTrue(markdownHtml("[label$index]($target)").contains("<a href=\"$target\">label$index</a>"))
+            assertTrue(markdownHtml("[label$index]($target)").contains("<a href=\"${target.replace("&", "&amp;")}\">label$index</a>"))
         }
         rejected.forEachIndexed { offset, target ->
             val index = offset + admitted.size

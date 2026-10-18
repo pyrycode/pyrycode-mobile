@@ -42,6 +42,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
@@ -210,10 +211,24 @@ fun MarkdownText(
 @Composable
 private fun rememberMarkdownUriHandler(onOpenMarkdownPath: ((String) -> Unit)?): UriHandler {
     val platformHandler = LocalUriHandler.current
+    val context = LocalContext.current
+    val onFailure by rememberUpdatedState(LocalMarkdownLinkFailure.current)
     val currentOnOpenMarkdownPath by rememberUpdatedState(onOpenMarkdownPath)
     val opensMarkdownPaths = onOpenMarkdownPath != null
-    return remember(platformHandler, opensMarkdownPaths) {
-        MarkdownUriHandler(platformHandler, opensMarkdownPaths) { currentOnOpenMarkdownPath }
+    val externalHandler =
+        remember(context, platformHandler) {
+            object : UriHandler {
+                override fun openUri(uri: String) {
+                    if (uri.substringBefore(':').equals("obsidian", ignoreCase = true)) {
+                        openObsidianLink(context, uri)?.let(onFailure)
+                    } else {
+                        platformHandler.openUri(uri)
+                    }
+                }
+            }
+        }
+    return remember(externalHandler, opensMarkdownPaths) {
+        MarkdownUriHandler(externalHandler, opensMarkdownPaths) { currentOnOpenMarkdownPath }
     }
 }
 
@@ -1495,5 +1510,5 @@ internal fun routeMarkdownLink(
 
 internal fun isSafeLinkScheme(url: String): Boolean {
     val scheme = url.substringBefore(':', missingDelimiterValue = "").lowercase()
-    return scheme == "http" || scheme == "https" || scheme == "mailto"
+    return scheme == "http" || scheme == "https" || scheme == "mailto" || isSafeObsidianLink(url)
 }

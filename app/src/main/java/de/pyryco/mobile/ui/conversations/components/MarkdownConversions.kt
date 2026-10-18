@@ -132,14 +132,16 @@ private fun tableText(
  */
 internal fun markdownHtml(markdown: String): String {
     val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(markdown)
+    val linkMap = LinkMap.buildLinkMap(root, markdown)
     val providers =
         MarkdownFlavour
-            .createHtmlGeneratingProviders(LinkMap.buildLinkMap(root, markdown), null)
+            .createHtmlGeneratingProviders(linkMap, null)
             .mapValues { (type, provider) ->
                 if (provider is LinkGeneratingProvider) {
                     AllowlistedLinkProvider(
                         provider,
                         image = type == MarkdownElementTypes.IMAGE,
+                        linkMap = linkMap,
                     )
                 } else {
                     provider
@@ -180,6 +182,7 @@ private fun escapeHtml(
 private class AllowlistedLinkProvider(
     private val inner: LinkGeneratingProvider,
     private val image: Boolean,
+    private val linkMap: LinkMap,
 ) : LinkGeneratingProvider(baseURI = null) {
     override fun getRenderInfo(
         text: String,
@@ -195,10 +198,32 @@ private class AllowlistedLinkProvider(
         // The destination has been through the library's normalisation, so an entity-encoded scheme is
         // judged decoded.
         val destination = info.destination.toString()
-        val linked = !image && isSafeLinkScheme(destination)
-        if (linked) visitor.consumeTagOpen(node, "a", "href=\"${escapeHtml(destination, ampersand = false)}\"")
+        val obsidian = destination.substringBefore(':').equals("obsidian", ignoreCase = true)
+        // The library escapes '&' and normalizes dots/backslashes before this callback. Obsidian must
+        // instead be judged and emitted from the authored destination, including reference definitions.
+        val raw = if (obsidian) rawDestination(node, text) else null
+        val linked = !image && isSafeLinkScheme(if (obsidian) raw ?: "" else destination)
+        val href = if (obsidian) escapeHtml(raw ?: "") else escapeHtml(destination, ampersand = false)
+        if (linked) visitor.consumeTagOpen(node, "a", "href=\"$href\"")
         labelProvider.processNode(visitor, text, info.label)
         if (linked) visitor.consumeTagClose("a")
+    }
+
+    private fun rawDestination(
+        node: ASTNode,
+        text: String,
+    ): String? {
+        val definition =
+            node.children
+                .firstOrNull { it.type == MarkdownElementTypes.LINK_LABEL }
+                ?.let { linkMap.getLinkInfo(it.getTextInNode(text))?.node }
+        return (definition ?: node)
+            .children
+            .firstOrNull { it.type == MarkdownElementTypes.LINK_DESTINATION }
+            ?.getTextInNode(text)
+            ?.toString()
+            ?.removePrefix("<")
+            ?.removeSuffix(">")
     }
 }
 

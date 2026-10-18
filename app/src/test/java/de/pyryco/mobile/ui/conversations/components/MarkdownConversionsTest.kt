@@ -8,6 +8,28 @@ import org.junit.Test
 /** #1067: the reader's copy formats — the note as plain text and as HTML — and the clipboard bounds. */
 class MarkdownConversionsTest {
     @Test
+    fun htmlObsidianLinks_useReadOnlyAdmissionBeforeNormalization() {
+        val target = "ObSiDiAn://open?vault=Second%20brain&file=A%2fPlan.MD&paneType=tab"
+        assertTrue(markdownHtml("[note]($target)").contains("href=\"${target.replace("&", "&amp;")}\""))
+        assertTrue(markdownHtml("[note][ref]\n\n[ref]: $target").contains("href=\"${target.replace("&", "&amp;")}\""))
+        listOf(
+            "obsidian://open?file=%zz",
+            "obsidian://open?file=%C0%AF",
+            "obsidian://open?file=x.hta",
+            "obsidian://open?file=x&file=x.jar",
+            "obsidian://open?paneType=%23",
+            "obsidian://open#",
+            "obsidian://open?%66ile=Plan",
+            "obsidian&colon;//open?file=Plan",
+        ).forEach {
+            val html = markdownHtml("[note]($it)")
+            assertTrue(html, html.contains("note") && !html.contains("href="))
+            val reference = markdownHtml("[note][ref]\n\n[ref]: $it")
+            assertTrue(reference, reference.contains("note") && !reference.contains("href="))
+        }
+    }
+
+    @Test
     fun plainText_dropsTheSyntaxTheRendererHides() {
         val markdown =
             """
@@ -118,7 +140,7 @@ class MarkdownConversionsTest {
             "intent://x#Intent;end",
             "notes/Plan.md",
             "vbscript:x",
-            "obsidian://open?vault=x",
+            "obsidian://open?vault=x&prepend=text",
             "content://x/a.md",
         ).forEach { target ->
             val html = markdownHtml("[text]($target)")
