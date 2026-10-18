@@ -41,6 +41,7 @@ import java.io.IOException
 import java.util.Collections
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.TimeSource
 
 @RunWith(RobolectricTestRunner::class)
@@ -230,7 +231,9 @@ class OwnedLegacyCoverageTest {
         }
 
     @Test fun anchorInvariant_subtractingProducerKeepsValidReceivedGapWalk() =
-        runTest {
+        // Four disk-backed cases complete in about 54s locally; restore/reopen work shares this budget.
+        // Keep a finite method-local bound and phase evidence without reducing either fixture.
+        runTest(timeout = 2.minutes) {
             val started = TimeSource.Monotonic.markNow()
             val counts = HashMap<Boolean, Pair<LegacyRoomStorage.MutationCounts, Int>>()
             for (size in listOf(20, 18000)) {

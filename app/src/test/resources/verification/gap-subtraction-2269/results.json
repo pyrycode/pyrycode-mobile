@@ -18,7 +18,39 @@
     "priorPassingMethodSeconds": 49.092,
     "priorPassingReport": "../owned-coverage-2254/gap-green-OwnedLegacyCoverageTest.xml.gz"
   },
-  "runs": [],
+  "runs": [
+    {
+      "phase": "unchanged baseline",
+      "revision": "6e292874310dde62d1f8461f805dda9224ad9195",
+      "testSourceUnchangedFrom": "c2efe14b9c40cc52bc9071d36cddd7a1aefbcc5a",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest.anchorInvariant_subtractingProducerKeepsValidReceivedGapWalk --rerun-tasks --console=plain",
+      "report": "baseline.xml.gz",
+      "executed": 1, "passed": 1, "failures": 0, "errors": 0, "skipped": 0,
+      "methodSeconds": 54.708,
+      "timestamp": "2026-10-18T17:03:44.054Z"
+    },
+    {
+      "phase": "diagnostic with original 60-second deadline",
+      "revision": "1faf301baf71e781739a9d4a2fa8cc58308f056d",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest.anchorInvariant_subtractingProducerKeepsValidReceivedGapWalk --console=plain",
+      "report": "diagnostic-default-deadline.xml.gz",
+      "executed": 1, "passed": 1, "failures": 0, "errors": 0, "skipped": 0,
+      "methodSeconds": 53.973,
+      "timestamp": "2026-10-18T17:22:45.748Z",
+      "bodyCompletionMilliseconds": 52250,
+      "largeChangeCaseMilliseconds": 28201,
+      "largeRemovalCaseMilliseconds": 22245,
+      "largeChangeMutationMilliseconds": 423,
+      "largeRemovalMutationMilliseconds": 285,
+      "everyCaseAndDatabaseCloseCompleted": true
+    }
+  ],
+  "sha256": {
+    "baseline.xml.gz": "5b81970873cfee16e4ef4ca9c0c85a19f282ead9b1c7f78632a9042077ff3316",
+    "diagnostic-default-deadline.xml.gz": "cd1dea00e599050e1b2d78867a2764529eaede26f77fe7f38559a4b0a1a4b62a",
+    "historical-base.xml.gz": "aced02125468c9f2611017219d7a96919c649bb6b322f8e42e3fe4ee84a39834",
+    "historical-candidate.xml.gz": "90f8225447349ea4372330ebf217bc9b47412214a99b9c9fe075a4af8771986f"
+  },
   "completeConfiguredGates": "pending dispatcher, including named-method inclusion in JVM gate",
   "otherOperatingSystems": "outside this ticket's verification scope"
 }

@@ -23,4 +23,10 @@ The existing failing probe is the red regression. Run it unchanged, then instrum
 
 ## Revisions
 
-Pending measured diagnosis; record the chosen repair and its evidence before handoff.
+### 2026-10-18: measured cumulative disk work
+
+The unchanged Linux baseline at `6e292874310dde62d1f8461f805dda9224ad9195` passed 1/1 in 54.708 seconds. Instrumented `1faf301baf71e781739a9d4a2fa8cc58308f056d` retained the original minute and passed 1/1 in 53.973 seconds. All four cases reached `complete`, including explicit database close, at 52.250 seconds of monotonic body time. The large change case ran from 1.804 to 30.005 seconds; removal ran from 30.005 to 52.250. Repeated reopen/restore/verification reads dominate; measured large localized writes took 423/285ms. Both sizes still execute 24 legacy SQL statements with identical relevant counters for each mutation path.
+
+The retained historical failures occur in the final 18000-row removal case after its mutation counter: the remaining phase is mutation verification, repeated saves and reopened-reader verification. Their XML cannot identify the precise suspended call, and this run does not claim to reconstruct it. Fresh phase evidence shows every operation and database close completes; no unfinished-coroutine/Room defect is demonstrated. The earlier 49.092-second pass, fresh 54-second passes and historical 60-second cancellations establish inadequate aggregate runtime headroom. Preserve those failed captures rather than replacing them with green retries.
+
+Use `runTest(timeout = 2.minutes)` only on this method, approximately twice the measured complete runtime, with no global setting change. Keep content-free phase markers outside the measured SQL window and close each final reader explicitly before its completion marker. Every original assertion, fixture and companion control remains intact. No production change, new state machine, exported declaration or consumer migration is required. Final exact-method and complete-class results remain to be recorded in the evidence manifest; wider configured acceptance remains dispatcher-owned.
