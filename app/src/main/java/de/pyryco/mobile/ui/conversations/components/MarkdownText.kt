@@ -177,6 +177,33 @@ data class MarkdownTextStyle(
     val presentation: MarkdownPresentation = MarkdownPresentation.Thread,
 )
 
+private val AtxHeadingTypes =
+    setOf(
+        MarkdownElementTypes.ATX_1,
+        MarkdownElementTypes.ATX_2,
+        MarkdownElementTypes.ATX_3,
+        MarkdownElementTypes.ATX_4,
+        MarkdownElementTypes.ATX_5,
+        MarkdownElementTypes.ATX_6,
+    )
+
+/** Only sibling blocks own gaps; the next heading takes precedence over the previous one. */
+@Composable
+private fun MarkdownBlockGap(
+    previous: ASTNode?,
+    next: ASTNode,
+    ordinary: Dp,
+) {
+    if (previous == null) return
+    val gap =
+        when {
+            next.type in AtxHeadingTypes -> 20.dp
+            previous.type in AtxHeadingTypes -> 12.dp
+            else -> ordinary
+        }
+    Spacer(Modifier.height(gap))
+}
+
 /**
  * [onOpenMarkdownPath] (#1050) opts a caller in to workspace notes: a link whose target is a markdown path
  * ([markdownLinkPath]) is handed to it instead of doing nothing. Only assistant replies pass it; with the
@@ -196,11 +223,13 @@ fun MarkdownText(
         }
     val blockStyle =
         if (style.presentation == MarkdownPresentation.Reader) style.copy(body = style.body.readerLineHeight(style.presentation)) else style
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(blockStyle.blockSpacing),
-    ) {
-        root.children.forEach { child ->
+    val blocks =
+        remember(root) {
+            root.children.filter { it.type != MarkdownTokenTypes.EOL && it.type != MarkdownTokenTypes.WHITE_SPACE }
+        }
+    Column(modifier = modifier) {
+        blocks.forEachIndexed { index, child ->
+            MarkdownBlockGap(blocks.getOrNull(index - 1), child, blockStyle.blockSpacing)
             MarkdownBlock(child, markdown, uriHandler, blockStyle)
         }
     }
@@ -259,17 +288,16 @@ internal fun StreamingMarkdownText(
     val snapshot = remember(cache, source) { cache.update(source) }
     val blocks = remember(snapshot) { snapshot.blocks.filter { it.isContent } }
     val uriHandler = rememberMarkdownUriHandler(onOpenMarkdownPath)
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(style.blockSpacing),
-    ) {
+    Column(modifier = modifier) {
         blocks.forEachIndexed { index, block ->
             key(block.key) {
+                MarkdownBlockGap(blocks.getOrNull(index - 1)?.node, block.node, style.blockSpacing)
                 val trailing = index == blocks.lastIndex
                 StreamingBlock(block, uriHandler, style, if (trailing) snapshot.tail else null, trailing && caretVisible, observer)
             }
         }
         if (blocks.isEmpty() || snapshot.tail.caretTarget == null) {
+            if (blocks.isNotEmpty()) Spacer(Modifier.height(style.blockSpacing))
             // Alpha rather than presence, so a blink never moves the lines around it.
             Text(STREAMING_CARET_GLYPH, Modifier.alpha(if (caretVisible) 1f else 0f), style = style.body)
         }
@@ -451,7 +479,7 @@ private fun ListBlock(
             if (style.presentation == MarkdownPresentation.Reader && checkBox == null && lead?.type == MarkdownElementTypes.PARAGRAPH) {
                 // #1533: Figma `553:2574` writes each item as one `•  text` paragraph, so a wrapped line
                 // returns to the list's edge instead of hanging under the item text.
-                Column(verticalArrangement = Arrangement.spacedBy(style.blockSpacing)) {
+                Column {
                     Text(
                         text =
                             buildAnnotatedString {
@@ -461,7 +489,8 @@ private fun ListBlock(
                         style = style.body,
                     )
                     // The frame draws no nested content; later blocks keep the old hang so nesting still reads.
-                    blocks.drop(1).forEach { child ->
+                    blocks.drop(1).forEachIndexed { blockIndex, child ->
+                        MarkdownBlockGap(blocks[blockIndex], child, style.blockSpacing)
                         Box(Modifier.padding(start = ReaderListContinuationIndent)) {
                             MarkdownBlock(child, source, uriHandler, style)
                         }
@@ -482,10 +511,11 @@ private fun ListBlock(
                     TaskMark(isCheckedTaskMark(checkBox.getTextInNode(source).toString()))
                 }
                 Spacer(Modifier.width(ListItemIndent))
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(style.blockSpacing),
-                ) {
-                    blocks.forEach { child -> MarkdownBlock(child, source, uriHandler, style) }
+                Column {
+                    blocks.forEachIndexed { blockIndex, child ->
+                        MarkdownBlockGap(blocks.getOrNull(blockIndex - 1), child, style.blockSpacing)
+                        MarkdownBlock(child, source, uriHandler, style)
+                    }
                 }
             }
         }
@@ -564,26 +594,28 @@ private fun BlockQuoteBlock(
                     .background(barColor),
         )
         Spacer(Modifier.width(BlockquoteContentIndent))
-        Column(verticalArrangement = Arrangement.spacedBy(style.blockSpacing)) {
-            node.children
-                .filter {
-                    it.type != MarkdownTokenTypes.BLOCK_QUOTE &&
-                        it.type != MarkdownTokenTypes.WHITE_SPACE &&
-                        it.type != MarkdownTokenTypes.EOL
-                }.forEach { child ->
-                    if (child.type == MarkdownElementTypes.PARAGRAPH) {
-                        Text(
-                            text = buildInline(child, source, uriHandler, reader),
-                            style =
-                                style.body.copy(
-                                    color = if (reader) MaterialTheme.colorScheme.onSurfaceVariant else style.body.color,
-                                    fontStyle = if (reader) FontStyle.Normal else FontStyle.Italic,
-                                ),
-                        )
-                    } else {
-                        MarkdownBlock(child, source, uriHandler, style)
-                    }
+        val blocks =
+            node.children.filter {
+                it.type != MarkdownTokenTypes.BLOCK_QUOTE &&
+                    it.type != MarkdownTokenTypes.WHITE_SPACE &&
+                    it.type != MarkdownTokenTypes.EOL
+            }
+        Column {
+            blocks.forEachIndexed { index, child ->
+                MarkdownBlockGap(blocks.getOrNull(index - 1), child, style.blockSpacing)
+                if (child.type == MarkdownElementTypes.PARAGRAPH) {
+                    Text(
+                        text = buildInline(child, source, uriHandler, reader),
+                        style =
+                            style.body.copy(
+                                color = if (reader) MaterialTheme.colorScheme.onSurfaceVariant else style.body.color,
+                                fontStyle = if (reader) FontStyle.Normal else FontStyle.Italic,
+                            ),
+                    )
+                } else {
+                    MarkdownBlock(child, source, uriHandler, style)
                 }
+            }
         }
     }
 }

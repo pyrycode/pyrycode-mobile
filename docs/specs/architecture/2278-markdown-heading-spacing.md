@@ -6,6 +6,7 @@
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/components/StreamingMarkdown.kt`: `StreamingMarkdownBlock` and its content filtering preserve completed block identity.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MarkdownTextTest.kt`: native layout-box assertions and ordinary-gap regression.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/StreamingMarkdownTextTest.kt`: settlement bounds and completed-block reuse regressions.
+- `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/MarkdownReaderDesignTest.kt`: `referencePlacesBarRuleAndBodyAtFigmaCoordinates` needs the 8dp increase before H2, retaining outer padding and all other relative gaps.
 - `docs/knowledge/features/markdown-text.md` and `markdown-text-internals.md`: Reader's inline list-marker path needs the same sibling policy as the regular list path.
 - `docs/knowledge/features/markdown-reader-screen.md`: retain Reader gutters and outer padding; screen integration belongs to #2276.
 - `docs/knowledge/features/development-verification-gates.md`: shared bounds tests use native graphics and allow pixel rounding.
