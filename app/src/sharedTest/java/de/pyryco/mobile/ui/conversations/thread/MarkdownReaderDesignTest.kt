@@ -130,12 +130,12 @@ class MarkdownReaderDesignTest {
         val body =
             listOf(
                 "heading" to (heading.top to 97f),
-                // #2285: 16dp block gaps with the existing 28sp H1 and 26sp H2 line boxes.
+                // #2285 + #2283: 16dp block gaps with bodyMedium and the existing heading scale.
                 "paragraph" to (paragraph.top to 141f),
-                "subheading" to (subheading.top to 229f),
-                "first item" to (firstItem.top to 271f),
-                "code" to (code.top to 395f),
-                "quote" to (quote.top to 475f),
+                "subheading" to (subheading.top to 217f),
+                "first item" to (firstItem.top to 259f),
+                "code" to (code.top to 347f),
+                "quote" to (quote.top to 427f),
             )
         for (index in 1 until body.size) {
             val (name, block) = body[index]
@@ -238,7 +238,7 @@ class MarkdownReaderDesignTest {
 
     // #1533: `553:2574` writes each item as one `•  text` paragraph, so its wrapped line returns to the gutter.
     @Test fun wrappedListItemContinuesAtTheGutter() {
-        show()
+        show(markdown = "- Pin all five agents repos to one dispatcher version and verify every agent uses the same version")
         val item = rule.onNodeWithText("Pin all five agents repos", substring = true)
         val text = layout("Pin all five agents repos", substring = true)
 
@@ -260,8 +260,17 @@ class MarkdownReaderDesignTest {
         assertEquals(20.sp, code.lineHeight)
         assertEquals(FontFamily.Monospace, code.fontFamily)
         assertEquals(variant, code.color)
-        assertEquals(16.sp, quote.fontSize)
-        assertEquals(24.sp, quote.lineHeight)
+        assertEquals(14.sp, quote.fontSize)
+        assertEquals(20.sp, quote.lineHeight)
+        assertEquals(0.25.sp, quote.letterSpacing)
+        assertEquals(
+            20f,
+            rule
+                .onNodeWithText("Tokens first, running time second.")
+                .getUnclippedBoundsInRoot()
+                .height.value,
+            0.6f,
+        )
         assertNotEquals(FontStyle.Italic, quote.fontStyle)
         assertEquals(variant, quote.color)
     }

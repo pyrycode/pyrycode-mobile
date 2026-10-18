@@ -1,7 +1,9 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -17,7 +19,11 @@ import androidx.compose.ui.test.onParent
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -41,29 +47,65 @@ class MarkdownTypographyTest {
     @get:Rule
     val rule = createComposeRule()
 
-    @Test
-    fun reader_uses_large_body_and_recursively_spaced_blocks() {
-        rule.setContent {
-            PyrycodeMobileTheme(darkTheme = true) {
-                MarkdownReaderScreen(MarkdownDocument("Typography.md", fixture), onBack = {})
-            }
-        }
-        assertBody(16, 24, 16f, 6f, quoteStyle = FontStyle.Normal, inlineMarkers = true)
-        assertSpecialStyles(codeSize = 13)
-    }
+    private var proseColor = Color.Unspecified
+    private var quoteColor = Color.Unspecified
+    private var linkColor = Color.Unspecified
 
     @Test
-    fun linked_note_uses_the_same_reader_style() {
+    fun reader_uses_message_body_and_recursively_spaced_blocks() = assertReader(linked = false, dark = true)
+
+    @Test
+    fun linked_note_uses_the_same_reader_style() = assertReader(linked = true, dark = true)
+
+    @Test
+    fun light_reader_uses_message_body() = assertReader(linked = false, dark = false)
+
+    @Test
+    fun light_linked_note_uses_the_same_reader_style() = assertReader(linked = true, dark = false)
+
+    private fun assertReader(
+        linked: Boolean,
+        dark: Boolean,
+    ) {
         rule.setContent {
-            PyrycodeMobileTheme(darkTheme = true) {
-                LinkedMarkdownReaderDestination(
-                    note = LinkedMarkdown("Typography.md", MarkdownDocument("Typography.md", fixture)),
-                    reread = { null },
-                    onBack = {},
-                )
+            PyrycodeMobileTheme(darkTheme = dark, dynamicColor = false) {
+                proseColor = MaterialTheme.colorScheme.onSecondaryContainer
+                quoteColor = MaterialTheme.colorScheme.onSurfaceVariant
+                linkColor = MaterialTheme.colorScheme.primary
+                if (linked) {
+                    LinkedMarkdownReaderDestination(
+                        note = LinkedMarkdown("Typography.md", MarkdownDocument("Typography.md", fixture)),
+                        reread = { null },
+                        onBack = {},
+                    )
+                } else {
+                    MarkdownReaderScreen(MarkdownDocument("Typography.md", fixture), onBack = {})
+                }
             }
         }
-        assertBody(16, 24, 16f, 6f, quoteStyle = FontStyle.Normal, inlineMarkers = true)
+        assertBody(14, 20, 16f, 6f, quoteStyle = FontStyle.Normal, inlineMarkers = true)
+        assertSpecialStyles(codeSize = 13)
+        for (text in listOf("Paragraph one", "Parent", "Ordered one", "Task one", "Cell", "Header", "Quote one", "Reader link")) {
+            val node = rule.onNodeWithText(text, substring = true, useUnmergedTree = true)
+            val layout = node.layout()
+            val style = layout.layoutInput.style
+            assertEquals(text, FontFamily.SansSerif, style.fontFamily)
+            assertEquals(text, 14.sp, style.fontSize)
+            assertEquals(text, 20.sp, style.lineHeight)
+            assertEquals(text, 0.25.sp, style.letterSpacing)
+            assertEquals(text, if (text == "Header") FontWeight.Bold else FontWeight.Normal, style.fontWeight)
+            assertEquals(text, if (text == "Quote one") quoteColor else proseColor, style.color)
+            assertEquals(text, LineHeightStyle.Trim.None, style.lineHeightStyle?.trim)
+            assertEquals(text, 20f * layout.lineCount, layout.size.height / rule.density.density, 0.6f)
+        }
+        val linkText =
+            rule
+                .onNodeWithText("Reader link", useUnmergedTree = true)
+                .layout()
+                .layoutInput.text
+        val link = linkText.getLinkAnnotations(0, linkText.length).single().item
+        assertEquals(linkColor, link.styles?.style?.color)
+        assertEquals(TextDecoration.Underline, link.styles?.style?.textDecoration)
     }
 
     @Test
@@ -310,6 +352,8 @@ class MarkdownTypographyTest {
         ```kotlin
         val x = 1
         ```
+
+        [Reader link](https://example.com)
 
         End
         """.trimIndent()
