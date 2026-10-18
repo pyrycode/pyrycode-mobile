@@ -1,0 +1,148 @@
+{
+  "ticket": 2260,
+  "operatingSystem": "Linux",
+  "originalEvidence": {
+    "manifest": "https://github.com/pyrycode/pyrycode-mobile/blob/2739a690cc5719e9a255962f8d382d303beffb6c/app/src/test/resources/verification/owned-coverage-2254/rework-results.json",
+    "artifactRevision": "2739a690cc5719e9a255962f8d382d303beffb6c",
+    "artifactDirectory": "app/src/test/resources/verification/owned-coverage-2254/",
+    "note": "The watchdog halt is a failed capture with unavailable counts. Neither unchanged passing retry repairs or erases it.",
+    "passingRetries": [
+      {
+        "phase": "green-focused-retry",
+        "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest.classificationInvariant_cancelledCommittedImportCannotReadmitUnobservedWrites --console=plain",
+        "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "report": "green-focused-retry-MigratingConversationCacheTest.xml.gz",
+        "sha256": "06d50f1213960f81dd757c4816b080602f73a04199ca7a11c553e77f1de09f37"
+      },
+      {
+        "phase": "green-rework",
+        "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest --console=plain",
+        "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+        "executed": 15,
+        "passed": 15,
+        "failed": 0,
+        "skipped": 0,
+        "report": "green-rework-MigratingConversationCacheTest.xml.gz",
+        "sha256": "be00a4effd17ba2054690b16f8f838d1410a03d65f75013ff593cd471d70fd66"
+      }
+    ],
+    "failedCapture": {
+      "selector": "de.pyryco.mobile.data.cache.MigratingConversationCacheTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest --console=plain",
+      "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+      "followUpIssue": 2260,
+      "outcome": "failed: watchdog halted the test JVM after timeout and unsuccessful interrupt",
+      "timedOutMethod": "classificationInvariant_cancelledCommittedImportCannotReadmitUnobservedWrites",
+      "perTestTimeoutSeconds": 180,
+      "interruptGraceSeconds": 30,
+      "workerExitCode": 124,
+      "executed": null,
+      "passed": null,
+      "failed": null,
+      "skipped": null,
+      "countsUnavailableReason": "The halted JVM did not publish this class XML. The prior LegacyRoomStorageTest XML was stale and is excluded.",
+      "artifacts": [
+        {
+          "path": "red-migration-timeout-output-events.bin.gz",
+          "sha256": "f29912d1f333f0c8eb586830c00c3983ad90c016afff364e981fd7c21c88f064"
+        },
+        {
+          "path": "red-migration-timeout-results-generic.bin.gz",
+          "sha256": "b3c242cd5a55a3f064d983d008f86a8e06f26076f0c099f7b17bc9faeaa797de"
+        },
+        {
+          "path": "red-migration-timeout-thread-dump.txt.gz",
+          "sha256": "a5cbba5182789ad3a28cf068f9012817930acdceb969047ed3b551b56937a147"
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "phase": "red-initial",
+      "revision": "87b3e3b50e0f96bc1ffc710c2264c692fb15d7c7",
+      "sourceMatchesRevision": false,
+      "sourceSnapshotRevision": "af2d57bfdcecb5e1cd72c430f97d2feb68e5368b",
+      "sourceSha256": "7874b183bd3b2b4fac02c807e75377571191c58c651a27c2ba603a2740d31bfc",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest.cleanupInvariant_lateContinuationCompletesAfterInitialDrain --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest.cleanupInvariant_nonCompletionFailsWithoutWaitingForOwner --console=plain",
+      "timestamp": "2026-10-18T06:05:23.380Z",
+      "executed": 2,
+      "passed": 0,
+      "failed": 2,
+      "skipped": 0,
+      "rawOutputComplete": false,
+      "processExitCode": 1,
+      "note": "Uncommitted regression source matches af2d57bfd; compiler warnings truncated this output. Both XML failures are preserved. Complete recapture is a separate failed run.",
+      "artifacts": [
+        {
+          "path": "red-initial.xml.gz",
+          "sha256": "d4b7f41a0683f22b8f7ea441956c8193eceef3b093ef1ef42025db01d381baa3"
+        },
+        {
+          "path": "red-initial-output-truncated.txt.gz",
+          "sha256": "227f199fb6e09cb7b2f27596d9cf47451f0287837e4de843e9277ecd3f8d17ae"
+        }
+      ]
+    },
+    {
+      "phase": "red-complete",
+      "revision": "af2d57bfdcecb5e1cd72c430f97d2feb68e5368b",
+      "sourceMatchesRevision": true,
+      "sourceSha256": "7874b183bd3b2b4fac02c807e75377571191c58c651a27c2ba603a2740d31bfc",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest.cleanupInvariant_lateContinuationCompletesAfterInitialDrain --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest.cleanupInvariant_nonCompletionFailsWithoutWaitingForOwner --console=plain",
+      "timestamp": "2026-10-18T06:11:42.007Z",
+      "executed": 2,
+      "passed": 0,
+      "failed": 2,
+      "skipped": 0,
+      "methods": [
+        "cleanupInvariant_nonCompletionFailsWithoutWaitingForOwner",
+        "cleanupInvariant_lateContinuationCompletesAfterInitialDrain"
+      ],
+      "artifacts": [
+        {
+          "path": "red-complete.xml.gz",
+          "sha256": "9f6b54de952585bdf2f39c4cf598655feaa7689043e479d1727fdd036f252037"
+        },
+        {
+          "path": "red-complete-output.txt.gz",
+          "sha256": "b4ed07031aa074ef9e3f00056d6c6a0a4f11b33d3632a3ecf716dc04b6938acc"
+        }
+      ],
+      "processExitCode": 1,
+      "rawOutputComplete": true
+    },
+    {
+      "phase": "red-strong",
+      "revision": "8b797521a3469e37ce2ad1a8ad137e3a5c0ec054",
+      "sourceMatchesRevision": true,
+      "sourceSha256": "d32a60a9970359dbb729aed9f6b02f61eaae2753ccd3c33c88534ae620eedb3a",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest.cleanupInvariant_lateContinuationCompletesAfterInitialDrain --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest.cleanupInvariant_nonCompletionFailsWithoutWaitingForOwner --console=plain",
+      "timestamp": "2026-10-18T06:14:48.019Z",
+      "executed": 2,
+      "passed": 0,
+      "failed": 2,
+      "skipped": 0,
+      "methods": [
+        "cleanupInvariant_nonCompletionFailsWithoutWaitingForOwner",
+        "cleanupInvariant_lateContinuationCompletesAfterInitialDrain"
+      ],
+      "artifacts": [
+        {
+          "path": "red-strong.xml.gz",
+          "sha256": "98b42296333ca4084c61fd395b879dd7483f75af53333a92b88c2e5076187200"
+        },
+        {
+          "path": "red-strong-output.txt.gz",
+          "sha256": "dbe4582ca4b906f7f169b72cfbf8bfb0d7ccf625a8081a89accd5b2294db9101"
+        }
+      ],
+      "processExitCode": 1,
+      "rawOutputComplete": true
+    }
+  ]
+}

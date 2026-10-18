@@ -46,6 +46,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -564,17 +565,18 @@ class MigratingConversationCacheTest {
             val finalizing = CompletableDeferred<Unit>()
             val release = CompletableDeferred<Unit>()
             val published = CompletableDeferred<Job>()
-            val attempt = async(Dispatchers.Default) {
-                val owner = CoroutineScope(StandardTestDispatcher(scheduler))
-                val reader = owner.launch { holdCancellation(finalizing, release) }
-                published.complete(reader)
-                try {
-                    scheduler.runCurrent()
-                    runCatching { cancelAndDrain(reader, scheduler, timeoutMillis = 100) }
-                } finally {
-                    owner.cancel()
+            val attempt =
+                async(Dispatchers.Default) {
+                    val owner = CoroutineScope(StandardTestDispatcher(scheduler))
+                    val reader = owner.launch { holdCancellation(finalizing, release) }
+                    published.complete(reader)
+                    try {
+                        scheduler.runCurrent()
+                        runCatching { cancelAndDrain(reader, scheduler, timeoutMillis = 100) }
+                    } finally {
+                        owner.cancel()
+                    }
                 }
-            }
             try {
                 // The enclosing coroutine must return before the held child's release, even on failure.
                 val failure = withTimeout(1_000) { attempt.await() }.exceptionOrNull()
@@ -633,13 +635,25 @@ class MigratingConversationCacheTest {
         scheduler: TestCoroutineScheduler,
         timeoutMillis: Long = 10_000,
         afterFirstDrain: () -> Unit = {},
-    ) {
-        // Extract the existing cleanup with a real-time test bound for the red regression.
-        withTimeout(timeoutMillis) {
-            reader.cancel()
-            scheduler.runCurrent()
-            afterFirstDrain()
-            reader.join()
+    ) = withContext(NonCancellable + Dispatchers.Default) {
+        // Room can dispatch cancellation back after an earlier runCurrent has already returned.
+        val completed =
+            withTimeoutOrNull(timeoutMillis) {
+                reader.cancel()
+                scheduler.runCurrent()
+                afterFirstDrain()
+                while (!reader.isCompleted) {
+                    delay(1)
+                    scheduler.runCurrent()
+                }
+                true
+            }
+        if (completed != true) {
+            throw AssertionError(
+                "Cancelled import reader did not stop within ${timeoutMillis}ms: " +
+                    "active=${reader.isActive} cancelled=${reader.isCancelled} completed=${reader.isCompleted} " +
+                    "virtualTime=${scheduler.currentTime}",
+            )
         }
     }
 
@@ -681,7 +695,9 @@ class MigratingConversationCacheTest {
                     if (!writeImport) assertEquals(if (authoritative) null else emptyList<ThreadItem>(), read())
                     failing.set(false)
                     val scheduler = TestCoroutineScheduler()
-                    val reader = launch(StandardTestDispatcher(scheduler)) { if (writeImport) replace() else read() }
+                    // This owner is cancelled explicitly: a cleanup failure must not make runBlocking await the reader.
+                    val readerScope = CoroutineScope(StandardTestDispatcher(scheduler))
+                    val reader = readerScope.launch { if (writeImport) replace() else read() }
                     try {
                         withTimeout(10_000) {
                             while (!entered.isCompleted) {
@@ -696,9 +712,8 @@ class MigratingConversationCacheTest {
                         }
                     } finally {
                         release.complete(Unit)
-                        reader.cancel()
-                        scheduler.runCurrent()
-                        reader.join()
+                        readerScope.cancel()
+                        cancelAndDrain(reader, scheduler)
                     }
                     assertTrue(reader.isCancelled)
                     assertRefused("import_unobserved", replace())
