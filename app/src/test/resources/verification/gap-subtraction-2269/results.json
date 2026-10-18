@@ -43,13 +43,46 @@
       "largeChangeMutationMilliseconds": 423,
       "largeRemovalMutationMilliseconds": 285,
       "everyCaseAndDatabaseCloseCompleted": true
+    },
+    {
+      "phase": "repaired exact method",
+      "revision": "2bc42d88b54286d18b4ccb056f79429fabb03db5",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest.anchorInvariant_subtractingProducerKeepsValidReceivedGapWalk lint assembleDebug spotlessApply --console=plain",
+      "report": "repaired-method.xml.gz",
+      "executed": 1, "passed": 1, "failures": 0, "errors": 0, "skipped": 0,
+      "methodSeconds": 63.138,
+      "timestamp": "2026-10-18T17:29:36.909Z",
+      "bodyCompletionMilliseconds": 60703,
+      "phaseAcrossOriginalDeadline": "18000-row removal verify_final_reopen: 57346-60703ms; database close and complete at 60703ms",
+      "lintAssemblyAndSpotlessApply": "passed"
+    },
+    {
+      "phase": "repaired affected class",
+      "revision": "2bc42d88b54286d18b4ccb056f79429fabb03db5",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest --console=plain",
+      "report": "repaired-class.xml.gz",
+      "executed": 16, "passed": 16, "failures": 0, "errors": 0, "skipped": 0,
+      "suiteSeconds": 116.183,
+      "namedMethodSeconds": 49.89,
+      "invalidAnchorControlSeconds": 0.058,
+      "timestamp": "2026-10-18T17:33:08.552Z"
     }
   ],
   "sha256": {
     "baseline.xml.gz": "5b81970873cfee16e4ef4ca9c0c85a19f282ead9b1c7f78632a9042077ff3316",
     "diagnostic-default-deadline.xml.gz": "cd1dea00e599050e1b2d78867a2764529eaede26f77fe7f38559a4b0a1a4b62a",
+    "repaired-method.xml.gz": "25774ad933ca4c73db5f197d82e57216f99f1eb527ff05cbcb893a5775329e91",
+    "repaired-class.xml.gz": "e5bc81efac1ffdf7d6c643f7f61c76730b0de0ecaef539cea399761204680b81",
     "historical-base.xml.gz": "aced02125468c9f2611017219d7a96919c649bb6b322f8e42e3fe4ee84a39834",
     "historical-candidate.xml.gz": "90f8225447349ea4372330ebf217bc9b47412214a99b9c9fe075a4af8771986f"
+  },
+  "repairedFocusedTotals": { "executed": 17, "passed": 17, "failures": 0, "errors": 0, "skipped": 0 },
+  "localizedWorkBothSizes": {
+    "legacySqlStatements": 24,
+    "rowReads": 1, "rowWrites": 1,
+    "changedRowDecodesAndSerializations": 1,
+    "removedRowDecodesAndSerializations": 0,
+    "evidenceReads": 10, "evidenceDecodes": 2, "evidenceWrites": 6, "evidenceSerializations": 4
   },
   "completeConfiguredGates": "pending dispatcher, including named-method inclusion in JVM gate",
   "otherOperatingSystems": "outside this ticket's verification scope"
