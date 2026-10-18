@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.NegotiatedThread
+import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSupport
@@ -16,6 +17,8 @@ import de.pyryco.mobile.ui.conversations.thread.foldToolRuns
 import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -191,6 +194,15 @@ internal fun harnessThreadEvidence(repository: ConversationRepository): ThreadEv
         return ThreadEvidenceSource.connection(repository)
     }
     return ThreadEvidenceSource.legacy(null, repository, repository::observeMessages)
+}
+
+/** Keep ordinary reads on the captured connection; thread evidence follows its owning host. */
+internal suspend fun harnessHostRepository(coordinator: RelayRepositoryCoordinator): ConversationRepository {
+    val repository = coordinator.currentRepository.filterNotNull().first()
+    val thread = coordinator.negotiatedThread ?: return repository
+    return object : ConversationRepository by repository {
+        override val negotiatedThread: NegotiatedThread = thread
+    }
 }
 
 internal fun legacyThreadEvidence(

@@ -8108,7 +8108,7 @@ class InteractiveStreamE2ETest {
         serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),
     ): ConversationRepository {
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
-        return runBlocking { withTimeout(CONNECT_TIMEOUT_MS) { checkNotNull(bundle.coordinator.currentRepository.first { it != null }) } }
+        return runBlocking { withTimeout(CONNECT_TIMEOUT_MS) { harnessHostRepository(bundle.coordinator) } }
     }
 
     /**
