@@ -9,6 +9,7 @@
 - `data/cache/ConversationCacheDatabase.kt`: `LegacyDao`, owner-scoped rows, evidence and headers.
 - `data/cache/FileConversationCache.kt`: canonical row encoding, validation and proofs.
 - `data/repository/HistoryCoverage.kt`: `retainedBy`, producing claims and unsigned interval subtraction.
+- `data/network/ReadMarkIdSerializer.kt`: strict unsigned JSON requires numeric tokens; interval cells reuse the existing model serializers.
 - `docs/knowledge/features/conversation-cache-contract.md`: exact ownership, conservative evidence and independent authoritative family.
 - `docs/knowledge/features/caching-conversation-repository.md`: capture order, fixed connection base, suppression, failed-write retry and non-cancellable mutation/bookkeeping.
 - `docs/knowledge/decisions/0009-room-for-indexed-conversation-cache.md` and `docs/specs/architecture/2161-import-saved-threads-room.md`: no-backup Room custody, import refusal and cancellation lessons.
@@ -40,6 +41,7 @@ No new scopes, flows or jobs. Collection-owned writer, coalesced pending slot an
 | Partial owned update/removal, colliding second host, reopen | `OwnedLegacyWritesTest.ownershipInvariant_partialViewPreservesUnownedRowsAndEvidence` |
 | Newest update with short/18000 saved rows | `OwnedLegacyWritesTest.boundedInvariant_newestUpdateDoesNotScaleWithSavedHistory` |
 | Affected producing claims, unsigned maximum, token rejection/recovery | `OwnedLegacyWritesTest.ownershipInvariant_partialViewPreservesUnownedRowsAndEvidence` |
+| Shared producing claims, failed transaction, retry and interval split | `OwnedLegacyWritesTest.certificationInvariant_sharedProducingClaimsAreInvalidatedAtomically` |
 | Retention overflow | `OwnedLegacyWritesTest.retentionInvariant_discardedContentCannotRemainCertified` |
 | Held write, newer candidate/removal, coalescing | `OwnedLegacyConcurrencyTest.orderingInvariant_newerOwnedChangesWinHeldWrites` |
 | Failure, unchanged emission and final retry | `OwnedLegacyConcurrencyTest.failureInvariant_unchangedEmissionAndFinalFlushRetry` |
@@ -95,3 +97,5 @@ The additive migration widens legacy ordinals to `Long` (SQLite keeps INTEGER af
 The strengthened settlement probe also failed when a saved identity became unsettled, disappeared on disconnect and a different settled row arrived. Comparing only the final candidate with disk incorrectly classified that disappearance as deliberate removal. Removal intents now come from cacheable identities present in the preceding observed raw view and absent in the next raw view. Settlement exclusion never creates an intent. An intent survives coalescing/failure until a settled reappearance or a successful newer fence supersedes it. Successful baseline application preserves chronological neighbour slots and the existing retention cap.
 
 The migration probe's second insertion into the same held gap exposed immediate ordinal exhaustion when the first insert used the next integer. Placement now divides available space among the pending rows sharing that older boundary, retaining space on either side for later owned changes without moving existing ordinals. Restored identity indexes initialize lazily during worker acceptance, after cached first draw, preserving the existing processing boundary.
+
+The shared-producing-claims probe passed rollback but exposed unreadable split intervals after the successful retry: the strict unsigned codec rejects quoted ids. New span and gap cells now serialize `UnsignedHistorySpan` and `UnsignedHistoryGap` through `MobileJson`, retaining the canonical unquoted unsigned representation instead of assembling numeric JSON by hand. The probe preserves an unaffected producing row while splitting the affected interval, and requires readable evidence after reopen.

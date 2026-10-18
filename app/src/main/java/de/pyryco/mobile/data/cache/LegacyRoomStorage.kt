@@ -8,6 +8,8 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.HistoryCoverage
 import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.UnsignedHistoryGap
+import de.pyryco.mobile.data.repository.UnsignedHistorySpan
 import de.pyryco.mobile.data.repository.historyKeys
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -325,13 +327,13 @@ class LegacyRoomStorage internal constructor(
         low: ULong,
         high: ULong,
     ): Evidence {
-        val fields =
+        val payload =
             if (kind == "spans") {
-                mapOf("first" to JsonPrimitive(low.toString()), "last" to JsonPrimitive(high.toString()))
+                MobileJson.encodeToJsonElement(UnsignedHistorySpan(low, high))
             } else {
-                mapOf("anchor" to JsonPrimitive(low.toString()), "edge" to JsonPrimitive(high.toString()))
+                MobileJson.encodeToJsonElement(UnsignedHistoryGap(low, high))
             }
-        return Evidence(host, conversation, kind, low.position(), 0, -1L, low.position(), high.position(), JsonObject(fields).toString())
+        return Evidence(host, conversation, kind, low.position(), 0, -1L, low.position(), high.position(), payload.toString())
     }
 
     suspend fun readThread(
