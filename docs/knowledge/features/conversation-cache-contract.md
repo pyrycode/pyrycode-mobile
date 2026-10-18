@@ -14,6 +14,8 @@ interface ConversationCache {
     suspend fun readAuthoritativeThread(serverId: String, conversationId: String): SavedAuthoritativeThread? = null
     suspend fun writeAuthoritativeThread(serverId: String, conversationId: String, saved: SavedAuthoritativeThread): Result<Unit> =
         Result.success(Unit)
+    suspend fun resetAuthoritativeThread(serverId: String, conversationId: String, saved: SavedAuthoritativeThread): Result<Unit> =
+        writeAuthoritativeThread(serverId, conversationId, saved)
     suspend fun readHistoryPosition(serverId: String, conversationId: String): HistoryPosition? = null
     suspend fun writeHistoryPosition(serverId: String, conversationId: String, position: HistoryPosition?): Result<Unit> =
         Result.success(Unit)
@@ -95,7 +97,7 @@ unrecognized, streaming or in-flight-tool row by constructing a `ThreadItem` lis
 
 **The authoritative thread family (#2149).** `readAuthoritativeThread`/`writeAuthoritativeThread`
 are additive, default-bodied methods over `SavedAuthoritativeThread(epoch, items, appliedVersion,
-checkpoint, coverage)`. The full-write API atomically replaces facts and metadata, binding raw
+checkpoint, coverage, incarnation, retirements)`. The full-write API atomically replaces facts and metadata, binding raw
 item objects and their epoch to the certified checkpoint and optional continuous history coverage. `SavedThreadCoverage`
 holds `lowerOrder`, `upperOrder`, `continuation` and `olderExists`; parent or active facts outside
 that range do not enlarge it. Applied progress may exceed the checkpoint after an interrupted
@@ -118,8 +120,8 @@ converted into authoritative items or certify this checkpoint. Both thread famil
 with the conversation or host. The sole save/restore consumer is the
 [supplied caching seam](caching-conversation-repository.md#what-is-written-and-when);
 production route activation remains with #2245 and bounded reading with #2252.
-Ordinary Room saves use the owned upsert contract below (#2255); full-file compatibility and
-import continue to use replacement.
+Ordinary Room saves use the owned mutation contract below (#2255/#2256); full-file compatibility and
+import continue to use replacement while preserving committed retirement fences.
 Authoritative Room storage (#2163) is bound through the migration-aware cache (#2161).
 
 **The saved history position (#1354, extended by #1832 and #1910).** `HistoryPosition(cursor, atStart,
@@ -223,206 +225,14 @@ metadata lists, read positions, settings and attachment-byte storage remain avai
 
 ### Owned incremental legacy mutations (#2253)
 
-Ordinary production saves use the internal `OwnedLegacyCache` capability:
-`CachingConversationRepository.ThreadWriter` calls `MigratingConversationCache.mutateLegacyRows`,
-which admits the exact host/conversation/legacy family through the same import and retirement
-checks as replacement writes, then calls `LegacyRoomStorage.mutateRows`. Unavailable or unobserved
-imports and retired hosts still refuse writes. This storage capability changes no negotiated
-route and cannot enable legacy fallback for an authoritative-only host. Full `writeThread`
-replacement and file semantics remain available. History-position saves also use owned rows and
-selective evidence updates (#2254), as described below. Partial readers are not activated.
-
-A mutation carries changed cacheable rows, observed neighbour identities and explicit removed
-renderer identities. Identity is typed and canonical, with length-delimited session-boundary
-components; content, timestamps used for placement and unsigned durable ids do not substitute for
-renderer identity. SQL predicates retain exact case-sensitive host/conversation ownership.
-Updating a held row keeps its ordinal. New identities use available space between observed
-neighbours without moving held rows; exhausted placement rejects the transaction. Each identity
-appears once. Unobserved rows survive an incomplete view. Removal requires observed intent from
-the repository, including confirmed projection disappearance or suppressed queued echoes;
-omission, settlement exclusion and losing an unsettled row cannot authorize it. See
-[writer ownership and capture fences](caching-conversation-repository.md#state-and-concurrency).
-
-Schema version 4 adds the unique owner/renderer-identity index and scalar header row count via
-an additive 3 → 4 Room auto-migration. Its backfill decodes existing rows once, preserves invalid
-bytes with no indexed identity, and moves rows and their evidence together to spaced positive
-`Long` ordinals. Old ordinal zero becomes the first positive slot. Full replacements and imports
-use the same layout. Positive prefix allocation is essential: global evidence occupies ordinal
--1, so negative row positions could make a page select global cells as row-bound evidence and
-withhold otherwise valid claims. Backfill is migration work, never ordinary mutation work.
-
-Changed, removed or retention-discarded ordinals select only affected evidence, including aliased
-fragment claims. Before removing any binding, the transaction follows the connected
-producing-entry/claim component, including every sibling and its other producing ids. It withdraws
-those claims, subtracts every affected id from received spans and records indexed exact-owner
-producer losses with sibling identities. Recovery must validate every relevant sibling, including
-unchanged claims and losses created during the same evidence transaction. Unrelated payloads,
-ordinals and valid evidence remain exact.
-Splitting spans/gaps uses `MobileJson`'s canonical unsigned model serializers: quoted numeric ids
-fail the strict codec, including otherwise correct interval splits. Bounds through
-`ULong.MAX_VALUE` remain exact; subtracting the maximum never wraps to zero.
-
-Invalidation marks coverage unknown and clears saved completeness. Overflow beyond the existing
-100000-row cap selects only the oldest excess rows, invalidates their affected evidence and resets
-the backwards cursor/completeness conservatively. No discarded content stays certified. Ordinary
-mutations read changed identities, neighbour ordinals and relevant evidence, without materializing,
-decoding, serializing, deleting/reinserting or renumbering the whole saved thread. Failed validation,
-placement or storage commits nothing. Expected failures retain the existing causeless/static-code
-contract; diagnostics and internal counters expose no owners, identities, payloads or cursors.
-
-A mutation changes the committed local generation. Older continuations reject with null, allowing
-a new newest-page traversal to recover the entire committed snapshot. They never silently skip
-rows or become daemon cursors. Local save/page exhaustion proves no server continuity or exhaustion.
-
-#### Retained mutation and restart evidence
-
-Linux focused runs retained in
-[`owned-legacy-2253/results.json`](../../../app/src/test/resources/verification/owned-legacy-2253/results.json)
-record **125 executed/passed, 0 failed, 0 skipped**. The sibling `green-*.xml` files contain the
-counted results; historical failing reports and the earlier fixture patch remain alongside them.
-Production revision: `74bc7a5c1cfdbad50263ab2100a849ce2c20abc0`; final dense-fixture revision:
-`f92113bc4f9693bc3009af71316203b3c820901a`. The manifest distinguishes earlier runs with the
-fixture-only working patch from the final committed fixture run.
-
-| Focused selection | Executed/passed | Failed | Skipped |
-| --- | ---: | ---: | ---: |
-| `OwnedLegacyWritesTest` | 6 | 0 | 0 |
-| `OwnedLegacyMigrationTest` | 1 | 0 | 0 |
-| `OwnedLegacyConcurrencyTest` | 5 | 0 | 0 |
-| `LegacyRoomStorageTest` | 18 | 0 | 0 |
-| `MigratingConversationCacheTest` | 15 | 0 | 0 |
-| `CoalescedThreadWritesTest` | 41 | 0 | 0 |
-| `UnsignedHistoryCacheTest` | 11 | 0 | 0 |
-| `HistoryMessageIdentityTest` | 17 | 0 | 0 |
-| `CachedThreadWorkerTest` | 10 | 0 | 0 |
-| `AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence` | 1 | 0 | 0 |
-
-`boundedInvariant_newestUpdateDoesNotScaleWithSavedHistory` measures the production repository
-writer through migration-aware real on-disk Room, after import, restore and initial coverage save.
-Both the 20-row and 18000-row fixtures have a producing claim and separate received span per row.
-Each newest-row update records **1 row read, 1 decode, 1 serialization, 1 write; 8 evidence cells
-read, 1 evidence decode, 3 evidence mutation statements and 46 SQL statements**. The probe also
-rejects full saved-row/evidence reads and saved-row deletion for this update.
-
-`ownershipInvariant_partialViewPreservesUnownedRowsAndEvidence` changes/removes loaded identities
-in a 200-row owned view of 18000 saved rows, then reopens fresh database/cache/repository instances.
-It compares all 17800 unloaded rows and 53400 associated evidence cells exactly, checks a second
-host with colliding ids, rejects the stale token and completes a fresh traversal. The remaining
-owned-write probes cover shared-claim rollback/retry and readable interval splitting, retention,
-unsettled disappearance, and prepended-page evidence. The migration probe preserves held order,
-untouched positions and the other host while inserting before the migrated first row. All five
-concurrency methods cover held/newer writes and removal, failure/unchanged-emission/final retry,
-cancellation after commit, overlapping collectors/reconnect, and deletion/host forgetting/restart.
-
-The [verifier PASS at `54c70f599598bfefe57f556650c8c95bc490441d`](https://github.com/pyrycode/pyrycode-mobile/pull/2258#issuecomment-6244324619)
-records Linux configured gates: JVM **5911 executed/passed, 0 failed/skipped**; UI **334
-executed/passed, 0 failed, 1 skipped**; scripted **22 executed/passed, 0 failed/skipped**.
-The dispatcher named-test report confirms all twelve owned-write/migration/concurrency methods
-and `cachePolicyInvariant_100000LiveRowsAreFilteredOnlyAfterMainDelivery` passed in that full JVM
-suite. The UI skip is `RenameDialogCaptureTest.renameAtFigmaViewport`, not a storage pass.
-No real-Claude capture is required; other operating systems are outside this ticket's scope.
-
-#### Owned coverage and received evidence (#2254)
-
-`OwnedLegacyCoverageCache.writeOwnedLegacyCoverage` follows `mutateLegacyRows` through the
-same migration/import/retirement admission. It receives the position, previously observed received
-position and observed cacheable rows. Typed receipt differences select changed row/delta claims,
-new interval portions and owned cursor/walk updates before serialization. Omitted unloaded rows
-or evidence authorize no deletion; a first save owns only supplied facts. Explicit null position
-retains metadata-clear semantics without deleting rows. Broad history replacement and file APIs
-remain compatible, and negotiated support still forbids legacy fallback where required.
-
-Claims bind to committed exact-owner row/delta proofs and fragment bounds/hashes through
-`ULong.MAX_VALUE`. Additive producing claims with unchanged order, proof and fragment binding
-preserve unchanged sibling bindings. Real withdrawals collect the connected component before
-recovery selection, so same-transaction losses cannot evade sibling validation. Only fresh valid
-received proofs clear their corresponding indexed producer losses; refreshing one sibling cannot
-certify another stale sibling. Older boolean loss payloads remain conservative. A stale owned
-proof withdraws certification while preserving readable rows. A new or changed unbound producer
-outside row ownership, including an unsettled sibling sharing an old id, rejects the evidence
-transaction; retry after its row settles. Malformed structures or storage failure roll back that
-transaction. No failed evidence write undoes successful row bookkeeping.
-
-Received interval additions exclude already observed portions: repeating an old span cannot heal
-a producer invalidated by newer content. Select only relevant cells and proof rows; do not read,
-decode or broadly replace saved evidence. Span extension and producer subtraction preserve an
-existing gap's exact anchor/walk while the anchor remains inside the retained older span and its
-edge names the adjacent newer span. Invalid anchors or changed edges withdraw their walks.
-Recovery replays incoming gap/cursor/walk facts only beside affected recovery entries and only
-after validating committed bounds. Preserve the predecessor gap sharing the older boundary.
-An unchanged received position is skipped by receipt differences, so a later save cannot be relied
-on to repair valid progress erased during row invalidation.
-
-Unresolved producer loss keeps unknown/completeness conservative. Retention additionally persists
-`retentionLoss` independently, even without prior metadata or a claim for the discarded row.
-Incremental evidence cannot clear this unidentified-loss fence or restore backwards cursor/
-completeness; recovery requires explicit metadata clear/full replacement and newly received
-coverage. A local save, continuation or exhausted page never supplies received continuity, a
-daemon cursor or server exhaustion. Evidence mutations also invalidate local tokens: reject an
-old token and restart from newest rather than silently omitting rows.
-
-#### Retained owned coverage and restart evidence (#2254)
-
-Linux builder repair revision `5aac07d82b7fa482dbd65f55aa04cfaff944b45f` has **135 executed/passed,
-0 failed, 0 skipped**. The documentation stage read the compressed JUnit reports and verified their
-hashes against [`gap-rework-results.json`](../../../app/src/test/resources/verification/owned-coverage-2254/gap-rework-results.json).
-Every selection used `python3 scripts/gradle-gate.py testDebugUnitTest --tests <selector>
---console=plain`; these are recorded runs, not tests run by documentation.
-
-| Selection | Executed/passed | Failed | Skipped |
-| --- | ---: | ---: | ---: |
-| `OwnedLegacyCoverageTest` | 16 | 0 | 0 |
-| `OwnedLegacyCoverageConcurrencyTest` | 9 | 0 | 0 |
-| `CoalescedThreadWritesTest` | 41 | 0 | 0 |
-| `HistoryDurabilityTest` | 10 | 0 | 0 |
-| `UnsignedHistoryCacheTest` | 11 | 0 | 0 |
-| `LegacyRoomStorageTest` | 18 | 0 | 0 |
-| `MigratingConversationCacheTest` | 17 | 0 | 0 |
-| `OwnedLegacyWritesTest` | 6 | 0 | 0 |
-| `OwnedLegacyConcurrencyTest` | 5 | 0 | 0 |
-| `OwnedLegacyMigrationTest` | 1 | 0 | 0 |
-| `AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence` | 1 | 0 | 0 |
-
-All 16 coverage and nine concurrency methods are present and passed. They exercise 200 owned
-rows over 18000 saved rows, preserve the other 17800 and unrelated evidence after reopening,
-and isolate a second host. They cover unsigned maximum claims/fragments, shared-sibling and
-same-transaction recovery, uncommitted producers, cursor/gap/unknown walks, retention, row/evidence
-failure and retry, overlapping collectors/reconnect, cancellation, final flush and retirement.
-The metadata-clear probe fences delayed reads without deleting rows.
-
-After import/restore, short and fragmented 18000-row localized saves perform identical work:
-45 legacy SQL statements for the retained localized row-save probe; additive claim extensions
-perform 31, with one row read/decode/serialization and no row writes, as retained in
-[`sibling-rework-results.json`](../../../app/src/test/resources/verification/owned-coverage-2254/sibling-rework-results.json). The final
-`anchorInvariant_subtractingProducerKeepsValidReceivedGapWalk` compares changes and suppression/
-removal, repeated unchanged-position saves and restart: both sizes perform 24 legacy SQL
-statements, one row read and ten evidence-cell reads. Changes decode/serialize one row; removals
-neither. No full saved-row/evidence scan, broad replacement or unrelated ordinal rewrite occurs.
-Its companion `anchorInvariant_subtractingAnchorWithdrawsItsInvalidWalk` passes too.
-
-The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2259#issuecomment-6248844041)
-reviews `2e3a03ce3c57e9f1d6f1158fc8faf8e806a99036`. Current configured Linux JVM evidence is
-**5955 executed, 5954 passed, 1 failed, 0 skipped**; the unrelated EXIF-thumbnail method passed a
-separate exact-method retry (**1 executed/passed, 0 failed/skipped**), tracked by
-[#2265](https://github.com/pyrycode/pyrycode-mobile/issues/2265). This does not erase the original
-failure. UI records **334 executed/passed, 0 failed, 1 skipped** (`renameAtFigmaViewport` remains
-unverified); scripted records **22 executed/passed, 0 failed/skipped**. The dispatcher's pass marker
-names older commit `49ecc0328c9dd3328a446e6db3dc3dc556c6cacc`; current invocation evidence and the
-accepted retry disposition, not that marker, support the final verdict. No real-Claude capture
-is required; other operating systems are outside this Linux ticket's scope.
-
-Historical reports remain beside the manifest: the final pre-repair capture at `cdf48b192`
-records **2 executed, 1 passed, 1 failed, 0 skipped**. Earlier manifests retain the original
-124-pass set, 129-pass recovery set (plus one separate migration-method pass) and 133-pass sibling
-repair set at their per-selector revisions, with all earlier red captures. The migration watchdog
-capture has no class XML/counts and remains failed; [#2260](https://github.com/pyrycode/pyrycode-mobile/issues/2260)
-is now closed/merged, and all 17 current migration methods executed and passed.
+See [owned legacy mutations and received evidence](conversation-cache-legacy-mutations.md) for
+identity ownership, placement, coverage invalidation/recovery and counted Linux evidence.
 
 ### Indexed authoritative Room storage and pages (#2163)
 
 `AuthoritativeRoomStorage` is an independently usable backend over the same database as
 `LegacyRoomStorage`, exposing full `readAuthoritativeThread`/`writeAuthoritativeThread`
-equivalent to `ConversationCache`'s, plus owned upserts, `newestPage`/`beforePage` and scoped removal.
+equivalent to `ConversationCache`'s, plus owned upserts/removals, `newestPage`/`beforePage` and scoped removal.
 It is used by the application through the migration-aware cache (#2161); #2255 supplies ordinary
 owned writes and #2252 owns bounded reader activation. Ownership is the same exact, case-sensitive
 host-plus-conversation scoping as
@@ -434,7 +244,10 @@ never the same fact.
 `SavedAuthoritativeThread.retained()` (same rules as the file-backed cache: duplicate ids,
 numeric/revision bounds, coverage and the 100000-item ordered-tail cap), then replaces the
 header and every item row for that owner/epoch in one Room transaction — delete-then-insert,
-never a partial update. A tail-trimming replacement clears `checkpoint` to zero and `coverage`
+never a partial update. Replacement retains committed same-incarnation retirement fences and
+maximum applied progress, filters retired identities and rejects stale incarnations. Newly
+submitted fences must pass the durable-revision check described below before replacement begins.
+A tail-trimming replacement clears `checkpoint` to zero and `coverage`
 to null while keeping `appliedVersion`, the same certification loss the file-backed cache
 applies on retention. A rejected replacement (duplicate/invalid identity, bad coverage, IO or
 security failure) leaves the last committed header and items intact, surfaced as a causeless
@@ -471,7 +284,7 @@ asserts server-side completeness. Reaching the end of local pages does not chang
 progress, checkpoint or coverage.
 
 Scoped removal (`removeConversation`/`removeHost`) deletes both the legacy and authoritative
-families for the requested owner in one Room transaction — see
+families, including authoritative retirement fences, for the requested owner in one Room transaction — see
 [Layout § atomic scoped removal](conversation-cache-layout.md#indexed-legacy-room-layout-2162)
 — so a conversation or host disappears from both families together or not at all. A family-local
 write (an authoritative replacement, or `LegacyRoomStorage.writeThread`/history write) touches
@@ -527,10 +340,135 @@ Retention selects the oldest scalar-ordered excess over 100000 facts and atomica
 checkpoint to zero and coverage to null, keeping applied progress. A partial store may still hold
 the old certificate: neither repeating it on a revision nor a catch-up/coverage-only completion
 inheriting it can reinstall certification for trimmed facts. A fresh conservative restore and
-new store-authored completion can recover. Epoch mismatch or explicit runtime-generation reset
+new store-authored completion can recover. Explicit reset changes the incarnation and
 retires the family before its new facts commit, even when the epoch string is reused; ordinary
+replacement cannot bypass committed fences through different epoch text. Ordinary
 partial views cannot retire it. Confirmed conversation/host removal clears both families and
 fences delayed work. Existing no-backup custody and content-free classified failures remain.
+
+#### Explicit owned authoritative retirement (#2256)
+
+`AuthoritativeThreadStore.captureRemoval` mints a redacted capture only for a currently held
+daemon identity. Its family is authoritative by type; it binds the minting store, exact host and
+conversation, epoch, incarnation, runtime generation and held revision. The repository's internal
+`removeAuthoritativeFact` admits that capture under `historyWrites`, rechecking ownership and
+revision in the store lock. Wrong-store/owner/generation or superseded-revision captures cannot
+remove a fact. Repeating an already-retired capture is harmless. Omission from a partial view,
+hydration, settlement filtering and parent relationships never request removal; removing a parent
+does not remove its children. Other facts retain raw fields, explicit clears and stable order.
+
+The accepted identity-to-revision fence outlives every delayed snapshot, full-item replay,
+restore and restart within its epoch incarnation. Store restoration unions fences in that
+incarnation and filters retired identities. Room's schema-5 additive 4 → 5 migration adds the
+retirement table and default-empty header incarnation without discarding prior content. Old
+version-1 files and pre-migration headers use the initial empty incarnation and no fences.
+Saved-record validation rejects invalid fence identities/revisions, facts overlapping their fence,
+and nonconservative certification alongside fences. Saved state still grants no connected support.
+
+Incremental Room mutation checks only newly retired identities' durable payloads, then commits
+the named deletion, fence and required metadata atomically. It leaves unrelated payloads and
+ordinals untouched. Both Room replacement/import and file replacement independently check newly
+submitted fences against validated durable facts inside their transaction/lock: a newer durable
+revision rejects the entire mutation before any prior record changes. Committed fences survive
+stale replacement, and retired payloads are filtered before admission. File authoritative
+replacement is serialized across instances and retains atomic rename and exact envelope checks.
+
+Any retirement forces `checkpoint = 0` and `coverage = null`, retaining maximum applied progress
+within the same epoch/incarnation. Replay completion, hydration and extras cannot recertify an
+incarnation containing deliberately withheld identities. This is stricter than retention-trim
+recovery above: only explicit reset clears the retirement fences. Reset mints a fresh UUID
+incarnation, even with reused epoch text, and atomically replaces prior facts/fences/certificate.
+Old-incarnation work then rejects. The replacement fallback calls the explicit
+`ConversationCache.resetAuthoritativeThread` entry: `MigratingConversationCache` applies import
+observation and host-retirement admission before Room's reset transaction; ordinary replacement
+cannot substitute for it. Confirmed scope deletion clears both families and fences while the
+import ledger and host-retirement protection prevent leftover files or delayed work resurrecting
+removed content. App-private no-backup custody is unchanged.
+
+Transient failure preserves committed facts/certification and the successful baseline, retaining
+removal intent for retry with the same capture. A definitive `AuthoritativeRemovalRejected`
+instead returns a validated newer held fact after rollback; the writer withdraws only the matching
+uncommitted fence and restores that fact and its tie position. Committed fences cannot be withdrawn.
+Recovery peers last until commit or definitive rejection; the durable fence lasts until reset.
+Admission and durable failures use static, causeless/redacted errors and content-free diagnostics.
+See [writer concurrency](caching-conversation-repository.md#state-and-concurrency) for cancellation,
+pending-removal ordering and post-commit cleanup.
+
+Removal changes the committed page generation. Old local tokens explicitly reject; resume from
+`newestAuthoritativePage` and traverse fresh tokens. Empty pages still retain the durable fence
+and conservative metadata. Neither local exhaustion nor this restart recovery certifies history.
+
+#### Retained explicit-retirement evidence (#2256)
+
+The [PR #2262 handoff](https://github.com/pyrycode/pyrycode-mobile/pull/2262) reports separate Linux
+focused class runs at `3a9a1fa2e5e5b13cdb40bf5da0b79a33f01400bd`, each through
+`python3 scripts/gradle-gate.py testDebugUnitTest --tests '<qualified-class>' --console=plain`:
+
+| Class under `de.pyryco.mobile.data` | Executed/passed | Failed/errors | Skipped |
+| --- | ---: | ---: | ---: |
+| `repository.AuthoritativeOwnedRemovalTest` | 18 | 0 | 0 |
+| `repository.AuthoritativeOwnedUpsertTest` | 17 | 0 | 0 |
+| `repository.AuthoritativeThreadCacheTest` | 23 | 0 | 0 |
+| `repository.AuthoritativeThreadStoreTest` | 15 | 0 | 0 |
+| `cache.AuthoritativeRoomStorageTest` | 11 | 0 | 0 |
+| `cache.AuthoritativeFileCacheTest` | 4 | 0 | 0 |
+| `cache.MigratingConversationCacheTest` | 17 | 0 | 0 |
+| **Total reported focused** | **105** | **0** | **0** |
+
+Original focused XML/revisions/hashes were at `/tmp/builder-2256/evidence/rework4-final/` when
+reported. They are absent here; the downloaded builder bundle contains source identity/logs but
+no focused XML or artifact pointers. These focused counts remain attributed to the builder,
+not independently recounted. The accepted verifier handoff for the same source revision in
+retained run `097bee94b53f609d8004ac5c3128b5af5ac1f7d7c358d19e938b372a87c4cda3`
+independently counted all seven classes in current dispatcher XML: the same 105 methods executed
+and passed, zero failures/errors/skips. This is full-suite evidence, not another focused run.
+
+The named `AuthoritativeOwnedRemovalTest` methods executed and passed in that full JVM run:
+
+- `ownershipInvariant_partialRemovalPreservesEveryOtherFact`: 18000 saved facts, 200 owned;
+  exact reopen of the 17999 retained facts and the colliding other-host identity, no unrelated
+  payload writes or ordinal changes; omission removes nothing.
+- `ownershipInvariant_staleCapturesCannotRemoveNewerFacts`,
+  `ownershipInvariant_durableNewerRevisionRejectsRemovalAtomically`,
+  `ownershipInvariant_roomReplacementRejectsStaleRemovalAtomically` and
+  `ownershipInvariant_fileReplacementRejectsStaleRemovalAtomically`: runtime/durable admission,
+  exact prior certification, current/observed tie order and unrelated-save recovery.
+- `retirementInvariant_replayAndRestoreCannotResurrect`,
+  `retirementInvariant_storageFencesReplayAndOldIncarnationAcrossReopen` and
+  `retirementInvariant_fileCompatibilityRetainsFenceAndResetLifetime`: replay/replacement,
+  reopen, old-incarnation refusal and applied progress 20000 → 30000 → stale 20000 retaining 30000.
+- `atomicInvariant_failurePreservesCertificateAndRetryCommits`,
+  `retirementInvariant_heldUpsertThenRemovalCommitsFence`,
+  `atomicInvariant_cancelledRemovalFinishesCommitBeforeReturning` and
+  `retirementInvariant_finalFlushRefreshesRemoval`: rollback/retry, overlap, cancellation and
+  removal admitted during final I/O.
+- `retirementInvariant_resetDuringRemovalCreatesNewIncarnation`,
+  `retirementInvariant_roomReplacementResetAdmitsOnlyNewIncarnation`,
+  `retirementInvariant_scopeDeletionKeepsOtherHostExact` and
+  `retirementInvariant_emptyPageStillRetainsItsFence`: held reset, fallback failure/retry with
+  changed/reused epoch text, exact scope isolation and empty-page fence retention.
+- `ownershipInvariant_pendingRejectionsRestoreOriginalTieOrder` and
+  `retirementInvariant_successReleasesRecoveryButFailureRetainsIt`: multiple pending rejection
+  orders, exact disk/observed ordering, unrelated-save recovery and recovery entries released
+  after success while failed/held work retains them.
+
+The same run passed the inherited upsert methods, schema/import checks and original final-retirement
+regressions, including `retirementInvariant_resetDuringFinalIoRetiresReusedEpoch` and
+`atomicInvariant_heldFailureAndFinalFlushKeepNewestFacts`. The verifier counted 5974 executed,
+5973 passed, 1 failed, 0 errors/skips in the complete JVM/build invocation. Its sole unrelated
+failure, `AttentionNotifierTest.theSameAlertPostsOnceAcrossRepeatsAndAFreshProcess`, then passed
+an exact-method retry: 1 executed/passed, 0 failures/errors/skips. The dispatcher accepted that
+flaky disposition; the original failure remains a failure. Configured UI evidence was 334
+executed/passed, 0 failures/errors, 1 skipped; scripted-all was 22 executed/passed, 0 failures/errors/skips.
+
+The retained verifier handoff was read from `handoff/verifier-2256.md` in that evidence bundle;
+its counted XML is identified by invocation `jvm-yjz58kwi` and retry `jvm-qk01bpr3`. Raw XML is
+not present in the downloaded bundle or this documentation worktree, so these counts rely on the
+verifier's recorded inspection rather than a new raw-report audit. The older injected gate marker
+at `be34dabc0` is not the acceptance revision above. Historical rework4 red evidence reported
+3 executed/failed, zero errors/skips; the first repair reported 18 executed, 17 passed, 1 failed,
+zero errors/skips. None is relabelled as a pass. Documentation produced no runs; macOS is outside
+this Linux ticket's verification scope. No live capture or route activation was required.
 
 #### Retained authoritative mutation and restart evidence
 

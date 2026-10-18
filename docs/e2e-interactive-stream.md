@@ -1289,7 +1289,7 @@ assistant reply (`awaitCachedAssistantReply`, polling every `CACHE_POLL_MS`), be
 `turn_end` to each interactive connection separately and the peer's copy can arrive first; cutting on the
 peer's frame alone risks dropping the phone's own still-streaming row (see [Caching conversation
 repository § The merge base moves at a connection
-boundary](knowledge/features/caching-conversation-repository.md#the-merge-base-moves-at-a-connection-boundary-not-on-every-emission)). `setHostLink(serverId, up = false)` —
+boundary](knowledge/features/caching-conversation-repository-connection-boundary.md#the-merge-base-moves-at-a-connection-boundary-not-on-every-emission)). `setHostLink(serverId, up = false)` —
 the two-way split of the existing `cycleHostLink` cut/restore drive, keyed on
 `RelayConnectionRegistry`'s coordinator repository going `null` or non-`null` rather than
 `ConnectionState` — then tears down the connection-scoped repository, so what the open thread, the

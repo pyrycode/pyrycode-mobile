@@ -267,61 +267,14 @@ only place a cache failure can reach this wrapper — writes fail independently 
 
 ### The merge base moves at a connection boundary, not on every emission
 
-The naive version — fixing the merge base to the once-read `restored` snapshot for the whole
-collection — shipped first and failed review (PR #837, first pass): `StableConversationRepository`
-emits `emptyList()` on every disconnect (and again before a new connection's first page), so
-`drawn` collapsed to the open-time snapshot on every disconnect, and the write-when-changed rule
-wrote that shrunk snapshot back. Read → background → process death → offline reopen came back
-blank on a first-read thread, which is the ticket's headline scenario.
-
-The fix: the merge base is not fixed for the whole collection. It starts as `restored`. Each time
-`live` is empty **and suppression is empty** — a connection boundary — the base moves to
-`settledThreadRows(lastDrawn)`, the rows the screen already drew with their in-flight (streaming / running-tool) rows stripped. While
-live rows are flowing inside one connection, the base stays fixed, so a row the live side
-deliberately removes (`RemoteConversationRepository.removeOwnEcho` on a dropped queued send) is
-still honoured and not resurrected by an accumulating union — the same reasoning that ruled out an
-accumulating union for the original restored-snapshot design.
-
-The base also retains durable ordering: restore seeds `baseOrder` from persisted coverage, and
-a connection boundary combines it with the last live order. Each merge receives
-`baseOrder + snapshot.unsignedHistoryOrder`. Rows and ordering therefore survive reconnect together.
-Drawn rows are emitted and retained in `drawnThreads` before a cache write. The observer uses
-owned changes when supported, otherwise untrimmed `drawn` replacement, under the shared
-`historyWrites` mutex with a tombstone check inside the lock. Only a successful write advances
-the shared persisted baseline; static failure logging exposes no rows, ids or cursors.
-
-An empty visible snapshot with nonempty suppression is a pending-delivery reading within the
-same connection, not a disconnect. Rebasing there would lose the fixed restore base and its
-attachment metadata. The filtered drawn rows are emitted and cached, so reopening cannot
-resurrect a hidden queued echo before its delivered push.
-
-After the rebase, `cacheableThreadRows(drawn)` matches the previous accepted candidate, so
-a disconnect creates no new settled change or quiet-period delay. Already pending rows still
-persist, and an earlier failed write remains retryable. `settledThreadRows` (not
-`cacheableThreadRows`) is the rebase's own function: it drops only in-flight rows and applies no row-count bound, so a thread longer than
-[`MAX_CACHED_THREAD_ROWS`](conversation-cache-contract.md#the-contract) does not visibly shrink on screen
-the moment its connection drops.
-
-**Accepted residual:** the rebased base can carry a queued send's echo that the live side would
-have dropped, if that echo is the *only* live row at the moment of disconnect — the accumulating
-union's edge case, reintroduced at connection boundaries only. Not fixed: a queued send implies a
-running turn with its own live rows, so the case has not been observed. See the plan's `##
-Revisions` entry (2026-09-23) for the full argument.
-
-**Known non-blocking follow-on (verifier finding, PR #837 second pass, accepted):** the rebased
-base can also carry a previous connection's `ThreadItem.UnrecognizedMessage` rows, whose id
-(`RemoteConversationRepository.unrecognizedRowId`) is a per-connection counter
-(`"unrecognized-<n>"`). That id's KDoc assumes no reader ever observes rows from two connection
-instances merged — an assumption the rebase breaks. After a reconnect, the new connection's first
-unrecognized frame can collide on id with a rebased row from the old connection, and the merge
-(`mergeCachedRows` since #983, `mergeHistoryRows` before it — both share the same `alreadyHolds` join)
-drops the older one in its usual fail-safe direction. The only effect is an earlier diagnostic row
-silently disappearing; this cannot produce a duplicate key or a crash. Deferred, not fixed.
+See [connection-boundary merging](caching-conversation-repository-connection-boundary.md) for
+rebasing, deliberate removals and the retained reconnect evidence.
 
 ## What is written, and when
 
 **Supplied authoritative persistence (#2149).** Internal `observeAuthoritativeThread`,
-`openAuthoritativeThread` and `resetAuthoritativeThread` seams share the existing `ThreadWriter`.
+`openAuthoritativeThread`, `removeAuthoritativeFact` and `resetAuthoritativeThread` seams share
+the existing `ThreadWriter` persistence path.
 With a supplied `RemoteConversationRepository` whose store accessor matches this host, the
 wrapper uses that remote's authoritative store; otherwise it owns an offline store.
 Production route activation and combined live proof remain with #2245; the stable-delegate
@@ -334,11 +287,25 @@ Ordinary Room saves use `AuthoritativeUpsertCache` through `MigratingConversatio
 candidate, or the collection's restored baseline. Omission preserves unloaded facts. Metadata-only
 certification and placement-only changes also persist atomically. File caches and doubles without
 the capability retain full replacement; import admission and host retirement still apply.
-Bounded reader activation remains with #2252; individual-fact removal is separate work.
+Bounded reader activation remains with #2252. Explicit owned removal (#2256) uses a store-minted
+capture of one authoritative identity, binding the minting store, exact host/conversation,
+epoch/incarnation, runtime generation and held revision. Partial omission, hydration and settlement
+filtering never mint removal intent. Removing a parent does not cascade to its children.
 The same 100 ms quiet period,
 replaceable pending slot and serialized writer serve these candidates; reset generations bypass
 the delay. Ordinary delivery remains independent of held disk I/O. Failed saves keep durable facts,
 metadata and the successful baseline intact, enabling next-emission or final-flush retry.
+
+Removal atomically persists its identity fence with deletion and conservative metadata through
+that same path. The fence filters delayed candidates, replay and restore across disk reopen.
+Checkpoint stays zero and coverage null while any fence exists, even after replay completion;
+applied progress remains monotonic within the same epoch/incarnation. Explicit reset alone starts
+a new incarnation and clears fences, including with reused epoch text. Replacement-only caches
+receive `resetAuthoritativeThread`, rather than ordinary replacement, for that operation.
+The migration-aware Room fallback preserves import-observation and host-retirement admission
+before its atomic reset. Room/file replacements retain committed fences, reject stale incarnations
+and independently reject new fences captured before a newer durable revision. These seams add
+no daemon verb, UI action or negotiated capability.
 
 Open restores before asking the remote query dispatcher. Reconnect resumes only the certified
 checkpoint, so an interrupted reply may leave newer full items saved alongside the prior
@@ -367,7 +334,7 @@ the real-caller regression on PR #1470 demonstrated. Owned Room mutations enforc
 from the saved header count, selecting oldest excess rows and invalidating affected evidence.
 Coverage saves use the same owned row capability plus selective received-evidence updates
 (#2254); broad replacement APIs and file compatibility remain. See the [owned storage contract and counted
-restart/mutation results](conversation-cache-contract.md#owned-incremental-legacy-mutations-2253).
+restart/mutation results](conversation-cache-legacy-mutations.md#owned-incremental-legacy-mutations-2253).
 
 Since [#1967](../../specs/architecture/1967-coalesced-thread-writes.md), a collection-owned
 writer accepts immutable candidates after downstream emission returns. Cache-policy filtering
@@ -405,11 +372,37 @@ checkpoint/coverage wins. Repair derives from merged applied progress and retain
 plus current repair requests: stale partial disk progress cannot reopen repair after newer live
 certification. Disk does not supply runtime generation or repair flags.
 
+An accepted exact-owner, generation-checked restore can initialize the shared authoritative
+baseline under `historyWrites` before any observer save succeeds. It records the validated
+committed disk snapshot with capture zero, never the merged live view or a successful live capture.
+Without this baseline, explicitly removing one fact from an unchanged partial view rewrites all
+retained owned payloads. Restore unions same-incarnation fences and cannot restore certification
+for retired identities; old-incarnation restores reject.
+
 Authoritative candidates carry store generation and wrapper capture sequence. Inside the same
 `historyWrites` lock used by legacy row/position writes and deletion, persistence rejects deleted
 destinations, retired generations and captures older than the successful authoritative baseline.
 Started atomic mutation and baseline publication finish together in `NonCancellable`; failure
 advances no baseline. Older observers and final flushes cannot overwrite a newer committed record.
+
+`removeAuthoritativeFact` takes the same lock, rechecks capture ownership/revision under the store
+lock, then acknowledges only committed retirement or a proven committed superseding reset.
+Cancellation before admission creates no acknowledged retirement; once admitted, persistence and
+baseline publication finish together. A transient failure retains the uncommitted fence and its
+recovery placement for the same capture to retry. A definitive `AuthoritativeRemovalRejected`
+arrives only after rollback and carries the validated newer durable fact internally. The writer
+withdraws just that matching uncommitted generation/incarnation/revision fence and restores the
+fact, leaving the prior durable record/certificate intact. No failed mutation advances the baseline.
+
+Rejection recovery preserves current and observed tie order as well as disk order. Admission
+captures same-order peers, including identities hidden by other pending removals; otherwise
+rejecting B then A from `[A,B,C]` can restore `[B,A,C]`. Recovery uses the nearest surviving
+successor/predecessor without minting a placement move, and retains each captured order key so
+different ties cannot acquire a relationship. After successful commit and baseline publication,
+`commitRemovals` releases only matching recovery entries by generation/incarnation/retirement
+revision. Durable fences remain. Failed work and newer removals admitted during held I/O retain
+their evidence. Keeping every successful removal's copied peer list until reset would retain
+quadratic history for tied or absent-order facts.
 
 Accepted tie placement has its own store publication counter, independent of payload revision,
 within the epoch/runtime generation. Captures retain this evidence through coalescing and initial
@@ -423,7 +416,8 @@ describes atomic tie blocks, certification prerequisites and stale-page restart.
 Reset retirement is accepted non-cancellably on the worker **before downstream delivery**.
 Ordinary candidates retain acceptance after delivery. Cleanup joins started work, then refreshes
 retirement after suspended delivery and again inside the write lock. After each successful final
-mutation/bookkeeping it rechecks generation and commits a newer retirement before returning.
+mutation/bookkeeping it rechecks generation and same-generation removal fences and commits a
+newer retirement before returning. Old snapshots are reconciled with current fences inside the lock.
 Checking only before lock acquisition or mutation misses resets arriving during lock waits or
 final I/O after collection has ended. Cleanup stops on mutation failure with static reporting;
 it does not loop on failed storage or promise persistence through force-stop.
@@ -579,7 +573,7 @@ Invalid anchors lose their walks. Receipt differences skip unchanged facts, so r
 must preserve valid progress itself. Only relevant committed bounds can admit replay of received
 recovery anchors. Local continuation/exhaustion creates no daemon cursor, received continuity or
 server exhaustion. Evidence commits invalidate old local tokens; recover by traversal from newest.
-See [owned coverage and Linux evidence](conversation-cache-contract.md#owned-coverage-and-received-evidence-2254)
+See [owned coverage and Linux evidence](conversation-cache-legacy-mutations.md#owned-coverage-and-received-evidence-2254)
 for loss recovery, 135 passed focused checks, bounded 20/18000-row work and configured-gate results.
 
 This replaces #1354's accepted position-before-row window and unresolved saved-position gaps.
@@ -606,11 +600,15 @@ for composition, attachment storage and context-free test containers.
 See [Caching conversation repository — testing](caching-conversation-repository-testing.md) for worker scheduling, restore, reconnect and coalesced persistence coverage.
 
 The [retained #2255 focused evidence](conversation-cache-contract.md#retained-authoritative-mutation-and-restart-evidence)
-records 149 Linux executions/passes at `a0d7f4467`, including all 17 disk-backed owned-upsert
-probes, 23 retained authoritative writer regressions and 41 coalesced-writer regressions; zero
-failures/errors/skips. Exact fresh facts/metadata, page order, counters and unrelated ordinals
-cover held saves, retry, cancellation, post-commit baseline publication, reused-epoch reset,
-final-flush I/O and lock waits, deletion and host isolation. Documentation ran no tests.
+records 149 Linux passes at `a0d7f4467`, zero failures/errors/skips, covering owned upserts,
+writer cleanup, retry, cancellation, reset, deletion and exact restart state.
+
+The [#2256 retirement evidence](conversation-cache-contract.md#retained-explicit-retirement-evidence-2256)
+records builder-reported 105 focused Linux passes at `3a9a1fa2e5e5b13cdb40bf5da0b79a33f01400bd`
+and the accepted verifier's independent count of the same 105 affected methods in its full JVM
+run, with zero affected failures/errors/skips. It distinguishes unavailable original focused XML
+from the retained verifier report, names the fallback-reset, pending-rejection and recovery-lifetime
+probes, and preserves the unrelated full-suite failure/retry. Documentation produced no test runs.
 
 ## Related
 
