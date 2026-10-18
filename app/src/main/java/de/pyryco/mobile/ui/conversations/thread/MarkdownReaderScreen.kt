@@ -400,7 +400,7 @@ fun MarkdownReaderScreen(
                     style =
                         MarkdownTextStyle(
                             body = MaterialTheme.typography.bodyLarge,
-                            blockSpacing = 12.dp,
+                            blockSpacing = 16.dp,
                             listItemSpacing = 6.dp,
                             code = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 20.sp),
                             presentation = MarkdownPresentation.Reader,

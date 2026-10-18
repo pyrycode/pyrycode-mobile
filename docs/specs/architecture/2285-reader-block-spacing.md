@@ -21,3 +21,8 @@ Change the reader's explicit `MarkdownTextStyle.blockSpacing` override from 12 d
 ## Testing strategy
 
 Update the existing attachment and linked-note recursive-spacing assertions to 16 dp, then run red before changing production. Add focused bounds checks for both note sources covering paragraph/paragraph, paragraph/list, list/code, paragraph/code and code/paragraph boundaries, retaining 6 dp sibling gaps and existing outer padding. Measure both labelled and plain code surfaces. Update affected reference coordinates precisely with unchanged tolerances; later heading integration owns its heading-specific expectations. Run the typography, reader design, reader screen and reader link interaction coverage on Linux, plus lint, debug assembly, instrumented Kotlin compilation, Spotless and final pre-verification. Existing device-only memory and capture scenarios do not assert ordinary spacing or changed control geometry; no new device-only or live evidence is required.
+
+## Revisions
+
+- 2026-10-18: Inspection of `MarkdownReaderCaptureTest` confirms existing reference and compact captures exercise the visually changed body. Run that focused device class as additional visual/interaction coverage; no new device test is added. The initial typography run executed nine tests: four reader tests failed on the expected 16-versus-12 dp gap, while five thread/default tests passed.
+- 2026-10-18: The first green attempt passed recursive reader spacing but exposed a fixture measurement issue: a one-line plain panel is 44 dp visually inside Material's 48 dp minimum interactive layout. Use the reference's two-line panel to measure its full block surface without that inset; preserve exact 16 dp assertions and leave code-panel sizing with its sibling ticket.
