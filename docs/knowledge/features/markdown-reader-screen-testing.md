@@ -9,7 +9,7 @@ Reader rendering in light and dark themes through streaming and settlement, incl
 untrimmed line boxes. `MarkdownReaderDesignTest.referencePlacesBarRuleAndBodyAtFigmaCoordinates`
 retains density-1 exact gap assertions with the shared heading scale, 14/20sp prose and 16dp ordinary
 block spacing. Reference tops are heading 97dp, paragraph 141dp, subheading 217dp,
-first item 259dp, code 347dp and quote 427dp.
+first item 259dp, code 347dp and quote 421dp (#2284 shared panel).
 New Reader-screen integration checks remain assigned to #2276.
 
 ### Reader body typography coverage (#2283)
@@ -21,8 +21,8 @@ height as well as the declared style: default trimming can shorten a single-line
 Tables need the reader body style explicitly; see [table styling](markdown-text-internals.md#tables).
 
 `MarkdownReaderDesignTest` retains chrome, gutter, scroll, pointer and quote-bar checks.
-At the reference viewport, code/quote tops are 347/427dp after #2285
-(the #2283 typography-only positions were 331/407dp). The wrap fixture
+At the reference viewport, code/quote tops are now 347/421dp after #2284
+(previously 347/427dp after #2285; the #2283 typography-only positions were 331/407dp). The wrap fixture
 is deliberately long enough to wrap at 14sp; a formerly wrapping 16sp fixture could
 otherwise stop testing continuation at the gutter. Heading and code styles stay as documented.
 
@@ -68,6 +68,51 @@ with zero failures, errors or skips. Raw reports were at
 `/work/Projects/pyrycode-mobile-agents/logs/evidence/2285/builder-20261018-ff9fa380e/`
 (`jvm/`, `ui-zaxf6au9/`) at review time. macOS is outside this ticket's
 verification scope; no new live-provider scenario is required.
+
+### Shared code-panel coverage (#2284)
+
+All reader code forms use the shared panel; see [code blocks](markdown-text-internals.md#code-blocks).
+`MarkdownTypographyTest` checks labelled/unlabelled fences and indented code through both
+attachment and linked-note readers, including light/dark cases, at 12sp/20sp monospace.
+Its bounds checks measure the panel ancestor of the code viewport, preserving the exact
+16dp gaps instead of depending on the removed `reader-code-panel` tag. The reference's
+two-line shared panel is naturally 58dp high because its text trims the outer line boxes;
+the old reader-only panel forced a 64dp minimum. Consequently the following quote starts
+at 421dp rather than 427dp. Keep prose/headings untrimmed and preserve existing spacing
+assertions and fractional-density allowances; code-panel reuse does not redefine those roles.
+
+`MarkdownTextTest.reader_code_forms_keep_only_the_labelled_header_and_visible_copy_controls`
+distinguishes the visible control from the former whole-panel copy action. A semantics
+copy action alone could pass with that old panel. The labelled, unlabelled and indented
+scroll tests assert a stationary copy rail outside the horizontally scrolling viewport,
+without widening the container. Exact-copy checks retain blank lines and code whitespace,
+with the syntax indent removed from indented blocks. The clipboard-bound test first scrolls
+the tall block's bottom control into view, then checks the original 100,000-character prefix;
+a semantics click on an offscreen control is not operator interaction proof.
+
+`MarkdownReaderDesignTest.headerBlocksUnderlyingCodePanelWithPositiveClearAreaControl`
+physically taps the visible copy glyph as a positive control, then scrolls its centre beneath
+the fixed header and taps that root coordinate. The sentinel clipboard must remain unchanged.
+This proves header pointer interception; invoking the control's semantics action beneath
+the overlay would bypass the behavior being tested.
+
+The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2290#issuecomment-6256496269)
+records Linux acceptance on 2026-10-18 at `aee419a9cd01ba5f74849a1e10be4a6ef59e1e3f`.
+The current JVM gate XML contains **57 executed/passed, 0 failed/errors, 0 skipped** across
+`MarkdownTextTest` (29), `MarkdownTypographyTest` (11) and `MarkdownReaderDesignTest` (17).
+The named copy/header, exact-source, clipboard-bound, three scroll-form and reference-geometry
+methods are present and passed. These are results within the full configured JVM gate,
+which had **5,999 executed/passed, 0 failed, 0 skipped**; UI had **334 executed/passed,
+0 failed, 1 skipped** and scripted **22 executed/passed, 0 failed, 0 skipped**.
+`renameAtFigmaViewport` was skipped, not passed. Counted XML was retained in
+`/work/Projects/pyrycode-mobile-agents/logs/verifier-gate_#2284_4.log`, with UI/scripted
+reports in `_5.log` and `_6.log`, at documentation time.
+
+Separately, [committed focused Linux XML](../../../app/src/test/resources/reader-code-panels-2284/)
+at builder source `cf7a5ee2d1def7df63e5d33fa7f649f833ad962d` records **52 executed/passed,
+0 failed/errors, 0 skipped**: MarkdownText 29, typography 7 and design 16, before later main
+merges. No affected screenshot goldens were present. No fresh app screenshot or real-Claude
+run was required or produced for this change. macOS is outside this Linux ticket's scope.
 
 ### Fractional-density coordinate coverage (#2292)
 

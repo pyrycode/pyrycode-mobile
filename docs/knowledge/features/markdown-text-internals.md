@@ -27,14 +27,14 @@ The parse is keyed on the `markdown` string itself — the AST is rebuilt only w
 | `ORDERED_LIST` | same but marker is `"${index + 1}."` (1-based); both list kinds dispatch through the same `ListBlock`, so a `CHECK_BOX` child replaces the marker here too — untested directly, but true by the shared code path. The reader's inline-marker path above applies identically, with the `N.` marker in place of `•`. |
 | `BLOCK_QUOTE` | Thread: 4dp `onSurfaceVariant` bar and italic paragraphs. Reader: 3dp `outlineVariant` bar, 12dp gap and regular `bodyMedium` 14/20 / `onSurfaceVariant` text. |
 | `GFMElementTypes.TABLE` | `TableBlock(...)` — see [Tables](#tables) |
-| `CODE_FENCE` | Reader unlabelled fence: `ReaderCodeBlock`; labelled fence and thread: `CodeBlock` with copy control — see [Code blocks](#code-blocks). |
-| `CODE_BLOCK` | Reader indented block: `ReaderCodeBlock`; thread: `CodeBlock`. Both use extracted source text. |
+| `CODE_FENCE` | Reader and thread: `CodeBlock` with optional language header and copy control — see [Code blocks](#code-blocks). |
+| `CODE_BLOCK` | Reader and thread: `CodeBlock` without a language header, using extracted source text and a copy control. |
 | _else_ | `Text(node.getTextInNode(source).trim(), style = style.body)` — fallback |
 
-`Column` arrangements use `style.blockSpacing` between top-level blocks and recursively inside list items and quotes; sibling list items use `style.listItemSpacing`. Thread defaults are 16dp between blocks and 4dp between sibling items (#2273); the reader explicitly supplies 16dp and 6dp (#2285). Gaps come from the columns, not per-element padding, so the first and last blocks align with the renderer bounds without added outer spacing. Measure code-block gaps against the code surface, including its internal padding, rather than against the code text. A one-line plain panel has a 44dp visible surface
-inside Material’s 48dp minimum interactive layout; the reader bounds fixture uses
-the reference’s two-line panel to exceed that minimum and fill the measured block.
-Keep exact 16dp gap assertions rather than compensating for the touch-target inset.
+`Column` arrangements use `style.blockSpacing` between top-level blocks and recursively inside list items and quotes; sibling list items use `style.listItemSpacing`. Thread defaults are 16dp between blocks and 4dp between sibling items (#2273); the reader explicitly supplies 16dp and 6dp (#2285). Gaps come from the columns, not per-element padding, so the first and last blocks align with the renderer bounds without added outer spacing. Measure code-block gaps against the code surface, including its internal padding, rather than against the code text. The reader bounds fixture uses a two-line shared panel, whose trimmed outer text
+boxes produce a 58dp surface (#2284), replacing the reader-only 64dp minimum.
+Measure the panel ancestor of its scrolling viewport, rather than padded text or the
+removed `reader-code-panel` tag. Keep exact 16dp gap assertions.
 Reader outer padding remains measured-bar-plus-28dp / 20dp gutters / 16dp bottom;
 heading-specific 20/12dp integration belongs to #2278/#2276.
 
@@ -119,18 +119,20 @@ Two source forms, because the parser only recognises one of them as a node. `~~d
 
 ## Code blocks
 
-`CodeBlock` remains the thread, labelled-fence and [`ToolCallRow`](./tool-call-row.md)
-renderer, with its header, syntax treatment and visible copy control. The reader routes only
-unlabelled fences and indented blocks to `ReaderCodeBlock`: a full-width `surfaceContainer` panel
-using `MaterialTheme.shapes.small` (8dp here), 12dp inset, 13sp/20sp monospace
-`onSurfaceVariant` text and horizontal scrolling. Its panel tap copies that block's extracted
-source, bounded by `MAX_CLIPBOARD_CHARS`; the minimum height is capped at two text lines.
-Labelled reader fences retain `CodeBlock` and its visible copy action. Keep this dispatch by
-language presence: the [reader reference](markdown-reader-screen.md#what-it-does) depicts an
-unlabelled fence, while existing labelled-fence copy behavior remains part of the product.
-[The thread code comparison](https://github.com/pyrycode/pyrycode-mobile/blob/44ac0889/app/src/androidTest/assets/thread-message-1207/code-boundary-side-by-side.png)
-uses node `132:3959` (inspected 2026-09-29). [The reader comparison](../../../app/src/androidTest/assets/markdown-reader-1291/overlay-difference.png)
-uses node `553:2574` (inspected 2026-09-30) and shows the plain panel and quote rule.
+`CodeBlock` renders all fenced and indented code in Thread and Reader (#2284), and
+also serves [`ToolCallRow`](tool-call-row.md). Markdown enables the visible copy
+control and supplies 12sp/20sp `bodySmall`, with the panel enforcing monospace.
+The unused private `ReaderCodeBlock` was removed. Only a nonblank language adds a
+header and eligible syntax highlighting; unlabelled fences and indented blocks
+share the same panel without a header or divider. Tool output retains its separate
+`copyable = false` default and existing text style.
+
+Reader panels follow shared Simple Code Figma `134:4890` (inspected 2026-10-18):
+Background fill, 1dp Primary Container stroke, 6dp corners, 16dp start and 12dp
+vertical text padding, with a separate copy rail. The older
+[reader comparison](../../../app/src/androidTest/assets/markdown-reader-1291/overlay-difference.png)
+against `553:2574` predates this shared-panel change. See
+[reader interaction coverage](markdown-reader-screen-testing.md#shared-code-panel-coverage-2284).
 
 Visual structure since #657 (Figma `134:4809`, the assistant container's `Code` instance — header/divider/body, read off the node rather than #130's flat tile):
 
@@ -172,7 +174,7 @@ Surface(
 
 **Only the code viewport scrolls.** The header sits above the scroll chain (unchanged from #130's anchoring behaviour) and the copy control is a body-row sibling *outside* the `horizontalScroll` `Box`, not an overlay on top of it — a fixed right-hand rail, per the same anchoring rule the language label already followed. It cannot end up on top of the code at any scroll offset, because it was never inside the scrolling subtree to begin with. The body `Row`'s height is at least the control's own height, which is what gives an empty fence room to contain the glyph without the row collapsing under it. The code `Text`'s `end` padding drops from the full `CodeBlockHorizontalPadding` to the narrower `CodeBlockCopyRailGap` when `copyable` is true, so the rail has a fixed gap rather than overlapping the last characters of a short line.
 
-**Copy control and source exactness.** The mounted control is [`CopyTextControl`](./message-bubble.md#meta-row-and-copy-control-messagemetarowkt-since-644) from `MessageMetaRow.kt` (imported, not reimplemented — it was left `internal` rather than file-private in #644 for exactly this reuse). It copies `content` — the block's own extracted source string, never text read back out of the rendered `Text` node — so two code blocks in one message each copy only their own text, and a copy can never pick up characters from a sibling block or the surrounding message. Its glyph tint is `LocalContentColor.current.copy(alpha = CODE_COPY_ALPHA)` (0.80), **not** the design's named `Schemes/Inverse Primary` token: `#644` already hit this for the meta row's own copy glyph — `inversePrimary` reads as near-invisible de-emphasis only against the dark reference frame, and is `#9DCBFC`-on-`#F8F9FF` (illegible) against this block's light-scheme `background` fill. An alpha expression off the block's own content colour (here, `onBackground`) reads correctly in both schemes; the design's other named tokens (fill, border, divider, header label colour) are taken as given because none of them hit that trap.
+**Copy control and source exactness.** The mounted control is [`CopyTextControl`](./message-bubble.md#meta-row-and-copy-control-messagemetarowkt-since-644) from `MessageMetaRow.kt` (imported, not reimplemented — it was left `internal` rather than file-private in #644 for exactly this reuse). It copies `content` — the block's own extracted source string, never text read back out of the rendered `Text` node — through `setBoundedText` and its 100,000-character `MAX_CLIPBOARD_CHARS` limit, so two code blocks in one message or note each copy only their own text, and a copy can never pick up characters from a sibling block or the surrounding message. Its glyph tint is `LocalContentColor.current.copy(alpha = CODE_COPY_ALPHA)` (0.80), **not** the design's named `Schemes/Inverse Primary` token: `#644` already hit this for the meta row's own copy glyph — `inversePrimary` reads as near-invisible de-emphasis only against the dark reference frame, and is `#9DCBFC`-on-`#F8F9FF` (illegible) against this block's light-scheme `background` fill. An alpha expression off the block's own content colour (here, `onBackground`) reads correctly in both schemes; the design's other named tokens (fill, border, divider, header label colour) are taken as given because none of them hit that trap.
 
 Each `CodeBlock` invocation still gets its own `rememberScrollState()` — independent fenced blocks scroll independently, unchanged from #130.
 

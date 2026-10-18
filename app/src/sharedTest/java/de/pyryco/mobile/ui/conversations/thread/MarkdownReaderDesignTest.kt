@@ -33,6 +33,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onParent
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -71,6 +72,7 @@ class MarkdownReaderDesignTest {
     @get:Rule val rule = createComposeRule()
 
     private var variant = Color.Unspecified
+    private var codeForeground = Color.Unspecified
 
     private fun show(
         name: String = "Builder Pipeline - Plan.md",
@@ -82,6 +84,7 @@ class MarkdownReaderDesignTest {
         rule.setContent {
             PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                 variant = MaterialTheme.colorScheme.onSurfaceVariant
+                codeForeground = MaterialTheme.colorScheme.onBackground
                 CompositionLocalProvider(
                     LocalDensity provides Density(LocalDensity.current.density, fontScale),
                     LocalUriHandler provides
@@ -108,7 +111,7 @@ class MarkdownReaderDesignTest {
         show()
         val title = rule.onNodeWithText("Builder Pipeline - Plan.md").getUnclippedBoundsInRoot()
         val heading = rule.onNodeWithText("Builder Pipeline Plan").getUnclippedBoundsInRoot()
-        val code = rule.onNodeWithTag("reader-code-panel").getUnclippedBoundsInRoot()
+        val code = codePanel().getUnclippedBoundsInRoot()
         val quote = rule.onNodeWithText("Tokens first, running time second.").getUnclippedBoundsInRoot()
         val paragraph = rule.onNodeWithText("The main board runs four roles", substring = true).getUnclippedBoundsInRoot()
         val subheading = rule.onNodeWithText("Next steps").getUnclippedBoundsInRoot()
@@ -155,7 +158,8 @@ class MarkdownReaderDesignTest {
                 "subheading" to (subheading.top to 217f),
                 "first item" to (firstItem.top to 255f),
                 "code" to (code.top to 343f),
-                "quote" to (quote.top to 423f),
+                // Shared CodeBlock uses its natural trimmed text box, without the old reader minimum height.
+                "quote" to (quote.top to 417f),
             )
         for (index in 1 until body.size) {
             val (name, block) = body[index]
@@ -165,7 +169,7 @@ class MarkdownReaderDesignTest {
         }
         assertEquals(20f, code.left.value, 1f)
         assertEquals(372f, code.width.value, 1f)
-        assertEquals(64f, code.height.value, 1f)
+        assertEquals(58f, code.height.value, 1f)
         assertEquals(35f, quote.left.value, 1f)
     }
 
@@ -186,6 +190,8 @@ class MarkdownReaderDesignTest {
     }
 
     private fun body() = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+
+    private fun codePanel() = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.HorizontalScrollAxisRange)).onParent()
 
     @Test fun scrollViewportStartsBehindTheFixedBar() {
         show(markdown = "# Underlap heading\n\n" + (1..80).joinToString("\n\n") { "Paragraph $it" })
@@ -244,8 +250,8 @@ class MarkdownReaderDesignTest {
             markdown = "```\ncopy this code\nand this line\n```\n\n" + (1..80).joinToString("\n\n") { "Paragraph $it" },
             onBack = { backs++ },
         )
-        val panel = rule.onNodeWithTag("reader-code-panel")
-        panel.performTouchInput { click(Offset(10f, 10f)) }
+        val copy = rule.onNodeWithContentDescription("Copy this code block")
+        copy.performTouchInput { click() }
         assertEquals(
             "copy this code\nand this line",
             clipboard.primaryClip
@@ -254,9 +260,21 @@ class MarkdownReaderDesignTest {
                 .toString(),
         )
         clipboard.setPrimaryClip(ClipData.newPlainText("sentinel", "unchanged"))
-        body().performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 80f * rule.density.density) }
-        val bounds = panel.getUnclippedBoundsInRoot()
+        val before = copy.fetchSemanticsNode().boundsInRoot.center
+        body().performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, before.y - 66f * rule.density.density) }
+        val bounds = codePanel().getUnclippedBoundsInRoot()
         assertTrue("panel intersects bar", bounds.top.value < 69f && bounds.bottom.value > 24f)
+        val coveredCopy = copy.fetchSemanticsNode().boundsInRoot.center
+        val bar = rule.onNodeWithTag("markdown-reader-top-bar").fetchSemanticsNode().boundsInRoot
+        assertTrue("copy target lies beneath header", bar.contains(coveredCopy))
+        rule.onRoot().performTouchInput { click(coveredCopy) }
+        assertEquals(
+            "unchanged",
+            clipboard.primaryClip
+                ?.getItemAt(0)
+                ?.text
+                .toString(),
+        )
         // The blank strip above the rule, title and both control edges belong to chrome.
         body().performTouchInput { click(Offset(200f * rule.density.density, 66f * rule.density.density)) }
         rule.onNodeWithText("Builder Pipeline - Plan.md").performTouchInput { click() }
@@ -293,10 +311,10 @@ class MarkdownReaderDesignTest {
         val code = layout("pyry release --both\npyry status").layoutInput.style
         val quote = layout("Tokens first, running time second.").layoutInput.style
 
-        assertEquals(13.sp, code.fontSize)
+        assertEquals(12.sp, code.fontSize)
         assertEquals(20.sp, code.lineHeight)
         assertEquals(FontFamily.Monospace, code.fontFamily)
-        assertEquals(variant, code.color)
+        assertEquals(codeForeground, code.color)
         assertEquals(14.sp, quote.fontSize)
         assertEquals(20.sp, quote.lineHeight)
         assertEquals(0.25.sp, quote.letterSpacing)
@@ -348,16 +366,16 @@ class MarkdownReaderDesignTest {
         show(markdown = "```\n$line\n```")
         rule.onNodeWithText(line).assertIsDisplayed()
         val scroll = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.HorizontalScrollAxisRange))
+        val copy = rule.onNodeWithContentDescription("Copy this code block").assertIsDisplayed()
+        val copyBefore = copy.getUnclippedBoundsInRoot()
         val before = scroll.fetchSemanticsNode().config[SemanticsProperties.HorizontalScrollAxisRange].value()
         scroll.performTouchInput { swipeLeft() }
         val after = scroll.fetchSemanticsNode().config[SemanticsProperties.HorizontalScrollAxisRange].value()
         assertTrue("plain code did not scroll: $before -> $after", after > before)
+        assertEquals(copyBefore, copy.getUnclippedBoundsInRoot())
         assertEquals(
             372f,
-            rule
-                .onNodeWithTag("reader-code-panel")
-                .getUnclippedBoundsInRoot()
-                .width.value,
+            codePanel().getUnclippedBoundsInRoot().width.value,
             1f,
         )
     }

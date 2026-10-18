@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-18T15:54:30.411Z" hostname="a4c6319ff434" time="11.216">
+  <properties/>
+  <testcase name="settled_blocks_have_sixteen_dp_gaps_and_no_outer_spacing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="7.034"/>
+  <testcase name="streaming_blocks_have_sixteen_dp_gaps_and_no_outer_spacing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.201"/>
+  <testcase name="default_renderer_keeps_message_typography_and_spacing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.385"/>
+  <testcase name="streaming_reply_keeps_message_typography_and_spacing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="1.829"/>
+  <testcase name="linked_note_uses_the_same_reader_style" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.418"/>
+  <testcase name="reader_uses_large_body_and_recursively_spaced_blocks" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.29"/>
+  <testcase name="finished_reply_keeps_message_typography_and_spacing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.292"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
