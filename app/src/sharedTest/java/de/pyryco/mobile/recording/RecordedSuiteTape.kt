@@ -72,6 +72,12 @@ internal class RecordedSuiteTape(
             "backfill_since",
             "register_push_token",
         )
+    private val threadQueryRequests =
+        steps
+            .filter { it.direction == "client" && it.message?.type in setOf("thread_catch_up", "thread_page") }
+            .map { it.owner to it.message!!.id }
+            .toSet()
+
     private val identityKeys =
         setOf(
             "conversation_id",
@@ -508,6 +514,7 @@ internal class RecordedSuiteTape(
     private fun drain(): List<SuiteStep> {
         val result = mutableListOf<SuiteStep>()
         val blockedOwners = mutableSetOf<String>()
+        val blockedReplies = mutableSetOf<String>()
         for (index in 0 until commandBoundary()) {
             if (index in released) continue
             val step = steps[index]
@@ -516,6 +523,7 @@ internal class RecordedSuiteTape(
                 continue
             }
             if (lifecycleBefore[index]?.let { it !in consumed } == true) continue
+            if (step.owner in blockedReplies) continue
             // Android inputs affect the whole graph. They cannot cross a captured restart or unfinished request.
             if (step.direction == "external" && !precedingWorkReleased(index, allowDeferredReads = true)) continue
             if (step.direction in setOf("inbound_end", "down", "transport_down") && !precedingRequestsComplete(index, step.owner)) continue
@@ -531,7 +539,12 @@ internal class RecordedSuiteTape(
                 released += index
                 continue
             }
-            if (step.direction == "daemon" && frame!!.inReplyTo?.let { step.owner to it !in requests } == true) continue
+            if (step.direction == "daemon" && frame!!.inReplyTo?.let { step.owner to it !in requests } == true) {
+                // An authoritative query must establish its captured base before later live updates.
+                // Ordinary background reads and other connections can still progress independently.
+                if (step.owner to frame.inReplyTo in threadQueryRequests) blockedReplies += step.owner
+                continue
+            }
             if (step.direction in setOf("inbound_end", "down", "transport_down")) cancelUnsentReadNotifications(index, step.owner)
             if (step.direction in setOf("daemon", "settings_snapshot")) {
                 val encoded = mapped(MobileJson.encodeToJsonElement(Envelope.serializer(), frame!!)).jsonObject.toMutableMap()

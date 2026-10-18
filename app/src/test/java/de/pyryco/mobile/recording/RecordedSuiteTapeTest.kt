@@ -8,6 +8,26 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class RecordedSuiteTapeTest {
+    @Test fun aProducerCannotDeliverLiveUpdatesAheadOfItsEarlierUnrequestedQueryReply() {
+        val owner = "phone/host/0"
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client(owner, frame(1, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":0}""")),
+                    daemon(owner, frame(2, "thread_items", """{"final":false}""", reply = 1)),
+                    daemon(owner, frame(3, "thread_items", """{"final":true}""", reply = 1)),
+                    daemon(owner, frame(4, "thread_item_changed")),
+                    daemon("peer/host/0", frame(1, "model_list")),
+                ),
+                literalProducerIdentities = true,
+            )
+        assertEquals(listOf("peer/host/0"), tape.initial().map { it.owner })
+        val delivered = tape.request(owner, frame(90, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":0}"""))
+        assertEquals(listOf("thread_items", "thread_items", "thread_item_changed"), delivered.map { it.message!!.type })
+        assertEquals(listOf(90L, 90L, null), delivered.map { it.message!!.inReplyTo })
+        tape.assertComplete()
+    }
+
     @Test fun androidInputsCannotArriveBeforeTheirRecordedConnectionRestartAndRequests() {
         for (event in listOf("push-token", "push-wake")) {
             val old = "phone/host/0"
