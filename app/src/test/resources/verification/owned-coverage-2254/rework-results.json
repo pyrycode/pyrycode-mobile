@@ -1,0 +1,250 @@
+{
+  "ticket": 2254,
+  "operatingSystem": "Linux",
+  "runs": [
+    {
+      "phase": "red-recovery",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest.recoveryInvariant_sharedProducerRequiresEverySiblingProof --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest.retentionInvariant_uncertifiedDiscardSurvivesRestartAndLaterEvidence --console=plain",
+      "revision": "b9929d61f9026e1f4a8275887e54c867fa1e8a87",
+      "executed": 2,
+      "passed": 0,
+      "failed": 2,
+      "skipped": 0,
+      "report": "red-recovery-OwnedLegacyCoverageTest.xml.gz",
+      "sha256": "6639199bd6608674381b48d00b0ba1f38614c34484f18ad8586c8afb138353a4",
+      "timestamp": "2026-10-18T04:48:29.027Z",
+      "sourceNote": "Uncommitted restart probes reproduced cursor restoration after uncertified retention loss and completeness restoration after a partial shared-proof refresh."
+    },
+    {
+      "phase": "red-intents-initial",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest.intentInvariant_successPrunesOnlySatisfiedRows --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest.intentInvariant_rowFailureKeepsRetryableWork --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest.intentInvariant_concurrentAcceptanceSurvivesOlderSuccess --console=plain",
+      "revision": "b9929d61f9026e1f4a8275887e54c867fa1e8a87",
+      "executed": 3,
+      "passed": 0,
+      "failed": 3,
+      "skipped": 0,
+      "report": "red-intents-initial-OwnedLegacyCoverageConcurrencyTest.xml.gz",
+      "sha256": "6b7b915c6bf951cda4c63cb46fc6c4af242b31152f88b8ed9173624077654eba",
+      "timestamp": "2026-10-18T04:50:28.977Z",
+      "sourceNote": "Uncommitted probes. Initial row-failure and concurrent-intent probes reproduced retained intents. Success-lifetime attempts failed at an acceptance precondition; the final fixture acknowledges source emission after writer acceptance."
+    },
+    {
+      "phase": "red-intents-synchronized",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest.intentInvariant_successPrunesOnlySatisfiedRows --console=plain",
+      "revision": "b9929d61f9026e1f4a8275887e54c867fa1e8a87",
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "report": "red-intents-synchronized-OwnedLegacyCoverageConcurrencyTest.xml.gz",
+      "sha256": "f7573280f702235143f845eb9dfb24000bf8a903bf1a3cbf3ec2780ddbff3ebb",
+      "timestamp": "2026-10-18T04:54:34.102Z",
+      "sourceNote": "Uncommitted probes. Initial row-failure and concurrent-intent probes reproduced retained intents. Success-lifetime attempts failed at an acceptance precondition; the final fixture acknowledges source emission after writer acceptance."
+    },
+    {
+      "phase": "red-intents-after-yield",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest.intentInvariant_successPrunesOnlySatisfiedRows --console=plain",
+      "revision": "b9929d61f9026e1f4a8275887e54c867fa1e8a87",
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "report": "red-intents-after-yield-OwnedLegacyCoverageConcurrencyTest.xml.gz",
+      "sha256": "a38b00f6c35a46adf18b860f95f7cdac9625f2f91793f9e52d8481037286d1b4",
+      "timestamp": "2026-10-18T04:58:34.120Z",
+      "sourceNote": "Uncommitted probes. Initial row-failure and concurrent-intent probes reproduced retained intents. Success-lifetime attempts failed at an acceptance precondition; the final fixture acknowledges source emission after writer acceptance."
+    },
+    {
+      "phase": "green-rework",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest --console=plain",
+      "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+      "executed": 12,
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0,
+      "report": "green-rework-OwnedLegacyCoverageTest.xml.gz",
+      "sha256": "66190aa69217e96a8389919f65fee54e3ff0c237825cf41bd02665df7912db01",
+      "timestamp": "2026-10-18T05:05:59.550Z"
+    },
+    {
+      "phase": "green-rework",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest --console=plain",
+      "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+      "executed": 9,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "report": "green-rework-OwnedLegacyCoverageConcurrencyTest.xml.gz",
+      "sha256": "387be2677e80e63b34448eb4dbc8ec3b52a82a6e4883217446086cffe2b986b0",
+      "timestamp": "2026-10-18T05:07:11.243Z"
+    },
+    {
+      "phase": "green-rework",
+      "selector": "de.pyryco.mobile.data.repository.CoalescedThreadWritesTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.repository.CoalescedThreadWritesTest --console=plain",
+      "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+      "executed": 41,
+      "passed": 41,
+      "failed": 0,
+      "skipped": 0,
+      "report": "green-rework-CoalescedThreadWritesTest.xml.gz",
+      "sha256": "ae47caa68da449649a83fb9fa87a74a2d8c3cc4e58cabd025acc24f0f218313a",
+      "timestamp": "2026-10-18T05:07:40.209Z"
+    },
+    {
+      "phase": "green-rework",
+      "selector": "de.pyryco.mobile.data.repository.HistoryDurabilityTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.repository.HistoryDurabilityTest --console=plain",
+      "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+      "executed": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "report": "green-rework-HistoryDurabilityTest.xml.gz",
+      "sha256": "fa43c48e36ae979f5b07a1cc007730438691eda9b242b3a228f48a3ce36f6452",
+      "timestamp": "2026-10-18T05:07:53.197Z"
+    },
+    {
+      "phase": "green-rework",
+      "selector": "de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest --console=plain",
+      "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+      "executed": 11,
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "report": "green-rework-UnsignedHistoryCacheTest.xml.gz",
+      "sha256": "82d3dff7b7cb397c959824a4cfc9d1953c112f3c42affc590c9f28fc2ffe1e75",
+      "timestamp": "2026-10-18T05:08:05.200Z"
+    },
+    {
+      "phase": "green-rework",
+      "selector": "de.pyryco.mobile.data.cache.LegacyRoomStorageTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.LegacyRoomStorageTest --console=plain",
+      "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+      "executed": 18,
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "report": "green-rework-LegacyRoomStorageTest.xml.gz",
+      "sha256": "353730b27a058c3b2ffc130bd35f18823d7f7a5df84a5e859e17582854712de7",
+      "timestamp": "2026-10-18T05:08:16.835Z"
+    },
+    {
+      "phase": "green-focused-retry",
+      "selector": "de.pyryco.mobile.data.cache.MigratingConversationCacheTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest.classificationInvariant_cancelledCommittedImportCannotReadmitUnobservedWrites --console=plain",
+      "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "report": "green-focused-retry-MigratingConversationCacheTest.xml.gz",
+      "sha256": "06d50f1213960f81dd757c4816b080602f73a04199ca7a11c553e77f1de09f37",
+      "timestamp": "2026-10-18T05:14:16.515Z"
+    },
+    {
+      "phase": "green-rework",
+      "selector": "de.pyryco.mobile.data.cache.MigratingConversationCacheTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest --console=plain",
+      "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+      "executed": 15,
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0,
+      "report": "green-rework-MigratingConversationCacheTest.xml.gz",
+      "sha256": "be00a4effd17ba2054690b16f8f838d1410a03d65f75013ff593cd471d70fd66",
+      "timestamp": "2026-10-18T05:16:56.591Z"
+    },
+    {
+      "phase": "green-rework",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyWritesTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyWritesTest --console=plain",
+      "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+      "executed": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "report": "green-rework-OwnedLegacyWritesTest.xml.gz",
+      "sha256": "5dccd2d5908dbcd77465fe18251138527214e3c9a6bec46b31267893c46da085",
+      "timestamp": "2026-10-18T05:17:17.199Z"
+    },
+    {
+      "phase": "green-rework",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyConcurrencyTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyConcurrencyTest --console=plain",
+      "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+      "executed": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "report": "green-rework-OwnedLegacyConcurrencyTest.xml.gz",
+      "sha256": "39da229d3d1e3e5e213dd5138f2adc6d7ce5e6f8fe57a477d5e3ca4b59d46b19",
+      "timestamp": "2026-10-18T05:18:00.819Z"
+    },
+    {
+      "phase": "green-rework",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest --console=plain",
+      "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "report": "green-rework-OwnedLegacyMigrationTest.xml.gz",
+      "sha256": "a60add0e7567472c231857e79e6852c732650961754c32224dbb580ca5f35e57",
+      "timestamp": "2026-10-18T05:18:17.021Z"
+    },
+    {
+      "phase": "green-rework",
+      "selector": "de.pyryco.mobile.data.cache.AuthoritativeRoomStorageTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence --console=plain",
+      "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "report": "green-rework-AuthoritativeRoomStorageTest.xml.gz",
+      "sha256": "7332fc657fe34f52f9275658f97bb5b67d929ac52af780356acfba28fb7207f5",
+      "timestamp": "2026-10-18T05:20:14.501Z"
+    }
+  ],
+  "interruptedRuns": [
+    {
+      "selector": "de.pyryco.mobile.data.cache.MigratingConversationCacheTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest --console=plain",
+      "revision": "c5529900e3f772398c899f97576ce73d599d7898",
+      "followUpIssue": 2260,
+      "outcome": "failed: watchdog halted the test JVM after timeout and unsuccessful interrupt",
+      "timedOutMethod": "classificationInvariant_cancelledCommittedImportCannotReadmitUnobservedWrites",
+      "perTestTimeoutSeconds": 180,
+      "interruptGraceSeconds": 30,
+      "workerExitCode": 124,
+      "executed": null,
+      "passed": null,
+      "failed": null,
+      "skipped": null,
+      "countsUnavailableReason": "The halted JVM did not publish this class XML. The prior LegacyRoomStorageTest XML was stale and is excluded.",
+      "artifacts": [
+        {
+          "path": "red-migration-timeout-output-events.bin.gz",
+          "sha256": "f29912d1f333f0c8eb586830c00c3983ad90c016afff364e981fd7c21c88f064"
+        },
+        {
+          "path": "red-migration-timeout-results-generic.bin.gz",
+          "sha256": "b3c242cd5a55a3f064d983d008f86a8e06f26076f0c099f7b17bc9faeaa797de"
+        },
+        {
+          "path": "red-migration-timeout-thread-dump.txt.gz",
+          "sha256": "a5cbba5182789ad3a28cf068f9012817930acdceb969047ed3b551b56937a147"
+        }
+      ]
+    }
+  ]
+}

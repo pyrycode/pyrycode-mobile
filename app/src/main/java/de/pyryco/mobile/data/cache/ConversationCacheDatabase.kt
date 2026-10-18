@@ -372,6 +372,23 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
 
     @Dao
     internal interface LegacyDao {
+        @Query("SELECT EXISTS(SELECT 1 FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='losses')")
+        suspend fun hasLoss(
+            host: String,
+            conversation: String,
+        ): Boolean
+
+        @Query("SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind=:kind AND key=:key")
+        suspend fun evidenceCells(
+            host: String,
+            conversation: String,
+            kind: String,
+            key: String,
+        ): List<Evidence>
+
+        @Insert(onConflict = OnConflictStrategy.REPLACE)
+        suspend fun upsertEvidence(evidence: List<Evidence>)
+
         @Query("SELECT * FROM legacy_rows WHERE host=:host AND conversation=:conversation AND identity=:identity")
         suspend fun ownedRow(
             host: String,
