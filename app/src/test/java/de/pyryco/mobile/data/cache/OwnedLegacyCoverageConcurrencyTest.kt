@@ -32,8 +32,8 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.yield
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -134,12 +134,13 @@ class OwnedLegacyCoverageConcurrencyTest {
         runTest {
             val fail = AtomicBoolean()
             val failedAttempts = AtomicInteger()
-            val cache = open {
-                if (fail.get()) {
-                    failedAttempts.incrementAndGet()
-                    throw IOException("controlled")
+            val cache =
+                open {
+                    if (fail.get()) {
+                        failedAttempts.incrementAndGet()
+                        throw IOException("controlled")
+                    }
                 }
-            }
             cache.readThread("Host", "c")
             val readingHistory = CompletableDeferred<Unit>()
             val finishHistory = CompletableDeferred<Unit>()
@@ -168,12 +169,16 @@ class OwnedLegacyCoverageConcurrencyTest {
                 readingHistory.await()
                 runCurrent()
                 assertFalse("scheduler drain cannot complete the held history read", accepted.isCompleted)
+                finishHistory.complete(Unit)
+                accepted.await() // Source emission returns after the repository's writer accepts this exact snapshot.
+                assertEquals(setOf(row(1).legacyRowKey()), pendingKeys(repository))
                 fail.set(true)
                 repository.writeHistoryPosition("c", position(listOf(row(1))))
                 assertEquals(1, failedAttempts.get())
                 assertEquals("row failure must retain the accepted intent", setOf(row(1).legacyRowKey()), pendingKeys(repository))
                 assertTrue(cache.readThread("Host", "c").isEmpty())
                 fail.set(false)
+                source.capture = ThreadSnapshot(emptyList()) // Retry must use the retained intent, not a resupplied live row.
                 repository.writeHistoryPosition("c", position(listOf(row(1))))
                 assertTrue(pendingKeys(repository).isEmpty())
                 reader.cancelAndJoin()
@@ -469,13 +474,14 @@ class OwnedLegacyCoverageConcurrencyTest {
                 val finishDelivery = CompletableDeferred<Unit>()
                 val accepted = CompletableDeferred<Unit>()
                 source.afterEmission = { if (it.rows == listOf(row(1))) accepted.complete(Unit) }
-                val reader = backgroundScope.launch(worker) {
-                    repository.observeThreadSnapshot("c").collect {
-                        assertEquals(listOf(row(1)), it.rows)
-                        delivered.complete(Unit)
-                        finishDelivery.await()
+                val reader =
+                    backgroundScope.launch(worker) {
+                        repository.observeThreadSnapshot("c").collect {
+                            assertEquals(listOf(row(1)), it.rows)
+                            delivered.complete(Unit)
+                            finishDelivery.await()
+                        }
                     }
-                }
                 var save: Job? = null
                 try {
                     restoring.await()
@@ -501,9 +507,15 @@ class OwnedLegacyCoverageConcurrencyTest {
                     delivered.await()
                     runCurrent()
                     assertFalse("publication precedes writer acceptance", accepted.isCompleted)
+                    finishDelivery.complete(Unit)
+                    accepted.await() // Cancellation must follow final acceptance so finish() has a removal candidate.
                     reader.cancelAndJoin() // Final flush must remove row 2 despite matching the original restore.
                     val fresh = open(name)
-                    assertEquals("final accepted snapshot must remove row 2 (cancel=$cancel)", listOf(row(1)), fresh.readThread("Host", "c"))
+                    assertEquals(
+                        "final accepted snapshot must remove row 2 (cancel=$cancel)",
+                        listOf(row(1)),
+                        fresh.readThread("Host", "c"),
+                    )
                     assertEquals(
                         setOf(row(1).historyKeys().first()),
                         fresh

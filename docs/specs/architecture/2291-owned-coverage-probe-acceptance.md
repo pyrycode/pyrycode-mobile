@@ -60,4 +60,10 @@ Retain source revisions, commands, failure signatures, raw output/XML and hashes
 
 ## Open Questions
 
-- Do controlled pre-acceptance holds reproduce both assertions? Resolve from red/green evidence before handoff; record a revision if another cause requires a different design.
+- Resolved: the two controlled holds reproduce both assertions. Red evidence at `e5a22b25243caa8debec1a81d11532086d357fef` records 2 executed, 2 failed, 0 errors/skips: the row-failure probe sees an empty intent map, and the revision probe retains both disk rows after pre-acceptance cancellation. These establish the shared missing-acceptance boundary; the exact original historical assertions remain unknown.
+
+## Revisions
+
+### 2026-10-18: controlled diagnosis
+
+Both red probes fail at the expected contract assertions while held before acceptance. Keep both tests together and repair only their observation ordering. The intent retry now captures an empty live snapshot, so successful persistence must consume the retained exact pending row rather than receiving it again from the source. The existing post-emission acknowledgement is sufficient; no product change or new harness is needed.

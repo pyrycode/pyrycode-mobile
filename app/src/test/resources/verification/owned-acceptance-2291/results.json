@@ -1,0 +1,31 @@
+[
+  {
+    "stage": "red",
+    "revision": "e5a22b25243caa8debec1a81d11532086d357fef",
+    "os": "Linux",
+    "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest.intentInvariant_rowFailureKeepsRetryableWork --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest.revisionInvariant_rowSuccessSurvivesEvidenceFailureAndCancellation --console=plain",
+    "tests": 2,
+    "failures": 2,
+    "errors": 0,
+    "skipped": 0,
+    "xml": "red.xml.gz",
+    "xmlSha256": "30dbaccf183bb4c52b47daa55feb70de074896127856432e2a2a4db92c5b7d48",
+    "compressedSha256": "261179a6ce910b05eaedb635592cb9293ea84b14a1d80f0ac90d1061e0c62f14",
+    "stdout": "red.stdout.log",
+    "stdoutSha256": "f975803efbf2eb95848636eaaa03b47c230890eefb762c7a2fd4cce66387fd81",
+    "cases": [
+      {
+        "name": "intentInvariant_rowFailureKeepsRetryableWork",
+        "failed": true,
+        "skipped": false,
+        "failure": "java.lang.AssertionError: row failure must retain the accepted intent expected:<[message:id-1]> but was:<[]>"
+      },
+      {
+        "name": "revisionInvariant_rowSuccessSurvivesEvidenceFailureAndCancellation",
+        "failed": true,
+        "skipped": false,
+        "failure": "java.lang.AssertionError: final accepted snapshot must remove row 2 (cancel=false) expected:<[MessageItem(message=Message(id=id-1, sessionId=s, role=User, content=text-1, timestamp=1970-01-01T00:00:01Z, isStreaming=false, toolCall=null, attachments=[], segment=null, parentToolUseId=, reconciliationId=null))]> but was:<[MessageItem(message=Message(id=id-1, sessionId=s, role=User, content=text-1, timestamp=1970-01-01T00:00:01Z, isStreaming=false, toolCall=null, attachments=[], segment=null, parentToolUseId=, reconciliationId=null)), MessageItem(message=Message(id=id-2, sessionId=s, role=User, content=text-2, timestamp=1970-01-01T00:00:02Z, isStreaming=false, toolCall=null, attachments=[], segment=null, parentToolUseId=, reconciliationId=null))]>"
+      }
+    ]
+  }
+]
