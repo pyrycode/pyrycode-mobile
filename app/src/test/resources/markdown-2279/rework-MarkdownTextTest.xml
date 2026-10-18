@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" tests="25" skipped="0" failures="0" errors="0" timestamp="2026-10-18T16:01:11.168Z" hostname="723893f7154c" time="7.357">
+  <properties/>
+  <testcase name="reader_a_message_mixing_every_construct_renders_each_part" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="5.148"/>
+  <testcase name="task_list_marks_distinguish_checked_from_unchecked_and_are_inert" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.089"/>
+  <testcase name="reader_each_copy_control_copies_only_its_own_block_source_exactly" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.161"/>
+  <testcase name="table_renders_its_header_and_body_cells" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.081"/>
+  <testcase name="reader_a_long_line_scrolls_inside_the_block_while_label_and_copy_stay_put" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.144"/>
+  <testcase name="double_tilde_renders_struck_and_de_emphasised" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.056"/>
+  <testcase name="wide_table_scrolls_horizontally_without_widening_its_container" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.084"/>
+  <testcase name="an_authored_link_is_still_a_link" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.084"/>
+  <testcase name="message_paragraphs_follow_the_sixteen_dp_component_gap" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.049"/>
+  <testcase name="a_long_line_scrolls_inside_the_block_while_label_and_copy_stay_put" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.082"/>
+  <testcase name="a_heading_keeps_its_inline_markup_and_its_interior_spacing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.094"/>
+  <testcase name="raw_html_renders_as_visible_characters" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.057"/>
+  <testcase name="a_block_without_an_info_string_renders_no_header" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.053"/>
+  <testcase name="a_dollar_span_renders_as_its_own_characters_rather_than_as_maths" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.048"/>
+  <testcase name="a_marker_only_heading_renders_without_throwing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.066"/>
+  <testcase name="a_fence_with_an_info_string_renders_a_language_header_and_a_copy_control" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.052"/>
+  <testcase name="single_tilde_renders_struck_and_de_emphasised" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.044"/>
+  <testcase name="reader_wide_table_scrolls_horizontally_without_widening_its_container" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.078"/>
+  <testcase name="a_bare_url_renders_as_text_and_is_not_a_link" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.042"/>
+  <testcase name="atx_headings_render_without_the_marker_whitespace" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.073"/>
+  <testcase name="a_message_mixing_every_construct_renders_each_part" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.059"/>
+  <testcase name="home_relative_paths_keep_their_tildes_and_strike_nothing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.047"/>
+  <testcase name="fenced_code_uses_the_designs_twelve_sp_monospace_type_with_twenty_sp_lines" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.045"/>
+  <testcase name="table_tolerates_a_row_shorter_than_its_header" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.048"/>
+  <testcase name="each_copy_control_copies_only_its_own_block_source_exactly" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextTest" time="0.076"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
