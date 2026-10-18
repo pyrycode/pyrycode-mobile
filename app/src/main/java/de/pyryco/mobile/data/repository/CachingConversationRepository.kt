@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.cache.AttachmentStore
+import de.pyryco.mobile.data.cache.AuthoritativeRemovalRejected
 import de.pyryco.mobile.data.cache.AuthoritativeUpsertCache
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.OwnedLegacyCache
@@ -397,10 +398,14 @@ class CachingConversationRepository(
                             Result.success(Unit)
                         } else {
                             val owned = cache as? AuthoritativeUpsertCache
+                            val reset = selected.storeGeneration > (persisted?.storeGeneration ?: 0)
                             if (owned == null) {
-                                cache.writeAuthoritativeThread(serverId, conversationId, saved)
+                                if (reset) {
+                                    cache.resetAuthoritativeThread(serverId, conversationId, saved)
+                                } else {
+                                    cache.writeAuthoritativeThread(serverId, conversationId, saved)
+                                }
                             } else {
-                                val reset = selected.storeGeneration > (persisted?.storeGeneration ?: 0)
                                 val baseline =
                                     (persisted?.authoritative ?: selected.authoritativeBaseline)
                                         ?.takeIf { !reset && it.epoch == saved.epoch }
@@ -435,6 +440,16 @@ class CachingConversationRepository(
                                 )
                             }
                         }
+                    (result.exceptionOrNull() as? AuthoritativeRemovalRejected)?.let { rejected ->
+                        authoritativeThreads.rejectRemoval(
+                            serverId,
+                            conversationId,
+                            selected.storeGeneration,
+                            saved.incarnation,
+                            saved.retirements.getValue(rejected.held.id),
+                            rejected.held,
+                        )
+                    }
                     if (result.isSuccess) persistedAuthoritative[conversationId] = selected
                     result
                 }

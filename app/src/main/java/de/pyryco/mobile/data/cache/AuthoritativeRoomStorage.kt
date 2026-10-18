@@ -140,7 +140,8 @@ class AuthoritativeRoomStorage internal constructor(
                             .toSnapshot()
                             .items
                             .single()
-                    require(held.id == id && orderKey(held) == record.orderKey && held.rev <= revision)
+                    require(held.id == id && orderKey(held) == record.orderKey)
+                    if (held.rev > revision) throw AuthoritativeRemovalRejected(held)
                     lastWriteCounts =
                         lastWriteCounts.copy(itemReads = lastWriteCounts.itemReads + 1, itemDecodes = lastWriteCounts.itemDecodes + 1)
                 }
@@ -489,16 +490,21 @@ class AuthoritativeRoomStorage internal constructor(
         operation: String,
         block: suspend () -> Unit,
     ): Result<Unit> =
-        withContext(ioDispatcher) {
-            mutex.withLock {
-                when (val done = database.classifiedTransaction(beforeCommit, block)) {
-                    is CacheTransaction.Committed -> Result.success(Unit).also { log(operation, "ok") }
-                    is CacheTransaction.Failed -> {
-                        log(operation, done.code)
-                        Result.failure(ConversationCacheException("conversation cache $operation failed: ${done.code}"))
+        try {
+            withContext(ioDispatcher) {
+                mutex.withLock {
+                    when (val done = database.classifiedTransaction(beforeCommit, block)) {
+                        is CacheTransaction.Committed -> Result.success(Unit).also { log(operation, "ok") }
+                        is CacheTransaction.Failed -> {
+                            log(operation, done.code)
+                            Result.failure(ConversationCacheException("conversation cache $operation failed: ${done.code}"))
+                        }
                     }
                 }
             }
+        } catch (rejected: AuthoritativeRemovalRejected) {
+            log(operation, "stale_removal")
+            Result.failure(rejected)
         }
 
     private fun log(

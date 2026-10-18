@@ -1,5 +1,12 @@
 package de.pyryco.mobile.data.cache
 
+import de.pyryco.mobile.data.network.ThreadItemDto
+
+/** Definitive admission refusal after rollback; payload and identity never enter exception prose. */
+internal class AuthoritativeRemovalRejected(
+    val held: ThreadItemDto,
+) : Exception("authoritative removal superseded")
+
 /** Optional owned-write capability; full-file compatibility continues using the replacement API. */
 internal interface AuthoritativeUpsertCache {
     /**

@@ -62,6 +62,13 @@ interface ConversationCache {
         saved: SavedAuthoritativeThread,
     ): Result<Unit> = Result.success(Unit)
 
+    /** Explicit new incarnation; ordinary replacements must preserve committed retirement fences. */
+    suspend fun resetAuthoritativeThread(
+        serverId: String,
+        conversationId: String,
+        saved: SavedAuthoritativeThread,
+    ): Result<Unit> = writeAuthoritativeThread(serverId, conversationId, saved)
+
     /**
      * The thread rows last written for [conversationId] under [serverId] (#797), in arrival order.
      *

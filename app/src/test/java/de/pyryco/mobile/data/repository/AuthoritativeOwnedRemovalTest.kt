@@ -387,8 +387,12 @@ class AuthoritativeOwnedRemovalTest {
                 ).getOrThrow()
             assertTrue(repo.removeAuthoritativeFact(target).isFailure)
             assertEquals(newer, open().readAuthoritativeThread("host", "c"))
+            repo.authoritativeThreads.applyBatch("host", "c", "e", 20_002, listOf(ThreadItemDto.decodeReplacement(raw(1, 20_002))), 0)
+            runCurrent()
             observer.cancelAndJoin()
-            assertEquals(newer, open().readAuthoritativeThread("host", "c"))
+            val retained = requireNotNull(open().readAuthoritativeThread("host", "c"))
+            assertEquals(listOf(raw(1, 20_002), raw(2, 20_001)), retained.items)
+            assertTrue(retained.retirements.isEmpty())
         }
 
     @Test fun retirementInvariant_storageFencesReplayAndOldIncarnationAcrossReopen() =
@@ -431,7 +435,8 @@ class AuthoritativeOwnedRemovalTest {
         runTest {
             val root = File(temporary.root, "compatibility")
             val files = FileConversationCache(root, StandardTestDispatcher(testScheduler))
-            files.writeAuthoritativeThread("host", "c", saved(3)).getOrThrow()
+            val original = saved(3)
+            files.writeAuthoritativeThread("host", "c", original).getOrThrow()
             val repo = wrapper(files)
             val observer = observe(repo)
             repo.removeAuthoritativeFact(requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 1))).getOrThrow()
@@ -440,6 +445,9 @@ class AuthoritativeOwnedRemovalTest {
             val retained = requireNotNull(fresh.readAuthoritativeThread("host", "c"))
             assertEquals(listOf(raw(2), raw(3)), retained.items)
             assertEquals(mapOf(1L to 1L), retained.retirements)
+            files.writeAuthoritativeThread("host", "c", original).getOrThrow()
+            fresh.writeAuthoritativeThread("host", "c", original).getOrThrow()
+            assertEquals(retained, FileConversationCache(root).readAuthoritativeThread("host", "c"))
             val restarted = wrapper(fresh)
             val second = observe(restarted)
             restarted.authoritativeThreads.applyBatch("host", "c", "e", 30_000, listOf(ThreadItemDto.decodeReplacement(raw(1, 30_000))), 0)
@@ -449,6 +457,14 @@ class AuthoritativeOwnedRemovalTest {
             val reset = requireNotNull(fresh.readAuthoritativeThread("host", "c"))
             assertTrue(reset.retirements.isEmpty())
             assertTrue(reset.incarnation.isNotEmpty())
+            assertTrue(files.writeAuthoritativeThread("host", "c", original).isFailure)
+            assertTrue(fresh.writeAuthoritativeThread("host", "c", retained).isFailure)
+            assertEquals(reset, FileConversationCache(root).readAuthoritativeThread("host", "c"))
+            val third = observe(restarted)
+            restarted.authoritativeThreads.applyBatch("host", "c", "e", 1, listOf(ThreadItemDto.decodeReplacement(raw(1))), 1)
+            runCurrent()
+            third.cancelAndJoin()
+            assertEquals(listOf(raw(1)), FileConversationCache(root).readAuthoritativeThread("host", "c")?.items)
         }
 
     @Test fun atomicInvariant_cancelledRemovalFinishesCommitBeforeReturning() =

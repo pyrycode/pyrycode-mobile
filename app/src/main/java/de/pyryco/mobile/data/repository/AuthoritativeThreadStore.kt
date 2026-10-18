@@ -105,6 +105,30 @@ internal class AuthoritativeThreadStore {
         return AuthoritativeThreadOutcome.Applied
     }
 
+    /** Withdraw only an uncommitted intent whose exact revision storage definitively superseded. */
+    @Synchronized
+    fun rejectRemoval(
+        host: String,
+        conversation: String,
+        generation: Long,
+        incarnation: String,
+        revision: Long,
+        held: ThreadItemDto,
+    ) {
+        val current = current(host, conversation)
+        if (current.generation != generation || current.incarnation != incarnation || current.retirements[held.id] != revision) return
+        publish(
+            host,
+            conversation,
+            current.copy(
+                items = ordered(current.items + held),
+                completedVersion = maxOf(current.completedVersion, held.rev),
+                retirements = current.retirements - held.id,
+            ),
+            restoring = true,
+        )
+    }
+
     private val snapshots = MutableStateFlow<Map<Pair<String, String>, AuthoritativeThreadSnapshot>>(emptyMap())
 
     @Synchronized
