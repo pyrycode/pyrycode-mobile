@@ -1,0 +1,252 @@
+{
+  "ticket": 2254,
+  "operatingSystem": "Linux",
+  "currentFocusedTotals": {
+    "executed": 133,
+    "passed": 133,
+    "failed": 0,
+    "skipped": 0
+  },
+  "runs": [
+    {
+      "phase": "merge",
+      "selector": "de.pyryco.mobile.data.cache.MigratingConversationCacheTest",
+      "revision": "67c257026c6ce142c2d16824360031a1efc1720d",
+      "command": "python3 scripts/gradle-gate.py assembleDebug testDebugUnitTest --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest --console=plain",
+      "executed": 15,
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0,
+      "report": "sibling-merge-MigratingConversationCacheTest.xml.gz",
+      "sha256": "f6b7021adc67d9f231ef6c87f7e41c2ebb5e149e92ef402d2078b24ee80bb52d",
+      "timestamp": "2026-10-18T06:47:40.902Z"
+    },
+    {
+      "phase": "red",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "revision": "6123d9e3f4a95241b83e1e9da44e248ddb000485",
+      "executed": 2,
+      "passed": 0,
+      "failed": 2,
+      "skipped": 0,
+      "report": "sibling-red-OwnedLegacyCoverageTest.xml.gz",
+      "sha256": "cef7b68e100b4da1c7633caf11501a177188e87684388d04db257ac5f56767b7",
+      "timestamp": "2026-10-18T07:01:12.964Z",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest.recoveryInvariant_claimExtensionPreservesSiblingBindings --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest.recoveryInvariant_currentWithdrawalValidatesEverySibling --console=plain"
+    },
+    {
+      "phase": "attempt-1",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "revision": "19bfc0499304743efaf24f3843141f823b10d811",
+      "executed": 14,
+      "passed": 12,
+      "failed": 2,
+      "skipped": 0,
+      "report": "sibling-attempt-1-OwnedLegacyCoverageTest.xml.gz",
+      "sha256": "9a413dd4b35da09f0ad081994aab33760bc3dc329ec1543a0a700548e3a2202c",
+      "timestamp": "2026-10-18T07:23:13.968Z",
+      "command": "python3 scripts/gradle-gate.py spotlessApply testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest --console=plain"
+    },
+    {
+      "phase": "attempt-2",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "revision": "a5d1b21c7e371f0b7e5ee018d881bac5200029da",
+      "executed": 14,
+      "passed": 13,
+      "failed": 1,
+      "skipped": 0,
+      "report": "sibling-attempt-2-OwnedLegacyCoverageTest.xml.gz",
+      "sha256": "cefb90a52fd81741f49110dd88865f0b1b8cfbddab10f1b85037cdf49a8c0685",
+      "timestamp": "2026-10-18T07:31:12.341Z",
+      "command": "python3 scripts/gradle-gate.py spotlessApply testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest lint --console=plain"
+    },
+    {
+      "phase": "attempt-3",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "revision": "2af42c53f1dcf3e8c8ccb44bd6642293e2c02cb4",
+      "executed": 14,
+      "passed": 12,
+      "failed": 2,
+      "skipped": 0,
+      "report": "sibling-attempt-3-OwnedLegacyCoverageTest.xml.gz",
+      "sha256": "a01a36f918b4d618efb1d69a6a9717e9fcf017ac939aa7771fd330f02bfcfe3f",
+      "timestamp": "2026-10-18T07:43:37.628Z",
+      "command": "python3 scripts/gradle-gate.py spotlessApply testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest lint --console=plain"
+    },
+    {
+      "phase": "green",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "revision": "e2430a1e05d1fec11f8eb9df8ccdd4518cda8882",
+      "executed": 14,
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0,
+      "report": "sibling-green-OwnedLegacyCoverageTest.xml.gz",
+      "sha256": "53c8013120fdffec62b92125a67633237f78b6e52f98a443087ceebf936c9996",
+      "timestamp": "2026-10-18T07:49:47.796Z",
+      "command": "python3 scripts/gradle-gate.py spotlessApply testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest lint --console=plain"
+    },
+    {
+      "phase": "green",
+      "selector": "de.pyryco.mobile.data.cache.LegacyRoomStorageTest",
+      "revision": "e2430a1e05d1fec11f8eb9df8ccdd4518cda8882",
+      "executed": 18,
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "report": "sibling-green-LegacyRoomStorageTest.xml.gz",
+      "sha256": "a9ce5da158d17a0cc30a4f24925b830f5104eed6a3e134faab4e29002ab3e22a",
+      "timestamp": "2026-10-18T07:51:34.464Z",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.LegacyRoomStorageTest --console=plain"
+    },
+    {
+      "phase": "rows-attempt-1",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyWritesTest",
+      "revision": "e2430a1e05d1fec11f8eb9df8ccdd4518cda8882",
+      "executed": 6,
+      "passed": 5,
+      "failed": 1,
+      "skipped": 0,
+      "report": "sibling-rows-attempt-1-OwnedLegacyWritesTest.xml.gz",
+      "sha256": "af5e62bba20243b8b71f4f7b4d0f39ba16a43f74386ed9435e52bae87ad60af1",
+      "timestamp": "2026-10-18T07:54:20.343Z",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyWritesTest --console=plain"
+    },
+    {
+      "phase": "green",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyWritesTest",
+      "revision": "9e8e61e87bba4846b7515a6e9d583b6c9ab0e196",
+      "executed": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "report": "sibling-green-OwnedLegacyWritesTest.xml.gz",
+      "sha256": "2cf7255be295bcf49761c2d84aa4a12cff69c9c5ad28f606a2d603d625fe9496",
+      "timestamp": "2026-10-18T07:59:54.275Z",
+      "command": "python3 scripts/gradle-gate.py spotlessApply testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyWritesTest --console=plain"
+    },
+    {
+      "phase": "green",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest",
+      "revision": "9e8e61e87bba4846b7515a6e9d583b6c9ab0e196",
+      "executed": 9,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "report": "sibling-green-OwnedLegacyCoverageConcurrencyTest.xml.gz",
+      "sha256": "0bd40f8f34c2979d5f22dc152e05aa3bfd610d5255826b3ba52b40e5d75a2058",
+      "timestamp": "2026-10-18T08:00:33.715Z",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest --console=plain"
+    },
+    {
+      "phase": "green",
+      "selector": "de.pyryco.mobile.data.repository.CoalescedThreadWritesTest",
+      "revision": "9e8e61e87bba4846b7515a6e9d583b6c9ab0e196",
+      "executed": 41,
+      "passed": 41,
+      "failed": 0,
+      "skipped": 0,
+      "report": "sibling-green-CoalescedThreadWritesTest.xml.gz",
+      "sha256": "29013198e4231e42ecc3664b05459010347886b825a05a2a575cda833706e59e",
+      "timestamp": "2026-10-18T08:00:58.408Z",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.repository.CoalescedThreadWritesTest --console=plain"
+    },
+    {
+      "phase": "green",
+      "selector": "de.pyryco.mobile.data.repository.HistoryDurabilityTest",
+      "revision": "9e8e61e87bba4846b7515a6e9d583b6c9ab0e196",
+      "executed": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "report": "sibling-green-HistoryDurabilityTest.xml.gz",
+      "sha256": "87fb4878103214dbd55b8dbce973800852394f6ef93913f024bfb417bc6af0fe",
+      "timestamp": "2026-10-18T08:01:18.748Z",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.repository.HistoryDurabilityTest --console=plain"
+    },
+    {
+      "phase": "green",
+      "selector": "de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest",
+      "revision": "9e8e61e87bba4846b7515a6e9d583b6c9ab0e196",
+      "executed": 11,
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "report": "sibling-green-UnsignedHistoryCacheTest.xml.gz",
+      "sha256": "caadb4debe6a9f3c8bb300de1a1f3a60a9d942a0a9090df91334c1b05149f5a9",
+      "timestamp": "2026-10-18T08:01:38.779Z",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest --console=plain"
+    },
+    {
+      "phase": "green",
+      "selector": "de.pyryco.mobile.data.cache.MigratingConversationCacheTest",
+      "revision": "9e8e61e87bba4846b7515a6e9d583b6c9ab0e196",
+      "executed": 17,
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0,
+      "report": "sibling-green-MigratingConversationCacheTest.xml.gz",
+      "sha256": "565498d6da977e6cf9af5dfe47ea57c49c02693b9e7478f9e38284a36a9b1a83",
+      "timestamp": "2026-10-18T08:02:13.301Z",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest --console=plain"
+    },
+    {
+      "phase": "green",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyConcurrencyTest",
+      "revision": "9e8e61e87bba4846b7515a6e9d583b6c9ab0e196",
+      "executed": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "report": "sibling-green-OwnedLegacyConcurrencyTest.xml.gz",
+      "sha256": "744050270b2128b0d837e1c5e35c5ba414710ef0769ef705f194422c5c522c91",
+      "timestamp": "2026-10-18T08:02:52.433Z",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyConcurrencyTest --console=plain"
+    },
+    {
+      "phase": "green",
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest",
+      "revision": "9e8e61e87bba4846b7515a6e9d583b6c9ab0e196",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "report": "sibling-green-OwnedLegacyMigrationTest.xml.gz",
+      "sha256": "a43cd483be1209a2c5d2ceaae2d6d22ceffc4cde638983dbb112884a80df9df9",
+      "timestamp": "2026-10-18T08:03:17.322Z",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest --console=plain"
+    },
+    {
+      "phase": "green",
+      "selector": "de.pyryco.mobile.data.cache.AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence",
+      "revision": "9e8e61e87bba4846b7515a6e9d583b6c9ab0e196",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "report": "sibling-green-AuthoritativeRoomStorageTest.xml.gz",
+      "sha256": "bb50dffe1c312d16d4298cf16cf3805991a208056ae92ab8c4892588d4e90052",
+      "timestamp": "2026-10-18T08:03:49.293Z",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence --console=plain"
+    }
+  ],
+  "supplementalArtifacts": [
+    {
+      "path": "sibling-red-tests.patch.gz",
+      "sha256": "294d41380d03d78836244c1e560a7fd99a81972b769a2aa2f7917230523e4979"
+    },
+    {
+      "path": "sibling-formatting-failure.txt.gz",
+      "sha256": "490db98a225252f9f3f1ca0a938358641e4032e631ad687ddc7893c59ceb01cd"
+    }
+  ],
+  "notes": [
+    "Red used uncommitted tests over the recorded plan revision; the exact original patch is retained. Its first failure demonstrates missing sibling bindings. The maximum-id completeness expectation in the second probe was corrected later.",
+    "Attempt 1 preserved sibling cells and passed 12 existing methods; both new methods then failed incorrect atStart expectations. The lower-range extension probe now requires completeness, while the maximum-id probe requires conservative atStart.",
+    "Attempt 2 passed 13 methods and exposed a lost received gap anchor. Attempt 3 passed both new probes but exposed predecessor-gap deletion in two retained regressions. Historical failures remain failed.",
+    "The ordinary owned-row class initially passed 5/6: its old expected span kept entry 3 after removing the only binding. The assertion now requires that entry absent and checks unrelated evidence exactly; rollback/retry, proof and completeness checks remain.",
+    "Formatting initially stopped before test execution (0 executed); the raw diagnostic is retained. A preliminary two-class merge check was refused by selection policy, then narrowed to the migration class; that refused invocation is not a test pass.",
+    "The historical migration timeout remains in rework-results.json. Main’s reviewed #2260 cleanup fix was merged in 2af42c53f. This repair did not ignore assertions or raise timeouts.",
+    "Complete configured JVM, UI and scripted acceptance is pending with the dispatcher/verifier. Documentation updates are pending with the documentation stage. Other operating systems are outside scope."
+  ]
+}
