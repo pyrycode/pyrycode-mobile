@@ -195,6 +195,17 @@ really advances virtual time. When adding a finite watchdog or timeout, drive on
 the intended deadline with `advanceTimeBy(...)` followed by `runCurrent()`;
 `advanceUntilIdle()` also advances newly armed watchdogs.
 
+With real Room I/O, a scheduler drain cannot acknowledge snapshot acceptance (#2291).
+`CachingConversationRepository.observeThreadSnapshot` can suspend on history reading before
+publication, and its collector receives publication before `ThreadWriter.accept` runs. In
+`OwnedLegacyCoverageConcurrencyTest`, await the exact snapshot's `Source.afterEmission` callback:
+the source's `emit` returns only after the repository collector finishes acceptance. A `first()`
+capture aborts emission before that callback, so it cannot accidentally acknowledge the live
+reader. This establishes acceptance, not row commit or evidence-write success; observe those
+operations separately. Keep deliberate read/publication holds to prove delivery and scheduler
+drains cannot satisfy the acceptance signal. Release all holds and join owned saves/readers in
+`finally` before closing Room. See [owned coverage acceptance probes and counted Linux evidence](conversation-cache-testing.md#owned-coverage-snapshot-acceptance-2291).
+
 Compose's `waitUntil` uses a wall-clock deadline while advancing the Compose clock
 one frame per poll. A fixture's virtual timer can therefore remain unfinished at
 timeout under constrained scheduling. In the delayed rename regression (#2014),

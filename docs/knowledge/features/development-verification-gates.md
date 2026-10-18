@@ -361,7 +361,11 @@ segments. Check the component gaps and line boxes separately within one pixel
 so a permissive total cannot hide a spacing regression. The
 [thread geometry examples](thread-screen-testing-coverage.md#testing) retain 97dp and
 60dp totals with measured two-pixel allowances; integral-density checks remain
-exact even with that allowance.
+exact even with that allowance. The [reader coordinate checks](markdown-reader-screen-testing.md#fractional-density-coordinate-coverage-2292)
+show that even adjacent-block totals can accumulate several text-line and internal-gap
+roundings. Their local two-pixel bound has separate constituent checks and a boundary
+control tied to the same allowance constant, rejecting three pixels and preserving
+the default one-pixel bound.
 The device also ignores `@Config` qualifiers and Robolectric's 320dp width,
 draws text with its own font, and runs at that density: a test that needs a
 412dp frame forces it with `ForcedSize`, scales pixel samples by the composition's
