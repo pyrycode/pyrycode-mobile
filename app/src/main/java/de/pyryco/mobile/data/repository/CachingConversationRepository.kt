@@ -160,10 +160,10 @@ class CachingConversationRepository(
 
         // Called sequentially on the processing dispatcher; disk work never holds this path.
         fun accept(drawn: DrawnThread) {
-            owned += drawn.rows.map { it.legacyRowKey() }
             val cacheable = cacheableThreadRows(drawn.rows)
             if (cache is OwnedLegacyCache) {
                 val present = drawn.rows.mapTo(HashSet()) { it.legacyRowKey() }
+                owned += present
                 // Losing an unsettled row or excluding it at a disconnect never authorizes removal.
                 cacheableThreadRows(previousRows).forEach { row ->
                     val key = row.legacyRowKey()
@@ -196,7 +196,7 @@ class CachingConversationRepository(
                 CacheCandidate(
                     drawn,
                     cacheable,
-                    owned = owned.toSet(),
+                    owned = if (cache is OwnedLegacyCache) owned.toSet() else emptySet(),
                     rowGenerations = rowGenerations.toMap(),
                     removedGenerations = removedGenerations.toMap(),
                 )

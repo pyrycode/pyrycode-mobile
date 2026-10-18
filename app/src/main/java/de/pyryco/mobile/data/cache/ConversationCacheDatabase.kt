@@ -47,7 +47,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
                     db.execSQL(
                         "UPDATE legacy_rows SET ordinal=?,identity=? WHERE host=? AND conversation=? AND ordinal=?",
                         arrayOf<Any?>(
-                            (-cursor.getLong(2) - 1) * LEGACY_ORDINAL_STEP,
+                            (-cursor.getLong(2)) * LEGACY_ORDINAL_STEP,
                             identity,
                             cursor.getString(0),
                             cursor.getString(1),
@@ -56,7 +56,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
                     )
                 }
             }
-            db.execSQL("UPDATE legacy_evidence SET ordinal=ordinal*4294967296 WHERE ordinal>=0")
+            db.execSQL("UPDATE legacy_evidence SET ordinal=(ordinal+1)*4294967296 WHERE ordinal>=0")
             db.execSQL(
                 "UPDATE legacy_headers SET rowCount=(SELECT COUNT(*) FROM legacy_rows r WHERE r.host=legacy_headers.host AND r.conversation=legacy_headers.conversation)",
             )

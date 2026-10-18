@@ -380,7 +380,7 @@ class AuthoritativeRoomStorageTest {
                 "held-payload",
                 requireNotNull(database)
                     .legacy()
-                    .rows("Host", "thread", 1, 1)
+                    .rows("Host", "thread", Long.MAX_VALUE, 1)
                     .single()
                     .payload,
             )

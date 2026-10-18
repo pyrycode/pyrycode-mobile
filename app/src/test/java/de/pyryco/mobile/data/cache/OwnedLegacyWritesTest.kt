@@ -249,6 +249,40 @@ class OwnedLegacyWritesTest {
             assertFalse(saved.atStart)
         }
 
+    @Test fun pagingInvariant_prependedRowsKeepValidEvidenceReadable() =
+        runTest {
+            val cache = open()
+            val rows = (1..4).map { row(it) }
+            cache.readThread("Host", "c")
+            cache.writeThread("Host", "c", rows).getOrThrow()
+            val order =
+                rows.associate {
+                    it.historyKeys().first() to
+                        it.message.id
+                            .removePrefix("id-")
+                            .toULong()
+                }
+            val coverage =
+                HistoryCoverage(
+                    unsignedSpans = listOf(UnsignedHistorySpan(1u, 4u)),
+                    unsignedRowOrder = order,
+                    unsignedRowEntries = order.mapValues { setOf(it.value) },
+                    proofs = historyRowProofs(rows),
+                )
+            cache.writeHistoryPosition("Host", "c", HistoryPosition("saved", false, coverage)).getOrThrow()
+            val added = (10..12).map { row(it) }
+            val before = rows.first().legacyRowKey()
+            val changes =
+                added.mapIndexed { index, item ->
+                    OwnedLegacyRow(item, added.getOrNull(index - 1)?.legacyRowKey(), before)
+                }
+            cache.mutateLegacyRows("Host", "c", changes, emptySet()).getOrThrow()
+            val page = requireNotNull(cache.newestLegacyPage("Host", "c", 6))
+            assertEquals(added.drop(1) + rows, page.rows)
+            assertTrue("owned prepends must not make valid page evidence unreadable", page.evidence != null)
+            assertEquals(coverage.proofs, page.evidence?.proofs)
+        }
+
     @Test fun retentionInvariant_discardedContentCannotRemainCertified() =
         runTest {
             val cache = open()

@@ -50,6 +50,7 @@ No new scopes, flows or jobs. Collection-owned writer, coalesced pending slot an
 | Held write followed by confirmed deletion/forgetting | `OwnedLegacyConcurrencyTest.retirementInvariant_removalWinsHeldWritesAndRestart` |
 | Existing version-3 storage upgraded | `OwnedLegacyMigrationTest.migrationInvariant_existingRowsGainOwnedIndexWithoutChangingHeldOrder` |
 | Unsettled replacement, disconnect and a different settled row | `OwnedLegacyWritesTest.settlementInvariant_unsettledRowCannotRemoveSavedIdentity` |
+| Owned prepends and valid page evidence | `OwnedLegacyWritesTest.pagingInvariant_prependedRowsKeepValidEvidenceReadable` |
 
 ## Error handling
 
@@ -99,3 +100,9 @@ The strengthened settlement probe also failed when a saved identity became unset
 The migration probe's second insertion into the same held gap exposed immediate ordinal exhaustion when the first insert used the next integer. Placement now divides available space among the pending rows sharing that older boundary, retaining space on either side for later owned changes without moving existing ordinals. Restored identity indexes initialize lazily during worker acceptance, after cached first draw, preserving the existing processing boundary.
 
 The shared-producing-claims probe passed rollback but exposed unreadable split intervals after the successful retry: the strict unsigned codec rejects quoted ids. New span and gap cells now serialize `UnsignedHistorySpan` and `UnsignedHistoryGap` through `MobileJson`, retaining the canonical unquoted unsigned representation instead of assembling numeric JSON by hand. The probe preserves an unaffected producing row while splitting the affected interval, and requires readable evidence after reopen.
+
+### 2026-10-18: processing budget and page prefixes
+
+The existing `CachedThreadWorkerTest.cachePolicyInvariant_100000LiveRowsAreFilteredOnlyAfterMainDelivery` detected a doubled traversal for replacement caches. Ownership traversal and its lazy restore index are now used only when the cache supplies the owned-write capability; the original assertion stays unchanged.
+
+The prepend probe exposed a collision between negative held positions and the global evidence sentinel at ordinal -1. A page spanning that position selected global cells as row-bound evidence and withheld otherwise valid evidence. Prefix allocation now divides positive free space, and the migration maps old ordinal zero to the first positive slot, superseding the zero-preserving detail above. Row and evidence ordinals migrate together. The existing authoritative migration fixture queries its held payload without assuming physical ordinal zero. The owned migration probe prepends before the migrated first row and preserves the other host and untouched held ordinal.

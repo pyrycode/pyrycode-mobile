@@ -88,6 +88,13 @@ class OwnedLegacyMigrationTest {
                     .mutateLegacyRows(
                         "Host",
                         "c",
+                        listOf(OwnedLegacyRow(row(6), null, rows.first().legacyRowKey())),
+                        emptySet(),
+                    ).getOrThrow()
+                cache
+                    .mutateLegacyRows(
+                        "Host",
+                        "c",
                         listOf(
                             OwnedLegacyRow(changed, null, row(2).legacyRowKey()),
                             OwnedLegacyRow(row(4), changed.legacyRowKey(), row(2).legacyRowKey()),
@@ -108,10 +115,10 @@ class OwnedLegacyMigrationTest {
             try {
                 val db = reopened
                 val cache = MigratingConversationCache(File(temporary.root, "files"), db, Dispatchers.IO)
-                assertEquals(listOf(changed, row(5), row(4), row(2)), cache.readThread("Host", "c"))
+                assertEquals(listOf(row(6), changed, row(5), row(4), row(2)), cache.readThread("Host", "c"))
                 assertEquals(rows, cache.readThread("host", "c"))
                 val held = requireNotNull(db.legacy().ownedRow("Host", "c", row(2).legacyRowKey()))
-                assertEquals(2 * LEGACY_ORDINAL_STEP, held.ordinal)
+                assertEquals(3 * LEGACY_ORDINAL_STEP, held.ordinal)
                 assertEquals(encodeLegacyRow(row(2)), held.payload)
                 assertEquals(
                     cachedThreadRowProof(row(2)),

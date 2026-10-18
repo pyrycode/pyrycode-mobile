@@ -196,7 +196,9 @@ class LegacyRoomStorage internal constructor(
                             before != null -> {
                                 val previous = dao.probe(host, conversation, before).singleOrNull()
                                 if (previous == null) {
-                                    Math.subtractExact(before, LEGACY_ORDINAL_STEP * reserve)
+                                    // Global evidence occupies -1; held rows use positive positions.
+                                    require(before > reserve)
+                                    before / (reserve + 1)
                                 } else {
                                     require(before - previous > reserve)
                                     previous + (before - previous) / (reserve + 1)
