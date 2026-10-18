@@ -239,7 +239,8 @@ class OwnedLegacyCoverageTest {
                     val ids = listOf(1uL, 2uL, 3uL, 10uL) + (5..size).map { it.toULong() * 2u + 20u }
                     val order = rows.zip(ids).associate { (row, id) -> row.historyKeys().first() to id }
                     val spans = listOf(UnsignedHistorySpan(1u, 3u)) + ids.drop(3).map { UnsignedHistorySpan(it, it) }
-                    val gaps = listOf(UnsignedHistoryGap(2u, 10u)) + spans.drop(1).zipWithNext { a, b -> UnsignedHistoryGap(a.last, b.first) }
+                    val gaps =
+                        listOf(UnsignedHistoryGap(2u, 10u)) + spans.drop(1).zipWithNext { a, b -> UnsignedHistoryGap(a.last, b.first) }
                     val evidence =
                         HistoryCoverage(
                             unsignedSpans = spans,
@@ -266,13 +267,22 @@ class OwnedLegacyCoverageTest {
                     repository.readHistoryPosition("c")
                     val changed = row(1, "changed")
                     source.snapshots.value =
-                        if (remove) ThreadSnapshot(emptyList(), suppressedUserMessageIds = setOf("id-1")) else ThreadSnapshot(listOf(changed))
+                        if (remove) {
+                            ThreadSnapshot(
+                                emptyList(),
+                                suppressedUserMessageIds = setOf("id-1"),
+                            )
+                        } else {
+                            ThreadSnapshot(listOf(changed))
+                        }
                     val expectedRows = if (remove) rows.drop(1) else listOf(changed) + rows.drop(1)
                     queries.clear()
                     repository.writeHistoryPosition("c", initial)
                     val statements = synchronized(queries) { queries.toList() }.filter { it.contains("legacy_", true) }
                     val work = cache.legacyMutationCounts to statements.size
-                    println("owned_gap_subtraction saved_rows=$size removal=$remove counts=${work.first} storage_sql_statements=${work.second}")
+                    println(
+                        "owned_gap_subtraction saved_rows=$size removal=$remove counts=${work.first} storage_sql_statements=${work.second}",
+                    )
                     if (size == 20) counts[remove] = work else assertEquals("bounded relevant evidence work", counts[remove], work)
                     assertFalse(statements.any { it.startsWith("SELECT * FROM legacy_rows", true) && !it.contains("identity=") })
                     assertFalse(statements.any { it.contains("FROM legacy_evidence WHERE host=? AND conversation=? ORDER BY") })
@@ -331,7 +341,14 @@ class OwnedLegacyCoverageTest {
                 repository.observeThreadSnapshot("c").first()
                 repository.readHistoryPosition("c")
                 source.snapshots.value =
-                    if (remove) ThreadSnapshot(emptyList(), suppressedUserMessageIds = setOf("id-2")) else ThreadSnapshot(listOf(row(2, "changed")))
+                    if (remove) {
+                        ThreadSnapshot(
+                            emptyList(),
+                            suppressedUserMessageIds = setOf("id-2"),
+                        )
+                    } else {
+                        ThreadSnapshot(listOf(row(2, "changed")))
+                    }
                 repeat(2) { repository.writeHistoryPosition("c", initial) }
                 val retained = requireNotNull(open(name).readHistoryPosition("Host", "c")?.coverage)
                 assertEquals(listOf(UnsignedHistoryGap(1u, 3u), UnsignedHistoryGap(3u, 10u)), retained.unsignedGaps)

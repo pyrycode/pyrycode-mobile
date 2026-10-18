@@ -343,11 +343,6 @@ class LegacyRoomStorage internal constructor(
             val gaps = dao.intervals(host, conversation, "gaps", span.low, span.high)
             lastMutationCounts =
                 lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + gaps.size + listOfNotNull(older, newer).size)
-            for (gap in gaps) {
-                dao.removeCell(host, conversation, gap.kind, gap.key, gap.part)
-                dao.removeCell(host, conversation, "walks", gap.low.toULong().toString(), 0)
-            }
-            dao.removeCell(host, conversation, "spans", span.key, span.part)
             val low = span.low.toULong()
             val high = span.high.toULong()
             val pieces =
@@ -356,12 +351,22 @@ class LegacyRoomStorage internal constructor(
                     if (entry < high) add(entry + 1u to high)
                 }
             val inserted = pieces.map { (first, last) -> intervalCell(host, conversation, "spans", first, last) }
-            dao.insertEvidence(inserted)
             val neighbours = listOfNotNull(older) + inserted + listOfNotNull(newer)
-            val repaired = neighbours.zipWithNext { a, b -> intervalCell(host, conversation, "gaps", a.high.toULong(), b.low.toULong()) }
+            val repaired =
+                neighbours.zipWithNext { a, b ->
+                    val previous = gaps.firstOrNull { it.high == b.low && it.low >= a.low && it.low <= a.high }
+                    intervalCell(host, conversation, "gaps", (previous?.low ?: a.high).toULong(), b.low.toULong())
+                }
+            val invalidWalks = gaps.filter { gap -> repaired.none { it.low == gap.low && it.high == gap.high } }
+            gaps.forEach { dao.removeCell(host, conversation, it.kind, it.key, it.part) }
+            invalidWalks.forEach { dao.removeCell(host, conversation, "walks", it.low.toULong().toString(), 0) }
+            dao.removeCell(host, conversation, "spans", span.key, span.part)
+            dao.insertEvidence(inserted)
             dao.insertEvidence(repaired)
             lastMutationCounts =
-                lastMutationCounts.copy(evidenceWrites = lastMutationCounts.evidenceWrites + gaps.size + 1 + inserted.size + repaired.size)
+                lastMutationCounts.copy(
+                    evidenceWrites = lastMutationCounts.evidenceWrites + gaps.size + invalidWalks.size + 1 + inserted.size + repaired.size,
+                )
         }
     }
 

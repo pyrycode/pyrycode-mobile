@@ -77,6 +77,7 @@ Pending for documentation stage: update owned coverage, evidence/removal and fai
 **Verdict:** PASS
 
 - Trust boundaries: MUST FIX addressed in design. Received metadata must be checked against committed exact-owner row/delta/fragment proofs; unchanged stale input cannot restore invalidated producers. Producer-loss cells retain every invalidated sibling identity, so recovery validates unchanged relevant claims too, including losses created by the current evidence transaction. Withdrawals collect the connected producing entries before removing bindings; additive claims with unchanged binding preserve sibling evidence. Retention without a producing claim has its own durable scalar fence; incremental evidence cannot discharge that unidentified loss.
+- Received gap progress: producer subtraction preserves a previously received anchor/walk only while its anchor belongs to the retained older span and its edge is the adjacent newer span's start. Invalid anchors/edges lose their walks. This preserves unrelated received facts without restoring invalidated producer certification.
 - Tokens/secrets: no credential or key handling is added. Opaque daemon cursors remain private metadata, excluded from diagnostics.
 - Files/storage: reuse app-private no-backup Room and its sidecars, exact SQL owner predicates, existing import ledger and transactions. No caller-controlled filesystem paths or change to the accepted plaintext conversation-cache threat model.
 - Android attack surface: no manifest, component, intent, provider, WebView or UI change.
