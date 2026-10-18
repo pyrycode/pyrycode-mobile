@@ -124,6 +124,7 @@ class CachingConversationRepository(
         val authoritative: SavedAuthoritativeThread? = null,
         val storeGeneration: Long = 0,
         val authoritativeBaseline: SavedAuthoritativeThread? = null,
+        val authoritativeOrderMoves: Map<Long, AuthoritativeOrderMove> = emptyMap(),
     )
 
     private inner class ThreadWriter(
@@ -187,6 +188,7 @@ class CachingConversationRepository(
                     authoritative = saved,
                     storeGeneration = snapshot.generation,
                     authoritativeBaseline = initialAuthoritative,
+                    authoritativeOrderMoves = snapshot.orderMoves,
                 )
             schedule(candidate, immediate = snapshot.generation > (previous?.storeGeneration ?: 0))
         }
@@ -256,6 +258,7 @@ class CachingConversationRepository(
                                 emptyList(),
                                 authoritative = snapshot.toSavedAuthoritativeThread(),
                                 storeGeneration = snapshot.generation,
+                                authoritativeOrderMoves = snapshot.orderMoves,
                             ),
                         )
                     }
@@ -282,6 +285,7 @@ class CachingConversationRepository(
                         emptyList(),
                         authoritative = current.toSavedAuthoritativeThread(),
                         storeGeneration = current.generation,
+                        authoritativeOrderMoves = current.orderMoves,
                     )
             }
             val saved = selected.authoritative ?: return null
@@ -308,9 +312,22 @@ class CachingConversationRepository(
                                         ?.takeIf { !reset && it.epoch == saved.epoch }
                                 val previous = baseline?.items?.associateBy { it["id"] }.orEmpty()
                                 val changed = saved.items.filter { it != previous[it["id"]] }
-                                val certify =
-                                    baseline == null || saved.checkpoint != baseline.checkpoint || saved.coverage != baseline.coverage
-                                owned.upsertAuthoritativeThread(serverId, conversationId, saved.copy(items = changed), reset, certify)
+                                val moves =
+                                    changed
+                                        .mapNotNull { raw ->
+                                            val id = raw.getValue("id").toString().toLong()
+                                            val move = selected.authoritativeOrderMoves[id]
+                                            val priorRevision = previous[raw["id"]]?.get("rev")?.toString()?.toLong() ?: 0
+                                            move?.takeIf { it.revision > priorRevision }?.let { id to it.before }
+                                        }.toMap()
+                                owned.upsertAuthoritativeThread(
+                                    serverId,
+                                    conversationId,
+                                    saved.copy(items = changed),
+                                    reset,
+                                    baseline?.copy(items = emptyList()),
+                                    moves,
+                                )
                             }
                         }
                     if (result.isSuccess) persistedAuthoritative[conversationId] = selected
@@ -385,6 +402,7 @@ class CachingConversationRepository(
                 emptyList(),
                 authoritative = snapshot.toSavedAuthoritativeThread(),
                 storeGeneration = snapshot.generation,
+                authoritativeOrderMoves = snapshot.orderMoves,
             )
         return withContext(NonCancellable) {
             historyWrites.withLock {

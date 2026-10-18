@@ -104,7 +104,8 @@ class AuthoritativeRoomStorage internal constructor(
         conversation: String,
         saved: SavedAuthoritativeThread,
         reset: Boolean,
-        certify: Boolean,
+        baseline: SavedAuthoritativeThread?,
+        orderMoves: Map<Long, Boolean>,
     ): Result<Unit> =
         mutate("upsert_authoritative") {
             lastWriteCounts = WriteCounts()
@@ -141,9 +142,14 @@ class AuthoritativeRoomStorage internal constructor(
                         }
                     if (held != null && item.rev <= held.rev) null else item to record
                 }
+
             // Stable sort keeps movers from below a tie before it, and movers from above after it.
             // Reserve scalar ordinals only for changed facts; unrelated ordinals never move.
-            val beforeCount = changes.count { (item, record) -> record != null && orderKey(item) > record.orderKey }
+            fun joinsBefore(
+                item: ThreadItemDto,
+                record: AuthoritativeItem?,
+            ): Boolean = orderMoves[item.id] ?: (record != null && orderKey(item) > record.orderKey)
+            val beforeCount = changes.count { (item, record) -> joinsBefore(item, record) }
             var beforeOrdinal =
                 if (beforeCount == 0) {
                     0
@@ -156,9 +162,9 @@ class AuthoritativeRoomStorage internal constructor(
             var maximumOrdinal: Int? = null
             for ((item, record) in changes) {
                 val ordinal =
-                    if (record != null && orderKey(item) == record.orderKey) {
+                    if (record != null && item.id !in orderMoves && orderKey(item) == record.orderKey) {
                         record.ordinal
-                    } else if (record != null && orderKey(item) > record.orderKey) {
+                    } else if (joinsBefore(item, record)) {
                         beforeOrdinal++
                     } else {
                         run {
@@ -184,8 +190,18 @@ class AuthoritativeRoomStorage internal constructor(
                 lastWriteCounts = lastWriteCounts.copy(itemDeletes = lastWriteCounts.itemDeletes + trimmed)
             }
             val applied = maxOf(saved.appliedVersion, previous?.appliedVersion ?: 0)
+            // Completion can inherit a certificate whose required facts retention already removed.
+            // Advancing metadata alone never restores those prerequisites.
             val acceptCertificate =
-                previous == null || (certify && saved.appliedVersion >= previous.appliedVersion && saved.checkpoint >= previous.checkpoint)
+                previous == null ||
+                    (
+                        baseline != null &&
+                            baseline.epoch == previous.epoch &&
+                            baseline.checkpoint == previous.checkpoint &&
+                            baseline.coverage == previous.coverage &&
+                            saved.appliedVersion >= previous.appliedVersion &&
+                            saved.checkpoint >= previous.checkpoint
+                    )
             val checkpoint =
                 if (trimmed > 0) {
                     0

@@ -11,6 +11,8 @@ import de.pyryco.mobile.data.cache.SavedAuthoritativeThread
 import de.pyryco.mobile.data.cache.SavedThreadCoverage
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.network.ThreadQueryReply
+import de.pyryco.mobile.data.network.ThreadQueryRequest
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelAndJoin
@@ -337,6 +339,159 @@ class AuthoritativeOwnedUpsertTest {
             assertEquals(210_001L, restored.appliedVersion)
             assertEquals(0L, restored.checkpoint)
             assertNull(restored.coverage)
+
+            // Completion inherits coverage for the trimmed fact; metadata changes cannot repair it.
+            val checkpoint =
+                ThreadQueryReply.Checkpoint(
+                    MobileJson.parseToJsonElement("""{"conversation_id":"c","epoch":"e","version":210001}""").jsonObject,
+                )
+            for ((request, coverage) in listOf(
+                ThreadQueryRequest.CatchUp("c", "e", 190_000uL) to ThreadQueryReply.Coverage.CatchUp(190_000uL),
+                ThreadQueryRequest.Page("c", 1uL) to ThreadQueryReply.Coverage.Window(0uL, 1uL, 0uL, false),
+            )) {
+                observer = observe(repo)
+                assertEquals(
+                    AuthoritativeThreadOutcome.Applied,
+                    repo.authoritativeThreads.certifyQuery(
+                        "host",
+                        request,
+                        ThreadQueryReply.Success(JsonObject(emptyMap()), checkpoint, coverage),
+                        0,
+                    ),
+                )
+                runCurrent()
+                observer.cancelAndJoin()
+                assertWork(cache, 0, 0)
+                assertEquals(210_001L, repo.authoritativeThreads.current("host", "c").checkpoint)
+                if (request is ThreadQueryRequest.Page) {
+                    assertEquals(
+                        0uL,
+                        repo.authoritativeThreads
+                            .current("host", "c")
+                            .coverage
+                            ?.lowerOrder,
+                    )
+                }
+                assertEquals(restored, fresh())
+                val reopened = wrapper(PartialCache(cache)).observeAuthoritativeThread("c").first()
+                assertEquals(0L, reopened.checkpoint)
+                assertNull(reopened.coverage)
+            }
+
+            // A fresh conservative baseline can certify a newly supplied, fully durable window.
+            val recovery = wrapper(PartialCache(cache))
+            observer = observe(recovery)
+            assertEquals(
+                AuthoritativeThreadOutcome.Applied,
+                recovery.authoritativeThreads.certifyQuery(
+                    "host",
+                    ThreadQueryRequest.CatchUp("c", "e", 0uL),
+                    ThreadQueryReply.Success(
+                        JsonObject(emptyMap()),
+                        checkpoint,
+                        ThreadQueryReply.Coverage.Window(99_802uL, 100_001uL, 99_802uL, true),
+                    ),
+                    0,
+                ),
+            )
+            runCurrent()
+            observer.cancelAndJoin()
+            assertWork(cache, 0, 0)
+            assertEquals(restored.copy(checkpoint = 210_001, coverage = SavedThreadCoverage(99_802, 100_001, 99_802, true)), fresh())
+        }
+
+    @Test fun retentionInvariant_coverageCompletionCannotReinstateTrimmedRange() =
+        runTest {
+            val cache = open()
+            val original = saved((1..MAX_CACHED_THREAD_ROWS).map { raw(it) }, 200_000).copy(checkpoint = 0)
+            cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
+            val repo = wrapper(PartialCache(cache))
+            var observer = observe(repo)
+            apply(repo, 210_000, raw(100_001, 210_000))
+            runCurrent()
+            observer.cancelAndJoin()
+            assertWork(cache, 0, 1, 1)
+            observer = observe(repo)
+            val checkpoint =
+                ThreadQueryReply.Checkpoint(
+                    MobileJson.parseToJsonElement("""{"conversation_id":"c","epoch":"e","version":210000}""").jsonObject,
+                )
+            assertEquals(
+                AuthoritativeThreadOutcome.Applied,
+                repo.authoritativeThreads.certifyQuery(
+                    "host",
+                    ThreadQueryRequest.Page("c", 1uL),
+                    ThreadQueryReply.Success(JsonObject(emptyMap()), checkpoint, ThreadQueryReply.Coverage.Window(0uL, 1uL, 0uL, false)),
+                    0,
+                ),
+            )
+            runCurrent()
+            observer.cancelAndJoin()
+            assertWork(cache, 0, 0)
+            assertEquals(0L, repo.authoritativeThreads.current("host", "c").checkpoint)
+            assertEquals(
+                0uL,
+                repo.authoritativeThreads
+                    .current("host", "c")
+                    .coverage
+                    ?.lowerOrder,
+            )
+            assertEquals(
+                original.copy(items = original.items.drop(1) + raw(100_001, 210_000), appliedVersion = 210_000, coverage = null),
+                fresh(),
+            )
+            val reopened = wrapper(open()).observeAuthoritativeThread("c").first()
+            assertEquals(0L, reopened.checkpoint)
+            assertNull(reopened.coverage)
+        }
+
+    @Test fun orderingInvariant_coalescedMovesPreserveFinalTies() =
+        runTest {
+            for ((initialOrder, deliverIntermediate) in listOf(10 to true, 20 to true, 10 to false, 20 to false)) {
+                val cache = open()
+                cache
+                    .writeAuthoritativeThread(
+                        "host",
+                        "c",
+                        saved(listOf(raw(1, order = initialOrder), raw(2, order = 20), raw(3, order = 20), raw(4, order = 40))),
+                    ).getOrThrow()
+                val before = ordinals()
+                val repo = wrapper(cache)
+                val observer = observe(repo)
+                val fullReads = cache.authoritativeFullReads
+                apply(repo, 21_000, raw(1, 21_000, 30))
+                if (deliverIntermediate) runCurrent()
+                apply(repo, 21_001, raw(1, 21_001, 20))
+                runCurrent()
+                val expected =
+                    repo.authoritativeThreads
+                        .current("host", "c")
+                        .items
+                        .map { it.raw }
+                assertEquals(listOf(raw(2, order = 20), raw(3, order = 20), raw(1, 21_001, 20), raw(4, order = 40)), expected)
+                advanceTimeBy(101)
+                runCurrent()
+                observer.cancelAndJoin()
+                assertWork(cache, 1, 1)
+                assertEquals(fullReads, cache.authoritativeFullReads)
+                assertEquals(before.filterKeys { it != 1L }, ordinals().filterKeys { it != 1L })
+                assertEquals(expected, fresh()?.items)
+                var page = requireNotNull(cache.newestAuthoritativePage("host", "c", 1))
+                var walked = page.items
+                while (page.continuation != null) {
+                    page = requireNotNull(cache.beforeAuthoritativePage("host", "c", requireNotNull(page.continuation), 1))
+                    walked = page.items + walked
+                }
+                assertEquals(expected, walked)
+                assertEquals(
+                    expected,
+                    wrapper(open())
+                        .observeAuthoritativeThread("c")
+                        .first()
+                        .items
+                        .map { it.raw },
+                )
+            }
         }
 
     @Test fun orderingInvariant_repeatedMovesIntoTiesOnlyRewriteMovedFacts() =
@@ -385,9 +540,10 @@ class AuthoritativeOwnedUpsertTest {
                         conversationId: String,
                         saved: SavedAuthoritativeThread,
                         reset: Boolean,
-                        certify: Boolean,
+                        baseline: SavedAuthoritativeThread?,
+                        orderMoves: Map<Long, Boolean>,
                     ): Result<Unit> {
-                        val result = cache.upsertAuthoritativeThread(serverId, conversationId, saved, reset, certify)
+                        val result = cache.upsertAuthoritativeThread(serverId, conversationId, saved, reset, baseline, orderMoves)
                         if (hold) {
                             committed.complete(Unit)
                             release.await()
@@ -459,14 +615,14 @@ class AuthoritativeOwnedUpsertTest {
             val cache = open { if (fail) throw IOException("private") }
             assertNull(cache.readAuthoritativeThread("host", "c"))
             fail = false
-            val rejected = cache.upsertAuthoritativeThread("host", "c", original.copy(items = listOf(raw(3))), false, true)
+            val rejected = cache.upsertAuthoritativeThread("host", "c", original.copy(items = listOf(raw(3))), false, original, emptyMap())
             assertTrue(rejected.isFailure)
             assertTrue(rejected.exceptionOrNull()?.message?.endsWith("import_unobserved") == true)
             assertNull(rejected.exceptionOrNull()?.cause)
             assertEquals(original, fresh())
             val restarted = open()
             restarted.removeHost("host").getOrThrow()
-            val retired = restarted.upsertAuthoritativeThread("host", "c", original, false, true)
+            val retired = restarted.upsertAuthoritativeThread("host", "c", original, false, original, emptyMap())
             assertTrue(retired.exceptionOrNull()?.message?.endsWith("host_retired") == true)
             assertNull(fresh())
         }

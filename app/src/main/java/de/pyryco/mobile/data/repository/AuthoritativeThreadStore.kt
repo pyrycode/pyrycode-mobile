@@ -26,9 +26,16 @@ internal data class AuthoritativeThreadSnapshot(
     val generation: Long = 0,
     val coverage: AuthoritativeThreadCoverage? = null,
     val pendingSends: List<AuthoritativePendingSend> = emptyList(),
+    val orderMoves: Map<Long, AuthoritativeOrderMove> = emptyMap(),
 ) {
     override fun toString(): String = "AuthoritativeThreadSnapshot(content=***)"
 }
+
+/** Runtime evidence of the last accepted move, retained even when snapshots are conflated. */
+internal data class AuthoritativeOrderMove(
+    val revision: Long,
+    val before: Boolean,
+)
 
 /** Certified continuous ordered history; parent/active extras do not contribute to this range. */
 internal data class AuthoritativeThreadCoverage(
@@ -429,8 +436,19 @@ internal class AuthoritativeThreadStore {
         conversation: String,
         snapshot: AuthoritativeThreadSnapshot,
     ) {
+        val previous = current(host, conversation)
+        val sameGeneration = previous.generation == snapshot.generation && previous.epoch == snapshot.epoch
+        val held = if (sameGeneration) previous.items.associateBy { it.id } else emptyMap()
+        val moves = if (sameGeneration) previous.orderMoves.toMutableMap() else mutableMapOf()
+        snapshot.items.forEach { item ->
+            held[item.id]?.let { old ->
+                val oldOrder = old.order?.takeIf { it > 0 } ?: Long.MAX_VALUE
+                val newOrder = item.order?.takeIf { it > 0 } ?: Long.MAX_VALUE
+                if (oldOrder != newOrder) moves[item.id] = AuthoritativeOrderMove(item.rev, before = newOrder > oldOrder)
+            }
+        }
         val unresolved = snapshot.pendingSends.filterNot { pending -> snapshot.items.any { it.matchesPending(pending) } }
         if (unresolved.size != snapshot.pendingSends.size) RelayLog.i { "event=thread_send code=settled" }
-        snapshots.value = snapshots.value + ((host to conversation) to snapshot.copy(pendingSends = unresolved))
+        snapshots.value = snapshots.value + ((host to conversation) to snapshot.copy(pendingSends = unresolved, orderMoves = moves.toMap()))
     }
 }

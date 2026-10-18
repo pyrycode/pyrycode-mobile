@@ -115,10 +115,11 @@ internal class MigratingConversationCache(
         conversationId: String,
         saved: SavedAuthoritativeThread,
         reset: Boolean,
-        certify: Boolean,
+        baseline: SavedAuthoritativeThread?,
+        orderMoves: Map<Long, Boolean>,
     ): Result<Unit> =
         write(serverId, conversationId, AUTHORITATIVE, "upsert_authoritative") {
-            authoritative.upsertAuthoritativeThread(serverId, conversationId, saved, reset, certify)
+            authoritative.upsertAuthoritativeThread(serverId, conversationId, saved, reset, baseline, orderMoves)
         }
 
     /** Bounded pages, imported first so no page reader can bypass the saved file (#2068 activates readers). */
