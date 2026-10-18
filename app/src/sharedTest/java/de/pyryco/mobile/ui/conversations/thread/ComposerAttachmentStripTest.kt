@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.net.Uri
+import android.os.Looper
 import android.view.View
 import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.activity.result.ActivityResultRegistry
@@ -12,6 +13,8 @@ import androidx.activity.result.ActivityResultRegistryOwner
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -20,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
@@ -45,12 +49,18 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -65,8 +75,10 @@ import kotlin.math.abs
 /** #933: the composer's attachment picker, strip, removal, send enablement and per-chat strips. */
 @RunWith(AndroidJUnit4::class)
 class ComposerAttachmentStripTest {
+    // IO completion must queue its return; the default unconfined rule can resume effects on IO.
+    @OptIn(ExperimentalTestApi::class)
     @get:Rule
-    val composeRule = createComposeRule()
+    val composeRule = createComposeRule(effectContext = StandardTestDispatcher())
 
     @get:Rule val pasteFiles = TemporaryFolder()
 
@@ -172,6 +184,48 @@ class ComposerAttachmentStripTest {
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun ownedJpegThumbnail_appliesExifRotationAndMirroringWithoutTheOriginalProvider() {
         assertOrientedThumbnail(7, listOf(Color.YELLOW, Color.GREEN, Color.BLUE, Color.RED))
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun thumbnailEffect_returnsFromIoAndDisposesOnTheViewThread() {
+        val enteredIo = CompletableDeferred<Unit>()
+        val finishIo = CompletableDeferred<Unit>()
+        val resumedOn = CompletableDeferred<Looper?>()
+        val disposedOn = CompletableDeferred<Looper?>()
+        var mounted by mutableStateOf(true)
+        composeRule.setContent {
+            if (mounted) {
+                val root = LocalView.current.rootView
+                DisposableEffect(Unit) {
+                    onDispose { disposedOn.complete(Looper.myLooper()) }
+                }
+                LaunchedEffect(Unit) {
+                    // Hold the same return boundary as rememberThumbnail until the UI caller has suspended.
+                    withContext(Dispatchers.IO) {
+                        enteredIo.complete(Unit)
+                        finishIo.await()
+                    }
+                    resumedOn.complete(Looper.myLooper())
+                    root.requestLayout()
+                }
+            }
+        }
+        try {
+            runBlocking { withTimeout(5_000) { enteredIo.await() } }
+            finishIo.complete(Unit)
+            composeRule.waitUntil(5_000) { resumedOn.isCompleted }
+            composeRule.runOnIdle { mounted = false }
+            composeRule.waitForIdle()
+            assertSame("IO return must own the view thread", Looper.getMainLooper(), runBlocking { resumedOn.await() })
+            assertSame(
+                "Disposal must own the view thread",
+                Looper.getMainLooper(),
+                runBlocking { withTimeout(5_000) { disposedOn.await() } },
+            )
+        } finally {
+            finishIo.complete(Unit)
+        }
     }
 
     private fun assertOrientedThumbnail(

@@ -1,0 +1,197 @@
+{
+  "operatingSystem": "Linux x86_64",
+  "acceptanceRevision": "4ab23d2c24babf00ed072697bd51331a612dc157",
+  "redLayoutRevision": "72acc7c96b84e32a5535c87f4ea407488403b485",
+  "invocations": {
+    "baseline": {
+      "command": [
+        "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2265/scripts/gradle-gate.py",
+        ":app:testDebugUnitTest",
+        "--rerun",
+        "--console=plain",
+        "--no-daemon",
+        "-Pkotlin.compiler.execution.strategy=in-process",
+        "--tests",
+        "de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest.ownedJpegThumbnail_appliesExifRotationWithoutTheOriginalProvider"
+      ],
+      "exitCode": 0,
+      "gradleTaskOutcome": "EXECUTED",
+      "reusedGradleResult": false,
+      "executedInReport": 1,
+      "executedThisInvocation": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "red-io-return": {
+      "command": [
+        "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2265/scripts/gradle-gate.py",
+        ":app:testDebugUnitTest",
+        "--rerun",
+        "--console=plain",
+        "--no-daemon",
+        "-Pkotlin.compiler.execution.strategy=in-process",
+        "--tests",
+        "de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest.thumbnailEffect_returnsFromIoAndDisposesOnTheViewThread"
+      ],
+      "exitCode": 1,
+      "gradleTaskOutcome": "EXECUTED",
+      "reusedGradleResult": false,
+      "executedInReport": 1,
+      "executedThisInvocation": 1,
+      "skipped": 0,
+      "failed": 1
+    },
+    "red-layout": {
+      "command": [
+        "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2265/scripts/gradle-gate.py",
+        ":app:testDebugUnitTest",
+        "--rerun",
+        "--console=plain",
+        "--no-daemon",
+        "-Pkotlin.compiler.execution.strategy=in-process",
+        "--tests",
+        "de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest.thumbnailEffect_returnsFromIoAndDisposesOnTheViewThread"
+      ],
+      "exitCode": 1,
+      "gradleTaskOutcome": "EXECUTED",
+      "reusedGradleResult": false,
+      "executedInReport": 1,
+      "executedThisInvocation": 1,
+      "skipped": 0,
+      "failed": 1
+    },
+    "green-regression": {
+      "command": [
+        "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2265/scripts/gradle-gate.py",
+        ":app:testDebugUnitTest",
+        "--rerun",
+        "--console=plain",
+        "--no-daemon",
+        "-Pkotlin.compiler.execution.strategy=in-process",
+        "--tests",
+        "de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest.thumbnailEffect_returnsFromIoAndDisposesOnTheViewThread"
+      ],
+      "exitCode": 0,
+      "gradleTaskOutcome": "EXECUTED",
+      "reusedGradleResult": false,
+      "executedInReport": 1,
+      "executedThisInvocation": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "class": {
+      "command": [
+        "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2265/scripts/gradle-gate.py",
+        ":app:testDebugUnitTest",
+        "--rerun",
+        "--console=plain",
+        "--no-daemon",
+        "-Pkotlin.compiler.execution.strategy=in-process",
+        "--tests",
+        "de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest"
+      ],
+      "exitCode": 0,
+      "gradleTaskOutcome": "EXECUTED",
+      "reusedGradleResult": false,
+      "executedInReport": 18,
+      "executedThisInvocation": 18,
+      "skipped": 0,
+      "failed": 0
+    },
+    "exact-1": {
+      "command": [
+        "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2265/scripts/gradle-gate.py",
+        ":app:testDebugUnitTest",
+        "--rerun",
+        "--console=plain",
+        "--no-daemon",
+        "-Pkotlin.compiler.execution.strategy=in-process",
+        "--tests",
+        "de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest.ownedJpegThumbnail_appliesExifRotationWithoutTheOriginalProvider"
+      ],
+      "exitCode": 0,
+      "gradleTaskOutcome": "EXECUTED",
+      "reusedGradleResult": false,
+      "executedInReport": 1,
+      "executedThisInvocation": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "exact-2": {
+      "command": [
+        "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2265/scripts/gradle-gate.py",
+        ":app:testDebugUnitTest",
+        "--rerun",
+        "--console=plain",
+        "--no-daemon",
+        "-Pkotlin.compiler.execution.strategy=in-process",
+        "--tests",
+        "de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest.ownedJpegThumbnail_appliesExifRotationWithoutTheOriginalProvider"
+      ],
+      "exitCode": 0,
+      "gradleTaskOutcome": "EXECUTED",
+      "reusedGradleResult": false,
+      "executedInReport": 1,
+      "executedThisInvocation": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "exact-3": {
+      "command": [
+        "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2265/scripts/gradle-gate.py",
+        ":app:testDebugUnitTest",
+        "--rerun",
+        "--console=plain",
+        "--no-daemon",
+        "-Pkotlin.compiler.execution.strategy=in-process",
+        "--tests",
+        "de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest.ownedJpegThumbnail_appliesExifRotationWithoutTheOriginalProvider"
+      ],
+      "exitCode": 0,
+      "gradleTaskOutcome": "EXECUTED",
+      "reusedGradleResult": false,
+      "executedInReport": 1,
+      "executedThisInvocation": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "exact-4": {
+      "command": [
+        "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2265/scripts/gradle-gate.py",
+        ":app:testDebugUnitTest",
+        "--rerun",
+        "--console=plain",
+        "--no-daemon",
+        "-Pkotlin.compiler.execution.strategy=in-process",
+        "--tests",
+        "de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest.ownedJpegThumbnail_appliesExifRotationWithoutTheOriginalProvider"
+      ],
+      "exitCode": 0,
+      "gradleTaskOutcome": "EXECUTED",
+      "reusedGradleResult": false,
+      "executedInReport": 1,
+      "executedThisInvocation": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "exact-5": {
+      "command": [
+        "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2265/scripts/gradle-gate.py",
+        ":app:testDebugUnitTest",
+        "--rerun",
+        "--console=plain",
+        "--no-daemon",
+        "-Pkotlin.compiler.execution.strategy=in-process",
+        "--tests",
+        "de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest.ownedJpegThumbnail_appliesExifRotationWithoutTheOriginalProvider"
+      ],
+      "exitCode": 0,
+      "gradleTaskOutcome": "EXECUTED",
+      "reusedGradleResult": false,
+      "executedInReport": 1,
+      "executedThisInvocation": 1,
+      "skipped": 0,
+      "failed": 0
+    }
+  }
+}
