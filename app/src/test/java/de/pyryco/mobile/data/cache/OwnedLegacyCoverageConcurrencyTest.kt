@@ -27,8 +27,10 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -72,6 +74,140 @@ class OwnedLegacyCoverageConcurrencyTest {
     @After fun close() {
         database?.close()
     }
+
+    private fun pendingKeys(repository: CachingConversationRepository): Set<String> {
+        val field = CachingConversationRepository::class.java.getDeclaredField("acceptedRows")
+        field.isAccessible = true
+        val conversations = field.get(repository) as Map<*, *>
+        return (conversations["c"] as? Map<*, *>)
+            ?.keys
+            .orEmpty()
+            .map { it.toString() }
+            .toSet()
+    }
+
+    @Test fun intentInvariant_successPrunesOnlySatisfiedRows() =
+        runTest {
+            for (coverage in listOf(false, true)) {
+                val failAt = AtomicInteger()
+                val cache =
+                    open("intent-$coverage") {
+                        if (failAt.get() > 0 && failAt.decrementAndGet() == 0) throw IOException("controlled")
+                    }
+                val initial = listOf(row(1))
+                cache.readThread("Host", "c")
+                cache.writeThread("Host", "c", initial).getOrThrow()
+                cache.writeHistoryPosition("Host", "c", position(initial)).getOrThrow()
+                val source = Source()
+                val worker = UnconfinedTestDispatcher(testScheduler)
+                val repository = CachingConversationRepository(source, cache, "Host", processingDispatcher = worker)
+                val restored = CompletableDeferred<Unit>()
+                val accepted = CompletableDeferred<Unit>()
+                source.afterEmission = { if (it.rows == initial + row(2)) accepted.complete(Unit) }
+                val reader =
+                    backgroundScope.launch(worker) {
+                        repository.observeThreadSnapshot("c").collect {
+                            restored.complete(Unit)
+                        }
+                    }
+                restored.await()
+                source.snapshots.value = ThreadSnapshot(initial + row(2))
+                accepted.await()
+                runCurrent()
+                assertEquals(setOf(row(2).legacyRowKey()), pendingKeys(repository))
+                if (coverage) {
+                    failAt.set(2) // Successful rows retire intents even when the evidence transaction fails.
+                    repository.writeHistoryPosition("c", position(initial + row(2)))
+                    assertTrue(pendingKeys(repository).isEmpty())
+                    assertEquals(position(initial), cache.readHistoryPosition("Host", "c"))
+                }
+                reader.cancelAndJoin() // Ordinary success and final flush share the same pruning boundary.
+                assertTrue("successful $coverage writer retained satisfied payloads", pendingKeys(repository).isEmpty())
+                assertEquals(initial + row(2), cache.readThread("Host", "c"))
+            }
+        }
+
+    @Test fun intentInvariant_rowFailureKeepsRetryableWork() =
+        runTest {
+            val fail = AtomicBoolean()
+            val cache = open { if (fail.get()) throw IOException("controlled") }
+            cache.readThread("Host", "c")
+            val source = Source()
+            val worker = UnconfinedTestDispatcher(testScheduler)
+            val repository = CachingConversationRepository(source, cache, "Host", processingDispatcher = worker)
+            val restored = CompletableDeferred<Unit>()
+            val reader = backgroundScope.launch(worker) { repository.observeThreadSnapshot("c").collect { restored.complete(Unit) } }
+            restored.await()
+            source.snapshots.value = ThreadSnapshot(listOf(row(1)))
+            runCurrent()
+            fail.set(true)
+            repository.writeHistoryPosition("c", position(listOf(row(1))))
+            assertEquals(setOf(row(1).legacyRowKey()), pendingKeys(repository))
+            assertTrue(cache.readThread("Host", "c").isEmpty())
+            fail.set(false)
+            repository.writeHistoryPosition("c", position(listOf(row(1))))
+            assertTrue(pendingKeys(repository).isEmpty())
+            reader.cancelAndJoin()
+            assertEquals(listOf(row(1)), open().readThread("Host", "c"))
+        }
+
+    @Test fun intentInvariant_concurrentAcceptanceSurvivesOlderSuccess() =
+        runTest {
+            for ((coverage, replace) in listOf(false to false, true to false, false to true, true to true)) {
+                val name = "concurrent-intent-$coverage-$replace"
+                val cache = open(name)
+                cache.readThread("Host", "c")
+                val entered = CompletableDeferred<Unit>()
+                val release = CompletableDeferred<Unit>()
+                val returned = CompletableDeferred<Unit>()
+                val once = AtomicBoolean(true)
+                val intercepted =
+                    object : ConversationCache by cache, OwnedLegacyCoverageCache by cache {
+                        override suspend fun mutateLegacyRows(
+                            host: String,
+                            conversation: String,
+                            upserts: List<OwnedLegacyRow>,
+                            removed: Set<String>,
+                        ): Result<Unit> {
+                            val result = cache.mutateLegacyRows(host, conversation, upserts, removed)
+                            if (once.compareAndSet(true, false)) {
+                                entered.complete(Unit)
+                                release.await()
+                                returned.complete(Unit)
+                            }
+                            return result
+                        }
+                    }
+                val source = Source()
+                val worker = UnconfinedTestDispatcher(testScheduler)
+                val repository = CachingConversationRepository(source, intercepted, "Host", processingDispatcher = worker)
+                val restored = CompletableDeferred<Unit>()
+                val reader = backgroundScope.launch(worker) { repository.observeThreadSnapshot("c").collect { restored.complete(Unit) } }
+                restored.await()
+                source.snapshots.value = ThreadSnapshot(listOf(row(1)))
+                runCurrent()
+                val save = if (coverage) async { repository.writeHistoryPosition("c", position(listOf(row(1)))) } else null
+                if (!coverage) {
+                    advanceTimeBy(101)
+                    runCurrent()
+                }
+                entered.await()
+                val newer = listOf(row(1, if (replace) "newer" else "text-1"), row(2))
+                source.snapshots.value = ThreadSnapshot(newer)
+                runCurrent()
+                assertEquals(setOf(row(1).legacyRowKey(), row(2).legacyRowKey()), pendingKeys(repository))
+                release.complete(Unit)
+                returned.await()
+                save?.await()
+                yield()
+                runCurrent()
+                val pending = if (replace) newer else newer.drop(1)
+                assertEquals(pending.mapTo(HashSet()) { it.legacyRowKey() }, pendingKeys(repository))
+                reader.cancelAndJoin()
+                assertTrue(pendingKeys(repository).isEmpty())
+                assertEquals(newer, open(name).readThread("Host", "c"))
+            }
+        }
 
     @Test fun captureInvariant_firstSnapshotCleanupCannotRenewOldCoverage() =
         runTest {
@@ -168,8 +304,15 @@ class OwnedLegacyCoverageConcurrencyTest {
         ThreadSnapshotSource {
         val snapshots = MutableStateFlow(ThreadSnapshot(emptyList()))
         var capture: ThreadSnapshot? = null
+        var afterEmission: (ThreadSnapshot) -> Unit = {}
 
-        override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> = capture?.let { flowOf(it) } ?: snapshots
+        override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
+            capture?.let { flowOf(it) } ?: flow {
+                snapshots.collect {
+                    emit(it)
+                    afterEmission(it)
+                }
+            }
 
         override suspend fun delete(conversationId: String) = Unit
     }

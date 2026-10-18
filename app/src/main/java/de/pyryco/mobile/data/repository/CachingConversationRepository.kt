@@ -132,6 +132,18 @@ class CachingConversationRepository(
 
     private val acceptedRows = ConcurrentHashMap<String, ConcurrentHashMap<String, AcceptedLegacyRow>>()
 
+    private fun retireAcceptedRows(
+        conversationId: String,
+        through: Long,
+    ) {
+        acceptedRows.computeIfPresent(conversationId) { _, intents ->
+            intents.forEach { (key, intent) ->
+                if (intent.capture <= through) intents.remove(key, intent)
+            }
+            intents.takeIf { it.isNotEmpty() }
+        }
+    }
+
     private data class CacheCandidate(
         val drawn: DrawnThread,
         val cacheable: List<ThreadItem>,
@@ -222,18 +234,25 @@ class CachingConversationRepository(
                     removedGenerations = removedGenerations.toMap(),
                 )
             if (cache is OwnedLegacyCoverageCache) {
-                val intents = acceptedRows.computeIfAbsent(conversationId) { ConcurrentHashMap() }
                 val keys = cacheable.map { it.legacyRowKey() }
-                cacheable.forEachIndexed { index, row ->
-                    val capture = rowGenerations[keys[index]] ?: return@forEachIndexed
-                    if (capture <= (persisted?.generation ?: 0)) return@forEachIndexed
-                    val intent =
-                        AcceptedLegacyRow(capture, index, OwnedLegacyRow(row, keys.getOrNull(index - 1), keys.getOrNull(index + 1)))
-                    intents.compute(keys[index]) { _, old -> if (old != null && old.capture >= capture) old else intent }
-                }
-                removedGenerations.forEach { (key, capture) ->
-                    val intent = AcceptedLegacyRow(capture, Int.MAX_VALUE, null)
-                    intents.compute(key) { _, old -> if (old != null && old.capture >= capture) old else intent }
+                acceptedRows.compute(conversationId) { _, held ->
+                    val intents = held ?: ConcurrentHashMap()
+                    // Acceptance can race success publication; use the current fence inside the same map operation as pruning.
+                    val fence = persistedThreads[conversationId]?.generation ?: 0
+                    cacheable.forEachIndexed { index, row ->
+                        val capture = rowGenerations[keys[index]] ?: return@forEachIndexed
+                        if (capture <= fence) return@forEachIndexed
+                        val intent =
+                            AcceptedLegacyRow(capture, index, OwnedLegacyRow(row, keys.getOrNull(index - 1), keys.getOrNull(index + 1)))
+                        intents.compute(keys[index]) { _, old -> if (old != null && old.capture >= capture) old else intent }
+                    }
+                    removedGenerations.forEach { (key, capture) ->
+                        if (capture > fence) {
+                            val intent = AcceptedLegacyRow(capture, Int.MAX_VALUE, null)
+                            intents.compute(key) { _, old -> if (old != null && old.capture >= capture) old else intent }
+                        }
+                    }
+                    intents.takeIf { it.isNotEmpty() }
                 }
             }
             schedule(candidate)
@@ -332,6 +351,7 @@ class CachingConversationRepository(
                                     successful,
                                     candidate.drawn.generation,
                                 )
+                            retireAcceptedRows(conversationId, candidate.drawn.generation)
                         }
                         result
                     }
@@ -713,6 +733,7 @@ class CachingConversationRepository(
                                 (persistedThreads[conversationId]?.coverageRevision ?: 0) + 1,
                                 if (owned == null) cacheable else applyOwnedRows(baseline.values.toList(), changes, removed),
                             )
+                        retireAcceptedRows(conversationId, satisfied)
                     }
                     result
                 }
