@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onParent
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,7 +47,7 @@ class MarkdownTypographyTest {
             }
         }
         assertBody(16, 24, 12f, 6f, quoteStyle = FontStyle.Normal, inlineMarkers = true)
-        assertSpecialStyles(codeSize = 13)
+        assertSpecialStyles(codeSize = 12)
     }
 
     @Test
@@ -61,6 +62,7 @@ class MarkdownTypographyTest {
             }
         }
         assertBody(16, 24, 12f, 6f, quoteStyle = FontStyle.Normal, inlineMarkers = true)
+        assertSpecialStyles(codeSize = 12)
     }
 
     @Test
@@ -214,7 +216,13 @@ class MarkdownTypographyTest {
     }
 
     private fun assertSpecialStyles(codeSize: Int = 14) {
-        for ((text, size, height) in listOf(Triple("Heading", 20, 28), Triple("Cell", 14, 20), Triple("val x = 1", codeSize, 20))) {
+        for ((text, size, height) in listOf(
+            Triple("Heading", 20, 28),
+            Triple("Cell", 14, 20),
+            Triple("val x = 1", codeSize, 20),
+            Triple("bare code", codeSize, 20),
+            Triple("indented code", codeSize, 20),
+        )) {
             val style =
                 rule
                     .onNodeWithText(text, useUnmergedTree = true)
@@ -222,6 +230,7 @@ class MarkdownTypographyTest {
                     .layoutInput.style
             assertEquals(text, size.sp, style.fontSize)
             assertEquals(text, height.sp, style.lineHeight)
+            if (text != "Heading" && text != "Cell") assertEquals(text, FontFamily.Monospace, style.fontFamily)
         }
     }
 
@@ -262,6 +271,12 @@ class MarkdownTypographyTest {
         ```kotlin
         val x = 1
         ```
+
+        ```
+        bare code
+        ```
+
+            indented code
 
         End
         """.trimIndent()

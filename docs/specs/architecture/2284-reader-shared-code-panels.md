@@ -47,3 +47,8 @@ Write assertions first and observe focused failures before changing production. 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-18
+
+## Revisions
+
+- 2026-10-18: Retain the three requested focused Linux JUnit reports under `app/src/test/resources/reader-code-panels-2284/` as raw review evidence (52 executed, 0 failed, 0 skipped). These are evidence files, not new test inputs or screenshot goldens. Remaining focused regression reports stay in the build evidence bundle.
+- 2026-10-18: Native shared tests measured the reused `CodeBlock` two-line fixture at 58dp because its existing text style trims the outer line boxes. The removed reader panel enforced a 64dp minimum. Update the fixture's height and following quote position to the shared component's existing geometry; retain the 12sp/20sp role, 16dp/12dp padding, theme colours, border and corners without changing thread/tool rendering. The clipboard-bound fixture must scroll to the bottom copy control before activating it, as an operator would; retaining the original full-text assertion proves the bound after that interaction.
