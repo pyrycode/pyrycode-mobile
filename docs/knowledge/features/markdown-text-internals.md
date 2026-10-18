@@ -31,7 +31,12 @@ The parse is keyed on the `markdown` string itself — the AST is rebuilt only w
 | `CODE_BLOCK` | Reader indented block: `ReaderCodeBlock`; thread: `CodeBlock`. Both use extracted source text. |
 | _else_ | `Text(node.getTextInNode(source).trim(), style = style.body)` — fallback |
 
-`Column` arrangements use `style.blockSpacing` between top-level blocks and recursively inside list items and quotes; sibling list items use `style.listItemSpacing`. Thread defaults are 16dp between blocks and 4dp between sibling items (#2273); the reader explicitly supplies 12dp and 6dp. Gaps come from the columns, not per-element padding, so the first and last blocks align with the renderer bounds without added outer spacing. Measure code-block gaps against the code surface, including its internal padding, rather than against the code text.
+`Column` arrangements use `style.blockSpacing` between top-level blocks and recursively inside list items and quotes; sibling list items use `style.listItemSpacing`. Thread defaults are 16dp between blocks and 4dp between sibling items (#2273); the reader explicitly supplies 16dp and 6dp (#2285). Gaps come from the columns, not per-element padding, so the first and last blocks align with the renderer bounds without added outer spacing. Measure code-block gaps against the code surface, including its internal padding, rather than against the code text. A one-line plain panel has a 44dp visible surface
+inside Material’s 48dp minimum interactive layout; the reader bounds fixture uses
+the reference’s two-line panel to exceed that minimum and fill the measured block.
+Keep exact 16dp gap assertions rather than compensating for the touch-target inset.
+Reader outer padding remains measured-bar-plus-28dp / 20dp gutters / 16dp bottom;
+heading-specific 20/12dp integration belongs to #2278/#2276.
 
 ATX headings use the [markdown-only scale](shared-typography.md#markdown-headings) and
 `onSecondaryContainer` in both presentations, retaining inline link colours and code spans.
@@ -291,4 +296,4 @@ private val TaskMarkCornerRadius = 3.dp
 private val TaskMarkTopInset = 4.dp   // sits the mark on the first text line, not the item's top edge
 ```
 
-Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256`; see [Tables](#tables)) — `internal` since #1067, the rest of this list stays file-private. Block spacing comes from `MarkdownTextStyle`, not a file-private constant: the message default is 16dp and the reader supplies its own 12dp. Text sizes use `MaterialTheme.typography` roles; the thread code role overrides line height to 20sp.
+Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256`; see [Tables](#tables)) — `internal` since #1067, the rest of this list stays file-private. Block spacing comes from `MarkdownTextStyle`, not a file-private constant: the message default is 16dp and the reader explicitly supplies 16dp, with 6dp sibling-item gaps. Text sizes use `MaterialTheme.typography` roles; the thread code role overrides line height to 20sp.
