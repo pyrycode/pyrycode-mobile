@@ -37,6 +37,7 @@ internal class MigratingConversationCache(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val beforeCommit: suspend () -> Unit = {},
 ) : ConversationCache,
+    AuthoritativeUpsertCache,
     OwnedLegacyCache {
     private val files = FileConversationCache(root, ioDispatcher)
     private val legacy = LegacyRoomStorage(database, ioDispatcher, beforeCommit)
@@ -112,6 +113,22 @@ internal class MigratingConversationCache(
     ): Result<Unit> =
         write(serverId, conversationId, AUTHORITATIVE, "write_authoritative") {
             authoritative.writeAuthoritativeThread(serverId, conversationId, saved)
+        }
+
+    internal val authoritativeWriteCounts get() = authoritative.lastWriteCounts
+    internal val authoritativeFullReads get() = authoritative.fullReads
+    internal val authoritativeReplacements get() = authoritative.replacements
+
+    override suspend fun upsertAuthoritativeThread(
+        serverId: String,
+        conversationId: String,
+        saved: SavedAuthoritativeThread,
+        reset: Boolean,
+        baseline: SavedAuthoritativeThread?,
+        orderMoves: Map<Long, Boolean>,
+    ): Result<Unit> =
+        write(serverId, conversationId, AUTHORITATIVE, "upsert_authoritative") {
+            authoritative.upsertAuthoritativeThread(serverId, conversationId, saved, reset, baseline, orderMoves)
         }
 
     /** Bounded pages, imported first so no page reader can bypass the saved file (#2068 activates readers). */

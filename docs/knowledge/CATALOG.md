@@ -247,3 +247,5 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 - [Thread screen — saved-thread first-draw testing](features/thread-screen-testing-saved-first-draw.md): committed-frame contract, bounded readiness/sampling cancellation and #2143 comparison evidence.
 - [Thread screen — saved-thread first-draw comparisons](features/thread-screen-testing-saved-first-draw-comparisons.md): historical allocation, restore and projection comparisons with retained misses; split for #2143.
 - [Thread screen — inline question rows and reveal](features/thread-screen-inline-question-reveal.md): question rows, prompt growth masking and shared reveal ownership; split from the list/status overview for #1985.
+
+- [Caching conversation repository — wiring](features/caching-conversation-repository-wiring.md): composition under `decorateRepository`, attachment bindings and context-free test containers; split for #2255.

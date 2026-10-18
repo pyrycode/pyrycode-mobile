@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.cache
 
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase.AuthoritativeHeader
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase.AuthoritativeItem
+import de.pyryco.mobile.data.cache.ConversationCacheDatabase.AuthoritativePosition
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ThreadItemDto
@@ -28,7 +29,7 @@ class AuthoritativeThreadPage internal constructor(
 ) {
     override fun toString(): String = "AuthoritativeThreadPage(items=${items.size}, redacted)"
 
-    /** Family-specific local ordinal; never a server continuation or a portable full snapshot. */
+    /** Family-specific local rank; never a server continuation or a portable full snapshot. */
     class Continuation internal constructor(
         internal val host: String,
         internal val conversation: String,
@@ -62,16 +63,36 @@ class AuthoritativeRoomStorage internal constructor(
     internal var lastReadCounts = ReadCounts()
         private set
 
+    internal data class WriteCounts(
+        val itemReads: Int = 0,
+        val itemDecodes: Int = 0,
+        val inputDecodes: Int = 0,
+        val itemSerializations: Int = 0,
+        val itemWrites: Int = 0,
+        val itemDeletes: Int = 0,
+        val headerWrites: Int = 0,
+        val ordinalReads: Int = 0,
+        val ordinalWrites: Int = 0,
+    )
+
+    internal var lastWriteCounts = WriteCounts()
+        private set
+    internal var fullReads = 0
+        private set
+    internal var replacements = 0
+        private set
+
     suspend fun readAuthoritativeThread(
         serverId: String,
         conversationId: String,
     ): SavedAuthoritativeThread? =
         read("read_authoritative") {
+            fullReads++
             val header = header(serverId, conversationId) ?: return@read null
             val saved = metadata(header)
             val records = dao.items(serverId, conversationId, header.epoch, Int.MAX_VALUE, MAX_CACHED_THREAD_ROWS + 1).asReversed()
             require(records.size == header.itemCount)
-            saved.copy(items = decode(records, saved, 0))
+            saved.copy(items = decode(records, saved))
         }
 
     suspend fun writeAuthoritativeThread(
@@ -80,12 +101,175 @@ class AuthoritativeRoomStorage internal constructor(
         saved: SavedAuthoritativeThread,
     ): Result<Unit> = mutate("write_authoritative") { importThread(serverId, conversationId, saved) }
 
+    /** Only changed payloads cross the codec boundary; omission never deletes a fact. */
+    internal suspend fun upsertAuthoritativeThread(
+        host: String,
+        conversation: String,
+        saved: SavedAuthoritativeThread,
+        reset: Boolean,
+        baseline: SavedAuthoritativeThread?,
+        orderMoves: Map<Long, Boolean>,
+    ): Result<Unit> =
+        mutate("upsert_authoritative") {
+            lastWriteCounts = WriteCounts()
+            val incoming = saved.toSnapshot().items
+            lastWriteCounts = lastWriteCounts.copy(inputDecodes = incoming.size)
+            val previousHeader = dao.header(host, conversation)
+            val retire = reset || (previousHeader != null && previousHeader.epoch != saved.epoch)
+            if (retire) {
+                dao.deleteItems(host, conversation)
+                lastWriteCounts = lastWriteCounts.copy(itemDeletes = previousHeader?.itemCount ?: 0)
+            }
+            val header = previousHeader?.takeUnless { retire }
+            val previous = header?.let { metadata(it) }
+            val positions = mutableMapOf<Long, AuthoritativePosition>()
+            val rejected = mutableSetOf<Long>()
+            val changes =
+                incoming.mapNotNull { item ->
+                    val record = dao.item(host, conversation, saved.epoch, item.id)
+                    val held =
+                        record?.let {
+                            lastWriteCounts =
+                                lastWriteCounts.copy(
+                                    itemReads = lastWriteCounts.itemReads + 1,
+                                    itemDecodes = lastWriteCounts.itemDecodes + 1,
+                                )
+                            val raw = MobileJson.parseToJsonElement(it.payload).jsonObject
+                            val decoded =
+                                requireNotNull(previous)
+                                    .copy(items = listOf(raw))
+                                    .toSnapshot()
+                                    .items
+                                    .single()
+                            require(it.id == decoded.id && it.orderKey == orderKey(decoded))
+                            require(decoded.kind == item.kind)
+                            positions[item.id] = AuthoritativePosition(it.id, it.ordinal, it.orderKey)
+                            decoded
+                        }
+                    if (held != null && (item.rev < held.rev || (item.rev == held.rev && item.raw != held.raw))) rejected += item.id
+                    if (held != null && item.rev <= held.rev) null else item to record
+                }
+
+            // Placement is independent of payload revisions. Keep accepted blocks together, including
+            // unchanged live peers restored ahead of saved ties. Correct blocks need no ordinal writes.
+            val moving = orderMoves.filterKeys { it !in rejected }.toMutableMap()
+            changes.forEach { (item, record) ->
+                if (record == null ||
+                    orderKey(item) != record.orderKey
+                ) {
+                    moving.putIfAbsent(item.id, record != null && orderKey(item) > record.orderKey)
+                }
+            }
+            for (id in moving.keys) {
+                if (id !in positions) {
+                    dao.position(host, conversation, saved.epoch, id)?.let { positions[id] = it }
+                    lastWriteCounts = lastWriteCounts.copy(ordinalReads = lastWriteCounts.ordinalReads + 1)
+                }
+            }
+            val changed = changes.associate { it.first.id to it.first }
+            val groups =
+                moving.entries.filter { it.key in positions || it.key in changed }.groupBy {
+                    (changed[it.key]?.let(::orderKey) ?: positions.getValue(it.key).orderKey) to it.value
+                }
+            val assigned = mutableMapOf<Long, Int>()
+            var minimum: Int? = null
+            var maximum: Int? = null
+            for ((placement, entries) in groups) {
+                val (order, before) = placement
+                val held = entries.mapNotNull { positions[it.key]?.takeIf { position -> position.orderKey == order }?.ordinal }
+                if (held.size == entries.size && held.zipWithNext().all { (a, b) -> a < b }) {
+                    val count = dao.tieSideCount(host, conversation, saved.epoch, order, if (before) held.last() else held.first(), before)
+                    lastWriteCounts = lastWriteCounts.copy(ordinalReads = lastWriteCounts.ordinalReads + 1)
+                    if (count == entries.size) continue
+                }
+                val edge =
+                    if (before) {
+                        minimum ?: (dao.minimumOrdinal(host, conversation, saved.epoch) ?: 0).also {
+                            lastWriteCounts = lastWriteCounts.copy(ordinalReads = lastWriteCounts.ordinalReads + 1)
+                        }
+                    } else {
+                        maximum ?: (dao.maximumOrdinal(host, conversation, saved.epoch) ?: -1).also {
+                            lastWriteCounts = lastWriteCounts.copy(ordinalReads = lastWriteCounts.ordinalReads + 1)
+                        }
+                    }
+                val first = if (before) edge.toLong() - entries.size else edge.toLong() + 1
+                require(first >= Int.MIN_VALUE && first + entries.size - 1 <= Int.MAX_VALUE)
+                entries.forEachIndexed { index, entry -> assigned[entry.key] = (first + index).toInt() }
+                if (before) minimum = first.toInt() else maximum = (first + entries.size - 1).toInt()
+            }
+            var added = 0
+            for ((item, record) in changes) {
+                val ordinal = assigned[item.id] ?: requireNotNull(record).ordinal
+                if (record == null) added++
+                dao.upsertItem(AuthoritativeItem(host, conversation, saved.epoch, item.id, ordinal, orderKey(item), item.raw.toString()))
+                lastWriteCounts =
+                    lastWriteCounts.copy(
+                        itemSerializations = lastWriteCounts.itemSerializations + 1,
+                        itemWrites = lastWriteCounts.itemWrites + 1,
+                    )
+            }
+            for ((id, ordinal) in assigned) {
+                if (id in changed) continue
+                dao.moveItem(host, conversation, saved.epoch, id, ordinal)
+                lastWriteCounts = lastWriteCounts.copy(ordinalWrites = lastWriteCounts.ordinalWrites + 1)
+            }
+            val count = (header?.itemCount ?: 0) + added
+            val trimmed = (count - MAX_CACHED_THREAD_ROWS).coerceAtLeast(0)
+            if (trimmed > 0) {
+                dao.trimItems(host, conversation, saved.epoch, trimmed)
+                lastWriteCounts = lastWriteCounts.copy(itemDeletes = lastWriteCounts.itemDeletes + trimmed)
+            }
+            val applied = maxOf(saved.appliedVersion, previous?.appliedVersion ?: 0)
+            // Completion can inherit a certificate whose required facts retention already removed.
+            // Advancing metadata alone never restores those prerequisites.
+            val acceptCertificate =
+                previous == null ||
+                    (
+                        baseline != null &&
+                            baseline.epoch == previous.epoch &&
+                            baseline.checkpoint == previous.checkpoint &&
+                            baseline.coverage == previous.coverage &&
+                            saved.appliedVersion >= previous.appliedVersion &&
+                            saved.checkpoint >= previous.checkpoint
+                    )
+            val checkpoint =
+                if (trimmed > 0) {
+                    0
+                } else if (acceptCertificate) {
+                    saved.checkpoint
+                } else {
+                    previous?.checkpoint ?: 0
+                }
+            val coverage =
+                if (trimmed > 0) {
+                    null
+                } else if (acceptCertificate) {
+                    saved.coverage
+                } else {
+                    previous?.coverage
+                }
+            dao.upsertHeader(
+                AuthoritativeHeader(
+                    host,
+                    conversation,
+                    saved.epoch,
+                    UUID.randomUUID().toString(),
+                    applied,
+                    checkpoint,
+                    coverage?.let { MobileJson.encodeToString(it) },
+                    count - trimmed,
+                ),
+            )
+            lastWriteCounts = lastWriteCounts.copy(headerWrites = 1)
+        }
+
     /** #2161: also a file import's replacement inside the caller's transaction, so its completion marker commits with it. */
     internal suspend fun importThread(
         serverId: String,
         conversationId: String,
         saved: SavedAuthoritativeThread,
     ) {
+        replacements++
         val kept = saved.retained()
         val records =
             kept.toSnapshot().items.mapIndexed { ordinal, item ->
@@ -154,10 +338,10 @@ class AuthoritativeRoomStorage internal constructor(
             val records = dao.items(host, conversation, header.epoch, before, count).asReversed()
             require(records.size == count)
             val first = before - count
-            val items = decode(records, saved, first)
+            val items = decode(records, saved)
             val probe = dao.probe(host, conversation, header.epoch, first)
             lastReadCounts = lastReadCounts.copy(ordinalReads = probe.size)
-            require(probe == if (first > 0) listOf(first - 1) else emptyList<Int>())
+            require(probe.size == if (first > 0) 1 else 0)
             val continuation =
                 if (probe.isEmpty()) {
                     null
@@ -207,7 +391,6 @@ class AuthoritativeRoomStorage internal constructor(
     private fun decode(
         records: List<AuthoritativeItem>,
         saved: SavedAuthoritativeThread,
-        first: Int,
     ): List<JsonObject> {
         lastReadCounts = lastReadCounts.copy(itemReads = records.size)
         val raw =
@@ -217,8 +400,9 @@ class AuthoritativeRoomStorage internal constructor(
             }
         val decoded = saved.copy(items = raw).toSnapshot().items
         require(decoded.map { it.raw } == raw)
-        records.zip(decoded).forEachIndexed { offset, (record, item) ->
-            require(record.id == item.id && record.ordinal == first + offset && record.orderKey == orderKey(item))
+        require(records.map { it.ordinal }.distinct().size == records.size)
+        records.zip(decoded).forEach { (record, item) ->
+            require(record.id == item.id && record.orderKey == orderKey(item))
         }
         return raw
     }

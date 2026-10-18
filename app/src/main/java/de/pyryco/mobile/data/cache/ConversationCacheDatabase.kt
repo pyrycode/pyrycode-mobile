@@ -10,6 +10,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.Upsert
 import androidx.room.migration.AutoMigrationSpec
 import androidx.room.withTransaction
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -139,8 +140,49 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         override fun toString(): String = "AuthoritativeItem(redacted)"
     }
 
+    internal data class AuthoritativePosition(
+        val id: Long,
+        val ordinal: Int,
+        val orderKey: Long,
+    ) {
+        override fun toString(): String = "AuthoritativePosition(redacted)"
+    }
+
     @Dao
     internal interface AuthoritativeDao {
+        @Query(
+            "SELECT id,ordinal,orderKey FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id=:id",
+        )
+        suspend fun position(
+            host: String,
+            conversation: String,
+            epoch: String,
+            id: Long,
+        ): AuthoritativePosition?
+
+        @Query(
+            "SELECT COUNT(*) FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND orderKey=:orderKey AND ((:before AND ordinal<=:edge) OR (NOT :before AND ordinal>=:edge))",
+        )
+        suspend fun tieSideCount(
+            host: String,
+            conversation: String,
+            epoch: String,
+            orderKey: Long,
+            edge: Int,
+            before: Boolean,
+        ): Int
+
+        @Query(
+            "UPDATE authoritative_items SET ordinal=:ordinal WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id=:id",
+        )
+        suspend fun moveItem(
+            host: String,
+            conversation: String,
+            epoch: String,
+            id: Long,
+            ordinal: Int,
+        )
+
         @Query("SELECT * FROM authoritative_headers WHERE host=:host AND conversation=:conversation")
         suspend fun header(
             host: String,
@@ -148,7 +190,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         ): AuthoritativeHeader?
 
         @Query(
-            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND ordinal<:before ORDER BY ordinal DESC LIMIT :limit",
+            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id IN (SELECT id FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch ORDER BY orderKey DESC,ordinal DESC LIMIT :limit OFFSET MAX(0,(SELECT itemCount FROM authoritative_headers WHERE host=:host AND conversation=:conversation)-:before)) ORDER BY orderKey DESC,ordinal DESC",
         )
         suspend fun items(
             host: String,
@@ -159,7 +201,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         ): List<AuthoritativeItem>
 
         @Query(
-            "SELECT ordinal FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND ordinal<:before ORDER BY ordinal DESC LIMIT 1",
+            "SELECT ordinal FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch ORDER BY orderKey DESC,ordinal DESC LIMIT 1 OFFSET MAX(0,(SELECT itemCount FROM authoritative_headers WHERE host=:host AND conversation=:conversation)-:before)",
         )
         suspend fun probe(
             host: String,
@@ -173,6 +215,44 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
 
         @Insert
         suspend fun insertItems(items: List<AuthoritativeItem>)
+
+        @Query("SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id=:id")
+        suspend fun item(
+            host: String,
+            conversation: String,
+            epoch: String,
+            id: Long,
+        ): AuthoritativeItem?
+
+        @Query("SELECT MAX(ordinal) FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch")
+        suspend fun maximumOrdinal(
+            host: String,
+            conversation: String,
+            epoch: String,
+        ): Int?
+
+        @Query("SELECT MIN(ordinal) FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch")
+        suspend fun minimumOrdinal(
+            host: String,
+            conversation: String,
+            epoch: String,
+        ): Int?
+
+        @Upsert
+        suspend fun upsertItem(item: AuthoritativeItem)
+
+        @Upsert
+        suspend fun upsertHeader(header: AuthoritativeHeader)
+
+        @Query(
+            "DELETE FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id IN (SELECT id FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch ORDER BY orderKey,ordinal LIMIT :count)",
+        )
+        suspend fun trimItems(
+            host: String,
+            conversation: String,
+            epoch: String,
+            count: Int,
+        )
 
         @Query("DELETE FROM authoritative_items WHERE host=:host AND (:conversation IS NULL OR conversation=:conversation)")
         suspend fun deleteItems(

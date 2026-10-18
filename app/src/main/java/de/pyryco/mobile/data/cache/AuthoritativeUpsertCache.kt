@@ -1,0 +1,20 @@
+package de.pyryco.mobile.data.cache
+
+/** Optional owned-write capability; full-file compatibility continues using the replacement API. */
+internal interface AuthoritativeUpsertCache {
+    /**
+     * [saved] contains changed identities and store-authored metadata, never an exhaustive family.
+     * [reset] retires the previous runtime generation even when its epoch is reused.
+     * [baseline] is the prior certificate whose durable prerequisites the candidate inherits.
+     * [orderMoves] independently carries accepted placement blocks in candidate order, including unchanged
+     * payloads: true joins before a tie, false after. Only the serialized owner writer supplies these.
+     */
+    suspend fun upsertAuthoritativeThread(
+        serverId: String,
+        conversationId: String,
+        saved: SavedAuthoritativeThread,
+        reset: Boolean,
+        baseline: SavedAuthoritativeThread?,
+        orderMoves: Map<Long, Boolean>,
+    ): Result<Unit>
+}
