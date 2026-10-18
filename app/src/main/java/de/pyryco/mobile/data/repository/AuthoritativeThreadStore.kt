@@ -26,9 +26,16 @@ internal data class AuthoritativeThreadSnapshot(
     val generation: Long = 0,
     val coverage: AuthoritativeThreadCoverage? = null,
     val pendingSends: List<AuthoritativePendingSend> = emptyList(),
+    val orderMoves: Map<Long, AuthoritativeOrderMove> = emptyMap(),
 ) {
     override fun toString(): String = "AuthoritativeThreadSnapshot(content=***)"
 }
+
+/** Runtime evidence of entry or the last accepted move, retained even when snapshots are conflated. */
+internal data class AuthoritativeOrderMove(
+    val capture: Long,
+    val before: Boolean,
+)
 
 /** Certified continuous ordered history; parent/active extras do not contribute to this range. */
 internal data class AuthoritativeThreadCoverage(
@@ -130,6 +137,7 @@ internal class AuthoritativeThreadStore {
                 coverage = if (adoptCertification && current.coverage == null) saved.coverage else current.coverage,
                 repairNeeded = current.repairNeeded || completedVersion > checkpoint,
             ),
+            restoring = true,
         )
         RelayLog.i { "event=thread_store code=restored" }
         return AuthoritativeThreadOutcome.Applied
@@ -428,9 +436,35 @@ internal class AuthoritativeThreadStore {
         host: String,
         conversation: String,
         snapshot: AuthoritativeThreadSnapshot,
+        restoring: Boolean = false,
     ) {
+        val previous = current(host, conversation)
+        val sameGeneration = previous.generation == snapshot.generation && previous.epoch == snapshot.epoch
+        val held = if (sameGeneration) previous.items.associateBy { it.id } else emptyMap()
+        val moves = if (sameGeneration) previous.orderMoves.toMutableMap() else mutableMapOf()
+        val capture = (moves.values.maxOfOrNull { it.capture } ?: 0) + 1
+        val restoredOrders =
+            if (restoring) {
+                snapshot.items.filter { it.id !in held }.mapTo(mutableSetOf()) { it.order?.takeIf { order -> order > 0 } ?: Long.MAX_VALUE }
+            } else {
+                emptySet()
+            }
+        snapshot.items.forEach { item ->
+            val old = held[item.id]
+            if (old == null && !restoring) {
+                // Merge appends newly held identities, even when they already exist outside a partial restore.
+                moves[item.id] = AuthoritativeOrderMove(capture, before = false)
+            } else if (old != null) {
+                val oldOrder = old.order?.takeIf { it > 0 } ?: Long.MAX_VALUE
+                val newOrder = item.order?.takeIf { it > 0 } ?: Long.MAX_VALUE
+                // Restore appends saved peers behind live facts, superseding their earlier entry/move hints.
+                if (newOrder in restoredOrders || oldOrder != newOrder) {
+                    moves[item.id] = AuthoritativeOrderMove(capture, before = newOrder in restoredOrders || newOrder > oldOrder)
+                }
+            }
+        }
         val unresolved = snapshot.pendingSends.filterNot { pending -> snapshot.items.any { it.matchesPending(pending) } }
         if (unresolved.size != snapshot.pendingSends.size) RelayLog.i { "event=thread_send code=settled" }
-        snapshots.value = snapshots.value + ((host to conversation) to snapshot.copy(pendingSends = unresolved))
+        snapshots.value = snapshots.value + ((host to conversation) to snapshot.copy(pendingSends = unresolved, orderMoves = moves.toMap()))
     }
 }

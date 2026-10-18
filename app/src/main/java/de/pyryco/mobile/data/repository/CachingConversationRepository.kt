@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.cache.AttachmentStore
+import de.pyryco.mobile.data.cache.AuthoritativeUpsertCache
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.OwnedLegacyCache
 import de.pyryco.mobile.data.cache.OwnedLegacyCoverageCache
@@ -150,6 +151,8 @@ class CachingConversationRepository(
         val ready: CompletableDeferred<Unit> = CompletableDeferred(),
         val authoritative: SavedAuthoritativeThread? = null,
         val storeGeneration: Long = 0,
+        val authoritativeBaseline: SavedAuthoritativeThread? = null,
+        val authoritativeOrderMoves: Map<Long, AuthoritativeOrderMove> = emptyMap(),
         val owned: Set<String> = emptySet(),
         val rowGenerations: Map<String, Long> = emptyMap(),
         val removedGenerations: Map<String, Long> = emptyMap(),
@@ -267,13 +270,21 @@ class CachingConversationRepository(
             val previous = latest.get()
             if (saved == (previous?.authoritative ?: initialAuthoritative) &&
                 snapshot.generation == (previous?.storeGeneration ?: 0) &&
+                snapshot.orderMoves == previous?.authoritativeOrderMoves.orEmpty() &&
                 !retry.getAndSet(false)
             ) {
                 return
             }
             retry.set(false)
             val candidate =
-                CacheCandidate(DrawnThread(emptyList(), capture), emptyList(), authoritative = saved, storeGeneration = snapshot.generation)
+                CacheCandidate(
+                    DrawnThread(emptyList(), capture),
+                    emptyList(),
+                    authoritative = saved,
+                    storeGeneration = snapshot.generation,
+                    authoritativeBaseline = initialAuthoritative,
+                    authoritativeOrderMoves = snapshot.orderMoves,
+                )
             schedule(candidate, immediate = snapshot.generation > (previous?.storeGeneration ?: 0))
         }
 
@@ -379,6 +390,7 @@ class CachingConversationRepository(
                                 emptyList(),
                                 authoritative = snapshot.toSavedAuthoritativeThread(),
                                 storeGeneration = snapshot.generation,
+                                authoritativeOrderMoves = snapshot.orderMoves,
                             ),
                         )
                     }
@@ -405,6 +417,7 @@ class CachingConversationRepository(
                         emptyList(),
                         authoritative = current.toSavedAuthoritativeThread(),
                         storeGeneration = current.generation,
+                        authoritativeOrderMoves = current.orderMoves,
                     )
             }
             val saved = selected.authoritative ?: return null
@@ -418,10 +431,43 @@ class CachingConversationRepository(
             val result =
                 withContext(NonCancellable) {
                     val result =
-                        if (saved == persisted?.authoritative) {
+                        if (saved == persisted?.authoritative &&
+                            selected.storeGeneration == persisted?.storeGeneration &&
+                            selected.authoritativeOrderMoves == persisted.authoritativeOrderMoves
+                        ) {
                             Result.success(Unit)
                         } else {
-                            cache.writeAuthoritativeThread(serverId, conversationId, saved)
+                            val owned = cache as? AuthoritativeUpsertCache
+                            if (owned == null) {
+                                cache.writeAuthoritativeThread(serverId, conversationId, saved)
+                            } else {
+                                val reset = selected.storeGeneration > (persisted?.storeGeneration ?: 0)
+                                val baseline =
+                                    (persisted?.authoritative ?: selected.authoritativeBaseline)
+                                        ?.takeIf { !reset && it.epoch == saved.epoch }
+                                val previous = baseline?.items?.associateBy { it["id"] }.orEmpty()
+                                val changed = saved.items.filter { it != previous[it["id"]] }
+                                val successfulMoves =
+                                    persisted
+                                        ?.takeIf { it.storeGeneration == selected.storeGeneration }
+                                        ?.authoritativeOrderMoves
+                                        .orEmpty()
+                                val moves =
+                                    saved.items
+                                        .mapNotNull { raw ->
+                                            val id = raw.getValue("id").toString().toLong()
+                                            val move = selected.authoritativeOrderMoves[id]
+                                            move?.takeIf { it.capture > (successfulMoves[id]?.capture ?: 0) }?.let { id to it.before }
+                                        }.toMap()
+                                owned.upsertAuthoritativeThread(
+                                    serverId,
+                                    conversationId,
+                                    saved.copy(items = changed),
+                                    reset,
+                                    baseline?.copy(items = emptyList()),
+                                    moves,
+                                )
+                            }
                         }
                     if (result.isSuccess) persistedAuthoritative[conversationId] = selected
                     result
@@ -495,6 +541,7 @@ class CachingConversationRepository(
                 emptyList(),
                 authoritative = snapshot.toSavedAuthoritativeThread(),
                 storeGeneration = snapshot.generation,
+                authoritativeOrderMoves = snapshot.orderMoves,
             )
         return withContext(NonCancellable) {
             historyWrites.withLock {
