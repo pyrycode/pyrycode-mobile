@@ -589,9 +589,18 @@ class RemoteConversationRepository internal constructor(
             authoritativeHostId.isNotEmpty() &&
             setOf(CAPABILITY_THREAD, CAPABILITY_INTERACTIVE).all { it in negotiatedCapabilities() }
 
-    private fun refreshAuthoritativeReadFacts() {
+    private fun refreshAuthoritativeReadFacts(
+        conversationId: String,
+        generation: Long,
+    ) {
         scope.launch {
-            if (authoritativeCommandsEnded || !authoritativeLiveEnabled()) return@launch
+            if (authoritativeCommandsEnded ||
+                !authoritativeLiveEnabled() ||
+                authoritativeThreads.current(authoritativeHostId, conversationId).generation != generation
+            ) {
+                return@launch
+            }
+            authoritativeQueries.refresh(conversationId, generation)
             val sent = pump.send(listConversationsRequest())
             RelayLog.i { "event=thread_summary_refresh code=${if (sent) "requested" else "refused"}" }
         }

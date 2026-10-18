@@ -18,8 +18,8 @@ import de.pyryco.mobile.data.network.TransportEvent
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.item
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.text
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
-import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadRow
+import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -479,17 +479,33 @@ class NegotiatedThreadActivationTest {
                 pump.push(window(opening))
                 runCurrent()
                 val before = pump.sent.count { it.type == "list_conversations" }
-                val terminal = JsonObject(item(2, 20, 2).raw + mapOf("kind" to JsonPrimitive("turn_end"), "active" to JsonPrimitive(false), "shown" to JsonPrimitive(false)))
-                val reply = ThreadItemDto.decodeReplacement(JsonObject(item(1, 19, 1, text = "completed reply").raw + ("active" to JsonPrimitive(false))))
-                pump.push(Envelope(199, "thread_item_changed", "2026-10-17T10:00:00Z", buildJsonObject {
-                    put("conversation_id", "c")
-                    put("epoch", "e")
-                    put("version", 19)
-                    put("item_id", 1)
-                    put("base_rev", 5)
-                    put("rev", 19)
-                    put("changes", JsonObject(reply.raw - setOf("id", "kind")))
-                }))
+                val terminal =
+                    JsonObject(
+                        item(2, 20, 2).raw +
+                            mapOf("kind" to JsonPrimitive("turn_end"), "active" to JsonPrimitive(false), "shown" to JsonPrimitive(false)),
+                    )
+                val reply =
+                    ThreadItemDto.decodeReplacement(
+                        JsonObject(
+                            item(1, 19, 1, text = "completed reply").raw + ("active" to JsonPrimitive(false)),
+                        ),
+                    )
+                pump.push(
+                    Envelope(
+                        199,
+                        "thread_item_changed",
+                        "2026-10-17T10:00:00Z",
+                        buildJsonObject {
+                            put("conversation_id", "c")
+                            put("epoch", "e")
+                            put("version", 19)
+                            put("item_id", 1)
+                            put("base_rev", 5)
+                            put("rev", 19)
+                            put("changes", JsonObject(reply.raw - setOf("id", "kind")))
+                        },
+                    ),
+                )
                 val update =
                     Envelope(
                         200,
@@ -508,21 +524,32 @@ class NegotiatedThreadActivationTest {
                 assertEquals(2, pump.queries().size)
                 val refresh = pump.queries().last()
                 assertEquals("10", field(refresh, "version").toString())
+
                 fun presentation() = projectAuthoritativeThread("h", "c", host.coordinator.authoritativeThreads.current("h", "c"))
                 val marks = ConversationReadMarks(0u, 20u, 19u, true)
                 val uncertified = presentation()
                 assertNull(uncertified.readCheckpoint(uncertified.newestReadKey, marks, uncertified.shownRowRevisions))
                 pump.push(batch(refresh, 20, listOf(reply)))
                 runCurrent()
-                assertEquals(10L, host.coordinator.authoritativeThreads.current("h", "c").checkpoint)
-                pump.push(reply(refresh, buildJsonObject {
-                    put("conversation_id", "c")
-                    put("epoch", "e")
-                    put("version", 20)
-                    put("items", JsonArray(emptyList()))
-                    put("final", true)
-                    put("from_version", 10)
-                }))
+                assertEquals(
+                    10L,
+                    host.coordinator.authoritativeThreads
+                        .current("h", "c")
+                        .checkpoint,
+                )
+                pump.push(
+                    reply(
+                        refresh,
+                        buildJsonObject {
+                            put("conversation_id", "c")
+                            put("epoch", "e")
+                            put("version", 20)
+                            put("items", JsonArray(emptyList()))
+                            put("final", true)
+                            put("from_version", 10)
+                        },
+                    ),
+                )
                 runCurrent()
                 val certified = presentation()
                 assertEquals(19uL, certified.readCheckpoint(certified.newestReadKey, marks, certified.shownRowRevisions))
@@ -542,8 +569,15 @@ class NegotiatedThreadActivationTest {
             val host = host("h")
             val owner = ViewModelStore()
             try {
-                val facade = StableConversationRepository(host.coordinator.currentRepository, negotiatedThread = host.coordinator.negotiatedThread)
-                val vm = ThreadViewModel(SavedStateHandle(mapOf("serverId" to "h", "conversationId" to "c")), facade, FakeConnectionStateSource(), ComposerDraftStore())
+                val facade =
+                    StableConversationRepository(host.coordinator.currentRepository, negotiatedThread = host.coordinator.negotiatedThread)
+                val vm =
+                    ThreadViewModel(
+                        SavedStateHandle(mapOf("serverId" to "h", "conversationId" to "c")),
+                        facade,
+                        FakeConnectionStateSource(),
+                        ComposerDraftStore(),
+                    )
                 owner.put("thread", vm)
                 backgroundScope.launch { vm.state.collect {} }
                 val pump = host.connect()
@@ -552,7 +586,12 @@ class NegotiatedThreadActivationTest {
                 assertEquals(1, pump.queries().size)
                 vm.sendMessage("before the first batch")
                 runCurrent()
-                assertEquals(null, host.coordinator.authoritativeThreads.current("h", "c").epoch)
+                assertEquals(
+                    null,
+                    host.coordinator.authoritativeThreads
+                        .current("h", "c")
+                        .epoch,
+                )
                 assertEquals(1, pump.sent.count { it.type == "send_message" })
                 val presentation = requireNotNull(vm.state.value.authoritativeThread)
                 val sending = presentation.rows.single() as ThreadRow.Queued
@@ -577,12 +616,19 @@ class NegotiatedThreadActivationTest {
                 assertTrue(host.repo().openAuthoritativeThread("c"))
                 val opening = pump.queries().single()
                 pump.push(batch(opening, item(1, 5, 1)))
-                pump.push(Envelope(201, "thread_item_added", "2026-10-17T10:00:00Z", buildJsonObject {
-                    put("conversation_id", "c")
-                    put("epoch", "e")
-                    put("version", 20)
-                    put("item", JsonObject(item(2, 20, 2).raw + ("kind" to JsonPrimitive("turn_end"))))
-                }))
+                pump.push(
+                    Envelope(
+                        201,
+                        "thread_item_added",
+                        "2026-10-17T10:00:00Z",
+                        buildJsonObject {
+                            put("conversation_id", "c")
+                            put("epoch", "e")
+                            put("version", 20)
+                            put("item", JsonObject(item(2, 20, 2).raw + ("kind" to JsonPrimitive("turn_end"))))
+                        },
+                    ),
+                )
                 runCurrent()
                 assertEquals(1, pump.queries().size)
                 pump.push(window(opening))

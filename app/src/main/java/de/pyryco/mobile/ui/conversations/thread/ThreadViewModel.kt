@@ -1074,7 +1074,7 @@ class ThreadViewModel(
                 },
             )
         }.distinctUntilChanged()
-            .paceThreadContent(contentScheduling)
+            .paceThreadContent(if (negotiated == null) contentScheduling else null)
 
     /**
      * The negotiated thread's screen presentation (#2175): restored or synchronized facts for this exact host and
@@ -1083,25 +1083,30 @@ class ThreadViewModel(
     @OptIn(ExperimentalCoroutinesApi::class)
     private val negotiatedPresentation: Flow<AuthoritativeThreadPresentation?> =
         negotiated?.let { route ->
+            // Persistence may finish non-cancellably. Its cleanup must not own the verdict switch.
+            val snapshots = route.observe(conversationId).shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
             route.support
                 .flatMapLatest { support ->
-                    if (support is ThreadSupport.Missing) return@flatMapLatest flowOf(null)
-                    val progress =
-                        if (support is ThreadSupport.Supported) {
-                            route.progress(conversationId, support.connection)
-                        } else {
-                            flowOf(AuthoritativeLiveProgress())
-                        }
-                    combine(route.observe(conversationId), progress) { snapshot, reading ->
-                        if (snapshot.epoch == null) {
-                            null
-                        } else {
-                            withContext(contentScheduling?.worker ?: Dispatchers.Main.immediate) {
-                                projectAuthoritativeThread(route.host, conversationId, snapshot, reading)
+                    flow<AuthoritativeThreadPresentation?> {
+                        // Clear retired progress and Missing content without waiting for a frame or disk.
+                        emit(null)
+                        if (support is ThreadSupport.Missing) return@flow
+                        val progress =
+                            if (support is ThreadSupport.Supported) {
+                                route.progress(conversationId, support.connection)
+                            } else {
+                                flowOf(AuthoritativeLiveProgress())
                             }
-                        }
+                        emitAll(
+                            combine(snapshots, progress) { snapshot, reading ->
+                                withContext(contentScheduling?.worker ?: Dispatchers.Main.immediate) {
+                                    // An empty epoch can still carry scoped local Sending feedback.
+                                    projectAuthoritativeThread(route.host, conversationId, snapshot, reading)
+                                }
+                            }.paceThreadContent(contentScheduling),
+                        )
                     }
-                }.onStart { emit(null) }
+                }
         } ?: flowOf(null)
 
     init {

@@ -12,18 +12,18 @@ import de.pyryco.mobile.data.repository.AuthoritativeLiveProgress
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.item
-import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.CachingConversationRepository
+import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSupport
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -36,19 +36,20 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Test
 import org.junit.Rule
+import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 /** #2175: the production thread route is the ViewModel's only content producer. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class NegotiatedThreadViewModelTest {
     private val oldSink = RelayLog.sink
+
     @get:Rule val temporary = TemporaryFolder()
 
     @Before fun setup() {
@@ -159,14 +160,26 @@ class NegotiatedThreadViewModelTest {
             val finishing = CompletableDeferred<Unit>()
             val route = Route("host")
             val disk = FileConversationCache(temporary.root, StandardTestDispatcher(testScheduler))
-            val cache = object : ConversationCache by disk {
-                override suspend fun writeAuthoritativeThread(serverId: String, conversationId: String, saved: SavedAuthoritativeThread): Result<Unit> {
-                    finishing.complete(Unit)
-                    release.await()
-                    return disk.writeAuthoritativeThread(serverId, conversationId, saved)
+            val cache =
+                object : ConversationCache by disk {
+                    override suspend fun writeAuthoritativeThread(
+                        serverId: String,
+                        conversationId: String,
+                        saved: SavedAuthoritativeThread,
+                    ): Result<Unit> {
+                        finishing.complete(Unit)
+                        release.await()
+                        return disk.writeAuthoritativeThread(serverId, conversationId, saved)
+                    }
                 }
-            }
-            route.store.establishComplete("host", "c", "e", 10, listOf(item(kind = "tool_call", extra = "\"session\":\"s\",", content = """{"name":"Read","tool_use_id":"tool"}""")), 0)
+            route.store.establishComplete(
+                "host",
+                "c",
+                "e",
+                10,
+                listOf(item(kind = "tool_call", extra = "\"session\":\"s\",", content = """{"name":"Read","tool_use_id":"tool"}""")),
+                0,
+            )
             route.reading.value = AuthoritativeLiveProgress("s", tools = mapOf("tool" to 7))
             route.support.value = ThreadSupport.Supported(Any())
             val owner = ViewModelStore()
@@ -175,7 +188,13 @@ class NegotiatedThreadViewModelTest {
             try {
                 runCurrent()
                 assertNotNull(vm.state.value.authoritativeThread)
-                fun elapsed() = (vm.state.value.authoritativeThread?.items?.singleOrNull() as? ThreadItem.MessageItem)?.message?.toolCall?.elapsedSeconds
+
+                fun elapsed() =
+                    (
+                        vm.state.value.authoritativeThread
+                            ?.items
+                            ?.singleOrNull() as? ThreadItem.MessageItem
+                    )?.message?.toolCall?.elapsedSeconds
                 assertEquals(7, elapsed())
                 reader.cancel()
                 runCurrent()
@@ -218,7 +237,10 @@ class NegotiatedThreadViewModelTest {
                 }
                 frames.send(2)
                 runCurrent()
-                assertEquals("revision-15", (requireNotNull(vm.state.value.authoritativeThread).items.single() as ThreadItem.MessageItem).message.content)
+                assertEquals(
+                    "revision-15",
+                    (requireNotNull(vm.state.value.authoritativeThread).items.single() as ThreadItem.MessageItem).message.content,
+                )
                 route.support.value = ThreadSupport.Missing(Any())
                 runCurrent()
                 assertNull(vm.state.value.authoritativeThread)
@@ -238,7 +260,9 @@ class NegotiatedThreadViewModelTest {
             object : ConversationRepository by legacy {
                 override val negotiatedThread: NegotiatedThread = route
             }
-        val repository = cache?.let { CachingConversationRepository(source, it, "host", processingDispatcher = StandardTestDispatcher(testScheduler)) } ?: source
+        val repository =
+            cache?.let { CachingConversationRepository(source, it, "host", processingDispatcher = StandardTestDispatcher(testScheduler)) }
+                ?: source
         val factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
@@ -299,7 +323,10 @@ class NegotiatedThreadViewModelTest {
 
         override fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot> = store.observe(host, conversationId)
 
-        override fun progress(conversationId: String, connection: Any): Flow<AuthoritativeLiveProgress> = reading
+        override fun progress(
+            conversationId: String,
+            connection: Any,
+        ): Flow<AuthoritativeLiveProgress> = reading
 
         override suspend fun open(conversationId: String): Boolean {
             opened += (support.value as ThreadSupport.Supported).connection

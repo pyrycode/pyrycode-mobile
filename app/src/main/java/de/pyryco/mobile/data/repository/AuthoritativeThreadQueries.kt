@@ -56,6 +56,20 @@ internal class AuthoritativeThreadQueries(
         return true
     }
 
+    /** A live completion needs a boundary captured after it, even when an older query is running. */
+    @Synchronized
+    fun refresh(
+        conversation: String,
+        generation: Long,
+    ): Boolean {
+        if (closed || !enabled() || conversation !in opened || store.current(host, conversation).generation != generation) return false
+        val intent = Intent(conversation, false)
+        // Coalesce queued refreshes, but never let the active query consume a later completion.
+        if (intent !in queued) queued.addLast(intent)
+        dispatch()
+        return true
+    }
+
     @Synchronized
     fun older(conversation: String): Boolean {
         if (closed || !enabled() || conversation !in opened || store.current(host, conversation).coverage?.olderExists != true) return false

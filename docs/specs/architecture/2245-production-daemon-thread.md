@@ -63,6 +63,10 @@ Coordinator state and its shared store outlive one socket; each repository/query
 | Missing → capable; repeated supported connection; destination disposal | `NegotiatedThreadViewModelTest.opensOncePerSupportedConnectionAndCancelsOnClear`, shared negotiated screen probe |
 | Exact row revision changed or presentation replaced before read | Factory integrated probe above and existing `AuthoritativeReadSightTest` |
 | Admitted completion and duplicate completion | `NegotiatedThreadActivationTest.admittedTurnEndRefreshesDaemonReadFactsWithoutInventingAMark` |
+| Completion while an older captured query is still active | `NegotiatedThreadActivationTest.completionDuringAnOlderCapturedQueryQueuesFreshCoverageOnItsOwner` |
+| Local send before the first captured batch establishes an epoch | `NegotiatedThreadActivationTest.productionSendBeforeFirstBatchShowsOnlyScopedPreAcceptanceFeedback` |
+| Observer final write held across destination recollection and verdict retirement | `NegotiatedThreadViewModelTest.retirementDoesNotWaitForAnObserversFinalWrite` |
+| Finite authoritative burst, controlled display frames and Missing before another frame | `NegotiatedThreadViewModelTest.authoritativeBurstsPublishOnlyAtFramesAndMissingDoesNotWaitForOne` |
 | Evidence recollection across reconnect and Missing | `HarnessThreadEvidenceBindingTest.negotiatedEvidenceRetiresConnectionOwnershipAndSuppressesMissingHostFacts` |
 
 ## Error handling
@@ -78,6 +82,8 @@ Carry the scoped integrated probes first and observe red before implementation. 
 None. Validate salvage against current fences and owned cache writes instead of replacing older files wholesale.
 
 ## Revisions
+
+2026-10-18 (resumed verifier rework): The preserved regressions and plan notes are incomplete work, not prior passes. Apply the completion callback outside the live-route monitor, carrying the admitted conversation and generation; the owning query scheduler rechecks generation and current connection eligibility. This preserves lock ordering with query reset and prevents a delayed completion callback from refreshing a replacement generation. The negotiated destination's empty legacy content arm does not consume display frames; complete authoritative presentations own that pacing. Existing `needs-human:sizing` and `needs-live-artifacts` holds remain; no new separable behaviour is added. Figma node `16:8` was rechecked with no geometry, token or asset changes required.
 
 2026-10-18 (verifier rework): Completion refresh must obtain a correlated catch-up certification as well as summary metadata. Pass the admitted conversation to the owning query scheduler; refresh only an already-open conversation, coalesce requests, and queue a refresh behind an in-flight query so a boundary captured before completion cannot lose the refresh. Keep all connection/generation fences. Extend the completion probe from version 10 through live revision 19/completion 20, partial batch, certified terminal marker, exact sight and duplicate completion. Live receipt itself certifies nothing.
 
@@ -104,7 +110,12 @@ None. Validate salvage against current fences and owned cache writes instead of 
 ## Documentation handoff
 
 
-Pending documentation stage: update `docs/knowledge/features/thread-screen.md` and `docs/knowledge/features/remote-conversation-repository.md`, replacing opt-in/pending activation wording with required-thread production selection and no fallback. Explain offline saved facts versus current support/progress and Missing suppression. If recordings change, record actual capture/replay/comparison outcomes and reviewed differences in `docs/e2e-interactive-stream.md`.
+Pending documentation stage:
+
+- `docs/knowledge/features/thread-screen.md`, "What it does": required-thread production selection with no fallback, offline saved facts versus current support/progress, Missing suppression, prompt retirement and frame-paced presentations.
+- `docs/knowledge/features/remote-conversation-repository.md`, "Opt-in thread negotiation (#2244)": replace opt-in/pending-activation wording; describe owning-connection completion refresh and terminal-marker certification separately from summary metadata.
+- `docs/e2e-interactive-stream.md`, recording evidence: when genuine refreshed recordings arrive, record actual capture/replay/comparison outcomes and reviewed differences.
+- `docs/recorded-tests.md`, "What replay proves": update obsolete pending-activation prose after the recording handoff, preserving the standalone explicitly legacy fixture and all strict evidence requirements.
 
 ## Security review
 
@@ -120,6 +131,7 @@ Pending documentation stage: update `docs/knowledge/features/thread-screen.md` a
 - **Errors/logs:** static codes only; no tokens, item bodies, decrypted bytes or transient state dumps. Generic existing UI failures remain.
 - **Concurrency:** MUST FIX addressed in design: retain A's synchronous transport/child-scope gates; cancellation alone is insufficient. Provider opens after restore; progress is bound to the verdict's exact connection and removed on retirement. Existing serialized cache writer protects certification.
 - **Rework adversarial pass:** MUST FIX findings on final-flush retirement and completion certification are addressed above: persistence cleanup cannot own the support switch; a refresh queues behind an older captured query and only its terminal marker supplies certification. Frame pacing cannot delay the verdict's clearing emission. A pending local send grants neither an epoch nor read evidence. No additional token, storage, Android, crypto, network, logging or threat-model boundary changes.
+- **Resumed callback review:** completion callbacks run after releasing the live-route monitor, avoiding inverse acquisition against query reset. The captured generation and owning connection are checked before a refresh is queued; cancellation/reset drops queued refresh work through the existing scheduler fences. Neither the metadata response nor a partial query batch certifies a rendered revision.
 - **Threat model:** malicious relay delay/drop/reorder is handled by Noise plus connection/generation fencing and certified checkpoints. Hostile daemon frames reuse defensive decoding and inert text paths. Keystore wrapping of credentials remains; rooted-device plaintext-content theft and OS screenshot/accessibility/keyboard exposure are existing platform limitations, unchanged by source selection.
 
 **Reviewer:** builder self-review per `builder/security-review.md`. **Date:** 2026-10-18.

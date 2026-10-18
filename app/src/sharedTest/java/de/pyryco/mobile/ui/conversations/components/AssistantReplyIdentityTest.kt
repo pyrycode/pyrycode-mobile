@@ -13,10 +13,10 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.e2e.legacyThreadEvidence
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertNotNull
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
@@ -36,6 +36,7 @@ class AssistantReplyIdentityTest {
 
     @Test fun userTextAndUnfinishedAssistantTextCannotStandInForACompletedReply() {
         var message by mutableStateOf(Message("reply", "s", Role.User, "Yes, completed!", Instant.fromEpochMilliseconds(0), false))
+
         fun completedReply() = legacyThreadEvidence("h", "c", this, listOf(ThreadItem.MessageItem(message))).loadedMainReply()
         compose.setContent { PyrycodeMobileTheme(darkTheme = true) { MessageBubble(message) } }
         compose.onNodeWithTag("assistant-reply:reply", useUnmergedTree = true).assertDoesNotExist()

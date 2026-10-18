@@ -15,16 +15,19 @@ internal class AuthoritativeThreadRoute(
     private val store: AuthoritativeThreadStore,
     private val decoder: ThreadUpdateDecoder = ThreadUpdateDecoder(host, "connection"),
     private val onRepair: (Map<String, Long>) -> Unit = {},
-    private val onTurnCompleted: () -> Unit = {},
+    private val onTurnCompleted: (String, Long) -> Unit = { _, _ -> },
 ) {
     private val pendingGenerations = mutableMapOf<String, Long>()
 
     fun accept(envelope: Envelope) {
+        val completed = mutableMapOf<String, Long>()
         val repairs =
             synchronized(this) {
-                applyOutcomes(decoder.decode(envelope))
+                applyOutcomes(decoder.decode(envelope)) { conversation, generation -> completed[conversation] = generation }
             }
         if (repairs.isNotEmpty()) onRepair(repairs)
+        // Query reset takes the query monitor before this route's monitor. Call back outside it.
+        completed.forEach { (conversation, generation) -> onTurnCompleted(conversation, generation) }
     }
 
     suspend fun runExpiry() {
@@ -44,7 +47,7 @@ internal class AuthoritativeThreadRoute(
 
     @Synchronized
     fun abandon() {
-        decoder.abandon().forEach(::applyOutcome)
+        decoder.abandon().forEach { applyOutcome(it) }
         pendingGenerations.clear()
     }
 
@@ -74,10 +77,13 @@ internal class AuthoritativeThreadRoute(
         return outcome
     }
 
-    private fun applyOutcomes(outcomes: List<ThreadDecodeOutcome<ThreadUpdateDto>>): Map<String, Long> =
+    private fun applyOutcomes(
+        outcomes: List<ThreadDecodeOutcome<ThreadUpdateDto>>,
+        completed: (String, Long) -> Unit = { _, _ -> },
+    ): Map<String, Long> =
         buildMap {
             outcomes.forEach { outcome ->
-                if (applyOutcome(outcome)) {
+                if (applyOutcome(outcome, completed)) {
                     val conversation =
                         when (outcome) {
                             is ThreadDecodeOutcome.Complete -> outcome.value.conversationId
@@ -89,13 +95,20 @@ internal class AuthoritativeThreadRoute(
             }
         }
 
-    private fun applyOutcome(outcome: ThreadDecodeOutcome<ThreadUpdateDto>): Boolean =
+    private fun applyOutcome(
+        outcome: ThreadDecodeOutcome<ThreadUpdateDto>,
+        completed: (String, Long) -> Unit = { _, _ -> },
+    ): Boolean =
         when (outcome) {
             is ThreadDecodeOutcome.Complete -> {
                 val conversation = outcome.value.conversationId
                 val generation = pendingGenerations.remove(conversation) ?: store.current(host, conversation).generation
                 val applied = store.apply(host, outcome.value, generation)
-                if (applied == AuthoritativeThreadOutcome.Applied && outcome.value.item?.kind == "turn_end") onTurnCompleted()
+                if (applied == AuthoritativeThreadOutcome.Applied &&
+                    outcome.value.item?.kind == "turn_end"
+                ) {
+                    completed(conversation, generation)
+                }
                 applied in setOf(AuthoritativeThreadOutcome.RepairNeeded, AuthoritativeThreadOutcome.ResetNeeded)
             }
             is ThreadDecodeOutcome.Pending -> {
