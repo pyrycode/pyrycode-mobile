@@ -95,6 +95,8 @@ None. Validate salvage against current fences and owned cache writes instead of 
 
 2026-10-18: The exact-connection native read probe failed despite qualified sight and a daemon-confirmed read. Its assertion incorrectly required the shown watermark to reach the item's completion-only revision. The protocol's `last_shown_version` contract explicitly excludes completion-only changes. Retain certified coverage through the exact settled revision; separately require a shown watermark covering the reply's creation and confirmation through that current daemon watermark. Exact-revision sight remains covered by the production sight tests and is never inferred from numeric receipt.
 
+2026-10-18: The next native run confirmed the reply read, then timed out after the unseen-post control caused the harness's intentional push-queue ceiling teardown (`4413`). Retired phone evidence correctly cannot observe a replacement connection. Keep phone rendering/read proof on its exact admitted connection, and obtain the later unseen post from the independent thread-enabled read actor's certified newest window. Reuse `ThreadQueryDecoder` per peer connection/request; abandon incomplete batches on replacement. Assert unread attention before the peer queries, then confirm through that peer's authoritative shown watermark. No legacy history supplies production read evidence.
+
 ## Documentation handoff
 
 

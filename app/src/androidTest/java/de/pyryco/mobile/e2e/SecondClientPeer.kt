@@ -26,6 +26,11 @@ import de.pyryco.mobile.data.network.RenameWorkspacePayloadDto
 import de.pyryco.mobile.data.network.RequestAttachmentPayloadDto
 import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
+import de.pyryco.mobile.data.network.ThreadDecodeOutcome
+import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.network.ThreadQueryDecoder
+import de.pyryco.mobile.data.network.ThreadQueryReply
+import de.pyryco.mobile.data.network.ThreadQueryRequest
 import de.pyryco.mobile.data.network.TransportEvent
 import de.pyryco.mobile.data.repository.ManagedSessionPump
 import de.pyryco.mobile.recording.RecordedSuiteNative
@@ -193,10 +198,56 @@ class SecondClientPeer(
             )
         val row = rows.conversations.first { it.id == conversationId }
         return de.pyryco.mobile.data.repository
-            .ConversationReadMarks(row.readUpTo, row.latestEntryId)
+            .ConversationReadMarks(row.readUpTo, row.latestEntryId, row.lastShownVersion, threadEnabled)
     }
 
-    /** Confirm only a checkpoint obtained from this peer's received durable history. */
+    /** One certified newest window, with a fresh decoder and batches for each exact peer connection. */
+    internal suspend fun threadWindow(
+        conversationId: String,
+        timeoutMs: Long,
+    ): List<ThreadItemDto> {
+        check(threadEnabled) { "peer thread was not negotiated" }
+        val query = ThreadQueryRequest.CatchUp(conversationId, "", 0uL)
+        return awaiting("peer thread window", timeoutMs) {
+            link.request("peer thread window", resend = true) { live ->
+                var decoder: ThreadQueryDecoder? = null
+                val seen = mutableSetOf<Envelope>()
+                val items = mutableMapOf<Long, ThreadItemDto>()
+                try {
+                    val outcome =
+                        attempt(live, query.type, query.payload()) { id ->
+                            if (inReplyTo != id || !seen.add(this)) return@attempt false
+                            val current =
+                                decoder ?: ThreadQueryDecoder(pairing.serverId, System.identityHashCode(live).toString(), id, query)
+                                    .also { decoder = it }
+                            var complete = false
+                            current.decode(this).forEach { decoded ->
+                                when (decoded) {
+                                    is ThreadDecodeOutcome.Pending -> Unit
+                                    is ThreadDecodeOutcome.Repair -> error("peer thread rejected: ${decoded.code}")
+                                    is ThreadDecodeOutcome.Complete ->
+                                        when (val reply = decoded.value) {
+                                            is ThreadQueryReply.Batch -> reply.items.forEach { items[it.id] = it }
+                                            is ThreadQueryReply.Success -> complete = true
+                                            else -> error("peer thread query did not complete")
+                                        }
+                                }
+                            }
+                            complete
+                        }
+                    when (outcome) {
+                        is RedialingLink.Attempt.Answered -> RedialingLink.Attempt.Answered(items.values.toList())
+                        RedialingLink.Attempt.Ended -> RedialingLink.Attempt.Ended
+                        RedialingLink.Attempt.NotSent -> RedialingLink.Attempt.NotSent
+                    }
+                } finally {
+                    decoder?.abandon()
+                }
+            }
+        }
+    }
+
+    /** Confirm only a checkpoint obtained from this peer's received history or certified thread facts. */
     internal suspend fun markRead(
         conversationId: String,
         checkpoint: ULong,

@@ -513,17 +513,14 @@ class DeterministicInteractiveStreamE2ETest {
         // The owned post control admits only the existing e2e1833 fixture prefix.
         DaemonFaultControl().posts(SEED_CHANNEL_NAME, "e2e1833-attention-read", 1)
         val postText = "e2e1833-attention-read-000"
-        val post =
-            runBlocking {
-                withTimeout(REPLY_TIMEOUT_MS) {
-                    evidence.observe(conversationId).first { held ->
-                        held.records.any { it.fullText == postText && !it.message.isStreaming }
-                    }
-                }
+        runBlocking {
+            withTimeout(REPLY_TIMEOUT_MS) {
+                val supported =
+                    route.support.first { it is de.pyryco.mobile.data.repository.ThreadSupport.Supported }
+                        as de.pyryco.mobile.data.repository.ThreadSupport.Supported
+                supported.connection.observeConversations(ConversationFilter.All).first()
             }
-        assertTrue("post evidence belongs to the same connection", ownsConnection() && post.owner.matches(reply.owner))
-        val postVersion = requireNotNull(post.records.single { it.fullText == postText }.fact).rev.toULong()
-        runBlocking { repository.observeConversations(ConversationFilter.All).first() }
+        }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val row = hasText(SEED_CHANNEL_NAME) and hasTestTag(de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG)
         val unread = context.getString(R.string.cd_conversation_attention_unread)
@@ -541,7 +538,15 @@ class DeterministicInteractiveStreamE2ETest {
         ).use { peer ->
             runBlocking {
                 peer.open(CONNECT_TIMEOUT_MS)
-                assertTrue("peer read confirmed", peer.markRead(conversationId, postVersion, THREAD_TIMEOUT_MS) >= postVersion)
+                val post =
+                    peer.threadWindow(conversationId, THREAD_TIMEOUT_MS).single {
+                        it.kind == "assistant_message" && (it.content as? JsonObject)?.get("text")?.jsonPrimitive?.content == postText
+                    }
+                val facts = peer.readMarks(conversationId, THREAD_TIMEOUT_MS)
+                val shown = requireNotNull(facts.lastShownVersion)
+                assertTrue("peer received an authoritative unread post", facts.threadSupported && shown >= post.id.toULong())
+                assertTrue("the unseen post is still unread", (facts.readUpTo ?: 0uL) < shown)
+                assertTrue("peer read confirmed", peer.markRead(conversationId, shown, THREAD_TIMEOUT_MS) >= shown)
             }
             val idle = context.getString(R.string.cd_conversation_attention_idle)
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
