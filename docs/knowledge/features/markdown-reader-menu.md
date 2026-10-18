@@ -155,7 +155,7 @@ on whatever file (if any) already exists.
   not a new exposure.
 
 **Lesson from implementation:** `MarkdownReaderScreenTest` needed the same `FileProvider.sCache` reset
-`AttachmentActionsTest` already used (see [Testing](markdown-reader-screen.md#testing)) — without it, a shared-note file served in one
+`AttachmentActionsTest` already used (see [Testing](markdown-reader-screen-testing.md#testing)) — without it, a shared-note file served in one
 test could leave the provider's authority-to-root cache pointed at a data directory Robolectric had already
 torn down for the next test in the same JVM, turning an expected `NO_APP` into `OPEN_FAILED`.
 
@@ -166,7 +166,7 @@ conversationId, attachmentId) }` (see [The reader destination](markdown-reader-s
 is `MainActivity`'s `{ path -> readLinkedMarkdown(destinations.repository(target.serverId), target.conversationId,
 path) }` (see [Linked note, live](markdown-reader-screen.md#linked-note-live-since-1050)) — so a linked note's Refresh sends another
 `read_workspace_file`, proven live by the extended `interactiveTurn_markdownLink_opensLiveNoteInReader`
-scenario (see [Testing](markdown-reader-screen.md#testing) and [Interactive stream e2e](../../e2e-interactive-stream.md)).
+scenario (see [Testing](markdown-reader-screen-testing.md#testing) and [Interactive stream e2e](../../e2e-interactive-stream.md)).
 
 ## Save to device (since #1069)
 
