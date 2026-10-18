@@ -324,15 +324,21 @@ silently disappearing; this cannot produce a duplicate key or a crash. Deferred,
 `openAuthoritativeThread` and `resetAuthoritativeThread` seams share the existing `ThreadWriter`.
 With a supplied `RemoteConversationRepository` whose store accessor matches this host, the
 wrapper uses that remote's authoritative store; otherwise it owns an offline store.
-Production route activation and combined live proof remain with #1988; the stable-delegate
+Production route activation and combined live proof remain with #2245; the stable-delegate
 legacy route described below is unchanged.
 
 Observation restores the [separate atomic record](conversation-cache-contract.md#the-contract)
-and accepts full items plus epoch, applied progress, checkpoint and continuous coverage as one
-candidate. Metadata-only certification changes also persist. The same 100 ms quiet period,
+and captures immutable raw facts plus epoch, applied progress, checkpoint and continuous coverage.
+Ordinary Room saves use `AuthoritativeUpsertCache` through `MigratingConversationCache`: under
+`historyWrites`, `persistAuthoritative` selects changed identities against the shared successful
+candidate, or the collection's restored baseline. Omission preserves unloaded facts. Metadata-only
+certification and placement-only changes also persist atomically. File caches and doubles without
+the capability retain full replacement; import admission and host retirement still apply.
+Bounded reader activation remains with #2252; individual-fact removal is separate work.
+The same 100 ms quiet period,
 replaceable pending slot and serialized writer serve these candidates; reset generations bypass
-the delay. Ordinary delivery remains independent of held disk I/O. Failed saves keep the document
-and successful baseline intact, enabling next-emission or final-flush retry.
+the delay. Ordinary delivery remains independent of held disk I/O. Failed saves keep durable facts,
+metadata and the successful baseline intact, enabling next-emission or final-flush retry.
 
 Open restores before asking the remote query dispatcher. Reconnect resumes only the certified
 checkpoint, so an interrupted reply may leave newer full items saved alongside the prior
@@ -405,6 +411,15 @@ destinations, retired generations and captures older than the successful authori
 Started atomic mutation and baseline publication finish together in `NonCancellable`; failure
 advances no baseline. Older observers and final flushes cannot overwrite a newer committed record.
 
+Accepted tie placement has its own store publication counter, independent of payload revision,
+within the epoch/runtime generation. Captures retain this evidence through coalescing and initial
+restore: saved peers can arrive behind an unchanged live identity. Under `historyWrites`, pending
+placements are selected against the shared successful placement capture, including unchanged
+peers in candidate order. Mutation and successful payload/placement bookkeeping finish together.
+Filtering placement by payload revision loses these relationships even if single-item tests pass.
+The [owned storage contract](conversation-cache-contract.md#owned-incremental-authoritative-mutations-2255)
+describes atomic tie blocks, certification prerequisites and stale-page restart.
+
 Reset retirement is accepted non-cancellably on the worker **before downstream delivery**.
 Ordinary candidates retain acceptance after delivery. Cleanup joins started work, then refreshes
 retirement after suspended delivery and again inside the write lock. After each successful final
@@ -413,7 +428,8 @@ Checking only before lock acquisition or mutation misses resets arriving during 
 final I/O after collection has ended. Cleanup stops on mutation failure with static reporting;
 it does not loop on failed storage or promise persistence through force-stop.
 
-`resetAuthoritativeThread` returns `Result<Unit>` after durable replacement. Supersession alone
+`resetAuthoritativeThread` returns `Result<Unit>` after durable retirement and commit, including
+when a new runtime generation reuses the same epoch string. Supersession alone
 cannot acknowledge reset: a rejected candidate succeeds only when the committed baseline proves
 that generation or a later one reached disk. A superseded reset whose replacement is still held
 or failed reports a content-free failure (`event=authoritative_cache_reset_failed`);
@@ -571,52 +587,19 @@ evidence](../../e2e-interactive-stream.md#verification-status).
 
 ## Wiring — under `decorateRepository`, not in it
 
-`ThreadDestinationFactory.repository(serverId, bundle)` (`di/AppModule.kt`) wraps the
-`StableConversationRepository` it builds in `CachingConversationRepository` **before** handing the
-result to the `decorateRepository` hook:
-
-```kotlin
-decorateRepository(
-    if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId, attachments) else stable,
-)
-```
-
-`attachments` (#899) follows `cache` through the same conditional — a blank `serverId` gets neither, so
-retrieved files, like restored rows, are never filed under the empty id's namespace.
-
-`E2eTestApplication` replaces `decorateRepository` with `::TappingConversationRepository` for its
-instrumented harness. Because the cache sits *underneath* that hook rather than inside it, the
-tapping decorator still observes the restored, merged thread — a cache wired the other way round
-would be invisible to exactly the harness [#850](https://github.com/pyrycode/pyrycode-mobile/issues/850)
-uses to prove offline reading and reconnect reconciliation live. The demo branch
-(`FakeConversationRepository`) never reaches this code path and gets no
-cache. A blank `serverId` (a malformed route) also gets no cache, so restored rows are never filed
-under the empty id's namespace.
-
-`hostConversationModule(useRelay, decorateRepository)` passes `cache = if (useRelay) get() else
-null` into `ThreadDestinationFactory`'s constructor — the same `useRelay` gate
-[`HostConversationSource.relay(get(), cache = get())`](dependency-injection-host-conversation-source.md#restore-from-the-on-disk-cache-796)
-already follows for the host-list restore. No new Koin binding was added for this ticket; both
-consumers resolve the single `ConversationCache` #796 bound.
-
-`ThreadDestinationFactory` gained the matching `attachments: AttachmentStore? = null` constructor
-param (#899), gated `if (useRelay) get() else null` the same way as `cache`, resolving the app's single
-`AttachmentStore` bound in `AppModule` over `File(androidContext().noBackupFilesDir, "attachments")`.
-Because that `get()` runs inside the `single { ThreadDestinationFactory(...) }` block, any Koin
-container that resolves a `ThreadDestinationFactory` under `useRelay = true` now needs an
-`AttachmentStore` binding too — see [Dependency injection §
-AttachmentStore](dependency-injection.md#attachmentstore-and-context-free-thread-destination-containers-899)
-for the four test containers that needed the same `InertConversationCache`-shaped override.
-
-Three `RelayConnectionFactoryTest` containers build a thread destination under `useRelay = true`
-with no `androidContext()`. Resolving the cache in `ThreadDestinationFactory` meant those
-containers now need the same `single<ConversationCache> { InertConversationCache }` override their
-sibling container already carried for #796 — before this change only `HostConversationSource`'s
-containers needed it. Any future container built the same way inherits this requirement.
+See [repository wiring](caching-conversation-repository-wiring.md#wiring--under-decoraterepository-not-in-it)
+for composition, attachment storage and context-free test containers.
 
 ## Testing
 
 See [Caching conversation repository — testing](caching-conversation-repository-testing.md) for worker scheduling, restore, reconnect and coalesced persistence coverage.
+
+The [retained #2255 focused evidence](conversation-cache-contract.md#retained-authoritative-mutation-and-restart-evidence)
+records 149 Linux executions/passes at `a0d7f4467`, including all 17 disk-backed owned-upsert
+probes, 23 retained authoritative writer regressions and 41 coalesced-writer regressions; zero
+failures/errors/skips. Exact fresh facts/metadata, page order, counters and unrelated ordinals
+cover held saves, retry, cancellation, post-commit baseline publication, reused-epoch reset,
+final-flush I/O and lock waits, deletion and host isolation. Documentation ran no tests.
 
 ## Related
 
