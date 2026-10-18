@@ -3,7 +3,7 @@ Reader coordinate rounding (#2292), Linux x86_64, 2026-10-18
 Selection:
 de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest#referencePlacesBarRuleAndBodyAtFigmaCoordinates
 Command:
-python3 scripts/android-test-gate.py ui --tests '<selection above>'
+python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest#referencePlacesBarRuleAndBodyAtFigmaCoordinates'
 Managed Android 13 Google ATD, pixel2Api33Atd, density 2.625.
 
 Unchanged red:
@@ -27,11 +27,19 @@ verified SHA256SUMS are retained beneath:
 /work/Projects/pyrycode-mobile-agents/logs/evidence/2292/builder-20261018/
   red-d069c285d/
   diagnostic-red-5038a3488/
+  jvm-initial/ (includes the tested working-tree patch)
+  native-green-c75eab30b/
+
+Native green:
+Revision: c75eab30b47f6b00bb95a6a53d6eb50f896a4c53
+python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest#referencePlacesBarRuleAndBodyAtFigmaCoordinates,de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest#adjacentBlockRoundingAllowanceKeepsItsPixelBoundary'
+2 executed/passed, 0 failed/errors/skipped; command exit 0.
+The named coordinate method and the two-pixel boundary controls both passed.
 
 Focused Robolectric green:
 python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest'
 17 executed/passed, 0 failed/errors/skipped; command exit 0.
 Includes the named coordinate method, constituent checks, and strict boundary
-controls at density 1. Native green evidence will be appended after execution.
+controls at density 1. Final post-merge JVM evidence will be appended after execution.
 Complete gates and the next post-merge Linux main sweep remain dispatcher-owned.
 macOS is outside this ticket's verification scope.
