@@ -29,6 +29,7 @@ verified SHA256SUMS are retained beneath:
   diagnostic-red-5038a3488/
   jvm-initial/ (includes the tested working-tree patch)
   native-green-c75eab30b/
+  jvm-green-43711d802/
 
 Native green:
 Revision: c75eab30b47f6b00bb95a6a53d6eb50f896a4c53
@@ -40,6 +41,12 @@ Focused Robolectric green:
 python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest'
 17 executed/passed, 0 failed/errors/skipped; command exit 0.
 Includes the named coordinate method, constituent checks, and strict boundary
-controls at density 1. Final post-merge JVM evidence will be appended after execution.
+controls at density 1.
+
+Final post-merge JVM/static/build green:
+Revision: 43711d8027b50bf835e7f5f3b850072be814f90c
+python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest' lint assembleDebug compileDebugAndroidTestKotlin spotlessApply --console=plain
+17 executed/passed, 0 failed/errors/skipped; command exit 0.
+Lint, APK assembly, instrumented Kotlin compilation and formatting also passed.
 Complete gates and the next post-merge Linux main sweep remain dispatcher-owned.
 macOS is outside this ticket's verification scope.
