@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,9 +40,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.platform.testTag
@@ -384,28 +381,20 @@ private fun MarkdownBlock(
                     ?.toString()
                     ?.trim()
                     ?.takeIf { it.isNotEmpty() }
-            if (style.presentation == MarkdownPresentation.Reader && language == null) {
-                ReaderCodeBlock(code, style.code ?: MaterialTheme.typography.bodySmall)
-            } else {
-                CodeBlock(
-                    code,
-                    language,
-                    copyable = true,
-                    textStyle = style.code ?: MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
-                )
-            }
+            CodeBlock(
+                code,
+                language,
+                copyable = true,
+                textStyle = style.code ?: MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
+            )
         }
         MarkdownElementTypes.CODE_BLOCK ->
-            if (style.presentation == MarkdownPresentation.Reader) {
-                ReaderCodeBlock(indentedCodeText(node, source), style.code ?: MaterialTheme.typography.bodySmall)
-            } else {
-                CodeBlock(
-                    indentedCodeText(node, source),
-                    language = null,
-                    copyable = true,
-                    textStyle = style.code ?: MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
-                )
-            }
+            CodeBlock(
+                indentedCodeText(node, source),
+                language = null,
+                copyable = true,
+                textStyle = style.code ?: MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
+            )
         else -> {
             val text = node.getTextInNode(source).toString().trim()
             if (text.isNotEmpty()) {
@@ -610,37 +599,6 @@ private fun BlockQuoteBlock(
                     }
                 }
         }
-    }
-}
-
-/** The reader's unlabelled code panel from Figma 553:2574; a tap still copies this block's bounded source. */
-@Composable
-private fun ReaderCodeBlock(
-    content: String,
-    textStyle: TextStyle,
-) {
-    // Match the one- and two-line reference boxes; longer content grows naturally without a huge min constraint.
-    val minimumLines = if ('\n' in content) 2 else 1
-    val minimumHeight = 24.dp + with(LocalDensity.current) { textStyle.lineHeight.toDp() } * minimumLines
-    val clipboard = LocalClipboardManager.current
-    val copyDescription = stringResource(R.string.cd_thread_copy_code)
-    Surface(
-        onClick = { clipboard.setText(AnnotatedString(content.take(MAX_CLIPBOARD_CHARS))) },
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .heightIn(min = minimumHeight)
-                .testTag("reader-code-panel")
-                .semantics { contentDescription = copyDescription },
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surfaceContainer,
-    ) {
-        Text(
-            text = content,
-            modifier = Modifier.horizontalScroll(rememberScrollState()).padding(12.dp),
-            style = textStyle.copy(fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant),
-            softWrap = false,
-        )
     }
 }
 

@@ -414,7 +414,7 @@ fun MarkdownReaderScreen(
                                 body = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSecondaryContainer),
                                 blockSpacing = 16.dp,
                                 listItemSpacing = 6.dp,
-                                code = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 20.sp),
+                                code = MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
                                 presentation = MarkdownPresentation.Reader,
                             ),
                         modifier =

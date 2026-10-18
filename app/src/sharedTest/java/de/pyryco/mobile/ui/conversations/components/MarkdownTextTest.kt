@@ -18,6 +18,7 @@ import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -432,6 +433,20 @@ class MarkdownTextTest {
         composeTestRule.onNodeWithContentDescription(copyCode).assertIsDisplayed().assertHasClickAction()
     }
 
+    @Test
+    fun reader_code_forms_keep_only_the_labelled_header_and_visible_copy_controls() {
+        render("```kotlin\nval x = 1\n```\n\n```\nbare fence\n```\n\n    indented block\n", reader = true)
+
+        composeTestRule.onAllNodesWithTag(CODE_BLOCK_HEADER_TAG).assertCountEquals(1)
+        composeTestRule.onNodeWithTag(CODE_BLOCK_HEADER_TAG).assertTextEquals("kotlin")
+        val controls = composeTestRule.onAllNodesWithContentDescription(copyCode)
+        controls.assertCountEquals(3)
+        for (index in 0..2) controls[index].assertIsDisplayed().assertHasClickAction()
+        assertTrue(annotatedTextOf("val x = 1").spanStyles.isNotEmpty())
+        assertTrue(annotatedTextOf("bare fence").spanStyles.isEmpty())
+        assertTrue(annotatedTextOf("indented block").spanStyles.isEmpty())
+    }
+
     /**
      * Both header-absent forms — a bare fence and an indented block — render no header bar at all,
      * so there is neither an empty strip nor a divider left without a header to hang from. They keep
@@ -463,16 +478,32 @@ class MarkdownTextTest {
             "Intro prose.\n\n" +
                 "```kotlin\nfun a() {\n    val x = 1\n\n\n    return x\n}\n```\n\n" +
                 "Between.\n\n" +
-                "```\nsecond\n  block\n```\n",
+                "```\nsecond\n  block  \n```\n\n" +
+                "    third\n      indented  \n\n    last\n",
             reader = reader,
         )
 
         val controls = composeTestRule.onAllNodesWithContentDescription(copyCode)
-        controls.assertCountEquals(2)
+        controls.assertCountEquals(3)
         controls[0].performClick()
         assertEquals("fun a() {\n    val x = 1\n\n\n    return x\n}", clipboard.copied)
         controls[1].performClick()
-        assertEquals("second\n  block", clipboard.copied)
+        assertEquals("second\n  block  ", clipboard.copied)
+        controls[2].performClick()
+        assertEquals("third\n  indented  \n\nlast", clipboard.copied)
+    }
+
+    @Test
+    fun reader_code_copy_keeps_original_text_under_the_clipboard_bound() {
+        val content = "  original <script> & `code`  \n".repeat(4000)
+        render("```\n$content```", reader = true)
+
+        composeTestRule
+            .onNodeWithContentDescription(copyCode)
+            .performScrollTo()
+            .assertIsDisplayed()
+            .performClick()
+        assertEquals(content.take(MAX_CLIPBOARD_CHARS), clipboard.copied)
     }
 
     /**
@@ -486,15 +517,27 @@ class MarkdownTextTest {
     @Test
     fun reader_a_long_line_scrolls_inside_the_block_while_label_and_copy_stay_put() = assertCodeScrolling(reader = true)
 
-    private fun assertCodeScrolling(reader: Boolean) {
+    @Test
+    fun reader_unlabelled_code_scrolls_while_copy_stays_put() = assertCodeScrolling(reader = true, language = null)
+
+    @Test
+    fun reader_indented_code_scrolls_while_copy_stays_put() = assertCodeScrolling(reader = true, indented = true)
+
+    private fun assertCodeScrolling(
+        reader: Boolean,
+        language: String? = "kotlin",
+        indented: Boolean = false,
+    ) {
         val longLine = "val numbers = listOf(" + (1..40).joinToString() + ")"
-        render("```kotlin\n$longLine\n```\n", maxWidth = CONTAINER_MAX_WIDTH, reader = reader)
+        val markdown = if (indented) "    $longLine\n" else "```${language.orEmpty()}\n$longLine\n```\n"
+        render(markdown, maxWidth = CONTAINER_MAX_WIDTH, reader = reader)
 
         val label = composeTestRule.onNodeWithTag(CODE_BLOCK_HEADER_TAG)
         val copy = composeTestRule.onNodeWithContentDescription(copyCode)
         val viewport = composeTestRule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.HorizontalScrollAxisRange))
         val code = composeTestRule.onNodeWithText(longLine)
-        val labelBefore = label.getBoundsInRoot()
+        val labelBefore = if (!indented && language != null) label.getBoundsInRoot() else null
+        if (labelBefore == null) label.assertDoesNotExist()
         val copyBefore = copy.getBoundsInRoot()
         val codeBefore = code.getUnclippedBoundsInRoot()
 
@@ -507,8 +550,10 @@ class MarkdownTextTest {
         composeTestRule.waitForIdle()
 
         assertTrue("the code did not scroll", code.getUnclippedBoundsInRoot().left < codeBefore.left)
-        assertEquals(labelBefore, label.getBoundsInRoot())
+        if (labelBefore != null) assertEquals(labelBefore, label.getBoundsInRoot())
         assertEquals(copyBefore, copy.getBoundsInRoot())
+        copy.performTouchInput { click() }
+        assertEquals(longLine, clipboard.copied)
         val containerWidth =
             composeTestRule.onNodeWithTag(CONTAINER_TAG).getUnclippedBoundsInRoot().width
         assertTrue(
