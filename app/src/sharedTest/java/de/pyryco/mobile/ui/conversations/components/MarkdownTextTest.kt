@@ -85,12 +85,12 @@ class MarkdownTextTest {
     private val copyCode: String get() = context.getString(R.string.cd_thread_copy_code)
 
     @Test
-    fun message_paragraphs_follow_the_twelve_dp_component_gap() {
+    fun message_paragraphs_follow_the_sixteen_dp_component_gap() {
         render("First paragraph.\n\nSecond paragraph.")
 
         val first = composeTestRule.onNodeWithText("First paragraph.").getUnclippedBoundsInRoot()
         val second = composeTestRule.onNodeWithText("Second paragraph.").getUnclippedBoundsInRoot()
-        assertEquals(12.dp.value, (second.top - first.bottom).value, 1.5f)
+        assertEquals(16.dp.value, (second.top - first.bottom).value, 0.6f)
     }
 
     @Test
