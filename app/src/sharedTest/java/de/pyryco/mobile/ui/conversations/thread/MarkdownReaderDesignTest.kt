@@ -130,12 +130,12 @@ class MarkdownReaderDesignTest {
         val body =
             listOf(
                 "heading" to (heading.top to 97f),
-                // #2277: heading scale uses 28sp H1 and 26sp H2 line boxes; gaps stay unchanged.
-                "paragraph" to (paragraph.top to 137f),
-                "subheading" to (subheading.top to 209f),
-                "first item" to (firstItem.top to 247f),
-                "code" to (code.top to 331f),
-                "quote" to (quote.top to 407f),
+                // #2285 + #2283: 16dp block gaps with bodyMedium and the existing heading scale.
+                "paragraph" to (paragraph.top to 141f),
+                "subheading" to (subheading.top to 217f),
+                "first item" to (firstItem.top to 259f),
+                "code" to (code.top to 347f),
+                "quote" to (quote.top to 427f),
             )
         for (index in 1 until body.size) {
             val (name, block) = body[index]
