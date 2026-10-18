@@ -228,6 +228,118 @@ class OwnedLegacyCoverageTest {
             assertEquals(next, saved)
         }
 
+    @Test fun anchorInvariant_subtractingProducerKeepsValidReceivedGapWalk() =
+        runTest {
+            val counts = HashMap<Boolean, Pair<LegacyRoomStorage.MutationCounts, Int>>()
+            for (size in listOf(20, 18000)) {
+                for (remove in listOf(false, true)) {
+                    val name = "subtract-$size-$remove"
+                    var cache = open(name)
+                    val rows = (1..size).map { row(it) }
+                    val ids = listOf(1uL, 2uL, 3uL, 10uL) + (5..size).map { it.toULong() * 2u + 20u }
+                    val order = rows.zip(ids).associate { (row, id) -> row.historyKeys().first() to id }
+                    val spans = listOf(UnsignedHistorySpan(1u, 3u)) + ids.drop(3).map { UnsignedHistorySpan(it, it) }
+                    val gaps = listOf(UnsignedHistoryGap(2u, 10u)) + spans.drop(1).zipWithNext { a, b -> UnsignedHistoryGap(a.last, b.first) }
+                    val evidence =
+                        HistoryCoverage(
+                            unsignedSpans = spans,
+                            unsignedGaps = gaps,
+                            unsignedWalks = gaps.associate { it.anchor to "received-walk-${it.anchor}" },
+                            unsignedCursors = gaps.associate { it.anchor to "received-cursor-${it.anchor}" },
+                            unsignedRowOrder = order,
+                            unsignedRowEntries = order.mapValues { setOf(it.value) },
+                            proofs = historyRowProofs(rows),
+                        )
+                    val initial = HistoryPosition("saved", true, evidence)
+                    cache.readThread("Host", "c")
+                    cache.writeThread("Host", "c", rows).getOrThrow()
+                    cache.writeHistoryPosition("Host", "c", initial).getOrThrow()
+
+                    suspend fun unrelated() =
+                        requireNotNull(database).legacy().allEvidence("Host", "c").filterNot {
+                            it.ordinal == LEGACY_ORDINAL_STEP || it.kind == "losses" || it.kind == "spans" && it.low.toULong() <= 3u
+                        }
+                    val unchanged = unrelated()
+                    val source = Source()
+                    var repository = CachingConversationRepository(source, cache, "Host")
+                    assertEquals(rows, repository.observeThreadSnapshot("c").first().rows)
+                    repository.readHistoryPosition("c")
+                    val changed = row(1, "changed")
+                    source.snapshots.value =
+                        if (remove) ThreadSnapshot(emptyList(), suppressedUserMessageIds = setOf("id-1")) else ThreadSnapshot(listOf(changed))
+                    val expectedRows = if (remove) rows.drop(1) else listOf(changed) + rows.drop(1)
+                    queries.clear()
+                    repository.writeHistoryPosition("c", initial)
+                    val statements = synchronized(queries) { queries.toList() }.filter { it.contains("legacy_", true) }
+                    val work = cache.legacyMutationCounts to statements.size
+                    println("owned_gap_subtraction saved_rows=$size removal=$remove counts=${work.first} storage_sql_statements=${work.second}")
+                    if (size == 20) counts[remove] = work else assertEquals("bounded relevant evidence work", counts[remove], work)
+                    assertFalse(statements.any { it.startsWith("SELECT * FROM legacy_rows", true) && !it.contains("identity=") })
+                    assertFalse(statements.any { it.contains("FROM legacy_evidence WHERE host=? AND conversation=? ORDER BY") })
+                    assertFalse(statements.any { it == "DELETE FROM legacy_evidence WHERE host=? AND (? IS NULL OR conversation=?)" })
+                    assertEquals("untouched received evidence", unchanged, unrelated())
+                    repeat(2) { repository.writeHistoryPosition("c", initial) }
+                    cache = open(name)
+                    assertEquals(expectedRows, cache.readThread("Host", "c"))
+                    val saved = requireNotNull(cache.readHistoryPosition("Host", "c"))
+                    val retained = requireNotNull(saved.coverage)
+                    assertEquals(UnsignedHistorySpan(2u, 3u), retained.unsignedSpans.first())
+                    assertEquals(evidence.unsignedGaps, retained.unsignedGaps)
+                    assertEquals(evidence.unsignedWalks, retained.unsignedWalks)
+                    assertEquals(evidence.unsignedCursors, retained.unsignedCursors)
+                    assertEquals(evidence.proofs - rows.first().historyKeys().first(), retained.proofs)
+                    assertFalse(saved.atStart)
+                    assertTrue(retained.unsignedUnknown)
+                    assertEquals(unchanged, unrelated())
+                    repository = CachingConversationRepository(source, cache, "Host")
+                    repository.observeThreadSnapshot("c").first()
+                    repository.readHistoryPosition("c")
+                    repeat(2) { repository.writeHistoryPosition("c", initial) }
+                    val reopened = open(name)
+                    assertEquals(expectedRows, reopened.readThread("Host", "c"))
+                    assertEquals(saved, reopened.readHistoryPosition("Host", "c"))
+                    assertEquals(unchanged, unrelated())
+                }
+            }
+        }
+
+    @Test fun anchorInvariant_subtractingAnchorWithdrawsItsInvalidWalk() =
+        runTest {
+            for (remove in listOf(false, true)) {
+                val name = "invalid-anchor-$remove"
+                val cache = open(name)
+                val rows = (1..4).map { row(it) }
+                val order = rows.zip(listOf(1uL, 2uL, 3uL, 10uL)).associate { (row, id) -> row.historyKeys().first() to id }
+                val initial =
+                    HistoryPosition(
+                        "saved",
+                        true,
+                        HistoryCoverage(
+                            unsignedSpans = listOf(UnsignedHistorySpan(1u, 3u), UnsignedHistorySpan(10u, 10u)),
+                            unsignedGaps = listOf(UnsignedHistoryGap(2u, 10u)),
+                            unsignedWalks = mapOf(2uL to "received-walk"),
+                            unsignedRowOrder = order,
+                            unsignedRowEntries = order.mapValues { setOf(it.value) },
+                            proofs = historyRowProofs(rows),
+                        ),
+                    )
+                cache.readThread("Host", "c")
+                cache.writeThread("Host", "c", rows).getOrThrow()
+                cache.writeHistoryPosition("Host", "c", initial).getOrThrow()
+                val source = Source()
+                val repository = CachingConversationRepository(source, cache, "Host")
+                repository.observeThreadSnapshot("c").first()
+                repository.readHistoryPosition("c")
+                source.snapshots.value =
+                    if (remove) ThreadSnapshot(emptyList(), suppressedUserMessageIds = setOf("id-2")) else ThreadSnapshot(listOf(row(2, "changed")))
+                repeat(2) { repository.writeHistoryPosition("c", initial) }
+                val retained = requireNotNull(open(name).readHistoryPosition("Host", "c")?.coverage)
+                assertEquals(listOf(UnsignedHistoryGap(1u, 3u), UnsignedHistoryGap(3u, 10u)), retained.unsignedGaps)
+                assertTrue(retained.unsignedWalks.isEmpty())
+                assertFalse(retained.unsignedSpans.any { 2uL in it.first..it.last })
+            }
+        }
+
     @Test fun certificationInvariant_changedProducersCannotRegainStaleClaims() =
         runTest {
             val cache = open()
