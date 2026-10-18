@@ -84,7 +84,7 @@ class MarkdownTypographyTest {
             }
         }
         assertBody(14, 20, 16f, 6f, quoteStyle = FontStyle.Normal, inlineMarkers = true)
-        assertSpecialStyles(codeSize = 13)
+        assertSpecialStyles(codeSize = 12)
         for (text in listOf("Paragraph one", "Parent", "Ordered one", "Task one", "Cell", "Header", "Quote one", "Reader link")) {
             val node = rule.onNodeWithText(text, substring = true, useUnmergedTree = true)
             val layout = node.layout()
@@ -132,8 +132,13 @@ class MarkdownTypographyTest {
         assertGap("Second", "Item one", 16f)
         assertGap("Item one", "Item two", 6f)
         val labelledCode = rule.onNodeWithTag(CODE_BLOCK_HEADER_TAG, useUnmergedTree = true).onParent().getUnclippedBoundsInRoot()
-        // Two lines match the reference panel and exceed Surface's minimum interactive height.
-        val plainCode = rule.onNodeWithTag("reader-code-panel").getUnclippedBoundsInRoot()
+        // Measure the shared panel around the scrolling text, including its padding and copy rail.
+        val plainCode =
+            rule
+                .onNodeWithText("plain code\nsecond line", useUnmergedTree = true)
+                .onParent()
+                .onParent()
+                .getUnclippedBoundsInRoot()
         val item = rule.onNodeWithText("Item two", substring = true, useUnmergedTree = true).getUnclippedBoundsInRoot()
         val between = rule.onNodeWithText("Between", useUnmergedTree = true).getUnclippedBoundsInRoot()
         val tail = rule.onNodeWithText("Tail 1", useUnmergedTree = true).getUnclippedBoundsInRoot()
@@ -304,7 +309,13 @@ class MarkdownTypographyTest {
     }
 
     private fun assertSpecialStyles(codeSize: Int = 14) {
-        for ((text, size, height) in listOf(Triple("Heading", 20, 28), Triple("Cell", 14, 20), Triple("val x = 1", codeSize, 20))) {
+        for ((text, size, height) in listOf(
+            Triple("Heading", 20, 28),
+            Triple("Cell", 14, 20),
+            Triple("val x = 1", codeSize, 20),
+            Triple("bare code", codeSize, 20),
+            Triple("indented code", codeSize, 20),
+        )) {
             val style =
                 rule
                     .onNodeWithText(text, useUnmergedTree = true)
@@ -312,6 +323,7 @@ class MarkdownTypographyTest {
                     .layoutInput.style
             assertEquals(text, size.sp, style.fontSize)
             assertEquals(text, height.sp, style.lineHeight)
+            if (text != "Heading" && text != "Cell") assertEquals(text, FontFamily.Monospace, style.fontFamily)
         }
     }
 
@@ -352,6 +364,12 @@ class MarkdownTypographyTest {
         ```kotlin
         val x = 1
         ```
+
+        ```
+        bare code
+        ```
+
+            indented code
 
         [Reader link](https://example.com)
 
