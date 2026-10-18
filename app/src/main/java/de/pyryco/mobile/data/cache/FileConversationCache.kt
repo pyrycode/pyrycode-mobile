@@ -240,7 +240,7 @@ class FileConversationCache(
                         null
                     } else {
                         try {
-                            decodeAuthoritative(Files.readString(document.toPath()), serverId, conversationId)
+                            decodeAuthoritative(Files.readAllBytes(document.toPath()).toString(Charsets.UTF_8), serverId, conversationId)
                         } catch (_: java.nio.file.NoSuchFileException) {
                             null
                         }
