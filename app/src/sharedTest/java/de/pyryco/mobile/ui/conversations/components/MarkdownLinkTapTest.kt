@@ -104,11 +104,17 @@ class MarkdownLinkTapTest {
             .config[SemanticsProperties.Text]
             .single()
 
-    private fun assertInert(text: String) {
+    private fun assertInert(
+        text: String,
+        beforeTapMillis: Long = 0,
+    ) {
         val rendered = annotated(text)
         assertTrue("$text must have no active link annotation", rendered.getLinkAnnotations(0, rendered.length).isEmpty())
         assertTrue(rendered.spanStyles.none { it.item.color == linkColor || it.item.textDecoration == TextDecoration.Underline })
-        composeTestRule.onNodeWithText(text).performTouchInput { click(center) }
+        composeTestRule.onNodeWithText(text).performTouchInput {
+            advanceEventTime(beforeTapMillis)
+            click(center)
+        }
         composeTestRule.waitForIdle()
     }
 
@@ -147,7 +153,7 @@ class MarkdownLinkTapTest {
             composeTestRule.waitUntil(TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText("End$index.", substring = true).fetchSemanticsNodes().isNotEmpty()
             }
-            assertInert("Before note after")
+            assertInert("Before note after", beforeTapMillis = 1_000)
             assertEquals(emptyList<String>(), opened)
             assertEquals(emptyList<String>(), paths)
             val html = markdownHtml("[note](<$target>)")
