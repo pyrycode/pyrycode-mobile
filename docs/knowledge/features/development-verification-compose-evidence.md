@@ -552,6 +552,41 @@ settles (`ComposerFileTileTintTest`, #1532). Drawing `LocalView.current` into a
 way `ConversationTreeRowsTest` does, samples the same real pixels without
 going through `forceRedraw` at all.
 
+`runOnIdle` confines that drawing callback, but does not constrain independent
+asynchronous effects. In Compose UI test 1.10.4, the default
+`UnconfinedTestDispatcher` can resume an effect on an IO worker after
+`withContext(Dispatchers.IO)`. `ComposerAttachmentStripTest` supplies
+`createComposeRule(effectContext = StandardTestDispatcher())` so the return queues
+until the UI test scheduler drains it (#2265). Keep real decoding on IO and retain
+main-thread drawing and bitmap cleanup.
+
+`thumbnailEffect_returnsFromIoAndDisposesOnTheViewThread` holds IO completion until
+the caller suspends, then checks view-thread ownership on return and disposal.
+The [retained diagnostics](../../../app/src/test/resources/attachment-2265/README.md)
+include two failed Linux probes, each 1 executed / 1 failed / 0 skipped: first a
+missing main looper, then `CalledFromWrongThreadException` from view layout on
+`DefaultDispatcher-worker-5` through Compose's continuation interceptors at
+`72acc7c96b84e32a5535c87f4ea407488403b485`. The queued-dispatcher regression passed
+1 executed / 0 failed / 0 skipped. At acceptance revision
+`4ab23d2c24babf00ed072697bd51331a612dc157`, all 18 class methods passed with zero
+failures/skips; five separate fresh executions of
+`ownedJpegThumbnail_appliesExifRotationWithoutTheOriginalProvider` each passed
+1 executed / 0 failed / 0 skipped. The class report includes the controlled
+regression, real PNG decode and all three EXIF cases. These retained logs include
+counted XML; invocation metadata records commands and revisions.
+
+The [cause report](https://github.com/pyrycode/pyrycode-mobile/issues/2265#issuecomment-6249041003)
+distinguishes this controlled mechanism from #2254's historical exception summary,
+which cannot identify the original failing call site. A fresh focused pass alone
+did not establish the cause. The
+[verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2268#issuecomment-6249979729)
+also confirms all 18 class methods passed in the Linux complete JVM gate
+(5956 executed / 1 failed / 0 skipped); the accepted inherited failure belongs to
+`OwnedLegacyCoverageTest.anchorInvariant_subtractingProducerKeepsValidReceivedGapWalk`
+and is tracked in #2269. macOS was outside this ticket's verification scope.
+See the [owned-JPEG pixel contract](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments)
+for the assertions this scheduling repair preserves.
+
 Shared geometry assertions must convert `boundsInRoot` pixels through the composition's
 `LocalDensity` before comparing with dp specifications, and use `assertDpEquals`/`pixelDp`
 for edge snapping. `BackgroundTaskStopPanelTest` (#1830) originally passed at Robolectric density 1

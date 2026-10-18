@@ -222,8 +222,17 @@ leftovers from the dedicated directory before new captures exist; activity creat
 Owned thumbnails use sampled `ImageDecoder` decoding inside that same read/deletion monitor, preserving
 JPEG EXIF rotation and mirroring at the existing tile bound. Replacing provider thumbnail loading with
 private decoding changes the orientation boundary: source independence alone cannot prove correct pixels.
-`ComposerAttachmentStripTest` covers an unavailable provider and three asymmetric JPEGs (rotation,
-mirroring and both), alongside existing geometry/removal assertions. `OwnedPasteCopyTest` and
+`ComposerAttachmentStripTest.assertOrientedThumbnail` uses real owned-JPEG decoding with the original
+provider unavailable for EXIF rotation (6), mirroring (2) and both (7). After the JPG fallback disappears,
+it draws the root into a bitmap on `runOnIdle` and checks four oriented colour samples, each RGB channel
+difference strictly below 15. Tile bounds are 45 × 60 dp within 0.5 dp, converted from pixels through
+Compose density. Keep these asymmetric pixel assertions alongside geometry/removal coverage: a decoded
+image or missing fallback alone does not prove orientation. The class's queued effect dispatcher and
+controlled IO-return/disposal regression preserve UI-thread ownership without replacing the decoder;
+see [Compose evidence](development-verification-compose-evidence.md#compose-evidence) for the scheduling
+trap and retained Linux red/green reports (#2265).
+
+`OwnedPasteCopyTest` and
 `ThreadViewModelAttachmentTest.pasteThenRevokeOriginal_sendsCapturedBytesAndNeverPublishesDeletedOriginal`
 explicitly make the original unreadable and verify captured bytes and cleanup. Clipboard replacement
 alone is insufficient evidence when a MediaStore fixture was inserted with the target app identity;
