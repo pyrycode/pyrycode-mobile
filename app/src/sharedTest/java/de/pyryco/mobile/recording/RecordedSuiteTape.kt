@@ -532,7 +532,12 @@ internal class RecordedSuiteTape(
             if (index in released) continue
             val step = steps[index]
             if (step.direction in setOf("client", "connect", "close")) {
-                if (index in consumed || index in optionalModelReplies) released += index
+                if (index in consumed || index in optionalModelReplies) {
+                    released += index
+                } else if (step.direction == "client" && step.owner to step.message!!.id in threadQueryRequests) {
+                    // Preserve the captured query start before any later live frame, even one preceding its reply.
+                    blockedReplies += step.owner
+                }
                 continue
             }
             if (lifecycleBefore[index]?.let { it !in consumed } == true) continue

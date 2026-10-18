@@ -28,6 +28,30 @@ class RecordedSuiteTapeTest {
         tape.assertComplete()
     }
 
+    @Test fun threadQueryStartKeepsInterleavedLiveFramesBehindTheActualRequest() {
+        val owner = "phone/host/0"
+        val request = """{"conversation_id":"chat","epoch":"epoch","version":0}"""
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client(owner, frame(1, "thread_catch_up", request)),
+                    daemon(owner, frame(2, "thread_item_changed")),
+                    daemon(owner, frame(3, "thread_items", """{"final":true}""", reply = 1)),
+                    client(owner, frame(4, "thread_catch_up", request)),
+                    daemon(owner, frame(5, "thread_items", """{"final":true}""", reply = 4)),
+                    daemon("peer/host/0", frame(1, "model_list")),
+                ),
+                literalProducerIdentities = true,
+            )
+        assertEquals(listOf("peer/host/0"), tape.initial().map { it.owner })
+        val first = tape.request(owner, frame(90, "thread_catch_up", request))
+        assertEquals(listOf("thread_item_changed", "thread_items"), first.map { it.message!!.type })
+        assertEquals(listOf(null, 90L), first.map { it.message!!.inReplyTo })
+        val second = tape.request(owner, frame(91, "thread_catch_up", request))
+        assertEquals(listOf(91L), second.map { it.message!!.inReplyTo })
+        tape.assertComplete()
+    }
+
     @Test fun androidInputsCannotArriveBeforeTheirRecordedConnectionRestartAndRequests() {
         for (event in listOf("push-token", "push-wake")) {
             val old = "phone/host/0"
