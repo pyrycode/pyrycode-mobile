@@ -117,7 +117,7 @@ internal class AuthoritativeThreadStore {
     ) {
         val current = current(host, conversation)
         if (current.generation != generation || current.incarnation != incarnation || current.retirements[held.id] != revision) return
-        publish(
+        publishSnapshot(
             host,
             conversation,
             current.copy(
@@ -125,7 +125,7 @@ internal class AuthoritativeThreadStore {
                 completedVersion = maxOf(current.completedVersion, held.rev),
                 retirements = current.retirements - held.id,
             ),
-            restoring = true,
+            preservePlacement = true,
         )
     }
 
@@ -527,6 +527,14 @@ internal class AuthoritativeThreadStore {
         conversation: String,
         snapshot: AuthoritativeThreadSnapshot,
         restoring: Boolean = false,
+    ) = publishSnapshot(host, conversation, snapshot, restoring)
+
+    private fun publishSnapshot(
+        host: String,
+        conversation: String,
+        snapshot: AuthoritativeThreadSnapshot,
+        restoring: Boolean = false,
+        preservePlacement: Boolean = false,
     ) {
         val previous = current(host, conversation)
         val sameGeneration = previous.generation == snapshot.generation && previous.epoch == snapshot.epoch
@@ -539,7 +547,7 @@ internal class AuthoritativeThreadStore {
             } else {
                 emptySet()
             }
-        snapshot.items.forEach { item ->
+        snapshot.items.takeUnless { preservePlacement }.orEmpty().forEach { item ->
             val old = held[item.id]
             if (old == null && !restoring) {
                 // Merge appends newly held identities, even when they already exist outside a partial restore.

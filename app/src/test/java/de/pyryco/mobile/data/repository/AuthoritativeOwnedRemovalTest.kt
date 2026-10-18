@@ -63,10 +63,11 @@ class AuthoritativeOwnedRemovalTest {
     private fun raw(
         id: Int,
         rev: Int = id,
+        order: Int = id,
     ): JsonObject =
         MobileJson
             .parseToJsonElement(
-                """{"id":$id,"rev":$rev,"order":$id,"parent":1,"kind":"future","status":"done","active":false,"shown":true,"summary":"private","content":null,"unknown":{"clear":null}}""",
+                """{"id":$id,"rev":$rev,"order":$order,"parent":1,"kind":"future","status":"done","active":false,"shown":true,"summary":"private","content":null,"unknown":{"clear":null}}""",
             ).jsonObject
 
     private fun saved(count: Int = 18_000) =
@@ -370,28 +371,30 @@ class AuthoritativeOwnedRemovalTest {
     @Test fun ownershipInvariant_durableNewerRevisionRejectsRemovalAtomically() =
         runTest {
             val cache = open()
-            val original = saved(2)
+            val original = saved(2).copy(items = listOf(raw(2, order = 1), raw(1)))
             cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
             val repo = wrapper(cache)
             val observer = observe(repo)
             val target = requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 2))
-            val newer = original.copy(items = listOf(raw(1), raw(2, 20_001)), appliedVersion = 20_001)
+            val newer = original.copy(items = listOf(raw(2, 20_001, order = 1), raw(1)), appliedVersion = 20_001)
             cache
                 .upsertAuthoritativeThread(
                     "host",
                     "c",
-                    newer.copy(items = listOf(raw(2, 20_001))),
+                    newer.copy(items = listOf(raw(2, 20_001, order = 1))),
                     false,
                     original.copy(items = emptyList()),
                     emptyMap(),
                 ).getOrThrow()
+            val before = ordinals()
             assertTrue(repo.removeAuthoritativeFact(target).isFailure)
             assertEquals(newer, open().readAuthoritativeThread("host", "c"))
             repo.authoritativeThreads.applyBatch("host", "c", "e", 20_002, listOf(ThreadItemDto.decodeReplacement(raw(1, 20_002))), 0)
             runCurrent()
             observer.cancelAndJoin()
             val retained = requireNotNull(open().readAuthoritativeThread("host", "c"))
-            assertEquals(listOf(raw(1, 20_002), raw(2, 20_001)), retained.items)
+            assertEquals(listOf(raw(2, 20_001, order = 1), raw(1, 20_002)), retained.items)
+            assertEquals(before, ordinals())
             assertTrue(retained.retirements.isEmpty())
         }
 
