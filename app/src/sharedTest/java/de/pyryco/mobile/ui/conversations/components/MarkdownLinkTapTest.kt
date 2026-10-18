@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -16,9 +17,11 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performFirstLinkClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -303,12 +306,35 @@ class MarkdownLinkTapTest {
             }
         }
         for (level in 1..6) {
-            composeTestRule
-                .onNodeWithText("Note$level Web$level", substring = streaming)
-                .performFirstLinkClick { (it.item as? LinkAnnotation.Url)?.url?.startsWith("notes/") == true }
-            composeTestRule
-                .onNodeWithText("Note$level Web$level", substring = streaming)
-                .performFirstLinkClick { (it.item as? LinkAnnotation.Url)?.url?.startsWith("https:") == true }
+            val workspaceLabel = "Note$level"
+            val webLabel = "Web$level"
+            val heading = composeTestRule.onNodeWithText("$workspaceLabel $webLabel", substring = streaming)
+            val rendered = heading.fetchSemanticsNode().config[SemanticsProperties.Text].single()
+            assertEquals(if (reader) 1 else 2, rendered.getLinkAnnotations(0, rendered.length).size)
+            if (reader) {
+                val workspaceText = rendered.subSequence(0, workspaceLabel.length)
+                assertTrue("H$level workspace label must be inert", workspaceText.getLinkAnnotations(0, workspaceText.length).isEmpty())
+                assertTrue(
+                    workspaceText.spanStyles.none { it.item.color == linkColor || it.item.textDecoration == TextDecoration.Underline },
+                )
+                val layouts = mutableListOf<TextLayoutResult>()
+                heading.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+                heading.performTouchInput { click(layouts.single().getBoundingBox(0).center) }
+                composeTestRule.waitForIdle()
+                assertEquals(emptyList<String>(), paths)
+                assertEquals((1 until level).map { "https://example.com/$it" }, opened)
+            } else {
+                heading.performFirstLinkClick { (it.item as? LinkAnnotation.Url)?.url == "notes/Plan$level.md" }
+            }
+            val webStart = workspaceLabel.length + 1
+            val webRange = rendered.getLinkAnnotations(webStart, webStart + webLabel.length).single()
+            assertEquals(webStart, webRange.start)
+            assertEquals(webStart + webLabel.length, webRange.end)
+            val webLink = webRange.item as LinkAnnotation.Url
+            assertEquals("https://example.com/$level", webLink.url)
+            assertEquals(linkColor, webLink.styles?.style?.color)
+            assertEquals(TextDecoration.Underline, webLink.styles?.style?.textDecoration)
+            heading.performFirstLinkClick { (it.item as? LinkAnnotation.Url)?.url == webLink.url }
         }
         assertEquals(if (reader) emptyList<String>() else (1..6).map { "notes/Plan$it.md" }, paths)
         assertEquals((1..6).map { "https://example.com/$it" }, opened)
