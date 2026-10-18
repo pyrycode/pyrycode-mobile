@@ -126,7 +126,7 @@ class MarkdownReaderDesignTest {
             assertDpEquals(20.dp, with(rule.density) { height.toDp() }, "paragraph line $line")
         }
         assertDpEquals(60.dp, paragraph.height, "three-line paragraph", pixels = ROUNDED_TEXT_BLOCK_PIXELS)
-        assertDpEquals(16.dp, subheading.top - paragraph.bottom, "gap after paragraph")
+        assertDpEquals(20.dp, subheading.top - paragraph.bottom, "gap after paragraph")
         items.forEach { assertDpEquals(20.dp, it.height, "list item height") }
         items.zipWithNext { above, below -> assertDpEquals(6.dp, below.top - above.bottom, "sibling item gap") }
         assertDpEquals(16.dp, code.top - items.last().bottom, "gap after list")
