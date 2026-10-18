@@ -747,11 +747,19 @@ class LegacyRoomStorage internal constructor(
                 if (gap in oldGaps && !recoveringSpan(gap.anchor) && !recoveringSpan(gap.edge)) continue
                 val older = dao.intervals(host, conversation, "spans", gap.anchor.position(), gap.anchor.position()).singleOrNull()
                 val newer = dao.newerSpan(host, conversation, gap.anchor.position()).singleOrNull()
+                lastMutationCounts =
+                    lastMutationCounts.copy(
+                        evidenceReads = lastMutationCounts.evidenceReads + listOfNotNull(older, newer).size,
+                    )
                 if (older != null && newer?.low == gap.edge.position()) {
-                    dao.intervals(host, conversation, "gaps", older.low, newer.low).forEach {
+                    val adjacent = dao.intervals(host, conversation, "gaps", older.low, newer.low)
+                    lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + adjacent.size)
+                    val replaced = adjacent.filter { it.high == newer.low }
+                    replaced.forEach {
                         dao.removeCell(host, conversation, "gaps", it.key, it.part)
                     }
                     dao.upsertEvidence(listOf(intervalCell(host, conversation, "gaps", gap.anchor, gap.edge)))
+                    lastMutationCounts = lastMutationCounts.copy(evidenceWrites = lastMutationCounts.evidenceWrites + replaced.size + 1)
                     repairedAnchors += gap.anchor
                 }
             }
