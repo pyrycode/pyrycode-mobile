@@ -231,13 +231,16 @@ class AuthoritativeOwnedUpsertTest {
             assertFalse(wrapper(reopened).openAuthoritativeThread("c"))
         }
 
-    @Test fun atomicInvariant_heldFailureAndFinalFlushKeepNewestFacts() =
+    // Keep active: #2263 verifies the retry hold through a separate Room reader.
+    @Test
+    fun atomicInvariant_heldFailureAndFinalFlushKeepNewestFacts() =
         runTest {
             var hook: suspend () -> Unit = {}
             val cache = open { hook() }
             val prior = saved(listOf(raw(1), raw(2)))
             cache.writeAuthoritativeThread("host", "c", prior).getOrThrow()
             val rolledBack = CompletableDeferred<Unit>()
+            val retryEntered = CompletableDeferred<Unit>()
             val allowRetry = CompletableDeferred<Unit>()
             var attempts = 0
             val controlled =
@@ -251,7 +254,10 @@ class AuthoritativeOwnedUpsertTest {
                         orderMoves: Map<Long, Boolean>,
                     ): Result<Unit> {
                         // Hold retry before Room admission, leaving the committed snapshot readable.
-                        if (++attempts > 1) allowRetry.await()
+                        if (++attempts > 1) {
+                            retryEntered.complete(Unit)
+                            allowRetry.await()
+                        }
                         return cache.upsertAuthoritativeThread(serverId, conversationId, saved, reset, baseline, orderMoves).also {
                             if (it.isFailure) rolledBack.complete(Unit)
                         }
@@ -282,7 +288,10 @@ class AuthoritativeOwnedUpsertTest {
             runCurrent()
             release.complete(Unit)
             rolledBack.await()
+            retryEntered.await()
+            assertFalse("Retry must remain held before the independent read", allowRetry.isCompleted)
             assertEquals(prior, fresh())
+            assertFalse("Independent reader must finish before retry release", allowRetry.isCompleted)
             allowRetry.complete(Unit)
             observer.cancelAndJoin()
             val expected = prior.copy(items = listOf(raw(1, 22_000), raw(2), raw(3, 22_000)), appliedVersion = 22_000)

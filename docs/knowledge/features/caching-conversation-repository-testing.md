@@ -46,6 +46,11 @@ resubscription and multiple-collector probes protect the shared baseline and com
 guard. Failed-restore controls distinguish retained coverage from saves completed during restore,
 including a save captured before collection entry.
 
+For authoritative Room writes, the [held-retry atomic probe](conversation-cache-testing.md#held-retry-atomic-rollback-and-final-flush-2263)
+acknowledges rollback and holds retry before transaction admission so a separate disk-backed
+reader can prove the exact prior record before retry release, then the newest record after
+cancellation/final flush. Its fake delegate does not prove negotiated production activation.
+
 The three `postCommit` probes hold real atomic replacement before success returns, then accept
 a newer removal: cancellation, normal completion and coverage-save cancellation must all wait
 and restore the latest rows. Holding only before mutation misses this boundary. The renderer-key

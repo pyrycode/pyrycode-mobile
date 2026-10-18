@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-18T18:13:08.541Z" hostname="723893f7154c" time="3.632">
+  <properties/>
+  <testcase name="atomicInvariant_heldFailureAndFinalFlushKeepNewestFacts" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="3.158"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
