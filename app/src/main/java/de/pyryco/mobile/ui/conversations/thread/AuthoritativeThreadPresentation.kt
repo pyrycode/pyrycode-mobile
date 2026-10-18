@@ -38,6 +38,7 @@ class AuthoritativeThreadPresentation internal constructor(
     internal val foregroundTool: ToolCall?,
     internal val certifiedCheckpoint: Long?,
     internal val shownRowRevisions: Map<String, Long>,
+    internal val sourceSnapshot: AuthoritativeThreadSnapshot,
 ) {
     /** Waiting feedback carries no ordered read revision; anchor sight to admitted history. */
     internal val newestReadKey = rows.lastOrNull { it is ThreadRow.Delivered && it.listKey(0) in shownRowRevisions }?.listKey(0)
@@ -279,6 +280,7 @@ internal fun projectAuthoritativeThread(
         },
         snapshot.checkpoint.takeIf { snapshot.epoch != null && !snapshot.repairNeeded && !snapshot.resetNeeded && it >= 0 },
         visible.mapNotNull { item -> adapted[item.id]?.let { it.listKey(0) to item.rev } }.toMap(),
+        snapshot,
     )
 }
 

@@ -12,6 +12,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.datetime.Clock
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import java.io.Closeable
 import java.util.UUID
 
 /** One connection's unfinished query slot. Shared facts survive reconnect; pending work never does. */
@@ -40,6 +41,7 @@ internal class AuthoritativeThreadQueries(
 
     private val connection = UUID.randomUUID().toString()
     private val opened = mutableSetOf<String>()
+    private val consumers = mutableMapOf<String, MutableSet<Any>>()
     private val queued = ArrayDeque<Intent>()
 
     // Keep correlation ownership for this connection; late errors must never enter legacy evidence.
@@ -54,6 +56,29 @@ internal class AuthoritativeThreadQueries(
         enqueue(Intent(conversation, false))
         dispatch()
         return true
+    }
+
+    /** Multiple destinations share one conversation's synchronization on this connection. */
+    @Synchronized
+    fun acquire(conversation: String): Closeable? {
+        if (closed || !enabled() || conversation.isEmpty()) return null
+        val token = Any()
+        val leases = consumers.getOrPut(conversation) { mutableSetOf() }
+        if (leases.isEmpty()) open(conversation)
+        leases += token
+        RelayLog.d { "event=thread_query_consumer code=acquired" }
+        return Closeable { release(conversation, token) }
+    }
+
+    @Synchronized
+    private fun release(
+        conversation: String,
+        token: Any,
+    ) {
+        val leases = consumers[conversation] ?: return
+        if (!leases.remove(token)) return
+        RelayLog.d { "event=thread_query_consumer code=released" }
+        if (leases.isEmpty()) cancel(conversation)
     }
 
     /** A live completion needs a boundary captured after it, even when an older query is running. */
@@ -80,6 +105,7 @@ internal class AuthoritativeThreadQueries(
 
     @Synchronized
     fun cancel(conversation: String) {
+        consumers.remove(conversation)
         opened -= conversation
         queued.removeAll { it.conversation == conversation }
         if (active?.decoder?.request?.conversationId == conversation) retire("cancelled")
@@ -211,6 +237,7 @@ internal class AuthoritativeThreadQueries(
         closed = true
         queued.clear()
         opened.clear()
+        consumers.clear()
         retire("disconnected", remoteComplete = true)
     }
 

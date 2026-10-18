@@ -410,6 +410,11 @@ class RelayRepositoryCoordinator(
                 override suspend fun open(conversationId: String): Boolean =
                     verifiedRepository()?.openAuthoritativeThread(conversationId) == true
 
+                override suspend fun acquire(
+                    conversationId: String,
+                    connection: Any,
+                ): java.io.Closeable? = verifiedRepository()?.takeIf { it === connection }?.acquireAuthoritativeThread(conversationId)
+
                 override fun older(conversationId: String): Boolean =
                     verifiedRepository()?.requestOlderAuthoritativeThread(conversationId) == true
 

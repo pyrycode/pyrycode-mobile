@@ -74,6 +74,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -111,6 +112,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
+import java.lang.ref.WeakReference
 import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.floor
@@ -1114,17 +1116,18 @@ class ThreadViewModel(
         negotiated?.let { route ->
             viewModelScope.launch {
                 route.support.collectLatest { support ->
-                    if (support is ThreadSupport.Supported && route.open(conversationId)) {
-                        RelayLog.d { "event=thread_route_opened" }
+                    if (support is ThreadSupport.Supported) {
+                        val lease = route.acquire(conversationId, support.connection) ?: return@collectLatest
+                        try {
+                            RelayLog.d { "event=thread_route_opened" }
+                            awaitCancellation()
+                        } finally {
+                            lease.close()
+                        }
                     }
                 }
             }
         }
-    }
-
-    override fun onCleared() {
-        negotiated?.cancel(conversationId)
-        super.onCleared()
     }
 
     val state: StateFlow<ThreadUiState> =
@@ -3550,6 +3553,25 @@ class ThreadViewModel(
     }
 
     private var highestQualifiedRead = 0uL
+    private var highestQualifiedPresentation: AuthoritativeThreadPresentation? = null
+    private var highestQualifiedBinding: Any? = null
+    private var highestQualifiedReadConnection: Any? = null
+
+    private fun qualifiesAuthoritativeSight(event: ThreadEvent.NewestContentPresented): Boolean {
+        val presentation = event.presentation ?: return false
+        val authoritative = taskControls.value
+        return viewModelScope.coroutineContext[Job]?.isActive == true &&
+            authoritative.authoritative === presentation &&
+            authoritative.authoritativeBinding === event.binding &&
+            authoritative.readConnection === repository.runConfigurationReadings?.currentConnection &&
+            (negotiated == null || (negotiated.support.value as? ThreadSupport.Supported)?.connection === authoritative.readConnection) &&
+            (negotiated == null || negotiated.store.current(serverId, conversationId) === presentation.sourceSnapshot) &&
+            presentation.host == serverId &&
+            presentation.conversation == conversationId &&
+            state.value.hostAvailable &&
+            presentation.rows.any { row -> row is ThreadRow.Delivered && row.listKey(0) == event.rowKey && row.item == event.row } &&
+            presentation.readCheckpoint(event.rowKey, state.value.readMarks, event.seenRowRevisions) == event.checkpoint
+    }
 
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
@@ -3561,19 +3583,18 @@ class ThreadViewModel(
                 val authoritative = taskControls.value
                 val presentation = event.presentation
                 if (presentation != null) {
-                    if (authoritative.authoritative !== presentation ||
-                        authoritative.authoritativeBinding !== event.binding ||
-                        authoritative.readConnection !== repository.runConfigurationReadings?.currentConnection ||
-                        presentation.host != serverId ||
-                        presentation.conversation != conversationId ||
-                        !state.value.hostAvailable ||
-                        presentation.rows.none { row ->
-                            row is ThreadRow.Delivered && row.listKey(0) == event.rowKey && row.item == event.row
-                        } ||
-                        presentation.readCheckpoint(event.rowKey, state.value.readMarks, event.seenRowRevisions) != checkpoint
-                    ) {
+                    if (!qualifiesAuthoritativeSight(event)) {
                         RelayLog.d { "event=thread_read_sight code=retired_or_unqualified" }
                         return
+                    }
+                    if (highestQualifiedPresentation !== presentation ||
+                        highestQualifiedBinding !== event.binding ||
+                        highestQualifiedReadConnection !== authoritative.readConnection
+                    ) {
+                        highestQualifiedPresentation = presentation
+                        highestQualifiedBinding = event.binding
+                        highestQualifiedReadConnection = authoritative.readConnection
+                        highestQualifiedRead = 0uL
                     }
                 } else if (authoritative.authoritative != null || state.value.readMarks?.threadSupported == true) {
                     return
@@ -3581,9 +3602,19 @@ class ThreadViewModel(
                 if (checkpoint <= highestQualifiedRead) return
                 highestQualifiedRead = checkpoint
                 RelayLog.d { "event=thread_read_sight code=qualified" }
-                viewModelScope.launch(
-                    start = CoroutineStart.UNDISPATCHED,
-                ) { repository.acknowledgeReadCheckpoint(conversationId, checkpoint) }
+                if (presentation != null) {
+                    // The process retry service retains sight, without retaining a disposed ViewModel.
+                    val owner = WeakReference(this)
+                    viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        repository.acknowledgeAuthoritativeReadCheckpoint(conversationId, checkpoint, authoritative.readConnection) {
+                            owner.get()?.qualifiesAuthoritativeSight(event) == true
+                        }
+                    }
+                } else {
+                    viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        repository.acknowledgeReadCheckpoint(conversationId, checkpoint)
+                    }
+                }
             }
             is ThreadEvent.BackgroundTaskToggle -> toggleBackgroundTask(event.taskId)
             is ThreadEvent.BackgroundTaskStop -> sendBackgroundTaskStop(event)

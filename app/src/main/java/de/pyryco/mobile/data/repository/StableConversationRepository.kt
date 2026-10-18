@@ -356,6 +356,7 @@ class StableConversationRepository(
         conversationId: String,
         checkpoint: ULong,
     ) {
+        if (negotiatedThread != null) return
         if (readRetries != null) {
             readRetries.qualify(currentRepository, conversationId, checkpoint)
         } else {
@@ -364,6 +365,26 @@ class StableConversationRepository(
     }
 
     override suspend fun delete(conversationId: String): Unit = live.delete(conversationId)
+
+    override suspend fun acknowledgeAuthoritativeReadCheckpoint(
+        conversationId: String,
+        checkpoint: ULong,
+        connection: Any?,
+        isQualified: () -> Boolean,
+    ) {
+        val owner = currentRepository.value?.takeIf { it === connection } ?: return
+        val qualified = {
+            currentRepository.value === owner &&
+                (negotiatedThread == null || (negotiatedThread.support.value as? ThreadSupport.Supported)?.connection === owner) &&
+                isQualified()
+        }
+        if (!qualified()) return
+        if (readRetries != null) {
+            readRetries.qualify(currentRepository, conversationId, checkpoint, owner, qualified)
+        } else if (qualified()) {
+            owner.markConversationRead(conversationId, checkpoint)
+        }
+    }
 
     override suspend fun rename(
         conversationId: String,

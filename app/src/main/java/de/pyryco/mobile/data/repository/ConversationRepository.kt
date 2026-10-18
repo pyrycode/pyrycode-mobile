@@ -439,6 +439,16 @@ interface ConversationRepository {
         markConversationRead(conversationId, checkpoint)
     }
 
+    /** Retain exact sight qualification and its connection; it cannot become a legacy retry. */
+    suspend fun acknowledgeAuthoritativeReadCheckpoint(
+        conversationId: String,
+        checkpoint: ULong,
+        connection: Any?,
+        isQualified: () -> Boolean,
+    ) {
+        if (isQualified()) markConversationRead(conversationId, checkpoint)
+    }
+
     /**
      * Permanently removes the conversation from the store. Tolerant of unknown
      * ids: calling `delete` on an id that is not present is a silent no-op.

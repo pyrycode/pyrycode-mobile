@@ -318,6 +318,8 @@ class RemoteConversationRepository internal constructor(
 
     internal fun openAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.open(conversationId)
 
+    internal fun acquireAuthoritativeThread(conversationId: String): java.io.Closeable? = authoritativeQueries.acquire(conversationId)
+
     internal fun requestOlderAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.older(conversationId)
 
     internal fun cancelAuthoritativeThread(conversationId: String) = authoritativeQueries.cancel(conversationId)
@@ -1905,7 +1907,13 @@ class RemoteConversationRepository internal constructor(
     override suspend fun markConversationRead(
         conversationId: String,
         upTo: ULong,
-    ): Result<ULong> = conversationCommands.markConversationRead(conversationId, upTo)
+    ): Result<ULong> {
+        if (authoritativeHostId.isNotEmpty() && !usesAuthoritativeLiveState) {
+            RelayLog.d { "event=read_checkpoint code=unavailable" }
+            return Result.failure(IllegalStateException("Authoritative read connection is unavailable"))
+        }
+        return conversationCommands.markConversationRead(conversationId, upTo)
+    }
 
     /** Permanently delete a conversation (#532); see [ConversationCommands.delete]. */
     override suspend fun delete(conversationId: String): Unit = conversationCommands.delete(conversationId)

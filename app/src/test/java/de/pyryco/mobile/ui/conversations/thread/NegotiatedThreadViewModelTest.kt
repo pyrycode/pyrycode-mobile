@@ -114,6 +114,7 @@ class NegotiatedThreadViewModelTest {
             runCurrent()
             assertEquals(listOf(first, second), route.opened)
             owner.clear()
+            runCurrent()
             assertEquals(listOf("c"), route.cancelled)
         }
 

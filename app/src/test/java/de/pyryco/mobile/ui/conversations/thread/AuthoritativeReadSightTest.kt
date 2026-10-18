@@ -308,10 +308,10 @@ class AuthoritativeReadSightTest {
                 val reconnected = Peer().apply { response = 7u }
                 source.value = reconnected
                 runCurrent()
-                assertEquals(listOf(8uL), reconnected.writes)
+                assertTrue(reconnected.writes.isEmpty())
                 repeat(3) { sight() }
                 runCurrent()
-                assertEquals(listOf(8uL), reconnected.writes)
+                assertTrue(reconnected.writes.isEmpty())
                 reconnected.facts.value = facts(8u).copy(readUpTo = 7u)
                 source.value = null
                 runCurrent()
@@ -322,7 +322,7 @@ class AuthoritativeReadSightTest {
                     }
                 source.value = noop
                 runCurrent()
-                assertEquals(listOf(8uL), noop.writes)
+                assertTrue(noop.writes.isEmpty())
                 noop.facts.value = facts(8u).copy(readUpTo = 8u)
                 runCurrent()
                 source.value = null
@@ -353,6 +353,11 @@ class AuthoritativeReadSightTest {
             val p = projectAuthoritativeThread("h", "c", authoritativeSnapshot(authoritativeItem(1, rev = 8)).copy(checkpoint = 8))
             val binding = Any()
             vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(p, binding))
+            vm.onOverflowEvent(
+                ThreadEvent.NewestContentPresented(p.items.last(), 8u, p, binding, p.rows.last().listKey(0), p.shownRowRevisions),
+            )
+            runCurrent()
+            assertEquals(listOf(8uL), peer.writes)
             source.value = null
             runCurrent()
             val next = Peer()
@@ -362,8 +367,22 @@ class AuthoritativeReadSightTest {
                 ThreadEvent.NewestContentPresented(p.items.last(), 8u, p, binding, p.rows.last().listKey(0), p.shownRowRevisions),
             )
             runCurrent()
-            assertTrue(peer.writes.isEmpty())
+            assertEquals(listOf(8uL), peer.writes)
             assertTrue(next.writes.isEmpty())
+            val replacementBinding = Any()
+            vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(p, replacementBinding))
+            vm.onOverflowEvent(
+                ThreadEvent.NewestContentPresented(
+                    p.items.last(),
+                    8u,
+                    p,
+                    replacementBinding,
+                    p.rows.last().listKey(0),
+                    p.shownRowRevisions,
+                ),
+            )
+            runCurrent()
+            assertEquals(listOf(8uL), next.writes)
             retries.dispose()
         }
 

@@ -128,6 +128,15 @@ class CachingConversationRepository(
 
                 override suspend fun open(conversationId: String): Boolean = openAuthoritativeThread(conversationId)
 
+                override suspend fun acquire(
+                    conversationId: String,
+                    connection: Any,
+                ): java.io.Closeable? {
+                    restoreAuthoritative(conversationId)
+                    if (conversationId in deleted) return null
+                    return route.acquire(conversationId, connection)
+                }
+
                 override fun older(conversationId: String): Boolean = conversationId !in deleted && route.older(conversationId)
 
                 override fun cancel(conversationId: String) = route.cancel(conversationId)

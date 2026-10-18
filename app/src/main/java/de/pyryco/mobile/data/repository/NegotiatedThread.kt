@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.repository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
+import java.io.Closeable
 
 /**
  * The production thread route of one exact host (#2175). Decorators forward it, as they forward
@@ -24,6 +25,17 @@ abstract class NegotiatedThread {
 
     /** Opens synchronization on the connection named by the current [ThreadSupport.Supported] verdict only. */
     abstract suspend fun open(conversationId: String): Boolean
+
+    /** A destination releases only its interest on the captured connection. */
+    internal open suspend fun acquire(
+        conversationId: String,
+        connection: Any,
+    ): Closeable? {
+        if ((support.value as? ThreadSupport.Supported)?.connection !== connection || !open(conversationId)) return null
+        return Closeable {
+            if ((support.value as? ThreadSupport.Supported)?.connection === connection) cancel(conversationId)
+        }
+    }
 
     abstract fun older(conversationId: String): Boolean
 

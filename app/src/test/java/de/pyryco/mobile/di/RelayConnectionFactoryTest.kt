@@ -51,6 +51,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.DebugBundleStatus
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.HostReadingFrames
+import de.pyryco.mobile.data.repository.ReadCheckpointRetries
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -61,6 +62,7 @@ import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ThreadContentScheduling
 import de.pyryco.mobile.ui.conversations.thread.ThreadEvent
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.conversations.thread.listKey
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -1948,6 +1950,307 @@ class RelayConnectionFactoryTest {
                 Dispatchers.resetMain()
             }
         }
+
+    @Test fun sameConversationDestinationsKeepPagingAndCompletionCertificationAfterOneCloses() =
+        runTest {
+            withProductionDestinations { probe ->
+                val survivor = probe.open()
+                val duplicate = probe.open()
+                runCurrent()
+                val transport = probe.transport()
+                probe.finish(transport, transport.outbound.first { it.type == "thread_catch_up" }, 10)
+                probe.marks(transport)
+                runCurrent()
+                assertEquals(
+                    "opening certification",
+                    10L,
+                    survivor.second.state.value.authoritativeThread
+                        ?.certifiedCheckpoint,
+                )
+                duplicate.first.clear()
+                runCurrent()
+                survivor.second.onDemandOlderHistory()
+                runCurrent()
+                val page = transport.outbound.single { it.type == "thread_page" }
+                probe.finish(transport, page, 10)
+                runCurrent()
+                assertEquals(
+                    "page retains certification",
+                    10L,
+                    survivor.second.state.value.authoritativeThread
+                        ?.certifiedCheckpoint,
+                )
+                val terminal = item(2, 20, 6, kind = "turn_end").raw
+                transport.emit(envelope("thread_item_added", """{"conversation_id":"c","epoch":"e","version":20,"item":$terminal}"""))
+                runCurrent()
+                val refresh = transport.outbound.last { it.type == "thread_catch_up" }
+                assertNotEquals(page.id, refresh.id)
+                assertEquals(
+                    "10",
+                    refresh.payload.jsonObject
+                        .getValue("version")
+                        .toString(),
+                )
+                probe.finish(transport, refresh, 20)
+                runCurrent()
+                val held = requireNotNull(probe.registry.connectionFor("A")).coordinator.authoritativeThreads.current("A", "c")
+                assertEquals(
+                    "completion: checkpoint=${held.checkpoint} repair=${held.repairNeeded} " +
+                        "reset=${held.resetNeeded} support=${bundleState(probe.registry, "A")}",
+                    20L,
+                    survivor.second.state.value.authoritativeThread
+                        ?.certifiedCheckpoint,
+                )
+
+                val stale = probe.open()
+                runCurrent()
+                probe.reconnect()
+                val replacement = probe.transport()
+                probe.finish(replacement, replacement.outbound.last { it.type == "thread_catch_up" }, 20)
+                probe.marks(replacement)
+                runCurrent()
+                stale.first.clear()
+                runCurrent()
+                survivor.second.onDemandOlderHistory()
+                runCurrent()
+                assertEquals(1, replacement.outbound.count { it.type == "thread_page" })
+            }
+        }
+
+    @Test fun authoritativeReadRetriesRequireFreshSightOnCapableReplacement() =
+        runTest {
+            withProductionDestinations { probe -> probe.readReplacement(missing = false) }
+        }
+
+    @Test fun authoritativeReadRetriesNeverReachMissingReplacement() =
+        runTest {
+            withProductionDestinations { probe -> probe.readReplacement(missing = true) }
+        }
+
+    @Test fun authoritativeReadProofIsRecheckedBeforeQueuedAttempt() =
+        runTest {
+            withProductionDestinations { probe ->
+                val vm = probe.open().second
+                runCurrent()
+                val transport = probe.transport()
+                probe.finish(transport, transport.outbound.single { it.type == "thread_catch_up" }, 10)
+                probe.marks(transport)
+                runCurrent()
+                val retired = probe.sight(vm)
+                vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadRetired(retired))
+                runCurrent()
+                assertTrue(transport.outbound.none { it.type == "mark_conversation_read" })
+                probe.sight(vm)
+                runCurrent()
+                assertEquals(1, transport.outbound.count { it.type == "mark_conversation_read" })
+            }
+        }
+
+    @Test fun authoritativeReadProofCannotCrossAStoreGenerationBeforeDisplayCatchesUp() =
+        runTest {
+            withProductionDestinations { probe ->
+                val vm = probe.open().second
+                runCurrent()
+                val transport = probe.transport()
+                probe.finish(transport, transport.outbound.single { it.type == "thread_catch_up" }, 10)
+                probe.marks(transport)
+                runCurrent()
+                probe.sight(vm)
+                val store = requireNotNull(probe.registry.connectionFor("A")).coordinator.authoritativeThreads
+                store.reset("A", "c", "e")
+                store.establishComplete("A", "c", "e", 10, listOf(item(1, 5, 5)), store.current("A", "c").generation)
+                runCurrent()
+                assertTrue(
+                    "queued sight belongs to the retired generation",
+                    transport.outbound.none { it.type == "mark_conversation_read" },
+                )
+                probe.sight(vm)
+                runCurrent()
+                assertEquals(1, transport.outbound.count { it.type == "mark_conversation_read" })
+            }
+        }
+
+    private suspend fun TestScope.withProductionDestinations(test: suspend (ProductionDestinations) -> Unit) {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val probe = ProductionDestinations(this)
+        try {
+            probe.fixture.store.save(probe.fixture.a.record)
+            probe.registry.connect()
+            runCurrent()
+            test(probe)
+        } finally {
+            probe.owners.forEach { it.clear() }
+            probe.retries.dispose()
+            probe.registry.dispose()
+            runCurrent()
+            Dispatchers.resetMain()
+        }
+    }
+
+    private inner class ProductionDestinations(
+        val scope: TestScope,
+    ) {
+        val dispatcher = StandardTestDispatcher(scope.testScheduler)
+        val fixture = Fixture(scope).also { it.threadSupport = true }
+        val registry = fixture.registry()
+        val retries = ReadCheckpointRetries(dispatcher)
+        val owners = mutableListOf<androidx.lifecycle.ViewModelStore>()
+        val destinations =
+            ThreadDestinationFactory(
+                true,
+                registry,
+                FakeConversationRepository(),
+                fixture.store,
+                { it },
+                cache = FileConversationCache(temporary.root, dispatcher),
+                readRetries = retries,
+                attachmentReader = lazy { AttachmentReader { AttachmentRead.Unreadable } },
+                contentScheduling = ThreadContentScheduling(dispatcher) { 1L },
+            )
+        val preferences =
+            AppPreferences(
+                object : DataStore<Preferences> {
+                    override val data = flowOf(emptyPreferences())
+
+                    override suspend fun updateData(transform: suspend (Preferences) -> Preferences) = transform(emptyPreferences())
+                },
+            )
+
+        fun open(): Pair<androidx.lifecycle.ViewModelStore, ThreadViewModel> {
+            val owner = androidx.lifecycle.ViewModelStore().also { owners += it }
+            val vm =
+                destinations.thread(
+                    SavedStateHandle(mapOf("serverId" to "A", "conversationId" to "c")),
+                    de.pyryco.mobile.ui.conversations.thread
+                        .ComposerDraftStore(),
+                    preferences,
+                )
+            owner.put("thread", vm)
+            scope.backgroundScope.launch { vm.state.collect {} }
+            return owner to vm
+        }
+
+        fun transport() = fixture.transports.last()
+
+        fun reconnect() {
+            val previous = transport()
+            val bundle = requireNotNull(registry.connectionFor("A"))
+            bundle.supervisor.close()
+            scope.runCurrent()
+            registry.retryHost("A", bundle)
+            scope.runCurrent()
+            assertNotSame("the probe must replace its transport", previous, transport())
+        }
+
+        fun finish(
+            transport: PeerTransport,
+            request: Envelope,
+            version: Long,
+        ) {
+            val from =
+                request.payload.jsonObject["version"]
+                    ?.jsonPrimitive
+                    ?.content
+                    ?.toLongOrNull() ?: 0
+            val page = request.type == "thread_page"
+            val upper =
+                if (page) {
+                    request.payload.jsonObject
+                        .getValue("before_order")
+                        .jsonPrimitive.content
+                        .toLong()
+                } else {
+                    10
+                }
+            val lower = if (page) 1 else 5
+            val coverage =
+                if (!page && from > 0) {
+                    "\"from_version\":$from"
+                } else {
+                    "\"lower_order\":$lower,\"upper_order\":$upper,\"continuation\":$lower,\"older_exists\":true"
+                }
+            val facts =
+                when {
+                    page -> listOf(item(3, 5, 1))
+                    from == 0L -> listOf(item(1, 5, 5))
+                    version > from -> listOf(item(2, version, 6, kind = "turn_end"))
+                    else -> emptyList()
+                }
+            transport.emit(
+                envelope(
+                    "thread_items",
+                    """{"conversation_id":"c","epoch":"e","version":$version,"items":[${facts.joinToString {
+                        it.raw.toString()
+                    }}],"final":false}""",
+                ).copy(inReplyTo = request.id),
+            )
+            transport.emit(
+                envelope(
+                    "thread_items",
+                    """{"conversation_id":"c","epoch":"e","version":$version,"items":[],"final":true,$coverage}""",
+                ).copy(inReplyTo = request.id),
+            )
+        }
+
+        fun marks(transport: PeerTransport) {
+            transport.emit(
+                envelope(
+                    "conversations",
+                    """{"conversations":[{"id":"c","name":"A","is_promoted":true,"cwd":"/same","last_message_ts":"2026-09-01T00:00:00Z","last_used_at":"2026-09-01T00:00:00Z","read_up_to":0,"last_shown_version":5,"latest_entry_id":5}]}""",
+                ),
+            )
+        }
+
+        fun sight(vm: ThreadViewModel): Any {
+            val presentation = requireNotNull(vm.state.value.authoritativeThread)
+            val binding = Any()
+            vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(presentation, binding))
+            vm.onOverflowEvent(
+                ThreadEvent.NewestContentPresented(
+                    presentation.items.last(),
+                    5u,
+                    presentation,
+                    binding,
+                    presentation.rows.last().listKey(0),
+                    presentation.shownRowRevisions,
+                ),
+            )
+            return binding
+        }
+
+        suspend fun readReplacement(missing: Boolean) {
+            val vm = open().second
+            scope.runCurrent()
+            val first = transport()
+            finish(first, first.outbound.single { it.type == "thread_catch_up" }, 10)
+            marks(first)
+            scope.runCurrent()
+            sight(vm)
+            scope.runCurrent()
+            val mark = first.outbound.single { it.type == "mark_conversation_read" }
+            first.emit(envelope("error", """{"code":"internal","message":"failed"}""").copy(inReplyTo = mark.id))
+            scope.runCurrent()
+            fixture.threadSupport = !missing
+            reconnect()
+            val replacement = transport()
+            marks(replacement)
+            scope.runCurrent()
+            assertTrue("retired sight cannot mark a replacement", replacement.outbound.none { it.type == "mark_conversation_read" })
+            if (missing) {
+                assertNull(vm.state.value.authoritativeThread)
+                assertTrue(replacement.outbound.none { it.type.startsWith("thread_") })
+                assertTrue(destinations.repository("A").markConversationRead("c", 5u).isFailure)
+                assertTrue(replacement.outbound.none { it.type == "mark_conversation_read" })
+            } else {
+                finish(replacement, replacement.outbound.single { it.type == "thread_catch_up" }, 10)
+                scope.runCurrent()
+                assertTrue(replacement.outbound.none { it.type == "mark_conversation_read" })
+                sight(vm)
+                scope.runCurrent()
+                assertEquals(1, replacement.outbound.count { it.type == "mark_conversation_read" })
+            }
+        }
+    }
 
     private fun bundleState(
         registry: RelayConnectionRegistry,
