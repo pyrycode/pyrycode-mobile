@@ -475,7 +475,8 @@ class DeterministicInteractiveStreamE2ETest {
                     evidence.observe(conversationId).first { it.loadedMainReply()?.content?.contains(PING, ignoreCase = true) == true }
                 }
             }
-        val checkpoint = requireNotNull(reply.records.single { it.message.id == reply.loadedMainReply()?.id }.fact).rev.toULong()
+        val replyFact = requireNotNull(reply.records.single { it.message.id == reply.loadedMainReply()?.id }.fact)
+        val checkpoint = replyFact.rev.toULong()
         runBlocking {
             withTimeout(REPLY_TIMEOUT_MS) {
                 route.observe(conversationId).first {
@@ -499,7 +500,7 @@ class DeterministicInteractiveStreamE2ETest {
                         .matches(reply.owner) &&
                     marks?.threadSupported == true &&
                     shown != null &&
-                    shown >= checkpoint &&
+                    shown >= replyFact.id.toULong() &&
                     (marks.readUpTo ?: 0uL) >= shown
             }
         }

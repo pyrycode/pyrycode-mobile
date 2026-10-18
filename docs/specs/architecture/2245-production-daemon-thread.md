@@ -93,7 +93,10 @@ None. Validate salvage against current fences and owned cache writes instead of 
 
 2026-10-18: The next native run rendered the reply but the scripted read proof still waited on a reconnect-spanning Stable facade's legacy snapshots. Bind it once to the exact supported Remote connection and shared authoritative evidence, require certified coverage of the reply revision and confirmed authoritative shown watermark, and use the canonical post revision for the explicit peer read. The read actor opts into thread support; raw diagnostic peers keep their default legacy capabilities. Preserve unseen-post attention and peer-confirmation assertions without legacy history as evidence.
 
+2026-10-18: The exact-connection native read probe failed despite qualified sight and a daemon-confirmed read. Its assertion incorrectly required the shown watermark to reach the item's completion-only revision. The protocol's `last_shown_version` contract explicitly excludes completion-only changes. Retain certified coverage through the exact settled revision; separately require a shown watermark covering the reply's creation and confirmation through that current daemon watermark. Exact-revision sight remains covered by the production sight tests and is never inferred from numeric receipt.
+
 ## Documentation handoff
+
 
 Pending documentation stage: update `docs/knowledge/features/thread-screen.md` and `docs/knowledge/features/remote-conversation-repository.md`, replacing opt-in/pending activation wording with required-thread production selection and no fallback. Explain offline saved facts versus current support/progress and Missing suppression. If recordings change, record actual capture/replay/comparison outcomes and reviewed differences in `docs/e2e-interactive-stream.md`.
 
