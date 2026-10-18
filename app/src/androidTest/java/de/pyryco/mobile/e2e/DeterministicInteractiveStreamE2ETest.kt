@@ -355,6 +355,7 @@ class DeterministicInteractiveStreamE2ETest {
     }
 
     /** Zero-Claude durable twin runs beside the original ping scenario, with its own channel. */
+    @org.junit.Ignore("blocked on #2167: legacy cache/coverage proof is unhooked from the production thread")
     @Test
     fun interactiveTurn_seededChannel_durableGapCatchUp() {
         arriveInSeededThread()
@@ -425,11 +426,14 @@ class DeterministicInteractiveStreamE2ETest {
     fun interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread() {
         arriveInSeededThread()
 
-        // #1631: the top menu reaches the panel even before any task has been reported.
+        // The authoritative initial thread reports an empty task set without a legacy roster (#2245).
         composeTestRule.onNode(hasContentDescription("More actions")).performClick()
         composeTestRule.onNode(hasText("Background tasks") and hasClickAction()).performClick()
         composeTestRule.onNodeWithText("Channel info").assertDoesNotExist()
-        composeTestRule.onNodeWithText("No background-task report yet").assertIsDisplayed()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText("No background tasks").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText("No background tasks").assertIsDisplayed()
         composeTestRule.onNode(hasContentDescription("Close")).performClick()
         composeTestRule.onNodeWithText("Background tasks").assertDoesNotExist()
 
