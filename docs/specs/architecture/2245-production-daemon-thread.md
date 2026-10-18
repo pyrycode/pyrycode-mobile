@@ -87,6 +87,8 @@ None. Validate salvage against current fences and owned cache writes instead of 
 
 2026-10-18: The unchanged Room held-retry probe failed in this branch (17 executed, 1 failed) and untouched main `03e455f7b` (1 executed, 1 failed), both returning null from `fresh`. Filed #2263 in Backlog with low priority and retained its assertion behind a tracker-linked ignore, per the out-of-scope bug policy. Activation and the other atomic cache probes stay enabled.
 
+2026-10-18: Native scripted ping executed two failures on the supported production route, with `thread_decode code=attribution` followed by repair/drain reconnects. `ThreadQueryDecoder.decode` incorrectly equates an initial empty request epoch with the captured daemon epoch. The protocol permits empty epoch with version zero; admit that first captured epoch while retaining fixed epoch/version, routing and request correlation across the reply. Add `ThreadQueryDecoderTest.initialZeroVersionCatchUpLearnsEpochAndKeepsBatchesFenced` and rerun the scripted production probe. This cold-start guard is required by activation; no wire field or daemon contract changes. Also apply Spotless's required annotation layout to the tracked Room ignore.
+
 ## Documentation handoff
 
 Pending documentation stage: update `docs/knowledge/features/thread-screen.md` and `docs/knowledge/features/remote-conversation-repository.md`, replacing opt-in/pending activation wording with required-thread production selection and no fallback. Explain offline saved facts versus current support/progress and Missing suppression. If recordings change, record actual capture/replay/comparison outcomes and reviewed differences in `docs/e2e-interactive-stream.md`.
@@ -101,6 +103,7 @@ Pending documentation stage: update `docs/knowledge/features/thread-screen.md` a
 - **Android attack surface:** no component, intent, provider, permission or WebView change.
 - **Cryptography:** preserve vendored Noise IK and per-session cipher ownership; no primitive, key or nonce changes.
 - **Network/I/O:** preserve frame bounds, authenticated ack, timeouts and supervisor backoff. Delayed/reordered traffic cannot revive retired requests. Refresh only uses the owning repository, never the facade's replacement connection.
+- **Bootstrap admission:** an empty epoch learns the first captured epoch only for a zero-version catch-up. Request/conversation correlation and the captured epoch/version remain mandatory across every subsequent batch and terminal marker.
 - **Errors/logs:** static codes only; no tokens, item bodies, decrypted bytes or transient state dumps. Generic existing UI failures remain.
 - **Concurrency:** MUST FIX addressed in design: retain A's synchronous transport/child-scope gates; cancellation alone is insufficient. Provider opens after restore; progress is bound to the verdict's exact connection and removed on retirement. Existing serialized cache writer protects certification.
 - **Threat model:** malicious relay delay/drop/reorder is handled by Noise plus connection/generation fencing and certified checkpoints. Hostile daemon frames reuse defensive decoding and inert text paths. Keystore wrapping of credentials remains; rooted-device plaintext-content theft and OS screenshot/accessibility/keyboard exposure are existing platform limitations, unchanged by source selection.

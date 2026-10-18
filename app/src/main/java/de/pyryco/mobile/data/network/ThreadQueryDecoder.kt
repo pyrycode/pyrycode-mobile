@@ -56,7 +56,8 @@ internal class ThreadQueryDecoder(
         }
         if (current != null && envelope.type != "thread_reset") {
             val captured = checkpoint
-            if ((request is ThreadQueryRequest.CatchUp && current.epoch != request.epoch) ||
+            val initialCatchUp = request is ThreadQueryRequest.CatchUp && request.version == 0uL && request.epoch.isEmpty()
+            if ((request is ThreadQueryRequest.CatchUp && !initialCatchUp && current.epoch != request.epoch) ||
                 (captured != null && (captured.epoch != current.epoch || captured.version != current.version))
             ) {
                 return listOf(reject("attribution"))
