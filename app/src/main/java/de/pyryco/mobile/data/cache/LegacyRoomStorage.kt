@@ -139,6 +139,7 @@ class LegacyRoomStorage internal constructor(
         val evidenceReads: Int = 0,
         val evidenceDecodes: Int = 0,
         val evidenceWrites: Int = 0,
+        val evidenceSerializations: Int = 0,
     )
 
     internal var lastMutationCounts = MutationCounts()
@@ -231,6 +232,7 @@ class LegacyRoomStorage internal constructor(
                         lastMutationCounts = lastMutationCounts.copy(evidenceDecodes = lastMutationCounts.evidenceDecodes + 1)
                         val fields = MobileJson.parseToJsonElement(encoded).jsonObject.toMutableMap()
                         fields["unknown"] = JsonPrimitive(true)
+                        fields["ownedLoss"] = JsonPrimitive(true)
                         val first = dao.newerSpan(host, conversation, 0uL.position()).firstOrNull()
                         lastMutationCounts =
                             lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + if (first == null) 0 else 1)
@@ -282,7 +284,12 @@ class LegacyRoomStorage internal constructor(
         }
         keys.forEach { dao.removeClaim(host, conversation, it) }
         lastMutationCounts = lastMutationCounts.copy(evidenceWrites = lastMutationCounts.evidenceWrites + keys.size)
-        for (entry in entries) subtractEntry(host, conversation, entry)
+        for (entry in entries) {
+            subtractEntry(host, conversation, entry)
+            val key = entry.position()
+            dao.upsertEvidence(listOf(Evidence(host, conversation, "losses", key, 0, -1L, key, key, "true")))
+            lastMutationCounts = lastMutationCounts.copy(evidenceWrites = lastMutationCounts.evidenceWrites + 1)
+        }
         return keys.isNotEmpty()
     }
 
@@ -329,6 +336,7 @@ class LegacyRoomStorage internal constructor(
         low: ULong,
         high: ULong,
     ): Evidence {
+        lastMutationCounts = lastMutationCounts.copy(evidenceSerializations = lastMutationCounts.evidenceSerializations + 1)
         val payload =
             if (kind == "spans") {
                 MobileJson.encodeToJsonElement(UnsignedHistorySpan(low, high))
@@ -419,6 +427,18 @@ class LegacyRoomStorage internal constructor(
         mutate("write_history") {
             val header = dao.header(serverId, conversationId)
             if (header == null && position == null) return@mutate
+            if (position == null) {
+                dao.deleteEvidence(serverId, conversationId)
+                val cleared =
+                    checkNotNull(header).copy(
+                        generation = UUID.randomUUID().toString(),
+                        cursor = null,
+                        atStart = false,
+                        coverageHeader = null,
+                    )
+                dao.updateHeader(cleared)
+                return@mutate
+            }
             val records = dao.rows(serverId, conversationId, Long.MAX_VALUE, MAX_CACHED_THREAD_ROWS + 1).asReversed()
             val rows = decodeRows(records)
             val bound = position?.copy(coverage = position.coverage?.retainedBy(rows)?.boundTo(rows))
@@ -440,6 +460,308 @@ class LegacyRoomStorage internal constructor(
                     }.toMap(),
             )
         }
+
+    /** Apply received differences only; omitted unloaded claims are never a replacement request. */
+    internal suspend fun writeOwnedCoverage(
+        host: String,
+        conversation: String,
+        position: HistoryPosition,
+        previous: HistoryPosition?,
+        observed: List<ThreadItem>,
+    ): Result<Unit> =
+        mutate("owned_history") {
+            val incoming = requireNotNull(position.coverage)
+            incoming
+                .copy(
+                    unsignedRowOrder = emptyMap(),
+                    unsignedRowEntries = emptyMap(),
+                    proofs = emptyMap(),
+                    legacyKeys = emptyMap(),
+                ).validated()
+            val prior = previous?.coverage
+            val header = dao.header(host, conversation) ?: Header(host, conversation, "", null, false, null)
+            val direct = observed.flatMapTo(HashSet()) { it.historyKeys() }
+            val owned =
+                direct + incoming.legacyKeys.filterValues { it in direct }.keys +
+                    prior
+                        ?.legacyKeys
+                        .orEmpty()
+                        .filterValues { it in direct }
+                        .keys
+
+            fun HistoryCoverage.claim(key: String): List<Any?> =
+                listOf(
+                    unsignedRowOrder[key],
+                    unsignedRowEntries[key],
+                    proofs[key],
+                    legacyKeys[key],
+                    legacyOffsets[key],
+                    deltaLengths[key],
+                    deltaHashes[key],
+                )
+            val changed =
+                owned.filterTo(HashSet()) {
+                    val claimed = it in incoming.unsignedRowOrder || it in prior?.unsignedRowOrder.orEmpty()
+                    claimed && incoming.claim(it) != prior?.claim(it)
+                }
+            val aliases = changed.mapNotNullTo(HashSet()) { incoming.legacyKeys[it] ?: prior?.legacyKeys?.get(it) }
+            changed += incoming.legacyKeys.filterValues { it in aliases }.keys
+            changed +=
+                prior
+                    ?.legacyKeys
+                    .orEmpty()
+                    .filterValues { it in aliases }
+                    .keys
+            val requested = incoming.claims(changed)
+            val needed = changed + requested.legacyKeys.values
+            val records =
+                observed.filter { row -> row.historyKeys().any { it in needed } }.mapNotNull { row ->
+                    ownedRow(host, conversation, row.legacyRowKey())?.let { row to it }
+                }
+            val actual =
+                records.flatMap { (observedRow, record) ->
+                    lastMutationCounts = lastMutationCounts.copy(rowDecodes = lastMutationCounts.rowDecodes + 1)
+                    decodeLegacyRows(listOf(record.payload)).filter { it == observedRow }
+                }
+            val bound = requested.boundTo(actual)
+            val wholeRows = actual.count { (it as? ThreadItem.MessageItem)?.message?.segment == null }
+            lastMutationCounts = lastMutationCounts.copy(rowSerializations = lastMutationCounts.rowSerializations + wholeRows)
+            val valid =
+                bound.proofs
+                    .filter { (key, proof) ->
+                        val supplied = incoming.proofs[key]
+                        supplied == null || supplied == proof || incoming.deltaHashes[key] == proof
+                    }.keys
+            val rejectedEntries =
+                (
+                    (requested.unsignedRowEntries.keys - valid).flatMap { requested.unsignedRowEntries[it].orEmpty() } +
+                        (changed - valid).flatMap { prior?.unsignedRowEntries?.get(it).orEmpty() }
+                ).toSet()
+            val acceptedKeys =
+                valid.filterTo(HashSet()) { key ->
+                    bound.unsignedRowEntries[key].orEmpty().none { it in rejectedEntries }
+                }
+            val accepted = bound.claims(acceptedKeys)
+            accepted.copy(unsignedSpans = incoming.unsignedSpans, unsignedGaps = incoming.unsignedGaps).validated(actual)
+            if (accepted.legacyKeys.isNotEmpty()) {
+                lastMutationCounts =
+                    lastMutationCounts.copy(
+                        rowSerializations = lastMutationCounts.rowSerializations + wholeRows,
+                    )
+            }
+            val ordinals = records.flatMap { (row, record) -> row.historyKeys().map { it to record.ordinal } }.toMap()
+            // Replacing or withdrawing an owned proof invalidates its producing entries and shared claims.
+            val affectedKeys = changed + aliases
+            val withdrawals =
+                records
+                    .filter { (row, _) -> row.historyKeys().any { it in affectedKeys } }
+                    .mapTo(HashSet()) { it.second.ordinal }
+            invalidateOwnedEvidence(host, conversation, withdrawals)
+            val additions =
+                intervalDifference(incoming.unsignedSpans, prior?.unsignedSpans.orEmpty()) +
+                    accepted.unsignedRowEntries.values
+                        .flatten()
+                        .distinct()
+                        .map { UnsignedHistorySpan(it, it) }
+            val rejected = rejectedEntries
+            val safeAdditions = intervalDifference(additions, rejected.sorted().map { UnsignedHistorySpan(it, it) })
+            for (span in safeAdditions) addReceivedSpan(host, conversation, span)
+
+            val json = MobileJson.encodeToJsonElement(accepted).jsonObject
+            val cells = ArrayList<Evidence>()
+            for ((kind, value) in json) {
+                if (value !is JsonObject || kind == "cursors" || kind == "walks") continue
+                for ((key, payload) in value) {
+                    val ordinal = ordinals[key] ?: ordinals[accepted.legacyKeys[key]] ?: continue
+                    val parts = if (kind == "rowEntries") (payload as JsonArray).toList() else listOf(payload)
+                    parts.forEachIndexed { part, item ->
+                        val low = if (kind == "rowEntries" || kind == "rowOrder") item.unsigned() else 0uL
+                        cells += Evidence(host, conversation, kind, key, part, ordinal, low.position(), low.position(), item.toString())
+                    }
+                }
+            }
+            // Delete each old claim once before inserting all of its fields.
+            accepted.proofs.keys.forEach { dao.removeClaim(host, conversation, it) }
+            dao.upsertEvidence(cells)
+            accepted.unsignedRowEntries.values.flatten().toSet().forEach { entry ->
+                dao.removeCell(host, conversation, "losses", entry.position(), 0)
+            }
+            lastMutationCounts =
+                lastMutationCounts.copy(
+                    evidenceWrites = lastMutationCounts.evidenceWrites + cells.size + accepted.proofs.size,
+                    evidenceSerializations = lastMutationCounts.evidenceSerializations + cells.size,
+                )
+
+            val completeView = observed.size == header.rowCount
+            val ownedEntries =
+                owned.flatMapTo(HashSet()) {
+                    prior?.unsignedRowEntries?.get(it).orEmpty() + incoming.unsignedRowEntries[it].orEmpty()
+                }
+
+            suspend fun anchors(
+                kind: String,
+                current: Map<ULong, String>,
+                old: Map<ULong, String>,
+            ) {
+                for (key in current.keys + old.keys) {
+                    if (current[key] == old[key]) continue
+                    if (key !in current && !completeView && key !in ownedEntries) continue
+                    val held = dao.evidenceCells(host, conversation, kind, key.toString())
+                    lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + held.size)
+                    // A previous observation authorizes a withdrawal, never omission of an unseen anchor.
+                    held.forEach { dao.removeCell(host, conversation, kind, it.key, it.part) }
+                    current[key]?.let { value ->
+                        val low = key.position()
+                        val cell =
+                            Evidence(
+                                host,
+                                conversation,
+                                kind,
+                                key.toString(),
+                                0,
+                                -1L,
+                                low,
+                                low,
+                                JsonPrimitive(value).toString(),
+                            )
+                        dao.upsertEvidence(listOf(cell))
+                        lastMutationCounts = lastMutationCounts.copy(evidenceSerializations = lastMutationCounts.evidenceSerializations + 1)
+                    }
+                    lastMutationCounts = lastMutationCounts.copy(evidenceWrites = lastMutationCounts.evidenceWrites + 1)
+                }
+            }
+            anchors("cursors", incoming.unsignedCursors, prior?.unsignedCursors.orEmpty())
+            anchors("walks", incoming.unsignedWalks, prior?.unsignedWalks.orEmpty())
+            val oldGaps = prior?.unsignedGaps.orEmpty().toHashSet()
+            for (gap in incoming.unsignedGaps) {
+                if (gap in oldGaps) continue
+                val older = dao.intervals(host, conversation, "spans", gap.anchor.position(), gap.anchor.position()).singleOrNull()
+                val newer = dao.newerSpan(host, conversation, gap.anchor.position()).singleOrNull()
+                if (older != null && newer?.low == gap.edge.position()) {
+                    dao.intervals(host, conversation, "gaps", older.low, newer.low).forEach {
+                        dao.removeCell(host, conversation, "gaps", it.key, it.part)
+                    }
+                    dao.upsertEvidence(listOf(intervalCell(host, conversation, "gaps", gap.anchor, gap.edge)))
+                }
+            }
+            val first = dao.newerSpan(host, conversation, 0uL.position()).firstOrNull()
+            val last = dao.olderSpan(host, conversation, ULong.MAX_VALUE.position()).lastOrNull()
+            val maximum = dao.intervals(host, conversation, "spans", ULong.MAX_VALUE.position(), ULong.MAX_VALUE.position()).lastOrNull()
+            val highWater = (maximum ?: last)?.high?.toULong() ?: 0uL
+            val oldScalars = header.coverageHeader?.let { MobileJson.parseToJsonElement(it).jsonObject }
+            lastMutationCounts =
+                lastMutationCounts.copy(
+                    evidenceReads = lastMutationCounts.evidenceReads + listOfNotNull(first, last, maximum).size,
+                    evidenceDecodes = lastMutationCounts.evidenceDecodes + if (oldScalars == null) 0 else 1,
+                    evidenceSerializations = lastMutationCounts.evidenceSerializations + 1,
+                )
+            val lost = dao.hasLoss(host, conversation) || rejected.isNotEmpty()
+            val oldUnknown = oldScalars?.get("unknown")?.jsonPrimitive?.content == "true"
+            val unknown = incoming.unsignedUnknown || lost || (!completeView && oldUnknown)
+            val newest =
+                incoming.newestCursor ?: oldScalars
+                    ?.get("newestCursor")
+                    ?.jsonPrimitive
+                    ?.content
+                    ?.takeUnless { completeView }
+            val uncertain = incoming.signedUncertainty || (incoming.unsignedIncomplete && highWater <= Long.MAX_VALUE.toULong())
+            val scalarCoverage =
+                HistoryCoverage(
+                    unsignedSpans = emptyList(),
+                    unsignedUnknown = unknown,
+                    signedUncertainty = uncertain,
+                    newestCursor = newest,
+                )
+            val scalars = MobileJson.encodeToJsonElement(scalarCoverage).jsonObject.toMutableMap()
+            if (lost) scalars["ownedLoss"] = JsonPrimitive(true)
+            scalars["savedHighWater"] = JsonPrimitive(highWater.toString())
+            if (unknown) first?.let { scalars["savedUnknownEdge"] = JsonPrimitive(it.low.toULong().toString()) }
+            dao.updateHeader(
+                header.copy(
+                    generation = UUID.randomUUID().toString(),
+                    cursor = if (lost && header.cursor == "") "" else position.cursor,
+                    atStart = position.atStart && !lost && !incoming.unsignedIncomplete,
+                    coverageHeader = JsonObject(scalars).toString(),
+                ),
+            )
+        }
+
+    private fun HistoryCoverage.claims(keys: Set<String>): HistoryCoverage =
+        copy(
+            unsignedSpans = emptyList(),
+            unsignedGaps = emptyList(),
+            unsignedCursors = emptyMap(),
+            unsignedWalks = emptyMap(),
+            unsignedRowOrder = unsignedRowOrder.filterKeys { it in keys },
+            unsignedRowEntries = unsignedRowEntries.filterKeys { it in keys },
+            proofs = proofs.filterKeys { it in keys },
+            legacyKeys = legacyKeys.filterKeys { it in keys },
+            legacyOffsets = legacyOffsets.filterKeys { it in keys },
+            deltaLengths = deltaLengths.filterKeys { it in keys },
+            deltaHashes = deltaHashes.filterKeys { it in keys },
+            deltaText = deltaText.filterKeys { it in keys },
+        )
+
+    /** Subtract only already observed received facts, including exact unsigned maximum endpoints. */
+    private fun intervalDifference(
+        spans: List<UnsignedHistorySpan>,
+        old: List<UnsignedHistorySpan>,
+    ): List<UnsignedHistorySpan> =
+        buildList {
+            val sortedOld = old.sortedBy { it.first }
+            var index = 0
+            for (span in spans.sortedBy { it.first }) {
+                var start: ULong? = span.first
+                while (index < sortedOld.size && sortedOld[index].last < span.first) index++
+                for (cursor in index until sortedOld.size) {
+                    val held = sortedOld[cursor]
+                    val next = start ?: break
+                    if (held.first > span.last) break
+                    if (held.last < next) continue
+                    if (next < held.first) add(UnsignedHistorySpan(next, held.first - 1u))
+                    start = if (held.last >= span.last) null else held.last + 1u
+                }
+                start?.let { if (it <= span.last) add(UnsignedHistorySpan(it, span.last)) }
+            }
+        }
+
+    private suspend fun addReceivedSpan(
+        host: String,
+        conversation: String,
+        received: UnsignedHistorySpan,
+    ) {
+        require(received.first > 0u && received.first <= received.last)
+        val first = if (received.first > 1u) received.first - 1u else received.first
+        val last = if (received.last < ULong.MAX_VALUE) received.last + 1u else received.last
+        val held = dao.intervals(host, conversation, "spans", first.position(), last.position())
+        lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + held.size)
+        val low = minOf(received.first, held.minOfOrNull { it.low.toULong() } ?: received.first)
+        val high = maxOf(received.last, held.maxOfOrNull { it.high.toULong() } ?: received.last)
+        if (held.size == 1 && held.single().low.toULong() == low && held.single().high.toULong() == high) return
+        val older = dao.olderSpan(host, conversation, low.position()).singleOrNull()
+        val newer = dao.newerSpan(host, conversation, high.position()).singleOrNull()
+        val gaps = dao.intervals(host, conversation, "gaps", low.position(), high.position())
+        lastMutationCounts =
+            lastMutationCounts.copy(
+                evidenceReads = lastMutationCounts.evidenceReads + gaps.size + listOfNotNull(older, newer).size,
+            )
+        for (gap in gaps) {
+            dao.removeCell(host, conversation, "gaps", gap.key, gap.part)
+            dao.removeCell(host, conversation, "walks", gap.low.toULong().toString(), 0)
+        }
+        held.forEach { dao.removeCell(host, conversation, "spans", it.key, it.part) }
+        val merged = intervalCell(host, conversation, "spans", low, high)
+        val neighbours = listOfNotNull(older) + merged + listOfNotNull(newer)
+        val repaired =
+            neighbours.zipWithNext { a, b ->
+                intervalCell(host, conversation, "gaps", a.high.toULong(), b.low.toULong())
+            }
+        dao.upsertEvidence(listOf(merged) + repaired)
+        lastMutationCounts =
+            lastMutationCounts.copy(
+                evidenceWrites = lastMutationCounts.evidenceWrites + held.size + gaps.size + neighbours.size,
+            )
+    }
 
     suspend fun removeConversation(
         serverId: String,

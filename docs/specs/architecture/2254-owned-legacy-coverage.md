@@ -85,3 +85,13 @@ Pending for documentation stage: update owned coverage, evidence/removal and fai
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-18
+
+## Revisions
+
+### 2026-10-18: accepted rows and recoverable invalidation
+
+The initial implementation review found two ordering gaps before handoff. A coverage capture can omit a newer accepted row whose coalesced write has not started, and a successful coverage revision can precede a newer removal matching the collection's original restore. Remember per-row accepted intents with their original captures, merge eligible intents into the coverage base without pre-trimming, and retain the revision-based deliberate-removal exception in the owned writer. `heldInvariant_coverageIncludesNewerAcceptedRowsBeforeSatisfyingTheirCapture` and `revisionInvariant_rowSuccessSurvivesEvidenceFailureAndCancellation` cover these boundaries with real Room.
+
+Invalidated producing IDs use exact-owner indexed `losses` evidence cells in the existing flexible evidence table. A scalar existence query preserves conservative unknown/completeness after row or retention loss without reading all losses. Only accepted new content-bound producing claims clear their corresponding cells; full replacement and explicit metadata clear retain their existing semantics. This avoids permanently withholding completeness after valid new received proofs. `recoveryInvariant_receivedProofClearsOnlyItsOwnLoss` checks partial and complete recovery. `fragmentInvariant_ownedUpdatesKeepExactUnsignedBindings` checks maximum unsigned fragment bindings and changed content. No schema, public wire contract or Android surface changes.
+
+Security review rechecked both changes: accepted intents retain original capture fences, and loss deletion requires exact-owner, committed row/delta proofs. Neither local row persistence nor a local continuation clears a loss.

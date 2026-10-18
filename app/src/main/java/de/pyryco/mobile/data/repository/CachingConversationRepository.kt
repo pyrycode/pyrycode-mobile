@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.OwnedLegacyCache
+import de.pyryco.mobile.data.cache.OwnedLegacyCoverageCache
 import de.pyryco.mobile.data.cache.OwnedLegacyRow
 import de.pyryco.mobile.data.cache.SavedAuthoritativeThread
 import de.pyryco.mobile.data.cache.applyOwnedRows
@@ -120,6 +121,15 @@ class CachingConversationRepository(
     )
 
     private val persistedThreads = ConcurrentHashMap<String, PersistedThread>()
+    private val observedPositions = ConcurrentHashMap<String, HistoryPosition>()
+
+    private data class AcceptedLegacyRow(
+        val capture: Long,
+        val order: Int,
+        val change: OwnedLegacyRow?,
+    )
+
+    private val acceptedRows = ConcurrentHashMap<String, ConcurrentHashMap<String, AcceptedLegacyRow>>()
 
     private data class CacheCandidate(
         val drawn: DrawnThread,
@@ -190,6 +200,16 @@ class CachingConversationRepository(
                     (previous?.drawn?.generation ?: 0) <= persisted.coverageGeneration &&
                     drawn.generation > persisted.coverageGeneration &&
                     cacheable != persisted.cacheable
+            if (superseded && cache is OwnedLegacyCache) {
+                val present = drawn.rows.mapTo(HashSet()) { it.legacyRowKey() }
+                persisted?.cacheable.orEmpty().forEach { row ->
+                    val key = row.legacyRowKey()
+                    if (key !in present) {
+                        owned += key
+                        removedGenerations[key] = drawn.generation
+                    }
+                }
+            }
             if (!changed && !superseded && removedGenerations == previous?.removedGenerations.orEmpty() && !retry.getAndSet(false)) return
             retry.set(false)
             val candidate =
@@ -200,6 +220,21 @@ class CachingConversationRepository(
                     rowGenerations = rowGenerations.toMap(),
                     removedGenerations = removedGenerations.toMap(),
                 )
+            if (cache is OwnedLegacyCoverageCache) {
+                val intents = acceptedRows.computeIfAbsent(conversationId) { ConcurrentHashMap() }
+                val keys = cacheable.map { it.legacyRowKey() }
+                cacheable.forEachIndexed { index, row ->
+                    val capture = rowGenerations[keys[index]] ?: return@forEachIndexed
+                    if (capture <= (persisted?.generation ?: 0)) return@forEachIndexed
+                    val intent =
+                        AcceptedLegacyRow(capture, index, OwnedLegacyRow(row, keys.getOrNull(index - 1), keys.getOrNull(index + 1)))
+                    intents.compute(keys[index]) { _, old -> if (old != null && old.capture >= capture) old else intent }
+                }
+                removedGenerations.forEach { (key, capture) ->
+                    val intent = AcceptedLegacyRow(capture, Int.MAX_VALUE, null)
+                    intents.compute(key) { _, old -> if (old != null && old.capture >= capture) old else intent }
+                }
+            }
             schedule(candidate)
         }
 
@@ -468,6 +503,7 @@ class CachingConversationRepository(
             // A save captured before entry can still complete while restoration suspends.
             val collectionCoverageRevision = persistedThreads[conversationId]?.coverageRevision ?: 0
             var base = cache.readThread(serverId, conversationId)
+            if (cache is OwnedLegacyCoverageCache) persistedThreads.putIfAbsent(conversationId, PersistedThread(0, 0, base))
             var baseOrder = emptyMap<Any, ULong>()
             var restoredOrder = false
             var lastOrder = emptyMap<Any, ULong>()
@@ -480,6 +516,7 @@ class CachingConversationRepository(
                         val generation = generations.incrementAndGet()
                         if (!restoredOrder && snapshot.rows.isNotEmpty()) {
                             val savedPosition = cache.readHistoryPosition(serverId, conversationId)
+                            savedPosition?.let { observedPositions.putIfAbsent(conversationId, it) }
                             baseOrder =
                                 withContext(processingDispatcher) {
                                     base.receivedUnsignedHistoryOrder(savedPosition?.coverage?.unsignedPositions().orEmpty())
@@ -537,7 +574,10 @@ class CachingConversationRepository(
     /** This thread's saved history position (#1354), under this wrapper's own [serverId]. */
     override suspend fun readHistoryPosition(conversationId: String): HistoryPosition? {
         val saved = cache.readHistoryPosition(serverId, conversationId)
-        val empty = cache.readThread(serverId, conversationId).isEmpty()
+        saved?.let { observedPositions.putIfAbsent(conversationId, it) }
+        val restored = cache.readThread(serverId, conversationId)
+        if (cache is OwnedLegacyCoverageCache) persistedThreads.putIfAbsent(conversationId, PersistedThread(0, 0, restored))
+        val empty = restored.isEmpty()
         // Omitted unsigned content remains evidence even when cache policy retains no rows.
         if (empty &&
             saved?.coverage?.unsignedIncomplete != true &&
@@ -565,9 +605,13 @@ class CachingConversationRepository(
         if (position?.coverage == null) {
             historyWrites.withLock {
                 if (conversationId !in deleted) {
-                    cache
-                        .writeHistoryPosition(serverId, conversationId, position)
-                        .onFailure { RelayLog.d { "event=history_position_write_failed" } }
+                    withContext(NonCancellable) {
+                        cache
+                            .writeHistoryPosition(serverId, conversationId, position)
+                            // Keep a sentinel so a delayed metadata read cannot reseed the cleared baseline.
+                            .onSuccess { observedPositions[conversationId] = HistoryPosition("", false) }
+                            .onFailure { RelayLog.d { "event=history_position_write_failed" } }
+                    }
                 }
             }
             return
@@ -577,7 +621,19 @@ class CachingConversationRepository(
         historyWrites.withLock {
             if (conversationId in deleted) return@withLock
             val drawn = drawnThreads[conversationId]
-            val base = drawn?.rows ?: cache.readThread(serverId, conversationId)
+            val persisted = persistedThreads[conversationId]
+            val owned = cache as? OwnedLegacyCoverageCache
+            if (owned != null && historyGeneration <= (persisted?.generation ?: 0)) return@withLock
+            val baselineRows = if (owned == null) drawn?.rows ?: cache.readThread(serverId, conversationId)
+                else persisted?.cacheable ?: drawn?.rows ?: cache.readThread(serverId, conversationId)
+            val pending = acceptedRows[conversationId].orEmpty().filterValues { it.capture > (persisted?.generation ?: 0) }
+            val pendingChanges =
+                pending.values
+                    .sortedWith(
+                        compareBy<AcceptedLegacyRow> { it.capture }.thenBy { it.order },
+                    ).mapNotNull { it.change }
+            val pendingRemoved = pending.filterValues { it.change == null }.keys
+            val base = if (pending.isEmpty()) baselineRows else applyOwnedRows(baselineRows, pendingChanges, pendingRemoved, trim = false)
             if (conversationId in deleted) return@withLock
             val restored =
                 base.filterNot {
@@ -590,15 +646,41 @@ class CachingConversationRepository(
                     snapshot.unsignedHistoryOrder
             val rows = snapshot.rows.mergeUnsignedCachedRows(restored, order, rendererOwners = base)
             val cacheable = withContext(processingDispatcher) { cacheableThreadRows(rows) }
+            val baseline = if (owned == null) emptyMap() else baselineRows.associateBy { it.legacyRowKey() }
+            val removed = if (owned == null) emptySet() else baseline.keys - rows.mapTo(HashSet()) { it.legacyRowKey() }
+            val keys = if (owned == null) emptyList() else cacheable.map { it.legacyRowKey() }
+            val nextHeld = arrayOfNulls<String>(keys.size)
+            var next: String? = null
+            for (index in keys.indices.reversed()) {
+                nextHeld[index] = next
+                if (keys[index] in baseline) next = keys[index]
+            }
+            val changes =
+                if (owned == null) emptyList() else cacheable.mapIndexedNotNull { index, row ->
+                    if (baseline[row.legacyRowKey()] == row) {
+                        null
+                    } else {
+                        OwnedLegacyRow(
+                            row,
+                            cacheable.getOrNull(index - 1)?.legacyRowKey(),
+                            nextHeld[index],
+                        )
+                    }
+                }
             val result =
                 withContext(NonCancellable) {
-                    val result = cache.writeThread(serverId, conversationId, rows)
+                    val result =
+                        if (owned == null) {
+                            cache.writeThread(serverId, conversationId, rows)
+                        } else {
+                            owned.mutateLegacyRows(serverId, conversationId, changes, removed)
+                        }
                     if (result.isSuccess) {
                         persistedThreads[conversationId] =
                             PersistedThread(
                                 maxOf(historyGeneration, drawn?.generation ?: 0),
                                 (persistedThreads[conversationId]?.coverageRevision ?: 0) + 1,
-                                cacheable,
+                                if (owned == null) cacheable else applyOwnedRows(baseline.values.toList(), changes, removed),
                             )
                     }
                     result
@@ -608,6 +690,17 @@ class CachingConversationRepository(
                 return@withLock
             }
             if (conversationId in deleted) return@withLock
+            if (owned != null) {
+                owned
+                    .writeOwnedLegacyCoverage(serverId, conversationId, position, observedPositions[conversationId], cacheable)
+                    .onSuccess {
+                        observedPositions[conversationId] =
+                            withContext(processingDispatcher) {
+                                rememberObservedCoverage(position, observedPositions[conversationId], cacheable)
+                            }
+                    }.onFailure { RelayLog.d { "event=history_position_write_failed" } }
+                return@withLock
+            }
             val trimmed = threadRowsWereTrimmed(rows)
             val coverage = position.coverage.boundTo(rows)
             cache
@@ -630,6 +723,49 @@ class CachingConversationRepository(
         attachments?.retrieve(serverId, conversationId, attachmentId) { delegate.fetchAttachment(conversationId, attachmentId) }
             ?: delegate.retrieveAttachment(conversationId, attachmentId)
 
+    /** Receipt memory keeps omitted facts, even when committed content has conservatively invalidated them. */
+    private fun rememberObservedCoverage(
+        position: HistoryPosition,
+        previous: HistoryPosition?,
+        rows: List<ThreadItem>,
+    ): HistoryPosition {
+        val next = position.coverage ?: return position
+        val old = previous?.coverage ?: return position
+        val direct = rows.flatMapTo(HashSet()) { it.historyKeys() }
+        val owned = direct + old.legacyKeys.filterValues { it in direct }.keys + next.legacyKeys.filterValues { it in direct }.keys
+
+        fun <V> merge(
+            prior: Map<String, V>,
+            current: Map<String, V>,
+        ): Map<String, V> = prior.filterKeys { it !in owned } + current.filterKeys { it in owned }
+        val spans = ArrayList<UnsignedHistorySpan>()
+        for (span in (old.unsignedSpans + next.unsignedSpans).sortedBy { it.first }) {
+            val last = spans.lastOrNull()
+            if (last != null && (span.first <= last.last || span.first - 1u == last.last)) {
+                spans[spans.lastIndex] = UnsignedHistorySpan(last.first, maxOf(last.last, span.last))
+            } else {
+                spans += span
+            }
+        }
+        val entries = owned.flatMapTo(HashSet()) { old.unsignedRowEntries[it].orEmpty() + next.unsignedRowEntries[it].orEmpty() }
+        return position.copy(
+            coverage =
+                next.copy(
+                    unsignedSpans = spans,
+                    unsignedRowOrder = merge(old.unsignedRowOrder, next.unsignedRowOrder),
+                    unsignedRowEntries = merge(old.unsignedRowEntries, next.unsignedRowEntries),
+                    proofs = merge(old.proofs, next.proofs),
+                    legacyKeys = merge(old.legacyKeys, next.legacyKeys),
+                    legacyOffsets = merge(old.legacyOffsets, next.legacyOffsets),
+                    deltaLengths = merge(old.deltaLengths, next.deltaLengths),
+                    deltaHashes = merge(old.deltaHashes, next.deltaHashes),
+                    deltaText = merge(old.deltaText, next.deltaText),
+                    unsignedCursors = old.unsignedCursors.filterKeys { it !in entries } + next.unsignedCursors,
+                    unsignedWalks = old.unsignedWalks.filterKeys { it !in entries } + next.unsignedWalks,
+                ),
+        )
+    }
+
     /**
      * Deletes on the daemon first; only once that succeeded does the cached copy go. A refused delete
      * propagates with the cache untouched, since the conversation still exists. A failed cache removal
@@ -643,6 +779,8 @@ class CachingConversationRepository(
             historyWrites.withLock {
                 drawnThreads.remove(conversationId)
                 persistedThreads.remove(conversationId)
+                observedPositions.remove(conversationId)
+                acceptedRows.remove(conversationId)
                 persistedAuthoritative.remove(conversationId)
                 cache.removeConversation(serverId, conversationId)
             }
