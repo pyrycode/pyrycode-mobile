@@ -23,6 +23,91 @@ import kotlin.concurrent.thread
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteConnectionsTest {
+    @Test fun phoneTeardownWaitsForACapturedReplacementAndItsQueriesEvenIfItClosesDuringTheWait() =
+        runTest {
+            val old = "phone/host/0"
+            val next = "phone/host/1"
+            val entries =
+                listOf(
+                    SuiteStep("connect", old),
+                    SuiteStep("open", old),
+                    SuiteStep("close", old),
+                    SuiteStep("inbound_end", old),
+                    SuiteStep("connect", next),
+                    SuiteStep("open", next),
+                    SuiteStep("client", next, frame(1, "list_conversations")),
+                    SuiteStep("daemon", next, frame(2, "conversations", reply = 1)),
+                    SuiteStep("close", next),
+                    SuiteStep("inbound_end", next),
+                    SuiteStep("client", "control", frame(1, "test-control:checkpoint", """{"body":"scenario-complete"}""")),
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, RecordedSuiteTape(entries))
+            try {
+                val first = hub.transport(old) { error("Live transport started") }
+                val firstPump = hub.pump(first) { error("Live pump started") }
+                firstPump.start()
+                first.connect()
+                runCurrent()
+                first.close()
+                runCurrent()
+                val closing = async { hub.beforePhoneTeardown() }
+                runCurrent()
+                assertFalse(closing.isCompleted)
+                val replacement = hub.transport(next) { error("Live transport started") }
+                val pump = hub.pump(replacement) { error("Live pump started") }
+                pump.start()
+                replacement.connect()
+                runCurrent()
+                advanceTimeBy(10)
+                runCurrent()
+                assertFalse(closing.isCompleted)
+                assertTrue(pump.send(frame(90, "list_conversations")))
+                pump.close()
+                advanceTimeBy(20)
+                runCurrent()
+                closing.await()
+                hub.checkpoint("scenario-complete")
+                runCurrent()
+                hub.assertComplete()
+            } finally {
+                hub.close()
+            }
+        }
+
+    @Test fun phoneTeardownDoesNotWaitForRegistryDisposalAfterTheCompletionCheckpoint() =
+        runTest {
+            val owner = "phone/host/0"
+            val hub =
+                SuiteConnections.replaying(
+                    backgroundScope,
+                    RecordedSuiteTape(
+                        listOf(
+                            SuiteStep("connect", owner),
+                            SuiteStep("open", owner),
+                            SuiteStep("client", "control", frame(1, "test-control:checkpoint", """{"body":"scenario-complete"}""")),
+                            SuiteStep("close", owner),
+                        ),
+                    ),
+                )
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                runCurrent()
+                val beforeTeardown = async { hub.beforePhoneTeardown() }
+                runCurrent()
+                assertTrue(beforeTeardown.isCompleted)
+                beforeTeardown.await()
+                hub.checkpoint("scenario-complete")
+                pump.close()
+                runCurrent()
+                hub.assertComplete()
+            } finally {
+                hub.close()
+            }
+        }
+
     @Test fun aRacingCloseCannotHideTheCapturedRefusedAttachmentRequest() =
         runTest {
             val request = frame(1, "request_attachment", """{"conversation_id":"chat","attachment_id":"file"}""")

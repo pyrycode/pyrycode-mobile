@@ -199,8 +199,23 @@ internal class SuiteConnections private constructor(
     suspend fun beforeClose(owner: String) {
         if (tape == null || synchronized(this) { transports[owner]?.localClose?.get() == true }) return
         withTimeout(30000) {
-            while (!synchronized(this@SuiteConnections) { tape.closeReady(owner) }) delay(10)
+            while (!synchronized(this@SuiteConnections) {
+                    transports[owner]?.localClose?.get() == true || tape.closeReady(owner)
+                }
+            ) {
+                delay(10)
+            }
             awaitIdle()
+        }
+    }
+
+    suspend fun beforePhoneTeardown() {
+        val replay = tape ?: return
+        for (owner in replay.phoneClosesBeforeTeardown()) {
+            withTimeout(30000) {
+                while (!synchronized(this@SuiteConnections) { owner in transports }) delay(10)
+            }
+            beforeClose(owner)
         }
     }
 

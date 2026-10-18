@@ -321,6 +321,19 @@ internal class RecordedSuiteTape(
         }
     }
 
+    /** A foreground fence must not wait for later cleanup controls or registry disposal. */
+    @Synchronized fun phoneClosesBeforeTeardown(): List<String> {
+        val cleanup =
+            steps.indices.firstOrNull {
+                it !in consumed && steps[it].owner == "control" && steps[it].message?.type == "test-control:test-end"
+            } ?: steps.size
+        return steps
+            .take(minOf(cleanup, checkpointBoundary()))
+            .filter { it.direction == "close" && it.owner.startsWith("phone/") }
+            .map { it.owner }
+            .distinct()
+    }
+
     @Synchronized fun initial(): List<SuiteStep> = drain()
 
     @Synchronized fun closeReady(owner: String): Boolean {
