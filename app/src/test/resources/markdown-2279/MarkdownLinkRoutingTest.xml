@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-18T14:32:28.417Z" hostname="723893f7154c" time="0.044">
+  <properties/>
+  <testcase name="aMarkdownPath_goesToTheCallback_andNeverToAnotherApp" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest" time="0.035"/>
+  <testcase name="withoutACallback_aMarkdownPathStaysInert" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest" time="0.001"/>
+  <testcase name="otherLinks_keepTodaysSchemeAllowlist_withOrWithoutACallback" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest" time="0.001"/>
+  <testcase name="schemesOtherFilesAndNonDigitSuffixes_areNotMarkdownPaths" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest" time="0.001"/>
+  <testcase name="markdownPaths_areSentAsWritten_withoutFragmentOrLineSuffix" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
