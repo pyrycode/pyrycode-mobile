@@ -480,8 +480,9 @@ fun ThreadScreen(
     // #985: a ready message attachment opens in another app or saves to a picked document; each outcome the
     // user should hear about is one static sentence, never a name, URI or path.
     val noticeScope = rememberCoroutineScope()
+    val linkNotices = MarkdownLinkNotice.entries.associateWith { stringResource(it.message) }
     val onMarkdownLinkFailure: (MarkdownLinkNotice) -> Unit = { notice ->
-        errorNotices.enqueue(noticeScope, resources.getString(notice.message))
+        errorNotices.enqueue(noticeScope, linkNotices.getValue(notice))
     }
     val attachmentActions =
         rememberAttachmentActions(attachmentStates, onOpenMarkdownAttachment) { notice ->
