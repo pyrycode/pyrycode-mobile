@@ -279,10 +279,21 @@ class LegacyRoomStorage internal constructor(
         val keys = cells.filter { it.kind == "proofs" || it.kind == "rowEntries" || it.kind == "rowOrder" }.mapTo(HashSet()) { it.key }
         val entries = cells.filter { it.kind == "rowEntries" || it.kind == "rowOrder" }.mapTo(sortedSetOf()) { it.low.toULong() }
         val siblings = HashMap<ULong, Set<String>>()
-        for (entry in entries) {
+        val pending = entries.toMutableList()
+        var next = 0
+        while (next < pending.size) {
+            val entry = pending[next++]
             val dependents = dao.producingClaims(host, conversation, entry.position())
             lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + dependents.size)
-            keys += dependents.map { it.key }
+            for (dependent in dependents) {
+                if (!keys.add(dependent.key)) continue
+                val producing = dao.evidenceCells(host, conversation, "rowEntries", dependent.key)
+                lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + producing.size)
+                for (cell in producing) {
+                    val id = cell.low.toULong()
+                    if (entries.add(id)) pending += id
+                }
+            }
             siblings[entry] =
                 dependents.mapTo(HashSet()) { it.key } +
                 cells.filter { (it.kind == "rowEntries" || it.kind == "rowOrder") && it.low == entry.position() }.map { it.key }
@@ -529,6 +540,32 @@ class LegacyRoomStorage internal constructor(
                     val claimed = it in incoming.unsignedRowOrder || it in prior?.unsignedRowOrder.orEmpty()
                     claimed && incoming.claim(it) != prior?.claim(it)
                 }
+            val withdrawn =
+                changed.filterNotTo(HashSet()) { key ->
+                    prior != null &&
+                        incoming.proofs[key] != null &&
+                        incoming.unsignedRowOrder[key] == prior.unsignedRowOrder[key] &&
+                        incoming.claim(key).drop(2) == prior.claim(key).drop(2) &&
+                        incoming.unsignedRowEntries[key].orEmpty().containsAll(prior.unsignedRowEntries[key].orEmpty())
+                }
+            val withdrawalAliases =
+                withdrawn.flatMapTo(HashSet()) {
+                    listOfNotNull(incoming.legacyKeys[it], prior?.legacyKeys?.get(it))
+                }
+            val indexed = HashMap<String, Row?>()
+
+            suspend fun record(row: ThreadItem): Row? {
+                val key = row.legacyRowKey()
+                if (key !in indexed) indexed[key] = ownedRow(host, conversation, key)
+                return indexed[key]
+            }
+            val withdrawals =
+                observed
+                    .filter { row -> row.historyKeys().any { it in withdrawn || it in withdrawalAliases } }
+                    .mapNotNullTo(HashSet()) { record(it)?.ordinal }
+            // Recovery must see losses created by this transaction, including unchanged siblings.
+            // Additive claims keep their old bindings; acceptance still checks committed content below.
+            invalidateOwnedEvidence(host, conversation, withdrawals)
             val aliases = HashSet<String>()
             val checkedEntries = HashSet<ULong>()
             val recovering = HashMap<ULong, Set<String>?>()
@@ -559,7 +596,7 @@ class LegacyRoomStorage internal constructor(
             val needed = changed + requested.legacyKeys.values
             val records =
                 observed.filter { row -> row.historyKeys().any { it in needed } }.mapNotNull { row ->
-                    ownedRow(host, conversation, row.legacyRowKey())?.let { row to it }
+                    record(row)?.let { row to it }
                 }
             val actual =
                 records.flatMap { (observedRow, record) ->
@@ -607,13 +644,6 @@ class LegacyRoomStorage internal constructor(
                     )
             }
             val ordinals = records.flatMap { (row, record) -> row.historyKeys().map { it to record.ordinal } }.toMap()
-            // Replacing or withdrawing an owned proof invalidates its producing entries and shared claims.
-            val affectedKeys = changed + aliases
-            val withdrawals =
-                records
-                    .filter { (row, _) -> row.historyKeys().any { it in affectedKeys } }
-                    .mapTo(HashSet()) { it.second.ordinal }
-            invalidateOwnedEvidence(host, conversation, withdrawals)
             val additions =
                 intervalDifference(incoming.unsignedSpans, prior?.unsignedSpans.orEmpty()) +
                     accepted.unsignedRowEntries.values
