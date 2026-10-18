@@ -26,7 +26,7 @@ fun MarkdownText(
 4dp sibling-item gaps. The [reader](markdown-reader-screen.md#what-it-does) selects
 `MarkdownPresentation.Reader`, `bodyMedium` (14sp/20sp, 0.25sp tracking) with
 `onSecondaryContainer` prose and table cells (#2283), 16dp ordinary block gaps,
-6dp sibling-item gaps and 13sp/20sp code (#2285).
+6dp sibling-item gaps (#2285) and 12sp/20sp monospace code (#2284).
 
 The 16dp gap also separates blocks inside list items and quotes in Thread (#2273)
 and Reader (#2285). Reader outer padding stays measured-bar-plus-28dp at the top,
@@ -40,7 +40,7 @@ Heading-specific spacing remains assigned to #2274. See the
 The reader uses untrimmed line-height boxes for headings and prose, including nested list and quote
 text; Android's default trimmed boxes otherwise shorten the Figma paragraph and list. Thread line
 boxes stay as before. Headings and tables keep their element-specific typography. The presentation
-choice changes code and quote appearance, while parser, inline links and routing stay shared.
+choice changes quote and list appearance; code panels, parser, inline links and routing stay shared.
 
 **No `color` parameter** — body text inherits `LocalContentColor.current`; assistant bubbles and the reader
 supply their body colours: assistant bubbles inherit `onSurface`, while reader prose
@@ -85,6 +85,10 @@ Parse memoisation, block and inline dispatch, tables, task lists, strikethrough,
 
 ## Testing
 
+[Shared reader code coverage and counted Linux evidence](markdown-reader-screen-testing.md#shared-code-panel-coverage-2284)
+cover every code form, original-source bounded copying, stationary copy rails,
+horizontal scrolling and physical header interception.
+
 [Reader bounds coverage and counted Linux acceptance](markdown-reader-screen-testing.md#ordinary-block-bounds-coverage-2285)
 pin 16dp ordinary gaps for both note sources, recursive list/quote content, panel
 boundaries, 6dp sibling gaps and unchanged outer padding. Reader heading-specific
@@ -122,12 +126,12 @@ macOS is outside this Linux ticket’s verification scope; no real-Claude accept
 
 - **Inline-code background paints at glyph-rect bounds, not at a padded rectangle.** `SpanStyle(background = …)` on an `AnnotatedString` span has no horizontal padding option in Compose's text API — the background tints exactly the glyph rect. Short identifiers (`getUserId()`) read fine; longer code spans look tight. **Acceptable for #129.** If the tightness becomes a complaint, the replacement shape is `InlineTextContent` per code span — don't pre-build that now.
 - **Soft line breaks collapse to a single space.** `EOL` tokens inside a paragraph map to `append(" ")` rather than `append("\n")`. Matches CommonMark's "soft-break = space" rendering rule. Hard breaks (two trailing spaces or a backslash before the newline) are not yet specially handled — they fall through to the same single-space behaviour. Not in AC.
-- **Thread and labelled reader fences use syntax highlighting and bordered header/body chrome** — `Surface(background fill, primaryContainer border, 6dp corners)`, a header bar with a divider above the body when the fence carries a language, monospace text with token colours bound to `MaterialTheme.colorScheme`, horizontal scroll for long lines (no wrap), and a per-block copy control. See [Code blocks](markdown-text-internals.md#code-blocks) for the full mapping; library choice in [ADR 0003](../decisions/0003-syntax-highlighter-library.md).
+- **Thread and reader code share bordered panels with visible copy controls** — `Surface(background fill, primaryContainer border, 6dp corners)`, a header bar with a divider above the body when the fence carries a language, monospace text with token colours bound to `MaterialTheme.colorScheme`, horizontal scroll for long lines (no wrap), and a per-block copy control. See [Code blocks](markdown-text-internals.md#code-blocks) for the full mapping; library choice in [ADR 0003](../decisions/0003-syntax-highlighter-library.md).
 - **Highlighter language coverage is bounded.** Kotlin / Bash / JSON (via the JavaScript lexer — JSON's grammar is a subset) tokenise; Markdown and any other language fall through to plain monospace but still show the language label. Adding a language is a one-line addition to `resolveSyntaxLanguage` if the library exposes it.
-- **Thread indented blocks use `CodeBlock` without a header; reader indented blocks use the plain panel.** CommonMark indented blocks have no info string, so thread `CodeBlock` suppresses the header and divider.
+- **Unlabelled fences and indented blocks use `CodeBlock` without a header in both presentations.** Without an info string, the shared panel suppresses its language header and divider.
 - **Lists are flat-bulleted.** Unordered lists use `"•"`; ordered lists use `"${index + 1}."` from the 1-based item position within the list. Nested-list indentation depth comes from the recursive `MarkdownBlock` call inside the list item's `Column` — no per-level indent multiplier. **Reader exception (#1533):** a reader item's own wrapped text follows the Figma frame's hanging-free layout (continuation returns to the list edge, not the item text), while a nested block still gets the old fixed hang (`ReaderListContinuationIndent`, 14dp) because the frame draws no nested content to measure against. The thread presentation is untouched and keeps the marker-row hang for every item, wrapped or not.
 - **Blockquote appearance is presentation-specific.** Thread paragraphs remain italic with an `onSurfaceVariant` bar; reader paragraphs are regular with an `outlineVariant` bar. Nested non-paragraph blocks recurse through `MarkdownBlock`.
-- **No free-text selection.** Prose, tables, lists and quotes use bare `Text`, while code blocks expose block-only copying: thread and labelled reader fences show `CopyTextControl`; plain reader panels copy on tap. The reader menu separately copies the whole note.
+- **No free-text selection.** Prose, tables, lists and quotes use bare `Text`, while code blocks expose block-only copying: thread and reader code panels show `CopyTextControl`. The reader menu separately copies the whole note.
 - **`MarkdownText` itself treats `markdown` as final.** Partial markdown still parses, since the JetBrains parser is total, and a construct never closed renders literally. Streaming replies go through `StreamingMarkdownText` instead; see [Streaming](#streaming-since-1766). Streaming uses the default body style.
 - **Renderer is total.** The JetBrains parser produces an AST for any input string — there is no exception path. Unsupported element kinds hit the `else` fallback (raw text using the selected body style), so the message is never blank. #681 leaned on exactly this property to switch parser flavours without suppressing anything — see the next two points.
 - **Parser flavour is GFM since #681, and that changes more than the three constructs it was switched on for.** `org.jetbrains:markdown` has no per-construct registration — `GFMFlavourDescriptor` is the only off-the-shelf way to reach tables, task lists and strikethrough, and it necessarily also brings bare-URL autolinks (`GFM_AUTOLINK`) and `$…$` inline maths (`INLINE_MATH`) into every message this renderer sees, whether or not that message uses any of the three wanted constructs.

@@ -33,8 +33,13 @@ sibling-list-item gaps (#2285). Heading-specific 20/12dp integration remains wit
 with Thread: H1 20/28sp, H2 18/26sp, H3 16/24sp (all Medium), and H4–H6 14/20sp Bold.
 Tracking is 0, 0, 0.15 and 0.25sp respectively; plain heading text uses `onSecondaryContainer`.
 Reader headings and prose use untrimmed line-height boxes; Thread retains its existing trimming.
-SETEXT headings keep the raw body fallback. Unlabelled and indented code uses a plain, tappable,
-horizontally scrolling panel; labelled fences keep syntax highlighting and visible per-block copy.
+SETEXT headings keep the raw body fallback. All fenced and indented code uses the shared
+`CodeBlock` panel (#2284): 12sp/20sp monospace, Background fill, a 1dp Primary Container
+stroke, 6dp corners and a visible lower-right copy control. Only labelled fences have a
+language header and syntax highlighting. Each control copies its block's extracted original
+text through the existing 100,000-character clipboard bound. Long lines scroll horizontally
+inside the panel while the copy rail stays fixed, without widening the reader. The fixed
+header intercepts physical taps on covered copy controls as it does on covered links.
 Reader quotes use regular 14sp/20sp `onSurfaceVariant` text and a subdued 3dp
 `outlineVariant` rule; links retain their colour and underline at the same body size. See
 [MarkdownText block dispatch](markdown-text-internals.md#block-dispatch). Reader menu copies and link routing
