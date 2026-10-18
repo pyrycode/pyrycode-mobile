@@ -8,6 +8,8 @@ internal interface AuthoritativeUpsertCache {
      * [baseline] is the prior certificate whose durable prerequisites the candidate inherits.
      * [orderMoves] independently carries accepted placement blocks in candidate order, including unchanged
      * payloads: true joins before a tie, false after. Only the serialized owner writer supplies these.
+     * Explicit [SavedAuthoritativeThread.retirements] are durable identity fences; omission is never removal.
+     * [SavedAuthoritativeThread.incarnation] survives restart and changes only on explicit reset.
      */
     suspend fun upsertAuthoritativeThread(
         serverId: String,

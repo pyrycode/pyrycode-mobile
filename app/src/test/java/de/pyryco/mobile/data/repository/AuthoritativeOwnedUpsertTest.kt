@@ -98,7 +98,7 @@ class AuthoritativeOwnedUpsertTest {
             conversationId: String,
         ): SavedAuthoritativeThread? =
             actual.newestAuthoritativePage(serverId, conversationId, 200)?.let {
-                SavedAuthoritativeThread(it.epoch, it.items, it.appliedVersion, it.checkpoint, it.coverage)
+                SavedAuthoritativeThread(it.epoch, it.items, it.appliedVersion, it.checkpoint, it.coverage, it.incarnation, it.retirements)
             }
     }
 
@@ -829,7 +829,7 @@ class AuthoritativeOwnedUpsertTest {
             release.complete(Unit)
             first.join()
             second.join()
-            assertEquals(SavedAuthoritativeThread("e", emptyList(), 0, 0), fresh())
+            assertEquals(SavedAuthoritativeThread("e", emptyList(), 0, 0), fresh()?.copy(incarnation = ""))
         }
 
     @Test fun admissionInvariant_deferredImportCannotBeOverwrittenByOwnedSaves() =
@@ -893,7 +893,7 @@ class AuthoritativeOwnedUpsertTest {
                 releaseRetirement.complete(Unit)
                 runCurrent()
                 observer.join()
-                assertEquals(SavedAuthoritativeThread(epoch, emptyList(), 0, 0), fresh())
+                assertEquals(SavedAuthoritativeThread(epoch, emptyList(), 0, 0), fresh()?.copy(incarnation = ""))
             }
         }
 

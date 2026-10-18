@@ -41,9 +41,12 @@ No new jobs or scopes. Use injected processing/IO dispatchers and existing obser
 | Failed transaction then same capture retry | `atomicInvariant_failurePreservesCertificateAndRetryCommits` |
 | Held upsert overlapping removal | `retirementInvariant_heldUpsertThenRemovalCommitsFence` |
 | Cancellation/final flush while retirement changes | `retirementInvariant_finalFlushRefreshesRemoval` |
+| Explicit removal caller cancelled during started I/O | `atomicInvariant_cancelledRemovalFinishesCommitBeforeReturning` |
 | Held removal followed by reset, including reused epoch | `retirementInvariant_resetDuringRemovalCreatesNewIncarnation` |
 | Confirmed conversation deletion and host forgetting | `retirementInvariant_scopeDeletionKeepsOtherHostExact` |
-| Schema upgrade and file compatibility | focused Room migration/import and file-cache regressions |
+| A newer revision already committed outside the held view | `ownershipInvariant_durableNewerRevisionRejectsRemovalAtomically` |
+| Replayed replacement/upsert, restart and reused-epoch reset | `retirementInvariant_storageFencesReplayAndOldIncarnationAcrossReopen` |
+| Schema upgrade and file compatibility | `AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence`, `retirementInvariant_fileCompatibilityRetainsFenceAndResetLifetime` |
 
 ## Error handling
 
@@ -77,3 +80,13 @@ Pending for the documentation stage: update explicit ownership, retirement lifet
 
 **Reviewer:** builder (self-review)
 **Date:** 2026-10-18
+
+## Revisions
+
+### 2026-10-18: shared restored baseline
+
+The explicit seam can persist before an observer has made any successful mutation. Preserve the validated, committed restoration as the initial shared baseline under `historyWrites`, without advancing its capture fence or adopting live merged facts as durable. Otherwise removing one identity from an unchanged partial view would rewrite every retained owned payload. Existing observer-local restoration remains unchanged; successful mutations supersede the initial baseline normally. The partial-view probe checks zero payload writes and unchanged unrelated ordinals. Security review remains PASS: only an accepted exact-owner, generation-checked restore can initialize this baseline, and no connected capability is inferred.
+
+Retirement keeps checkpoint zero and coverage null until explicit reset: replay completion cannot certify a range containing deliberately withheld identities. Saved records validate this conservative certificate and disallow a fact overlapping its fence. Incarnation defaults preserve existing version-1 files and pre-migration Room content; explicit reset assigns a fresh UUID. The authoritative capture type fixes its family and binds the minting store in addition to exact ownership, epoch, incarnation, generation and revision.
+
+The first fixture run failed before removal because its full items omitted required fields (1 executed/failed). After correcting the fixture, the behavioral regression ran against plan `575562ee5` and the no-op seam: 1 executed, 1 failed, 0 errors/skips, expected 17999 versus 18000 facts. Raw XML and the test source are retained under `/tmp/builder-2256/evidence/red/`.

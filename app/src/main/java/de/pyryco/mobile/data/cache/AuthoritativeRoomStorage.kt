@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.cache
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase.AuthoritativeHeader
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase.AuthoritativeItem
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase.AuthoritativePosition
+import de.pyryco.mobile.data.cache.ConversationCacheDatabase.AuthoritativeRetirement
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ThreadItemDto
@@ -26,6 +27,8 @@ class AuthoritativeThreadPage internal constructor(
     val checkpoint: Long,
     val coverage: SavedThreadCoverage?,
     val continuation: Continuation?,
+    val incarnation: String = "",
+    val retirements: Map<Long, Long> = emptyMap(),
 ) {
     override fun toString(): String = "AuthoritativeThreadPage(items=${items.size}, redacted)"
 
@@ -73,6 +76,7 @@ class AuthoritativeRoomStorage internal constructor(
         val headerWrites: Int = 0,
         val ordinalReads: Int = 0,
         val ordinalWrites: Int = 0,
+        val retirementWrites: Int = 0,
     )
 
     internal var lastWriteCounts = WriteCounts()
@@ -115,17 +119,44 @@ class AuthoritativeRoomStorage internal constructor(
             val incoming = saved.toSnapshot().items
             lastWriteCounts = lastWriteCounts.copy(inputDecodes = incoming.size)
             val previousHeader = dao.header(host, conversation)
+            require(
+                reset || previousHeader == null || (previousHeader.epoch == saved.epoch && previousHeader.incarnation == saved.incarnation),
+            )
             val retire = reset || (previousHeader != null && previousHeader.epoch != saved.epoch)
             if (retire) {
                 dao.deleteItems(host, conversation)
+                dao.deleteRetirements(host, conversation)
                 lastWriteCounts = lastWriteCounts.copy(itemDeletes = previousHeader?.itemCount ?: 0)
             }
             val header = previousHeader?.takeUnless { retire }
-            val previous = header?.let { metadata(it) }
+            val previous = header?.let { metadata(it, includeRetirements = false) }
+            var removed = 0
+            for ((id, revision) in saved.retirements) {
+                if (dao.retirement(host, conversation, id) != null) continue
+                dao.item(host, conversation, saved.epoch, id)?.let { record ->
+                    val held =
+                        requireNotNull(previous)
+                            .copy(items = listOf(MobileJson.parseToJsonElement(record.payload).jsonObject))
+                            .toSnapshot()
+                            .items
+                            .single()
+                    require(held.id == id && orderKey(held) == record.orderKey && held.rev <= revision)
+                    lastWriteCounts =
+                        lastWriteCounts.copy(itemReads = lastWriteCounts.itemReads + 1, itemDecodes = lastWriteCounts.itemDecodes + 1)
+                }
+                removed += dao.removeItem(host, conversation, saved.epoch, id)
+                dao.retire(AuthoritativeRetirement(host, conversation, id, revision))
+                lastWriteCounts = lastWriteCounts.copy(retirementWrites = lastWriteCounts.retirementWrites + 1)
+            }
+            lastWriteCounts = lastWriteCounts.copy(itemDeletes = lastWriteCounts.itemDeletes + removed)
             val positions = mutableMapOf<Long, AuthoritativePosition>()
             val rejected = mutableSetOf<Long>()
             val changes =
                 incoming.mapNotNull { item ->
+                    if (dao.retirement(host, conversation, item.id) != null) {
+                        rejected += item.id
+                        return@mapNotNull null
+                    }
                     val record = dao.item(host, conversation, saved.epoch, item.id)
                     val held =
                         record?.let {
@@ -213,7 +244,7 @@ class AuthoritativeRoomStorage internal constructor(
                 dao.moveItem(host, conversation, saved.epoch, id, ordinal)
                 lastWriteCounts = lastWriteCounts.copy(ordinalWrites = lastWriteCounts.ordinalWrites + 1)
             }
-            val count = (header?.itemCount ?: 0) + added
+            val count = (header?.itemCount ?: 0) + added - removed
             val trimmed = (count - MAX_CACHED_THREAD_ROWS).coerceAtLeast(0)
             if (trimmed > 0) {
                 dao.trimItems(host, conversation, saved.epoch, trimmed)
@@ -233,7 +264,7 @@ class AuthoritativeRoomStorage internal constructor(
                             saved.checkpoint >= previous.checkpoint
                     )
             val checkpoint =
-                if (trimmed > 0) {
+                if (trimmed > 0 || dao.hasRetirements(host, conversation)) {
                     0
                 } else if (acceptCertificate) {
                     saved.checkpoint
@@ -241,7 +272,7 @@ class AuthoritativeRoomStorage internal constructor(
                     previous?.checkpoint ?: 0
                 }
             val coverage =
-                if (trimmed > 0) {
+                if (trimmed > 0 || dao.hasRetirements(host, conversation)) {
                     null
                 } else if (acceptCertificate) {
                     saved.coverage
@@ -258,6 +289,7 @@ class AuthoritativeRoomStorage internal constructor(
                     checkpoint,
                     coverage?.let { MobileJson.encodeToString(it) },
                     count - trimmed,
+                    saved.incarnation,
                 ),
             )
             lastWriteCounts = lastWriteCounts.copy(headerWrites = 1)
@@ -270,13 +302,35 @@ class AuthoritativeRoomStorage internal constructor(
         saved: SavedAuthoritativeThread,
     ) {
         replacements++
-        val kept = saved.retained()
+        val incoming = saved.toSnapshot()
+        val header = dao.header(serverId, conversationId)
+        require(header == null || header.incarnation == saved.incarnation)
+        require(header == null || header.epoch == saved.epoch || !dao.hasRetirements(serverId, conversationId))
+        val retired =
+            if (header?.epoch ==
+                saved.epoch
+            ) {
+                dao.retirements(serverId, conversationId).associate { it.id to it.revision }
+            } else {
+                emptyMap()
+            }
+        val fences = retired + saved.retirements
+        val kept =
+            saved
+                .copy(
+            items = incoming.items.filterNot { it.id in fences }.map { it.raw },
+                    retirements = fences,
+                    checkpoint = if (fences.isEmpty()) saved.checkpoint else 0,
+                    coverage = saved.coverage.takeIf { fences.isEmpty() },
+                ).retained()
         val records =
             kept.toSnapshot().items.mapIndexed { ordinal, item ->
                 AuthoritativeItem(serverId, conversationId, kept.epoch, item.id, ordinal, orderKey(item), item.raw.toString())
             }
         dao.deleteItems(serverId, conversationId)
         dao.deleteHeaders(serverId, conversationId)
+        dao.deleteRetirements(serverId, conversationId)
+        for ((id, revision) in fences) dao.retire(AuthoritativeRetirement(serverId, conversationId, id, revision))
         dao.insertItems(records)
         dao.insertHeader(
             AuthoritativeHeader(
@@ -288,6 +342,7 @@ class AuthoritativeRoomStorage internal constructor(
                 kept.checkpoint,
                 kept.coverage?.let { MobileJson.encodeToString(it) },
                 records.size,
+                kept.incarnation,
             ),
         )
     }
@@ -363,6 +418,8 @@ class AuthoritativeRoomStorage internal constructor(
                 saved.checkpoint,
                 saved.coverage,
                 continuation,
+                saved.incarnation,
+                saved.retirements,
             )
         }
 
@@ -372,7 +429,10 @@ class AuthoritativeRoomStorage internal constructor(
     ): AuthoritativeHeader? =
         dao.header(host, conversation).also { lastReadCounts = lastReadCounts.copy(evidenceReads = if (it == null) 0 else 1) }
 
-    private fun metadata(header: AuthoritativeHeader): SavedAuthoritativeThread {
+    private suspend fun metadata(
+        header: AuthoritativeHeader,
+        includeRetirements: Boolean = true,
+    ): SavedAuthoritativeThread {
         require(header.itemCount in 0..MAX_CACHED_THREAD_ROWS && header.generation.isNotEmpty())
         val coverage =
             header.coverage?.let {
@@ -385,6 +445,8 @@ class AuthoritativeRoomStorage internal constructor(
             header.appliedVersion,
             header.checkpoint,
             coverage,
+            header.incarnation,
+            if (includeRetirements) dao.retirements(header.host, header.conversation).associate { it.id to it.revision } else emptyMap(),
         ).also { it.toSnapshot() }
     }
 

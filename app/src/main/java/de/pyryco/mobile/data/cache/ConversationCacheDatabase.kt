@@ -23,13 +23,15 @@ import java.io.IOException
         ConversationCacheDatabase.Header::class, ConversationCacheDatabase.Row::class, ConversationCacheDatabase.Evidence::class,
         ConversationCacheDatabase.AuthoritativeHeader::class, ConversationCacheDatabase.AuthoritativeItem::class,
         ConversationCacheDatabase.FileImport::class,
+        ConversationCacheDatabase.AuthoritativeRetirement::class,
     ],
-    version = 4,
+    version = 5,
     autoMigrations = [
         AutoMigration(
             from = 1,
             to = 2,
         ), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4, spec = ConversationCacheDatabase.OwnedRowsMigration::class),
+        AutoMigration(from = 4, to = 5),
     ],
 )
 abstract class ConversationCacheDatabase : RoomDatabase() {
@@ -79,6 +81,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         legacy().deleteRows(host, conversation)
         legacy().deleteHeaders(host, conversation)
         authoritative().deleteItems(host, conversation)
+        authoritative().deleteRetirements(host, conversation)
         authoritative().deleteHeaders(host, conversation)
     }
 
@@ -119,8 +122,19 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         val checkpoint: Long,
         val coverage: String?,
         val itemCount: Int,
+        @ColumnInfo(defaultValue = "''") val incarnation: String = "",
     ) {
         override fun toString(): String = "AuthoritativeHeader(redacted)"
+    }
+
+    @Entity(tableName = "authoritative_retirements", primaryKeys = ["host", "conversation", "id"])
+    internal data class AuthoritativeRetirement(
+        val host: String,
+        val conversation: String,
+        val id: Long,
+        val revision: Long,
+    ) {
+        override fun toString(): String = "AuthoritativeRetirement(redacted)"
     }
 
     @Entity(
@@ -150,6 +164,42 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
 
     @Dao
     internal interface AuthoritativeDao {
+        @Query("SELECT * FROM authoritative_retirements WHERE host=:host AND conversation=:conversation")
+        suspend fun retirements(
+            host: String,
+            conversation: String,
+        ): List<AuthoritativeRetirement>
+
+        @Query("SELECT EXISTS(SELECT 1 FROM authoritative_retirements WHERE host=:host AND conversation=:conversation)")
+        suspend fun hasRetirements(
+            host: String,
+            conversation: String,
+        ): Boolean
+
+        @Query("SELECT * FROM authoritative_retirements WHERE host=:host AND conversation=:conversation AND id=:id")
+        suspend fun retirement(
+            host: String,
+            conversation: String,
+            id: Long,
+        ): AuthoritativeRetirement?
+
+        @Insert(onConflict = OnConflictStrategy.IGNORE)
+        suspend fun retire(retirement: AuthoritativeRetirement)
+
+        @Query("DELETE FROM authoritative_retirements WHERE host=:host AND (:conversation IS NULL OR conversation=:conversation)")
+        suspend fun deleteRetirements(
+            host: String,
+            conversation: String?,
+        )
+
+        @Query("DELETE FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id=:id")
+        suspend fun removeItem(
+            host: String,
+            conversation: String,
+            epoch: String,
+            id: Long,
+        ): Int
+
         @Query(
             "SELECT id,ordinal,orderKey FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id=:id",
         )
