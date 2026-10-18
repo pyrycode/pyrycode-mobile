@@ -29,6 +29,31 @@ size, line height and tracking. Component widths and spacing belong to their
 owning screens; the shared ramp does not fix text height, so Android font scaling
 continues to apply.
 
+## Markdown headings
+
+[`MarkdownTypography`](../../../app/src/main/java/de/pyryco/mobile/ui/theme/MarkdownTypography.kt)
+owns the ATX H1–H6 scale from Figma `892:13442` (#2277), shared by settled and streaming
+[Thread rendering](markdown-text.md) and the [Reader](markdown-reader-screen.md).
+All levels use explicit `FontFamily.SansSerif` (Roboto on Android). Sizes, line heights
+and tracking use `sp`:
+
+| Level | Weight | Size / line height | Tracking |
+| --- | ---: | ---: | ---: |
+| H1 | 500 | 20 / 28 | 0 |
+| H2 | 500 | 18 / 26 | 0 |
+| H3 | 500 | 16 / 24 | 0.15 |
+| H4–H6 | 700 | 14 / 20 | 0.25 |
+
+H3 derives from `MaterialTheme.typography.titleMedium`, overriding its family and tracking
+locally. This Compose version supplies 0.2sp tracking for that role; reusing it unchanged
+misses Figma’s 0.15sp. H1, H2 and H4–H6 use dedicated tokens. `AppTypography` and other
+screens’ shared roles stay unchanged. Plain heading text uses `onSecondaryContainer` in
+the active theme; inline link and code spans keep their existing treatments. Reader
+headings additionally use untrimmed line boxes. The native-graphics
+[`MarkdownHeadingScaleTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MarkdownHeadingScaleTest.kt)
+asserts rendered metrics and colour across both themes and presentations through streaming
+and settlement; [counted verification](markdown-text.md#testing) records the passing coverage.
+
 ## Verification and limits
 
 [`AppTypographyTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/theme/AppTypographyTest.kt)

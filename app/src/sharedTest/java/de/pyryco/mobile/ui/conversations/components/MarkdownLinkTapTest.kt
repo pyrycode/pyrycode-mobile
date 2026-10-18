@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -10,6 +11,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performFirstLinkClick
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
@@ -126,6 +128,47 @@ class MarkdownLinkTapTest {
 
         assertEquals(emptyList<String>(), paths)
         assertEquals(emptyList<String>(), opened)
+    }
+
+    @Test
+    fun allHeadingLevels_routeWorkspaceAndWebLinks() = assertHeadingLinks(streaming = false, reader = false)
+
+    @Test
+    fun allStreamingHeadingLevels_routeWorkspaceAndWebLinks() = assertHeadingLinks(streaming = true, reader = false)
+
+    @Test
+    fun allReaderHeadingLevels_keepWorkspaceLinksInertAndRouteWebLinks() = assertHeadingLinks(streaming = false, reader = true)
+
+    private fun assertHeadingLinks(
+        streaming: Boolean,
+        reader: Boolean,
+    ) {
+        val source =
+            (1..6).joinToString("\n\n") { level ->
+                "${"#".repeat(level)} [Note$level](notes/Plan$level.md) [Web$level](https://example.com/$level)"
+            }
+        show {
+            val style =
+                MarkdownTextStyle(
+                    body = MaterialTheme.typography.bodyMedium,
+                    presentation = if (reader) MarkdownPresentation.Reader else MarkdownPresentation.Thread,
+                )
+            if (streaming) {
+                StreamingMarkdownText(source, caretVisible = true, onOpenMarkdownPath = { paths += it }, style = style)
+            } else {
+                MarkdownText(source, onOpenMarkdownPath = if (reader) null else { path -> paths += path }, style = style)
+            }
+        }
+        for (level in 1..6) {
+            composeTestRule
+                .onNodeWithText("Note$level Web$level", substring = streaming)
+                .performFirstLinkClick { (it.item as? LinkAnnotation.Url)?.url?.startsWith("notes/") == true }
+            composeTestRule
+                .onNodeWithText("Note$level Web$level", substring = streaming)
+                .performFirstLinkClick { (it.item as? LinkAnnotation.Url)?.url?.startsWith("https:") == true }
+        }
+        assertEquals(if (reader) emptyList<String>() else (1..6).map { "notes/Plan$it.md" }, paths)
+        assertEquals((1..6).map { "https://example.com/$it" }, opened)
     }
 
     private companion object {
