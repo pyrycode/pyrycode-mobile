@@ -38,8 +38,8 @@ class ConversationCacheException(message: String) : Exception(message)
 ```
 
 **File-to-Room import (#2161).** The active `MigratingConversationCache` attempts import for each
-exact host/conversation and family before its full reads, replacements or internal page
-wrappers use Room. Owner ids come from cache operations; hashed filenames cannot recover
+exact host/conversation and family before its full reads, replacements, owned mutations or internal
+page wrappers use Room. Owner ids come from cache operations; hashed filenames cannot recover
 owners, so unknown-owner sources stay untouched. Legacy and authoritative version-1 codecs
 remain separate: legacy rows never become authoritative facts or certify their checkpoint.
 Held row order, fields, unsigned evidence through `ULong.MAX_VALUE`, fragment bindings and
@@ -179,7 +179,7 @@ before selects earlier ordinals. Repeated pages traverse an unchanged snapshot e
 even with equal or misleading timestamps. The result carries its exact owner. Its opaque local
 `Continuation` belongs only to the legacy family and binds exact case-sensitive host,
 conversation and committed generation. Wrong-owner or stale tokens return null. Replacement
-invalidates old tokens; local continuation is never a daemon cursor.
+and owned mutation invalidate old tokens; local continuation is never a daemon cursor.
 
 `LegacyPageEvidence` exposes typed unsigned spans, gaps, selected row/delta claims and proofs,
 fragment bindings and relevant cursor/walk evidence. It is a projection, not full
@@ -213,10 +213,109 @@ Diagnostics contain static operation/failure codes; page, evidence, continuation
 result strings redact content, cursors and owner ids.
 
 The application uses this backend through the import-aware cache (#2161), alongside
-authoritative Room storage (#2163). #2068 owns bounded reader activation/owned partial writes.
-Legacy rows/evidence never become
-authoritative items or certify an authoritative checkpoint. Existing file-cache operations,
+authoritative Room storage (#2163). #2068 owns bounded reader activation; #2253 supplies owned
+legacy writes below. Legacy rows/evidence never become authoritative items or certify an
+authoritative checkpoint. Existing file-cache operations,
 metadata lists, read positions, settings and attachment-byte storage remain available.
+
+### Owned incremental legacy mutations (#2253)
+
+Ordinary production saves use the internal `OwnedLegacyCache` capability:
+`CachingConversationRepository.ThreadWriter` calls `MigratingConversationCache.mutateLegacyRows`,
+which admits the exact host/conversation/legacy family through the same import and retirement
+checks as replacement writes, then calls `LegacyRoomStorage.mutateRows`. Unavailable or unobserved
+imports and retired hosts still refuse writes. This storage capability changes no negotiated
+route and cannot enable legacy fallback for an authoritative-only host. Full `writeThread`
+replacement and file semantics remain available. Full-view history-position/coverage saves still
+replace reconciled rows and bind evidence to their actual held ordinals; their optimization is
+separate work. Partial readers are not activated.
+
+A mutation carries changed cacheable rows, observed neighbour identities and explicit removed
+renderer identities. Identity is typed and canonical, with length-delimited session-boundary
+components; content, timestamps used for placement and unsigned durable ids do not substitute for
+renderer identity. SQL predicates retain exact case-sensitive host/conversation ownership.
+Updating a held row keeps its ordinal. New identities use available space between observed
+neighbours without moving held rows; exhausted placement rejects the transaction. Each identity
+appears once. Unobserved rows survive an incomplete view. Removal requires observed intent from
+the repository, including confirmed projection disappearance or suppressed queued echoes;
+omission, settlement exclusion and losing an unsettled row cannot authorize it. See
+[writer ownership and capture fences](caching-conversation-repository.md#state-and-concurrency).
+
+Schema version 4 adds the unique owner/renderer-identity index and scalar header row count via
+an additive 3 → 4 Room auto-migration. Its backfill decodes existing rows once, preserves invalid
+bytes with no indexed identity, and moves rows and their evidence together to spaced positive
+`Long` ordinals. Old ordinal zero becomes the first positive slot. Full replacements and imports
+use the same layout. Positive prefix allocation is essential: global evidence occupies ordinal
+-1, so negative row positions could make a page select global cells as row-bound evidence and
+withhold otherwise valid claims. Backfill is migration work, never ordinary mutation work.
+
+Changed, removed or retention-discarded ordinals select only affected evidence, including aliased
+fragment claims. The same transaction removes their producing claims and dependent claims that
+share an affected producing id, subtracts those ids from intersecting received spans, and repairs
+adjacent gaps/walk evidence. Unrelated payloads, ordinals and valid evidence remain exact.
+Splitting spans/gaps uses `MobileJson`'s canonical unsigned model serializers: quoted numeric ids
+fail the strict codec, including otherwise correct interval splits. Bounds through
+`ULong.MAX_VALUE` remain exact; subtracting the maximum never wraps to zero.
+
+Invalidation marks coverage unknown and clears saved completeness. Overflow beyond the existing
+100000-row cap selects only the oldest excess rows, invalidates their affected evidence and resets
+the backwards cursor/completeness conservatively. No discarded content stays certified. Ordinary
+mutations read changed identities, neighbour ordinals and relevant evidence, without materializing,
+decoding, serializing, deleting/reinserting or renumbering the whole saved thread. Failed validation,
+placement or storage commits nothing. Expected failures retain the existing causeless/static-code
+contract; diagnostics and internal counters expose no owners, identities, payloads or cursors.
+
+A mutation changes the committed local generation. Older continuations reject with null, allowing
+a new newest-page traversal to recover the entire committed snapshot. They never silently skip
+rows or become daemon cursors. Local save/page exhaustion proves no server continuity or exhaustion.
+
+#### Retained mutation and restart evidence
+
+Linux focused runs retained in
+[`owned-legacy-2253/results.json`](../../../app/src/test/resources/verification/owned-legacy-2253/results.json)
+record **125 executed/passed, 0 failed, 0 skipped**. The sibling `green-*.xml` files contain the
+counted results; historical failing reports and the earlier fixture patch remain alongside them.
+Production revision: `74bc7a5c1cfdbad50263ab2100a849ce2c20abc0`; final dense-fixture revision:
+`f92113bc4f9693bc3009af71316203b3c820901a`. The manifest distinguishes earlier runs with the
+fixture-only working patch from the final committed fixture run.
+
+| Focused selection | Executed/passed | Failed | Skipped |
+| --- | ---: | ---: | ---: |
+| `OwnedLegacyWritesTest` | 6 | 0 | 0 |
+| `OwnedLegacyMigrationTest` | 1 | 0 | 0 |
+| `OwnedLegacyConcurrencyTest` | 5 | 0 | 0 |
+| `LegacyRoomStorageTest` | 18 | 0 | 0 |
+| `MigratingConversationCacheTest` | 15 | 0 | 0 |
+| `CoalescedThreadWritesTest` | 41 | 0 | 0 |
+| `UnsignedHistoryCacheTest` | 11 | 0 | 0 |
+| `HistoryMessageIdentityTest` | 17 | 0 | 0 |
+| `CachedThreadWorkerTest` | 10 | 0 | 0 |
+| `AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence` | 1 | 0 | 0 |
+
+`boundedInvariant_newestUpdateDoesNotScaleWithSavedHistory` measures the production repository
+writer through migration-aware real on-disk Room, after import, restore and initial coverage save.
+Both the 20-row and 18000-row fixtures have a producing claim and separate received span per row.
+Each newest-row update records **1 row read, 1 decode, 1 serialization, 1 write; 8 evidence cells
+read, 1 evidence decode, 3 evidence mutation statements and 46 SQL statements**. The probe also
+rejects full saved-row/evidence reads and saved-row deletion for this update.
+
+`ownershipInvariant_partialViewPreservesUnownedRowsAndEvidence` changes/removes loaded identities
+in a 200-row owned view of 18000 saved rows, then reopens fresh database/cache/repository instances.
+It compares all 17800 unloaded rows and 53400 associated evidence cells exactly, checks a second
+host with colliding ids, rejects the stale token and completes a fresh traversal. The remaining
+owned-write probes cover shared-claim rollback/retry and readable interval splitting, retention,
+unsettled disappearance, and prepended-page evidence. The migration probe preserves held order,
+untouched positions and the other host while inserting before the migrated first row. All five
+concurrency methods cover held/newer writes and removal, failure/unchanged-emission/final retry,
+cancellation after commit, overlapping collectors/reconnect, and deletion/host forgetting/restart.
+
+The [verifier PASS at `54c70f599598bfefe57f556650c8c95bc490441d`](https://github.com/pyrycode/pyrycode-mobile/pull/2258#issuecomment-6244324619)
+records Linux configured gates: JVM **5911 executed/passed, 0 failed/skipped**; UI **334
+executed/passed, 0 failed, 1 skipped**; scripted **22 executed/passed, 0 failed/skipped**.
+The dispatcher named-test report confirms all twelve owned-write/migration/concurrency methods
+and `cachePolicyInvariant_100000LiveRowsAreFilteredOnlyAfterMainDelivery` passed in that full JVM
+suite. The UI skip is `RenameDialogCaptureTest.renameAtFigmaViewport`, not a storage pass.
+No real-Claude capture is required; other operating systems are outside this ticket's scope.
 
 ### Indexed authoritative Room storage and pages (#2163)
 
