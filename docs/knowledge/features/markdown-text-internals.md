@@ -18,9 +18,10 @@ The parse is keyed on the `markdown` string itself — the AST is rebuilt only w
 
 | AST type | Renders as |
 |---|---|
-| `ATX_1` | `Text(buildInline(...), style = headlineSmall)` |
-| `ATX_2` | `Text(buildInline(...), style = titleLarge)` |
-| `ATX_3` | `Text(buildInline(...), style = titleMedium)` |
+| `ATX_1` | `HeadingBlock` with `MarkdownTypography.h1` |
+| `ATX_2` | `HeadingBlock` with `MarkdownTypography.h2` |
+| `ATX_3` | `HeadingBlock` with `MarkdownTypography.h3(MaterialTheme.typography.titleMedium)` |
+| `ATX_4`, `ATX_5`, `ATX_6` | `HeadingBlock` with `MarkdownTypography.h4ToH6` |
 | `PARAGRAPH` | `Text(buildInline(...), style = style.body)` |
 | `UNORDERED_LIST` | `Column { … Row { Text("•"); Spacer; Column { recurse } } … }` — an item carrying a `GFMTokenTypes.CHECK_BOX` child renders `TaskMark(checked)` instead of the bullet; see [Task lists](#task-lists). **Reader only (#1533):** a non-task item whose first block is a paragraph skips the `Row` entirely and draws one `Text` of `"$marker  "` followed by `buildInline(lead)`, so a wrapped continuation line returns to the list's own left edge instead of hanging under the item text — matching Figma `553:2574`, where the marker is part of the item's paragraph, not a sibling of it. The item's later blocks (a nested list, a second paragraph) still indent under a fixed `ReaderListContinuationIndent` (14dp), since the frame has no nested case to follow. |
 | `ORDERED_LIST` | same but marker is `"${index + 1}."` (1-based); both list kinds dispatch through the same `ListBlock`, so a `CHECK_BOX` child replaces the marker here too — untested directly, but true by the shared code path. The reader's inline-marker path above applies identically, with the `N.` marker in place of `•`. |
@@ -30,11 +31,18 @@ The parse is keyed on the `markdown` string itself — the AST is rebuilt only w
 | `CODE_BLOCK` | Reader indented block: `ReaderCodeBlock`; thread: `CodeBlock`. Both use extracted source text. |
 | _else_ | `Text(node.getTextInNode(source).trim(), style = style.body)` — fallback |
 
-`Column` arrangements use `style.blockSpacing` between top-level blocks and recursively inside list items and quotes; sibling list items use `style.listItemSpacing`. Gaps come from the columns, not per-element padding.
+`Column` arrangements use `style.blockSpacing` between top-level blocks and recursively inside list items and quotes; sibling list items use `style.listItemSpacing`. Thread defaults are 16dp between blocks and 4dp between sibling items (#2273); the reader explicitly supplies 12dp and 6dp. Gaps come from the columns, not per-element padding, so the first and last blocks align with the renderer bounds without added outer spacing. Measure code-block gaps against the code surface, including its internal padding, rather than against the code text.
+
+ATX headings use the [markdown-only scale](shared-typography.md#markdown-headings) and
+`onSecondaryContainer` in both presentations, retaining inline link colours and code spans.
+Reader styles pass through `readerLineHeight` for untrimmed boxes and retain long-run
+breaking. `SETEXT_1` and `SETEXT_2` use the raw body fallback, rather than the ATX styles;
+the streaming pending-table-header guard runs before dispatch so a partial table delimiter
+parsed as SETEXT can still display its pending cells.
 
 ## Heading inline content
 
-A heading's own children are just the marker and one content node — `# Heading with text` parses as `ATX_1 [ATX_HEADER, ATX_CONTENT]`, with the marker's whitespace nested *inside* `ATX_CONTENT`, not beside it. `HeadingBlock` takes that single `ATX_CONTENT` child (`firstOrNull`, since a marker-only `##` has none) and walks its `trimmedContent()` — the same edge-whitespace trim [Tables](#tables) uses for cells — through `appendInline`. Trimming the edges is not the same fix as filtering one level deeper: `ATX_CONTENT`'s *interior* `WHITE_SPACE` tokens are the real spaces between words (`` ## `code` and **bold** `` lexes as `WHITE_SPACE, CODE_SPAN, WHITE_SPACE, TEXT, WHITE_SPACE, STRONG`), so dropping every whitespace child rather than only the edges would render `` `code`andbold ``. The closed form `## Trailing ##` keeps its closing marker outside `ATX_CONTENT` (a heading's own second `ATX_HEADER`-shaped token) but its trailing space inside, so both edges come off together. Fixed in #768, which #681 had already worked around at the test level (`substring = true` on the one heading assertion that existed) rather than at the source — a `substring` match is exactly the shape of test that can pass on this defect. `MarkdownTextParsingTest` pins all four AST facts the fix rests on — the `[ATX_HEADER, ATX_CONTENT]` direct-child shape, interior-vs-edge whitespace, the closed form's trailing space, and the marker-only heading's missing content child — so a parser bump that moves any of them reddens a unit test instead of silently re-indenting every heading in every reply.
+A heading's own children are just the marker and one content node — `# Heading with text` parses as `ATX_1 [ATX_HEADER, ATX_CONTENT]`, with the marker's whitespace nested *inside* `ATX_CONTENT`, not beside it. `HeadingBlock` takes that single `ATX_CONTENT` child (`firstOrNull`, since a marker-only `##` has none) and walks its `trimmedContent()` — the same edge-whitespace trim [Tables](#tables) uses for cells — through `appendLeaf`, which shares the inline walker while preserving the streaming tail’s pending-inline and caret handling. Trimming the edges is not the same fix as filtering one level deeper: `ATX_CONTENT`'s *interior* `WHITE_SPACE` tokens are the real spaces between words (`` ## `code` and **bold** `` lexes as `WHITE_SPACE, CODE_SPAN, WHITE_SPACE, TEXT, WHITE_SPACE, STRONG`), so dropping every whitespace child rather than only the edges would render `` `code`andbold ``. The closed form `## Trailing ##` keeps its closing marker outside `ATX_CONTENT` (a heading's own second `ATX_HEADER`-shaped token) but its trailing space inside, so both edges come off together. Fixed in #768, which #681 had already worked around at the test level (`substring = true` on the one heading assertion that existed) rather than at the source — a `substring` match is exactly the shape of test that can pass on this defect. `MarkdownTextParsingTest` pins all four AST facts the fix rests on — the `[ATX_HEADER, ATX_CONTENT]` direct-child shape, interior-vs-edge whitespace, the closed form's trailing space, and the marker-only heading's missing content child — so a parser bump that moves any of them reddens a unit test instead of silently re-indenting every heading in every reply.
 
 ## Inline dispatch
 
@@ -235,4 +243,4 @@ private val TaskMarkCornerRadius = 3.dp
 private val TaskMarkTopInset = 4.dp   // sits the mark on the first text line, not the item's top edge
 ```
 
-Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256`; see [Tables](#tables)) — `internal` since #1067, the rest of this list stays file-private. Block spacing comes from `MarkdownTextStyle`, not a file-private constant: the message default is 12dp and the reader supplies its own 12dp. Text sizes use `MaterialTheme.typography` roles; the thread code role overrides line height to 20sp.
+Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256`; see [Tables](#tables)) — `internal` since #1067, the rest of this list stays file-private. Block spacing comes from `MarkdownTextStyle`, not a file-private constant: the message default is 16dp and the reader supplies its own 12dp. Text sizes use `MaterialTheme.typography` roles; the thread code role overrides line height to 20sp.
