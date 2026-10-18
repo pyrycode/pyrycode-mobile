@@ -158,6 +158,7 @@ class MarkdownLinkTapTest {
                 "obsidian://open?vault=x&append=text",
                 "obsidian://open?file=x.hta",
                 "obsidian://open?file=%ED%A0%80",
+                " obsidian://open?file=Plan.md",
                 "JaVaScRiPt:alert(1)",
                 "data:text/html,x",
                 "file:///tmp/a.md",
@@ -167,7 +168,11 @@ class MarkdownLinkTapTest {
         val targets = admitted + rejected
         val codeLink = "[code](https://example.com)"
         val source =
-            targets.mapIndexed { index, target -> "Before [label$index]($target) after" }.joinToString("\n\n") + "\n\n`$codeLink`\n\nEnd."
+            targets
+                .mapIndexed { index, target ->
+                    val destination = if (target.startsWith(' ')) "<$target>" else target
+                    "Before [label$index]($destination) after"
+                }.joinToString("\n\n") + "\n\n`$codeLink`\n\nEnd."
         show { MessageBubble(message(Role.Assistant, source, isStreaming), onOpenMarkdownLink = { paths += it }) }
         composeTestRule.waitUntil(TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText("End.", substring = true).fetchSemanticsNodes().isNotEmpty()
@@ -190,7 +195,8 @@ class MarkdownLinkTapTest {
         rejected.forEachIndexed { offset, target ->
             val index = offset + admitted.size
             assertInert("Before label$index after")
-            val html = markdownHtml("[label$index]($target)")
+            val destination = if (target.startsWith(' ')) "<$target>" else target
+            val html = markdownHtml("[label$index]($destination)")
             assertTrue(html, html.contains("label$index") && !html.contains("href="))
         }
         val code = annotated(codeLink)

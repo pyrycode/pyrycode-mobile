@@ -181,7 +181,7 @@ data class MarkdownTextStyle(
 /**
  * [onOpenMarkdownPath] (#1050) opts a caller in to workspace notes: a link whose target is a markdown path
  * ([markdownLinkPath]) is handed to it instead of doing nothing. Only assistant replies pass it; with the
- * default every link keeps the `http` / `https` / `mailto` allowlist, which is what the reader relies on.
+ * default workspace paths stay inert and external links use the shared admission check.
  */
 @Composable
 fun MarkdownText(
@@ -1488,7 +1488,8 @@ private val LinkScheme = Regex("""^[A-Za-z][A-Za-z0-9+.-]*:""")
  */
 internal fun markdownLinkPath(target: String): String? {
     val path = target.substringBeforeLast('#').replace(LinkLineSuffix, "")
-    if (LinkScheme.containsMatchIn(path)) return null
+    // Malformed URI shapes must not fall through to the workspace reader just because they end in .md.
+    if (LinkScheme.containsMatchIn(path) || "://" in path) return null
     return path.takeIf { it.endsWith(".md", ignoreCase = true) || it.endsWith(".markdown", ignoreCase = true) }
 }
 

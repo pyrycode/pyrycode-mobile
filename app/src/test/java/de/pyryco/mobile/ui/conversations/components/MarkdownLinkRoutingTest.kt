@@ -7,6 +7,14 @@ import org.junit.Test
 /** #1050: which link targets are workspace markdown paths, and where a tap on each one goes. */
 class MarkdownLinkRoutingTest {
     @Test
+    fun malformedNoteUris_neverFallThroughToTheWorkspaceReader() {
+        listOf(" obsidian://open?file=Plan.md", "obsıdian://open?file=Plan.md", "://open/Plan.md").forEach { target ->
+            assertNull(target, markdownLinkPath(target))
+            routeMarkdownLink(target, { throw AssertionError("workspace callback") }) { throw AssertionError("external callback") }
+        }
+    }
+
+    @Test
     fun markdownPaths_areSentAsWritten_withoutFragmentOrLineSuffix() {
         mapOf(
             "notes/Plan.md" to "notes/Plan.md",
