@@ -82,6 +82,7 @@ None.
 ## Revisions
 
 - 2026-10-18: Before implementation, avoid subscribing completed streaming blocks to callback identity changes. Remember the handler by platform handler and the boolean workspace opt-in; its admission method reads that boolean, while activation alone reads `rememberUpdatedState`. Adding/removing opt-in rebuilds annotations, and replacing a callback keeps the handler stable while invoking the newest callback. The shared callback test covers both finished and completed streaming blocks. Code-span literal/link checks are included in both assistant matrices.
+- 2026-10-18: A combined focused-test/lint/assembly/instrumented-compile invocation exhausted the Gradle heap before tests ran. Use separate invocations for verification. The standalone link class compiled and passed all 11 methods; raw red/green XML and the verification checkpoint are retained under `app/src/test/resources/markdown-2279/`. No production design, build configuration or assertion changed for this resource failure.
 
 ## Documentation handoff
 

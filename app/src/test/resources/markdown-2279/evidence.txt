@@ -1,0 +1,31 @@
+Ticket #2279 focused verification — Linux x86_64
+
+Implementation revision: a7bd8fe9656c4c4e37ff6f78fb5440fac4d1c40a
+
+Controlled red:
+Source: ea66b82d7b08e30f05b4146962a161178056a3b8
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest.withoutTheOptIn_aNotesLinkStaysInert' --console=plain
+Executed 1; passed 0; failed 1 (expected annotation assertion); errors 0; skipped 0.
+Raw result: red.xml
+
+Green link regression class:
+Source: a7bd8fe9656c4c4e37ff6f78fb5440fac4d1c40a
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest' --console=plain
+Executed 11; passed 11; failed 0; errors 0; skipped 0.
+Raw result: MarkdownLinkTapTest.xml
+Includes finished/streaming external annotations, ranges, styling and activation;
+denied pointer taps; reader workspace paths; current and revoked callbacks;
+partial-target completion/settlement; HTML consistency; literal code-span links.
+
+Earlier combined validation attempt:
+The same link-class command with lint, assembleDebug and compileDebugAndroidTestKotlin
+exhausted the Gradle heap in compileDebugUnitTestKotlin and compileDebugAndroidTestKotlin.
+It executed no green tests. The standalone link-class rerun above compiled and passed.
+The earlier red XML was not counted as fresh passing evidence after that failure.
+
+Pending at this evidence checkpoint:
+Existing MarkdownTextTest (including the unchanged bare-URL test), MarkdownConversionsTest,
+MarkdownLinkRoutingTest, StreamingMarkdownTextTest, StreamingMarkdownTest and
+MarkdownTextParsingTest; standalone lint/instrumented compilation; final main merge,
+assembly, forced Spotless and pre-verify. Complete acceptance stays dispatcher-owned.
+macOS is outside this ticket's verification scope.
