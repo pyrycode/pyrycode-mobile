@@ -225,7 +225,7 @@ class LegacyRoomStorage internal constructor(
             }
             val invalidated = invalidateOwnedEvidence(host, conversation, affected)
             val scalars =
-                header.coverageHeader?.let { encoded ->
+                (header.coverageHeader ?: "{}".takeIf { trimmed })?.let { encoded ->
                     if (!invalidated && !trimmed) {
                         encoded
                     } else {
@@ -233,6 +233,7 @@ class LegacyRoomStorage internal constructor(
                         val fields = MobileJson.parseToJsonElement(encoded).jsonObject.toMutableMap()
                         fields["unknown"] = JsonPrimitive(true)
                         fields["ownedLoss"] = JsonPrimitive(true)
+                        if (trimmed) fields["retentionLoss"] = JsonPrimitive(true)
                         val first = dao.newerSpan(host, conversation, 0uL.position()).firstOrNull()
                         lastMutationCounts =
                             lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + if (first == null) 0 else 1)
@@ -277,20 +278,44 @@ class LegacyRoomStorage internal constructor(
         lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + cells.size)
         val keys = cells.filter { it.kind == "proofs" || it.kind == "rowEntries" || it.kind == "rowOrder" }.mapTo(HashSet()) { it.key }
         val entries = cells.filter { it.kind == "rowEntries" || it.kind == "rowOrder" }.mapTo(sortedSetOf()) { it.low.toULong() }
+        val siblings = HashMap<ULong, Set<String>>()
         for (entry in entries) {
             val dependents = dao.producingClaims(host, conversation, entry.position())
             lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + dependents.size)
             keys += dependents.map { it.key }
+            siblings[entry] =
+                dependents.mapTo(HashSet()) { it.key } +
+                cells.filter { (it.kind == "rowEntries" || it.kind == "rowOrder") && it.low == entry.position() }.map { it.key }
         }
         keys.forEach { dao.removeClaim(host, conversation, it) }
         lastMutationCounts = lastMutationCounts.copy(evidenceWrites = lastMutationCounts.evidenceWrites + keys.size)
         for (entry in entries) {
             subtractEntry(host, conversation, entry)
             val key = entry.position()
-            dao.upsertEvidence(listOf(Evidence(host, conversation, "losses", key, 0, -1L, key, key, "true")))
-            lastMutationCounts = lastMutationCounts.copy(evidenceWrites = lastMutationCounts.evidenceWrites + 1)
+            val old = dao.evidenceCells(host, conversation, "losses", key).singleOrNull()
+            lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + if (old == null) 0 else 1)
+            val previous = old?.let { lossKeys(it) }
+            // Old boolean markers lack sibling custody and remain conservative until explicit replacement.
+            val payload =
+                if (old != null && previous == null) {
+                    "true"
+                } else {
+                    JsonArray((previous.orEmpty() + siblings[entry].orEmpty()).sorted().map { JsonPrimitive(it) }).toString()
+                }
+            dao.upsertEvidence(listOf(Evidence(host, conversation, "losses", key, 0, -1L, key, key, payload)))
+            lastMutationCounts =
+                lastMutationCounts.copy(
+                    evidenceWrites = lastMutationCounts.evidenceWrites + 1,
+                    evidenceSerializations = lastMutationCounts.evidenceSerializations + 1,
+                )
         }
         return keys.isNotEmpty()
+    }
+
+    private fun lossKeys(cell: Evidence): Set<String>? {
+        lastMutationCounts = lastMutationCounts.copy(evidenceDecodes = lastMutationCounts.evidenceDecodes + 1)
+        val payload = MobileJson.parseToJsonElement(cell.payload)
+        return (payload as? JsonArray)?.mapTo(HashSet()) { it.jsonPrimitive.content }
     }
 
     /** Split a producing interval without reading or rewriting unrelated intervals or row ordinals. */
@@ -504,14 +529,32 @@ class LegacyRoomStorage internal constructor(
                     val claimed = it in incoming.unsignedRowOrder || it in prior?.unsignedRowOrder.orEmpty()
                     claimed && incoming.claim(it) != prior?.claim(it)
                 }
-            val aliases = changed.mapNotNullTo(HashSet()) { incoming.legacyKeys[it] ?: prior?.legacyKeys?.get(it) }
-            changed += incoming.legacyKeys.filterValues { it in aliases }.keys
-            changed +=
-                prior
-                    ?.legacyKeys
-                    .orEmpty()
-                    .filterValues { it in aliases }
-                    .keys
+            val aliases = HashSet<String>()
+            val checkedEntries = HashSet<ULong>()
+            val recovering = HashMap<ULong, Set<String>?>()
+            while (true) {
+                changed.mapNotNullTo(aliases) { incoming.legacyKeys[it] ?: prior?.legacyKeys?.get(it) }
+                changed += incoming.legacyKeys.filterValues { it in aliases }.keys
+                changed +=
+                    prior
+                        ?.legacyKeys
+                        .orEmpty()
+                        .filterValues { it in aliases }
+                        .keys
+                val entries =
+                    changed.flatMapTo(HashSet()) {
+                        incoming.unsignedRowEntries[it].orEmpty() + prior?.unsignedRowEntries?.get(it).orEmpty()
+                    } - checkedEntries
+                if (entries.isEmpty()) break
+                for (entry in entries) {
+                    checkedEntries += entry
+                    val loss = dao.evidenceCells(host, conversation, "losses", entry.position()).singleOrNull() ?: continue
+                    lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + 1)
+                    val siblings = lossKeys(loss)
+                    recovering[entry] = siblings
+                    changed += siblings.orEmpty()
+                }
+            }
             val requested = incoming.claims(changed)
             val needed = changed + requested.legacyKeys.values
             val records =
@@ -550,7 +593,7 @@ class LegacyRoomStorage internal constructor(
                 (
                     (requested.unsignedRowEntries.keys - valid).flatMap { requested.unsignedRowEntries[it].orEmpty() } +
                         (changed - valid).flatMap { prior?.unsignedRowEntries?.get(it).orEmpty() }
-                ).toSet()
+                ).toSet() + recovering.filterValues { siblings -> siblings == null || siblings.any { it !in valid } }.keys
             val acceptedKeys =
                 valid.filterTo(HashSet()) { key ->
                     bound.unsignedRowEntries[key].orEmpty().none { it in rejectedEntries }
@@ -680,7 +723,8 @@ class LegacyRoomStorage internal constructor(
                     evidenceDecodes = lastMutationCounts.evidenceDecodes + if (oldScalars == null) 0 else 1,
                     evidenceSerializations = lastMutationCounts.evidenceSerializations + 1,
                 )
-            val lost = dao.hasLoss(host, conversation) || rejected.isNotEmpty()
+            val retentionLoss = oldScalars?.get("retentionLoss")?.jsonPrimitive?.content == "true"
+            val lost = retentionLoss || dao.hasLoss(host, conversation) || rejected.isNotEmpty()
             val oldUnknown = oldScalars?.get("unknown")?.jsonPrimitive?.content == "true"
             val unknown = incoming.unsignedUnknown || lost || (!completeView && oldUnknown)
             val newest =
@@ -699,12 +743,13 @@ class LegacyRoomStorage internal constructor(
                 )
             val scalars = MobileJson.encodeToJsonElement(scalarCoverage).jsonObject.toMutableMap()
             if (lost) scalars["ownedLoss"] = JsonPrimitive(true)
+            if (retentionLoss) scalars["retentionLoss"] = JsonPrimitive(true)
             scalars["savedHighWater"] = JsonPrimitive(highWater.toString())
             if (unknown) first?.let { scalars["savedUnknownEdge"] = JsonPrimitive(it.low.toULong().toString()) }
             dao.updateHeader(
                 header.copy(
                     generation = UUID.randomUUID().toString(),
-                    cursor = if (lost && header.cursor == "") "" else position.cursor,
+                    cursor = if (retentionLoss || lost && header.cursor == "") "" else position.cursor,
                     atStart = position.atStart && !lost && !incoming.unsignedIncomplete,
                     coverageHeader = JsonObject(scalars).toString(),
                 ),

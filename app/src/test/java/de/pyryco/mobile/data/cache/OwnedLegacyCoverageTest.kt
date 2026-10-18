@@ -371,6 +371,93 @@ class OwnedLegacyCoverageTest {
             assertEquals(bothProofs, saved)
         }
 
+    @Test fun recoveryInvariant_sharedProducerRequiresEverySiblingProof() =
+        runTest {
+            var cache = open()
+            val rows = listOf(row(1), row(2), row(3))
+            val keys = rows.map { it.historyKeys().first() }
+            val order = mapOf(keys[0] to 1uL, keys[1] to 1uL, keys[2] to 3uL)
+            val initial =
+                HistoryPosition(
+                    "saved",
+                    true,
+                    HistoryCoverage(
+                        unsignedSpans = listOf(UnsignedHistorySpan(1u, 1u), UnsignedHistorySpan(3u, 3u)),
+                        unsignedGaps = listOf(UnsignedHistoryGap(1u, 3u)),
+                        unsignedRowOrder = order,
+                        unsignedRowEntries = order.mapValues { setOf(it.value) },
+                        proofs = historyRowProofs(rows),
+                    ),
+                )
+            cache.readThread("Host", "c")
+            cache.writeThread("Host", "c", rows).getOrThrow()
+            cache.writeHistoryPosition("Host", "c", initial).getOrThrow()
+            val unrelated = requireNotNull(database).legacy().allEvidence("Host", "c").filter { it.key == keys[2] }
+            val changed = listOf(row(1, "changed-a"), row(2, "changed-b"), rows[2])
+            var source = Source()
+            var repository = CachingConversationRepository(source, cache, "Host")
+            repository.observeThreadSnapshot("c").first()
+            repository.readHistoryPosition("c")
+            source.snapshots.value = ThreadSnapshot(changed)
+            repository.writeHistoryPosition("c", initial)
+            val partial = initial.copy(coverage = initial.coverage?.copy(proofs = historyRowProofs(listOf(rows[0], changed[1], rows[2]))))
+            repository.writeHistoryPosition("c", partial)
+            cache = open()
+            val saved = requireNotNull(cache.readHistoryPosition("Host", "c"))
+            assertFalse("one refreshed sibling cannot restore completeness", saved.atStart)
+            assertTrue(requireNotNull(saved.coverage).unsignedUnknown)
+            assertFalse(requireNotNull(saved.coverage).unsignedSpans.any { 1uL in it.first..it.last })
+            assertEquals(unrelated, requireNotNull(database).legacy().allEvidence("Host", "c").filter { it.key == keys[2] })
+            assertEquals(changed, cache.readThread("Host", "c"))
+            source = Source()
+            repository = CachingConversationRepository(source, cache, "Host")
+            repository.observeThreadSnapshot("c").first()
+            repository.readHistoryPosition("c")
+            repository.writeHistoryPosition("c", partial)
+            assertFalse(requireNotNull(cache.readHistoryPosition("Host", "c")).atStart)
+            val refreshed = initial.copy(coverage = initial.coverage?.copy(proofs = historyRowProofs(changed)))
+            repository.writeHistoryPosition("c", refreshed)
+            val fresh = open()
+            assertEquals(refreshed, fresh.readHistoryPosition("Host", "c"))
+            assertEquals(changed, fresh.readThread("Host", "c"))
+        }
+
+    @Test fun retentionInvariant_uncertifiedDiscardSurvivesRestartAndLaterEvidence() =
+        runTest {
+            var cache = open()
+            val rows = (1..MAX_CACHED_THREAD_ROWS).map { row(it) }
+            val initial = HistoryPosition("saved", true, HistoryCoverage(unsignedSpans = listOf(UnsignedHistorySpan(1u, 1u))))
+            cache.readThread("Host", "c")
+            cache.writeThread("Host", "c", rows).getOrThrow()
+            cache.writeHistoryPosition("Host", "c", initial).getOrThrow()
+            var source = Source()
+            var repository = CachingConversationRepository(source, cache, "Host")
+            repository.observeThreadSnapshot("c").first()
+            repository.readHistoryPosition("c")
+            source.snapshots.value = ThreadSnapshot(listOf(row(MAX_CACHED_THREAD_ROWS + 1)))
+            repository.writeHistoryPosition("c", initial)
+            cache = open()
+            assertEquals(rows.drop(1) + row(MAX_CACHED_THREAD_ROWS + 1), cache.readThread("Host", "c"))
+            repeat(2) {
+                val saved = requireNotNull(cache.readHistoryPosition("Host", "c"))
+                assertEquals("", saved.cursor)
+                assertFalse(saved.atStart)
+                assertTrue(requireNotNull(saved.coverage).unsignedUnknown)
+                source = Source()
+                repository = CachingConversationRepository(source, cache, "Host")
+                repository.observeThreadSnapshot("c").first()
+                repository.readHistoryPosition("c")
+                repository.writeHistoryPosition("c", initial.copy(cursor = "later"))
+                cache = open()
+            }
+            val saved = requireNotNull(cache.readHistoryPosition("Host", "c"))
+            assertFalse(saved.atStart)
+            assertTrue(requireNotNull(saved.coverage).unsignedUnknown)
+            // Explicit replacement remains the recovery contract for newly received full metadata.
+            cache.writeHistoryPosition("Host", "c", initial.copy(cursor = "received-again")).getOrThrow()
+            assertEquals(initial.copy(cursor = "received-again"), open().readHistoryPosition("Host", "c"))
+        }
+
     @Test fun retentionInvariant_coverageCannotRecertifyDiscardedRows() =
         runTest {
             val cache = open()
