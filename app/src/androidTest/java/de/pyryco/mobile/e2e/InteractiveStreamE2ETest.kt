@@ -5604,28 +5604,51 @@ class InteractiveStreamE2ETest {
             var newerWait = "messages"
             var newerReadings = emptyList<String>()
             // #2173: the rendered Agent identity comes from the bound source; the raw peer ID only correlates.
-            val runningAgent =
-                runBlocking {
-                    withTimeoutDiagnostic({ "Newer reply wait=$newerWait phone=$newerReadings; ${peer.linkState()}" }) {
-                        withTimeout(THREAD_TIMEOUT_MS) {
-                            val held =
-                                liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { held ->
-                                    newerReadings =
-                                        held.records.map {
-                                            "role=${it.message.role},main=${it.agentId == null},turn=${it.turn == newerTurn}," +
-                                                "streaming=${it.message.isStreaming},agent=${it.rawToolUseId() == agentId}"
-                                        }
-                                    held.settledTurnReply(newerTurn) != null && held.renderedAgent(agentId) != null
-                                }
-                            newerWait = "phase"
-                            liveRepositories.firstOnLive({ it.observeTurnPhase(chat) }) {
-                                newerWait = "phase:$it"
-                                it == LiveSessionEvent.TurnState.Phase.Idle
+            runBlocking {
+                withTimeoutDiagnostic({ "Newer reply wait=$newerWait phone=$newerReadings; ${peer.linkState()}" }) {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        val held =
+                            liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { held ->
+                                newerReadings =
+                                    held.records.map {
+                                        "role=${it.message.role},main=${it.agentId == null},turn=${it.turn == newerTurn}," +
+                                            "streaming=${it.message.isStreaming},agent=${it.rawToolUseId() == agentId}"
+                                    }
+                                held.settledTurnReply(newerTurn) != null && held.renderedAgent(agentId) != null
                             }
-                            checkNotNull(held.renderedAgent(agentId)).agentId
+                        newerWait = "phase"
+                        liveRepositories.firstOnLive({ it.observeTurnPhase(chat) }) {
+                            newerWait = "phase:$it"
+                            it == LiveSessionEvent.TurnState.Phase.Idle
                         }
+                        checkNotNull(held.renderedAgent(agentId)).agentId
                     }
                 }
+            }
+            var displayedAgent: String? = null
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                val evidence =
+                    runBlocking {
+                        withTimeoutOrNull(1000) {
+                            liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { true }
+                        }
+                    }
+                val family = evidence?.renderedAgent(agentId)
+                val markerIndex =
+                    family?.let {
+                        composeTestRule
+                            .onNode(hasScrollToNodeAction())
+                            .fetchSemanticsNode()
+                            .config[SemanticsProperties.IndexForKey]("agent-start:${it.agentId}")
+                    } ?: -1
+                if (evidence?.settledTurnReply(newerTurn) == null || markerIndex < 0) {
+                    false
+                } else {
+                    displayedAgent = checkNotNull(family).agentId
+                    true
+                }
+            }
+            val runningAgent = checkNotNull(displayedAgent)
             val go = string(R.string.agent_go_to)
             val marker = hasText(go) and hasClickAction() and hasText(task.description.orEmpty().take(4096))
             val header = hasTestTag("background-agent:$runningAgent")
