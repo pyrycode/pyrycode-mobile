@@ -256,8 +256,14 @@ class OwnedLegacyWritesTest {
             assertEquals(before, requireNotNull(database).legacy().allEvidence("Host", "c"))
             fresh.mutateLegacyRows("Host", "c", changes, emptySet()).getOrThrow()
             val saved = requireNotNull(open().readHistoryPosition("Host", "c"))
-            assertEquals(listOf(UnsignedHistorySpan(1u, 1u), UnsignedHistorySpan(3u, 4u)), saved.coverage?.unsignedSpans)
+            assertEquals(listOf(UnsignedHistorySpan(1u, 1u), UnsignedHistorySpan(4u, 4u)), saved.coverage?.unsignedSpans)
             assertEquals(historyRowProofs(listOf(rows.first(), rows.last())), saved.coverage?.proofs)
+            val unrelated = setOf(keys.first(), keys.last())
+            assertEquals(
+                before.filter { it.key in unrelated },
+                requireNotNull(database).legacy().allEvidence("Host", "c").filter { it.key in unrelated },
+            )
+            assertTrue(saved.coverage?.unsignedUnknown == true)
             assertFalse(saved.atStart)
         }
 
