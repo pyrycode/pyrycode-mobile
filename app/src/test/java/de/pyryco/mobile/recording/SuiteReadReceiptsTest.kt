@@ -2,11 +2,156 @@ package de.pyryco.mobile.recording
 
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.RelayLog
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Before
 import org.junit.Test
 
 class SuiteReadReceiptsTest {
+    private val previousLogSink = RelayLog.sink
+
+    @Before fun muteThreadStoreLogs() {
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After fun restoreThreadStoreLogs() {
+        RelayLog.sink = previousLogSink
+    }
+
+    private fun authoritativeTape(
+        sourceOwner: String = "phone/host0/0",
+        readerOwner: String = sourceOwner,
+        finalVersion: Long = 15,
+        legacyEvidence: Boolean = false,
+    ): RecordedSuiteTape {
+        val item = """{
+            "id":11,"kind":"assistant_message","rev":13,"order":11,"status":"done",
+            "active":false,"shown":true,"summary":"reply","content":{"text":"reply"}
+        }"""
+        return RecordedSuiteTape(
+            listOf(
+                SuiteStep("open", sourceOwner, capabilities = setOf("interactive", "thread")),
+                *if (readerOwner ==
+                    sourceOwner
+                ) {
+                    emptyArray()
+                } else {
+                    arrayOf(SuiteStep("open", readerOwner, capabilities = setOf("interactive", "thread")))
+                },
+                SuiteStep(
+                    "daemon",
+                    sourceOwner,
+                    frame(1, "conversation_created", """{"id":"chat","last_shown_version":11,"read_up_to":0}"""),
+                ),
+                *if (!legacyEvidence) {
+                    emptyArray()
+                } else {
+                    arrayOf(
+                        SuiteStep(
+                            "daemon",
+                            sourceOwner,
+                            frame(5, "assistant_delta", """{"conversation_id":"chat","text":"legacy reply"}""").copy(historyEntryId = 11u),
+                        ),
+                    )
+                },
+                SuiteStep("client", sourceOwner, frame(1, "thread_catch_up", """{"conversation_id":"chat","epoch":"","version":0}""")),
+                SuiteStep(
+                    "daemon",
+                    sourceOwner,
+                    frame(2, "thread_items", """{"conversation_id":"chat","epoch":"e","version":15,"items":[$item],"final":false}""", 1),
+                ),
+                SuiteStep(
+                    "daemon",
+                    sourceOwner,
+                    frame(
+                        3,
+                        "thread_items",
+                        """{"conversation_id":"chat","epoch":"e","version":$finalVersion,"items":[],"final":true,"lower_order":11,"upper_order":16,"continuation":11,"older_exists":false}""",
+                        1,
+                    ),
+                ),
+                SuiteStep("client", readerOwner, frame(2, "mark_conversation_read", """{"conversation_id":"chat","up_to":11}""")),
+                SuiteStep(
+                    "daemon",
+                    readerOwner,
+                    frame(4, "conversation_updated", """{"id":"chat","last_shown_version":11,"read_up_to":11}""", 2),
+                ),
+            ),
+            coalescedReadReceipts = true,
+            retainedPhoneHistory = true,
+            literalProducerIdentities = true,
+        )
+    }
+
+    private fun deliverInitial(tape: RecordedSuiteTape) {
+        tape.initial().filter { it.message != null }.forEach { tape.delivered(it.owner, it.message!!) }
+    }
+
+    private fun authoritativeReplies(
+        tape: RecordedSuiteTape,
+        owner: String = "phone/host0/0",
+    ) = tape.request(owner, frame(90, "thread_catch_up", """{"conversation_id":"chat","epoch":"","version":0}"""))
+
+    private fun authoritativeRead(
+        tape: RecordedSuiteTape,
+        owner: String = "phone/host0/0",
+        target: Long = 11,
+    ) = tape.send(owner, frame(91, "mark_conversation_read", """{"conversation_id":"chat","up_to":$target}"""))
+
+    @Test fun aCertifiedAuthoritativeWindowSuppliesOnlyItsObservedShownWatermark() {
+        for (reader in listOf("phone/host0/0", "phone/host0/1")) {
+            val tape = authoritativeTape(readerOwner = reader)
+            deliverInitial(tape)
+            authoritativeReplies(tape).forEach { tape.delivered(it.owner, it.message!!) }
+            val acknowledgement = authoritativeRead(tape, reader).deliveries.single().message!!
+            assertEquals(
+                MobileJson.parseToJsonElement("11"),
+                (acknowledgement.payload as kotlinx.serialization.json.JsonObject)["read_up_to"],
+            )
+            tape.assertComplete()
+        }
+    }
+
+    @Test fun aNegotiatedThreadCannotUseLegacyDeliveryAsReadEvidence() {
+        val tape = authoritativeTape(legacyEvidence = true)
+        deliverInitial(tape)
+        assertThrows(IllegalStateException::class.java) { authoritativeRead(tape) }
+    }
+
+    @Test fun enqueuedOrPartialAuthoritativeRepliesCannotAcknowledgeARead() {
+        for (delivered in listOf(0, 1)) {
+            val tape = authoritativeTape()
+            deliverInitial(tape)
+            authoritativeReplies(tape).take(delivered).forEach { tape.delivered(it.owner, it.message!!) }
+            assertThrows(IllegalStateException::class.java) { authoritativeRead(tape) }
+        }
+    }
+
+    @Test fun aMismatchedAuthoritativeTerminalCannotCertifyReceivedItems() {
+        val tape = authoritativeTape(finalVersion = 14)
+        deliverInitial(tape)
+        authoritativeReplies(tape).forEach { tape.delivered(it.owner, it.message!!) }
+        assertThrows(IllegalStateException::class.java) { authoritativeRead(tape) }
+    }
+
+    @Test fun authoritativeReadsCannotUseAnotherClientsOrHostsWindow() {
+        for (source in listOf("peer/host0/0", "phone/host1/0")) {
+            val tape = authoritativeTape(sourceOwner = source, readerOwner = "phone/host0/1")
+            deliverInitial(tape)
+            authoritativeReplies(tape, source).forEach { tape.delivered(it.owner, it.message!!) }
+            assertThrows(IllegalStateException::class.java) { authoritativeRead(tape, "phone/host0/1") }
+        }
+    }
+
+    @Test fun aCertifiedVersionDoesNotInventAnUnobservedShownWatermark() {
+        val tape = authoritativeTape()
+        deliverInitial(tape)
+        authoritativeReplies(tape).forEach { tape.delivered(it.owner, it.message!!) }
+        assertThrows(IllegalStateException::class.java) { authoritativeRead(tape, target = 12) }
+    }
+
     private fun frame(
         id: Long,
         type: String,

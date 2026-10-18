@@ -44,6 +44,7 @@ internal class SuiteReadReceipts(
 
     private fun phone(owner: String) = owner == "phone" || owner.startsWith("phone/")
 
+    private val threadReceipts = SuiteThreadReadReceipts(source)
     private val historyRequests = mutableMapOf<Pair<String, Long>, String>()
     private val delivered = mutableMapOf<Pair<String, String>, MutableSet<ULong>>()
     private val phoneHistory = mutableMapOf<Pair<String, String>, MutableSet<ULong>>()
@@ -132,6 +133,7 @@ internal class SuiteReadReceipts(
         owner: String,
         frame: Envelope,
     ) {
+        threadReceipts.requested(owner, frame)
         if (frame.type == "request_history") {
             val conversation =
                 frame.payload.jsonObject
@@ -145,6 +147,7 @@ internal class SuiteReadReceipts(
         owner: String,
         frame: Envelope,
     ) {
+        threadReceipts.delivered(owner, frame)
         val payload = frame.payload.jsonObject
 
         fun rememberHistory(
@@ -249,22 +252,27 @@ internal class SuiteReadReceipts(
             }
         val group = key?.let(groups::getValue)
         val last = lastRequests[owner to conversation] ?: 0u
+        val authoritative = threadReceipts.handles(owner)
         val wasDelivered =
-            target in delivered[owner to conversation].orEmpty() ||
-                retainedPhoneHistory &&
-                target in phoneHistory[host(owner) to conversation].orEmpty()
+            if (authoritative) {
+                threadReceipts.permits(owner, conversation, target, retainedPhoneHistory)
+            } else {
+                target in delivered[owner to conversation].orEmpty() ||
+                    retainedPhoneHistory && target in phoneHistory[host(owner) to conversation].orEmpty()
+            }
         check(target > last && wasDelivered && (retainedPhoneHistory || group == null || target <= group.maxRequested)) {
             "Read receipt checkpoint rejected: target=$target previous=$last delivered=$wasDelivered " +
                 "maximum=${group?.maxRequested} action=$action"
         }
         lastRequests[owner to conversation] = target
         val server = host(owner) to conversation
+        val shownCeiling = if (authoritative) threadReceipts.ceiling(owner, conversation) else shown[server]
         val ceiling =
             if (retainedPhoneHistory) {
-                group?.required?.let { maxOf(it, shown[server] ?: it) }
-                    ?: checkNotNull(shown[server]) { "Read receipt has no delivered content" }
+                group?.required?.let { maxOf(it, shownCeiling ?: it) }
+                    ?: checkNotNull(shownCeiling) { "Read receipt has no delivered content" }
             } else {
-                group?.required ?: checkNotNull(shown[server]) { "Read receipt has no delivered content" }
+                group?.required ?: checkNotNull(shownCeiling) { "Read receipt has no delivered content" }
             }
         val stored = maxOf(confirmed[server] ?: 0u, minOf(target, ceiling))
         confirmed[server] = stored
