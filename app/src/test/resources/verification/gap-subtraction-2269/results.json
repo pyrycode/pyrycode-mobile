@@ -1,0 +1,24 @@
+{
+  "ticket": 2269,
+  "operatingSystem": "Linux",
+  "historicalEvidence": {
+    "runId": "0c087469a5fd5557f5d77cf1447830e3432a87813de8ef5d2420ab802ecea01d",
+    "bundleDigest": "1e0f33ed484f0f51bcb8e9fc1ed0ae067d54c1623af5b4b3cb0862c5ebbd3d94",
+    "candidateRevision": "01c9fccc87efaace3cbff97c5026df4550d49f71",
+    "baseRevision": "9281e2e5926ead8d22e5de5961183de0e38ffa6c",
+    "candidateReport": "historical-candidate.xml.gz",
+    "candidateReportSource": "logs/2026-10-18T11-58-45-811Z_verifier-gate-rerun__2265.log",
+    "baseReport": "historical-base.xml.gz",
+    "baseReportSource": "logs/2026-10-18T12-00-11-267Z_verifier-gate-base__2265.log",
+    "eachReportCounts": { "executed": 1, "passed": 0, "failures": 1, "errors": 0, "skipped": 0 },
+    "candidateMethodSeconds": 67.642,
+    "baseMethodSeconds": 63.99,
+    "failure": "UncompletedCoroutinesError after default 60-second runTest deadline; all four mutation-counter records precede failure",
+    "priorPassingRevision": "5aac07d82b7fa482dbd65f55aa04cfaff944b45f",
+    "priorPassingMethodSeconds": 49.092,
+    "priorPassingReport": "../owned-coverage-2254/gap-green-OwnedLegacyCoverageTest.xml.gz"
+  },
+  "runs": [],
+  "completeConfiguredGates": "pending dispatcher, including named-method inclusion in JVM gate",
+  "otherOperatingSystems": "outside this ticket's verification scope"
+}
