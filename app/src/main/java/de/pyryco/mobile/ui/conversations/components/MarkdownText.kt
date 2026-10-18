@@ -171,7 +171,7 @@ private val ReaderLineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Pr
 /** Body presentation; headings and tables keep their own element-specific styles. */
 data class MarkdownTextStyle(
     val body: TextStyle,
-    val blockSpacing: Dp = 12.dp,
+    val blockSpacing: Dp = 16.dp,
     val listItemSpacing: Dp = 4.dp,
     val code: TextStyle? = null,
     val presentation: MarkdownPresentation = MarkdownPresentation.Thread,
