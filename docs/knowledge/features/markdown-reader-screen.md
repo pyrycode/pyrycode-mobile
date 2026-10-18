@@ -26,8 +26,11 @@ height plus 28dp as scrollable top padding, so enlarged text retains the rule-to
 The reader removes `BarBottomGap`; counting it again would enlarge that gap. Body gutters
 remain 20dp and bottom padding 16dp, with the final block reachable at the scroll end.
 Both attachment and linked-note readers select M3 `bodyLarge` (16sp/24sp), 12dp block gaps
-and 6dp sibling-list-item gaps. Reader headings and prose use untrimmed line-height boxes; the
-thread keeps its existing metrics. Unlabelled and indented code uses a plain, tappable,
+and 6dp sibling-list-item gaps. ATX headings share the [markdown scale](shared-typography.md#markdown-headings)
+with Thread: H1 20/28sp, H2 18/26sp, H3 16/24sp (all Medium), and H4–H6 14/20sp Bold.
+Tracking is 0, 0, 0.15 and 0.25sp respectively; plain heading text uses `onSecondaryContainer`.
+Reader headings and prose use untrimmed line-height boxes; Thread retains its existing trimming.
+SETEXT headings keep the raw body fallback. Unlabelled and indented code uses a plain, tappable,
 horizontally scrolling panel; labelled fences keep syntax highlighting and visible per-block copy.
 Reader quotes use regular `bodyLarge` text and a subdued 3dp rule. See
 [MarkdownText block dispatch](markdown-text-internals.md#block-dispatch). Reader menu copies and link routing
@@ -286,6 +289,13 @@ shows.
 The top bar's overflow menu — copy as markdown/plain text/HTML, Refresh, Open in another app (since #1068) and Save to device (since #1069), plus their logging — moved to [Markdown reader menu](markdown-reader-menu.md) under the docs guard's size cap (#1533).
 
 ## Testing
+
+The [heading-scale coverage and counted #2277 acceptance](markdown-text.md#testing) exercise
+Reader rendering in light and dark themes through streaming and settlement, including
+untrimmed line boxes. `MarkdownReaderDesignTest.referencePlacesBarRuleAndBodyAtFigmaCoordinates`
+retains its gap assertions while downstream positions account for H1’s 32→28sp and H2’s
+28→26sp line heights. Smaller text boxes move later blocks without changing block spacing.
+New Reader-screen integration checks remain assigned to #2276.
 
 ### Native memory regression evidence (#1759)
 

@@ -69,6 +69,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.ui.theme.MarkdownTypography
 import dev.snipme.highlights.Highlights
 import dev.snipme.highlights.model.CodeStructure
 import dev.snipme.highlights.model.PhraseLocation
@@ -331,13 +332,21 @@ private fun MarkdownBlock(
                 node,
                 source,
                 uriHandler,
-                MaterialTheme.typography.headlineSmall.readerLineHeight(style.presentation),
+                MarkdownTypography.h1.readerLineHeight(style.presentation),
                 style.reader,
             )
         MarkdownElementTypes.ATX_2 ->
-            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleLarge.readerLineHeight(style.presentation), style.reader)
+            HeadingBlock(node, source, uriHandler, MarkdownTypography.h2.readerLineHeight(style.presentation), style.reader)
         MarkdownElementTypes.ATX_3 ->
-            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleMedium.readerLineHeight(style.presentation), style.reader)
+            HeadingBlock(
+                node,
+                source,
+                uriHandler,
+                MarkdownTypography.h3(MaterialTheme.typography.titleMedium).readerLineHeight(style.presentation),
+                style.reader,
+            )
+        MarkdownElementTypes.ATX_4, MarkdownElementTypes.ATX_5, MarkdownElementTypes.ATX_6 ->
+            HeadingBlock(node, source, uriHandler, MarkdownTypography.h4ToH6.readerLineHeight(style.presentation), style.reader)
         MarkdownElementTypes.PARAGRAPH ->
             Text(
                 text = buildInline(node, source, uriHandler, style.reader),
@@ -427,7 +436,11 @@ private fun HeadingBlock(
                 appendLeaf(content, source, uriHandler, colors, streaming) { it.trimmedContent() }
             }
         }
-    Text(text = if (breakLongRuns) text.withBreaksInLongRuns() else text, style = style)
+    Text(
+        text = if (breakLongRuns) text.withBreaksInLongRuns() else text,
+        style = style,
+        color = MaterialTheme.colorScheme.onSecondaryContainer,
+    )
 }
 
 @Composable

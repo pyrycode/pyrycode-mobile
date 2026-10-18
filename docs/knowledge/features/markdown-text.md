@@ -6,7 +6,7 @@ Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/p
 
 ## What it does
 
-Parses an input string with `org.jetbrains:markdown`'s `MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(...)` and walks the resulting AST, dispatching each top-level block to a Compose composable. Block kinds supported: ATX headings (h1–h3), paragraphs, ordered and unordered lists, task lists, blockquotes, fenced code blocks, indented code blocks, pipe tables. Inline kinds supported: bold (`STRONG`), italic (`EMPH`), inline code (`CODE_SPAN`), inline links (`INLINE_LINK`), strikethrough (both `~~double~~` and `~single~` tilde forms). `org.jetbrains:markdown` offers no per-construct registration, so the single flavour switch that unlocks these three constructs also changes what two *unwanted* node kinds parse as — bare-URL autolinks (`GFM_AUTOLINK`) and `$…$` inline maths (`INLINE_MATH`) — see [Edge cases / limitations](#edge-cases--limitations) for what they render as and why. Unsupported AST node kinds (HTML, horizontal rules) fall back to rendering the raw source text of that node using the selected body style — the renderer never throws. Images are a separate case, not a fallback one — see the corrected claim in [Link safety](markdown-text-internals.md#link-safety--scheme-allowlist).
+Parses an input string with `org.jetbrains:markdown`'s `MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(...)` and walks the resulting AST, dispatching each top-level block to a Compose composable. Block kinds supported: ATX headings (H1–H6), paragraphs, ordered and unordered lists, task lists, blockquotes, fenced code blocks, indented code blocks, pipe tables. Inline kinds supported: bold (`STRONG`), italic (`EMPH`), inline code (`CODE_SPAN`), inline links (`INLINE_LINK`), strikethrough (both `~~double~~` and `~single~` tilde forms). `org.jetbrains:markdown` offers no per-construct registration, so the single flavour switch that unlocks these three constructs also changes what two *unwanted* node kinds parse as — bare-URL autolinks (`GFM_AUTOLINK`) and `$…$` inline maths (`INLINE_MATH`) — see [Edge cases / limitations](#edge-cases--limitations) for what they render as and why. Unsupported AST node kinds (HTML, horizontal rules) fall back to rendering the raw source text of that node using the selected body style — the renderer never throws. Images are a separate case, not a fallback one — see the corrected claim in [Link safety](markdown-text-internals.md#link-safety--scheme-allowlist).
 
 ## Public surface
 
@@ -38,8 +38,12 @@ text; Android's default trimmed boxes otherwise shorten the Figma paragraph and 
 boxes stay as before. Headings and tables keep their element-specific typography. The presentation
 choice changes code and quote appearance, while parser, inline links and routing stay shared.
 
-**No `color` parameter** — text inherits `LocalContentColor.current`; assistant bubbles and the reader
-supply `onSurface`.
+**No `color` parameter** — body text inherits `LocalContentColor.current`; assistant bubbles and the reader
+supply `onSurface`. Plain ATX heading text explicitly uses the active theme’s
+`onSecondaryContainer`; inline links and code retain their existing span treatments.
+All six levels share the [markdown-only heading scale](shared-typography.md#markdown-headings)
+in settled and streaming Thread/Reader rendering. SETEXT headings retain the raw body fallback,
+including their source underline, except for the streaming pending-table-header probe below.
 
 **`onOpenMarkdownPath` is opt-in.** Only the assistant reply paths pass this callback to open workspace
 notes. With the default `null`, including inside the reader, workspace paths stay inert. Allowed
@@ -54,7 +58,7 @@ Parse memoisation, block and inline dispatch, tables, task lists, strikethrough,
 
 - **Library dependencies:** `implementation(libs.jetbrains.markdown)` (parser; catalog pin `jetbrainsMarkdown = "0.7.3"`) and `implementation(libs.snipme.highlights)` (code-block tokeniser since #130; catalog pin `snipmeHighlights = "1.1.0"`) in `app/build.gradle.kts`. No KSP, no kapt, no proguard rules for either.
 - **Two strings since #681, plus one since #657:** `markdown_task_mark_checked` / `markdown_task_mark_unchecked` — static TalkBack labels for the task-mark, chosen by a boolean, carrying no format argument and no daemon-authored text. `cd_thread_copy_code` ("Copy this code block") is the accessible name for each code block's copy control, in the same `cd_thread_*` family as `MessageMetaRow`'s `cd_thread_copy_message`. Otherwise renders the input markdown verbatim; no other resource lookup.
-- **No renderer-local theme overrides.** Block colours and typography come from `MaterialTheme`; prose comes from `MarkdownTextStyle.body`. The reader quote rule uses `outlineVariant`; thread quotes use `onSurfaceVariant` for contrast against their bubble. Shared text roles come from the [app type ramp](shared-typography.md). The code copy glyph uses `LocalContentColor` at `CODE_COPY_ALPHA`.
+- **No renderer-local theme overrides.** Block colours come from `MaterialTheme`; prose comes from `MarkdownTextStyle.body`, and ATX headings use `MarkdownTypography` without changing shared Material roles. The reader quote rule uses `outlineVariant`; thread quotes use `onSurfaceVariant` for contrast against their bubble. Shared text roles come from the [app type ramp](shared-typography.md). The code copy glyph uses `LocalContentColor` at `CODE_COPY_ALPHA`.
 - **No DI.** Pure leaf composable; no Koin module touched.
 
 ## Previews
@@ -73,6 +77,36 @@ Parse memoisation, block and inline dispatch, tables, task lists, strikethrough,
 - **Caret.** Appended to the trailing leaf's built text, never to the parsed source, so it cannot become code content or part of a link target. It is drawn only while the blink is on, as before #1766, so a blink-off frame shows exactly the arrived text. When the reply ends in something else, such as an open fence, it takes its own line and blinks by alpha.
 - **Settlement.** For complete markdown the probe pairs nothing, so `MarkdownText` draws the same text, spans, link targets and line breaks at the same width, apart from the caret. One ambiguity is inherent and pinned by a test: a final `see ~/path` looks like an open strikethrough while streaming, so it shows `see /path` until the reply ends.
 - **Test seam.** An optional `StreamingMarkdownObserver` parameter reports each parsed tail and each composed block. Production passes none.
+
+## Testing
+
+`MarkdownHeadingScaleTest` inspects rendered `TextLayoutResult` styles under native graphics,
+with dark/light × Thread/Reader cases. Each case checks H1–H6 size, line height, tracking,
+weight, sans-serif family and semantic colour while a trailing heading grows, the caret
+blinks, a completed heading precedes a growing paragraph, and the reply settles. Reader
+cases also assert `Trim.None`; the fifth method pins SETEXT raw-body fallback.
+
+`MarkdownTextTest` checks exact heading text, interior spaces, inline spans and marker-only
+headings across six levels. `StreamingMarkdownTextTest` extends pending-inline/caret and
+settlement coverage to all levels; `MarkdownLinkTapTest` taps rendered heading links to
+exercise platform and opt-in workspace-path routing. Parsing, typography and existing
+Reader geometry regressions complete the affected coverage. New Reader-screen integration
+coverage belongs to #2276; heading spacing belongs to a separate child of #2274.
+
+The [#2277 verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/2282#issuecomment-6251474355)
+records Linux acceptance on 2026-10-18 at `5f300ed7ddf321706a849dc33f2da70b33481b55`.
+The retained gate-4 JUnit report contains **115 executed, 115 passed, 0 failed, 0 skipped**
+across `MarkdownHeadingScaleTest` (5), `MarkdownTextTest` (25), `StreamingMarkdownTextTest`
+(12), `MarkdownTypographyTest` (5), `MarkdownLinkTapTest` (9), `MarkdownReaderDesignTest`
+(16), `MarkdownTextParsingTest` (28) and `StreamingMarkdownTest` (15). All five heading-scale
+methods are present and passed. These are results within the full JVM gate, not a separate
+focused verifier run. The full gate executed 5,965 tests: 5,964 passed, 1 failed, 0 skipped.
+The failure, `OwnedLegacyCoverageTest.anchorInvariant_subtractingProducerKeepsValidReceivedGapWalk`,
+also failed on main `fedb43e1f1593f8b00e966ce480d083a3344f441` and was accepted as inherited,
+tracked in [#2269](https://github.com/pyrycode/pyrycode-mobile/issues/2269); it remains a failure.
+The counted XML was retained at
+`/work/Projects/pyrycode-mobile-agents/logs/verifier-gate_#2277_4.log` at documentation time.
+macOS is outside this Linux ticket’s verification scope; no real-Claude acceptance was required.
 
 ## Edge cases / limitations
 
