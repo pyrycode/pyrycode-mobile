@@ -1,0 +1,146 @@
+diff --git a/app/src/test/java/de/pyryco/mobile/data/cache/OwnedLegacyWritesTest.kt b/app/src/test/java/de/pyryco/mobile/data/cache/OwnedLegacyWritesTest.kt
+index 47b8c33fe..b3bc03554 100644
+--- a/app/src/test/java/de/pyryco/mobile/data/cache/OwnedLegacyWritesTest.kt
++++ b/app/src/test/java/de/pyryco/mobile/data/cache/OwnedLegacyWritesTest.kt
+@@ -35,7 +35,7 @@ import org.robolectric.RobolectricTestRunner
+ import org.robolectric.annotation.Config
+ import java.io.File
+ import java.io.IOException
+-import java.util.concurrent.CopyOnWriteArrayList
++import java.util.Collections
+ import java.util.concurrent.Executor
+ import java.util.concurrent.atomic.AtomicBoolean
+ 
+@@ -44,7 +44,7 @@ import java.util.concurrent.atomic.AtomicBoolean
+ class OwnedLegacyWritesTest {
+     @get:Rule val temporary = TemporaryFolder()
+     private var database: ConversationCacheDatabase? = null
+-    private val queries = CopyOnWriteArrayList<String>()
++    private val queries = Collections.synchronizedList(ArrayList<String>())
+ 
+     private fun open(
+         name: String = "cache",
+@@ -102,16 +102,17 @@ class OwnedLegacyWritesTest {
+                     val rows = (1..size).map { row(it) }
+                     cache.readThread("Host", "c")
+                     cache.writeThread("Host", "c", rows).getOrThrow()
+-                    val producing = listOf(rows.first(), rows.last())
+-                    val entryIds = listOf(1uL, ULong.MAX_VALUE)
+-                    val order = producing.zip(entryIds).associate { (row, id) -> row.historyKeys().first() to id }
++                    val entryIds = rows.indices.map { index ->
++                        if (index == rows.lastIndex) ULong.MAX_VALUE else (index + 1).toULong() * 2uL
++                    }
++                    val order = rows.zip(entryIds).associate { (row, id) -> row.historyKeys().first() to id }
+                     val evidence =
+                         HistoryCoverage(
+                             unsignedSpans = entryIds.map { UnsignedHistorySpan(it, it) },
+-                            unsignedGaps = listOf(UnsignedHistoryGap(1u, ULong.MAX_VALUE)),
++                            unsignedGaps = entryIds.zipWithNext { anchor, edge -> UnsignedHistoryGap(anchor, edge) },
+                             unsignedRowOrder = order,
+                             unsignedRowEntries = order.mapValues { setOf(it.value) },
+-                            proofs = historyRowProofs(producing),
++                            proofs = historyRowProofs(rows),
+                         )
+                     cache.writeHistoryPosition("Host", "c", HistoryPosition("saved", false, evidence)).getOrThrow()
+                     val source =
+@@ -126,21 +127,25 @@ class OwnedLegacyWritesTest {
+                         }
+                     val repository = CachingConversationRepository(source, cache, "Host", processingDispatcher = Dispatchers.Default)
+                     repository.observeThreadSnapshot("c").collect {}
+-                    val rowStatements = queries.filter { it.contains("legacy_rows", true) }
++                    val statements = synchronized(queries) { queries.toList() }
++                    val rowStatements = statements.filter { it.contains("legacy_rows", true) }
+                     val writes = rowStatements.count { it.startsWith("INSERT", true) || it.startsWith("UPDATE", true) }
+-                    val deletedRows = queries.any { it.startsWith("DELETE FROM legacy_rows", true) }
+-                    assertFalse("ordinary update deleted saved rows: $queries", deletedRows)
++                    val deletedRows = statements.any { it.startsWith("DELETE FROM legacy_rows", true) }
++                    assertFalse("ordinary update deleted saved rows", deletedRows)
+                     assertEquals(1, writes)
+                     val mutation = cache.legacyMutationCounts
+-                    println("owned_mutation saved_rows=$size counts=$mutation sql_statements=${queries.size}")
++                    println(
++                        "owned_mutation saved_rows=$size producing_claims=${evidence.proofs.size} " +
++                            "counts=$mutation sql_statements=${statements.size}",
++                    )
+                     assertEquals(1, mutation.rowReads)
+                     assertEquals(1, mutation.rowDecodes)
+                     assertEquals(1, mutation.rowSerializations)
+                     assertEquals(1, mutation.rowWrites)
+-                    assertFalse(queries.any { it.contains("FROM legacy_evidence WHERE host=? AND conversation=? ORDER BY") })
+-                    assertFalse(queries.any { it.startsWith("SELECT * FROM legacy_rows") && !it.contains("identity=") })
++                    assertFalse(statements.any { it.contains("FROM legacy_evidence WHERE host=? AND conversation=? ORDER BY") })
++                    assertFalse(statements.any { it.startsWith("SELECT * FROM legacy_rows") && !it.contains("identity=") })
+                     val restored = open("cache-$size").readThread("Host", "c")
+-                    assertEquals(rows.dropLast(1) + row(size, "changed"), restored)
++                    assertTrue("newest update changed other rows", rows.dropLast(1) + row(size, "changed") == restored)
+                     mutation
+                 }
+             assertEquals(counts.first(), counts.last())
+@@ -151,15 +156,17 @@ class OwnedLegacyWritesTest {
+             val cache = open()
+             val rows = (1..18000).map { row(it) }
+             val view = rows.takeLast(200)
+-            val producing = listOf(rows.first(), view.first(), view.last())
+-            val ids = listOf(1uL, ULong.MAX_VALUE - 1u, ULong.MAX_VALUE)
++            val ids = rows.indices.map { index ->
++                if (index == rows.lastIndex) ULong.MAX_VALUE else (index + 1).toULong()
++            }
++            val order = rows.zip(ids).associate { (row, id) -> row.historyKeys().first() to id }
+             val coverage =
+                 HistoryCoverage(
+-                    unsignedSpans = listOf(UnsignedHistorySpan(1u, 1u), UnsignedHistorySpan(ULong.MAX_VALUE - 1u, ULong.MAX_VALUE)),
+-                    unsignedGaps = listOf(UnsignedHistoryGap(1u, ULong.MAX_VALUE - 1u)),
+-                    unsignedRowOrder = producing.zip(ids).associate { (row, id) -> row.historyKeys().first() to id },
+-                    unsignedRowEntries = producing.zip(ids).associate { (row, id) -> row.historyKeys().first() to setOf(id) },
+-                    proofs = historyRowProofs(producing),
++                    unsignedSpans = listOf(UnsignedHistorySpan(1u, 17999u), UnsignedHistorySpan(ULong.MAX_VALUE, ULong.MAX_VALUE)),
++                    unsignedGaps = listOf(UnsignedHistoryGap(17999u, ULong.MAX_VALUE)),
++                    unsignedRowOrder = order,
++                    unsignedRowEntries = order.mapValues { setOf(it.value) },
++                    proofs = historyRowProofs(rows),
+                     unsignedUnknown = true,
+                 )
+             val position = HistoryPosition("daemon-cursor", false, coverage)
+@@ -168,7 +175,9 @@ class OwnedLegacyWritesTest {
+                 cache.writeThread(host, "c", rows).getOrThrow()
+                 cache.writeHistoryPosition(host, "c", position).getOrThrow()
+             }
+-            val before = requireNotNull(database).legacy().allEvidence("Host", "c").filter { it.ordinal == LEGACY_ORDINAL_STEP }
++            val cutoff = 17800 * LEGACY_ORDINAL_STEP
++            val before = requireNotNull(database).legacy().allEvidence("Host", "c").filter { it.ordinal in 1L..cutoff }
++            assertEquals(17800 * 3, before.size)
+             val token = requireNotNull(cache.newestLegacyPage("Host", "c", 200)?.continuation)
+             val partial =
+                 object : ConversationCache by cache, OwnedLegacyCache by cache {
+@@ -193,8 +202,8 @@ class OwnedLegacyWritesTest {
+             assertEquals(2, cache.legacyMutationCounts.rowWrites)
+             assertEquals(1, cache.legacyMutationCounts.rowSerializations)
+             assertNull(cache.beforeLegacyPage("Host", "c", token, 200))
+-            val unrelated = requireNotNull(database).legacy().allEvidence("Host", "c").filter { it.ordinal == LEGACY_ORDINAL_STEP }
+-            assertEquals(before, unrelated)
++            val unrelated = requireNotNull(database).legacy().allEvidence("Host", "c").filter { it.ordinal in 1L..cutoff }
++            assertTrue("unloaded producing evidence changed", before == unrelated)
+             val expected = rows.take(17800) + changed
+             val traversed = mutableListOf<ThreadItem>()
+             var page = cache.newestLegacyPage("Host", "c", 200)
+@@ -202,14 +211,15 @@ class OwnedLegacyWritesTest {
+                 traversed.addAll(0, page.rows)
+                 page = page.continuation?.let { cache.beforeLegacyPage("Host", "c", it, 200) }
+             }
+-            assertEquals(expected, traversed)
++            assertTrue("page traversal changed retained rows", expected == traversed)
+             val fresh = open()
+-            assertEquals(expected, fresh.readThread("Host", "c"))
+-            assertEquals(rows, fresh.readThread("host", "c"))
+-            assertEquals(position, fresh.readHistoryPosition("host", "c"))
++            assertTrue("restart changed retained rows", expected == fresh.readThread("Host", "c"))
++            assertTrue("another host's rows changed", rows == fresh.readThread("host", "c"))
++            assertTrue("another host's evidence changed", position == fresh.readHistoryPosition("host", "c"))
+             val saved = requireNotNull(fresh.readHistoryPosition("Host", "c"))
+-            assertEquals(listOf(UnsignedHistorySpan(1u, 1u)), saved.coverage?.unsignedSpans)
+-            assertEquals(historyRowProofs(listOf(rows.first())), saved.coverage?.proofs)
++            assertEquals(listOf(UnsignedHistorySpan(1u, 17800u), UnsignedHistorySpan(17802u, 17999u)), saved.coverage?.unsignedSpans)
++            val certified = rows.take(17800) + view.drop(1).dropLast(1)
++            assertTrue("unrelated proofs changed", historyRowProofs(certified) == saved.coverage?.proofs)
+             assertFalse(saved.atStart)
+         }

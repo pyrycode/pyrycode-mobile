@@ -285,10 +285,10 @@ accumulating union for the original restored-snapshot design.
 The base also retains durable ordering: restore seeds `baseOrder` from persisted coverage, and
 a connection boundary combines it with the last live order. Each merge receives
 `baseOrder + snapshot.unsignedHistoryOrder`. Rows and ordering therefore survive reconnect together.
-Drawn rows are emitted and retained in `drawnThreads` before a cache write. The observer hands
-untrimmed `drawn` to `writeThread`, under the shared `historyWrites` mutex with a tombstone check
-inside the lock. Only a successful write advances the shared persisted baseline; static failure
-logging exposes no rows, ids or cursors.
+Drawn rows are emitted and retained in `drawnThreads` before a cache write. The observer uses
+owned changes when supported, otherwise untrimmed `drawn` replacement, under the shared
+`historyWrites` mutex with a tombstone check inside the lock. Only a successful write advances
+the shared persisted baseline; static failure logging exposes no rows, ids or cursors.
 
 An empty visible snapshot with nonempty suppression is a pending-delivery reading within the
 same connection, not a disconnect. Rebasing there would lose the fixed restore base and its
@@ -339,25 +339,29 @@ checkpoint, so an interrupted reply may leave newer full items saved alongside t
 checkpoint/coverage. Offline restore establishes neither connected-daemon capability nor current
 transient progress; protocol selection still requires current connection negotiation.
 
-**Legacy row persistence.** The write is the thread **as drawn** — restored-plus-live with
-exclusions applied — never the live projection alone: right after a reconnect the live side holds only the newest page, and
-writing it alone would shrink the cache. [`cacheableThreadRows`](conversation-cache-contract.md#the-contract)
-is the single definition of what may reach disk, shared with `ConversationCache`'s own write path
-so the two can never disagree; the wrapper only decides *when* to call it, and, since #1354,
-`writeThread` itself applies `cacheableThreadRows` to what it is handed — see below.
+**Legacy row persistence (#2253).** Candidates come from the reconciled thread as drawn,
+with [`cacheableThreadRows`](conversation-cache-contract.md#the-contract) defining disk eligibility.
+The production `MigratingConversationCache` supplies `OwnedLegacyCache`: `ThreadWriter` sends
+changed owned rows with observed neighbour anchors and deliberate removals through its import-aware
+Room mutation path. An incomplete view preserves unobserved saved rows and unrelated evidence.
+Changed/removed producing claims are invalidated atomically; held identities and ordinals survive.
+This changes no negotiated route or legacy-fallback verdict and activates no partial reader.
 
-**`observeMessages` hands `writeThread` the drawn rows, not the already-trimmed cacheable ones
-(#1354).** The wrapper compares its `cacheable` rows against successful persisted rows to decide
-*whether* to write, but the call itself passes `drawn`, because `writeThread`'s own contract is to
-do the trimming and to drop a saved history position when that trim moves the oldest kept row away
-from it (see [Conversation cache § The thread document's two
-writers](conversation-cache-layout.md#the-thread-documents-two-writers-1354)). A first version of this
-change kept passing `cacheable` here, which meant the cache never actually saw a thread get
-trimmed — a verifier finding on PR #1470: the direct-to-cache test that wrote 100001 rows passed,
-but a thread that reached the same size through this wrapper kept a position that no longer
-matched the oldest saved row, a silent, permanent gap in a very long saved channel. The lesson: a
-cache rule that depends on the shape of its input has to be tested through its real caller, not
-only called directly with the shape the rule expects.
+Removal intents compare successive observed raw drawn views: a previously cacheable identity
+absent from the next raw view can be removed, including confirmed projection removals and
+suppressed queued echoes. An unsettled row still present in raw rows cannot be removed merely
+because cache policy excludes it. Its later disappearance on disconnect also supplies no removal
+intent. Intents survive coalescing/failure until settled reappearance or a successful newer fence
+supersedes them; subtracting a partial candidate from disk would wrongly delete unowned history.
+
+Caches without this capability retain whole-thread replacement. The wrapper passes **untrimmed
+drawn rows** to `writeThread`, comparing cacheable rows only to decide whether to write (#1354).
+Otherwise the cache cannot detect retention loss and reset stale cursor/completeness claims, as
+the real-caller regression on PR #1470 demonstrated. Owned Room mutations enforce the same cap
+from the saved header count, selecting oldest excess rows and invalidating affected evidence.
+Full-view coverage saves still replace reconciled rows until their separate optimization; broad
+replacement APIs and file compatibility remain. See the [owned storage contract and counted
+restart/mutation results](conversation-cache-contract.md#owned-incremental-legacy-mutations-2253).
 
 Since [#1967](../../specs/architecture/1967-coalesced-thread-writes.md), a collection-owned
 writer accepts immutable candidates after downstream emission returns. Cache-policy filtering
@@ -440,18 +444,30 @@ on the collector. Snapshot generations are allocated at upstream capture, before
 processing can suspend; held drawn rows carry that generation into coverage saves.
 
 The wrapper's `historyWrites` mutex serializes observer writes, coverage-null position writes,
-the complete coverage row/state operation and confirmed deletion. Lock order is wrapper then
-file cache, with no callback into the wrapper. Both row writers publish their successful
+the complete coverage row/state operation and confirmed deletion. Lock order is wrapper,
+migration-aware cache, storage mutex, then Room transaction (or file cache for replacement-only
+implementations), with no callback into the wrapper. Both row writers publish their successful
 `persistedThreads` baseline under this lock; it survives collection restarts. A writer also
 remembers its completed candidate by identity, so cleanup cannot repeat that completed write
 after another collector persists newer rows. Later candidates still compare against the shared
 successful rows, not an obsolete collection-local baseline.
+
+Ordinary successes also advance the shared capture fence (#2253). Each owned candidate carries
+the capture of each actual row change and removal; only intents newer than that fence are eligible.
+A later snapshot cannot renew unchanged stale text from an older collector after reconnect. On
+success, baseline application preserves newer content the candidate did not change and unowned
+rows in their neighbour slots. Failure advances neither baseline nor fence. Ownership indexes
+initialize lazily after cached first draw on worker acceptance, only for capable caches; doing
+that traversal for replacement caches doubled the existing 100000-row processing budget.
 
 Lock acquisition and snapshot processing remain cancellable. Once either row writer starts a
 mutation, the mutation and its successful baseline update finish together in `NonCancellable`
 under `historyWrites`. Atomic replacement can commit before a cancellable dispatcher return
 delivers success: joining a cancelled writer alone would otherwise leave disk and baseline
 inconsistent and could skip a newer removal during flush. Failed writes update no baseline.
+Confirmed deletion tombstones before waiting; host forgetting
+waits for held cache work, removes it and refuses delayed/final saves through host retirement.
+Neither path can be undone by cleanup or restart; colliding ids under another host remain exact.
 
 Normal upstream completion, upstream failure and collector cancellation run non-cancellable
 cleanup: cancel/join the timer and writer, then attempt the latest accepted pending candidate

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" tests="41" skipped="0" failures="0" errors="0" timestamp="2026-10-18T00:44:43.692Z" hostname="023c096c208b" time="1.413">
+  <properties/>
+  <testcase name="retryInvariant_retainedCoverageStillAllowsChangedRowsAndUnchangedFailureRetry" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.268"/>
+  <testcase name="coverageInvariant_unchangedCandidateRetriesAfterBeingSupersededByUnseenHistory" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.012"/>
+  <testcase name="coverageInvariant_newSnapshotDuringCoverageWriteRemainsEligibleAndRowsPrecedeState" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.012"/>
+  <testcase name="deliveryInvariant_heldWriteDoesNotBlockSnapshotsAndPendingRowsAreReplaced" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.005"/>
+  <testcase name="cancellationInvariant_postCommitCancellationFlushesLatestAcceptedRemoval" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.013"/>
+  <testcase name="identityInvariant_collidingRendererKeysKeepBothIdentitiesThroughPendingReconnect" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.01"/>
+  <testcase name="coverageInvariant_saveStartedBeforeCollectionPersistsNewerRemovalAfterQuietPeriod" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.018"/>
+  <testcase name="deletionInvariant_inFlightWriteFinishesBeforeRemovalAndPendingRowsStayDeleted" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.007"/>
+  <testcase name="coverageInvariant_firstOrderingReadCannotOverwriteNewerSaveAfterQuietPeriod" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.015"/>
+  <testcase name="coverageInvariant_newerRemovalComparedWithActualPersistedHistoryRows" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.009"/>
+  <testcase name="deletionInvariant_pendingAndFinalFlushCannotRecreateConfirmedRemoval" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.004"/>
+  <testcase name="coverageInvariant_firstOrderingDispatchCannotOverwriteNewerSaveAfterQuietPeriod" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.011"/>
+  <testcase name="unchangedInvariant_observerBaselineDoesNotTurnFailedRestoreIntoAnEmptyWrite" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.006"/>
+  <testcase name="completionInvariant_postCommitCompletionFlushesLatestAcceptedRemoval" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.008"/>
+  <testcase name="deletionInvariant_removalWaitsForFinalFlushThenDeletesItsResults" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.005"/>
+  <testcase name="reconnectInvariant_pendingRowsKeepMergedNeighboursSuppressionAndOrderAcrossBoundary" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.006"/>
+  <testcase name="finalRetryInvariant_failedScheduledWriteGetsOneFinalAttempt" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.003"/>
+  <testcase name="coverageInvariant_capturedOlderSnapshotCannotInvalidateNewerSaveWhenWorkerResumes" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.007"/>
+  <testcase name="completionInvariant_upstreamFailureFlushesAcceptedRowsBeforePropagating" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.008"/>
+  <testcase name="coverageInvariant_firstOrderingReadCannotOverwriteNewerSaveOnCancellation" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.01"/>
+  <testcase name="finalFailureInvariant_failedCleanupDoesNotLeaveAnOrphanWriter" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.003"/>
+  <testcase name="baselineInvariant_returnToPersistedRowsReplacesObsoletePendingCandidate" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.004"/>
+  <testcase name="cancellationInvariant_cleanupWaitsForFinalFlushAndFreshCacheRestoresRows" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.003"/>
+  <testcase name="cancellationInvariant_inFlightWriteCompletesBeforeFlushingLatestAcceptedRows" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.004"/>
+  <testcase name="completionInvariant_finiteUpstreamFlushesBeforeCollectionReturns" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.005"/>
+  <testcase name="coverageInvariant_saveDuringRestoreStillAllowsNewerUnchangedRemoval" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.009"/>
+  <testcase name="coverageInvariant_successfulRowsSupersedePendingEvenWhenStateWriteFails" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.005"/>
+  <testcase name="baselineInvariant_resubscriptionFlushesRowsAfterObserverSupersedesCoverage" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.01"/>
+  <testcase name="deletionInvariant_refusedDeleteRetainsPendingRowsAndHostIsolation" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.004"/>
+  <testcase name="retryInvariant_failureRetriesOnUnchangedSnapshotButNeverBusyLoops" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.004"/>
+  <testcase name="coverageInvariant_postCommitSaveCancellationFlushesLatestAcceptedRemoval" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.008"/>
+  <testcase name="unchangedInvariant_retainedCoverageCannotEraseFailedRestoreAfterQuietPeriod" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.008"/>
+  <testcase name="baselineInvariant_resubscriptionPersistsRowsAfterObserverSupersedesCoverage" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.009"/>
+  <testcase name="burstInvariant_onlyLatestChangedCandidateWritesAfter100ms" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.004"/>
+  <testcase name="coverageInvariant_firstOrderingDispatchCannotOverwriteNewerSaveOnCancellation" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.007"/>
+  <testcase name="baselineInvariant_completedCandidateCannotOverwriteAnotherCollectorsNewerRows" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.006"/>
+  <testcase name="trimmingInvariant_deferredWriteReceivesUntrimmedRowsAndClearsStalePosition" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.841"/>
+  <testcase name="coverageInvariant_saveStartedBeforeCollectionFlushesNewerRemovalOnCancellation" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.013"/>
+  <testcase name="unchangedInvariant_streamingUpdatesDoNotRestartQuietPeriod" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.002"/>
+  <testcase name="coverageInvariant_pendingObserverCannotOverwriteNewerRowsAndClaims" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.003"/>
+  <testcase name="unchangedInvariant_retainedCoverageCannotEraseFailedRestoreOnFinalFlush" classname="de.pyryco.mobile.data.repository.CoalescedThreadWritesTest" time="0.005"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
