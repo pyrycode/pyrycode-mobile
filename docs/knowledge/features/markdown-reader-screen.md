@@ -25,14 +25,16 @@ at 97dp. [`MarkdownText`](markdown-text.md#public-surface) reserves the bar's ac
 height plus 28dp as scrollable top padding, so enlarged text retains the rule-to-heading gap.
 The reader removes `BarBottomGap`; counting it again would enlarge that gap. Body gutters
 remain 20dp and bottom padding 16dp, with the final block reachable at the scroll end.
-Both attachment and linked-note readers select M3 `bodyLarge` (16sp/24sp), 12dp block gaps
-and 6dp sibling-list-item gaps. ATX headings share the [markdown scale](shared-typography.md#markdown-headings)
+Both attachment and linked-note readers select M3 `bodyMedium`: regular Roboto 14sp/20sp,
+0.25sp tracking and `onSecondaryContainer` for paragraphs, list items and table cells (#2283).
+They retain 12dp block gaps and 6dp sibling-list-item gaps. ATX headings share the [markdown scale](shared-typography.md#markdown-headings)
 with Thread: H1 20/28sp, H2 18/26sp, H3 16/24sp (all Medium), and H4–H6 14/20sp Bold.
 Tracking is 0, 0, 0.15 and 0.25sp respectively; plain heading text uses `onSecondaryContainer`.
 Reader headings and prose use untrimmed line-height boxes; Thread retains its existing trimming.
 SETEXT headings keep the raw body fallback. Unlabelled and indented code uses a plain, tappable,
 horizontally scrolling panel; labelled fences keep syntax highlighting and visible per-block copy.
-Reader quotes use regular `bodyLarge` text and a subdued 3dp rule. See
+Reader quotes use regular 14sp/20sp `onSurfaceVariant` text and a subdued 3dp
+`outlineVariant` rule; links retain their colour and underline at the same body size. See
 [MarkdownText block dispatch](markdown-text-internals.md#block-dispatch). Reader menu copies and link routing
 are unchanged.
 
@@ -187,7 +189,8 @@ the saved-state bundle.
 `MarkdownReaderScreen(document, onBack, modifier, onRefresh, errorNotices)` is the stateless render: a
 `Surface` with explicit `contentColor = MaterialTheme.colorScheme.onSurface`, holding `MarkdownReaderTopBar`
 then the scrolling body. The custom canvas is not a global Material role, so automatic content-colour lookup
-cannot select its foreground; retaining `onSurface` explicitly keeps `MarkdownText`'s text colour intact. It has
+cannot select its foreground. The explicit `onSurface` is the fallback content colour;
+reader prose supplies `onSecondaryContainer` through its own body style. It has
 a measured-header top overlay for errors and its locally remembered confirmation queue;
 failures, including a failed refresh, use `errorNotices: TransientErrorNoticeState`
 shared by the caller (#1747). `onRefresh` defaults to an inert callback and
@@ -296,6 +299,36 @@ untrimmed line boxes. `MarkdownReaderDesignTest.referencePlacesBarRuleAndBodyAtF
 retains its gap assertions while downstream positions account for H1’s 32→28sp and H2’s
 28→26sp line heights. Smaller text boxes move later blocks without changing block spacing.
 New Reader-screen integration checks remain assigned to #2276.
+
+### Reader body typography coverage (#2283)
+
+`MarkdownTypographyTest` uses native graphics to check both attachment and linked-note
+readers in light and dark themes: Roboto 14/20, 0.25sp tracking, body/quote colours,
+bold table headers, link colour/underline and untrimmed 20sp line boxes. Check measured
+height as well as the declared style: default trimming can shorten a single-line box.
+Tables need the reader body style explicitly; see [table styling](markdown-text-internals.md#tables).
+
+`MarkdownReaderDesignTest` retains chrome, gutter, scroll, pointer and quote-bar checks.
+At the reference viewport, code/quote tops are now 331/407dp (previously 379/455dp):
+smaller prose and list lines move later blocks while gaps stay fixed. The wrap fixture
+is deliberately long enough to wrap at 14sp; a formerly wrapping 16sp fixture could
+otherwise stop testing continuation at the gutter. Heading and code styles stay as documented.
+
+The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2287#issuecomment-6252413269)
+records Linux acceptance on `5e1c4079ac6a888578ac03d8f696d0ba6b829ce3` (2026-10-18):
+JVM gate **5,987 executed/passed, 0 failed, 0 skipped**; UI gate **334 executed/passed,
+0 failed, 1 skipped**; scripted gate **22 executed/passed, 0 failed, 0 skipped**.
+The unrelated `renameAtFigmaViewport` was skipped, not passed.
+
+Retained focused builder XML records **105 executed/passed, 0 failed, 0 skipped**,
+including `MarkdownTypographyTest` **9/9** and `MarkdownReaderDesignTest` **16/16**.
+The separate managed Android 13 capture run records **2 executed/passed, 0 failed,
+0 skipped**: `MarkdownReaderCaptureTest.referenceAndMenuAt412By892` and
+`compactLargeTextKeepsControlsAndBodyReachable`. Both also passed in the full UI gate.
+Raw reports and captures were retained at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2283/builder-20261018-5e1c4079a/`
+(`jvm/`, `device/`, `captures/`); this is their location at review time, not permanent storage.
+macOS is outside this Linux ticket's verification scope. No live-provider scenario changed.
 
 ### Native memory regression evidence (#1759)
 

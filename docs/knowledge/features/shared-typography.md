@@ -29,6 +29,21 @@ size, line height and tracking. Component widths and spacing belong to their
 owning screens; the shared ramp does not fix text height, so Android font scaling
 continues to apply.
 
+## Markdown reader body
+
+Both [reader entry points](markdown-reader-screen.md#what-it-does) use regular Roboto
+`bodyMedium` 14/20 with 0.25sp tracking and `onSecondaryContainer` for prose, lists and
+table cells (#2283), matching thread body metrics. Quote paragraphs use regular
+`onSurfaceVariant` at the same metrics beside their 3dp bar; links keep their colour
+and underline. The reader locally uses centered, untrimmed line boxes, including
+[table cells](markdown-text-internals.md#tables); the shared type ramp is unchanged.
+
+Native-graphics `MarkdownTypographyTest` checks both entry points and themes for
+metrics, colours, spans and measured 20sp line boxes. A size assertion alone cannot
+catch trimming. Geometry coverage keeps a deliberately wrapping list fixture at the
+smaller size and retains the continuation-at-gutter contract; see
+[counted reader evidence](markdown-reader-screen.md#reader-body-typography-coverage-2283).
+
 ## Markdown headings
 
 [`MarkdownTypography`](../../../app/src/main/java/de/pyryco/mobile/ui/theme/MarkdownTypography.kt)

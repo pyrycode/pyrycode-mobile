@@ -359,7 +359,7 @@ private fun MarkdownBlock(
         MarkdownElementTypes.BLOCK_QUOTE ->
             BlockQuoteBlock(node, source, uriHandler, style)
         GFMElementTypes.TABLE ->
-            TableBlock(node, source, uriHandler)
+            TableBlock(node, source, uriHandler, style)
         MarkdownElementTypes.CODE_FENCE -> {
             val code = fencedCodeText(node, source)
             val language =
@@ -649,6 +649,7 @@ private fun TableBlock(
     node: ASTNode,
     source: String,
     uriHandler: UriHandler,
+    textStyle: MarkdownTextStyle,
 ) {
     val colors = currentInlineColors()
     val streaming = LocalStreamingTail.current
@@ -688,7 +689,7 @@ private fun TableBlock(
                 Column(modifier = Modifier.width(IntrinsicSize.Max)) {
                     rows.forEachIndexed { rowIndex, cells ->
                         val cell = cells.getOrNull(column)
-                        val style = MaterialTheme.typography.bodyMedium
+                        val style = if (textStyle.reader) textStyle.body else MaterialTheme.typography.bodyMedium
                         Text(
                             text =
                                 if (cell == null) {
