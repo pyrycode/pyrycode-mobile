@@ -52,6 +52,101 @@ class RecordedSuiteTapeTest {
         tape.assertComplete()
     }
 
+    @Test fun threadQueryMayRaceObservationButItsReplyMustWait() {
+        val owner = "phone/host/0"
+        val request = """{"conversation_id":"chat","epoch":"epoch","version":0}"""
+        val checkpoint = """{"body":"phone-send"}"""
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client("control", frame(1, "test-control:checkpoint", checkpoint)),
+                    client(owner, frame(1, "thread_catch_up", request)),
+                    daemon(owner, frame(2, "thread_items", """{"final":true}""", reply = 1)),
+                    client(owner, frame(3, "send_message", """{"text":"hello"}""")),
+                ),
+                literalProducerIdentities = true,
+            )
+        assertEquals(emptyList<SuiteStep>(), tape.initial())
+        assertEquals(emptyList<SuiteStep>(), tape.request(owner, frame(90, "thread_catch_up", request)))
+        assertEquals(true, tape.checkpointReady("phone-send"))
+        val replies = tape.request("control", frame(1, "test-control:checkpoint", checkpoint))
+        assertEquals(listOf("thread_items"), replies.map { it.message!!.type })
+        assertEquals(listOf(90L), replies.map { it.message!!.inReplyTo })
+        tape.request(owner, frame(91, "send_message", """{"text":"hello"}"""))
+        tape.assertComplete()
+    }
+
+    @Test fun earlyThreadQueryCannotCrossTheNextUserAction() {
+        val owner = "phone/host/0"
+        val request = """{"conversation_id":"chat","epoch":"epoch","version":0}"""
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client("control", frame(1, "test-control:checkpoint", """{"body":"phone-send"}""")),
+                    client(owner, frame(1, "send_message", """{"text":"hello"}""")),
+                    client(owner, frame(2, "thread_catch_up", request)),
+                    daemon(owner, frame(3, "thread_items", """{"final":true}""", reply = 2)),
+                ),
+                literalProducerIdentities = true,
+            )
+        tape.initial()
+        assertThrows(IllegalStateException::class.java) { tape.request(owner, frame(90, "thread_catch_up", request)) }
+    }
+
+    @Test fun earlyThreadQueryCannotCrossAndroidInputOrConnectionClosure() {
+        val owner = "phone/host/0"
+        val request = """{"conversation_id":"chat","epoch":"epoch","version":0}"""
+        for (boundary in listOf(
+            SuiteStep("external", "android", detail = MobileJson.parseToJsonElement("""{"event":"push-wake"}""").jsonObject),
+            SuiteStep("close", owner),
+        )) {
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        client("control", frame(1, "test-control:checkpoint", """{"body":"phone-send"}""")),
+                        boundary,
+                        client(owner, frame(1, "thread_catch_up", request)),
+                        daemon(owner, frame(2, "thread_items", """{"final":true}""", reply = 1)),
+                    ),
+                    literalProducerIdentities = true,
+                )
+            tape.initial()
+            assertThrows(IllegalStateException::class.java) { tape.request(owner, frame(90, "thread_catch_up", request)) }
+        }
+    }
+
+    @Test fun earlyThreadQueryRefusalCannotCrossAnObservation() {
+        val owner = "phone/host/0"
+        val request = """{"conversation_id":"chat","epoch":"epoch","version":0}"""
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client("control", frame(1, "test-control:checkpoint", """{"body":"phone-send"}""")),
+                    client(owner, frame(1, "thread_catch_up", request)).copy(accepted = false),
+                ),
+                literalProducerIdentities = true,
+            )
+        tape.initial()
+        assertThrows(IllegalStateException::class.java) { tape.request(owner, frame(90, "thread_catch_up", request)) }
+    }
+
+    @Test fun earlyThreadQueryCannotOvertakeItsOwnIncomingFacts() {
+        val owner = "phone/host/0"
+        val request = """{"conversation_id":"chat","epoch":"epoch","version":0}"""
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client("control", frame(1, "test-control:checkpoint", """{"body":"phone-send"}""")),
+                    daemon(owner, frame(1, "thread_item_changed")),
+                    client(owner, frame(2, "thread_catch_up", request)),
+                    daemon(owner, frame(3, "thread_items", """{"final":true}""", reply = 2)),
+                ),
+                literalProducerIdentities = true,
+            )
+        tape.initial()
+        assertThrows(IllegalStateException::class.java) { tape.request(owner, frame(90, "thread_catch_up", request)) }
+    }
+
     @Test fun androidInputsCannotArriveBeforeTheirRecordedConnectionRestartAndRequests() {
         for (event in listOf("push-token", "push-wake")) {
             val old = "phone/host/0"

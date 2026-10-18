@@ -305,6 +305,26 @@ internal class RecordedSuiteTape(
         return precedingWorkReleased(boundary, allowDeferredReads = true)
     }
 
+    /** A read may race a pure test observation; its reply still waits in drain until that observation. */
+    private fun threadQueryMayRaceCheckpoint(
+        index: Int,
+        boundary: Int,
+        checkpoint: Int,
+    ): Boolean {
+        val step = steps[index]
+        if (boundary != checkpoint || step.direction != "client" || !step.accepted ||
+            step.owner to step.message!!.id !in threadQueryRequests
+        ) {
+            return false
+        }
+        return (checkpoint + 1 until index).all { before ->
+            val earlier = steps[before]
+            earlier.direction == "client" &&
+                (earlier.message!!.type in queryTypes || earlier.owner == "control" && earlier.message.type == "test-control:checkpoint") ||
+                earlier.direction == "daemon" && earlier.owner != step.owner
+        }
+    }
+
     private fun eligible(): List<Int> {
         val boundary = commandBoundary()
         val checkpoint = checkpointBoundary()
@@ -312,7 +332,8 @@ internal class RecordedSuiteTape(
             val step = steps[index]
             val connected = lifecycleBefore[index]?.let { it in consumed } ?: true
             when {
-                index in consumed || !connected || index > checkpoint -> false
+                index in consumed || !connected -> false
+                index > checkpoint && !threadQueryMayRaceCheckpoint(index, boundary, checkpoint) -> false
                 step.direction == "connect" -> true
                 step.direction == "close" -> precedingRequestsComplete(index, step.owner)
                 step.direction == "client" -> step.message!!.type in queryTypes || index == boundary
