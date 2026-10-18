@@ -1,0 +1,6 @@
+<testsuites><testsuite name="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-18T11:02:55.527Z" hostname="2927f00f6760" time="7.381">
+  <properties />
+  <testcase name="thumbnailEffect_returnsFromIoAndDisposesOnTheViewThread" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="6.538" />
+  <system-out />
+  <system-err />
+</testsuite></testsuites>

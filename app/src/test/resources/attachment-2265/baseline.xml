@@ -1,0 +1,6 @@
+<testsuites><testsuite name="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-18T10:52:13.799Z" hostname="2927f00f6760" time="16.745">
+  <properties />
+  <testcase name="ownedJpegThumbnail_appliesExifRotationWithoutTheOriginalProvider" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="10.774" />
+  <system-out />
+  <system-err />
+</testsuite></testsuites>
