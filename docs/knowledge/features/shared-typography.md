@@ -42,7 +42,7 @@ Native-graphics `MarkdownTypographyTest` checks both entry points and themes for
 metrics, colours, spans and measured 20sp line boxes. A size assertion alone cannot
 catch trimming. Geometry coverage keeps a deliberately wrapping list fixture at the
 smaller size and retains the continuation-at-gutter contract; see
-[counted reader evidence](markdown-reader-screen.md#reader-body-typography-coverage-2283).
+[counted reader evidence](markdown-reader-screen-testing.md#reader-body-typography-coverage-2283).
 
 ## Markdown headings
 

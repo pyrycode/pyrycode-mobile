@@ -89,7 +89,7 @@ body style, carrying Roboto 14/20, 0.25sp tracking, `onSecondaryContainer` and u
 line boxes through this separate typography selection; changing only the reader's
 paragraph style would leave cells behind. Thread cells continue selecting Material
 `bodyMedium`. Row 0 copies the selected style with bold weight, retaining header emphasis.
-See [reader native coverage](markdown-reader-screen.md#reader-body-typography-coverage-2283).
+See [reader native coverage](markdown-reader-screen-testing.md#reader-body-typography-coverage-2283).
 
 **Alignment** comes from `parseTableAlignments(delimiterRow)` (`internal`, pure, unit-tested): splits the delimiter row on `|`, drops a blank leading/trailing segment (GFM permits the row with or without outer pipes), and reads each spec — leading-and-trailing `:` → `Center`, trailing `:` only → `End`, anything else → `Start`. A column the delimiter row doesn't describe defaults to `Start`.
 
