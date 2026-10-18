@@ -1,8 +1,8 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
@@ -10,9 +10,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.LinkAnnotation
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -20,6 +17,10 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performFirstLinkClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
@@ -78,11 +79,15 @@ class MarkdownLinkTapTest {
     }
 
     private fun annotated(text: String): AnnotatedString =
-        composeTestRule.onNodeWithText(text).fetchSemanticsNode().config[SemanticsProperties.Text].single()
+        composeTestRule
+            .onNodeWithText(text)
+            .fetchSemanticsNode()
+            .config[SemanticsProperties.Text]
+            .single()
 
     private fun assertInert(text: String) {
         val rendered = annotated(text)
-        assertTrue(rendered.getLinkAnnotations(0, rendered.length).isEmpty())
+        assertTrue("$text must have no active link annotation", rendered.getLinkAnnotations(0, rendered.length).isEmpty())
         assertTrue(rendered.spanStyles.none { it.item.color == linkColor || it.item.textDecoration == TextDecoration.Underline })
         composeTestRule.onNodeWithText(text).performTouchInput { click(center) }
         composeTestRule.waitForIdle()
@@ -96,9 +101,19 @@ class MarkdownLinkTapTest {
 
     private fun assertExplicitLinks(isStreaming: Boolean) {
         val admitted = listOf("http://example.com/a", "HTTPS://example.com/A%20B?q=1#Top", "mailto:a@example.com")
-        val rejected = listOf("obsidian://open?vault=x", "JaVaScRiPt:alert(1)", "data:text/html,x", "file:///tmp/a.md", "content://x/a.md", "unknown:x")
+        val rejected =
+            listOf(
+                "obsidian://open?vault=x",
+                "JaVaScRiPt:alert(1)",
+                "data:text/html,x",
+                "file:///tmp/a.md",
+                "content://x/a.md",
+                "unknown:x",
+            )
         val targets = admitted + rejected
-        val source = targets.mapIndexed { index, target -> "Before [label$index]($target) after" }.joinToString("\n\n") + "\n\nEnd."
+        val codeLink = "[code](https://example.com)"
+        val source =
+            targets.mapIndexed { index, target -> "Before [label$index]($target) after" }.joinToString("\n\n") + "\n\n`$codeLink`\n\nEnd."
         show { MessageBubble(message(Role.Assistant, source, isStreaming), onOpenMarkdownLink = { paths += it }) }
         composeTestRule.waitUntil(TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText("End.", substring = true).fetchSemanticsNodes().isNotEmpty()
@@ -124,15 +139,29 @@ class MarkdownLinkTapTest {
             val html = markdownHtml("[label$index]($target)")
             assertTrue(html, html.contains("label$index") && !html.contains("href="))
         }
+        val code = annotated(codeLink)
+        assertTrue(code.getLinkAnnotations(0, code.length).isEmpty())
+        assertTrue(code.spanStyles.any { it.item.fontFamily == FontFamily.Monospace })
         assertEquals(admitted, opened)
         assertEquals(emptyList<String>(), paths)
     }
 
     @Test
-    fun workspaceOptInChanges_refreshAnnotationsAndUseTheCurrentCallback() {
+    fun workspaceOptInChanges_refreshAnnotationsAndUseTheCurrentCallback() = assertWorkspaceOptInChanges(isStreaming = false)
+
+    @Test
+    fun streamingWorkspaceOptInChanges_refreshAnnotationsAndUseTheCurrentCallback() = assertWorkspaceOptInChanges(isStreaming = true)
+
+    private fun assertWorkspaceOptInChanges(isStreaming: Boolean) {
         val callback = mutableStateOf<((String) -> Unit)?>(null)
         val replacementPaths = mutableListOf<String>()
-        show { MarkdownText("[Plan](notes/Plan.md:12#top)", onOpenMarkdownPath = callback.value) }
+        show {
+            if (isStreaming) {
+                StreamingMarkdownText("[Plan](notes/Plan.md:12#top)\n\nTail", caretVisible = false, onOpenMarkdownPath = callback.value)
+            } else {
+                MarkdownText("[Plan](notes/Plan.md:12#top)", onOpenMarkdownPath = callback.value)
+            }
+        }
         assertInert("Plan")
 
         composeTestRule.runOnIdle { callback.value = { paths += it } }
@@ -160,7 +189,14 @@ class MarkdownLinkTapTest {
         composeTestRule.waitUntil(TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText("label", substring = true).fetchSemanticsNodes().isNotEmpty()
         }
-        val pending = composeTestRule.onNodeWithText("label", substring = true).fetchSemanticsNode().config[SemanticsProperties.Text].single()
+        val pending =
+            composeTestRule
+                .onNodeWithText(
+                    "label",
+                    substring = true,
+                ).fetchSemanticsNode()
+                .config[SemanticsProperties.Text]
+                .single()
         assertTrue(pending.getLinkAnnotations(0, pending.length).isEmpty())
         composeTestRule.runOnIdle { reply.value = reply.value.copy(content = "[label](javascript:alert(1))\n\nEnd.") }
         composeTestRule.waitUntil(TIMEOUT_MS) {

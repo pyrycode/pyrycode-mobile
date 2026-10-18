@@ -78,3 +78,11 @@ None.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-18
+
+## Revisions
+
+- 2026-10-18: Before implementation, avoid subscribing completed streaming blocks to callback identity changes. Remember the handler by platform handler and the boolean workspace opt-in; its admission method reads that boolean, while activation alone reads `rememberUpdatedState`. Adding/removing opt-in rebuilds annotations, and replacing a callback keeps the handler stable while invoking the newest callback. The shared callback test covers both finished and completed streaming blocks. Code-span literal/link checks are included in both assistant matrices.
+
+## Documentation handoff
+
+Pending documentation stage: update `docs/knowledge/features/markdown-text-internals.md`, sections Inline dispatch, Link safety and Markdown-path links, to describe render-time rejection and the private handler capability. Its current statement that rejected labels remain underlined becomes obsolete with this fix.
