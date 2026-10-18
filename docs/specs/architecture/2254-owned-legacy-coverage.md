@@ -107,7 +107,7 @@ Security review rechecked conservative certification and capture ordering agains
 
 Stale content-proof mismatch is a conservative owned-claim withdrawal rather than a transaction failure: invalidate it while retaining readable rows. Malformed structures and classified storage failures still roll back the evidence transaction. Neither outcome undoes the successful row revision.
 
-Scope recount: 1683 inserted/deleted authored lines before this note and the evidence manifest, above the 1600-line ceiling. GitHub parentage is #2068 → #2249 → #2254, so the split-depth rule requires continuing this grandchild with `needs-human:sizing`. A first-emission capture/fence repair could have shipped against the full writer separately; the owned evidence plumbing remains with its sole production consumer. Required ordering, restart and bounded-work probes remain intact.
+Corrected final scope recount: 1992 inserted/deleted text lines, including the 337-line generated verification manifest. The earlier 1683-line count was an arithmetic error. GitHub parentage is #2068 → #2249 → #2254, so the split-depth rule requires continuing this grandchild with `needs-human:sizing`. A first-emission capture/fence repair could have shipped against the full writer separately; the owned evidence plumbing remains with its sole production consumer. Required ordering, restart and bounded-work probes remain intact.
 
 ### 2026-10-18: uncommitted producing rows
 
