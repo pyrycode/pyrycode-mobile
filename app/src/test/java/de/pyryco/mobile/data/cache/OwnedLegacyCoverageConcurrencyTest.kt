@@ -18,6 +18,8 @@ import de.pyryco.mobile.data.repository.historyRowProofs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
@@ -31,6 +33,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -130,25 +133,56 @@ class OwnedLegacyCoverageConcurrencyTest {
     @Test fun intentInvariant_rowFailureKeepsRetryableWork() =
         runTest {
             val fail = AtomicBoolean()
-            val cache = open { if (fail.get()) throw IOException("controlled") }
+            val failedAttempts = AtomicInteger()
+            val cache = open {
+                if (fail.get()) {
+                    failedAttempts.incrementAndGet()
+                    throw IOException("controlled")
+                }
+            }
             cache.readThread("Host", "c")
+            val readingHistory = CompletableDeferred<Unit>()
+            val finishHistory = CompletableDeferred<Unit>()
+            val intercepted =
+                object : ConversationCache by cache, OwnedLegacyCoverageCache by cache {
+                    override suspend fun readHistoryPosition(
+                        serverId: String,
+                        conversationId: String,
+                    ): HistoryPosition? {
+                        val result = cache.readHistoryPosition(serverId, conversationId)
+                        readingHistory.complete(Unit)
+                        finishHistory.await()
+                        return result
+                    }
+                }
             val source = Source()
             val worker = UnconfinedTestDispatcher(testScheduler)
-            val repository = CachingConversationRepository(source, cache, "Host", processingDispatcher = worker)
+            val repository = CachingConversationRepository(source, intercepted, "Host", processingDispatcher = worker)
             val restored = CompletableDeferred<Unit>()
+            val accepted = CompletableDeferred<Unit>()
+            source.afterEmission = { if (it.rows == listOf(row(1))) accepted.complete(Unit) }
             val reader = backgroundScope.launch(worker) { repository.observeThreadSnapshot("c").collect { restored.complete(Unit) } }
-            restored.await()
-            source.snapshots.value = ThreadSnapshot(listOf(row(1)))
-            runCurrent()
-            fail.set(true)
-            repository.writeHistoryPosition("c", position(listOf(row(1))))
-            assertEquals(setOf(row(1).legacyRowKey()), pendingKeys(repository))
-            assertTrue(cache.readThread("Host", "c").isEmpty())
-            fail.set(false)
-            repository.writeHistoryPosition("c", position(listOf(row(1))))
-            assertTrue(pendingKeys(repository).isEmpty())
-            reader.cancelAndJoin()
-            assertEquals(listOf(row(1)), open().readThread("Host", "c"))
+            try {
+                restored.await()
+                source.snapshots.value = ThreadSnapshot(listOf(row(1)))
+                readingHistory.await()
+                runCurrent()
+                assertFalse("scheduler drain cannot complete the held history read", accepted.isCompleted)
+                fail.set(true)
+                repository.writeHistoryPosition("c", position(listOf(row(1))))
+                assertEquals(1, failedAttempts.get())
+                assertEquals("row failure must retain the accepted intent", setOf(row(1).legacyRowKey()), pendingKeys(repository))
+                assertTrue(cache.readThread("Host", "c").isEmpty())
+                fail.set(false)
+                repository.writeHistoryPosition("c", position(listOf(row(1))))
+                assertTrue(pendingKeys(repository).isEmpty())
+                reader.cancelAndJoin()
+                assertEquals(listOf(row(1)), open().readThread("Host", "c"))
+            } finally {
+                fail.set(false)
+                finishHistory.complete(Unit)
+                withContext(NonCancellable) { reader.cancelAndJoin() }
+            }
         }
 
     @Test fun intentInvariant_concurrentAcceptanceSurvivesOlderSuccess() =
@@ -432,35 +466,61 @@ class OwnedLegacyCoverageConcurrencyTest {
                 val worker = UnconfinedTestDispatcher(testScheduler)
                 val repository = CachingConversationRepository(source, intercepted, "Host", processingDispatcher = worker)
                 val delivered = CompletableDeferred<Unit>()
-                val reader = backgroundScope.launch(worker) { repository.observeThreadSnapshot("c").collect { delivered.complete(Unit) } }
-                restoring.await()
-                source.snapshots.value = ThreadSnapshot(listOf(row(1), row(2)))
-                if (!cancel) failAt.set(2)
-                val save = async { repository.writeHistoryPosition("c", position(listOf(row(1), row(2)))) }
-                if (cancel) {
-                    committed.await()
-                    save.cancel()
-                    runCurrent()
-                    assertFalse(save.isCompleted)
-                    finishCommit.complete(Unit)
+                val finishDelivery = CompletableDeferred<Unit>()
+                val accepted = CompletableDeferred<Unit>()
+                source.afterEmission = { if (it.rows == listOf(row(1))) accepted.complete(Unit) }
+                val reader = backgroundScope.launch(worker) {
+                    repository.observeThreadSnapshot("c").collect {
+                        assertEquals(listOf(row(1)), it.rows)
+                        delivered.complete(Unit)
+                        finishDelivery.await()
+                    }
                 }
-                save.join()
-                assertEquals(listOf(row(1), row(2)), cache.readThread("Host", "c"))
-                source.snapshots.value = ThreadSnapshot(listOf(row(1)))
-                restore.complete(Unit)
-                delivered.await()
-                runCurrent()
-                reader.cancelAndJoin() // Final flush must remove row 2 despite matching the original restore.
-                val fresh = open(name)
-                assertEquals(listOf(row(1)), fresh.readThread("Host", "c"))
-                assertEquals(
-                    setOf(row(1).historyKeys().first()),
-                    fresh
-                        .readHistoryPosition("Host", "c")
-                        ?.coverage
-                        ?.proofs
-                        ?.keys,
-                )
+                var save: Job? = null
+                try {
+                    restoring.await()
+                    source.snapshots.value = ThreadSnapshot(listOf(row(1), row(2)))
+                    if (!cancel) failAt.set(2)
+                    val saving = async { repository.writeHistoryPosition("c", position(listOf(row(1), row(2)))) }
+                    save = saving
+                    if (cancel) {
+                        committed.await()
+                        assertEquals(listOf(row(1), row(2)), cache.readThread("Host", "c"))
+                        saving.cancel()
+                        runCurrent()
+                        assertFalse("cancellation must await the held non-cancellable commit", saving.isCompleted)
+                        finishCommit.complete(Unit)
+                    }
+                    saving.join()
+                    assertEquals(cancel, saving.isCancelled)
+                    assertEquals(0, failAt.get())
+                    assertEquals(listOf(row(1), row(2)), cache.readThread("Host", "c"))
+                    assertEquals(position(listOf(row(1))), cache.readHistoryPosition("Host", "c"))
+                    source.snapshots.value = ThreadSnapshot(listOf(row(1)))
+                    restore.complete(Unit)
+                    delivered.await()
+                    runCurrent()
+                    assertFalse("publication precedes writer acceptance", accepted.isCompleted)
+                    reader.cancelAndJoin() // Final flush must remove row 2 despite matching the original restore.
+                    val fresh = open(name)
+                    assertEquals("final accepted snapshot must remove row 2 (cancel=$cancel)", listOf(row(1)), fresh.readThread("Host", "c"))
+                    assertEquals(
+                        setOf(row(1).historyKeys().first()),
+                        fresh
+                            .readHistoryPosition("Host", "c")
+                            ?.coverage
+                            ?.proofs
+                            ?.keys,
+                    )
+                } finally {
+                    restore.complete(Unit)
+                    finishCommit.complete(Unit)
+                    finishDelivery.complete(Unit)
+                    withContext(NonCancellable) {
+                        save?.cancelAndJoin()
+                        reader.cancelAndJoin()
+                    }
+                }
             }
         }
 
