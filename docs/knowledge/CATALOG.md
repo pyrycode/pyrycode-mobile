@@ -252,3 +252,5 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 
 - [Conversation cache — owned legacy mutations](features/conversation-cache-legacy-mutations.md): exact legacy ownership, placement, received-evidence recovery and counted Linux checks; split for #2256.
 - [Caching conversation repository — connection-boundary merge](features/caching-conversation-repository-connection-boundary.md): reconnect rebasing, deliberate removals and retained boundary probes; split for #2256.
+
+- [Markdown reader — testing](features/markdown-reader-screen-testing.md): coordinate and typography coverage, fractional-density rounding bounds and retained reader acceptance evidence; split from the screen overview for #2292.

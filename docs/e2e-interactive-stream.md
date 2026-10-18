@@ -7895,7 +7895,7 @@ The remaining checks here are specific to a real relay or real Claude execution:
   `InteractiveStreamE2ETest.interactiveTurn_markdownLink_opensLiveNoteInReader` still reaches Refresh;
   no new scenario or deterministic twin was added. The fresh full dispatcher live suite on
   2026-10-05 executed 53, passed 53, failed 0, skipped 0, with this named method present and passed
-  in retained XML. See [reader testing](knowledge/features/markdown-reader-screen.md#testing)
+  in retained XML. See [reader testing](knowledge/features/markdown-reader-screen-testing.md#testing)
   for the command, revisions and linked gate evidence; no separate focused run was required.
 
 - **Coverage — shipped:** [#1067](https://github.com/pyrycode/pyrycode-mobile/issues/1067) added
