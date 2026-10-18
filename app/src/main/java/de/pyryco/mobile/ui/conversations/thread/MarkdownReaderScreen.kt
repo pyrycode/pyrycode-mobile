@@ -349,9 +349,13 @@ fun MarkdownReaderScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val linkNotices = MarkdownLinkNotice.entries.associateWith { stringResource(it.message) }
-    val onMarkdownLinkFailure: (MarkdownLinkNotice) -> Unit = { notice ->
-        errorNotices.enqueue(scope, linkNotices.getValue(notice))
-    }
+    val onMarkdownLinkFailure: (MarkdownLinkNotice) -> Unit =
+        remember(errorNotices, scope, linkNotices) {
+            { notice ->
+                errorNotices.enqueue(scope, linkNotices.getValue(notice))
+                Unit
+            }
+        }
     val chooserTitle = stringResource(R.string.markdown_reader_open_in_app)
     val notices = AttachmentNotice.entries.associateWith { stringResource(it.message) }
     val onCopy: (MarkdownCopyFormat) -> Unit = { format ->

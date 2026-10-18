@@ -481,9 +481,13 @@ fun ThreadScreen(
     // user should hear about is one static sentence, never a name, URI or path.
     val noticeScope = rememberCoroutineScope()
     val linkNotices = MarkdownLinkNotice.entries.associateWith { stringResource(it.message) }
-    val onMarkdownLinkFailure: (MarkdownLinkNotice) -> Unit = { notice ->
-        errorNotices.enqueue(noticeScope, linkNotices.getValue(notice))
-    }
+    val onMarkdownLinkFailure: (MarkdownLinkNotice) -> Unit =
+        remember(errorNotices, noticeScope, linkNotices) {
+            { notice ->
+                errorNotices.enqueue(noticeScope, linkNotices.getValue(notice))
+                Unit
+            }
+        }
     val attachmentActions =
         rememberAttachmentActions(attachmentStates, onOpenMarkdownAttachment) { notice ->
             val text = resources.getString(notice.message)
