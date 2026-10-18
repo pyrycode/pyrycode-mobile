@@ -76,7 +76,7 @@ Pending for documentation stage: update owned coverage, evidence/removal and fai
 
 **Verdict:** PASS
 
-- Trust boundaries: MUST FIX addressed in design. Received metadata must be checked against committed exact-owner row/delta/fragment proofs; unchanged stale input cannot restore invalidated producers. Producer-loss cells retain every invalidated sibling identity, so recovery validates unchanged relevant claims too. Retention without a producing claim has its own durable scalar fence; incremental evidence cannot discharge that unidentified loss.
+- Trust boundaries: MUST FIX addressed in design. Received metadata must be checked against committed exact-owner row/delta/fragment proofs; unchanged stale input cannot restore invalidated producers. Producer-loss cells retain every invalidated sibling identity, so recovery validates unchanged relevant claims too, including losses created by the current evidence transaction. Withdrawals collect the connected producing entries before removing bindings; additive claims with unchanged binding preserve sibling evidence. Retention without a producing claim has its own durable scalar fence; incremental evidence cannot discharge that unidentified loss.
 - Tokens/secrets: no credential or key handling is added. Opaque daemon cursors remain private metadata, excluded from diagnostics.
 - Files/storage: reuse app-private no-backup Room and its sidecars, exact SQL owner predicates, existing import ledger and transactions. No caller-controlled filesystem paths or change to the accepted plaintext conversation-cache threat model.
 - Android attack surface: no manifest, component, intent, provider, WebView or UI change.
@@ -132,3 +132,18 @@ Finding 3 bounds accepted-intent custody to pending work: after either row write
 Rework verification on Linux at `c5529900e3f772398c899f97576ce73d599d7898`: latest affected selectors executed/passed 129, failed/skipped 0. The exact migration cancellation method also passed separately (1 executed/passed). An earlier unchanged migration-class attempt hit its 180-second watchdog and 30-second interrupt grace, with no class XML/counts available; raw binary events/results and its thread dump remain a failed capture, tracked in #2260 (priority:low, Backlog). No assertion was ignored or timeout increased. `app/src/test/resources/verification/owned-coverage-2254/rework-results.json` retains commands, revisions, counts, historical red results and artifact hashes. Documentation handoff also includes unidentified retention loss, recovery of every shared sibling and successful-intent retirement.
 
 Final rework scope recount: 2560 inserted/deleted text lines against main, including the original 337-line and new 250-line generated verification manifests. The existing #2068 → #2249 → #2254 grandchild exception and `needs-human:sizing` remain; the required recovery, concurrency, restart and bounded-work verification floor is retained.
+
+### 2026-10-18: same-transaction sibling custody (verifier finding 1)
+
+This repairs the same content-certification invariant, with its regression, rather than adding a separate behaviour. A claim-only extension must preserve unchanged siblings; a real withdrawal must account for every producing entry whose binding it removes. `invalidateOwnedEvidence` follows the indexed producing-entry/claim connections to a fixed point before deleting any claim and creates a loss for each affected entry, including unsigned maximum IDs. It reads only this connected evidence component.
+
+`writeOwnedCoverage` applies necessary withdrawals before expanding recovery candidates, so newly created losses participate in the existing sibling-proof checks. Memoized exact-identity row lookups serve both withdrawal and validation. A received additive claim with unchanged order, proof and fragment binding does not withdraw existing evidence; it still passes committed-row proof validation before acceptance. All other withdrawals retain conservative loss until every relevant sibling binds. Transaction rejection rolls these evidence changes back together; successful row bookkeeping remains independent.
+
+| Rework event | Required probe in `OwnedLegacyCoverageTest` |
+| --- | --- |
+| Claim-only extension, unchanged/unloaded sibling, restart, then sibling change/removal; identical short/18000-row fragmented save work | `recoveryInvariant_claimExtensionPreservesSiblingBindings` |
+| Withdrawal creates shared losses during this evidence transaction; recovery includes unchanged siblings or keeps their entries uncertified | `recoveryInvariant_currentWithdrawalValidatesEverySibling` |
+
+Security self-review: MUST FIX addressed at `writeOwnedCoverage`/`invalidateOwnedEvidence`. New losses are visible before recovery selection, connected entries retain sibling custody, and additive replacement cannot silently remove a sibling's binding. Exact owner predicates, no-backup custody, fragment/unsigned proofs, static diagnostics, cancellation, retirement and all other reviewed boundaries remain unchanged. No new public declaration, schema, scope, job or consumer signature. Forecast: about 250 additional written lines across production, regression tests, evidence and this revision; the existing grandchild sizing exception continues without reducing verification.
+
+Documentation handoff additionally covers same-transaction losses, connected producing-entry invalidation and preserved unchanged sibling bindings in the two existing cache topics.
