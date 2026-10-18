@@ -242,11 +242,22 @@ class AuthoritativeThreadCacheTest {
             serverId: String,
             conversationId: String,
             saved: SavedAuthoritativeThread,
+        ): Result<Unit> = write(saved) { actual.writeAuthoritativeThread(serverId, conversationId, saved) }
+
+        override suspend fun resetAuthoritativeThread(
+            serverId: String,
+            conversationId: String,
+            saved: SavedAuthoritativeThread,
+        ): Result<Unit> = write(saved) { actual.resetAuthoritativeThread(serverId, conversationId, saved) }
+
+        private suspend fun write(
+            saved: SavedAuthoritativeThread,
+            commit: suspend () -> Result<Unit>,
         ): Result<Unit> {
             writes += saved
             beforeWrite?.invoke()
             if (fail) return Result.failure(IllegalStateException("test failure"))
-            val result = actual.writeAuthoritativeThread(serverId, conversationId, saved)
+            val result = commit()
             afterWrite?.invoke()
             return result
         }
