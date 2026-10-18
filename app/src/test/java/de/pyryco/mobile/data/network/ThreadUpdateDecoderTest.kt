@@ -51,7 +51,13 @@ class ThreadUpdateDecoderTest {
                 """{"protocol_version":"v2","server_id":"srv","conn_id":"conn","capabilities":["interactive","thread"]}""",
             )
         assertTrue(CAPABILITY_THREAD in ack.capabilities)
-        val hello = HelloClientPayload(deviceName = "d", clientVersion = "1", token = "secret")
+        assertTrue(CAPABILITY_THREAD in HelloClientPayload(deviceName = "d", clientVersion = "1", token = "secret").capabilities)
+        val hello = HelloClientPayload(
+            deviceName = "d",
+            clientVersion = "1",
+            token = "secret",
+            capabilities = listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT, CAPABILITY_STOP_BACKGROUND_TASK),
+        )
         assertFalse(CAPABILITY_THREAD in hello.capabilities)
         assertFalse(MobileJson.encodeToString(hello).contains("\"thread\""))
     }

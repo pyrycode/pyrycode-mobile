@@ -19,6 +19,8 @@ import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.i
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.text
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.conversations.thread.ThreadRow
+import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -470,8 +472,24 @@ class NegotiatedThreadActivationTest {
                 val pump = host.connect()
                 pump.open(CAPABLE)
                 runCurrent()
+                val repo = host.repo()
+                assertTrue(repo.openAuthoritativeThread("c"))
+                val opening = pump.queries().single()
+                pump.push(batch(opening, item(1, 5, 1)))
+                pump.push(window(opening))
+                runCurrent()
                 val before = pump.sent.count { it.type == "list_conversations" }
-                val terminal = JsonObject(item(1, 1, 1).raw + mapOf("kind" to JsonPrimitive("turn_end"), "active" to JsonPrimitive(false)))
+                val terminal = JsonObject(item(2, 20, 2).raw + mapOf("kind" to JsonPrimitive("turn_end"), "active" to JsonPrimitive(false), "shown" to JsonPrimitive(false)))
+                val reply = ThreadItemDto.decodeReplacement(JsonObject(item(1, 19, 1, text = "completed reply").raw + ("active" to JsonPrimitive(false))))
+                pump.push(Envelope(199, "thread_item_changed", "2026-10-17T10:00:00Z", buildJsonObject {
+                    put("conversation_id", "c")
+                    put("epoch", "e")
+                    put("version", 19)
+                    put("item_id", 1)
+                    put("base_rev", 5)
+                    put("rev", 19)
+                    put("changes", JsonObject(reply.raw - setOf("id", "kind")))
+                }))
                 val update =
                     Envelope(
                         200,
@@ -480,18 +498,102 @@ class NegotiatedThreadActivationTest {
                         buildJsonObject {
                             put("conversation_id", "c")
                             put("epoch", "e")
-                            put("version", 1)
+                            put("version", 20)
                             put("item", terminal)
                         },
                     )
                 pump.push(update)
                 runCurrent()
                 assertEquals(before + 1, pump.sent.count { it.type == "list_conversations" })
-                assertTrue(pump.queries().isEmpty())
+                assertEquals(2, pump.queries().size)
+                val refresh = pump.queries().last()
+                assertEquals("10", field(refresh, "version").toString())
+                fun presentation() = projectAuthoritativeThread("h", "c", host.coordinator.authoritativeThreads.current("h", "c"))
+                val marks = ConversationReadMarks(0u, 20u, 19u, true)
+                val uncertified = presentation()
+                assertNull(uncertified.readCheckpoint(uncertified.newestReadKey, marks, uncertified.shownRowRevisions))
+                pump.push(batch(refresh, 20, listOf(reply)))
+                runCurrent()
+                assertEquals(10L, host.coordinator.authoritativeThreads.current("h", "c").checkpoint)
+                pump.push(reply(refresh, buildJsonObject {
+                    put("conversation_id", "c")
+                    put("epoch", "e")
+                    put("version", 20)
+                    put("items", JsonArray(emptyList()))
+                    put("final", true)
+                    put("from_version", 10)
+                }))
+                runCurrent()
+                val certified = presentation()
+                assertEquals(19uL, certified.readCheckpoint(certified.newestReadKey, marks, certified.shownRowRevisions))
+                assertNull(certified.readCheckpoint(certified.newestReadKey, marks, uncertified.shownRowRevisions.mapValues { 5L }))
                 assertEquals(null, (host.coordinator.currentRepository.value as RemoteConversationRepository).currentReadMarks("c"))
                 pump.push(update)
                 runCurrent()
                 assertEquals(before + 1, pump.sent.count { it.type == "list_conversations" })
+                assertEquals(2, pump.queries().size)
+            } finally {
+                host.coordinator.close()
+            }
+        }
+
+    @Test fun productionSendBeforeFirstBatchShowsOnlyScopedPreAcceptanceFeedback() =
+        runTest {
+            val host = host("h")
+            val owner = ViewModelStore()
+            try {
+                val facade = StableConversationRepository(host.coordinator.currentRepository, negotiatedThread = host.coordinator.negotiatedThread)
+                val vm = ThreadViewModel(SavedStateHandle(mapOf("serverId" to "h", "conversationId" to "c")), facade, FakeConnectionStateSource(), ComposerDraftStore())
+                owner.put("thread", vm)
+                backgroundScope.launch { vm.state.collect {} }
+                val pump = host.connect()
+                pump.open(CAPABLE)
+                runCurrent()
+                assertEquals(1, pump.queries().size)
+                vm.sendMessage("before the first batch")
+                runCurrent()
+                assertEquals(null, host.coordinator.authoritativeThreads.current("h", "c").epoch)
+                assertEquals(1, pump.sent.count { it.type == "send_message" })
+                val presentation = requireNotNull(vm.state.value.authoritativeThread)
+                val sending = presentation.rows.single() as ThreadRow.Queued
+                assertEquals("sending", sending.status)
+                assertEquals("before the first batch", sending.text)
+                assertNull(presentation.certifiedCheckpoint)
+                assertTrue(presentation.shownRowRevisions.isEmpty())
+                assertNull(presentation.readCheckpoint(null, ConversationReadMarks(0u, 1u, 1u, true), emptyMap()))
+            } finally {
+                owner.clear()
+                host.coordinator.close()
+            }
+        }
+
+    @Test fun completionDuringAnOlderCapturedQueryQueuesFreshCoverageOnItsOwner() =
+        runTest {
+            val host = host("h")
+            try {
+                val pump = host.connect()
+                pump.open(CAPABLE)
+                runCurrent()
+                assertTrue(host.repo().openAuthoritativeThread("c"))
+                val opening = pump.queries().single()
+                pump.push(batch(opening, item(1, 5, 1)))
+                pump.push(Envelope(201, "thread_item_added", "2026-10-17T10:00:00Z", buildJsonObject {
+                    put("conversation_id", "c")
+                    put("epoch", "e")
+                    put("version", 20)
+                    put("item", JsonObject(item(2, 20, 2).raw + ("kind" to JsonPrimitive("turn_end"))))
+                }))
+                runCurrent()
+                assertEquals(1, pump.queries().size)
+                pump.push(window(opening))
+                runCurrent()
+                assertEquals(2, pump.queries().size)
+                assertEquals("10", field(pump.queries().last(), "version").toString())
+                val retired = host.repo()
+                host.connections.value = null
+                runCurrent()
+                assertFalse(retired.openAuthoritativeThread("c"))
+                assertEquals(2, pump.queries().size)
             } finally {
                 host.coordinator.close()
             }
