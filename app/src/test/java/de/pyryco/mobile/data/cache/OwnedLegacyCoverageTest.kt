@@ -98,6 +98,55 @@ class OwnedLegacyCoverageTest {
         override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> = snapshots
     }
 
+    @Test fun certificationInvariant_uncommittedProducerWaitsForCommittedRow() =
+        runTest {
+            fun position(
+                rows: List<ThreadItem>,
+                cursor: String,
+                atStart: Boolean,
+                producer: ULong,
+            ): HistoryPosition {
+                val order = rows.mapIndexed { index, row -> row.historyKeys().first() to if (index == 0) 1uL else producer }.toMap()
+                return HistoryPosition(
+                    cursor,
+                    atStart,
+                    HistoryCoverage(
+                        unsignedSpans = listOf(UnsignedHistorySpan(1u, order.values.max())),
+                        unsignedRowOrder = order,
+                        unsignedRowEntries = order.mapValues { setOf(it.value) },
+                        proofs = historyRowProofs(rows),
+                    ),
+                )
+            }
+            for (producer in listOf(1uL, 2uL)) {
+                val cache = open("producer-$producer")
+                val first = row(1)
+                val streaming =
+                    ThreadItem.MessageItem(
+                        Message("id-2", "s", Role.Assistant, "partial", Instant.fromEpochSeconds(2), true),
+                    )
+                val initial = position(listOf(first), "old", false, producer)
+                cache.readThread("Host", "c")
+                cache.writeThread("Host", "c", listOf(first)).getOrThrow()
+                cache.writeHistoryPosition("Host", "c", initial).getOrThrow()
+                val source = Source()
+                val repository = CachingConversationRepository(source, cache, "Host")
+                repository.observeThreadSnapshot("c").first()
+                repository.readHistoryPosition("c")
+                source.snapshots.value = ThreadSnapshot(listOf(first, streaming))
+                val received = position(listOf(first, streaming), "new", true, producer)
+                repository.writeHistoryPosition("c", received)
+                assertEquals(listOf(first), cache.readThread("Host", "c"))
+                assertEquals(initial, cache.readHistoryPosition("Host", "c"))
+                val settled = streaming.copy(message = streaming.message.copy(isStreaming = false))
+                source.snapshots.value = ThreadSnapshot(listOf(first, settled))
+                repository.writeHistoryPosition("c", received)
+                val fresh = open("producer-$producer")
+                assertEquals(listOf(first, settled), fresh.readThread("Host", "c"))
+                assertEquals(received, fresh.readHistoryPosition("Host", "c"))
+            }
+        }
+
     @Test fun anchorInvariant_ownedUpdatesPreserveUnrelatedAnchors() =
         runTest {
             val cache = open()

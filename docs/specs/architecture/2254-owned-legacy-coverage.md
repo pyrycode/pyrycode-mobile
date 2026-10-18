@@ -42,9 +42,12 @@ No new scope, flow or background job. Existing caller-owned processing runs on t
 | Same localized coverage change on short and fragmented 18000-row histories | `OwnedLegacyCoverageTest.boundedInvariant_coverageSaveDoesNotScaleWithSavedHistory` |
 | Maximum unsigned producer, shared claims, fragments and delayed stale evidence | `OwnedLegacyCoverageTest.certificationInvariant_changedProducersCannotRegainStaleClaims` |
 | Cursor refusal, gap fill and unknown-walk changes | `OwnedLegacyCoverageTest.anchorInvariant_ownedUpdatesPreserveUnrelatedAnchors` |
+| Span extension preserves an existing received gap anchor/walk | `OwnedLegacyCoverageTest.anchorInvariant_extendingSpanKeepsReceivedGapWalk` |
+| An unsaved streaming producer shares an old ID or introduces a new ID; settle and retry | `OwnedLegacyCoverageTest.certificationInvariant_uncommittedProducerWaitsForCommittedRow` |
 | Retention removes previously certified content | `OwnedLegacyCoverageTest.retentionInvariant_coverageCannotRecertifyDiscardedRows` |
 | Row failure, evidence failure, retry and row-before-evidence restart | `OwnedLegacyCoverageTest.failureInvariant_rowsAndEvidenceAdvanceSeparately` |
 | Held coverage versus newer rows/removals, overlapping collector and reconnect | `OwnedLegacyCoverageConcurrencyTest.captureInvariant_delayedCoverageCannotUndoNewerRows` |
+| Snapshot emission precedes suspending cleanup and newer completed, delivered or accepted work | `OwnedLegacyCoverageConcurrencyTest.captureInvariant_firstSnapshotCleanupCannotRenewOldCoverage` |
 | Cancel after row commit; newer removal matches original restore; evidence fails | `OwnedLegacyCoverageConcurrencyTest.revisionInvariant_rowSuccessSurvivesEvidenceFailureAndCancellation` |
 | Final flush, confirmed deletion and host forgetting while coverage is held | `OwnedLegacyCoverageConcurrencyTest.retirementInvariant_coverageCannotResurrectRemovedOwners` |
 | Null position and local token invalidation/recovery | ownership/anchor probes plus retained `LegacyRoomStorageTest` regressions |
@@ -105,3 +108,7 @@ Security review rechecked conservative certification and capture ordering agains
 Stale content-proof mismatch is a conservative owned-claim withdrawal rather than a transaction failure: invalidate it while retaining readable rows. Malformed structures and classified storage failures still roll back the evidence transaction. Neither outcome undoes the successful row revision.
 
 Scope recount: 1683 inserted/deleted authored lines before this note and the evidence manifest, above the 1600-line ceiling. GitHub parentage is #2068 → #2249 → #2254, so the split-depth rule requires continuing this grandchild with `needs-human:sizing`. A first-emission capture/fence repair could have shipped against the full writer separately; the owned evidence plumbing remains with its sole production consumer. Required ordering, restart and bounded-work probes remain intact.
+
+### 2026-10-18: uncommitted producing rows
+
+`certificationInvariant_uncommittedProducerWaitsForCommittedRow` failed when a streaming row's received claim advanced completion before that row was eligible for persistence. Refuse the evidence transaction when an unbound producer introduces a new ID or a changed claim outside row ownership, including a sibling sharing an already-received ID. Preserve the successful row baseline/revision and prior conservative metadata; retry the same received position after the row settles. The probe covers both producer identities and restart. Security review rechecked that this rejection runs before evidence mutation, uses a static classified error, and adds no saved-row or saved-evidence scan. Existing stale owned-proof withdrawal remains conservative.

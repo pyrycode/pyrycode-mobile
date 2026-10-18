@@ -532,6 +532,20 @@ class LegacyRoomStorage internal constructor(
                         val supplied = incoming.proofs[key]
                         supplied == null || supplied == proof || incoming.deltaHashes[key] == proof
                     }.keys
+            val priorSpans = prior?.unsignedSpans.orEmpty()
+
+            fun received(id: ULong): Boolean {
+                val found = priorSpans.binarySearch { it.first.compareTo(id) }
+                val index = if (found >= 0) found else -found - 2
+                return index >= 0 && id <= priorSpans[index].last
+            }
+            // An unsaved producer also blocks new claims sharing an already received entry.
+            require(
+                incoming.unsignedRowEntries.none { (key, ids) ->
+                    key !in valid &&
+                        (key !in owned && incoming.claim(key) != prior?.claim(key) || ids.any { !received(it) })
+                },
+            ) { "uncommitted history producer" }
             val rejectedEntries =
                 (
                     (requested.unsignedRowEntries.keys - valid).flatMap { requested.unsignedRowEntries[it].orEmpty() } +
