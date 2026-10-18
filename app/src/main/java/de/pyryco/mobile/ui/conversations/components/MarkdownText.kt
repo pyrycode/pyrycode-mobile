@@ -1488,8 +1488,8 @@ private val LinkScheme = Regex("""^[A-Za-z][A-Za-z0-9+.-]*:""")
  */
 internal fun markdownLinkPath(target: String): String? {
     val path = target.substringBeforeLast('#').replace(LinkLineSuffix, "")
-    // Malformed URI shapes must not fall through to the workspace reader just because they end in .md.
-    if (LinkScheme.containsMatchIn(path) || "://" in path) return null
+    // Trim only for scheme detection: malformed URI shapes must never fall through to workspace reads.
+    if (LinkScheme.containsMatchIn(path.trimStart()) || "://" in path) return null
     return path.takeIf { it.endsWith(".md", ignoreCase = true) || it.endsWith(".markdown", ignoreCase = true) }
 }
 

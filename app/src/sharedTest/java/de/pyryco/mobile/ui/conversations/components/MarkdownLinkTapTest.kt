@@ -119,6 +119,43 @@ class MarkdownLinkTapTest {
     fun streamingExplicitLinks_agreeWithRoutingAndHtml() = assertExplicitLinks(isStreaming = true)
 
     @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun finishedMalformedUris_stayInertWithWorkspaceOptIn() = assertMalformedUris(isStreaming = false)
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun streamingMalformedUris_stayInertWithWorkspaceOptIn() = assertMalformedUris(isStreaming = true)
+
+    private fun assertMalformedUris(isStreaming: Boolean) {
+        val source = mutableStateOf("")
+        show { MessageBubble(message(Role.Assistant, source.value, isStreaming), onOpenMarkdownLink = { paths += it }) }
+        val targets =
+            listOf(" ", "\t", " \t", "\u00a0", "\u2003").flatMap { prefix ->
+                listOf(
+                    "obsidian:open?file=Plan.md",
+                    "obsidian:/open?file=Plan.md",
+                    "obsidian://open?file=Plan.md",
+                    "obsidian:///open?file=Plan.md",
+                    "ObSiDiAn:open?file=Plan.MARKDOWN:12#top",
+                    "file:Plan.md",
+                    "content:/Plan.markdown",
+                    "unknown:Plan.md",
+                ).map { prefix + it }
+            }
+        targets.forEachIndexed { index, target ->
+            composeTestRule.runOnIdle { source.value = "Before [note](<$target>) after\n\nEnd$index." }
+            composeTestRule.waitUntil(TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText("End$index.", substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            assertInert("Before note after")
+            assertEquals(emptyList<String>(), opened)
+            assertEquals(emptyList<String>(), paths)
+            val html = markdownHtml("[note](<$target>)")
+            assertTrue(html, html.contains("note") && !html.contains("href="))
+        }
+    }
+
+    @Test
     fun retainedObsidianLink_usesTheCurrentFailureSink() {
         val first = mutableListOf<MarkdownLinkNotice>()
         val second = mutableListOf<MarkdownLinkNotice>()
