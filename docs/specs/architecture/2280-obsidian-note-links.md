@@ -89,4 +89,5 @@ None. Desktop's implementation and merged #2279 resolve the contract and integra
 
 ## Revisions
 
+- 2026-10-18: The first native run executed one case and exposed a test-handler process crash: the test APK excludes Kotlin runtime classes supplied by the instrumented application. The controlled handler is now a small platform-only Java activity, avoiding a dependency or production manifest change. Intent delivery and unchanged-URI assertions remain identical.
 - 2026-10-18: Adversarial inspection found that Kotlin's `ignoreCase` accepts Unicode scheme lookalikes that Desktop's URL parser rejects. Admission now compares the lowercased scheme string with ASCII `obsidian`; `schemeCaseFolding_neverAdmitsUnicodeLookalikes` guards dotless i, dotted I and long s. HTML reads inline and reference destinations from their authored AST nodes before normalization, preserving the same raw-target contract.

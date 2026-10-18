@@ -1,13 +1,11 @@
 package de.pyryco.mobile.ui.conversations.components
 
-import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
-import android.os.Bundle
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -43,7 +41,7 @@ class ObsidianIntentDeliveryTest {
                     delivered.countDown()
                 }
             }
-        targetContext.registerReceiver(receiver, IntentFilter(DELIVERY_ACTION), Context.RECEIVER_EXPORTED)
+        targetContext.registerReceiver(receiver, IntentFilter(ObsidianTestHandlerActivity.DELIVERY_ACTION), Context.RECEIVER_EXPORTED)
         try {
             // Pin only this test dispatch to the test APK so another installed handler cannot take it.
             val dispatchContext =
@@ -64,22 +62,5 @@ class ObsidianIntentDeliveryTest {
         } finally {
             targetContext.unregisterReceiver(receiver)
         }
-    }
-}
-
-private const val DELIVERY_ACTION = "de.pyryco.mobile.test.OBSIDIAN_DELIVERED"
-
-/** Exported solely in the test APK; no production protocol handler or visibility declaration. */
-class ObsidianTestHandlerActivity : Activity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        val targetPackage = packageName.removeSuffix(".test")
-        sendBroadcast(
-            Intent(DELIVERY_ACTION)
-                .setPackage(targetPackage)
-                .putExtra("action", intent.action)
-                .putExtra("uri", intent.dataString),
-        )
-        finish()
     }
 }
