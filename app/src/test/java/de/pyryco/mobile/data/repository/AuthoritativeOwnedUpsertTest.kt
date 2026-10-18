@@ -445,6 +445,69 @@ class AuthoritativeOwnedUpsertTest {
             assertNull(reopened.coverage)
         }
 
+    @Test fun orderingInvariant_partialRestoreChangedOrderPreservesFinalTie() = runTest { assertPartialRestoreTie(initialOrder = 10) }
+
+    @Test fun orderingInvariant_partialRestoreUnchangedOrderPreservesFinalTie() = runTest { assertPartialRestoreTie(initialOrder = 20) }
+
+    private suspend fun TestScope.assertPartialRestoreTie(initialOrder: Int) {
+        val cache = open()
+        val later = (3..201).map { raw(it, order = it + 100) }
+        val peer = raw(2, order = 20)
+        cache.writeAuthoritativeThread("host", "c", saved(listOf(raw(1, order = initialOrder), peer) + later)).getOrThrow()
+        val before = ordinals()
+        val repo = wrapper(PartialCache(cache))
+        val observer = observe(repo)
+        val restored = repo.authoritativeThreads.current("host", "c")
+        assertEquals(200, restored.items.size)
+        assertFalse(restored.items.any { it.id == 1L })
+        val fullReads = cache.authoritativeFullReads
+        val replacements = cache.authoritativeReplacements
+        var placed: Map<Long, Int>? = null
+        for (revision in 21_000..21_001) {
+            apply(repo, revision, raw(1, revision, 20))
+            runCurrent()
+            val expected = listOf(peer, raw(1, revision, 20)) + later
+            assertEquals(
+                expected,
+                repo.authoritativeThreads
+                    .current("host", "c")
+                    .items
+                    .map { it.raw },
+            )
+            advanceTimeBy(101)
+            runCurrent()
+            // A bounded read joins the cache mutex after the writer's asynchronous Room commit.
+            requireNotNull(cache.newestAuthoritativePage("host", "c", 1))
+            assertWork(cache, 1, 1)
+            assertEquals(fullReads, cache.authoritativeFullReads)
+            assertEquals(replacements, cache.authoritativeReplacements)
+            val currentOrdinals = ordinals()
+            assertEquals(before.filterKeys { it != 1L }, currentOrdinals.filterKeys { it != 1L })
+            placed?.let { assertEquals(it, currentOrdinals) }
+            placed = currentOrdinals
+            val reopened = requireNotNull(fresh())
+            assertEquals(expected.take(2).map { it["id"] }, reopened.items.take(2).map { it["id"] })
+            assertEquals(saved(expected).copy(appliedVersion = revision.toLong()), reopened)
+        }
+        observer.cancelAndJoin()
+        val expected = listOf(peer, raw(1, 21_001, 20)) + later
+        var page = requireNotNull(cache.newestAuthoritativePage("host", "c", 1))
+        var walked = page.items
+        while (page.continuation != null) {
+            page = requireNotNull(cache.beforeAuthoritativePage("host", "c", requireNotNull(page.continuation), 1))
+            walked = page.items + walked
+        }
+        assertEquals(expected, walked)
+        assertEquals(
+            expected,
+            wrapper(open())
+                .observeAuthoritativeThread("c")
+                .first()
+                .items
+                .map { it.raw },
+        )
+    }
+
     @Test fun orderingInvariant_coalescedMovesPreserveFinalTies() =
         runTest {
             for ((initialOrder, deliverIntermediate) in listOf(10 to true, 20 to true, 10 to false, 20 to false)) {

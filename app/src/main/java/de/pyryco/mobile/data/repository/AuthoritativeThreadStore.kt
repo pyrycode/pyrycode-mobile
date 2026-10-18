@@ -31,7 +31,7 @@ internal data class AuthoritativeThreadSnapshot(
     override fun toString(): String = "AuthoritativeThreadSnapshot(content=***)"
 }
 
-/** Runtime evidence of the last accepted move, retained even when snapshots are conflated. */
+/** Runtime evidence of entry or the last accepted move, retained even when snapshots are conflated. */
 internal data class AuthoritativeOrderMove(
     val revision: Long,
     val before: Boolean,
@@ -441,7 +441,11 @@ internal class AuthoritativeThreadStore {
         val held = if (sameGeneration) previous.items.associateBy { it.id } else emptyMap()
         val moves = if (sameGeneration) previous.orderMoves.toMutableMap() else mutableMapOf()
         snapshot.items.forEach { item ->
-            held[item.id]?.let { old ->
+            val old = held[item.id]
+            if (old == null) {
+                // Merge appends newly held identities, even when they already exist outside a partial restore.
+                moves[item.id] = AuthoritativeOrderMove(item.rev, before = false)
+            } else {
                 val oldOrder = old.order?.takeIf { it > 0 } ?: Long.MAX_VALUE
                 val newOrder = item.order?.takeIf { it > 0 } ?: Long.MAX_VALUE
                 if (oldOrder != newOrder) moves[item.id] = AuthoritativeOrderMove(item.rev, before = newOrder > oldOrder)

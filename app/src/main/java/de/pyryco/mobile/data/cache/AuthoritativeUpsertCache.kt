@@ -6,7 +6,7 @@ internal interface AuthoritativeUpsertCache {
      * [saved] contains changed identities and store-authored metadata, never an exhaustive family.
      * [reset] retires the previous runtime generation even when its epoch is reused.
      * [baseline] is the prior certificate whose durable prerequisites the candidate inherits.
-     * [orderMoves] carries accepted moves since that baseline: true joins before a tie, false after.
+     * [orderMoves] carries accepted entries/moves since that baseline: true joins before a tie, false after.
      */
     suspend fun upsertAuthoritativeThread(
         serverId: String,
