@@ -99,7 +99,7 @@ import kotlinx.serialization.json.encodeToJsonElement
  */
 class RemoteConversationRepository internal constructor(
     private val pump: SessionPump,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     /**
      * The connection-level device name sent as `register_push_token`'s `device_name` (#359) — the
      * same value [de.pyryco.mobile.data.network.NoiseClientInfo.deviceName] puts in the `hello`
@@ -191,7 +191,12 @@ class RemoteConversationRepository internal constructor(
 ) : ConversationRepository,
     ThreadSnapshotSource {
     internal val authoritativeRoute: AuthoritativeThreadRoute =
-        AuthoritativeThreadRoute(authoritativeHostId, authoritativeThreads, onRepair = { authoritativeQueries.repair(it) })
+        AuthoritativeThreadRoute(
+            authoritativeHostId,
+            authoritativeThreads,
+            onRepair = { authoritativeQueries.repair(it) },
+            onTurnCompleted = ::refreshAuthoritativeReadFacts,
+        )
 
     @Volatile private var authoritativeCommandsEnded = false
 
@@ -303,6 +308,9 @@ class RemoteConversationRepository internal constructor(
             authoritativeNowMillis,
             retireAuthoritativeConnection,
         )
+
+    /** The exact host this connection's thread route serves, or empty on the legacy test entry (#2175). */
+    internal val authoritativeHost: String get() = authoritativeHostId
 
     /** The cache may borrow this supplied store only for its exact host namespace. */
     internal fun authoritativeStoreFor(host: String): AuthoritativeThreadStore? =
@@ -580,6 +588,14 @@ class RemoteConversationRepository internal constructor(
         !authoritativeCommandsEnded &&
             authoritativeHostId.isNotEmpty() &&
             setOf(CAPABILITY_THREAD, CAPABILITY_INTERACTIVE).all { it in negotiatedCapabilities() }
+
+    private fun refreshAuthoritativeReadFacts() {
+        scope.launch {
+            if (authoritativeCommandsEnded || !authoritativeLiveEnabled()) return@launch
+            val sent = pump.send(listConversationsRequest())
+            RelayLog.i { "event=thread_summary_refresh code=${if (sent) "requested" else "refused"}" }
+        }
+    }
 
     /** Supplied transient progress, never a durable item or read checkpoint. */
     fun observeAuthoritativeToolProgress(conversationId: String): Flow<Map<String, Int>> =

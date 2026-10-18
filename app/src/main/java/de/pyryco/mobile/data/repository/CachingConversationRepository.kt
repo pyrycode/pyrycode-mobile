@@ -27,6 +27,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
@@ -101,7 +102,34 @@ class CachingConversationRepository(
     private val deleted = ConcurrentHashMap.newKeySet<String>()
     private val historyWrites = Mutex()
     private val authoritativeRemote = (delegate as? RemoteConversationRepository)?.takeIf { it.authoritativeStoreFor(serverId) != null }
-    internal val authoritativeThreads = authoritativeRemote?.authoritativeStoreFor(serverId) ?: AuthoritativeThreadStore()
+
+    // #2175: production reaches the host's shared store through the forwarded route, never another host's.
+    private val hostThread = delegate.negotiatedThread?.takeIf { it.host == serverId }
+    internal val authoritativeThreads =
+        hostThread?.store ?: authoritativeRemote?.authoritativeStoreFor(serverId) ?: AuthoritativeThreadStore()
+
+    /** The host route with this cache's restore-before-query observation and opening (#2175). */
+    override val negotiatedThread: NegotiatedThread? =
+        hostThread?.let { route ->
+            object : NegotiatedThread() {
+                override val host: String = route.host
+                override val support: StateFlow<ThreadSupport> get() = route.support
+                override val store: AuthoritativeThreadStore get() = authoritativeThreads
+
+                override fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot> = observeAuthoritativeThread(conversationId)
+
+                override fun progress(
+                    conversationId: String,
+                    connection: Any,
+                ): Flow<AuthoritativeLiveProgress> = route.progress(conversationId, connection)
+
+                override suspend fun open(conversationId: String): Boolean = openAuthoritativeThread(conversationId)
+
+                override fun older(conversationId: String): Boolean = conversationId !in deleted && route.older(conversationId)
+
+                override fun cancel(conversationId: String) = route.cancel(conversationId)
+            }
+        }
     private val persistedAuthoritative = ConcurrentHashMap<String, CacheCandidate>()
 
     private data class DrawnThread(
@@ -464,7 +492,8 @@ class CachingConversationRepository(
 
     internal suspend fun openAuthoritativeThread(conversationId: String): Boolean {
         restoreAuthoritative(conversationId)
-        return conversationId !in deleted && authoritativeRemote?.openAuthoritativeThread(conversationId) == true
+        if (conversationId in deleted) return false
+        return hostThread?.open(conversationId) ?: (authoritativeRemote?.openAuthoritativeThread(conversationId) == true)
     }
 
     /** Reset acknowledgement includes durable invalidation; failure leaves the last successful record intact. */

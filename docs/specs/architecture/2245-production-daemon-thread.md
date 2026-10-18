@@ -13,6 +13,7 @@
 - `ui/conversations/thread/AuthoritativeThreadPresentation.kt` and `ThreadScreen.kt`: existing authoritative rows, exact revision sight, session ownership and queue actions.
 - `ui/conversations/components/MessageBubble.kt`, `AssistantMessage`: preserve the body tag while its Agent remains active.
 - `sharedTest/.../e2e/ThreadEvidence.kt`, `harnessThreadEvidence`: bind evidence to the selected route and actual connection.
+- `androidTest/.../e2e/SecondClientPeer.kt`, `CLIENT_INFO`, and `recording/RecordedPermissionTest.kt`: keep raw producer diagnostics and the standalone legacy fixture explicitly legacy; the normal recorded suite uses the production phone factory.
 - `NegotiatedThreadActivationTest`, `RelayConnectionFactoryTest`, and salvage `NegotiatedThreadViewModelTest`, `NegotiatedThreadScreenTest`, `HarnessThreadEvidenceBindingTest`: integrated probes, keeping A's regression tests.
 - `docs/knowledge/features/thread-screen.md`, `remote-conversation-repository.md`, `conversation-cache.md`: saved facts never negotiate support; only certified coverage qualifies reads.
 - `/work/Projects/pyrycode/docs/protocol-mobile.md`: capability negotiation, daemon thread updates, session state, queue and security contracts remain the wire authority.
@@ -58,7 +59,7 @@ Coordinator state and its shared store outlive one socket; each repository/query
 | Reconnect replaces pump, verdict, callbacks and progress; old Open arrives late | A's retained transport/late-callback tests and `NegotiatedThreadActivationTest.productionProjectionRetiresProgressAcrossReconnect` |
 | Catch-up interrupted, then resumed; page overlaps newer row/parent and queued settlement | Factory integrated probe above and A's preserved catch-up fixture validation |
 | Lost acknowledgement, duplicate/late queued update and recovered delivery | Factory integrated probe above; existing `AuthoritativeSendRepositoryTest` |
-| Process restart/offline restoration, then Missing with saved facts | `NegotiatedThreadActivationTest.restartRestoresFactsAndOnlyCertifiedReconnectCheckpoint`, `NegotiatedThreadViewModelTest.offlineCachedThreadReadsUntilAMissingVerdictSuppressesIt` |
+| Process restart/offline restoration, then Missing with saved facts | `AuthoritativeThreadCacheTest.restartRestoresFactsAndOnlyCertifiedReconnectCheckpoint`, `NegotiatedThreadViewModelTest.offlineCachedThreadReadsUntilAMissingVerdictSuppressesIt` |
 | Missing → capable; repeated supported connection; destination disposal | `NegotiatedThreadViewModelTest.opensOncePerSupportedConnectionAndCancelsOnClear`, shared negotiated screen probe |
 | Exact row revision changed or presentation replaced before read | Factory integrated probe above and existing `AuthoritativeReadSightTest` |
 | Admitted completion and duplicate completion | `NegotiatedThreadActivationTest.admittedTurnEndRefreshesDaemonReadFactsWithoutInventingAMark` |
@@ -75,6 +76,16 @@ Carry the scoped integrated probes first and observe red before implementation. 
 ## Open Questions
 
 None. Validate salvage against current fences and owned cache writes instead of replacing older files wholesale.
+
+## Revisions
+
+2026-10-18: After correcting an invalid saved-snapshot fixture (two earlier 5/1 failed runs), the exact-Remote probe failed at retirement admission: 5 executed, 1 failed. Gate that evidence on `usesAuthoritativeLiveState`; the provider path retains connection-token ownership. The activation probe's first run was 16 executed, 1 failed because carried string assertions used A's JsonElement helper; compare its serialized numeric value without changing the checkpoint contract.
+
+2026-10-18: Carry the salvage peer's explicit legacy capability list and apply it to the standalone permission fixture too. Their raw diagnostics require legacy frames; neither supplies production-phone evidence. Existing device fixtures retain their real transport/storage reasons; no new device-only test is introduced. These necessary consumers and recording refresh may exceed 1,600 written lines; preserve the grandchild slice and escalate measured overage without further splitting.
+
+2026-10-18: Measured 1,603 written lines before this entry. Confirmed parent #2175 and grandparent #1988, posted the measurement and added `needs-human:sizing`; continue under the depth/floor rule. All 67 existing production recordings have legacy-only acknowledgements; actual native replay and any required genuine capture/comparison evidence remain explicit acceptance work.
+
+2026-10-18: The unchanged Room held-retry probe failed in this branch (17 executed, 1 failed) and untouched main `03e455f7b` (1 executed, 1 failed), both returning null from `fresh`. Filed #2263 in Backlog with low priority and retained its assertion behind a tracker-linked ignore, per the out-of-scope bug policy. Activation and the other atomic cache probes stay enabled.
 
 ## Documentation handoff
 

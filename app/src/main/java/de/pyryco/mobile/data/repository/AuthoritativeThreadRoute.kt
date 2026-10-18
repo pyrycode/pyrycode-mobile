@@ -15,6 +15,7 @@ internal class AuthoritativeThreadRoute(
     private val store: AuthoritativeThreadStore,
     private val decoder: ThreadUpdateDecoder = ThreadUpdateDecoder(host, "connection"),
     private val onRepair: (Map<String, Long>) -> Unit = {},
+    private val onTurnCompleted: () -> Unit = {},
 ) {
     private val pendingGenerations = mutableMapOf<String, Long>()
 
@@ -93,8 +94,9 @@ internal class AuthoritativeThreadRoute(
             is ThreadDecodeOutcome.Complete -> {
                 val conversation = outcome.value.conversationId
                 val generation = pendingGenerations.remove(conversation) ?: store.current(host, conversation).generation
-                store.apply(host, outcome.value, generation) in
-                    setOf(AuthoritativeThreadOutcome.RepairNeeded, AuthoritativeThreadOutcome.ResetNeeded)
+                val applied = store.apply(host, outcome.value, generation)
+                if (applied == AuthoritativeThreadOutcome.Applied && outcome.value.item?.kind == "turn_end") onTurnCompleted()
+                applied in setOf(AuthoritativeThreadOutcome.RepairNeeded, AuthoritativeThreadOutcome.ResetNeeded)
             }
             is ThreadDecodeOutcome.Pending -> {
                 pendingGenerations.putIfAbsent(
