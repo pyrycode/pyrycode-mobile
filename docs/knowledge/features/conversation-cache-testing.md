@@ -68,6 +68,45 @@ Import/application binding belongs to #2161, authoritative Room storage to #2163
 activation/owned partial writes to #2068. These disk probes do not establish application restore
 latency or production bounded reading before those consumers are activated.
 
+### Held-retry atomic rollback and final flush (#2263)
+
+`AuthoritativeOwnedUpsertTest.atomicInvariant_heldFailureAndFinalFlushKeepNewestFacts`
+is active on Linux. A fresh `MigratingConversationCache` reader can need Room transaction
+admission even after import has settled: `importFamily` still uses a transaction to inspect it.
+The commit hook deliberately runs inside the writer transaction. Holding retry there can block
+the independent reader, so preserve #2256's retry hold in the wrapper before Room admission.
+
+Keep the controlled sequence: commit the seed record, hold the first write after mutation,
+admit newer facts while it is held, then release it to fail. `rolledBack.await()` acknowledges
+the failed operation's actual rollback; `retryEntered.await()` confirms retry reached the
+pre-admission hold. Assert `allowRetry.isCompleted` is false both before and after
+`assertEquals(prior, fresh())`. Here `fresh()` opens and closes a separate disk-backed Room
+connection over the same database file. A writer-connection read or a read after retry release
+would miss the independent-reader invariant.
+
+Only after that exact prior-record assertion may retry be released and observer cancellation/
+final flush joined. Another newly opened reader must equal the exact newest record: revised
+item 1 and new item 3, untouched item 2, and the prior checkpoint, coverage and incarnation.
+Keep both whole-record assertions and the probe enabled when reconciling the proposed
+tracker-linked ignore from PR #2264. This wrapper uses `FakeConversationRepository` with no
+negotiated provider; its disk-cache evidence does not establish production activation.
+
+The [retained Linux manifest and sibling raw XML](../../../app/src/test/resources/verification/held-retry-2263/results.json)
+record commands, revisions, source/report hashes and the reader-ordering proof. Historical
+baseline `03e455f7bd9e667a18dfe57a41ed1b897de016c5` executed **1, 0 passed, 1 failed**;
+the earlier #2245 class run executed **17, 16 passed, 1 failed**, both with **0 errors/skips**.
+These remain failed evidence. With the repaired test source committed at
+`eca2b2956b17bcb9bd12883844fb13afb4ddf2f5`, separate focused method and class runs using
+`testDebugUnitTest -PfullRetentionTests=true` executed/passed **1/1** and **17/17**,
+respectively, with **0 failures/errors/skips**. Both green XML reports include the named method.
+
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2294#issuecomment-6254399073)
+at `1d510460bf81bacf6aaf2b9730670192a3e3df3a` records the complete Linux JVM gate:
+**5994 executed/passed, 0 failures/errors/skips**, including all 17 class methods and this
+named probe. This full-suite result is separate from the focused runs. macOS was outside this
+ticket's verification scope. See the [probe repair plan](../../specs/architecture/2263-held-retry-atomic-probe.md)
+and [wrapper scheduling tests](caching-conversation-repository-testing.md#testing).
+
 ### Received-gap subtraction runtime (#2269)
 
 `OwnedLegacyCoverageTest.anchorInvariant_subtractingProducerKeepsValidReceivedGapWalk`
