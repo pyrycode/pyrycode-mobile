@@ -135,39 +135,49 @@ class OwnedLegacyCoverageTest {
             assertEquals(next.proofs, saved.coverage?.proofs)
         }
 
-    @Test fun anchorInvariant_extendingSpanKeepsReceivedGapWalk() = runTest {
-        val cache = open()
-        val rows = listOf(row(1), row(2))
-        val order = rows.zip(listOf(1uL, ULong.MAX_VALUE)).associate { (row, id) -> row.historyKeys().first() to id }
-        val coverage = HistoryCoverage(
-            unsignedSpans = listOf(UnsignedHistorySpan(1u, 3u), UnsignedHistorySpan(ULong.MAX_VALUE, ULong.MAX_VALUE)),
-            unsignedGaps = listOf(UnsignedHistoryGap(1u, ULong.MAX_VALUE)), unsignedWalks = mapOf(1uL to "held-walk"),
-            unsignedRowOrder = order, unsignedRowEntries = order.mapValues { setOf(it.value) }, proofs = historyRowProofs(rows),
-        )
-        val initial = HistoryPosition("saved", false, coverage)
-        cache.readThread("Host", "c")
-        cache.writeThread("Host", "c", rows).getOrThrow()
-        cache.writeHistoryPosition("Host", "c", initial).getOrThrow()
-        val source = Source()
-        val repository = CachingConversationRepository(source, cache, "Host")
-        repository.observeThreadSnapshot("c").first()
-        repository.readHistoryPosition("c")
-        val added = row(3)
-        val key = added.historyKeys().first()
-        source.snapshots.value = ThreadSnapshot(listOf(added))
-        val next = initial.copy(coverage = coverage.copy(
-            unsignedSpans = listOf(UnsignedHistorySpan(1u, 4u), UnsignedHistorySpan(ULong.MAX_VALUE, ULong.MAX_VALUE)),
-            unsignedRowOrder = order + (key to 4uL), unsignedRowEntries = coverage.unsignedRowEntries + (key to setOf(4uL)),
-            proofs = coverage.proofs + historyRowProofs(listOf(added)),
-        ))
-        repository.writeHistoryPosition("c", next)
-        val fresh = open()
-        assertEquals(listOf(rows[0], added, rows[1]), fresh.readThread("Host", "c"))
-        val saved = fresh.readHistoryPosition("Host", "c")
-        assertEquals(coverage.unsignedGaps, saved?.coverage?.unsignedGaps)
-        assertEquals(coverage.unsignedWalks, saved?.coverage?.unsignedWalks)
-        assertEquals(next, saved)
-    }
+    @Test fun anchorInvariant_extendingSpanKeepsReceivedGapWalk() =
+        runTest {
+            val cache = open()
+            val rows = listOf(row(1), row(2))
+            val order = rows.zip(listOf(1uL, ULong.MAX_VALUE)).associate { (row, id) -> row.historyKeys().first() to id }
+            val coverage =
+                HistoryCoverage(
+                    unsignedSpans = listOf(UnsignedHistorySpan(1u, 3u), UnsignedHistorySpan(ULong.MAX_VALUE, ULong.MAX_VALUE)),
+                    unsignedGaps = listOf(UnsignedHistoryGap(1u, ULong.MAX_VALUE)),
+                    unsignedWalks = mapOf(1uL to "held-walk"),
+                    unsignedRowOrder = order,
+                    unsignedRowEntries = order.mapValues { setOf(it.value) },
+                    proofs = historyRowProofs(rows),
+                )
+            val initial = HistoryPosition("saved", false, coverage)
+            cache.readThread("Host", "c")
+            cache.writeThread("Host", "c", rows).getOrThrow()
+            cache.writeHistoryPosition("Host", "c", initial).getOrThrow()
+            val source = Source()
+            val repository = CachingConversationRepository(source, cache, "Host")
+            repository.observeThreadSnapshot("c").first()
+            repository.readHistoryPosition("c")
+            val added = row(3)
+            val key = added.historyKeys().first()
+            source.snapshots.value = ThreadSnapshot(listOf(added))
+            val next =
+                initial.copy(
+                    coverage =
+                        coverage.copy(
+                            unsignedSpans = listOf(UnsignedHistorySpan(1u, 4u), UnsignedHistorySpan(ULong.MAX_VALUE, ULong.MAX_VALUE)),
+                            unsignedRowOrder = order + (key to 4uL),
+                            unsignedRowEntries = coverage.unsignedRowEntries + (key to setOf(4uL)),
+                            proofs = coverage.proofs + historyRowProofs(listOf(added)),
+                        ),
+                )
+            repository.writeHistoryPosition("c", next)
+            val fresh = open()
+            assertEquals(listOf(rows[0], added, rows[1]), fresh.readThread("Host", "c"))
+            val saved = fresh.readHistoryPosition("Host", "c")
+            assertEquals(coverage.unsignedGaps, saved?.coverage?.unsignedGaps)
+            assertEquals(coverage.unsignedWalks, saved?.coverage?.unsignedWalks)
+            assertEquals(next, saved)
+        }
 
     @Test fun certificationInvariant_changedProducersCannotRegainStaleClaims() =
         runTest {

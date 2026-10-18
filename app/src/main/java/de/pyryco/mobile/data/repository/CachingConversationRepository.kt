@@ -28,8 +28,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -617,16 +617,23 @@ class CachingConversationRepository(
             }
             return
         }
-        val (snapshot, historyGeneration) = delegate.threadSnapshots(conversationId)
-            .map { it to generations.incrementAndGet() }.first()
+        val (snapshot, historyGeneration) =
+            delegate
+                .threadSnapshots(conversationId)
+                .map { it to generations.incrementAndGet() }
+                .first()
         historyWrites.withLock {
             if (conversationId in deleted) return@withLock
             val drawn = drawnThreads[conversationId]
             val persisted = persistedThreads[conversationId]
             val owned = cache as? OwnedLegacyCoverageCache
             if (historyGeneration <= (persisted?.generation ?: 0)) return@withLock
-            val baselineRows = if (owned == null) drawn?.rows ?: cache.readThread(serverId, conversationId)
-                else persisted?.cacheable ?: drawn?.rows ?: cache.readThread(serverId, conversationId)
+            val baselineRows =
+                if (owned == null) {
+                    drawn?.rows ?: cache.readThread(serverId, conversationId)
+                } else {
+                    persisted?.cacheable ?: drawn?.rows ?: cache.readThread(serverId, conversationId)
+                }
             val pending = acceptedRows[conversationId].orEmpty().filterValues { it.capture > (persisted?.generation ?: 0) }
             val pendingOrder =
                 pending.values
@@ -648,14 +655,23 @@ class CachingConversationRepository(
                     snapshot.unsignedHistoryOrder
             val merged = snapshot.rows.mergeUnsignedCachedRows(restored, order, rendererOwners = base)
             val newer = pending.filterValues { it.capture > historyGeneration }
-            val rows = if (newer.isEmpty()) merged else applyOwnedRows(
-                merged,
-                pendingOrder.filter { it.capture > historyGeneration }.mapNotNull { it.change },
-                newer.filterValues { it.change == null }.keys,
-                trim = false,
-            )
-            val satisfied = if (owned == null) maxOf(historyGeneration, drawn?.generation ?: 0)
-                else maxOf(historyGeneration, pendingOrder.maxOfOrNull { it.capture } ?: 0)
+            val rows =
+                if (newer.isEmpty()) {
+                    merged
+                } else {
+                    applyOwnedRows(
+                        merged,
+                        pendingOrder.filter { it.capture > historyGeneration }.mapNotNull { it.change },
+                        newer.filterValues { it.change == null }.keys,
+                        trim = false,
+                    )
+                }
+            val satisfied =
+                if (owned == null) {
+                    maxOf(historyGeneration, drawn?.generation ?: 0)
+                } else {
+                    maxOf(historyGeneration, pendingOrder.maxOfOrNull { it.capture } ?: 0)
+                }
             val cacheable = withContext(processingDispatcher) { cacheableThreadRows(rows) }
             val baseline = if (owned == null) emptyMap() else baselineRows.associateBy { it.legacyRowKey() }
             val removed = if (owned == null) emptySet() else baseline.keys - rows.mapTo(HashSet()) { it.legacyRowKey() }
@@ -667,15 +683,19 @@ class CachingConversationRepository(
                 if (keys[index] in baseline) next = keys[index]
             }
             val changes =
-                if (owned == null) emptyList() else cacheable.mapIndexedNotNull { index, row ->
-                    if (baseline[row.legacyRowKey()] == row) {
-                        null
-                    } else {
-                        OwnedLegacyRow(
-                            row,
-                            cacheable.getOrNull(index - 1)?.legacyRowKey(),
-                            nextHeld[index],
-                        )
+                if (owned == null) {
+                    emptyList()
+                } else {
+                    cacheable.mapIndexedNotNull { index, row ->
+                        if (baseline[row.legacyRowKey()] == row) {
+                            null
+                        } else {
+                            OwnedLegacyRow(
+                                row,
+                                cacheable.getOrNull(index - 1)?.legacyRowKey(),
+                                nextHeld[index],
+                            )
+                        }
                     }
                 }
             val result =

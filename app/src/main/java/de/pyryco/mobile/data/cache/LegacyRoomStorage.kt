@@ -564,11 +564,15 @@ class LegacyRoomStorage internal constructor(
                         .distinct()
                         .map { UnsignedHistorySpan(it, it) }
             val rejected = rejectedEntries
-            val losses = additions.flatMap {
-                dao.intervals(host, conversation, "losses", it.first.position(), it.last.position())
-            }
+            val losses =
+                additions.flatMap {
+                    dao.intervals(host, conversation, "losses", it.first.position(), it.last.position())
+                }
             lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + losses.size)
-            val receivedClaims = accepted.unsignedRowEntries.values.flatten().toSet()
+            val receivedClaims =
+                accepted.unsignedRowEntries.values
+                    .flatten()
+                    .toSet()
             val blocked = losses.map { it.low.toULong() }.toSet() - receivedClaims
             val excluded = (rejected + blocked).sorted().map { UnsignedHistorySpan(it, it) }
             val safeAdditions = intervalDifference(additions, excluded)
