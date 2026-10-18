@@ -1,0 +1,27 @@
+<testsuites><testsuite name="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" tests="1" skipped="0" failures="1" errors="0" timestamp="2026-10-18T10:59:43.586Z" hostname="2927f00f6760" time="7.265">
+  <properties />
+  <testcase name="thumbnailEffect_returnsFromIoAndDisposesOnTheViewThread" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="6.353">
+    <failure message="android.view.ViewRootImpl$CalledFromWrongThreadException: Only the original thread that created a view hierarchy can touch its views. Expected: SDK 36 Main Thread @kotlinx.coroutines.test runner#28 Calling: DefaultDispatcher-worker-5 @coroutine#33" type="android.view.ViewRootImpl$CalledFromWrongThreadException">android.view.ViewRootImpl$CalledFromWrongThreadException: Only the original thread that created a view hierarchy can touch its views. Expected: SDK 36 Main Thread @kotlinx.coroutines.test runner#28 Calling: DefaultDispatcher-worker-5 @coroutine#33
+	at android.view.ViewRootImpl.checkThread(ViewRootImpl.java:11357)
+	at android.view.ViewRootImpl.requestLayout(ViewRootImpl.java:2602)
+	at android.view.View.requestLayout(View.java:28315)
+	at de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest$thumbnailEffect_returnsFromIoAndDisposesOnTheViewThread$1$2$1.invokeSuspend(ComposerAttachmentStripTest.kt:206)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+	at androidx.compose.ui.test.ApplyingContinuationInterceptor$SendApplyContinuation.resumeWith(ApplyingContinuationInterceptor.kt:52)
+	at androidx.compose.ui.test.FrameDeferringContinuationInterceptor$FrameDeferredContinuation.resumeWith(FrameDeferringContinuationInterceptor.jvm.kt:187)
+	at kotlinx.coroutines.internal.DispatchedContinuationKt.resumeCancellableWith(DispatchedContinuation.kt:279)
+	at kotlinx.coroutines.DispatchedCoroutine.afterResume(Builders.common.kt:256)
+	at kotlinx.coroutines.AbstractCoroutine.resumeWith(AbstractCoroutine.kt:101)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:46)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:124)
+	at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:89)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:586)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:820)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:717)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:704)
+</failure>
+  </testcase>
+  <system-out />
+  <system-err />
+</testsuite></testsuites>
