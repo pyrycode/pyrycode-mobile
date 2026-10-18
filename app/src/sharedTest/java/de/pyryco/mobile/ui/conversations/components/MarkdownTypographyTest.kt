@@ -1,15 +1,21 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onParent
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.Message
@@ -60,21 +66,54 @@ class MarkdownTypographyTest {
     @Test
     fun default_renderer_keeps_message_typography_and_spacing() {
         rule.setContent { PyrycodeMobileTheme(darkTheme = true) { MarkdownText(fixture) } }
-        assertBody(14, 20, 12f, 4f, taskGap = 6f)
+        assertBody(14, 20, 16f, 4f, taskGap = 6f)
         assertSpecialStyles(codeSize = 12)
     }
 
     @Test
     fun finished_reply_keeps_message_typography_and_spacing() {
         showMessage(streaming = false)
-        assertBody(14, 20, 12f, 4f, taskGap = 6f)
+        assertBody(14, 20, 16f, 4f, taskGap = 6f)
     }
 
     @Test
     fun streaming_reply_keeps_message_typography_and_spacing() {
         showMessage(streaming = true)
         rule.mainClock.advanceTimeBy(10_000)
-        assertBody(14, 20, 12f, 4f, taskGap = 6f)
+        assertBody(14, 20, 16f, 4f, taskGap = 6f)
+    }
+
+    @Test
+    fun settled_blocks_have_sixteen_dp_gaps_and_no_outer_spacing() = assertBlockBounds(streaming = false)
+
+    @Test
+    fun streaming_blocks_have_sixteen_dp_gaps_and_no_outer_spacing() = assertBlockBounds(streaming = true)
+
+    private fun assertBlockBounds(streaming: Boolean) {
+        val source = "First\n\nSecond\n\n- Item one\n- Item two\n\n```kotlin\nval x = 1\n```\n\nLast"
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                val modifier = Modifier.width(240.dp).testTag("block-spacing-body")
+                if (streaming) {
+                    StreamingMarkdownText(source, caretVisible = true, modifier = modifier)
+                } else {
+                    MarkdownText(source, modifier = modifier)
+                }
+            }
+        }
+        assertGap("First", "Second", 16f)
+        assertGap("Second", "Item one", 16f)
+        assertGap("Item one", "Item two", 4f)
+        // The header's parent is the code surface; its bounds include code padding and the copy rail.
+        val code = rule.onNodeWithTag(CODE_BLOCK_HEADER_TAG, useUnmergedTree = true).onParent().getUnclippedBoundsInRoot()
+        val lastItem = rule.onNodeWithText("Item two", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val last = rule.onNodeWithText("Last", substring = true, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals("list -> code", 16f, (code.top - lastItem.bottom).value, 0.6f)
+        assertEquals("code -> paragraph", 16f, (last.top - code.bottom).value, 0.6f)
+        val body = rule.onNodeWithTag("block-spacing-body").getUnclippedBoundsInRoot()
+        val first = rule.onNodeWithText("First", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals("no space above the first block", body.top.value, first.top.value, 0.6f)
+        assertEquals("no space below the last block", body.bottom.value, last.bottom.value, 0.6f)
     }
 
     private fun showMessage(streaming: Boolean) {
@@ -175,7 +214,7 @@ class MarkdownTypographyTest {
     }
 
     private fun assertSpecialStyles(codeSize: Int = 14) {
-        for ((text, size, height) in listOf(Triple("Heading", 24, 32), Triple("Cell", 14, 20), Triple("val x = 1", codeSize, 20))) {
+        for ((text, size, height) in listOf(Triple("Heading", 20, 28), Triple("Cell", 14, 20), Triple("val x = 1", codeSize, 20))) {
             val style =
                 rule
                     .onNodeWithText(text, useUnmergedTree = true)

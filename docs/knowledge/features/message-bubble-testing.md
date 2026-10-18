@@ -4,6 +4,17 @@ Test coverage and fixture guidance for [MessageBubble](message-bubble.md).
 
 ## Testing
 
+`MarkdownTypographyTest` uses native graphics and unclipped dp bounds to check
+settled and streaming paragraph→paragraph, paragraph→list, list→code and
+code→paragraph gaps at 16dp (#2273). Measure the code surface via the header's
+parent, including its padding and copy rail; measuring padded code text would
+conflate internal insets with inter-block spacing. First/last blocks must align
+with renderer bounds, proving no added outer spacing. Keep the recursive
+list-item/quote checks, 4dp sibling-item checks and both reader routes' explicit
+12dp block override alongside these fixtures. This markdown gap is independent
+of user paragraphs, attachment/metadata gaps and bubble padding documented in
+[MessageBubble](message-bubble.md).
+
 `ThreadStreamingRevealTest` pauses the Compose clock through the real
 `ThreadScreen`: pre-open text is immediate, appended text retains its prefix and
 reveals progressively, and reopening before catch-up shows all arrived text.
