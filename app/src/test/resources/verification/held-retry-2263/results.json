@@ -1,0 +1,41 @@
+{
+  "ticket": 2263,
+  "os": "Linux",
+  "main_source_revision": "bdbb5c4921535d76d31c497f2b613747f6dd1a28",
+  "execution_parent_revision": "ea1e4f4a6ec318d2e3692ee274745b90e93254fe",
+  "execution_source": "Working tree over execution_parent_revision; only the held-retry probe was changed in code. Both runs used the exact test source hash below, retained in this branch.",
+  "test_source": "app/src/test/java/de/pyryco/mobile/data/repository/AuthoritativeOwnedUpsertTest.kt",
+  "test_source_sha256": "1cec313523037c32cf45e944007414f80b40034e299bca9cf86e1e3361ca8710",
+  "required_repair_merge": "f5bebca61f4c01d8a09842807469080a948f4318",
+  "independent_reader_proof": [
+    "The first commit hook holds after mutations; newer facts are admitted before releasing it to fail.",
+    "rolledBack.await() joins the failed cache operation, including Room rollback.",
+    "retryEntered.await() confirms retry reached the wrapper hold before cache transaction admission.",
+    "allowRetry.isCompleted is asserted false before and after assertEquals(prior, fresh()).",
+    "fresh() opens another disk-backed Room connection to the same cache.db and closes it after reading.",
+    "Only then is allowRetry completed and observer cancellation/final flush joined.",
+    "A newly opened fresh() reader must equal the exact newest record, including untouched item 2, checkpoint, coverage and incarnation."
+  ],
+  "red_provenance": {
+    "ticket": 2245,
+    "run_id": "0f7cf4bf367823bb43af94c02509cbc25ab3beb3fec037607a08c3d6d6ffea5d",
+    "bundle_digest": "87b2dad6ab3434e180d9cdabef00ae1022c8424d5c5d53eebf4788875206bd25",
+    "baseline_source_revision": "03e455f7bd9e667a18dfe57a41ed1b897de016c5",
+    "original_directory": "evidence/linux-20261018-d1fe2fc2c",
+    "baseline_report": "baseline-red/TEST-de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest.xml",
+    "class_report": "upsert-red/TEST-de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest.xml",
+    "class_source": "Earlier #2245 working tree; its exact working-tree revision was not recorded in the report. The baseline reproduction above is the authoritative red revision."
+  },
+  "reports": [
+    {"path": "baseline-red.xml", "sha256": "ba0761d167ca3d786bc1c527344f5d00c3c4fe35b00e3c59228a7c0627fcb884", "executed": 1, "passed": 0, "failed": 1, "errors": 0, "skipped": 0},
+    {"path": "upsert-red.xml", "sha256": "f23cbeb04be4eb9db39f66445b8ebfe3eb435ead169d1537e4e486c2fbc93e9c", "executed": 17, "passed": 16, "failed": 1, "errors": 0, "skipped": 0},
+    {"path": "method-green.xml", "sha256": "9565bb6f662df0fe0685999016710bba744f968c11bbcef1090af2b3f074d78a", "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0},
+    {"path": "class-green.xml", "sha256": "cec9b45ce760ed65828665a72e56c8953dfa5ef908bf538adca4c2bbf66362fd", "executed": 17, "passed": 17, "failed": 0, "errors": 0, "skipped": 0}
+  ],
+  "green_commands": [
+    "python3 scripts/gradle-gate.py testDebugUnitTest -PfullRetentionTests=true --tests 'de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest.atomicInvariant_heldFailureAndFinalFlushKeepNewestFacts' --console=plain",
+    "python3 scripts/gradle-gate.py testDebugUnitTest -PfullRetentionTests=true --tests 'de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest' --console=plain"
+  ],
+  "ignore_coordination": "No ignore exists in the input main revision. PR #2264's proposed ignore was flagged at https://github.com/pyrycode/pyrycode-mobile/pull/2264#issuecomment-6253290578; keep this probe active when reconciling that branch.",
+  "verification_scope": "Focused builder evidence only. Complete configured Linux gates belong to the dispatcher. macOS is outside this ticket's verification scope."
+}
