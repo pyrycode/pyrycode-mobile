@@ -112,6 +112,18 @@ class MarkdownReaderDesignTest {
         val paragraph = rule.onNodeWithText("The main board runs four roles", substring = true).getUnclippedBoundsInRoot()
         val subheading = rule.onNodeWithText("Next steps").getUnclippedBoundsInRoot()
         val firstItem = rule.onNodeWithText("Pin all five agents repos", substring = true).getUnclippedBoundsInRoot()
+        val paragraphLayout = layout("The main board runs four roles", substring = true)
+        val items = listOf(firstItem) +
+            listOf("Measure token spend per role", "Retire the old single-role runner").map {
+                rule.onNodeWithText(it, substring = true).getUnclippedBoundsInRoot()
+            }
+        android.util.Log.i(
+            "ReaderGeometry",
+            "density=${rule.density.density} paragraphHeight=${paragraph.height} lines=${paragraphLayout.lineCount} " +
+                "lineBoxes=${(0 until paragraphLayout.lineCount).map { paragraphLayout.getLineBottom(it) - paragraphLayout.getLineTop(it) }} " +
+                "paragraphGap=${subheading.top - paragraph.bottom} itemHeights=${items.map { it.height }} " +
+                "itemGaps=${items.zipWithNext { a, b -> b.top - a.bottom }} codeGap=${code.top - items.last().bottom}",
+        )
 
         assertEquals(56f, title.left.value, 1f)
         assertEquals(24f, title.top.value, 1f)
