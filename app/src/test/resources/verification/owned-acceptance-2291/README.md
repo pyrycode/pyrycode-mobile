@@ -3,7 +3,8 @@
 Linux focused checks only. `results.json` records each source revision, exact command,
 executed/failure/error/skip counts, test names and SHA-256 hashes. Sibling `.stdout.log`
 files preserve managed admission/Gradle output; `.xml.gz` files retain complete JUnit XML.
-Complete configured JVM-gate acceptance belongs to the dispatcher.
+Complete configured JVM-gate acceptance belongs to the dispatcher; its subsequent results
+are recorded in the [evergreen testing topic](../../../../../../docs/knowledge/features/conversation-cache-testing.md#owned-coverage-snapshot-acceptance-2291).
 
 The cold red run's console capture contains one tool-truncated compiler-warning chunk,
 explicitly marked in `red.stdout.log`. Its subsequent test-result output and complete
@@ -23,11 +24,17 @@ Before changing either probe, inspected both original failure bundles using
   method. `logs/2026-10-18T16-58-33-256Z_verifier-gate-rerun__2279.log` contains
   its rerun XML: 1 executed/passed, 0 failures/errors/skips.
 
-The original assertion messages are outside the bundled stdout tails. `pointers.json`
+At builder handoff, the original assertion messages were outside the bundled stdout tails. `pointers.json`
 retains full-log source paths and hashes on the originating computers; those full logs
 were unavailable locally. Coroutine entry locations do not identify the failed assertion.
 Historical failures remain failures. The independent gap-subtraction timeout belongs to
 #2269, already merged before this ticket's base.
+
+The verifier subsequently recovered #2279's full original log at
+`/work/Projects/pyrycode-mobile-agents/logs/verifier-gate_#2279_4.log`, matching pointer SHA-256
+`8a288b192e88dc6545fb6e898b9c3af832d6a50eda7fe22ff8d967b4932f2082`.
+Its revision assertion expected row 1 alone but found rows 1 and 2; the historical class
+had 9 executed, 8 passed, 1 failed, 0 errors/skips. #2278's exact assertions remain unknown.
 
 Controlled reproductions retain real Room I/O and the original exact persistence checks.
 The intent probe holds the first nonempty snapshot's history read. The revision probe
@@ -56,4 +63,8 @@ so exact restored content must come from its retained pending intent. Every chan
 probe releases held work and joins its readers/saves before closing Room.
 
 macOS is outside this Linux ticket's verification scope. No device or live scenario
-is required. Complete configured acceptance remains pending for the dispatcher.
+is required. Subsequent [verifier acceptance](https://github.com/pyrycode/pyrycode-mobile/pull/2296#issuecomment-6254914512)
+at `994f7ead2aa1fed18f54003edc8fc6f63ed2cb1e` records 5994 executed/passed,
+0 failures/errors/skips in the configured Linux JVM gate. Both named methods executed
+once and passed; their complete class passed 9/9 with 0 failures/errors/skips.
+These full-suite results are separate from the focused artifacts in this folder.
