@@ -860,6 +860,8 @@ class AuthoritativeOwnedUpsertTest {
             for (epoch in listOf("e", "new")) {
                 var hook: suspend () -> Unit = {}
                 val cache = open { hook() }
+                // Keep the epoch cases independent of the prior case's durable incarnation.
+                cache.removeConversation("host", "c").getOrThrow()
                 cache.writeAuthoritativeThread("host", "c", saved(listOf(raw(1)))).getOrThrow()
                 val repo = wrapper(cache)
                 val ready = CompletableDeferred<Unit>()
