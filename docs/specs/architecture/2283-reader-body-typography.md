@@ -6,6 +6,7 @@
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt`: `MarkdownBlock`, `BlockQuoteBlock`, `TableBlock` and `readerLineHeight` control recursive body rendering and reader line boxes.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MarkdownTypographyTest.kt`: reader entry-point, recursive spacing and thread typography coverage.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/MarkdownReaderDesignTest.kt`: native layout, wrap, quote, code and chrome assertions.
+- `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadCanvasPaletteTest.kt`: update its reader-only foreground expectation while preserving canvas and chrome pixel assertions.
 - `docs/knowledge/features/markdown-reader-screen.md` and `shared-typography.md`: preserve in-paragraph reader markers and use native graphics to detect trimmed line boxes.
 
 ## Design source
@@ -16,7 +17,7 @@ Read the design context and screenshot: a scrolling markdown column with regular
 
 ## Change
 
-Select `MaterialTheme.typography.bodyMedium` with `onSecondaryContainer` in `MarkdownReaderScreen`. Pass the existing markdown style to the private `TableBlock` (one caller), using its body style only for Reader so table cells also inherit colour and untrimmed line boxes; keep header emphasis. Quote paragraphs already override colour and font style, and inline links already override colour and underline. This is one observable behaviour: matching reader body typography across both entry points. Forecast: about 220 written lines across two production files, two test files and this plan; no exported declarations, state or error branches. In-flight #1766 and #2279 touch other blocks in `MarkdownText.kt`; keep this change local and additive.
+Select `MaterialTheme.typography.bodyMedium` with `onSecondaryContainer` in `MarkdownReaderScreen`. Pass the existing markdown style to the private `TableBlock` (one caller), using its body style only for Reader so table cells also inherit colour and untrimmed line boxes; keep header emphasis. Quote paragraphs already override colour and font style, and inline links already override colour and underline. This is one observable behaviour: matching reader body typography across both entry points. Forecast: about 220 written lines across two production files, three test files and this plan; no exported declarations, state or error branches. In-flight #1766 and #2279 touch other blocks in `MarkdownText.kt`; keep this change local and additive.
 
 ## Testing strategy
 
