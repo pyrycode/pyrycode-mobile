@@ -61,6 +61,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -515,10 +517,16 @@ class DeterministicInteractiveStreamE2ETest {
         val postText = "e2e1833-attention-read-000"
         runBlocking {
             withTimeout(REPLY_TIMEOUT_MS) {
-                val supported =
-                    route.support.first { it is de.pyryco.mobile.data.repository.ThreadSupport.Supported }
-                        as de.pyryco.mobile.data.repository.ThreadSupport.Supported
-                supported.connection.observeConversations(ConversationFilter.All).first()
+                val current =
+                    requireNotNull(
+                        kotlinx.coroutines.flow
+                            .combine(coordinator.currentRepository, route.support) { candidate, support ->
+                                candidate?.takeIf {
+                                    (support as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === it
+                                }
+                            }.first { it != null },
+                    )
+                current.observeConversations(ConversationFilter.All).first()
             }
         }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
