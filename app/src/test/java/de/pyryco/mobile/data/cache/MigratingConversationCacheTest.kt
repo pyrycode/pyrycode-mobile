@@ -555,19 +555,56 @@ class MigratingConversationCacheTest {
             }
         }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun cleanupInvariant_nonCompletionFailsWithoutWaitingForOwner() =
         runBlocking {
             val started = System.nanoTime()
-            withHeldReader { reader, scheduler, finalizing, _ ->
-                val failure = runCatching { cancelAndDrain(reader, scheduler, timeoutMillis = 100) }.exceptionOrNull()
+            val scheduler = TestCoroutineScheduler()
+            val finalizing = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val published = CompletableDeferred<Job>()
+            val attempt = async(Dispatchers.Default) {
+                val owner = CoroutineScope(StandardTestDispatcher(scheduler))
+                val reader = owner.launch { holdCancellation(finalizing, release) }
+                published.complete(reader)
+                try {
+                    scheduler.runCurrent()
+                    runCatching { cancelAndDrain(reader, scheduler, timeoutMillis = 100) }
+                } finally {
+                    owner.cancel()
+                }
+            }
+            try {
+                // The enclosing coroutine must return before the held child's release, even on failure.
+                val failure = withTimeout(1_000) { attempt.await() }.exceptionOrNull()
+                val reader = published.await()
                 assertTrue("expected a diagnostic cleanup failure, got $failure", failure is AssertionError)
                 assertTrue(requireNotNull(failure).message.orEmpty().contains("cancelled=true completed=false"))
                 assertTrue(finalizing.isCompleted)
                 assertFalse(reader.isCompleted)
+                assertFalse(release.isCompleted)
+            } finally {
+                release.complete(Unit)
+                cancelAndDrain(attempt, scheduler, timeoutMillis = 1_000)
+                if (published.isCompleted) cancelAndDrain(published.await(), scheduler, timeoutMillis = 1_000)
             }
             assertTrue("cleanup and enclosing scope must return within 10 seconds", System.nanoTime() - started < 10_000_000_000L)
         }
+
+    private suspend fun holdCancellation(
+        finalizing: CompletableDeferred<Unit>,
+        release: CompletableDeferred<Unit>,
+    ) {
+        try {
+            awaitCancellation()
+        } finally {
+            withContext(NonCancellable) {
+                finalizing.complete(Unit)
+                release.await()
+            }
+        }
+    }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun withHeldReader(
@@ -577,16 +614,7 @@ class MigratingConversationCacheTest {
         val owner = CoroutineScope(StandardTestDispatcher(scheduler))
         val finalizing = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
-        val reader = owner.launch {
-            try {
-                awaitCancellation()
-            } finally {
-                withContext(NonCancellable) {
-                    finalizing.complete(Unit)
-                    release.await()
-                }
-            }
-        }
+        val reader = owner.launch { holdCancellation(finalizing, release) }
         try {
             scheduler.runCurrent()
             block(reader, scheduler, finalizing, release)
