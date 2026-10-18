@@ -79,7 +79,8 @@ class ReadCheckpointRetries(
                             if (target == null || target.checkpoint <= stored) return@collect
                             locks.computeIfAbsent(conversation) { Mutex() }.withLock {
                                 val highest = pending.value[conversation] ?: return@withLock
-                                if (source.value !== repository || highest === attempted ||
+                                if (source.value !== repository ||
+                                    highest === attempted ||
                                     (highest.owner != null && (highest.owner !== repository || highest.isQualified?.invoke() != true))
                                 ) {
                                     return@withLock
