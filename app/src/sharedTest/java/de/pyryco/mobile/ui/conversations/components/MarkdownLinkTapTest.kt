@@ -36,6 +36,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * #1050: a tapped link to a workspace markdown note in an assistant reply hands its path to the thread,
@@ -283,6 +284,7 @@ class MarkdownLinkTapTest {
     fun allStreamingHeadingLevels_routeWorkspaceAndWebLinks() = assertHeadingLinks(streaming = true, reader = false)
 
     @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun allReaderHeadingLevels_keepWorkspaceLinksInertAndRouteWebLinks() = assertHeadingLinks(streaming = false, reader = true)
 
     private fun assertHeadingLinks(
