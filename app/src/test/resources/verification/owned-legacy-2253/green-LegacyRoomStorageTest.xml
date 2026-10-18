@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" tests="18" skipped="0" failures="0" errors="0" timestamp="2026-10-18T00:43:54.890Z" hostname="023c096c208b" time="15.762">
+  <properties/>
+  <testcase name="boundedEvidenceInvariant_olderEvidenceDoesNotGrowSharedBoundaryPages" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="3.282"/>
+  <testcase name="atomicityInvariant_failureAndCancellationKeepCommittedSnapshot" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.091"/>
+  <testcase name="unsignedAndFragmentInvariant_exactEvidenceSurvivesRestart" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.091"/>
+  <testcase name="committedEvidenceInvariant_invalidHistoryLeavesRowsReadable" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.066"/>
+  <testcase name="exclusionsInvariant_onlyCacheableUniqueRowsReachStorage" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.038"/>
+  <testcase name="replacementInvariant_oldTokensCannotReadNewSnapshot" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.061"/>
+  <testcase name="committedEvidenceInvariant_parseableInvalidFragmentBindingsAreIsolated" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.119"/>
+  <testcase name="committedEvidenceInvariant_parseableInvalidSpansAndClaimsAreIsolated" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.189"/>
+  <testcase name="roundTripInvariant_allKindsAndFieldsSurviveRestart" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.063"/>
+  <testcase name="heldOrderInvariant_backwardTraversalVisitsEachRowOnce" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.424"/>
+  <testcase name="boundedEvidenceInvariant_fragmentedFixtureDoesNotDecodeOutsideWindow" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="7.091"/>
+  <testcase name="boundedEvidenceInvariant_sharedGapBoundaryKeepsBothSides" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.05"/>
+  <testcase name="ownershipInvariant_tokensAndRemovalStayScoped" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.071"/>
+  <testcase name="diagnosticsInvariant_resultsAndFactoryExcludeContentOwnersAndCursors" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.046"/>
+  <testcase name="boundedEvidenceInvariant_overlappingGapKeepsItsOutsideWindowWalkAndNearestCursor" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.035"/>
+  <testcase name="boundedEvidenceInvariant_olderCursorsAndWalksDoNotGrowContinuousSpanPages" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.425"/>
+  <testcase name="committedEvidenceInvariant_changedContentAndTrimInvalidateClaims" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="3.058"/>
+  <testcase name="boundedEvidenceInvariant_sharedGapBoundaryPreservesUnsignedExtremes" classname="de.pyryco.mobile.data.cache.LegacyRoomStorageTest" time="0.095"/>
+  <system-out><![CDATA[legacy_room_boundary_probe baseline=ReadCounts(rowReads=1, rowDecodes=1, ordinalReads=1, evidenceReads=16, evidenceDecodes=13)
+legacy_room_boundary_probe older_evidence=4000 counts=ReadCounts(rowReads=1, rowDecodes=1, ordinalReads=1, evidenceReads=16, evidenceDecodes=13)
+legacy_room_probe rows=200 decodes=200 evidence_reads=1002 evidence_decodes=1002 pages=90
+legacy_room_boundary_probe baseline=ReadCounts(rowReads=1, rowDecodes=1, ordinalReads=1, evidenceReads=16, evidenceDecodes=13)
+legacy_room_continuous_probe small=ReadCounts(rowReads=200, rowDecodes=200, ordinalReads=1, evidenceReads=609, evidenceDecodes=608) large=ReadCounts(rowReads=200, rowDecodes=200, ordinalReads=1, evidenceReads=609, evidenceDecodes=608) older_anchors=36000
+legacy_room_boundary_probe baseline=ReadCounts(rowReads=1, rowDecodes=1, ordinalReads=1, evidenceReads=16, evidenceDecodes=13)
+legacy_room_boundary_probe older_evidence=4000 counts=ReadCounts(rowReads=1, rowDecodes=1, ordinalReads=1, evidenceReads=16, evidenceDecodes=13)
+]]></system-out>
+  <system-err><![CDATA[System.logW: A resource was acquired at attached stack trace but never released. See java.io.Closeable for information on avoiding resource leaks.
+java.lang.Throwable: Explicit termination method 'close' not called
+	at dalvik.system.CloseGuard.$$robo$$dalvik_system_CloseGuard$openWithCallSite(CloseGuard.java:288)
+	at dalvik.system.CloseGuard.openWithCallSite(CloseGuard.java)
+	at dalvik.system.CloseGuard.$$robo$$dalvik_system_CloseGuard$open(CloseGuard.java:257)
+	at dalvik.system.CloseGuard.open(CloseGuard.java)
+	at android.database.sqlite.SQLiteDatabase.$$robo$$android_database_sqlite_SQLiteDatabase$openInner(SQLiteDatabase.java:1086)
+	at android.database.sqlite.SQLiteDatabase.openInner(SQLiteDatabase.java)
+	at android.database.sqlite.SQLiteDatabase.$$robo$$android_database_sqlite_SQLiteDatabase$open(SQLiteDatabase.java:1065)
+	at android.database.sqlite.SQLiteDatabase.open(SQLiteDatabase.java)
+	at android.database.sqlite.SQLiteDatabase.$$robo$$android_database_sqlite_SQLiteDatabase$openDatabase(SQLiteDatabase.java:929)
+	at android.database.sqlite.SQLiteDatabase.openDatabase(SQLiteDatabase.java)
+	at android.database.sqlite.SQLiteDatabase.$$robo$$android_database_sqlite_SQLiteDatabase$openDatabase(SQLiteDatabase.java:918)
+	at android.database.sqlite.SQLiteDatabase.openDatabase(SQLiteDatabase.java)
+	at android.database.sqlite.SQLiteOpenHelper.$$robo$$android_database_sqlite_SQLiteOpenHelper$getDatabaseLocked(SQLiteOpenHelper.java:373)
+	at android.database.sqlite.SQLiteOpenHelper.getDatabaseLocked(SQLiteOpenHelper.java)
+	at android.database.sqlite.SQLiteOpenHelper.$$robo$$android_database_sqlite_SQLiteOpenHelper$getWritableDatabase(SQLiteOpenHelper.java:316)
+	at android.database.sqlite.SQLiteOpenHelper.getWritableDatabase(SQLiteOpenHelper.java)
+	at androidx.sqlite.db.framework.FrameworkSQLiteOpenHelper$OpenHelper.getWritableOrReadableDatabase(FrameworkSQLiteOpenHelper.android.kt:224)
+	at androidx.sqlite.db.framework.FrameworkSQLiteOpenHelper$OpenHelper.innerGetDatabase(FrameworkSQLiteOpenHelper.android.kt:167)
+	at androidx.sqlite.db.framework.FrameworkSQLiteOpenHelper$OpenHelper.getSupportDatabase(FrameworkSQLiteOpenHelper.android.kt:141)
+	at androidx.sqlite.db.framework.FrameworkSQLiteOpenHelper.getWritableDatabase(FrameworkSQLiteOpenHelper.android.kt:96)
+	at androidx.room.RoomDatabase.internalBeginTransaction(RoomDatabase.android.kt:695)
+	at androidx.room.RoomDatabase.beginTransaction(RoomDatabase.android.kt:690)
+	at androidx.room.RoomDatabaseKt__RoomDatabase_androidKt$withTransaction$2.invokeSuspend(RoomDatabase.android.kt:2042)
+	at androidx.room.RoomDatabaseKt__RoomDatabase_androidKt$withTransaction$2.invoke(RoomDatabase.android.kt)
+	at androidx.room.RoomDatabaseKt__RoomDatabase_androidKt$withTransaction$2.invoke(RoomDatabase.android.kt)
+	at androidx.room.RoomDatabaseKt__RoomDatabase_androidKt$withTransactionContext$transactionBlock$1.invokeSuspend(RoomDatabase.android.kt:2058)
+	at androidx.room.RoomDatabaseKt__RoomDatabase_androidKt$withTransactionContext$transactionBlock$1.invoke(RoomDatabase.android.kt)
+	at androidx.room.RoomDatabaseKt__RoomDatabase_androidKt$withTransactionContext$transactionBlock$1.invoke(RoomDatabase.android.kt)
+	at kotlinx.coroutines.intrinsics.UndispatchedKt.startUndspatched(Undispatched.kt:66)
+	at kotlinx.coroutines.intrinsics.UndispatchedKt.startUndispatchedOrReturn(Undispatched.kt:43)
+	at kotlinx.coroutines.BuildersKt__Builders_commonKt.withContext(Builders.common.kt:165)
+	at kotlinx.coroutines.BuildersKt.withContext(Unknown Source)
+	at androidx.room.RoomDatabaseKt__RoomDatabase_androidKt$startTransactionCoroutine$2$1$1.invokeSuspend(RoomDatabase.android.kt:2087)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:94)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:70)
+	at kotlinx.coroutines.BuildersKt.runBlocking(Unknown Source)
+	at androidx.room.RoomDatabaseKt__RoomDatabase_androidKt$startTransactionCoroutine$2$1.run(RoomDatabase.android.kt:2084)
+	at androidx.room.TransactionExecutor.execute$lambda$1$lambda$0(TransactionExecutor.android.kt:38)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1144)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:642)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+
+]]></system-err>
+</testsuite>

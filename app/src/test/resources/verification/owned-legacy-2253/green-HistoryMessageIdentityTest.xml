@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" tests="17" skipped="0" failures="0" errors="0" timestamp="2026-10-18T00:45:07.490Z" hostname="023c096c208b" time="0.459">
+  <properties/>
+  <testcase name="identityInvariant_unsignedCacheCollisionRetainsBothArrivalDirectionsAndReplay" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.087"/>
+  <testcase name="uniqueIdentityInvariant_occupiedAlternativesStayWithOwners_andOriginalLegacyReplayMatches" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.003"/>
+  <testcase name="placementInvariant_lifecycleUsesCombinedSplitSegmentRange_inHistoryAndCacheReplay" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.013"/>
+  <testcase name="placementInvariant_unsignedCacheLifecycleAnchorsUseOrdinaryIdentityBesideSameKeySegment" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.001"/>
+  <testcase name="ownershipInvariant_unsignedCacheCollisionPreservesDisplayedSegmentAndOccupiedAliases" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.001"/>
+  <testcase name="reconciliationInvariant_overlapAtStartMiddleAndEnd_preservesHeldTextStateAndSuffixOwnership" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.006"/>
+  <testcase name="logicalIdentityInvariant_aliasedLegacyStillReconcilesLaterMatchingText_withoutDuplicatingIt" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.002"/>
+  <testcase name="heldIdentityInvariant_lateLegacyCannotTakeOpeningSegmentId_onHistoryAndCache" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.001"/>
+  <testcase name="heldIdentityInvariant_legacyFirstKeepsBareId_andOpeningAliasSurvivesUnrelatedMerges" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.002"/>
+  <testcase name="reconnectInvariant_fileRestoreRetainsOrdinaryReplayIdentity_andHistoryAfterReconnect" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.141"/>
+  <testcase name="heldIdentityInvariant_existingSegmentSuffixIsNotCanonicalizedByUnrelatedInput" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.002"/>
+  <testcase name="placementInvariant_admittedSplitCollisionGetsUnusedSuffix_thenRetainsItOnReconstruction" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.002"/>
+  <testcase name="displayedIdentityInvariant_historyWriteFallbackPreservesRestoredOwnerInBothArrivalOrders" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.066"/>
+  <testcase name="displayedIdentityInvariant_unseededReconnectPreservesCacheOwners_onReplayAndEmptyEmissions" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.096"/>
+  <testcase name="receivingListInvariant_projectionAndCacheObserver_keepIdentityAcrossReconnectAndOriginalHistoryReplay" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.019"/>
+  <testcase name="reconnectInvariant_unsignedCacheCollisionSurvivesFreshRestoreAndReplay" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.006"/>
+  <testcase name="placementInvariant_unsignedCacheCollisionKeepsNeighboursAndDurableBounds" classname="de.pyryco.mobile.data.repository.HistoryMessageIdentityTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

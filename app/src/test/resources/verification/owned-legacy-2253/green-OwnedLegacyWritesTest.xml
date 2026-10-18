@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.cache.OwnedLegacyWritesTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-18T00:51:17.761Z" hostname="023c096c208b" time="20.227">
+  <properties/>
+  <testcase name="settlementInvariant_unsettledRowCannotRemoveSavedIdentity" classname="de.pyryco.mobile.data.cache.OwnedLegacyWritesTest" time="3.156"/>
+  <testcase name="certificationInvariant_sharedProducingClaimsAreInvalidatedAtomically" classname="de.pyryco.mobile.data.cache.OwnedLegacyWritesTest" time="0.215"/>
+  <testcase name="pagingInvariant_prependedRowsKeepValidEvidenceReadable" classname="de.pyryco.mobile.data.cache.OwnedLegacyWritesTest" time="0.077"/>
+  <testcase name="boundedInvariant_newestUpdateDoesNotScaleWithSavedHistory" classname="de.pyryco.mobile.data.cache.OwnedLegacyWritesTest" time="4.255"/>
+  <testcase name="retentionInvariant_discardedContentCannotRemainCertified" classname="de.pyryco.mobile.data.cache.OwnedLegacyWritesTest" time="3.635"/>
+  <testcase name="ownershipInvariant_partialViewPreservesUnownedRowsAndEvidence" classname="de.pyryco.mobile.data.cache.OwnedLegacyWritesTest" time="8.434"/>
+  <system-out><![CDATA[owned_mutation saved_rows=20 producing_claims=20 counts=MutationCounts(rowReads=1, rowDecodes=1, rowSerializations=1, rowWrites=1, evidenceReads=8, evidenceDecodes=1, evidenceWrites=3) sql_statements=46
+owned_mutation saved_rows=18000 producing_claims=18000 counts=MutationCounts(rowReads=1, rowDecodes=1, rowSerializations=1, rowWrites=1, evidenceReads=8, evidenceDecodes=1, evidenceWrites=3) sql_statements=46
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

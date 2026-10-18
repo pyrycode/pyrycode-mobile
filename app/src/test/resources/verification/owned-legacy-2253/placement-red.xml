@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest" tests="1" skipped="0" failures="1" errors="0" timestamp="2026-10-17T23:52:49.281Z" hostname="023c096c208b" time="3.609">
+  <properties/>
+  <testcase name="migrationInvariant_existingRowsGainOwnedIndexWithoutChangingHeldOrder" classname="de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest" time="3.121">
+    <failure message="de.pyryco.mobile.data.cache.ConversationCacheException: conversation cache mutate_rows failed: invalid_data" type="de.pyryco.mobile.data.cache.ConversationCacheException">de.pyryco.mobile.data.cache.ConversationCacheException: conversation cache mutate_rows failed: invalid_data
+	at de.pyryco.mobile.data.cache.LegacyRoomStorage$mutate$2.invokeSuspend(LegacyRoomStorage.kt:747)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:98)
+	at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:124)
+	at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:89)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:586)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:820)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:717)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:704)
+</failure>
+  </testcase>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
