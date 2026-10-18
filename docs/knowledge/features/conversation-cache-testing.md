@@ -68,6 +68,54 @@ Import/application binding belongs to #2161, authoritative Room storage to #2163
 activation/owned partial writes to #2068. These disk probes do not establish application restore
 latency or production bounded reading before those consumers are activated.
 
+### Cancelled committed import cleanup (#2260)
+
+`MigratingConversationCacheTest.classificationInvariant_cancelledCommittedImportCannotReadmitUnobservedWrites`
+observes the Room commit before cancelling its paused reader. Preserve all four combinations of
+read/write import and legacy/authoritative storage, the cancelled-child assertion,
+`import_unobserved` rejection, exact imported content and fresh-instance restart/no-replacement
+checks. Letting the reader observe the committed result before cancellation would miss the fence
+these assertions exercise.
+
+Room's IO cancellation continuation can arrive after `TestCoroutineScheduler.runCurrent()`
+returns. The private `cancelAndDrain` therefore repeatedly drives the selected scheduler until
+the reader completes, under a 10-second deadline on `NonCancellable + Dispatchers.Default`.
+Timeout reports job state and virtual time without joining. The reader has an independent owner
+scope, cancelled in `finally`, and the import release gate is completed on every exit; otherwise
+a cleanup failure could still leave `runBlocking` implicitly waiting for its child. See
+[coroutine cleanup guidance](development-verification-test-scheduling.md#test-scheduling-and-harnesses).
+
+`cleanupInvariant_lateContinuationCompletesAfterInitialDrain` explicitly releases the held
+finalizer after the first drain, proving another scheduler turn is needed without sleep-based
+ordering. `cleanupInvariant_nonCompletionFailsWithoutWaitingForOwner` keeps that finalizer held
+while awaiting the cleanup caller's diagnostic failure. Releasing it before checking the caller
+would hide an enclosing-scope wait. Both probes release held work in `finally` and use bounded
+fallback draining.
+
+The [retained Linux evidence](../../../app/src/test/resources/verification/cancelled-import-2260/results.json)
+records source revisions, commands, hashes, raw output and XML. At
+`66c1431cea22b0a876df26513ec97d56e50f100f`, the focused run executed/passed all three named
+methods above (**3 passed, 0 failed, 0 skipped**); the complete class executed/passed **17,
+0 failed, 0 skipped**, including those same methods. The complete old-cleanup red captures at
+`af2d57bfdcecb5e1cd72c430f97d2feb68e5368b` and
+`8b797521a3469e37ce2ad1a8ad137e3a5c0ec054` each executed **2, 0 passed, 2 failed, 0 skipped**
+without a watchdog halt. The initial red run also failed both tests; its truncated output is
+identified separately from the complete captures.
+
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2261#issuecomment-6247160957)
+at `d7db558791aafbbd85a6a41198d0b2dfe0120cea` confirms the Linux JVM gate executed/passed
+**5930, 0 failed, 0 skipped**, including all 17 class methods and the three named methods.
+This full-suite evidence is separate from the focused builder runs. macOS was outside this
+ticket's verification scope.
+
+Keep the [historical failed capture](https://github.com/pyrycode/pyrycode-mobile/blob/2739a690cc5719e9a255962f8d382d303beffb6c/app/src/test/resources/verification/owned-coverage-2254/rework-results.json)
+distinct: at `c5529900e3f772398c899f97576ce73d599d7898`, the original class run exceeded the
+180-second method limit and 30-second interrupt grace, then exited 124 without class XML or
+reliable counts. Unchanged retries passed **1/1** for the method and **15/15** for the class,
+each with **0 failed, 0 skipped**. Those retries do not erase the failed capture. A late Room
+continuation remains a source-supported explanation for that historical hang; this test-only
+repair establishes no production cache defect.
+
 ### File-cache regressions
 
 [`FileConversationCacheTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/cache/FileConversationCacheTest.kt)

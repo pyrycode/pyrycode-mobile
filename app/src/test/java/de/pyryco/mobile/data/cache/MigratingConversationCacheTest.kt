@@ -27,9 +27,14 @@ import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.data.repository.historyRowProofs
 import de.pyryco.mobile.ui.conversations.thread.fragmentedHistoryFixture
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -39,7 +44,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -533,6 +540,123 @@ class MigratingConversationCacheTest {
             assertEquals(saved("newer", listOf(4)).retained(), open().readAuthoritativeThread("Host", "thread"))
         }
 
+    @Test
+    fun cleanupInvariant_lateContinuationCompletesAfterInitialDrain() =
+        runBlocking {
+            withHeldReader { reader, scheduler, finalizing, release ->
+                cancelAndDrain(reader, scheduler, timeoutMillis = 1_000) {
+                    assertTrue(finalizing.isCompleted)
+                    assertFalse(reader.isCompleted)
+                    // Queue the completion strictly after the cleanup's first drain has returned.
+                    release.complete(Unit)
+                    assertFalse(reader.isCompleted)
+                }
+                assertTrue(reader.isCancelled)
+                assertTrue(reader.isCompleted)
+            }
+        }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun cleanupInvariant_nonCompletionFailsWithoutWaitingForOwner() =
+        runBlocking {
+            val started = System.nanoTime()
+            val scheduler = TestCoroutineScheduler()
+            val finalizing = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val published = CompletableDeferred<Job>()
+            val attempt =
+                async(Dispatchers.Default) {
+                    val owner = CoroutineScope(StandardTestDispatcher(scheduler))
+                    val reader = owner.launch { holdCancellation(finalizing, release) }
+                    published.complete(reader)
+                    try {
+                        scheduler.runCurrent()
+                        runCatching { cancelAndDrain(reader, scheduler, timeoutMillis = 100) }
+                    } finally {
+                        owner.cancel()
+                    }
+                }
+            try {
+                // The enclosing coroutine must return before the held child's release, even on failure.
+                val failure = withTimeout(1_000) { attempt.await() }.exceptionOrNull()
+                val reader = published.await()
+                assertTrue("expected a diagnostic cleanup failure, got $failure", failure is AssertionError)
+                assertTrue(requireNotNull(failure).message.orEmpty().contains("cancelled=true completed=false"))
+                assertTrue(finalizing.isCompleted)
+                assertFalse(reader.isCompleted)
+                assertFalse(release.isCompleted)
+            } finally {
+                release.complete(Unit)
+                cancelAndDrain(attempt, scheduler, timeoutMillis = 1_000)
+                if (published.isCompleted) cancelAndDrain(published.await(), scheduler, timeoutMillis = 1_000)
+            }
+            assertTrue("cleanup and enclosing scope must return within 10 seconds", System.nanoTime() - started < 10_000_000_000L)
+        }
+
+    private suspend fun holdCancellation(
+        finalizing: CompletableDeferred<Unit>,
+        release: CompletableDeferred<Unit>,
+    ) {
+        try {
+            awaitCancellation()
+        } finally {
+            withContext(NonCancellable) {
+                finalizing.complete(Unit)
+                release.await()
+            }
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun withHeldReader(
+        block: suspend (Job, TestCoroutineScheduler, CompletableDeferred<Unit>, CompletableDeferred<Unit>) -> Unit,
+    ) {
+        val scheduler = TestCoroutineScheduler()
+        val owner = CoroutineScope(StandardTestDispatcher(scheduler))
+        val finalizing = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val reader = owner.launch { holdCancellation(finalizing, release) }
+        try {
+            scheduler.runCurrent()
+            block(reader, scheduler, finalizing, release)
+        } finally {
+            owner.cancel()
+            release.complete(Unit)
+            scheduler.runCurrent()
+            withTimeout(1_000) { reader.join() }
+            assertTrue(reader.isCompleted)
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun cancelAndDrain(
+        reader: Job,
+        scheduler: TestCoroutineScheduler,
+        timeoutMillis: Long = 10_000,
+        afterFirstDrain: () -> Unit = {},
+    ) = withContext(NonCancellable + Dispatchers.Default) {
+        // Room can dispatch cancellation back after an earlier runCurrent has already returned.
+        val completed =
+            withTimeoutOrNull(timeoutMillis) {
+                reader.cancel()
+                scheduler.runCurrent()
+                afterFirstDrain()
+                while (!reader.isCompleted) {
+                    delay(1)
+                    scheduler.runCurrent()
+                }
+                true
+            }
+        if (completed != true) {
+            throw AssertionError(
+                "Cancelled import reader did not stop within ${timeoutMillis}ms: " +
+                    "active=${reader.isActive} cancelled=${reader.isCancelled} completed=${reader.isCompleted} " +
+                    "virtualTime=${scheduler.currentTime}",
+            )
+        }
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun classificationInvariant_cancelledCommittedImportCannotReadmitUnobservedWrites() =
@@ -571,7 +695,9 @@ class MigratingConversationCacheTest {
                     if (!writeImport) assertEquals(if (authoritative) null else emptyList<ThreadItem>(), read())
                     failing.set(false)
                     val scheduler = TestCoroutineScheduler()
-                    val reader = launch(StandardTestDispatcher(scheduler)) { if (writeImport) replace() else read() }
+                    // This owner is cancelled explicitly: a cleanup failure must not make runBlocking await the reader.
+                    val readerScope = CoroutineScope(StandardTestDispatcher(scheduler))
+                    val reader = readerScope.launch { if (writeImport) replace() else read() }
                     try {
                         withTimeout(10_000) {
                             while (!entered.isCompleted) {
@@ -586,9 +712,8 @@ class MigratingConversationCacheTest {
                         }
                     } finally {
                         release.complete(Unit)
-                        reader.cancel()
-                        scheduler.runCurrent()
-                        reader.join()
+                        readerScope.cancel()
+                        cancelAndDrain(reader, scheduler)
                     }
                     assertTrue(reader.isCancelled)
                     assertRefused("import_unobserved", replace())
