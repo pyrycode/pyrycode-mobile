@@ -56,6 +56,7 @@ import de.pyryco.mobile.ui.pixelDp
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -115,6 +116,23 @@ class MarkdownReaderDesignTest {
         val paragraph = rule.onNodeWithText("The main board runs four roles", substring = true).getUnclippedBoundsInRoot()
         val subheading = rule.onNodeWithText("Next steps").getUnclippedBoundsInRoot()
         val firstItem = rule.onNodeWithText("Pin all five agents repos", substring = true).getUnclippedBoundsInRoot()
+        val paragraphLayout = layout("The main board runs four roles", substring = true)
+        val items =
+            listOf(firstItem) +
+                listOf("Measure token spend per role", "Retire the old single-role runner").map {
+                    rule.onNodeWithText(it, substring = true).getUnclippedBoundsInRoot()
+                }
+
+        assertEquals(3, paragraphLayout.lineCount)
+        for (line in 0 until paragraphLayout.lineCount) {
+            val height = paragraphLayout.getLineBottom(line) - paragraphLayout.getLineTop(line)
+            assertDpEquals(20.dp, with(rule.density) { height.toDp() }, "paragraph line $line")
+        }
+        assertDpEquals(60.dp, paragraph.height, "three-line paragraph", pixels = ROUNDED_TEXT_BLOCK_PIXELS)
+        assertDpEquals(16.dp, subheading.top - paragraph.bottom, "gap after paragraph")
+        items.forEach { assertDpEquals(20.dp, it.height, "list item height") }
+        items.zipWithNext { above, below -> assertDpEquals(6.dp, below.top - above.bottom, "sibling item gap") }
+        assertDpEquals(16.dp, code.top - items.last().bottom, "gap after list")
 
         assertEquals(56f, title.left.value, 1f)
         assertEquals(24f, title.top.value, 1f)
@@ -128,8 +146,10 @@ class MarkdownReaderDesignTest {
                 .bottom.value,
             1f,
         )
-        // Each block is checked against the one above it, so the pixel every block rounds by at the emulator's
-        // density does not add up down the body. Robolectric's density 1 rounds nothing.
+        // Adjacent tops avoid accumulating rounding from the entire body. At density 2.625, each 20sp
+        // line is 53px instead of 52.5px: the paragraph adds 1.5px; three list items plus two 6dp gaps
+        // add 2px (3 * 0.5 + 2 * 0.25). Their constituent checks above keep gaps within one pixel.
+        // Only those two intervals need two pixels; density-1 comparisons remain exact.
         val body =
             listOf(
                 "heading" to (heading.top to 97f),
@@ -144,12 +164,29 @@ class MarkdownReaderDesignTest {
         for (index in 1 until body.size) {
             val (name, block) = body[index]
             val (above, previous) = body[index - 1]
-            assertDpEquals((block.second - previous.second).dp, block.first - previous.first, "$name below $above")
+            val pixels = if (above == "paragraph" || above == "first item") ROUNDED_TEXT_BLOCK_PIXELS else 1
+            assertDpEquals((block.second - previous.second).dp, block.first - previous.first, "$name below $above", pixels = pixels)
         }
         assertEquals(20f, code.left.value, 1f)
         assertEquals(372f, code.width.value, 1f)
         assertEquals(58f, code.height.value, 1f)
         assertEquals(35f, quote.left.value, 1f)
+    }
+
+    @Test fun adjacentBlockRoundingAllowanceKeepsItsPixelBoundary() {
+        val pixel = pixelDp()
+        // A subpixel change must still fail at density 1, even with an explicit two-pixel allowance.
+        val beyond = if (pixel == 0f) 0.001f else 3 * pixel
+        val beyondDefault = if (pixel == 0f) beyond else 2 * pixel
+        for (direction in listOf(-1, 1)) {
+            assertDpEquals(0.dp, (direction * 2 * pixel).dp, pixels = ROUNDED_TEXT_BLOCK_PIXELS)
+            assertThrows(AssertionError::class.java) {
+                assertDpEquals(0.dp, (direction * beyond).dp, pixels = ROUNDED_TEXT_BLOCK_PIXELS)
+            }
+            assertThrows(AssertionError::class.java) {
+                assertDpEquals(0.dp, (direction * beyondDefault).dp)
+            }
+        }
     }
 
     private fun body() = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
@@ -519,6 +556,8 @@ class MarkdownReaderDesignTest {
     }
 
     private companion object {
+        const val ROUNDED_TEXT_BLOCK_PIXELS = 2
+
         const val REFERENCE_MARKDOWN =
             "# Builder Pipeline Plan\n\nThe main board runs four roles since 2026-09-01. Each ticket moves from " +
                 "[refiner](https://example.com) to builder, then through review and the merge gate.\n\n## Next steps\n\n" +

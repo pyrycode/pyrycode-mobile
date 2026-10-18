@@ -85,7 +85,7 @@ Parse memoisation, block and inline dispatch, tables, task lists, strikethrough,
 
 ## Testing
 
-[Reader bounds coverage and counted Linux acceptance](markdown-reader-screen.md#ordinary-block-bounds-coverage-2285)
+[Reader bounds coverage and counted Linux acceptance](markdown-reader-screen-testing.md#ordinary-block-bounds-coverage-2285)
 pin 16dp ordinary gaps for both note sources, recursive list/quote content, panel
 boundaries, 6dp sibling gaps and unchanged outer padding. Reader heading-specific
 20/12dp integration remains with #2278/#2276.
