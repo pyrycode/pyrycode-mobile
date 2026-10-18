@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTextTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-18T14:32:53.194Z" hostname="723893f7154c" time="7.924">
+  <properties/>
+  <testcase name="completedBlocks_areNeitherReparsedNorRecomposed_whileTheTailGrowsAndTheCaretBlinks" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTextTest" time="5.167"/>
+  <testcase name="pendingInlineConstructs_showTheirTextPlain_withoutPunctuationOrLinks" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTextTest" time="0.2"/>
+  <testcase name="pacing_aLargeFormattedBacklogCatchesUpWithinFifteenTicks_andNeverShowsPunctuation" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTextTest" time="0.284"/>
+  <testcase name="completion_beforeTheRevealCatchesUp_showsTheWholeReplyAtOnce_andMalformedSourceFallsBack" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTextTest" time="0.127"/>
+  <testcase name="caret_followsTheTrailingText_andNeverEntersCodeOrALink" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTextTest" time="0.105"/>
+  <testcase name="trailingAmbiguity_aHomePathChangesOnSettlement" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTextTest" time="0.059"/>
+  <testcase name="literalPunctuation_staysLiteral_andCompleteConstructsKeepTheirFormatting" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTextTest" time="0.142"/>
+  <testcase name="clearingIsStreaming_onACaughtUpReply_keepsTextFormattingLinksAndPositions" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTextTest" time="0.232"/>
+  <testcase name="pacing_aSmallBacklogRevealsOneFormattedWordPerTick" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTextTest" time="0.104"/>
+  <testcase name="completeMarkdown_settlesWithTheSameTextFormattingLinksAndBounds" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTextTest" time="0.879"/>
+  <testcase name="pendingTableHeader_showsItsCellsPlain_untilTheRealTableArrives" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTextTest" time="0.066"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
