@@ -270,6 +270,23 @@ and `HostWorkspacePreferencesTest` — see [App preferences § Testing](app-pref
 already used correctly). Hold the first scope's `Job` in a named `val` and call `job1.join()` right after
 `scope1.cancel()`, before constructing the second store.
 
+For a child on a paused `StandardTestDispatcher`, cancellation followed by one scheduler drain
+and `join()` can still hang: an IO cancellation continuation may arrive after the drain.
+Drive the child's selected scheduler until `isCompleted`, with a deadline that progresses on
+a real dispatcher independently of virtual time. A timeout around `join()` alone does not bound
+an enclosing scope's implicit wait for that child. Own the reader in an independent scope,
+cancel that owner on every exit, release held work in `finally`, and report timeout diagnostics
+without an unbounded join. `MigratingConversationCacheTest` keeps this helper local to its
+cancelled-import probe, under `NonCancellable + Dispatchers.Default` with a 10-second deadline.
+
+Its late-continuation regression explicitly queues completion after the initial drain; sleeps
+and repeated passing retries cannot establish that ordering. Its non-completion regression
+awaits the cleanup caller while the child's non-cancellable finalizer remains held, then releases
+the gate in guaranteed cleanup with bounded fallback draining. Releasing the finalizer before
+checking the caller would let a broken structured-wait path pass. See
+[cancelled committed import cleanup](conversation-cache-testing.md#cancelled-committed-import-cleanup-2260)
+for the named probes and retained red/green Linux evidence.
+
 A JVM unit test that constructs or resolves a component backed by `Dispatchers.Default` — a Koin
 singleton reached without an injected test dispatcher, for example — must stop it before that test
 class's `Dispatchers.resetMain()`, not merely dispose it. The failure this produces attaches to
