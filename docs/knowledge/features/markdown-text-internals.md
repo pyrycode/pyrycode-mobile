@@ -25,13 +25,18 @@ The parse is keyed on the `markdown` string itself — the AST is rebuilt only w
 | `PARAGRAPH` | `Text(buildInline(...), style = style.body)` |
 | `UNORDERED_LIST` | `Column { … Row { Text("•"); Spacer; Column { recurse } } … }` — an item carrying a `GFMTokenTypes.CHECK_BOX` child renders `TaskMark(checked)` instead of the bullet; see [Task lists](#task-lists). **Reader only (#1533):** a non-task item whose first block is a paragraph skips the `Row` entirely and draws one `Text` of `"$marker  "` followed by `buildInline(lead)`, so a wrapped continuation line returns to the list's own left edge instead of hanging under the item text — matching Figma `553:2574`, where the marker is part of the item's paragraph, not a sibling of it. The item's later blocks (a nested list, a second paragraph) still indent under a fixed `ReaderListContinuationIndent` (14dp), since the frame has no nested case to follow. |
 | `ORDERED_LIST` | same but marker is `"${index + 1}."` (1-based); both list kinds dispatch through the same `ListBlock`, so a `CHECK_BOX` child replaces the marker here too — untested directly, but true by the shared code path. The reader's inline-marker path above applies identically, with the `N.` marker in place of `•`. |
-| `BLOCK_QUOTE` | Thread: 4dp `onSurfaceVariant` bar and italic paragraphs. Reader: 3dp `outlineVariant` bar, 12dp gap and regular `bodyLarge` / `onSurfaceVariant` text. |
+| `BLOCK_QUOTE` | Thread: 4dp `onSurfaceVariant` bar and italic paragraphs. Reader: 3dp `outlineVariant` bar, 12dp gap and regular `bodyMedium` 14/20 / `onSurfaceVariant` text. |
 | `GFMElementTypes.TABLE` | `TableBlock(...)` — see [Tables](#tables) |
 | `CODE_FENCE` | Reader unlabelled fence: `ReaderCodeBlock`; labelled fence and thread: `CodeBlock` with copy control — see [Code blocks](#code-blocks). |
 | `CODE_BLOCK` | Reader indented block: `ReaderCodeBlock`; thread: `CodeBlock`. Both use extracted source text. |
 | _else_ | `Text(node.getTextInNode(source).trim(), style = style.body)` — fallback |
 
-`Column` arrangements use `style.blockSpacing` between top-level blocks and recursively inside list items and quotes; sibling list items use `style.listItemSpacing`. Thread defaults are 16dp between blocks and 4dp between sibling items (#2273); the reader explicitly supplies 12dp and 6dp. Gaps come from the columns, not per-element padding, so the first and last blocks align with the renderer bounds without added outer spacing. Measure code-block gaps against the code surface, including its internal padding, rather than against the code text.
+`Column` arrangements use `style.blockSpacing` between top-level blocks and recursively inside list items and quotes; sibling list items use `style.listItemSpacing`. Thread defaults are 16dp between blocks and 4dp between sibling items (#2273); the reader explicitly supplies 16dp and 6dp (#2285). Gaps come from the columns, not per-element padding, so the first and last blocks align with the renderer bounds without added outer spacing. Measure code-block gaps against the code surface, including its internal padding, rather than against the code text. A one-line plain panel has a 44dp visible surface
+inside Material’s 48dp minimum interactive layout; the reader bounds fixture uses
+the reference’s two-line panel to exceed that minimum and fill the measured block.
+Keep exact 16dp gap assertions rather than compensating for the touch-target inset.
+Reader outer padding remains measured-bar-plus-28dp / 20dp gutters / 16dp bottom;
+heading-specific 20/12dp integration belongs to #2278/#2276.
 
 ATX headings use the [markdown-only scale](shared-typography.md#markdown-headings) and
 `onSecondaryContainer` in both presentations, retaining inline link colours and code spans.
@@ -54,12 +59,20 @@ A heading's own children are just the marker and one content node — `# Heading
 | `STRONG` | `withStyle(SpanStyle(fontWeight = Bold)) { recurse children }` |
 | `GFMElementTypes.STRIKETHROUGH` | `withStyle(SpanStyle(textDecoration = LineThrough, color = onSurfaceVariant)) { recurse children, filtering out the two TILDE tokens }` — only the `~~double~~` form arrives as this node; see [Strikethrough](#strikethrough) for the `~single~` form, which does not |
 | `CODE_SPAN` | `withStyle(SpanStyle(fontFamily = Monospace, background = surfaceContainer)) { append(text.trim('\`')) }` |
-| `INLINE_LINK` | `withLink(LinkAnnotation.Url(url, styles = TextLinkStyles(SpanStyle(color = primary, textDecoration = Underline)), linkInteractionListener = …)) { append(linkText) }` |
+| `INLINE_LINK` | Check admission before `withLink`: admitted targets get one `LinkAnnotation.Url` over the label with the unchanged target and primary/underline styling; rejected targets use `append(linkText)` without link styling or annotation. |
 | `EOL` | `append(" ")` — collapses CommonMark soft-breaks to a single space |
 | _leaf token, no children_ | `append(node.getTextInNode(source).toString())` — this is the arm `GFM_AUTOLINK` hits (a childless leaf), so a bare URL renders as its own text and never as a link |
 | _element with children_ | recurse into each child — this is the arm `INLINE_MATH` hits, so `$20 and $30` rebuilds verbatim from its `DOLLAR` / `TEXT` / `WHITE_SPACE` leaves |
 
 Link text is built from the `LINK_TEXT` child's children, filtering `LBRACKET` / `RBRACKET` tokens. URL is the `LINK_DESTINATION` child's text, trimmed and stripped of surrounding `<` / `>` (for angle-bracket destinations) — read from the node's own source span rather than from its children, so it stays byte-identical to the CommonMark case even though GFM nests a `GFM_AUTOLINK` child inside `LINK_DESTINATION` where CommonMark held `TEXT`/`:`/`TEXT`. Code-span text is the node's raw text trimmed of backticks.
+
+Since #2279, admission uses the private `MarkdownUriHandler.accepts(target)` capability,
+with `isSafeLinkScheme(target)` as the fallback for a plain `UriHandler`, including
+the non-routing `inlineText` conversion. Finished replies, streaming replies and reader
+content share this arm. Rejected labels inherit surrounding text treatment. A streaming
+destination closed only by synthetic punctuation remains plain; completing a rejected
+destination and settling the same message never adds a link. Bare prose and code spans
+retain their existing literal behavior.
 
 **Every sibling-list walk goes through `appendInlineChildren(children, source, uriHandler, colors)`, not a per-child loop.** `appendInline`'s own `else` arm, its `EMPH` / `STRONG` / `STRIKETHROUGH` arms, and `HeadingBlock` all pass their (already-filtered) child list through it. The seam exists for one reason: pairing bare `~single~` tildes needs to see siblings together, which a node walked one at a time cannot do — see [Strikethrough](#strikethrough).
 
@@ -70,6 +83,13 @@ Link text is built from the `LINK_TEXT` child's children, filtering `LBRACKET` /
 `GFMElementTypes.TABLE` dispatches to `TableBlock`. The `HEADER`'s `CELL` children are row 0, each `ROW`'s `CELL` children a further row; column count is row 0's size. A cell's own children are ordinary inline nodes, walked by the same `appendInlineChildren` as everywhere else.
 
 **Column-major layout**, not row-major: a `Row` of per-column `Column`s, each `Column` at `IntrinsicSize.Max` width with its cells at `fillMaxWidth`. That is what gives a column its own widest-cell width with no measuring pass, and what gives `textAlign` a box to align within. Rows stay in step across columns only because **cells never wrap** — each is one line of `bodyMedium` (`softWrap = false`, `maxLines = 1`), whose `lineHeight` comes from the type style rather than the glyphs, so a monospace or bold cell sits at the same height as plain text. A table too wide for the bubble scrolls horizontally (`Modifier.horizontalScroll` on the outer `Box`) instead of reflowing; the bubble and thread keep their own width because the scroll is on the table's content, not on the message column.
+
+`TableBlock` receives `MarkdownTextStyle` explicitly (#2283). Reader cells select its
+body style, carrying Roboto 14/20, 0.25sp tracking, `onSecondaryContainer` and untrimmed
+line boxes through this separate typography selection; changing only the reader's
+paragraph style would leave cells behind. Thread cells continue selecting Material
+`bodyMedium`. Row 0 copies the selected style with bold weight, retaining header emphasis.
+See [reader native coverage](markdown-reader-screen.md#reader-body-typography-coverage-2283).
 
 **Alignment** comes from `parseTableAlignments(delimiterRow)` (`internal`, pure, unit-tested): splits the delimiter row on `|`, drops a blank leading/trailing segment (GFM permits the row with or without outer pipes), and reads each spec — leading-and-trailing `:` → `Center`, trailing `:` only → `End`, anything else → `Start`. A column the delimiter row doesn't describe defaults to `Start`.
 
@@ -190,7 +210,19 @@ internal fun isSafeLinkScheme(url: String): Boolean {
 }
 ```
 
-The link's `LinkInteractionListener` consults this predicate before calling `uriHandler.openUri(url)`. **Rejected URLs no-op silently** — the visible underlined link span remains drawn, the tap does nothing. The renderer never blocks the link from rendering visually; it only blocks the navigation. Visual fidelity therefore doesn't depend on URL safety.
+External targets use this predicate at render time and again at activation through
+`routeMarkdownLink`. **Rejected explicit links are inert labels**: no URL annotation,
+link colour or underline is added, and tapping starts nothing. `http`, `https` and
+`mailto` remain admitted, including mixed-case schemes; `obsidian`, `javascript`,
+`data`, `file`, `content` and unknown schemes remain rejected. Admission introduces
+no target normalisation. Workspace Markdown paths have the separate opt-in described
+below.
+
+`AllowlistedLinkProvider.renderLink` and `AutolinkProvider` in `MarkdownConversions.kt`
+share `isSafeLinkScheme` for HTML href admission. Rejected explicit targets emit only
+their visible labels; workspace paths receive no HTML href even when an assistant
+renderer would have a workspace callback. HTML retains its existing destination
+normalisation and escaping.
 
 **Why allowlist, not denylist.** A denylist (`intent://`, `javascript:`, …) is fragile against future scheme additions and against case / whitespace tricks (`InTeNt://`, `\tjavascript:`). The allowlist is enforced at the `lowercase()` scheme prefix, so it rejects anything that doesn't normalise to `http` / `https` / `mailto`. New schemes that turn out safe later (e.g. `tel:` for click-to-dial) are an explicit one-line addition rather than a silent default.
 
@@ -210,9 +242,30 @@ The link's `LinkInteractionListener` consults this predicate before calling `uri
 
 - `internal fun markdownLinkPath(target: String): String?` — the path to send, or `null` when [target] is not a markdown path. Strips a trailing `#fragment` (from the *last* `#` — `a.md#x#y` keeps `#x` as part of the path and so is not a markdown path; harmless, since the link then just stays inert rather than misrouting), then a trailing `:line` or `:line:column` (digits only, `LinkLineSuffix`), then requires no URL scheme (`LinkScheme`, RFC 3986's `^[A-Za-z][A-Za-z0-9+.-]*:`) and a `.md` / `.markdown` suffix, any case. Stripping the `:line` suffix *before* the scheme check is what keeps `Plan.md:12` from reading as scheme `plan.md`. The stripped path is returned exactly as written — the phone never decodes, resolves or confines it; the daemon's `read_workspace_file` does.
 - `internal fun routeMarkdownLink(target, onOpenMarkdownPath, openUri)` — a markdown path with a non-null callback goes to the callback and never to `openUri`; anything else falls through to the existing `isSafeLinkScheme` allowlist.
-- `MarkdownText` wraps `LocalUriHandler.current` in a `remember`ed private `UriHandler` whose `openUri` calls `routeMarkdownLink` (the callback read through `rememberUpdatedState`, so a recomposition with a new lambda doesn't need a new handler instance); the `INLINE_LINK` arm's `LinkInteractionListener` now calls this wrapping handler for every link target unconditionally, rather than checking `isSafeLinkScheme` itself first.
+- Both `MarkdownText` and `StreamingMarkdownText` use `rememberMarkdownUriHandler` to wrap `LocalUriHandler.current` in a private `MarkdownUriHandler`. Recursive walkers keep their plain `UriHandler` signatures. Its `accepts(target)` admits an external allowlisted scheme or a `markdownLinkPath(target)` only when workspace opt-in is present. Reader/default callers omit that opt-in, so workspace labels have neither link styling nor a URL annotation.
+- The handler is remembered by the platform handler and the boolean `onOpenMarkdownPath != null`. Adding or removing opt-in changes handler identity and rebuilds annotations even for unchanged source and completed streaming blocks. Replacing one non-null callback with another keeps the handler stable, preserving completed-block reuse. Only activation reads the latest callback through `rememberUpdatedState`; `openUri` independently calls `routeMarkdownLink`, so a retained listener cannot invoke a removed or stale callback.
 
 Consumer wiring: [`MessageBubble`](message-bubble.md)'s `onOpenMarkdownLink` parameter reaches both assistant render paths (finished `MarkdownText` and the streaming `StreamingAssistantBody` / `StreamingAssistantBodyView` chain) but not `UserMessageBubble`, which never receives it. [Thread screen](thread-screen.md) and [Markdown reader screen](markdown-reader-screen.md#linked-note-live-since-1050) cover the ViewModel-side single-read guard and the route the callback ultimately drives.
+
+`MarkdownLinkTapTest` checks annotation ranges and link styles per label, including
+mixed H1–H6 headings: the adjacent web label must stay linked while the workspace
+label is inert without opt-in. A whole-node assertion that no links exist would
+reject that valid mixture, and activating a supposedly rejected annotation cannot
+prove its absence. Coordinate-based taps on reader heading labels use Robolectric
+native graphics so real glyph bounds keep the tap off the neighboring web link.
+The callback-change regression covers both finished and completed streaming blocks.
+
+Linux focused evidence for #2279 is retained in
+[`markdown-2279/rework-evidence.txt`](../../../app/src/test/resources/markdown-2279/rework-evidence.txt)
+with raw JUnit reports alongside it. At source revision
+`fc2c6ed8442e10e398df5e736ad34cd491474c37`, `MarkdownLinkTapTest` executed and passed
+14 methods and `MarkdownTextTest` executed and passed 25, each with zero failures,
+errors or skips. These include the finished/streaming admission, callback-change,
+settlement, reader-body and reader-heading checks and the unchanged
+`a_bare_url_renders_as_text_and_is_not_a_link`. The evidence index also preserves
+the two failed reader-heading runs; the earlier
+[`evidence.txt`](../../../app/src/test/resources/markdown-2279/evidence.txt) retains
+the routing, HTML, parser and streaming focused results and their source revisions.
 
 ## File-private spacing constants
 
@@ -243,4 +296,4 @@ private val TaskMarkCornerRadius = 3.dp
 private val TaskMarkTopInset = 4.dp   // sits the mark on the first text line, not the item's top edge
 ```
 
-Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256`; see [Tables](#tables)) — `internal` since #1067, the rest of this list stays file-private. Block spacing comes from `MarkdownTextStyle`, not a file-private constant: the message default is 16dp and the reader supplies its own 12dp. Text sizes use `MaterialTheme.typography` roles; the thread code role overrides line height to 20sp.
+Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256`; see [Tables](#tables)) — `internal` since #1067, the rest of this list stays file-private. Block spacing comes from `MarkdownTextStyle`, not a file-private constant: the message default is 16dp and the reader explicitly supplies 16dp, with 6dp sibling-item gaps. Text sizes use `MaterialTheme.typography` roles; the thread code role overrides line height to 20sp.

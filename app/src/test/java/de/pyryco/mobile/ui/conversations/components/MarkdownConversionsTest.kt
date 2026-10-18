@@ -118,6 +118,8 @@ class MarkdownConversionsTest {
             "intent://x#Intent;end",
             "notes/Plan.md",
             "vbscript:x",
+            "obsidian://open?vault=x",
+            "content://x/a.md",
         ).forEach { target ->
             val html = markdownHtml("[text]($target)")
             assertFalse("$target → $html", html.contains("<a"))

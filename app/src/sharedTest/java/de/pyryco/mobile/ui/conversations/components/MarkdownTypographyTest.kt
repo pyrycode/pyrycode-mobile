@@ -1,9 +1,13 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
@@ -12,10 +16,14 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onParent
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -39,30 +47,115 @@ class MarkdownTypographyTest {
     @get:Rule
     val rule = createComposeRule()
 
+    private var proseColor = Color.Unspecified
+    private var quoteColor = Color.Unspecified
+    private var linkColor = Color.Unspecified
+
     @Test
-    fun reader_uses_large_body_and_recursively_spaced_blocks() {
+    fun reader_uses_message_body_and_recursively_spaced_blocks() = assertReader(linked = false, dark = true)
+
+    @Test
+    fun linked_note_uses_the_same_reader_style() = assertReader(linked = true, dark = true)
+
+    @Test
+    fun light_reader_uses_message_body() = assertReader(linked = false, dark = false)
+
+    @Test
+    fun light_linked_note_uses_the_same_reader_style() = assertReader(linked = true, dark = false)
+
+    private fun assertReader(
+        linked: Boolean,
+        dark: Boolean,
+    ) {
         rule.setContent {
-            PyrycodeMobileTheme(darkTheme = true) {
-                MarkdownReaderScreen(MarkdownDocument("Typography.md", fixture), onBack = {})
+            PyrycodeMobileTheme(darkTheme = dark, dynamicColor = false) {
+                proseColor = MaterialTheme.colorScheme.onSecondaryContainer
+                quoteColor = MaterialTheme.colorScheme.onSurfaceVariant
+                linkColor = MaterialTheme.colorScheme.primary
+                if (linked) {
+                    LinkedMarkdownReaderDestination(
+                        note = LinkedMarkdown("Typography.md", MarkdownDocument("Typography.md", fixture)),
+                        reread = { null },
+                        onBack = {},
+                    )
+                } else {
+                    MarkdownReaderScreen(MarkdownDocument("Typography.md", fixture), onBack = {})
+                }
             }
         }
-        assertBody(16, 24, 12f, 6f, quoteStyle = FontStyle.Normal, inlineMarkers = true)
+        assertBody(14, 20, 16f, 6f, quoteStyle = FontStyle.Normal, inlineMarkers = true)
         assertSpecialStyles(codeSize = 12)
+        for (text in listOf("Paragraph one", "Parent", "Ordered one", "Task one", "Cell", "Header", "Quote one", "Reader link")) {
+            val node = rule.onNodeWithText(text, substring = true, useUnmergedTree = true)
+            val layout = node.layout()
+            val style = layout.layoutInput.style
+            assertEquals(text, FontFamily.SansSerif, style.fontFamily)
+            assertEquals(text, 14.sp, style.fontSize)
+            assertEquals(text, 20.sp, style.lineHeight)
+            assertEquals(text, 0.25.sp, style.letterSpacing)
+            assertEquals(text, if (text == "Header") FontWeight.Bold else FontWeight.Normal, style.fontWeight)
+            assertEquals(text, if (text == "Quote one") quoteColor else proseColor, style.color)
+            assertEquals(text, LineHeightStyle.Trim.None, style.lineHeightStyle?.trim)
+            assertEquals(text, 20f * layout.lineCount, layout.size.height / rule.density.density, 0.6f)
+        }
+        val linkText =
+            rule
+                .onNodeWithText("Reader link", useUnmergedTree = true)
+                .layout()
+                .layoutInput.text
+        val link = linkText.getLinkAnnotations(0, linkText.length).single().item
+        assertEquals(linkColor, link.styles?.style?.color)
+        assertEquals(TextDecoration.Underline, link.styles?.style?.textDecoration)
     }
 
     @Test
-    fun linked_note_uses_the_same_reader_style() {
+    fun attachment_reader_has_sixteen_dp_block_gaps_and_preserves_outer_padding() = assertReaderBlockBounds(linked = false)
+
+    @Test
+    fun linked_reader_has_sixteen_dp_block_gaps_and_preserves_outer_padding() = assertReaderBlockBounds(linked = true)
+
+    private fun assertReaderBlockBounds(linked: Boolean) {
+        val source =
+            "First\n\nSecond\n\n- Item one\n- Item two\n\n```kotlin\nval x = 1\n```\n\nBetween\n\n```\nplain code\nsecond line\n```\n\n" +
+                (1..20).joinToString("\n\n") { "Tail $it" }
         rule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
-                LinkedMarkdownReaderDestination(
-                    note = LinkedMarkdown("Typography.md", MarkdownDocument("Typography.md", fixture)),
-                    reread = { null },
-                    onBack = {},
-                )
+                val document = MarkdownDocument("Spacing.md", source)
+                if (linked) {
+                    LinkedMarkdownReaderDestination(LinkedMarkdown("Spacing.md", document), reread = { null }, onBack = {})
+                } else {
+                    MarkdownReaderScreen(document, onBack = {})
+                }
             }
         }
-        assertBody(16, 24, 12f, 6f, quoteStyle = FontStyle.Normal, inlineMarkers = true)
-        assertSpecialStyles(codeSize = 12)
+        assertGap("First", "Second", 16f)
+        assertGap("Second", "Item one", 16f)
+        assertGap("Item one", "Item two", 6f)
+        val labelledCode = rule.onNodeWithTag(CODE_BLOCK_HEADER_TAG, useUnmergedTree = true).onParent().getUnclippedBoundsInRoot()
+        // Measure the shared panel around the scrolling text, including its padding and copy rail.
+        val plainCode =
+            rule
+                .onNodeWithText("plain code\nsecond line", useUnmergedTree = true)
+                .onParent()
+                .onParent()
+                .getUnclippedBoundsInRoot()
+        val item = rule.onNodeWithText("Item two", substring = true, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val between = rule.onNodeWithText("Between", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val tail = rule.onNodeWithText("Tail 1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals("list -> labelled code", 16f, (labelledCode.top - item.bottom).value, 0.6f)
+        assertEquals("labelled code -> paragraph", 16f, (between.top - labelledCode.bottom).value, 0.6f)
+        assertEquals("paragraph -> plain code", 16f, (plainCode.top - between.bottom).value, 0.6f)
+        assertEquals("plain code -> paragraph", 16f, (tail.top - plainCode.bottom).value, 0.6f)
+        val first = rule.onNodeWithText("First", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val bar = rule.onNodeWithTag("markdown-reader-top-bar").getUnclippedBoundsInRoot()
+        val root = rule.onRoot().getUnclippedBoundsInRoot()
+        assertEquals("top padding below measured bar", 28f, (first.top - bar.bottom).value, 0.6f)
+        assertEquals("left gutter", 20f, (first.left - root.left).value, 0.6f)
+        assertEquals("right gutter", 20f, (root.right - plainCode.right).value, 0.6f)
+        val body = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+        body.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 100_000f) }
+        val last = rule.onNodeWithText("Tail 20", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals("bottom padding at scroll end", 16f, (body.getUnclippedBoundsInRoot().bottom - last.bottom).value, 0.6f)
     }
 
     @Test
@@ -277,6 +370,8 @@ class MarkdownTypographyTest {
         ```
 
             indented code
+
+        [Reader link](https://example.com)
 
         End
         """.trimIndent()

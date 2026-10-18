@@ -1,0 +1,39 @@
+Ticket #2279 — verifier finding 1 rework, 2026-10-18
+Operating system: Linux 7.0.0-38-generic x86_64
+
+Original reader-heading reproduction:
+Source revision: 8af0981af2cc2b12ae96f6f442c99addd579dbd3
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest.allReaderHeadingLevels_keepWorkspaceLinksInertAndRouteWebLinks' --console=plain
+Executed 1; passed 0; failed 1; errors 0; skipped 0.
+Failure: no link found matching the notes/ annotation predicate.
+Raw result: rework-reader-heading-red.xml
+
+First repaired class, before native glyph measurement:
+Source revision: 59c259d5f1d8a9ed6f1b512a8873246e9dc26382
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest' --console=plain
+Executed 14; passed 13; failed 1; errors 0; skipped 0.
+Failure: first workspace-glyph pointer tap activated the adjacent web target
+under default Robolectric graphics. Native graphics corrects text hit geometry;
+all annotation, styling, no-op and activation assertions remain intact.
+Raw result: rework-reader-heading-pointer-red.xml
+
+Passing rework source revision: fc2c6ed8442e10e398df5e736ad34cd491474c37
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest' --console=plain
+Executed 14; passed 14; failed 0; errors 0; skipped 0.
+Raw result: rework-MarkdownLinkTapTest.xml
+Includes allReaderHeadingLevels_keepWorkspaceLinksInertAndRouteWebLinks,
+allHeadingLevels_routeWorkspaceAndWebLinks and
+allStreamingHeadingLevels_routeWorkspaceAndWebLinks, plus the existing
+finished/streaming admission, callback, settlement and reader-body controls.
+
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.components.MarkdownTextTest' --console=plain
+Source revision: fc2c6ed8442e10e398df5e736ad34cd491474c37
+Executed 25; passed 25; failed 0; errors 0; skipped 0.
+Raw result: rework-MarkdownTextTest.xml
+a_bare_url_renders_as_text_and_is_not_a_link is unchanged and passed.
+
+Focused green total: executed 39; passed 39; failed/errors/skipped 0.
+These are focused results, not a complete acceptance pass. Final builder
+build/format/lint/pre-verify checks are recorded in the PR Testing section.
+Complete JVM, device-only and scripted gates remain dispatcher-owned.
+macOS is outside this Linux ticket's verification scope.

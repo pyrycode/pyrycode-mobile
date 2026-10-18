@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-18T14:27:20.692Z" hostname="723893f7154c" time="6.684">
+  <properties/>
+  <testcase name="streamingWorkspaceOptInChanges_refreshAnnotationsAndUseTheCurrentCallback" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="4.734"/>
+  <testcase name="reader_links_keep_web_routing_and_inert_workspace_paths" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.215"/>
+  <testcase name="aStreamingDestination_becomesInertWhenRejected_andStaysInertOnSettlement" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.286"/>
+  <testcase name="aFinishedReply_handsTheNotesPathToTheThread_andNothingToAnotherApp" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.101"/>
+  <testcase name="finishedExplicitLinks_agreeWithRoutingAndHtml" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.157"/>
+  <testcase name="withoutTheOptIn_aNotesLinkStaysInert" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.054"/>
+  <testcase name="aStreamingReply_handsTheNotesPathToTheThread" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.106"/>
+  <testcase name="aWebLinkInAReply_stillOpensThroughTheUriHandler" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.058"/>
+  <testcase name="workspaceOptInChanges_refreshAnnotationsAndUseTheCurrentCallback" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.065"/>
+  <testcase name="streamingExplicitLinks_agreeWithRoutingAndHtml" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.331"/>
+  <testcase name="theOperatorsOwnMessage_isNotALink" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.057"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

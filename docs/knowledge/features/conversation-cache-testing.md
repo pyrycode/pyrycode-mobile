@@ -68,6 +68,49 @@ Import/application binding belongs to #2161, authoritative Room storage to #2163
 activation/owned partial writes to #2068. These disk probes do not establish application restore
 latency or production bounded reading before those consumers are activated.
 
+### Received-gap subtraction runtime (#2269)
+
+`OwnedLegacyCoverageTest.anchorInvariant_subtractingProducerKeepsValidReceivedGapWalk`
+combines change/removal cases at 20 and 18000 rows under one `runTest` deadline. Its
+24-statement localized mutation counters precede substantial real-disk restore, repeated-save
+and reopened-reader verification work. Equal bounded SQL work does not bound the whole fixture's
+runtime. Keep both sizes, real disk-backed Room and production repository integration, exact
+rows/spans/gaps/walks/cursors, withdrawn proofs, conservative unknown/start state and unrelated
+evidence equality. The [owned coverage contract](conversation-cache-legacy-mutations.md#owned-coverage-and-received-evidence-2254)
+and invalid-anchor companion control remain unchanged.
+
+Content-free monotonic phase markers sit outside the measured SQL window, with an explicit final
+database close before each `complete` marker. The original-deadline diagnostic completed all four
+cases and closes at 52.250 seconds of body time: large change/removal cases took 28.201/22.245
+seconds, while their measured mutations took only 423/285 milliseconds. A repaired run then crossed
+the former minute during the final 18000-row removal `verify_final_reopen` phase
+(57.346–60.703 seconds), closed and completed. This measured aggregate cost justifies the bounded
+`runTest(timeout = 2.minutes)` on this method, roughly twice observed complete runtime. Preserve
+the fixture and assertions when revisiting this budget.
+
+The historical candidate `01c9fccc87efaace3cbff97c5026df4550d49f71` and base
+`9281e2e5926ead8d22e5de5961183de0e38ffa6c` captures each record **1 executed, 0 passed,
+1 failed, 0 errors/skips** with `UncompletedCoroutinesError` after the last mutation counter.
+They locate the remaining work in the final removal case but cannot identify its precise
+interrupted call. Fresh completion demonstrates insufficient aggregate runtime headroom;
+no suspended-coroutine or Room defect was demonstrated. Green retries do not erase those failures.
+
+The [retained Linux manifest and sibling compressed XML](../../../app/src/test/resources/verification/gap-subtraction-2269/results.json)
+preserve commands, revisions, hashes, counts and phase output. The unchanged baseline at
+`6e292874310dde62d1f8461f805dda9224ad9195` passed **1/1** in 54.708 seconds; the diagnostic
+at `1faf301baf71e781739a9d4a2fa8cc58308f056d` passed **1/1** in 53.973 seconds. At repaired
+revision `2bc42d88b54286d18b4ccb056f79429fabb03db5`, the exact method passed **1/1** in
+63.138 seconds and the class passed **16/16** in 116.183 seconds (named method 49.890 seconds,
+invalid-anchor control passed). Every green selection had **0 failures/errors/skips**.
+
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2293#issuecomment-6253996404)
+at `c53b4b0e008bc4826ffac022c8a10850749f6015` confirms the complete Linux JVM gate:
+**5992 executed/passed, 0 failures/errors/skips**. Its class XML records **16/16** passed in
+112.145 seconds, including this method in 52.268 seconds and the invalid-anchor control.
+This is full-suite evidence, separate from the focused runs. macOS was outside this ticket's
+verification scope; no device or real-Claude acceptance was required. See the
+[diagnosis plan](../../specs/architecture/2269-reliable-gap-subtraction-probe.md).
+
 ### Cancelled committed import cleanup (#2260)
 
 `MigratingConversationCacheTest.classificationInvariant_cancelledCommittedImportCannotReadmitUnobservedWrites`
