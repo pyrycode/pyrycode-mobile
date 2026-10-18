@@ -691,6 +691,20 @@ class LegacyRoomStorage internal constructor(
                 )
 
             val completeView = observed.size == header.rowCount
+            val recoveringIds = recovering.keys.sorted()
+            val recoverySpans =
+                incoming.unsignedSpans.filter { span ->
+                    val found = recoveringIds.binarySearch(span.first)
+                    val index = if (found >= 0) found else -found - 1
+                    recoveringIds.getOrNull(index)?.let { it <= span.last } == true
+                }
+            val repairedAnchors = HashSet<ULong>()
+
+            fun recoveringSpan(id: ULong): Boolean {
+                val found = recoverySpans.binarySearch { it.first.compareTo(id) }
+                val index = if (found >= 0) found else -found - 2
+                return index >= 0 && id <= recoverySpans[index].last
+            }
             val ownedEntries =
                 owned.flatMapTo(HashSet()) {
                     prior?.unsignedRowEntries?.get(it).orEmpty() + incoming.unsignedRowEntries[it].orEmpty()
@@ -702,7 +716,7 @@ class LegacyRoomStorage internal constructor(
                 old: Map<ULong, String>,
             ) {
                 for (key in current.keys + old.keys) {
-                    if (current[key] == old[key]) continue
+                    if (current[key] == old[key] && key !in repairedAnchors) continue
                     if (key !in current && !completeView && key !in ownedEntries) continue
                     val held = dao.evidenceCells(host, conversation, kind, key.toString())
                     lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + held.size)
@@ -728,11 +742,9 @@ class LegacyRoomStorage internal constructor(
                     lastMutationCounts = lastMutationCounts.copy(evidenceWrites = lastMutationCounts.evidenceWrites + 1)
                 }
             }
-            anchors("cursors", incoming.unsignedCursors, prior?.unsignedCursors.orEmpty())
-            anchors("walks", incoming.unsignedWalks, prior?.unsignedWalks.orEmpty())
             val oldGaps = prior?.unsignedGaps.orEmpty().toHashSet()
             for (gap in incoming.unsignedGaps) {
-                if (gap in oldGaps) continue
+                if (gap in oldGaps && !recoveringSpan(gap.anchor) && !recoveringSpan(gap.edge)) continue
                 val older = dao.intervals(host, conversation, "spans", gap.anchor.position(), gap.anchor.position()).singleOrNull()
                 val newer = dao.newerSpan(host, conversation, gap.anchor.position()).singleOrNull()
                 if (older != null && newer?.low == gap.edge.position()) {
@@ -740,8 +752,11 @@ class LegacyRoomStorage internal constructor(
                         dao.removeCell(host, conversation, "gaps", it.key, it.part)
                     }
                     dao.upsertEvidence(listOf(intervalCell(host, conversation, "gaps", gap.anchor, gap.edge)))
+                    repairedAnchors += gap.anchor
                 }
             }
+            anchors("cursors", incoming.unsignedCursors, prior?.unsignedCursors.orEmpty())
+            anchors("walks", incoming.unsignedWalks, prior?.unsignedWalks.orEmpty())
             val first = dao.newerSpan(host, conversation, 0uL.position()).firstOrNull()
             val last = dao.olderSpan(host, conversation, ULong.MAX_VALUE.position()).lastOrNull()
             val maximum = dao.intervals(host, conversation, "spans", ULong.MAX_VALUE.position(), ULong.MAX_VALUE.position()).lastOrNull()

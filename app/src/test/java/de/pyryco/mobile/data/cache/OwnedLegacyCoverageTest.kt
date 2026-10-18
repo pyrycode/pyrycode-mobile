@@ -527,6 +527,8 @@ class OwnedLegacyCoverageTest {
                     HistoryCoverage(
                         unsignedSpans = listOf(UnsignedHistorySpan(1u, 2u), UnsignedHistorySpan(ULong.MAX_VALUE, ULong.MAX_VALUE)),
                         unsignedGaps = listOf(UnsignedHistoryGap(2u, ULong.MAX_VALUE)),
+                        unsignedWalks = mapOf(2uL to "received-walk"),
+                        unsignedCursors = mapOf(2uL to "received-cursor"),
                         unsignedRowOrder = mapOf(keys[0] to 1uL, keys[1] to 1uL, keys[2] to 2uL),
                         unsignedRowEntries =
                             mapOf(
@@ -566,6 +568,9 @@ class OwnedLegacyCoverageTest {
                     assertEquals(setOf(keys[0]), committed.proofs.keys)
                     assertEquals(listOf(UnsignedHistorySpan(3u, 3u)), committed.unsignedSpans)
                 } else {
+                    assertEquals(evidence.unsignedGaps, committed.unsignedGaps)
+                    assertEquals(evidence.unsignedWalks, committed.unsignedWalks)
+                    assertEquals(evidence.unsignedCursors, committed.unsignedCursors)
                     assertEquals(next.coverage, committed)
                     assertEquals(next.copy(atStart = false), saved)
                     assertTrue(committed.unsignedIncomplete)
