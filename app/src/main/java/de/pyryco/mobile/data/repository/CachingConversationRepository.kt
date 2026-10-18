@@ -506,7 +506,16 @@ class CachingConversationRepository(
                             rejected.held,
                         )
                     }
-                    if (result.isSuccess) persistedAuthoritative[conversationId] = selected
+                    if (result.isSuccess) {
+                        persistedAuthoritative[conversationId] = selected
+                        authoritativeThreads.commitRemovals(
+                            serverId,
+                            conversationId,
+                            selected.storeGeneration,
+                            saved.incarnation,
+                            saved.retirements,
+                        )
+                    }
                     result
                 }
             if (result.isFailure ||

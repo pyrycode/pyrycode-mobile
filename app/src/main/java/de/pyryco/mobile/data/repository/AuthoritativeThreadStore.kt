@@ -52,7 +52,33 @@ internal enum class AuthoritativeThreadOutcome { Applied, Ignored, RepairNeeded,
 
 /** In-memory facts keyed by source and conversation, independent of legacy projection/cache. */
 internal class AuthoritativeThreadStore {
-    private val removalPeers = mutableMapOf<Pair<String, String>, MutableMap<Long, List<Long>>>()
+    private class RemovalPlacement(
+        val order: Long,
+        val peers: List<Long>,
+    )
+
+    private val removalPeers = mutableMapOf<Pair<String, String>, MutableMap<Long, RemovalPlacement>>()
+
+    /** Content-free retained recovery size, independent of durable fences. */
+    @Synchronized
+    internal fun retainedRemovalPeerCount(): Int = removalPeers.values.sumOf { scope -> scope.values.sumOf { it.peers.size } }
+
+    /** Called under historyWrites only after the mutation and successful baseline have committed. */
+    @Synchronized
+    fun commitRemovals(
+        host: String,
+        conversation: String,
+        generation: Long,
+        incarnation: String,
+        retirements: Map<Long, Long>,
+    ) {
+        val current = current(host, conversation)
+        if (current.generation != generation || current.incarnation != incarnation) return
+        val key = host to conversation
+        val pending = removalPeers[key] ?: return
+        pending.keys.removeAll { id -> retirements[id]?.let { it == current.retirements[id] } == true }
+        if (pending.isEmpty()) removalPeers.remove(key)
+    }
 
     /** A capture of one owned authoritative fact, never inferred from absence or a projected row. */
     internal class Removal internal constructor(
@@ -96,8 +122,31 @@ internal class AuthoritativeThreadStore {
         if (target.id in current.retirements) return AuthoritativeThreadOutcome.Ignored
         val held = current.items.firstOrNull { it.id == target.id } ?: return AuthoritativeThreadOutcome.Ignored
         if (held.rev != target.revision) return AuthoritativeThreadOutcome.Ignored
-        removalPeers.getOrPut(target.host to target.conversation) { mutableMapOf() }[target.id] =
-            current.items.filter { orderKey(it) == orderKey(held) }.map { it.id }
+        val pending = removalPeers.getOrPut(target.host to target.conversation) { mutableMapOf() }
+        val order = orderKey(held)
+        val peers =
+            current.items
+                .filter { orderKey(it) == order }
+                .map { it.id }
+                .toMutableList()
+        // Other uncommitted removals still own tie relationships if storage later refuses them.
+        for ((id, placement) in pending) {
+            if (placement.order != order) continue
+            val split = placement.peers.indexOf(id)
+            val before =
+                placement.peers
+                    .drop(split + 1)
+                    .firstOrNull { it in peers }
+                    ?.let(peers::indexOf)
+            val after =
+                placement.peers
+                    .take(split)
+                    .asReversed()
+                    .firstOrNull { it in peers }
+                    ?.let { peers.indexOf(it) + 1 }
+            peers.add(before ?: after ?: 0, id)
+        }
+        pending[target.id] = RemovalPlacement(order, peers)
         publish(
             target.host,
             target.conversation,
@@ -122,7 +171,7 @@ internal class AuthoritativeThreadStore {
     ) {
         val current = current(host, conversation)
         if (current.generation != generation || current.incarnation != incarnation || current.retirements[held.id] != revision) return
-        val peers = removalPeers[host to conversation]?.get(held.id).orEmpty()
+        val peers = removalPeers[host to conversation]?.get(held.id)?.peers.orEmpty()
         val split = peers.indexOf(held.id).coerceAtLeast(0)
         val positions =
             current.items

@@ -445,11 +445,13 @@ class MigratingConversationCacheTest {
                 assertNull(cache.readAuthoritativeThread("Host", "thread"))
                 assertRefused("import_unavailable", cache.writeThread("Host", "thread", listOf(row(2))))
                 assertRefused("import_unavailable", cache.writeAuthoritativeThread("Host", "thread", saved("newer", listOf(4))))
+                assertRefused("import_unavailable", cache.resetAuthoritativeThread("Host", "thread", saved("newer", listOf(4))))
                 assertTrue(requireNotNull(database).imports().settled("Host", "thread", "legacy").isEmpty())
                 locked.forEach { it.setReadable(true) }
                 // The next save was merged from the empty restore: the import lands and that save does not replace it.
                 assertRefused("import_unobserved", cache.writeThread("Host", "thread", listOf(row(2))))
                 assertRefused("import_unobserved", cache.writeAuthoritativeThread("Host", "thread", saved("newer", listOf(4))))
+                assertRefused("import_unobserved", cache.resetAuthoritativeThread("Host", "thread", saved("newer", listOf(4))))
                 assertEquals(listOf(row(1)), cache.readThread("Host", "thread"))
                 assertEquals(saved().retained(), cache.readAuthoritativeThread("Host", "thread"))
                 assertEquals(listOf(row(1)), open().readThread("Host", "thread"))
@@ -823,6 +825,7 @@ class MigratingConversationCacheTest {
             cache.writeConversations("Host", listOf(conversation("a"))).getOrThrow()
             assertRefused("host_retired", cache.writeThread("Host", "a", rows))
             assertTrue(cache.writeAuthoritativeThread("Host", "a", saved()).isFailure)
+            assertRefused("host_retired", cache.resetAuthoritativeThread("Host", "a", saved()))
             assertEquals(emptyList<ThreadItem>(), cache.readThread("Host", "a"))
 
             // Recursive delete failed to remove sources: restart neither imports them nor touches the other host.

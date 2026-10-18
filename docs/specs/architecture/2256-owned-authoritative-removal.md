@@ -48,6 +48,9 @@ No new jobs or scopes. Use injected processing/IO dispatchers and existing obser
 | A newer revision already committed outside the held view | `ownershipInvariant_durableNewerRevisionRejectsRemovalAtomically` |
 | Replayed replacement/upsert, restart and reused-epoch reset | `retirementInvariant_storageFencesReplayAndOldIncarnationAcrossReopen` |
 | Schema upgrade and file compatibility | `AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence`, `retirementInvariant_fileCompatibilityRetainsFenceAndResetLifetime` |
+| Replacement fallback reset, failure, retry and reused epoch text | `retirementInvariant_roomReplacementResetAdmitsOnlyNewIncarnation` |
+| Multiple pending rejections, observer order and unrelated-save recovery | `ownershipInvariant_pendingRejectionsRestoreOriginalTieOrder` |
+| Repeated committed removals and failed removal retention | `retirementInvariant_successReleasesRecoveryButFailureRetainsIt`, `retirementInvariant_finalFlushRefreshesRemoval` |
 
 ## Error handling
 
@@ -130,4 +133,8 @@ After successful persistence and baseline publication, release recovery peer lis
 
 Security re-review: PASS. Reset uses the existing exact-owner migration admission and Room transaction; it cannot bypass unavailable/unobserved imports or host retirement. Recovery and its cleanup stay under the store lock and `historyWrites`; cleanup checks generation/incarnation/revision and never withdraws a durable fence. Captured identities remain internal and unlogged; diagnostics expose counts only. Tokens, credentials, cache paths, no-backup custody, cryptography, network and Android surfaces are unchanged. No job or dependency is added.
 
-Sizing reassessment: one retirement behavior, already over the ceiling at 1675 inserted / 46 deleted lines (1721 total), plus about 230 written lines for these regressions and repairs. No exported type or signature migration. Confirmed grandchild depth and existing `needs-human:sizing` require continuing. In-flight #2175 and #2245 overlap only route forwarding in `CachingConversationRepository`; these local persistence edits are independent. Documentation handoff remains pending.
+Sizing reassessment: one retirement behavior, initially 1675 inserted / 46 deleted lines (1721 total); the formatted final diff has 1910 inserted / 47 deleted lines (1957 total), including the 446-line schema. No exported type or signature migration. Confirmed grandchild depth and existing `needs-human:sizing` require continuing. In-flight #2175 and #2245 overlap only route forwarding in `CachingConversationRepository`; these local persistence edits are independent. Documentation handoff remains pending.
+
+The three new regressions failed against unchanged production at plan `843784bf6`: 3 executed/failed, 0 errors/skips. Raw XML, test source, patch and hashes are retained in `/tmp/builder-2256/evidence/rework4-red/`. The retention probe originally inspected the old private lists to observe the leak; it now uses a content-free internal count, with the same assertions. Recovery captures additionally retain their order key so pending removals from different ties cannot acquire a relationship.
+
+The first repaired class run executed 18 tests: 17 passed and the new held-I/O count assertion failed (0 errors/skips). That fixture uses distinct order keys, so one peer entry is retained, not three. Correct only that count to one; preserve the held-state, cleanup-to-zero and exact reopened-state assertions. No production contract changes. Raw XML and the patch are retained in `/tmp/builder-2256/evidence/rework4-first-repair/`.

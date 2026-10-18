@@ -357,10 +357,12 @@ class AuthoritativeOwnedRemovalTest {
                         requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 2)),
                     ),
                 )
+                assertEquals(1, recoveryEntries(repo.authoritativeThreads))
             } finally {
                 release.complete(Unit)
             }
             cleanup.join()
+            assertEquals(0, recoveryEntries(repo.authoritativeThreads))
             val fresh = requireNotNull(open().readAuthoritativeThread("host", "c"))
             assertEquals(listOf(raw(1), raw(3)), fresh.items)
             assertEquals(mapOf(2L to 20_001L), fresh.retirements)
@@ -386,6 +388,149 @@ class AuthoritativeOwnedRemovalTest {
                 FileConversationCache(root, StandardTestDispatcher(testScheduler))
             }
         }
+
+    @Test fun retirementInvariant_roomReplacementResetAdmitsOnlyNewIncarnation() =
+        runTest {
+            for (epoch in listOf("e", "new")) {
+                val fail = AtomicBoolean(false)
+                val room = open { if (fail.get()) throw IOException("private reset failure") }
+                room.removeConversation("host", "c").getOrThrow()
+                val cache = object : ConversationCache by room {}
+                val original = saved(3)
+                cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
+                cache.writeAuthoritativeThread("other", "c", original).getOrThrow()
+                val repo = wrapper(cache)
+                observe(repo).cancelAndJoin()
+                val target = requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 2))
+                repo.removeAuthoritativeFact(target).getOrThrow()
+                val retired = requireNotNull(open().readAuthoritativeThread("host", "c"))
+                fail.set(true)
+                assertTrue(repo.resetAuthoritativeThread("c", epoch).isFailure)
+                assertEquals(retired, open().readAuthoritativeThread("host", "c"))
+                fail.set(false)
+                repo.resetAuthoritativeThread("c", epoch).getOrThrow()
+                val reset = requireNotNull(open().readAuthoritativeThread("host", "c"))
+                assertEquals(epoch, reset.epoch)
+                assertTrue(reset.incarnation.isNotEmpty())
+                assertTrue(reset.items.isEmpty())
+                assertTrue(reset.retirements.isEmpty())
+                assertEquals(0L, reset.checkpoint)
+                assertNull(reset.coverage)
+                assertTrue(repo.removeAuthoritativeFact(target).isFailure)
+                assertTrue(open().writeAuthoritativeThread("host", "c", retired).isFailure)
+                assertEquals(
+                    AuthoritativeThreadOutcome.StaleGeneration,
+                    repo.authoritativeThreads.applyBatch("host", "c", "e", 3, original.toSnapshot().items, 0),
+                )
+                val observer = observe(repo)
+                val generation = repo.authoritativeThreads.current("host", "c").generation
+                repo.authoritativeThreads.applyBatch("host", "c", epoch, 2, listOf(ThreadItemDto.decodeReplacement(raw(2))), generation)
+                runCurrent()
+                observer.cancelAndJoin()
+                val fresh = open()
+                val admitted = requireNotNull(fresh.readAuthoritativeThread("host", "c"))
+                assertEquals(listOf(raw(2)), admitted.items)
+                assertEquals(reset.incarnation, admitted.incarnation)
+                assertEquals(original, fresh.readAuthoritativeThread("other", "c"))
+                assertEquals(
+                    admitted.items,
+                    wrapper(fresh)
+                        .observeAuthoritativeThread("c")
+                        .first()
+                        .items
+                        .map { it.raw },
+                )
+            }
+        }
+
+    @Test fun ownershipInvariant_pendingRejectionsRestoreOriginalTieOrder() =
+        runTest {
+            val fail = AtomicBoolean(false)
+            val cache = open { if (fail.get()) throw IOException("private removal failure") }
+            val original = saved(3).copy(items = (1..3).map { raw(it, order = 1) })
+            cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
+            val repo = wrapper(cache)
+            observe(repo).cancelAndJoin()
+            var observed = emptyList<ThreadItemDto>()
+            val storeObserver =
+                backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) {
+                    repo.authoritativeThreads.observe("host", "c").collect { observed = it.items }
+                }
+            val first = requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 2))
+            fail.set(true)
+            assertTrue(repo.removeAuthoritativeFact(first).isFailure)
+            assertEquals(original, open().readAuthoritativeThread("host", "c"))
+            val newer = original.copy(items = listOf(raw(1, 20_001, 1), raw(2, 20_002, 1), raw(3, order = 1)), appliedVersion = 20_002)
+            open().writeAuthoritativeThread("host", "c", newer).getOrThrow()
+            val before = ordinals()
+            val second = requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 1))
+            fail.set(false)
+            assertTrue(repo.removeAuthoritativeFact(second).isFailure)
+            assertEquals(listOf(2L, 3L), observed.map { it.id })
+            assertTrue(repo.removeAuthoritativeFact(second).isFailure)
+            assertEquals(
+                newer.items,
+                repo.authoritativeThreads
+                    .current("host", "c")
+                    .items
+                    .map { it.raw },
+            )
+            assertEquals(newer.items, observed.map { it.raw })
+            assertEquals(newer, open().readAuthoritativeThread("host", "c"))
+            val observer = observe(repo)
+            repo.authoritativeThreads.applyBatch("host", "c", "e", 20_003, listOf(ThreadItemDto.decodeReplacement(raw(3, 20_003, 1))), 0)
+            runCurrent()
+            observer.cancelAndJoin()
+            val retained = requireNotNull(open().readAuthoritativeThread("host", "c"))
+            assertEquals(listOf(raw(1, 20_001, 1), raw(2, 20_002, 1), raw(3, 20_003, 1)), retained.items)
+            assertEquals(retained.items, observed.map { it.raw })
+            assertTrue(retained.retirements.isEmpty())
+            assertEquals(before, ordinals())
+            storeObserver.cancelAndJoin()
+        }
+
+    @Test fun retirementInvariant_successReleasesRecoveryButFailureRetainsIt() =
+        runTest {
+            for (absentOrder in listOf(false, true)) {
+                val fail = AtomicBoolean(false)
+                val cache = open { if (fail.get()) throw IOException("private removal failure") }
+                cache.removeConversation("host", "c").getOrThrow()
+                val original =
+                    saved(256).copy(
+                        items =
+                            (1..256).map { id ->
+                                val item = raw(id, order = 1)
+                                if (absentOrder) JsonObject(item - "order") else item
+                            },
+                    )
+                cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
+                val repo = wrapper(cache)
+                observe(repo).cancelAndJoin()
+                for (id in 1L..64L) {
+                    repo.removeAuthoritativeFact(requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", id))).getOrThrow()
+                    assertEquals(0, recoveryEntries(repo.authoritativeThreads))
+                    assertEquals(
+                        id.toInt(),
+                        repo.authoritativeThreads
+                            .current("host", "c")
+                            .retirements.size,
+                    )
+                }
+                val target = requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 65))
+                fail.set(true)
+                assertTrue(repo.removeAuthoritativeFact(target).isFailure)
+                assertEquals(192, recoveryEntries(repo.authoritativeThreads))
+                assertEquals(original.items.drop(64), open().readAuthoritativeThread("host", "c")?.items)
+                fail.set(false)
+                repo.removeAuthoritativeFact(target).getOrThrow()
+                assertEquals(0, recoveryEntries(repo.authoritativeThreads))
+                val retained = requireNotNull(open().readAuthoritativeThread("host", "c"))
+                assertEquals(original.items.drop(65), retained.items)
+                assertEquals((1L..65L).associateWith { it }, retained.retirements)
+            }
+        }
+
+    private fun recoveryEntries(store: AuthoritativeThreadStore): Int = store.retainedRemovalPeerCount()
 
     private suspend fun TestScope.assertDurableRejection(
         cache: ConversationCache,
