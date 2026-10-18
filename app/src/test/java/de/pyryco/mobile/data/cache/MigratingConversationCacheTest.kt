@@ -27,9 +27,14 @@ import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.data.repository.historyRowProofs
 import de.pyryco.mobile.ui.conversations.thread.fragmentedHistoryFixture
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -39,6 +44,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
@@ -532,6 +538,82 @@ class MigratingConversationCacheTest {
             assertEquals(rows + row(3), open().readThread("Host", "thread"))
             assertEquals(saved("newer", listOf(4)).retained(), open().readAuthoritativeThread("Host", "thread"))
         }
+
+    @Test
+    fun cleanupInvariant_lateContinuationCompletesAfterInitialDrain() =
+        runBlocking {
+            withHeldReader { reader, scheduler, finalizing, release ->
+                cancelAndDrain(reader, scheduler, timeoutMillis = 1_000) {
+                    assertTrue(finalizing.isCompleted)
+                    assertFalse(reader.isCompleted)
+                    // Queue the completion strictly after the cleanup's first drain has returned.
+                    release.complete(Unit)
+                    assertFalse(reader.isCompleted)
+                }
+                assertTrue(reader.isCancelled)
+                assertTrue(reader.isCompleted)
+            }
+        }
+
+    @Test
+    fun cleanupInvariant_nonCompletionFailsWithoutWaitingForOwner() =
+        runBlocking {
+            val started = System.nanoTime()
+            withHeldReader { reader, scheduler, finalizing, _ ->
+                val failure = runCatching { cancelAndDrain(reader, scheduler, timeoutMillis = 100) }.exceptionOrNull()
+                assertTrue("expected a diagnostic cleanup failure, got $failure", failure is AssertionError)
+                assertTrue(requireNotNull(failure).message.orEmpty().contains("cancelled=true completed=false"))
+                assertTrue(finalizing.isCompleted)
+                assertFalse(reader.isCompleted)
+            }
+            assertTrue("cleanup and enclosing scope must return within 10 seconds", System.nanoTime() - started < 10_000_000_000L)
+        }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun withHeldReader(
+        block: suspend (Job, TestCoroutineScheduler, CompletableDeferred<Unit>, CompletableDeferred<Unit>) -> Unit,
+    ) {
+        val scheduler = TestCoroutineScheduler()
+        val owner = CoroutineScope(StandardTestDispatcher(scheduler))
+        val finalizing = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val reader = owner.launch {
+            try {
+                awaitCancellation()
+            } finally {
+                withContext(NonCancellable) {
+                    finalizing.complete(Unit)
+                    release.await()
+                }
+            }
+        }
+        try {
+            scheduler.runCurrent()
+            block(reader, scheduler, finalizing, release)
+        } finally {
+            owner.cancel()
+            release.complete(Unit)
+            scheduler.runCurrent()
+            withTimeout(1_000) { reader.join() }
+            assertTrue(reader.isCompleted)
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun cancelAndDrain(
+        reader: Job,
+        scheduler: TestCoroutineScheduler,
+        timeoutMillis: Long = 10_000,
+        afterFirstDrain: () -> Unit = {},
+    ) {
+        // Extract the existing cleanup with a real-time test bound for the red regression.
+        withTimeout(timeoutMillis) {
+            reader.cancel()
+            scheduler.runCurrent()
+            afterFirstDrain()
+            reader.join()
+        }
+    }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
