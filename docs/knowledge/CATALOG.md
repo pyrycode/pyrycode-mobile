@@ -249,3 +249,6 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 - [Thread screen — inline question rows and reveal](features/thread-screen-inline-question-reveal.md): question rows, prompt growth masking and shared reveal ownership; split from the list/status overview for #1985.
 
 - [Caching conversation repository — wiring](features/caching-conversation-repository-wiring.md): composition under `decorateRepository`, attachment bindings and context-free test containers; split for #2255.
+
+- [Conversation cache — owned legacy mutations](features/conversation-cache-legacy-mutations.md): exact legacy ownership, placement, received-evidence recovery and counted Linux checks; split for #2256.
+- [Caching conversation repository — connection-boundary merge](features/caching-conversation-repository-connection-boundary.md): reconnect rebasing, deliberate removals and retained boundary probes; split for #2256.
