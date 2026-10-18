@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
@@ -70,6 +71,64 @@ class OwnedLegacyCoverageConcurrencyTest {
 
     @After fun close() {
         database?.close()
+    }
+
+    @Test fun captureInvariant_firstSnapshotCleanupCannotRenewOldCoverage() = runTest {
+        for (mode in 0..2) {
+            val name = "capture-$mode"
+            val cache = open(name)
+            val oldRows = listOf(row(1, "old"))
+            val newRows = listOf(row(1, "new"), row(2))
+            cache.readThread("Host", "c")
+            cache.writeThread("Host", "c", oldRows).getOrThrow()
+            cache.writeHistoryPosition("Host", "c", position(oldRows)).getOrThrow()
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val delivered = CompletableDeferred<Unit>()
+            val accepted = CompletableDeferred<Unit>()
+            val finishDelivery = CompletableDeferred<Unit>()
+            val finishSource = CompletableDeferred<Unit>()
+            val calls = AtomicInteger()
+            val source = object : ConversationRepository by FakeConversationRepository(), ThreadSnapshotSource {
+                override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> = flow {
+                    if (calls.getAndIncrement() == 0) {
+                        try { emit(ThreadSnapshot(oldRows)) } finally {
+                            entered.complete(Unit)
+                            release.await()
+                        }
+                    } else {
+                        emit(ThreadSnapshot(newRows))
+                        accepted.complete(Unit)
+                        finishSource.await()
+                    }
+                }
+            }
+            val worker = UnconfinedTestDispatcher(testScheduler)
+            val repository = CachingConversationRepository(source, cache, "Host", processingDispatcher = worker)
+            repository.readHistoryPosition("c")
+            val older = async { repository.writeHistoryPosition("c", position(oldRows)) }
+            entered.await()
+            val reader = if (mode == 0) {
+                repository.writeHistoryPosition("c", position(newRows))
+                null
+            } else async(worker) {
+                repository.observeThreadSnapshot("c").collect {
+                    delivered.complete(Unit)
+                    if (mode == 1) finishDelivery.await()
+                }
+            }
+            if (mode != 0) delivered.await()
+            if (mode == 2) accepted.await()
+            release.complete(Unit)
+            older.await()
+            finishDelivery.complete(Unit)
+            finishSource.complete(Unit)
+            reader?.await()
+            val fresh = open(name)
+            assertEquals("newer rows lost in capture mode $mode", newRows, fresh.readThread("Host", "c"))
+            if (mode == 0) assertEquals(position(newRows), fresh.readHistoryPosition("Host", "c"))
+            else assertTrue(requireNotNull(fresh.readHistoryPosition("Host", "c")?.coverage).proofs.isEmpty())
+        }
     }
 
     private fun row(

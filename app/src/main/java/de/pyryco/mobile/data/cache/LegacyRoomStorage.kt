@@ -564,7 +564,14 @@ class LegacyRoomStorage internal constructor(
                         .distinct()
                         .map { UnsignedHistorySpan(it, it) }
             val rejected = rejectedEntries
-            val safeAdditions = intervalDifference(additions, rejected.sorted().map { UnsignedHistorySpan(it, it) })
+            val losses = additions.flatMap {
+                dao.intervals(host, conversation, "losses", it.first.position(), it.last.position())
+            }
+            lastMutationCounts = lastMutationCounts.copy(evidenceReads = lastMutationCounts.evidenceReads + losses.size)
+            val receivedClaims = accepted.unsignedRowEntries.values.flatten().toSet()
+            val blocked = losses.map { it.low.toULong() }.toSet() - receivedClaims
+            val excluded = (rejected + blocked).sorted().map { UnsignedHistorySpan(it, it) }
+            val safeAdditions = intervalDifference(additions, excluded)
             for (span in safeAdditions) addReceivedSpan(host, conversation, span)
 
             val json = MobileJson.encodeToJsonElement(accepted).jsonObject
@@ -745,17 +752,20 @@ class LegacyRoomStorage internal constructor(
             lastMutationCounts.copy(
                 evidenceReads = lastMutationCounts.evidenceReads + gaps.size + listOfNotNull(older, newer).size,
             )
-        for (gap in gaps) {
-            dao.removeCell(host, conversation, "gaps", gap.key, gap.part)
-            dao.removeCell(host, conversation, "walks", gap.low.toULong().toString(), 0)
-        }
-        held.forEach { dao.removeCell(host, conversation, "spans", it.key, it.part) }
         val merged = intervalCell(host, conversation, "spans", low, high)
         val neighbours = listOfNotNull(older) + merged + listOfNotNull(newer)
         val repaired =
             neighbours.zipWithNext { a, b ->
-                intervalCell(host, conversation, "gaps", a.high.toULong(), b.low.toULong())
+                val previous = gaps.firstOrNull { it.high == b.low && it.low >= a.low && it.low <= a.high }
+                intervalCell(host, conversation, "gaps", (previous?.low ?: a.high).toULong(), b.low.toULong())
             }
+        for (gap in gaps) {
+            dao.removeCell(host, conversation, "gaps", gap.key, gap.part)
+            if (repaired.none { it.low == gap.low }) {
+                dao.removeCell(host, conversation, "walks", gap.low.toULong().toString(), 0)
+            }
+        }
+        held.forEach { dao.removeCell(host, conversation, "spans", it.key, it.part) }
         dao.upsertEvidence(listOf(merged) + repaired)
         lastMutationCounts =
             lastMutationCounts.copy(

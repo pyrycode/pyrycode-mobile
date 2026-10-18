@@ -28,6 +28,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -616,22 +617,23 @@ class CachingConversationRepository(
             }
             return
         }
-        val snapshot = delegate.threadSnapshots(conversationId).first()
-        val historyGeneration = generations.incrementAndGet()
+        val (snapshot, historyGeneration) = delegate.threadSnapshots(conversationId)
+            .map { it to generations.incrementAndGet() }.first()
         historyWrites.withLock {
             if (conversationId in deleted) return@withLock
             val drawn = drawnThreads[conversationId]
             val persisted = persistedThreads[conversationId]
             val owned = cache as? OwnedLegacyCoverageCache
-            if (owned != null && historyGeneration <= (persisted?.generation ?: 0)) return@withLock
+            if (historyGeneration <= (persisted?.generation ?: 0)) return@withLock
             val baselineRows = if (owned == null) drawn?.rows ?: cache.readThread(serverId, conversationId)
                 else persisted?.cacheable ?: drawn?.rows ?: cache.readThread(serverId, conversationId)
             val pending = acceptedRows[conversationId].orEmpty().filterValues { it.capture > (persisted?.generation ?: 0) }
-            val pendingChanges =
+            val pendingOrder =
                 pending.values
                     .sortedWith(
                         compareBy<AcceptedLegacyRow> { it.capture }.thenBy { it.order },
-                    ).mapNotNull { it.change }
+                    )
+            val pendingChanges = pendingOrder.mapNotNull { it.change }
             val pendingRemoved = pending.filterValues { it.change == null }.keys
             val base = if (pending.isEmpty()) baselineRows else applyOwnedRows(baselineRows, pendingChanges, pendingRemoved, trim = false)
             if (conversationId in deleted) return@withLock
@@ -644,7 +646,16 @@ class CachingConversationRepository(
             val order =
                 (snapshot.rows + restored).receivedUnsignedHistoryOrder(position.coverage.unsignedPositions()) +
                     snapshot.unsignedHistoryOrder
-            val rows = snapshot.rows.mergeUnsignedCachedRows(restored, order, rendererOwners = base)
+            val merged = snapshot.rows.mergeUnsignedCachedRows(restored, order, rendererOwners = base)
+            val newer = pending.filterValues { it.capture > historyGeneration }
+            val rows = if (newer.isEmpty()) merged else applyOwnedRows(
+                merged,
+                pendingOrder.filter { it.capture > historyGeneration }.mapNotNull { it.change },
+                newer.filterValues { it.change == null }.keys,
+                trim = false,
+            )
+            val satisfied = if (owned == null) maxOf(historyGeneration, drawn?.generation ?: 0)
+                else maxOf(historyGeneration, pendingOrder.maxOfOrNull { it.capture } ?: 0)
             val cacheable = withContext(processingDispatcher) { cacheableThreadRows(rows) }
             val baseline = if (owned == null) emptyMap() else baselineRows.associateBy { it.legacyRowKey() }
             val removed = if (owned == null) emptySet() else baseline.keys - rows.mapTo(HashSet()) { it.legacyRowKey() }
@@ -678,7 +689,7 @@ class CachingConversationRepository(
                     if (result.isSuccess) {
                         persistedThreads[conversationId] =
                             PersistedThread(
-                                maxOf(historyGeneration, drawn?.generation ?: 0),
+                                satisfied,
                                 (persistedThreads[conversationId]?.coverageRevision ?: 0) + 1,
                                 if (owned == null) cacheable else applyOwnedRows(baseline.values.toList(), changes, removed),
                             )
