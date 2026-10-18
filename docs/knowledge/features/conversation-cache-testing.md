@@ -107,6 +107,64 @@ named probe. This full-suite result is separate from the focused runs. macOS was
 ticket's verification scope. See the [probe repair plan](../../specs/architecture/2263-held-retry-atomic-probe.md)
 and [wrapper scheduling tests](caching-conversation-repository-testing.md#testing).
 
+### Owned coverage snapshot acceptance (#2291)
+
+`OwnedLegacyCoverageConcurrencyTest` keeps real disk-backed Room while distinguishing history
+read, publication, writer acceptance, row commit, evidence failure and cancellation. A
+`runCurrent()` drain does not acknowledge external Room I/O completion; collector delivery precedes
+`ThreadWriter.accept`. The local `Source.afterEmission` callback runs after `emit` returns from
+the repository collector, acknowledging acceptance of that exact snapshot. `first()` aborts
+emission before the callback and cannot supply that acknowledgement. See
+[test scheduling guidance](development-verification-test-scheduling.md#test-scheduling-and-harnesses)
+and the [owned coverage contract](conversation-cache-legacy-mutations.md#owned-coverage-and-received-evidence-2254).
+
+- `intentInvariant_rowFailureKeepsRetryableWork` holds the first nonempty snapshot's real
+  history read and proves a scheduler drain leaves acceptance incomplete. After release and
+  explicit acceptance, the failed row transaction must retain the exact pending key and leave
+  disk rows empty. Retry uses an empty live capture, so resupplying the row cannot hide a lost
+  intent. Success retires that intent and a fresh database/cache reader returns exactly row 1.
+- `revisionInvariant_rowSuccessSurvivesEvidenceFailureAndCancellation` retains both branches:
+  committed rows survive evidence failure and cancellation, and the cancelled save cannot
+  finish while its non-cancellable commit is deliberately held. Final one-row publication is
+  held inside the collector to prove delivery has not acknowledged acceptance. Release it and
+  await the final snapshot's post-emission callback before cancellation/final flush. After
+  stale restore release, a fresh reader must contain exactly row 1, with row 2 removed and
+  matching proof keys. Every exit releases holds and completes saves/readers before Room closes.
+
+The [retained manifest and sibling raw output/compressed XML](../../../app/src/test/resources/verification/owned-acceptance-2291/results.json)
+record Linux commands, source revisions and hashes. Controlled unrepaired ordering at
+`e5a22b25243caa8debec1a81d11532086d357fef` executed **2, 0 passed, 2 failed, 0 errors/skips**:
+the intent map was empty and the final disk snapshot retained row 2. Both controlled failures
+establish a shared missing-acceptance boundary in the probes; no production defect was shown.
+The cold red console has one explicitly marked truncated compiler-warning chunk; complete
+failure XML and test-result output remain intact. At repaired source
+`0ce36236b2ee3bd507705922ef6e38517781778b`, the exact pair passed **2/2** and the affected
+class passed **9/9**, each with **0 failures/errors/skips** and complete captures. These are
+separate focused runs, preserving exact persistence assertions and both revision branches.
+
+Historical failures remain failures. #2278's retained stderr classifies both methods as
+`AssertionError`; its original assertion details remain unavailable beyond the full-log pointer
+on build-fractal-2. The same-tree pair rerun passed **2/2, 0 failures/errors/skips**. #2279's
+original full log was recovered during verification at
+`/work/Projects/pyrycode-mobile-agents/logs/verifier-gate_#2279_4.log`, SHA-256
+`8a288b192e88dc6545fb6e898b9c3af832d6a50eda7fe22ff8d967b4932f2082`, matching its retained
+pointer. Its revision assertion expected only row 1 but found rows 1 and 2, matching the
+controlled reproduction. That historical class executed **9, 8 passed, 1 failed, 0 errors/skips**;
+its separate exact-method retry passed **1/1, 0 failures/errors/skips**. This recovery supersedes
+the builder's earlier uncertainty about #2279, without identifying #2278's assertions. The
+independent [gap-subtraction timeout](#received-gap-subtraction-runtime-2269) has a different cause.
+
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2296#issuecomment-6254914512)
+at `994f7ead2aa1fed18f54003edc8fc6f63ed2cb1e` records the complete configured Linux JVM gate,
+`python3 scripts/jvm-test-gate.py --with-build-checks`: **5994 executed/passed, 0 failures/errors/skips**.
+Fresh gate XML includes both named methods once, passed, and all **9/9** class methods passed.
+The report was retained at `/work/Projects/pyrycode-mobile-agents/logs/verifier-gate_#2291_4.log`
+(SHA-256 `377da25aaf3091902f59b66e991e20cf664ee5c7d0dd3c3583ef7dad20ac2aed`), distinct from
+the focused captures. Configured UI evidence records **334 executed/passed, 0 failed/errors,
+1 skipped** (`renameAtFigmaViewport`, no visual evidence); scripted-all records **22 executed/passed,
+0 failures/errors/skips**. macOS was outside this Linux ticket's scope; no real-Claude scenario
+was required. See the [diagnosis plan](../../specs/architecture/2291-owned-coverage-probe-acceptance.md).
+
 ### Received-gap subtraction runtime (#2269)
 
 `OwnedLegacyCoverageTest.anchorInvariant_subtractingProducerKeepsValidReceivedGapWalk`
