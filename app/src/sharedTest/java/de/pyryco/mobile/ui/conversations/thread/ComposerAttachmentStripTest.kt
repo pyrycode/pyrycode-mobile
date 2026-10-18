@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
@@ -55,6 +56,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -73,8 +75,10 @@ import kotlin.math.abs
 /** #933: the composer's attachment picker, strip, removal, send enablement and per-chat strips. */
 @RunWith(AndroidJUnit4::class)
 class ComposerAttachmentStripTest {
+    // IO completion must queue its return; the default unconfined rule can resume effects on IO.
+    @OptIn(ExperimentalTestApi::class)
     @get:Rule
-    val composeRule = createComposeRule()
+    val composeRule = createComposeRule(effectContext = StandardTestDispatcher())
 
     @get:Rule val pasteFiles = TemporaryFolder()
 
@@ -214,7 +218,11 @@ class ComposerAttachmentStripTest {
             composeRule.runOnIdle { mounted = false }
             composeRule.waitForIdle()
             assertSame("IO return must own the view thread", Looper.getMainLooper(), runBlocking { resumedOn.await() })
-            assertSame("Disposal must own the view thread", Looper.getMainLooper(), runBlocking { withTimeout(5_000) { disposedOn.await() } })
+            assertSame(
+                "Disposal must own the view thread",
+                Looper.getMainLooper(),
+                runBlocking { withTimeout(5_000) { disposedOn.await() } },
+            )
         } finally {
             finishIo.complete(Unit)
         }

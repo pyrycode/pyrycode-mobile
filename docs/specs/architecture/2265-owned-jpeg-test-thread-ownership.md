@@ -52,3 +52,7 @@ Run the controlled regression red before changing the rule, then green. Run five
 - Does the explicit queued dispatcher preserve all existing class behaviour? Resolve through the affected-class execution.
 
 Sizing: approximately 200–300 written lines including this plan and regression, one test file, zero new exported types or migrated consumer call sites, three acceptance criteria, no new product reject branches; within `behaviour-slices-v1` limits.
+
+## Revisions
+
+- 2026-10-18: Resolved the scheduling question with two red controlled runs. `jvm-gjawiqtl` captured a null looper after the IO return (one executed, one failed). At regression commit `72acc7c96b84e32a5535c87f4ea407488403b485`, `jvm-1t9rilpg` performed view layout at that return and reproduced `CalledFromWrongThreadException`: expected SDK main thread, calling `DefaultDispatcher-worker-5`, through `ApplyingContinuationInterceptor` and `FrameDeferringContinuationInterceptor`. The class now supplies `StandardTestDispatcher` to queue this return until the UI clock drains it. No decoder, pixel assertion or timeout changes. This isolates the mechanism locally without attributing it to machine load or requiring a whole-suite reproduction. Existing class behaviour remains to be checked by the focused class run.
