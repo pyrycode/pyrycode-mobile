@@ -52,6 +52,8 @@ internal enum class AuthoritativeThreadOutcome { Applied, Ignored, RepairNeeded,
 
 /** In-memory facts keyed by source and conversation, independent of legacy projection/cache. */
 internal class AuthoritativeThreadStore {
+    private val removalPeers = mutableMapOf<Pair<String, String>, MutableMap<Long, List<Long>>>()
+
     /** A capture of one owned authoritative fact, never inferred from absence or a projected row. */
     internal class Removal internal constructor(
         val host: String,
@@ -92,7 +94,10 @@ internal class AuthoritativeThreadStore {
             return AuthoritativeThreadOutcome.StaleGeneration
         }
         if (target.id in current.retirements) return AuthoritativeThreadOutcome.Ignored
-        if (current.items.firstOrNull { it.id == target.id }?.rev != target.revision) return AuthoritativeThreadOutcome.Ignored
+        val held = current.items.firstOrNull { it.id == target.id } ?: return AuthoritativeThreadOutcome.Ignored
+        if (held.rev != target.revision) return AuthoritativeThreadOutcome.Ignored
+        removalPeers.getOrPut(target.host to target.conversation) { mutableMapOf() }[target.id] =
+            current.items.filter { orderKey(it) == orderKey(held) }.map { it.id }
         publish(
             target.host,
             target.conversation,
@@ -117,11 +122,26 @@ internal class AuthoritativeThreadStore {
     ) {
         val current = current(host, conversation)
         if (current.generation != generation || current.incarnation != incarnation || current.retirements[held.id] != revision) return
+        val peers = removalPeers[host to conversation]?.get(held.id).orEmpty()
+        val split = peers.indexOf(held.id).coerceAtLeast(0)
+        val positions =
+            current.items
+                .mapIndexedNotNull { index, item ->
+                    if (orderKey(item) == orderKey(held)) item.id to index else null
+                }.toMap()
+        val before = peers.drop(split + 1).firstNotNullOfOrNull { positions[it] }
+        val after =
+            peers
+                .take(split)
+                .asReversed()
+                .firstNotNullOfOrNull { positions[it] }
+                ?.plus(1)
+        val restored = current.items.toMutableList().apply { add(before ?: after ?: size, held) }
         publishSnapshot(
             host,
             conversation,
             current.copy(
-                items = ordered(current.items + held),
+                items = ordered(restored),
                 completedVersion = maxOf(current.completedVersion, held.rev),
                 retirements = current.retirements - held.id,
             ),
@@ -519,8 +539,9 @@ internal class AuthoritativeThreadStore {
     private fun number(value: Long): Boolean = value in 0..9007199254740991L
 
     // Zero is an explicit patch clear, never a position; stable ties never invent id/arrival ordering.
-    private fun ordered(items: List<ThreadItemDto>): List<ThreadItemDto> =
-        items.sortedBy { item -> item.order?.takeIf { it > 0L } ?: Long.MAX_VALUE }
+    private fun ordered(items: List<ThreadItemDto>): List<ThreadItemDto> = items.sortedBy(::orderKey)
+
+    private fun orderKey(item: ThreadItemDto): Long = item.order?.takeIf { it > 0L } ?: Long.MAX_VALUE
 
     private fun publish(
         host: String,
@@ -538,6 +559,13 @@ internal class AuthoritativeThreadStore {
     ) {
         val previous = current(host, conversation)
         val sameGeneration = previous.generation == snapshot.generation && previous.epoch == snapshot.epoch
+        if (!sameGeneration) {
+            removalPeers.remove(
+                host to conversation,
+            )
+        } else {
+            removalPeers[host to conversation]?.keys?.retainAll(snapshot.retirements.keys)
+        }
         val held = if (sameGeneration) previous.items.associateBy { it.id } else emptyMap()
         val moves = if (sameGeneration) previous.orderMoves.toMutableMap() else mutableMapOf()
         val capture = (moves.values.maxOfOrNull { it.capture } ?: 0) + 1

@@ -315,11 +315,20 @@ class AuthoritativeRoomStorage internal constructor(
             } else {
                 emptyMap()
             }
-        val fences = retired + saved.retirements
+        val previous = header?.takeIf { it.epoch == saved.epoch }?.let { metadata(it, includeRetirements = false) }
+        for ((id, revision) in saved.retirements) {
+            if (id in retired) continue
+            dao.item(serverId, conversationId, saved.epoch, id)?.let { record ->
+                val held = ThreadItemDto.decodeReplacement(decode(listOf(record), requireNotNull(previous)).single())
+                if (held.rev > revision) throw AuthoritativeRemovalRejected(held)
+            }
+        }
+        val fences = saved.retirements + retired
         val kept =
             saved
                 .copy(
                     items = incoming.items.filterNot { it.id in fences }.map { it.raw },
+                    appliedVersion = maxOf(saved.appliedVersion, previous?.appliedVersion ?: 0),
                     retirements = fences,
                     checkpoint = if (fences.isEmpty()) saved.checkpoint else 0,
                     coverage = saved.coverage.takeIf { fences.isEmpty() },

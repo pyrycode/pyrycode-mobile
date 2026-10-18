@@ -370,13 +370,41 @@ class AuthoritativeOwnedRemovalTest {
 
     @Test fun ownershipInvariant_durableNewerRevisionRejectsRemovalAtomically() =
         runTest {
-            val cache = open()
-            val original = saved(2).copy(items = listOf(raw(2, order = 1), raw(1)))
-            cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
-            val repo = wrapper(cache)
-            val observer = observe(repo)
-            val target = requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 2))
-            val newer = original.copy(items = listOf(raw(2, 20_001, order = 1), raw(1)), appliedVersion = 20_001)
+            assertDurableRejection(open()) { open() }
+        }
+
+    @Test fun ownershipInvariant_roomReplacementRejectsStaleRemovalAtomically() =
+        runTest {
+            // Hide the incremental capability so the production writer exercises full replacement.
+            assertDurableRejection(object : ConversationCache by open() {}) { open() }
+        }
+
+    @Test fun ownershipInvariant_fileReplacementRejectsStaleRemovalAtomically() =
+        runTest {
+            val root = File(temporary.root, "replacement")
+            assertDurableRejection(FileConversationCache(root, StandardTestDispatcher(testScheduler))) {
+                FileConversationCache(root, StandardTestDispatcher(testScheduler))
+            }
+        }
+
+    private suspend fun TestScope.assertDurableRejection(
+        cache: ConversationCache,
+        reopen: () -> ConversationCache,
+    ) {
+        val original = saved(2).copy(items = listOf(raw(2, order = 1), raw(1)))
+        cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
+        val repo = wrapper(cache)
+        val observer = observe(repo)
+        // Assert the refused transaction before an observer can save the recovered conservative state.
+        observer.cancelAndJoin()
+        var observed = emptyList<ThreadItemDto>()
+        val storeObserver =
+            backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) {
+                repo.authoritativeThreads.observe("host", "c").collect { observed = it.items }
+            }
+        val target = requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 2))
+        val newer = original.copy(items = listOf(raw(2, 20_001, order = 1), raw(1)), appliedVersion = 20_001)
+        if (cache is AuthoritativeUpsertCache) {
             cache
                 .upsertAuthoritativeThread(
                     "host",
@@ -386,23 +414,46 @@ class AuthoritativeOwnedRemovalTest {
                     original.copy(items = emptyList()),
                     emptyMap(),
                 ).getOrThrow()
-            val before = ordinals()
-            assertTrue(repo.removeAuthoritativeFact(target).isFailure)
-            assertEquals(newer, open().readAuthoritativeThread("host", "c"))
-            repo.authoritativeThreads.applyBatch("host", "c", "e", 20_002, listOf(ThreadItemDto.decodeReplacement(raw(1, 20_002))), 0)
-            runCurrent()
-            observer.cancelAndJoin()
-            val retained = requireNotNull(open().readAuthoritativeThread("host", "c"))
-            assertEquals(listOf(raw(2, 20_001, order = 1), raw(1, 20_002)), retained.items)
-            assertEquals(before, ordinals())
-            assertTrue(retained.retirements.isEmpty())
+        } else {
+            reopen().writeAuthoritativeThread("host", "c", newer).getOrThrow()
         }
+        val before = if (databases.isEmpty()) null else ordinals()
+        assertTrue(repo.removeAuthoritativeFact(target).isFailure)
+        assertEquals(newer, reopen().readAuthoritativeThread("host", "c"))
+        assertEquals(
+            newer.items,
+            repo.authoritativeThreads
+                .current("host", "c")
+                .items
+                .map { it.raw },
+        )
+        assertEquals(newer.items, observed.map { it.raw })
+        val writer = observe(repo)
+        repo.authoritativeThreads.applyBatch("host", "c", "e", 20_002, listOf(ThreadItemDto.decodeReplacement(raw(1, 20_002))), 0)
+        runCurrent()
+        writer.cancelAndJoin()
+        val retained = requireNotNull(reopen().readAuthoritativeThread("host", "c"))
+        assertEquals(listOf(raw(2, 20_001, order = 1), raw(1, 20_002)), retained.items)
+        assertEquals(retained.items, observed.map { it.raw })
+        if (before != null) assertEquals(before, ordinals())
+        assertTrue(retained.retirements.isEmpty())
+        storeObserver.cancelAndJoin()
+    }
 
     @Test fun retirementInvariant_storageFencesReplayAndOldIncarnationAcrossReopen() =
         runTest {
             val cache = open()
             val original = saved(2)
             cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
+            cache
+                .upsertAuthoritativeThread(
+                    "host",
+                    "c",
+                    original.copy(appliedVersion = 30_000),
+                    false,
+                    original.copy(items = emptyList()),
+                    emptyMap(),
+                ).getOrThrow()
             val repo = wrapper(cache)
             val observer = observe(repo)
             repo.removeAuthoritativeFact(requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 2))).getOrThrow()
@@ -411,7 +462,12 @@ class AuthoritativeOwnedRemovalTest {
             restarted.upsertAuthoritativeThread("host", "c", original, false, original.copy(items = emptyList()), emptyMap()).getOrThrow()
             assertEquals(listOf(raw(1)), open().readAuthoritativeThread("host", "c")?.items)
             restarted.writeAuthoritativeThread("host", "c", original).getOrThrow()
-            assertEquals(listOf(raw(1)), open().readAuthoritativeThread("host", "c")?.items)
+            val retained = requireNotNull(open().readAuthoritativeThread("host", "c"))
+            assertEquals(listOf(raw(1)), retained.items)
+            assertEquals(30_000L, retained.appliedVersion)
+            assertEquals(mapOf(2L to 2L), retained.retirements)
+            assertEquals(0L, retained.checkpoint)
+            assertNull(retained.coverage)
             assertTrue(restarted.writeAuthoritativeThread("host", "c", original.copy(epoch = "other")).isFailure)
             val freshRepo = wrapper(restarted)
             val second = observe(freshRepo)

@@ -248,6 +248,12 @@ class FileConversationCache(
                 require(previous == null || previous.incarnation == saved.incarnation)
                 require(previous == null || previous.epoch == saved.epoch || previous.retirements.isEmpty())
                 val held = previous?.takeIf { it.epoch == saved.epoch }
+                held?.toSnapshot()?.let { durable ->
+                    for (item in durable.items) {
+                        val revision = saved.retirements[item.id] ?: continue
+                        if (item.id !in durable.retirements && item.rev > revision) throw AuthoritativeRemovalRejected(item)
+                    }
+                }
                 val retired = saved.retirements + held?.retirements.orEmpty()
                 val kept =
                     saved
@@ -638,11 +644,19 @@ class FileConversationCache(
                     RelayLog.d { "conversation_cache operation=$operation status=ok" }
                     Result.success(Unit)
                 } catch (error: Exception) {
-                    val code = failureCode(error) ?: throw error
+                    val code = if (error is AuthoritativeRemovalRejected) "stale_removal" else failureCode(error) ?: throw error
                     RelayLog.d { "conversation_cache operation=$operation status=failed code=$code" }
                     // A serialization or IO message can embed a conversation name or cwd, and a crash
                     // reporter prints causes: the code travels, the cause never does.
-                    Result.failure(ConversationCacheException("conversation cache $operation failed: $code"))
+                    Result.failure(
+                        if (error is AuthoritativeRemovalRejected) {
+                            error
+                        } else {
+                            ConversationCacheException(
+                                "conversation cache $operation failed: $code",
+                            )
+                        },
+                    )
                 }
             }
         }
