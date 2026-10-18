@@ -33,7 +33,7 @@ internal data class AuthoritativeThreadSnapshot(
 
 /** Runtime evidence of entry or the last accepted move, retained even when snapshots are conflated. */
 internal data class AuthoritativeOrderMove(
-    val revision: Long,
+    val capture: Long,
     val before: Boolean,
 )
 
@@ -442,6 +442,7 @@ internal class AuthoritativeThreadStore {
         val sameGeneration = previous.generation == snapshot.generation && previous.epoch == snapshot.epoch
         val held = if (sameGeneration) previous.items.associateBy { it.id } else emptyMap()
         val moves = if (sameGeneration) previous.orderMoves.toMutableMap() else mutableMapOf()
+        val capture = (moves.values.maxOfOrNull { it.capture } ?: 0) + 1
         val restoredOrders =
             if (restoring) {
                 snapshot.items.filter { it.id !in held }.mapTo(mutableSetOf()) { it.order?.takeIf { order -> order > 0 } ?: Long.MAX_VALUE }
@@ -450,15 +451,15 @@ internal class AuthoritativeThreadStore {
             }
         snapshot.items.forEach { item ->
             val old = held[item.id]
-            if (old == null) {
+            if (old == null && !restoring) {
                 // Merge appends newly held identities, even when they already exist outside a partial restore.
-                moves[item.id] = AuthoritativeOrderMove(item.rev, before = false)
-            } else {
+                moves[item.id] = AuthoritativeOrderMove(capture, before = false)
+            } else if (old != null) {
                 val oldOrder = old.order?.takeIf { it > 0 } ?: Long.MAX_VALUE
                 val newOrder = item.order?.takeIf { it > 0 } ?: Long.MAX_VALUE
                 // Restore appends saved peers behind live facts, superseding their earlier entry/move hints.
                 if (newOrder in restoredOrders || oldOrder != newOrder) {
-                    moves[item.id] = AuthoritativeOrderMove(item.rev, before = newOrder in restoredOrders || newOrder > oldOrder)
+                    moves[item.id] = AuthoritativeOrderMove(capture, before = newOrder in restoredOrders || newOrder > oldOrder)
                 }
             }
         }

@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.cache
 
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase.AuthoritativeHeader
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase.AuthoritativeItem
+import de.pyryco.mobile.data.cache.ConversationCacheDatabase.AuthoritativePosition
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ThreadItemDto
@@ -70,6 +71,8 @@ class AuthoritativeRoomStorage internal constructor(
         val itemWrites: Int = 0,
         val itemDeletes: Int = 0,
         val headerWrites: Int = 0,
+        val ordinalReads: Int = 0,
+        val ordinalWrites: Int = 0,
     )
 
     internal var lastWriteCounts = WriteCounts()
@@ -119,6 +122,8 @@ class AuthoritativeRoomStorage internal constructor(
             }
             val header = previousHeader?.takeUnless { retire }
             val previous = header?.let { metadata(it) }
+            val positions = mutableMapOf<Long, AuthoritativePosition>()
+            val rejected = mutableSetOf<Long>()
             val changes =
                 incoming.mapNotNull { item ->
                     val record = dao.item(host, conversation, saved.epoch, item.id)
@@ -138,43 +143,63 @@ class AuthoritativeRoomStorage internal constructor(
                                     .single()
                             require(it.id == decoded.id && it.orderKey == orderKey(decoded))
                             require(decoded.kind == item.kind)
+                            positions[item.id] = AuthoritativePosition(it.id, it.ordinal, it.orderKey)
                             decoded
                         }
+                    if (held != null && (item.rev < held.rev || (item.rev == held.rev && item.raw != held.raw))) rejected += item.id
                     if (held != null && item.rev <= held.rev) null else item to record
                 }
 
-            // Stable sort keeps movers from below a tie before it, and movers from above after it.
-            // Reserve scalar ordinals only for changed facts; unrelated ordinals never move.
-            fun joinsBefore(
-                item: ThreadItemDto,
-                record: AuthoritativeItem?,
-            ): Boolean = orderMoves[item.id] ?: (record != null && orderKey(item) > record.orderKey)
-            val beforeCount = changes.count { (item, record) -> joinsBefore(item, record) }
-            var beforeOrdinal =
-                if (beforeCount == 0) {
-                    0
-                } else {
-                    val minimum = dao.minimumOrdinal(host, conversation, saved.epoch) ?: 0
-                    require(minimum.toLong() - beforeCount >= Int.MIN_VALUE)
-                    minimum - beforeCount
+            // Placement is independent of payload revisions. Keep accepted blocks together, including
+            // unchanged live peers restored ahead of saved ties. Correct blocks need no ordinal writes.
+            val moving = orderMoves.filterKeys { it !in rejected }.toMutableMap()
+            changes.forEach { (item, record) ->
+                if (record == null ||
+                    orderKey(item) != record.orderKey
+                ) {
+                    moving.putIfAbsent(item.id, record != null && orderKey(item) > record.orderKey)
                 }
-            var added = 0
-            var maximumOrdinal: Int? = null
-            for ((item, record) in changes) {
-                val ordinal =
-                    if (record != null && item.id !in orderMoves && orderKey(item) == record.orderKey) {
-                        record.ordinal
-                    } else if (joinsBefore(item, record)) {
-                        beforeOrdinal++
+            }
+            for (id in moving.keys) {
+                if (id !in positions) {
+                    dao.position(host, conversation, saved.epoch, id)?.let { positions[id] = it }
+                    lastWriteCounts = lastWriteCounts.copy(ordinalReads = lastWriteCounts.ordinalReads + 1)
+                }
+            }
+            val changed = changes.associate { it.first.id to it.first }
+            val groups =
+                moving.entries.filter { it.key in positions || it.key in changed }.groupBy {
+                    (changed[it.key]?.let(::orderKey) ?: positions.getValue(it.key).orderKey) to it.value
+                }
+            val assigned = mutableMapOf<Long, Int>()
+            var minimum: Int? = null
+            var maximum: Int? = null
+            for ((placement, entries) in groups) {
+                val (order, before) = placement
+                val held = entries.mapNotNull { positions[it.key]?.takeIf { position -> position.orderKey == order }?.ordinal }
+                if (held.size == entries.size && held.zipWithNext().all { (a, b) -> a < b }) {
+                    val count = dao.tieSideCount(host, conversation, saved.epoch, order, if (before) held.last() else held.first(), before)
+                    lastWriteCounts = lastWriteCounts.copy(ordinalReads = lastWriteCounts.ordinalReads + 1)
+                    if (count == entries.size) continue
+                }
+                val edge =
+                    if (before) {
+                        minimum ?: (dao.minimumOrdinal(host, conversation, saved.epoch) ?: 0).also {
+                            lastWriteCounts = lastWriteCounts.copy(ordinalReads = lastWriteCounts.ordinalReads + 1)
+                        }
                     } else {
-                        run {
-                            val maximum = maximumOrdinal ?: (dao.maximumOrdinal(host, conversation, saved.epoch) ?: -1)
-                            require(maximum < Int.MAX_VALUE)
-                            (maximum + 1).also {
-                                maximumOrdinal = it
-                            }
+                        maximum ?: (dao.maximumOrdinal(host, conversation, saved.epoch) ?: -1).also {
+                            lastWriteCounts = lastWriteCounts.copy(ordinalReads = lastWriteCounts.ordinalReads + 1)
                         }
                     }
+                val first = if (before) edge.toLong() - entries.size else edge.toLong() + 1
+                require(first >= Int.MIN_VALUE && first + entries.size - 1 <= Int.MAX_VALUE)
+                entries.forEachIndexed { index, entry -> assigned[entry.key] = (first + index).toInt() }
+                if (before) minimum = first.toInt() else maximum = (first + entries.size - 1).toInt()
+            }
+            var added = 0
+            for ((item, record) in changes) {
+                val ordinal = assigned[item.id] ?: requireNotNull(record).ordinal
                 if (record == null) added++
                 dao.upsertItem(AuthoritativeItem(host, conversation, saved.epoch, item.id, ordinal, orderKey(item), item.raw.toString()))
                 lastWriteCounts =
@@ -182,6 +207,11 @@ class AuthoritativeRoomStorage internal constructor(
                         itemSerializations = lastWriteCounts.itemSerializations + 1,
                         itemWrites = lastWriteCounts.itemWrites + 1,
                     )
+            }
+            for ((id, ordinal) in assigned) {
+                if (id in changed) continue
+                dao.moveItem(host, conversation, saved.epoch, id, ordinal)
+                lastWriteCounts = lastWriteCounts.copy(ordinalWrites = lastWriteCounts.ordinalWrites + 1)
             }
             val count = (header?.itemCount ?: 0) + added
             val trimmed = (count - MAX_CACHED_THREAD_ROWS).coerceAtLeast(0)

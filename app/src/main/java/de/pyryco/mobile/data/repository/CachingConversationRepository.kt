@@ -215,6 +215,7 @@ class CachingConversationRepository(
             val previous = latest.get()
             if (saved == (previous?.authoritative ?: initialAuthoritative) &&
                 snapshot.generation == (previous?.storeGeneration ?: 0) &&
+                snapshot.orderMoves == previous?.authoritativeOrderMoves.orEmpty() &&
                 !retry.getAndSet(false)
             ) {
                 return
@@ -374,7 +375,10 @@ class CachingConversationRepository(
             val result =
                 withContext(NonCancellable) {
                     val result =
-                        if (saved == persisted?.authoritative && selected.storeGeneration == persisted?.storeGeneration) {
+                        if (saved == persisted?.authoritative &&
+                            selected.storeGeneration == persisted?.storeGeneration &&
+                            selected.authoritativeOrderMoves == persisted.authoritativeOrderMoves
+                        ) {
                             Result.success(Unit)
                         } else {
                             val owned = cache as? AuthoritativeUpsertCache
@@ -387,13 +391,17 @@ class CachingConversationRepository(
                                         ?.takeIf { !reset && it.epoch == saved.epoch }
                                 val previous = baseline?.items?.associateBy { it["id"] }.orEmpty()
                                 val changed = saved.items.filter { it != previous[it["id"]] }
+                                val successfulMoves =
+                                    persisted
+                                        ?.takeIf { it.storeGeneration == selected.storeGeneration }
+                                        ?.authoritativeOrderMoves
+                                        .orEmpty()
                                 val moves =
-                                    changed
+                                    saved.items
                                         .mapNotNull { raw ->
                                             val id = raw.getValue("id").toString().toLong()
                                             val move = selected.authoritativeOrderMoves[id]
-                                            val priorRevision = previous[raw["id"]]?.get("rev")?.toString()?.toLong() ?: 0
-                                            move?.takeIf { it.revision > priorRevision }?.let { id to it.before }
+                                            move?.takeIf { it.capture > (successfulMoves[id]?.capture ?: 0) }?.let { id to it.before }
                                         }.toMap()
                                 owned.upsertAuthoritativeThread(
                                     serverId,
