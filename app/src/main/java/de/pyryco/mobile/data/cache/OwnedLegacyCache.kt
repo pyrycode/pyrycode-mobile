@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.cache
 
+import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
 
 /** Capability used only by a writer that observed the identities it changes. */
@@ -9,6 +10,17 @@ internal interface OwnedLegacyCache {
         conversation: String,
         upserts: List<OwnedLegacyRow>,
         removed: Set<String>,
+    ): Result<Unit>
+}
+
+/** Received evidence changes are separate from the successful row baseline. */
+internal interface OwnedLegacyCoverageCache : OwnedLegacyCache {
+    suspend fun writeOwnedLegacyCoverage(
+        host: String,
+        conversation: String,
+        position: HistoryPosition,
+        previous: HistoryPosition?,
+        observed: List<ThreadItem>,
     ): Result<Unit>
 }
 
@@ -41,6 +53,7 @@ internal fun applyOwnedRows(
     baseline: List<ThreadItem>,
     changes: List<OwnedLegacyRow>,
     removed: Set<String>,
+    trim: Boolean = true,
 ): List<ThreadItem> {
     val positions = baseline.withIndex().associate { it.value.legacyRowKey() to it.index }
     val replacements = changes.associate { it.row.legacyRowKey() to it.row }
@@ -53,7 +66,7 @@ internal fun applyOwnedRows(
         slots.getOrPut(slot) { ArrayList() }.add(change.row)
         newSlots[key] = slot
     }
-    return cacheableThreadRows(
+    val applied =
         buildList {
             for (index in 0..baseline.size) {
                 slots[index]?.let { addAll(it) }
@@ -63,6 +76,6 @@ internal fun applyOwnedRows(
                     if (key !in removed) add(replacements[key] ?: row)
                 }
             }
-        },
-    )
+        }
+    return if (trim) cacheableThreadRows(applied) else applied
 }
