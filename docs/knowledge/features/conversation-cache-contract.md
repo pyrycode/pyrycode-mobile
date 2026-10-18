@@ -95,8 +95,8 @@ unrecognized, streaming or in-flight-tool row by constructing a `ThreadItem` lis
 
 **The authoritative thread family (#2149).** `readAuthoritativeThread`/`writeAuthoritativeThread`
 are additive, default-bodied methods over `SavedAuthoritativeThread(epoch, items, appliedVersion,
-checkpoint, coverage)`. One atomic replacement binds full raw item objects and their epoch to the
-certified reconnect checkpoint and optional continuous history coverage. `SavedThreadCoverage`
+checkpoint, coverage)`. The full-write API atomically replaces facts and metadata, binding raw
+item objects and their epoch to the certified checkpoint and optional continuous history coverage. `SavedThreadCoverage`
 holds `lowerOrder`, `upperOrder`, `continuation` and `olderExists`; parent or active facts outside
 that range do not enlarge it. Applied progress may exceed the checkpoint after an interrupted
 multi-batch reply: saving newer complete items does not certify the unfinished reply.
@@ -117,7 +117,9 @@ static operation/failure codes. Legacy rows remain readable through `readThread`
 converted into authoritative items or certify this checkpoint. Both thread families are removed
 with the conversation or host. The sole save/restore consumer is the
 [supplied caching seam](caching-conversation-repository.md#what-is-written-and-when);
-production route activation remains with #1988 and bounded reading with #2068.
+production route activation remains with #2245 and bounded reading with #2252.
+Ordinary Room saves use the owned upsert contract below (#2255); full-file compatibility and
+import continue to use replacement.
 Authoritative Room storage (#2163) is bound through the migration-aware cache (#2161).
 
 **The saved history position (#1354, extended by #1832 and #1910).** `HistoryPosition(cursor, atStart,
@@ -321,9 +323,9 @@ No real-Claude capture is required; other operating systems are outside this tic
 
 `AuthoritativeRoomStorage` is an independently usable backend over the same database as
 `LegacyRoomStorage`, exposing full `readAuthoritativeThread`/`writeAuthoritativeThread`
-equivalent to `ConversationCache`'s, plus `newestPage`/`beforePage` and scoped removal. It is
-used by the application through the migration-aware cache (#2161); #2068 owns bounded
-reader activation and owned partial writes. Ownership is the same exact, case-sensitive
+equivalent to `ConversationCache`'s, plus owned upserts, `newestPage`/`beforePage` and scoped removal.
+It is used by the application through the migration-aware cache (#2161); #2255 supplies ordinary
+owned writes and #2252 owns bounded reader activation. Ownership is the same exact, case-sensitive
 host-plus-conversation scoping as
 every other family in this cache, with the authoritative family additionally scoped by epoch —
 identical ids under another host, another conversation or another epoch are different rows,
@@ -347,20 +349,23 @@ shortened full read — carrying the exact owner, epoch, selected raw items, and
 committed `appliedVersion`/`checkpoint`/`coverage` exactly as `readAuthoritativeThread` would
 report them: a page can never advance, shrink or otherwise disagree with the full record's
 certification. For a positive page size, the query selects at most that many item rows in held
-ordinal order (newest-first for `newestPage`, continuing older for `beforePage`) plus one
-ordinal-only continuation probe that never selects or decodes the probed row's payload — the
+daemon order with ordinal tie-breaking (selecting the newest window for `newestPage` and
+earlier windows for `beforePage`, each returned chronologically) plus one
+scalar-only continuation probe that never selects or decodes the probed row's payload — the
 same bounded-read shape `LegacyRoomStorage`'s pages use. Growing history outside the requested
 window never grows what a page reads or decodes; only the selected items' rows and the single
-probed ordinal are touched, instrumented by the storage's internal `ReadCounts`. Decoded page
-items are revalidated against their indexed identity, revision and ordinal exactly as a full
+probed rank are touched, instrumented by the storage's internal `ReadCounts`. Decoded page
+items are revalidated against their indexed identity/order and unique held ordinals as a full
 read would, so a page can never surface a row that disagrees with its own index.
 
 The page's nested `AuthoritativeThreadPage.Continuation` is opaque and belongs only to this
-family: it binds the exact host, conversation, epoch and a per-write replacement generation
-(a fresh UUID minted on every `writeAuthoritativeThread`, not a content hash), plus the local
-ordinal to resume before. A token from a wrong owner, a stale epoch or a superseded generation
-returns null rather than a wrong or partial page — any replacement invalidates every token
-issued before it, even one from the same epoch reused by a later replacement. It cannot be
+family: it binds the exact host, conversation, epoch and committed generation
+(a fresh UUID on replacement or owned mutation, including metadata/placement-only commits),
+plus the local rank to resume before. Signed storage ordinals are tie keys, not token positions.
+A token from a wrong owner, a stale epoch or a superseded generation
+returns null rather than a wrong or partial page. Replacement and owned mutation invalidate
+every prior token, including within a reused epoch; restart from `newestPage` after rejection.
+It cannot be
 passed to `LegacyRoomStorage`'s paging, and a continuation running out (`continuation == null`)
 says only that this backend's local storage is exhausted; it is never a server cursor and never
 asserts server-side completeness. Reaching the end of local pages does not change applied
@@ -381,6 +386,102 @@ Room's additive
 [Layout § the additive version 1 → 2 migration](conversation-cache-layout.md#indexed-legacy-room-layout-2162)
 — adding the authoritative tables without touching existing legacy content. Version 3
 adds the import ledger described above.
+
+### Owned incremental authoritative mutations (#2255)
+
+`CachingConversationRepository.ThreadWriter` calls the internal `AuthoritativeUpsertCache`
+capability on `MigratingConversationCache`, which uses its existing import-aware admission before
+`AuthoritativeRoomStorage.upsertAuthoritativeThread`. Exact host/conversation/family, epoch and
+runtime generation still own every capture and commit. `import_unavailable`, `import_unobserved`
+and forgotten-host fences refuse this path too. Saved facts grant no negotiated support or route;
+this seam activates neither bounded readers nor a new wire operation. Full replacement/import
+and file compatibility APIs remain available.
+
+The mutation contains changed raw full facts, store-authored metadata, the prior metadata-only
+successful/restored baseline, an explicit reset and accepted placement evidence. Ordinary omission
+never removes a stored identity. Storage validates incoming facts with `toSnapshot`, selects only
+incoming identities' prior payloads, validates their indexed identity/order and kind, and accepts
+only newer revisions. Unknown raw fields, parent relationships and explicit clears remain exact.
+A newest revision reads/decodes/serializes/writes that fact and required metadata, without a full
+saved-thread read, full serialization, delete/reinsert or unrelated ordinal rewrite. Ordering-key
+SQL may scan scalar keys without decoding unrelated payloads.
+
+Placement admission is independent of payload admission. Runtime publication evidence preserves
+accepted before/after tie blocks in candidate order through coalescing, partial restoration and
+live-before-restore races, including unchanged peers and unchanged revisions. New entries append;
+moves from below prepend to a tie, moves from above append; restoration appends saved peers behind
+held live identities. Scalar queries retain already correct blocks' ordinals, otherwise reserve a
+signed ordinal block for participating identities only. Placement-only work reads no payloads and
+changes no payload bytes. Stale/conflicting incoming payloads cannot reposition a newer stored fact.
+Inferring final placement only from durable and final numeric order loses intermediate moves;
+filtering placement only by changed revisions loses unchanged live peers.
+
+Facts, placement, applied progress and certification commit in one Room transaction. Applied
+progress takes the maximum within the epoch; incomplete replies keep the prior certified
+checkpoint/coverage. For an existing family, advancing certification requires monotonic progress
+and the inherited
+baseline epoch/checkpoint/coverage to match the durable certificate inside that transaction.
+Local hydration, page exhaustion and active/parent extras cannot extend certification. Failure
+preserves prior facts and metadata; no successful baseline advances.
+
+Retention selects the oldest scalar-ordered excess over 100000 facts and atomically clears
+checkpoint to zero and coverage to null, keeping applied progress. A partial store may still hold
+the old certificate: neither repeating it on a revision nor a catch-up/coverage-only completion
+inheriting it can reinstall certification for trimmed facts. A fresh conservative restore and
+new store-authored completion can recover. Epoch mismatch or explicit runtime-generation reset
+retires the family before its new facts commit, even when the epoch string is reused; ordinary
+partial views cannot retire it. Confirmed conversation/host removal clears both families and
+fences delayed work. Existing no-backup custody and content-free classified failures remain.
+
+#### Retained authoritative mutation and restart evidence
+
+Linux focused evidence at `a0d7f4467c7ba9f13f0bbc11fe8830e2d721015c` (2026-10-18): each class
+ran separately through `python3 scripts/gradle-gate.py testDebugUnitTest --tests '<qualified class>'
+--console=plain`. Retained JUnit XML, per-class revisions, `results.json` and hashes were read
+alongside the [final verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/2257#issuecomment-6246324504).
+These are prior builder runs; documentation produced no test runs.
+
+| Class under `de.pyryco.mobile.data` | Executed/passed | Failed/errors | Skipped |
+| --- | ---: | ---: | ---: |
+| `repository.AuthoritativeOwnedUpsertTest` | 17 | 0 | 0 |
+| `repository.AuthoritativeThreadCacheTest` | 23 | 0 | 0 |
+| `repository.AuthoritativeThreadStoreTest` | 15 | 0 | 0 |
+| `repository.AuthoritativeThreadQueriesTest` | 23 | 0 | 0 |
+| `cache.AuthoritativeRoomStorageTest` | 11 | 0 | 0 |
+| `cache.MigratingConversationCacheTest` | 15 | 0 | 0 |
+| `cache.AuthoritativeFileCacheTest` | 4 | 0 | 0 |
+| `repository.CoalescedThreadWritesTest` | 41 | 0 | 0 |
+| **Total** | **149** | **0** | **0** |
+
+All 17 owned-upsert methods are present and passed in the retained report, including
+`boundedInvariant_ownedRevisionAndCertificationPreserveUnloadedFacts` (18000 saved/200 owned),
+identity/ordering, deferred-import admission, failure/retry, post-commit cancellation, reused-epoch
+reset, final-flush I/O/lock waits, retention/certification and deletion/other-host isolation.
+They compare exact fresh cache/repository facts and metadata plus one-item page traversal;
+mutations reject stale continuations before restart-from-newest recovery.
+
+Retained numeric work below excludes fixture seeding/restoration; every row writes one header.
+Ordinary saves add no full reads/replacements and preserve unrelated ordinals. The fixture's
+replacement counter remains 1; held-read fixtures also retain their initial restore read.
+
+| Probe operation | Payload reads/decodes | Input decodes/serializations/writes | Deletes | Scalar placement reads/writes |
+| --- | ---: | ---: | ---: | ---: |
+| 18000-fact newest revision | 1 / 1 | 1 / 1 / 1 | 0 | 0 / 0 |
+| Addition | 0 / 0 | 1 / 1 / 1 | 0 | 2 / 0 |
+| Certification-only | 0 / 0 | 0 / 0 / 0 | 0 | 0 / 0 |
+| `orderingInvariant_heldUnchangedPeerAnchorsChangedRevision` | 1 / 1 | 1 / 1 / 1 | 0 | 2 / 0 |
+| `orderingInvariant_heldUnchangedRevisionPersistsPlacementOnly` | 0 / 0 | 0 / 0 / 0 | 0 | 3 / 1 |
+
+Raw reports were at `/tmp/builder-2255/evidence/recovery-focused/` when recorded; they are
+retained evidence locations, not gate worktree build paths. The last two ordering probes first
+failed against `b50eef33ffc50b8f98e79b32dd8c952b6cce53a7`: 2 executed, 2 failed, 0 errors/skips
+(`recovery-red/`). Earlier live-before-restore red evidence at `23c69e6c9` recorded 1 executed,
+1 failed, 0 errors/skips (`rework3-red/`). These historical failures remain failures.
+
+The dispatcher's complete JVM gate at the same final revision additionally reports 5928
+executed/passed, 0 failed/skipped, including all named owned-upsert scenarios. This is a full-suite
+result, separate from the focused runs above. macOS is outside this Linux ticket's verification
+scope; this storage seam requires no live route-activation proof.
 
 **The read-position family (#877, fallback-only since #1883).**
 `readReadPositions`/`writeReadPositions` retain their graceful-read,

@@ -172,7 +172,7 @@ the global interface would miss thread reads after the route migration. The
 identity-default decorator adds no production subscription; instrumentation taps
 the existing `observeMessages` collection without another backfill request. Since
 \#797, this composes with the [caching
-wrapper](caching-conversation-repository.md#wiring--under-decoraterepository-not-in-it)
+wrapper](caching-conversation-repository-wiring.md#wiring--under-decoraterepository-not-in-it)
 that now sits underneath the hook: the tap observes the restored, merged thread,
 not a pre-restore projection.
 
