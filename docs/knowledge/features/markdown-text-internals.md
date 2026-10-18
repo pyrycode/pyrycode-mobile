@@ -25,7 +25,7 @@ The parse is keyed on the `markdown` string itself — the AST is rebuilt only w
 | `PARAGRAPH` | `Text(buildInline(...), style = style.body)` |
 | `UNORDERED_LIST` | `Column { … Row { Text("•"); Spacer; Column { recurse } } … }` — an item carrying a `GFMTokenTypes.CHECK_BOX` child renders `TaskMark(checked)` instead of the bullet; see [Task lists](#task-lists). **Reader only (#1533):** a non-task item whose first block is a paragraph skips the `Row` entirely and draws one `Text` of `"$marker  "` followed by `buildInline(lead)`, so a wrapped continuation line returns to the list's own left edge instead of hanging under the item text — matching Figma `553:2574`, where the marker is part of the item's paragraph, not a sibling of it. The item's later blocks (a nested list, a second paragraph) still indent under a fixed `ReaderListContinuationIndent` (14dp), since the frame has no nested case to follow. |
 | `ORDERED_LIST` | same but marker is `"${index + 1}."` (1-based); both list kinds dispatch through the same `ListBlock`, so a `CHECK_BOX` child replaces the marker here too — untested directly, but true by the shared code path. The reader's inline-marker path above applies identically, with the `N.` marker in place of `•`. |
-| `BLOCK_QUOTE` | Thread: 4dp `onSurfaceVariant` bar and italic paragraphs. Reader: 3dp `outlineVariant` bar, 12dp gap and regular `bodyLarge` / `onSurfaceVariant` text. |
+| `BLOCK_QUOTE` | Thread: 4dp `onSurfaceVariant` bar and italic paragraphs. Reader: 3dp `outlineVariant` bar, 12dp gap and regular `bodyMedium` 14/20 / `onSurfaceVariant` text. |
 | `GFMElementTypes.TABLE` | `TableBlock(...)` — see [Tables](#tables) |
 | `CODE_FENCE` | Reader unlabelled fence: `ReaderCodeBlock`; labelled fence and thread: `CodeBlock` with copy control — see [Code blocks](#code-blocks). |
 | `CODE_BLOCK` | Reader indented block: `ReaderCodeBlock`; thread: `CodeBlock`. Both use extracted source text. |
@@ -70,6 +70,13 @@ Link text is built from the `LINK_TEXT` child's children, filtering `LBRACKET` /
 `GFMElementTypes.TABLE` dispatches to `TableBlock`. The `HEADER`'s `CELL` children are row 0, each `ROW`'s `CELL` children a further row; column count is row 0's size. A cell's own children are ordinary inline nodes, walked by the same `appendInlineChildren` as everywhere else.
 
 **Column-major layout**, not row-major: a `Row` of per-column `Column`s, each `Column` at `IntrinsicSize.Max` width with its cells at `fillMaxWidth`. That is what gives a column its own widest-cell width with no measuring pass, and what gives `textAlign` a box to align within. Rows stay in step across columns only because **cells never wrap** — each is one line of `bodyMedium` (`softWrap = false`, `maxLines = 1`), whose `lineHeight` comes from the type style rather than the glyphs, so a monospace or bold cell sits at the same height as plain text. A table too wide for the bubble scrolls horizontally (`Modifier.horizontalScroll` on the outer `Box`) instead of reflowing; the bubble and thread keep their own width because the scroll is on the table's content, not on the message column.
+
+`TableBlock` receives `MarkdownTextStyle` explicitly (#2283). Reader cells select its
+body style, carrying Roboto 14/20, 0.25sp tracking, `onSecondaryContainer` and untrimmed
+line boxes through this separate typography selection; changing only the reader's
+paragraph style would leave cells behind. Thread cells continue selecting Material
+`bodyMedium`. Row 0 copies the selected style with bold weight, retaining header emphasis.
+See [reader native coverage](markdown-reader-screen.md#reader-body-typography-coverage-2283).
 
 **Alignment** comes from `parseTableAlignments(delimiterRow)` (`internal`, pure, unit-tested): splits the delimiter row on `|`, drops a blank leading/trailing segment (GFM permits the row with or without outer pipes), and reads each spec — leading-and-trailing `:` → `Center`, trailing `:` only → `End`, anything else → `Start`. A column the delimiter row doesn't describe defaults to `Start`.
 
