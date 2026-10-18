@@ -240,11 +240,21 @@ fun MarkdownText(
 private fun rememberMarkdownUriHandler(onOpenMarkdownPath: ((String) -> Unit)?): UriHandler {
     val platformHandler = LocalUriHandler.current
     val currentOnOpenMarkdownPath by rememberUpdatedState(onOpenMarkdownPath)
-    return remember(platformHandler) {
-        object : UriHandler {
-            override fun openUri(uri: String) = routeMarkdownLink(uri, currentOnOpenMarkdownPath, platformHandler::openUri)
-        }
+    val opensMarkdownPaths = onOpenMarkdownPath != null
+    return remember(platformHandler, opensMarkdownPaths) {
+        MarkdownUriHandler(platformHandler, opensMarkdownPaths) { currentOnOpenMarkdownPath }
     }
+}
+
+/** Admission is shared by both render paths; activation always rechecks the current callback. */
+private class MarkdownUriHandler(
+    private val platformHandler: UriHandler,
+    private val opensMarkdownPaths: Boolean,
+    private val currentMarkdownCallback: () -> ((String) -> Unit)?,
+) : UriHandler {
+    fun accepts(target: String): Boolean = isSafeLinkScheme(target) || (opensMarkdownPaths && markdownLinkPath(target) != null)
+
+    override fun openUri(uri: String) = routeMarkdownLink(uri, currentMarkdownCallback(), platformHandler::openUri)
 }
 
 /** The caret a streaming reply draws after its newest text. It is never part of the parsed source. */
@@ -377,7 +387,7 @@ private fun MarkdownBlock(
         MarkdownElementTypes.BLOCK_QUOTE ->
             BlockQuoteBlock(node, source, uriHandler, style)
         GFMElementTypes.TABLE ->
-            TableBlock(node, source, uriHandler)
+            TableBlock(node, source, uriHandler, style)
         MarkdownElementTypes.CODE_FENCE -> {
             val code = fencedCodeText(node, source)
             val language =
@@ -671,6 +681,7 @@ private fun TableBlock(
     node: ASTNode,
     source: String,
     uriHandler: UriHandler,
+    textStyle: MarkdownTextStyle,
 ) {
     val colors = currentInlineColors()
     val streaming = LocalStreamingTail.current
@@ -710,7 +721,7 @@ private fun TableBlock(
                 Column(modifier = Modifier.width(IntrinsicSize.Max)) {
                     rows.forEachIndexed { rowIndex, cells ->
                         val cell = cells.getOrNull(column)
-                        val style = MaterialTheme.typography.bodyMedium
+                        val style = if (textStyle.reader) textStyle.body else MaterialTheme.typography.bodyMedium
                         Text(
                             text =
                                 if (cell == null) {
@@ -1264,6 +1275,11 @@ private fun AnnotatedString.Builder.appendInline(
                     ?.removePrefix("<")
                     ?.removeSuffix(">")
                     ?: ""
+            val admitted = (uriHandler as? MarkdownUriHandler)?.accepts(url) ?: isSafeLinkScheme(url)
+            if (!admitted) {
+                append(linkText)
+                return
+            }
             withLink(
                 LinkAnnotation.Url(
                     url = url,

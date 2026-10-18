@@ -81,7 +81,7 @@ class ThreadCanvasPaletteTest {
                     surface = if (dark && !wallpaper) Color(0xFF0B0E11) else scheme.surface
                     divider = (if (dark && !wallpaper) Color(0xFF32628D) else scheme.outlineVariant).copy(alpha = 0.6f)
                     headerBackdrop = scheme.threadColors.headerBackdrop
-                    foreground = scheme.onSurface
+                    foreground = scheme.onSecondaryContainer
                     titleColor = scheme.onPrimaryContainer
                     expectedWidth = LocalWindowInfo.current.containerSize.width
                     if (!wallpaper) {

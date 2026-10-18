@@ -24,9 +24,13 @@ fun MarkdownText(
 `presentation` (default `MarkdownPresentation.Thread`). Finished and streaming
 [`MessageBubble`](message-bubble.md) use M3 `bodyMedium` (14sp/20sp), 16dp block gaps and
 4dp sibling-item gaps. The [reader](markdown-reader-screen.md#what-it-does) selects
-`MarkdownPresentation.Reader`, `bodyLarge` (16sp/24sp), 12dp/6dp gaps and 13sp/20sp code.
+`MarkdownPresentation.Reader`, `bodyMedium` (14sp/20sp, 0.25sp tracking) with
+`onSecondaryContainer` prose and table cells (#2283), 16dp ordinary block gaps,
+6dp sibling-item gaps and 13sp/20sp code (#2285).
 
-The 16dp thread gap also separates blocks inside list items and quotes (#2273).
+The 16dp gap also separates blocks inside list items and quotes in Thread (#2273)
+and Reader (#2285). Reader outer padding stays measured-bar-plus-28dp at the top,
+20dp at the sides and 16dp at the bottom.
 Column arrangements add gaps only between blocks, with no space before the first or
 after the last. User paragraphs, attachment/metadata gaps and bubble padding belong
 to [MessageBubble](message-bubble.md) and retain their independent values.
@@ -39,7 +43,8 @@ boxes stay as before. Headings and tables keep their element-specific typography
 choice changes code and quote appearance, while parser, inline links and routing stay shared.
 
 **No `color` parameter** — body text inherits `LocalContentColor.current`; assistant bubbles and the reader
-supply `onSurface`. Plain ATX heading text explicitly uses the active theme’s
+supply their body colours: assistant bubbles inherit `onSurface`, while reader prose
+uses `onSecondaryContainer` and quotes use `onSurfaceVariant`. Plain ATX heading text explicitly uses the active theme’s
 `onSecondaryContainer`; inline links and code retain their existing span treatments.
 All six levels share the [markdown-only heading scale](shared-typography.md#markdown-headings)
 in settled and streaming Thread/Reader rendering. SETEXT headings retain the raw body fallback,
@@ -79,6 +84,11 @@ Parse memoisation, block and inline dispatch, tables, task lists, strikethrough,
 - **Test seam.** An optional `StreamingMarkdownObserver` parameter reports each parsed tail and each composed block. Production passes none.
 
 ## Testing
+
+[Reader bounds coverage and counted Linux acceptance](markdown-reader-screen.md#ordinary-block-bounds-coverage-2285)
+pin 16dp ordinary gaps for both note sources, recursive list/quote content, panel
+boundaries, 6dp sibling gaps and unchanged outer padding. Reader heading-specific
+20/12dp integration remains with #2278/#2276.
 
 `MarkdownHeadingScaleTest` inspects rendered `TextLayoutResult` styles under native graphics,
 with dark/light × Thread/Reader cases. Each case checks H1–H6 size, line height, tracking,

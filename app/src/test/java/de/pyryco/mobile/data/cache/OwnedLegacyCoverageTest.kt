@@ -41,6 +41,8 @@ import java.io.IOException
 import java.util.Collections
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.TimeSource
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -229,12 +231,22 @@ class OwnedLegacyCoverageTest {
         }
 
     @Test fun anchorInvariant_subtractingProducerKeepsValidReceivedGapWalk() =
-        runTest {
+        // Four disk-backed cases complete in about 54s locally; restore/reopen work shares this budget.
+        // Keep a finite method-local bound and phase evidence without reducing either fixture.
+        runTest(timeout = 2.minutes) {
+            val started = TimeSource.Monotonic.markNow()
             val counts = HashMap<Boolean, Pair<LegacyRoomStorage.MutationCounts, Int>>()
             for (size in listOf(20, 18000)) {
                 for (remove in listOf(false, true)) {
+                    fun phase(name: String) {
+                        println(
+                            "owned_gap_subtraction_phase saved_rows=$size removal=$remove phase=$name elapsed_ms=${started.elapsedNow().inWholeMilliseconds}",
+                        )
+                    }
+                    phase("open")
                     val name = "subtract-$size-$remove"
                     var cache = open(name)
+                    phase("fixture")
                     val rows = (1..size).map { row(it) }
                     val ids = listOf(1uL, 2uL, 3uL, 10uL) + (5..size).map { it.toULong() * 2u + 20u }
                     val order = rows.zip(ids).associate { (row, id) -> row.historyKeys().first() to id }
@@ -252,17 +264,21 @@ class OwnedLegacyCoverageTest {
                             proofs = historyRowProofs(rows),
                         )
                     val initial = HistoryPosition("saved", true, evidence)
+                    phase("seed_rows")
                     cache.readThread("Host", "c")
                     cache.writeThread("Host", "c", rows).getOrThrow()
+                    phase("seed_evidence")
                     cache.writeHistoryPosition("Host", "c", initial).getOrThrow()
 
                     suspend fun unrelated() =
                         requireNotNull(database).legacy().allEvidence("Host", "c").filterNot {
                             it.ordinal == LEGACY_ORDINAL_STEP || it.kind == "losses" || it.kind == "spans" && it.low.toULong() <= 3u
                         }
+                    phase("read_unrelated")
                     val unchanged = unrelated()
                     val source = Source()
                     var repository = CachingConversationRepository(source, cache, "Host")
+                    phase("restore_repository")
                     assertEquals(rows, repository.observeThreadSnapshot("c").first().rows)
                     repository.readHistoryPosition("c")
                     val changed = row(1, "changed")
@@ -276,6 +292,7 @@ class OwnedLegacyCoverageTest {
                             ThreadSnapshot(listOf(changed))
                         }
                     val expectedRows = if (remove) rows.drop(1) else listOf(changed) + rows.drop(1)
+                    phase("mutate")
                     queries.clear()
                     repository.writeHistoryPosition("c", initial)
                     val statements = synchronized(queries) { queries.toList() }.filter { it.contains("legacy_", true) }
@@ -284,12 +301,16 @@ class OwnedLegacyCoverageTest {
                         "owned_gap_subtraction saved_rows=$size removal=$remove counts=${work.first} storage_sql_statements=${work.second}",
                     )
                     if (size == 20) counts[remove] = work else assertEquals("bounded relevant evidence work", counts[remove], work)
+                    phase("verify_mutation")
                     assertFalse(statements.any { it.startsWith("SELECT * FROM legacy_rows", true) && !it.contains("identity=") })
                     assertFalse(statements.any { it.contains("FROM legacy_evidence WHERE host=? AND conversation=? ORDER BY") })
                     assertFalse(statements.any { it == "DELETE FROM legacy_evidence WHERE host=? AND (? IS NULL OR conversation=?)" })
                     assertEquals("untouched received evidence", unchanged, unrelated())
+                    phase("repeat_saves")
                     repeat(2) { repository.writeHistoryPosition("c", initial) }
+                    phase("first_reopen")
                     cache = open(name)
+                    phase("verify_first_reopen")
                     assertEquals(expectedRows, cache.readThread("Host", "c"))
                     val saved = requireNotNull(cache.readHistoryPosition("Host", "c"))
                     val retained = requireNotNull(saved.coverage)
@@ -301,14 +322,21 @@ class OwnedLegacyCoverageTest {
                     assertFalse(saved.atStart)
                     assertTrue(retained.unsignedUnknown)
                     assertEquals(unchanged, unrelated())
+                    phase("restore_reopened_repository")
                     repository = CachingConversationRepository(source, cache, "Host")
                     repository.observeThreadSnapshot("c").first()
                     repository.readHistoryPosition("c")
+                    phase("repeat_reopened_saves")
                     repeat(2) { repository.writeHistoryPosition("c", initial) }
+                    phase("final_reopen")
                     val reopened = open(name)
+                    phase("verify_final_reopen")
                     assertEquals(expectedRows, reopened.readThread("Host", "c"))
                     assertEquals(saved, reopened.readHistoryPosition("Host", "c"))
                     assertEquals(unchanged, unrelated())
+                    phase("close")
+                    close()
+                    phase("complete")
                 }
             }
         }
