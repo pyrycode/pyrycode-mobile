@@ -123,6 +123,17 @@ and the [owned coverage contract](conversation-cache-legacy-mutations.md#owned-c
   explicit acceptance, the failed row transaction must retain the exact pending key and leave
   disk rows empty. Retry uses an empty live capture, so resupplying the row cannot hide a lost
   intent. Success retires that intent and a fresh database/cache reader returns exactly row 1.
+  Acceptance acknowledgement does not isolate the scheduled 100 ms writer from
+  `writeHistoryPosition`. Real Room I/O can suspend the explicit save while
+  `runTest` advances the shared clock, allowing both paths to reach the same
+  failure hook. The probe now gives its writer a separately driven
+  `TestCoroutineScheduler`. While the history transaction is held, advancing only
+  the main clock must leave writer time at zero and produce exactly one failed
+  attempt. After rollback, assert the exact retained intent and empty disk,
+  retry from an empty live capture, then explicitly release the writer timer.
+  Assert intent pruning, no additional failed attempt and exact row 1 through a
+  fresh reader. Cleanup releases all barriers and joins saves/readers before
+  Room closes; keep the post-emission acknowledgement as well as clock isolation.
 - `revisionInvariant_rowSuccessSurvivesEvidenceFailureAndCancellation` retains both branches:
   committed rows survive evidence failure and cancellation, and the cancelled save cannot
   finish while its non-cancellable commit is deliberately held. Final one-row publication is
@@ -141,6 +152,30 @@ failure XML and test-result output remain intact. At repaired source
 `0ce36236b2ee3bd507705922ef6e38517781778b`, the exact pair passed **2/2** and the affected
 class passed **9/9**, each with **0 failures/errors/skips** and complete captures. These are
 separate focused runs, preserving exact persistence assertions and both revision branches.
+
+The #2272 recovery's [retained index and raw XML](../../../app/src/test/resources/markdown-2272/recovery-evidence.txt)
+distinguish this timer overlap from #2291's earlier acceptance ordering defect.
+Controlled red at `0f33e4062` executed **1, 0 passed, 1 failed, 0 errors/skips**:
+the assertion expected one failed attempt but observed two, with transaction
+origins `history` at virtual time 100 ms and `writer` at 201 ms. Unchanged baseline
+method/class selections passed **1/1** and **9/9**; those retries did not clear the
+historical failure. Repaired source-equivalent `86dc2f098698297ef9672630bdc73b6b4ec331d2`
+passed the exact method **1/1** and class **9/9**, each with **0 failures/errors/skips**.
+The index preserves precommit source hashes and identifies the method run before
+formatting. Linux identity was Ubuntu 24.04.5 x86_64, JDK 21, Robolectric API 33.
+The fresh worker independently used `-Xmx4g` (4294967296 bytes); Gradle used
+`-Xmx4096m`. A Gradle heap increase alone cannot repair test-executor exhaustion.
+
+The prior partial #2272 gate at `ea1061b4e43f` remains failed: **5740 executed,
+5739 passed, 1 failed, 1 skipped**, plus separate lint and test-worker heap
+exhaustion. Accepted complete Linux verification at
+`07566472b2eac2574ae4f0e68eed6ddaa5724d67` then executed/passed **6086,
+0 failures/errors/skips**, including `intentInvariant_rowFailureKeepsRetryableWork`.
+That is full-suite evidence, separate from the focused recovery selections. See
+[the accepted run identity, gate counts and retained bundle](markdown-text.md#testing)
+for Android UI/scripted evidence and its one unrelated UI skip. No production
+cache defect was established; exact rollback, retained-intent and fresh-reader
+assertions stay in place. macOS was outside this Linux ticket's scope.
 
 Historical failures remain failures. #2278's retained stderr classifies both methods as
 `AssertionError`; its original assertion details remain unavailable beyond the full-log pointer
