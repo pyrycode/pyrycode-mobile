@@ -13,6 +13,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.NoiseSessionPump
+import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.StableConversationRepository
@@ -157,15 +158,19 @@ class E2eTestApplication : Application() {
             includes(hostConversationModule(useRelay = true, decorateRepository = ::TappingConversationRepository))
             single<ConversationRepository> { TappingConversationRepository(get<StableConversationRepository>()) }
             single {
+                val original = get<RelayTransportFactory>()
                 RelayConnectionFactory(
                     get(),
-                    get(),
+                    RelayTransportFactory { pairing -> OwnedReplyProbe.transport(pairing.serverId, original.create(pairing)) },
                     get(),
                     pushTokens = get<AppPreferences>().pushToken,
                     messageTrail = get(),
                     pumpFactory =
                         RelaySessionPumpFactory { transport, factory, dispatcher, minimum ->
-                            SettingsReadProbe.wrap(NoiseSessionPump(transport, factory, dispatcher, onClientMinimum = minimum))
+                            OwnedReplyProbe.wrap(
+                                transport,
+                                SettingsReadProbe.wrap(NoiseSessionPump(transport, factory, dispatcher, onClientMinimum = minimum)),
+                            )
                         },
                 )
             }

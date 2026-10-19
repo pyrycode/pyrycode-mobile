@@ -1,5 +1,8 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
@@ -7,7 +10,10 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.ComposeTestRule
+import de.pyryco.mobile.e2e.CompletedReplyObservation
+import de.pyryco.mobile.e2e.ThreadEvidenceRecord
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
+import de.pyryco.mobile.ui.conversations.components.markdownPlainText
 
 internal const val PING_PROMPT = "Reply with exactly the word: ping (nothing else)."
 
@@ -30,3 +36,35 @@ internal fun ComposeTestRule.awaitDisplayedPingReply(timeoutMillis: Long) {
     waitUntil(timeoutMillis) { reply.isDisplayed() }
     reply.assertIsDisplayed()
 }
+
+/** Counts identities independently of content so duplicate rows cannot hide behind different wording. */
+internal fun ComposeTestRule.ownedReplyNodeCounts(reply: CompletedReplyObservation): List<Int> =
+    reply.records.map { onAllNodes(hasTestTag("assistant-reply:${it.message.id}"), useUnmergedTree = true).fetchSemanticsNodes().size }
+
+internal fun ownedReplyMatcher(record: ThreadEvidenceRecord): SemanticsMatcher =
+    hasTestTag("assistant-reply:${record.message.id}") and
+        SemanticsMatcher("renders the admitted reply content") { root ->
+            fun texts(node: SemanticsNode): List<String> =
+                node.config
+                    .getOrNull(SemanticsProperties.Text)
+                    .orEmpty()
+                    .map { it.text } + node.children.flatMap(::texts)
+
+            fun normal(text: String): String = text.replace(Regex("\\s+"), " ").trim()
+            val rendered = normal(texts(root).joinToString(" "))
+            // Table semantics may walk columns rather than rows. Check each cell's actual text;
+            // dedicated Markdown assertions retain table contents and span-style checks.
+            markdownPlainText(record.message.content)
+                .lines()
+                .flatMap { it.split('\t') }
+                .filter { it.isNotBlank() }
+                .all { normal(it) in rendered }
+        }
+
+internal fun ComposeTestRule.ownedReplyDisplayed(reply: CompletedReplyObservation): Boolean =
+    ownedReplyNodeCounts(reply).all { it == 1 } &&
+        reply.records.all { onNode(ownedReplyMatcher(it), useUnmergedTree = true).isDisplayed() }
+
+internal fun ComposeTestRule.ownedReplyContentMatches(reply: CompletedReplyObservation): Boolean =
+    ownedReplyNodeCounts(reply).all { it == 1 } &&
+        reply.records.all { onAllNodes(ownedReplyMatcher(it), useUnmergedTree = true).fetchSemanticsNodes().size == 1 }

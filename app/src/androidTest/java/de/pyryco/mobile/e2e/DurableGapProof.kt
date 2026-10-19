@@ -22,10 +22,12 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.data.repository.projectDisplay
+import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.recording.RecordedSuiteNative
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.ThreadRow
 import de.pyryco.mobile.ui.conversations.thread.foldQueuedRows
+import de.pyryco.mobile.ui.conversations.thread.ownedReplyMatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -87,7 +89,7 @@ internal class DurableGapProof(
     fun catchUp(
         reconnect: () -> Unit,
         promptText: String,
-        replyText: String,
+        reply: ProducedReplyEvidence,
         cachedRows: List<SemanticsMatcher>,
     ) {
         try {
@@ -103,7 +105,14 @@ internal class DurableGapProof(
             rule.waitUntil(30_000) { messages().any { it == newestPost } && coverageGap() }
             assertEquals("only availability asks without a gesture", listOf(true), DurableHistoryProbe.asks())
             assertTrue("older post must be outside newest page and empty replay", olderPost !in messages())
-            assertTrue("reply must be outside newest page and empty replay", messages().none { it.contains(replyText, ignoreCase = true) })
+            assertTrue(
+                "reply must be outside newest page and empty replay",
+                DurableHistoryProbe.rows().filterIsInstance<ThreadItem.MessageItem>().none {
+                    it.message.role ==
+                        Role.Assistant &&
+                        it.message.segment?.turnId == reply.turn
+                },
+            )
             recordObservation("newest")
             // A history page can retain the cached reader anchor. Reveal the already delivered row
             // through semantics, which must not become history demand or certify replay coverage.
@@ -114,13 +123,23 @@ internal class DurableGapProof(
                 (0 until batchSize).map { "$prefix-a-${it.toString().padStart(3, '0')}" } +
                     (0 until batchSize).map { "$prefix-b-${it.toString().padStart(3, '0')}" }
 
+            fun recoveredReply(): CompletedReplyObservation? {
+                val repository =
+                    GlobalContext
+                        .get()
+                        .get<RelayConnectionRegistry>()
+                        .connectionFor(serverId)
+                        ?.coordinator
+                        ?.currentRepository
+                        ?.value
+                        ?: return null
+                val evidence = legacyThreadEvidence(serverId, conversationId, repository, DurableHistoryProbe.rows())
+                return reply.admitted(evidence, serverId)
+            }
+
             fun recoveredFixture(): Boolean {
-                val held = DurableHistoryProbe.rows().filterIsInstance<ThreadItem.MessageItem>()
-                val texts = held.map { it.message.content }.toSet()
-                return expected.all { it in texts } &&
-                    held.any {
-                        it.message.role == Role.Assistant && it.message.content.contains(replyText, ignoreCase = true)
-                    }
+                val texts = messages().toSet()
+                return expected.all { it in texts } && recoveredReply() != null
             }
             var pulls = 0
             // Hidden cache fragments are still unresolved metadata, but cannot initiate reader demand.
@@ -163,17 +182,20 @@ internal class DurableGapProof(
             assertEquals("chronological posts, each once", expected, posts)
             val rows = messages()
             val messageRows = DurableHistoryProbe.rows().filterIsInstance<ThreadItem.MessageItem>()
-            // The live user prompt also contains the requested reply text; it is not a reply.
-            val reply =
-                messageRows.indices.filter {
-                    messageRows[it].message.role == Role.Assistant && rows[it].contains(replyText, ignoreCase = true)
+            val recovered = checkNotNull(recoveredReply()) { "recovered source does not hold the produced reply" }
+            val replyIndices =
+                recovered.records.map { record ->
+                    val matches = messageRows.indices.filter { messageRows[it].message.id == record.message.id }
+                    assertEquals("each produced fragment once", 1, matches.size)
+                    matches.single()
                 }
-            assertEquals("completed reply once", 1, reply.size)
-            assertTrue("recovered reply is settled", !messageRows[reply.single()].message.isStreaming)
+            assertEquals("complete producer text survives history", reply.text, recovered.records.joinToString("") { it.fullText })
+            assertTrue("recovered reply fragments remain chronological", replyIndices == replyIndices.sorted())
             assertTrue(
                 "reply between the two durable post batches",
-                reply.single() > rows.indexOf(lastOlderPost) &&
-                    reply.single() < rows.indexOf("$prefix-b-000"),
+                replyIndices.all {
+                    it > rows.indexOf(lastOlderPost) && it < rows.indexOf("$prefix-b-000")
+                },
             )
             rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(olderPost))
             rule.onNodeWithText(olderPost, useUnmergedTree = true).assertIsDisplayed()
@@ -184,9 +206,7 @@ internal class DurableGapProof(
                     listOf(
                         hasText(lastOlderPost) and bubble,
                         hasText(promptText) and bubble,
-                        hasText(replyText, ignoreCase = true) and bubble,
-                        hasText("$prefix-b-000") and bubble,
-                    ),
+                    ) + recovered.records.map(::ownedReplyMatcher) + listOf(hasText("$prefix-b-000") and bubble),
             )
             assertEquals("rendered row reveals are inert", asks, DurableHistoryProbe.asks())
         } finally {
