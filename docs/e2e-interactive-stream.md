@@ -3772,6 +3772,59 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+### Authoritative completion alerts (#1573)
+
+Manual validation on 2026-10-19 covers certified background completion recovery and notification
+ownership through preview enrichment. All 163 focused Linux tests passed with zero failures, errors
+or skips. Formatting, compilation of every Kotlin source set, Android lint, debug APK assembly,
+pre-verification and the documentation guard passed. The before-fix evidence retains two query/live
+recovery failures and a separate retired-preview failure. The final focused class passes all 31 cases.
+
+Both original native methods ran with unchanged bodies and assertions:
+
+| Linux Android method | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread` | 1 | 1 | 0 | 0 | 0 |
+| `interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect` | 1 | 1 | 0 | 0 | 0 |
+
+The completion case verifies real FCM wake, exactly one alert, private preview, public redaction and
+the owning-thread tap. The adjacent prompt case verifies actual delivery and duplicate suppression
+across reconnect. The managed device is Google ATD Android 13/API 33 x86_64 Pixel 2. The installed
+Claude Code version is 2.1.280.
+
+Tested repair: `0ac045bee9b30573a138d584d50147dcceb6f486`. Private native composition: `c52b5c5935db6561a2a16f3b81f65e35ac597fc0`, containing that repair and preserved
+activation candidate `80b2efa999f2a3560048d8e13c9de9041b34c8f9`. The daemon binary revision is
+`5fd0d600b629c9cc3637fc42eb353c8e965f9fde`, SHA-256
+`8539e88af07aa24a37f1a138486ee94354f98cfe814bb2cb9eb5661c41ffffec`.
+The retained daemon source checkout is a separate identity and is recorded in the receipt.
+
+The [manual validation receipt](../app/src/test/resources/attention-1573/manual-validation.json)
+records exact source and unchanged-method hashes, per-class counts, device labels, app/test APK
+hashes and signer identities. Private raw XML, logcat, transport evidence and the source bundle are
+retained under `/work/Projects/pyrycode-mobile-agents/logs/evidence/1573/operator-manual-20261019/`.
+Earlier failed artifacts remain preserved.
+
+Independent read-only source review and the merged-main integration review passed with no findings.
+All six configured Linux checks passed at `3f6b8d262d6e28d6d54b0748ad04a0f5a319df3c`, containing
+main `dde1b41a6fde1dd0e545f9ad0e357b6256092fc8` and its #2317 repair. Script tests: 183 passed.
+The complete JVM graph freshly executed 6186 tests, all passed with zero failures, errors or skips;
+lint, formatting, APK assembly and instrumented compilation also passed. The full device selection
+executed 335 tests, all passed with zero failures or errors. Its one skipped case is the existing
+optional rename-dialog screenshot capture. All 67 recorded methods passed, including peer-turn reopen.
+The complete scripted selection passed all 21 scenarios: 22 executed and passed, zero failures,
+errors or skips. Final acceptance uses no inherited-failure exception.
+
+The private `full-verification-merged-main/` directory retains raw XML, logs, command records and a
+1048-file manifest with SHA-256 `1deeca8fefcff0f9864f9e7f6068cadf5c6d1ac9f73437cfde238882ef266096`.
+Earlier failed and interrupted runs remain preserved. Main's passive peer observer is unarmed for the
+two background methods; their bodies and the repaired production source remain unchanged. The native
+proof above stays bound to its recorded composition. Later main #2318 adds only static verification
+text and documentation. Application code, test code and recorded fixtures remain byte-identical to
+the full run; final metadata, documentation, formatting and static/package checks cover publication.
+Recorded fixtures are unchanged. #2245 retains its separate activation and recording acceptance.
+The historical OnePlus incident remains unexplained.
+
+
 ### Correlated native settings reads (#2305)
 
 [PR #2310](https://github.com/pyrycode/pyrycode-mobile/pull/2310) repairs the shared

@@ -39,6 +39,7 @@ import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
 import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_ADDED
 import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_CHANGED
 import de.pyryco.mobile.data.network.TYPE_THREAD_TEXT_APPEND
+import de.pyryco.mobile.data.network.ThreadQueryReply
 import de.pyryco.mobile.data.network.ToolProgressPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
@@ -64,10 +65,12 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
@@ -191,7 +194,25 @@ class RemoteConversationRepository internal constructor(
 ) : ConversationRepository,
     ThreadSnapshotSource {
     internal val authoritativeRoute: AuthoritativeThreadRoute =
-        AuthoritativeThreadRoute(authoritativeHostId, authoritativeThreads, onRepair = { authoritativeQueries.repair(it) })
+        AuthoritativeThreadRoute(
+            authoritativeHostId,
+            authoritativeThreads,
+            onRepair = { authoritativeQueries.repair(it) },
+            onApplied = { conversation, id, generation ->
+                val snapshot = authoritativeThreads.current(authoritativeHostId, conversation)
+                if (authoritativeLiveEnabled() &&
+                    snapshot.generation == generation &&
+                    snapshot.items.any { it.id == id && it.isCompletion() }
+                ) {
+                    authoritativeQueries.refreshAttention(conversation)
+                    RelayLog.d { "event=attention_completion source=live outcome=recovery_requested" }
+                }
+            },
+        )
+
+    private val completionFacts = MutableStateFlow<List<AuthoritativeCompletion>>(emptyList())
+    internal val authoritativeCompletions: StateFlow<List<AuthoritativeCompletion>> = completionFacts
+    internal val usesAuthoritativeAttention: Boolean get() = authoritativeHostId.isNotEmpty()
 
     @Volatile private var authoritativeCommandsEnded = false
 
@@ -302,7 +323,65 @@ class RemoteConversationRepository internal constructor(
             pump::send,
             authoritativeNowMillis,
             retireAuthoritativeConnection,
+            onCertified = { conversation, generation, reply ->
+                publishAuthoritativeCompletions(conversation, generation, certificate = reply)
+            },
         )
+
+    internal fun recoverAuthoritativeAttention(conversation: String): Boolean = authoritativeQueries.refreshAttention(conversation)
+
+    private fun publishAuthoritativeCompletions(
+        conversation: String,
+        generation: Long,
+        certificate: ThreadQueryReply.Success,
+    ): Boolean {
+        if (!authoritativeLiveEnabled()) return false
+        val snapshot = authoritativeThreads.current(authoritativeHostId, conversation)
+        val epoch = snapshot.epoch ?: return false
+        if (snapshot.generation != generation || snapshot.resetNeeded || snapshot.repairNeeded) return false
+        if (snapshot.checkpoint < snapshot.completedVersion) return false
+        val items = snapshot.items.filter { it.isCompletion() }
+        if (items.isEmpty()) return false
+        completionFacts.update { held ->
+            val recovered =
+                items.map {
+                    AuthoritativeCompletion(
+                        this,
+                        authoritativeHostId,
+                        conversation,
+                        epoch,
+                        generation,
+                        it,
+                        certificate.checkpoint.version.toLong(),
+                        (certificate.coverage as? ThreadQueryReply.Coverage.CatchUp)?.fromVersion,
+                        held.lastOrNull { fact -> fact.conversation == conversation && fact.item.id == it.id },
+                    )
+                }
+            (
+                held.filterNot { fact ->
+                    recovered.any { it.conversation == fact.conversation && it.key == fact.key }
+                } + recovered
+            ).takeLast(512)
+        }
+        RelayLog.d { "event=attention_completion source=catch_up outcome=admitted" }
+        return true
+    }
+
+    internal fun completionIsCurrent(completion: AuthoritativeCompletion): Boolean =
+        authoritativeLiveEnabled() &&
+            completion.owner === this &&
+            completion.host == authoritativeHostId &&
+            completion.isCurrent(authoritativeThreads.current(authoritativeHostId, completion.conversation))
+
+    internal suspend fun authoritativeCompletionPreview(completion: AuthoritativeCompletion): String? =
+        withTimeoutOrNull(3_000) {
+            combine(authoritativeThreads.observe(authoritativeHostId, completion.conversation), completionFacts) { snapshot, facts ->
+                snapshot to facts.lastOrNull { it.conversation == completion.conversation && it.key == completion.key }
+            }.first { (snapshot, proof) ->
+                !completionIsCurrent(completion) ||
+                    (!snapshot.repairNeeded && proof?.certifiedVersion?.let { it >= snapshot.completedVersion } == true)
+            }.let { (snapshot, proof) -> if (completionIsCurrent(completion)) proof?.preview(snapshot) else null }
+        }
 
     /** The cache may borrow this supplied store only for its exact host namespace. */
     internal fun authoritativeStoreFor(host: String): AuthoritativeThreadStore? =
@@ -724,6 +803,8 @@ class RemoteConversationRepository internal constructor(
     }
 
     private fun onInbound(envelope: Envelope) {
+        // An opted-in connection never promotes legacy replay into authoritative completion proof.
+        if (usesAuthoritativeAttention && envelope.type == TYPE_TURN_END) return
         if (authoritativeLiveEnabled() &&
             envelope.type in setOf("thread_items", "thread_reset", TYPE_ERROR) &&
             authoritativeQueries.accept(envelope)
