@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-19T01:34:27.352Z" hostname="723893f7154c" time="7.341">
+  <properties/>
+  <testcase name="settled_blocks_have_sixteen_dp_gaps_and_no_outer_spacing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="4.77"/>
+  <testcase name="light_linked_note_uses_the_same_reader_style" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.329"/>
+  <testcase name="attachment_reader_has_sixteen_dp_block_gaps_and_preserves_outer_padding" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.148"/>
+  <testcase name="reader_uses_message_body_and_recursively_spaced_blocks" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.162"/>
+  <testcase name="streaming_blocks_have_sixteen_dp_gaps_and_no_outer_spacing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.069"/>
+  <testcase name="default_renderer_keeps_message_typography_and_spacing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.151"/>
+  <testcase name="light_reader_uses_message_body" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.124"/>
+  <testcase name="linked_reader_has_sixteen_dp_block_gaps_and_preserves_outer_padding" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.092"/>
+  <testcase name="streaming_reply_keeps_message_typography_and_spacing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.719"/>
+  <testcase name="linked_note_uses_the_same_reader_style" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.113"/>
+  <testcase name="finished_reply_keeps_message_typography_and_spacing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest" time="0.172"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
