@@ -5130,28 +5130,30 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_empty))).assertCountEquals(0)
             closeBackgroundTasks()
 
-            // 4. Once the task finishes, the count is 0 and the panel no longer lists the task as live. It
-            //    labels the task finished until the empty roster claude sends after a finish drops it (#677's
-            //    `applyRoster`), then says there are no tasks; the live gate saw the empty roster win.
-            allowPromptsUntil(
-                peer,
-                chatId,
-                BACKGROUND_FINISH_TIMEOUT_MS,
-                "the background task never finished",
-                allowed,
-                frame = "background_task_updated",
-            ) { frame ->
-                frame.type == "background_task_updated" &&
-                    runCatching { MobileJson.decodeFromJsonElement(BackgroundTaskUpdatedPayloadDto.serializer(), frame.payload) }
-                        .getOrNull()
-                        ?.let { it.taskId == started.taskId && it.status.isNotEmpty() } == true
-            }
+            // 4. Once this successful task finishes, the count is 0 and the panel shows its
+            //    explicit completed outcome, or the later empty roster has removed it.
+            val finishedFrame =
+                allowPromptsUntil(
+                    peer,
+                    chatId,
+                    BACKGROUND_FINISH_TIMEOUT_MS,
+                    "the background task never finished",
+                    allowed,
+                    frame = "background_task_updated",
+                ) { frame ->
+                    frame.type == "background_task_updated" &&
+                        runCatching { MobileJson.decodeFromJsonElement(BackgroundTaskUpdatedPayloadDto.serializer(), frame.payload) }
+                            .getOrNull()
+                            ?.let { it.taskId == started.taskId && it.status.isNotEmpty() } == true
+                }
+            val finished = MobileJson.decodeFromJsonElement(BackgroundTaskUpdatedPayloadDto.serializer(), finishedFrame.payload)
+            assertEquals("the background sleep must finish successfully", "completed", finished.status)
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(taskPill).fetchSemanticsNodes().isEmpty()
             }
             openBackgroundTasks()
             val finishedOrGone =
-                (hasText(string(R.string.background_tasks_finished)) or hasText(string(R.string.background_tasks_empty))) and
+                (hasText(string(R.string.background_tasks_status_completed)) or hasText(string(R.string.background_tasks_empty))) and
                     inBackgroundPanel()
             try {
                 composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
