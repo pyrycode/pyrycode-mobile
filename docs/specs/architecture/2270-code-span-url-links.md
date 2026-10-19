@@ -88,6 +88,8 @@ Verification: reproduce the lint/compilation pressure with a focused managed bui
 
 Security re-review: PASS. The larger build-only heap accepts no daemon input and changes no application trust boundary, URI admission/routing, secrets, storage, Android components, crypto, transport, logs or coroutine lifecycle. Host admission still bounds concurrent work; no test-worker heap or process limits are raised.
 
+The focused original-heap control at `6bb7e66dc558b566ae5c5b9115990fef092db30f` confirmed 2,048 MiB and UTF-8, then passed fresh lint and both test Kotlin compilations (38 tasks executed). It did not reproduce the complete coordinated gate's exhaustion. Keep that narrower success separate from the retained failure; only the dispatcher can establish complete-gate acceptance at the repaired heap.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/markdown-text.md` and `markdown-text-internals.md`, inline code/link and streaming sections: describe completed URL-only spans, unchanged admission/routing, retained styles and inert synthetic closers, bare prose and fences, as requested by the verifier.
