@@ -602,12 +602,12 @@ class InteractiveStreamE2ETest {
         awaitChannelList()
         awaitConnected()
         val serverId = twoHostArg(ARG_SERVER_ID)
-        val before = hostConversationIds(serverId)
+        val before = presentedHostConversationIds(serverId)
         createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
-        val conversationId = newHostConversationId(serverId, before)
+        val conversationId = (presentedHostConversationIds(serverId) { (it - before).isNotEmpty() } - before).single()
         awaitOwnedPhoneReply(serverId, conversationId) {
             composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
             composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
@@ -665,12 +665,12 @@ class InteractiveStreamE2ETest {
         awaitChannelList()
         awaitConnected()
         val serverId = twoHostArg(ARG_SERVER_ID)
-        val before = hostConversationIds(serverId)
+        val before = presentedHostConversationIds(serverId)
         createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
-        val conversationId = newHostConversationId(serverId, before)
+        val conversationId = (presentedHostConversationIds(serverId) { (it - before).isNotEmpty() } - before).single()
         awaitOwnedPhoneReply(serverId, conversationId) {
             composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
             composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
@@ -703,12 +703,12 @@ class InteractiveStreamE2ETest {
         awaitChannelList()
         awaitConnected()
         val serverId = twoHostArg(ARG_SERVER_ID)
-        val before = hostConversationIds(serverId)
+        val before = presentedHostConversationIds(serverId)
         createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
-        val conversationId = newHostConversationId(serverId, before)
+        val conversationId = (presentedHostConversationIds(serverId) { (it - before).isNotEmpty() } - before).single()
         awaitOwnedPhoneReply(serverId, conversationId) {
             composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
             composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
@@ -1179,7 +1179,7 @@ class InteractiveStreamE2ETest {
 
         // 2. Create a chat in the daemon default, then open its thread folder picker.
         val serverId = twoHostArg(ARG_SERVER_ID)
-        val before = hostConversationIds(serverId)
+        val before = presentedHostConversationIds(serverId)
         createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
@@ -1213,7 +1213,7 @@ class InteractiveStreamE2ETest {
 
         // 5. AC-2: send the constrained ping in the new workspace and assert the streamed reply renders —
         //    proving the created folder is usable as a live session's workspace against a real claude turn.
-        val conversationId = newHostConversationId(serverId, before)
+        val conversationId = (presentedHostConversationIds(serverId) { (it - before).isNotEmpty() } - before).single()
         awaitOwnedPhoneReply(serverId, conversationId) {
             composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
             composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
@@ -8636,6 +8636,21 @@ class InteractiveStreamE2ETest {
     private fun awaitGoneFromThread(text: String) {
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(inThreadList(text), useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    /** Read the app's existing list projection without adding requests to a recorded scenario. */
+    private fun presentedHostConversationIds(
+        serverId: String,
+        ready: (Set<String>) -> Boolean = { true },
+    ): Set<String> = runBlocking {
+        val source = GlobalContext.get().get<HostConversationSource>()
+        withTimeout(LIST_TIMEOUT_MS) {
+            source.snapshots.map { snapshots ->
+                snapshots.singleOrNull { it.serverId == serverId && it.rowsLoaded }?.let {
+                    (it.channels + it.chats).mapTo(mutableSetOf()) { row -> row.id }
+                }
+            }.filterNotNull().first { ready(it) }
         }
     }
 
