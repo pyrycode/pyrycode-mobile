@@ -7,12 +7,15 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_ADDED
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.item
+import de.pyryco.mobile.ui.conversations.thread.ThreadRow
+import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -33,6 +36,146 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AuthoritativeSendRepositoryTest {
+    @Test fun ackOnlyResetCommandsNeverCreateFeedbackAndNextDeliveredSendIsLast() =
+        runTest {
+            val spaces =
+                "\t\n\u000B\u000C\r \u0085\u00A0\u1680" +
+                    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A" +
+                    "\u2028\u2029\u202F\u205F\u3000"
+            for (command in listOf("/clear", "/reset")) {
+                for (text in listOf(command, "  $command  ") + spaces.map { "$it$command${it}extra$it" }) {
+                    val store = AuthoritativeThreadStore()
+                    val (pump, repo) = repository(store)
+                    val reset = async { repo.sendMessage("c", text) }
+                    runCurrent()
+                    val request = pump.sent.single { it.type == "send_message" }
+                    assertEquals(
+                        text,
+                        request.payload.jsonObject
+                            .getValue("text")
+                            .jsonPrimitive.content,
+                    )
+                    assertTrue(store.current("host", "c").pendingSends.isEmpty())
+                    assertTrue(projectAuthoritativeThread("host", "c", store.current("host", "c")).rows.isEmpty())
+                    assertTrue(
+                        repo
+                            .observeThreadSnapshot("c")
+                            .first()
+                            .rows
+                            .isEmpty(),
+                    )
+                    pump.push(reply(request, "ack", buildJsonObject {}))
+                    runCurrent()
+                    assertEquals(text, reset.await().content)
+                    assertTrue(store.current("host", "c").pendingSends.isEmpty())
+                    assertTrue(projectAuthoritativeThread("host", "c", store.current("host", "c")).rows.isEmpty())
+                    assertTrue(
+                        repo
+                            .observeThreadSnapshot("c")
+                            .first()
+                            .rows
+                            .isEmpty(),
+                    )
+
+                    val next = async { repo.sendMessage("c", "private text") }
+                    runCurrent()
+                    val ordinary = pump.sent.last { it.type == "send_message" }
+                    pump.push(reply(ordinary, "ack", buildJsonObject {}))
+                    runCurrent()
+                    val message = next.await()
+                    assertEquals(
+                        message.id,
+                        store
+                            .current("host", "c")
+                            .pendingSends
+                            .single()
+                            .message.id,
+                    )
+                    val sending = projectAuthoritativeThread("host", "c", store.current("host", "c")).rows.single() as ThreadRow.Queued
+                    assertEquals("sending", sending.status)
+                    val fact = accepted(ordinary, status = "delivered", active = false)
+                    val delivered = ThreadItemDto.decodeReplacement(JsonObject(fact.raw + ("order" to JsonPrimitive(1))))
+                    pump.push(live(delivered))
+                    pump.push(live(delivered))
+                    runCurrent()
+                    assertTrue(store.current("host", "c").pendingSends.isEmpty())
+                    val rows = projectAuthoritativeThread("host", "c", store.current("host", "c")).rows
+                    assertEquals(1, rows.size)
+                    val last = (rows.last() as ThreadRow.Delivered).item as ThreadItem.MessageItem
+                    assertEquals(message.content, last.message.content)
+                }
+            }
+        }
+
+    @Test fun resetLookalikesRemainOrdinaryPendingSendsAfterAcknowledgement() =
+        runTest {
+            val nonmatches =
+                listOf("/clearcache", "/resetfoo", "/CLEAR", "/RESET", "please /clear", "please /reset", "") +
+                    listOf('\u200B', '\u001C', '\u001D', '\u001E', '\u001F').flatMap { listOf("$it/clear", "/reset${it}extra") }
+            for (text in nonmatches) {
+                val store = AuthoritativeThreadStore()
+                val (pump, repo) = repository(store)
+                val send = async { repo.sendMessage("c", text) }
+                runCurrent()
+                val request = pump.sent.single { it.type == "send_message" }
+                assertEquals(
+                    text,
+                    store
+                        .current("host", "c")
+                        .pendingSends
+                        .single()
+                        .message.content,
+                )
+                pump.push(reply(request, "ack", buildJsonObject {}))
+                runCurrent()
+                val message = send.await()
+                assertEquals(
+                    message.id,
+                    store
+                        .current("host", "c")
+                        .pendingSends
+                        .single()
+                        .message.id,
+                )
+                val rows = projectAuthoritativeThread("host", "c", store.current("host", "c")).rows
+                assertEquals("sending", (rows.single() as ThreadRow.Queued).status)
+            }
+        }
+
+    @Test fun repeatedResetAcknowledgementsPreserveOtherPendingFeedback() =
+        runTest {
+            val store = AuthoritativeThreadStore()
+            val (pump, repo) = repository(store)
+            val ordinary = async { repo.sendMessage("c", "private text") }
+            runCurrent()
+            pump.push(reply(pump.sent.last(), "ack", buildJsonObject {}))
+            runCurrent()
+            val message = ordinary.await()
+            for (text in listOf("/clear", "/reset", "/clear")) {
+                val reset = async { repo.sendMessage("c", text) }
+                runCurrent()
+                assertEquals(
+                    message.id,
+                    store
+                        .current("host", "c")
+                        .pendingSends
+                        .single()
+                        .message.id,
+                )
+                pump.push(reply(pump.sent.last(), "ack", buildJsonObject {}))
+                runCurrent()
+                reset.await()
+                assertEquals(
+                    message.id,
+                    store
+                        .current("host", "c")
+                        .pendingSends
+                        .single()
+                        .message.id,
+                )
+            }
+        }
+
     @Test fun retiredSendSourceCannotRegisterFeedbackInItsReplacementStore() =
         runTest {
             val store = AuthoritativeThreadStore()

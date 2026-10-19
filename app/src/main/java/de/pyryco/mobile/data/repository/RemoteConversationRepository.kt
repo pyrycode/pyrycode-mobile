@@ -358,7 +358,10 @@ class RemoteConversationRepository internal constructor(
                     throw IllegalStateException("send source unavailable")
                 }
                 val enabled = authoritativeHostId.isNotEmpty() && authoritativeLiveEnabled()
-                if (enabled) {
+                if (enabled && isDaemonResetCommand(message.content)) {
+                    // These sends receive only an ack, with no user_message to retire feedback.
+                    RelayLog.i { "event=thread_send code=reset_feedback_skipped" }
+                } else if (enabled) {
                     authoritativeThreads.registerPending(authoritativeHostId, conversation, null, message)
                     authoritativeThreads.identifyPending(
                         authoritativeHostId,
