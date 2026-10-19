@@ -24,6 +24,7 @@ internal class AuthoritativeThreadQueries(
     private val send: (Envelope) -> Boolean,
     private val nowMillis: () -> Long,
     private val retireConnection: () -> Unit = {},
+    private val onCertified: (String, Long, ThreadQueryReply.Success) -> Unit = { _, _, _ -> },
 ) {
     private data class Intent(
         val conversation: String,
@@ -52,6 +53,17 @@ internal class AuthoritativeThreadQueries(
         if (closed || !enabled() || conversation.isEmpty()) return false
         opened += conversation
         enqueue(Intent(conversation, false))
+        dispatch()
+        return true
+    }
+
+    /** Attention can discover a completion after an already-running query captured its boundary. */
+    @Synchronized
+    fun refreshAttention(conversation: String): Boolean {
+        if (closed || !enabled() || conversation.isEmpty()) return false
+        opened += conversation
+        val intent = Intent(conversation, false)
+        if (intent !in queued) queued.addLast(intent)
         dispatch()
         return true
     }
@@ -148,6 +160,9 @@ internal class AuthoritativeThreadQueries(
                         }
                         is ThreadQueryReply.Success -> {
                             val result = store.certifyQuery(host, request, reply, held.generation)
+                            if (result == AuthoritativeThreadOutcome.Applied && request is ThreadQueryRequest.CatchUp) {
+                                onCertified(request.conversationId, held.generation, reply)
+                            }
                             retire(
                                 if (result == AuthoritativeThreadOutcome.Applied) "complete" else "coverage",
                                 failed = result != AuthoritativeThreadOutcome.Applied,

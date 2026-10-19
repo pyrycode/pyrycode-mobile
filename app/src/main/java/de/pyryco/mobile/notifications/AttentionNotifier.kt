@@ -134,6 +134,7 @@ class AttentionNotifier(
         val kind = if (alert.kind == AttentionAlert.Kind.TurnCompleted) "turn" else "prompt"
         val outcome =
             when {
+                !alert.isCurrent() -> "superseded"
                 !ledger.add(digest(alert.serverId, alert.conversationId, alert.kind.name, alert.key)) -> "duplicate"
                 isForeground() -> "foreground"
                 !notificationsEnabled.first() -> "disabled"

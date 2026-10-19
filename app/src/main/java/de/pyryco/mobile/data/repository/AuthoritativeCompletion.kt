@@ -1,0 +1,83 @@
+package de.pyryco.mobile.data.repository
+
+import de.pyryco.mobile.data.network.ThreadItemDto
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+
+/** Ephemeral admitted evidence; identity and content never appear in diagnostics or persisted metadata. */
+internal class AuthoritativeCompletion(
+    val owner: RemoteConversationRepository,
+    val host: String,
+    val conversation: String,
+    private val epoch: String,
+    private val generation: Long,
+    val item: ThreadItemDto,
+    val certifiedVersion: Long?,
+    private val sourceFrom: ULong?,
+) {
+    val key: String = "thread:${epoch.length}:$epoch:${item.id}"
+
+    fun isCurrent(snapshot: AuthoritativeThreadSnapshot): Boolean {
+        if (snapshot.epoch != epoch || snapshot.generation != generation || snapshot.resetNeeded) return false
+        val current = snapshot.items.firstOrNull { it.id == item.id } ?: return false
+        return current.isCompletion() && current.rev >= item.rev && current.session == item.session && current.turn == item.turn
+    }
+
+    /** Full authoritative items own their text; only a certified range proves which is the completed reply's last segment. */
+    fun preview(snapshot: AuthoritativeThreadSnapshot): String? {
+        val certified = certifiedVersion ?: return null
+        if (!isCurrent(snapshot) || snapshot.repairNeeded || snapshot.checkpoint < snapshot.completedVersion ||
+            certified < snapshot.completedVersion
+        ) {
+            return null
+        }
+        val coverage = snapshot.coverage ?: return null
+        val completion = snapshot.items.firstOrNull { it.id == item.id } ?: return null
+        val end = completion.order ?: return null
+        val session = completion.session?.takeIf { it.isNotBlank() } ?: return null
+        val turn = completion.turn?.takeIf { it.isNotBlank() } ?: return null
+
+        fun covered(fact: ThreadItemDto): Boolean {
+            val order = fact.order?.toULong() ?: return false
+            if (fact.rev > certified) return false
+            // Paging coverage stays fixed when a nonzero catch-up certifies newly created tail items.
+            return order >= coverage.lowerOrder && order < coverage.upperOrder ||
+                sourceFrom?.let { fact.id.toULong() > it && order > it && order <= certified.toULong() } == true
+        }
+        if (!covered(completion)) return null
+        val replies =
+            snapshot.items.filter {
+                it.kind == "assistant_message" &&
+                    it.session == session &&
+                    it.turn == turn &&
+                    (it.parent ?: 0) == 0L &&
+                    it.shown &&
+                    it.order?.let { order -> order <= end } == true
+            }
+        if (replies.isEmpty() ||
+            replies.any {
+                it.active ||
+                    it.status !in setOf("done", "finished") ||
+                    it.rev > snapshot.checkpoint ||
+                    !covered(it)
+            }
+        ) {
+            return null
+        }
+        val texts =
+            replies.map { reply ->
+                val content = reply.content as? JsonObject ?: return null
+                for ((field, expected) in listOf("conversation_id" to conversation, "turn_id" to turn)) {
+                    val value = content[field] ?: continue
+                    if (value !is JsonPrimitive || !value.isString || value.content != expected) return null
+                }
+                (content["text"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+            }
+        return texts.lastOrNull { it.isNotBlank() }
+    }
+
+    override fun toString(): String = "AuthoritativeCompletion(redacted)"
+}
+
+internal fun ThreadItemDto.isCompletion(): Boolean =
+    kind == "turn_end" && !active && status in setOf("done", "finished", "failed", "stopped") && (parent ?: 0) == 0L

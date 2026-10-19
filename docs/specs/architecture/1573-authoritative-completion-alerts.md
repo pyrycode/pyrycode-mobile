@@ -40,6 +40,7 @@ The repository's inbound collector owns admission and updates a held `StateFlow`
 | Event | Focused regression/probe |
 | --- | --- |
 | Completion recovered with no running edge or open screen | `AuthoritativeCompletionNotifierTest.recoveredCompletionPostsCertifiedPrivatePreviewAndExactTap` |
+| Reconnect with a nonzero catch-up beyond the held paging window | `reconnectCatchUpCertifiesNewReplyBeyondTheHeldWindow` |
 | Batch without terminal success, rejection or unknown request | `partialAndRejectedRecoveryCannotPost` |
 | Query/live overlap, old/new revisions and duplicate completion | `overlapKeepsNewestAdmittedRevisionAndPostsOnce` |
 | Disconnect/reconnect and repeated wake | `reconnectAndRestartRetainLedgerIdentity` |
@@ -78,5 +79,10 @@ Pending documentation stage: record demonstrated cause, repair and counted focus
 - Concurrency: MUST FIX addressed in design: check owner before ledger insertion and again at posting; only newest store revisions can authorize evidence. Repository/source cancellation owns all new work.
 - Threat model: a malicious relay cannot supply authenticated completion plaintext; delayed/reordered input remains subject to codec/store fences. Hostile daemon text stays bounded inert private notification text. Rooted-device credential theft and third-party screenshots/accessibility remain existing platform threat-model limitations, unchanged by this repair.
 
-**Reviewer:** builder self-review per `builder/security-review.md`  
+**Reviewer:** builder self-review per `builder/security-review.md`
 **Date:** 2026-10-19
+
+## Revisions
+2026-10-19: The retained native trace uses a nonzero catch-up whose completed reply lies after the held paging window. Preview proof now carries the successful query's exact source interval and captured version, rather than inferring later ordered coverage from a batch maximum or extending paging coverage. Newly created tail items can be certified by that interval; older parent/active extras outside coverage cannot. Pending live previews wait for the matching successful certificate, including when store publication resumes a collector before the query callback. Evidence is branded with its exact repository owner. The integrated fixture performs main's opt-in reset exchange before asserting certified recovery; an initial fixture that omitted this exchange was rejected before reaching the intended failure.
+
+2026-10-19: The existing `authoritativeCompletionUsesShownAvailabilityInsteadOfLegacyEntryCoverage` regression pins the supplied route's read semantics: confirmed reads cover available `lastShownVersion`, while unavailable shown metadata proves nothing. The new source probe preserves that rule, including retaining the alert while newer shown activity remains unread. Legacy known-entry suppression remains unchanged. No local read inference was added.

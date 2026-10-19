@@ -269,6 +269,11 @@ class HostConversationSource internal constructor(
         val connection = entry.connection
         scope.launch(entry.job) {
             connection.liveSessionEvents.collect { event ->
+                if (event is LiveSessionEvent.TurnEnd &&
+                    (connection.repositories.value as? RemoteConversationRepository)?.usesAuthoritativeAttention == true
+                ) {
+                    return@collect
+                }
                 updateAttention(entry) {
                     val before = attention.counted[event.conversationId]
                     attention = attention.onEvent(event, viewing.isViewing(connection.serverId, event.conversationId))
@@ -287,6 +292,33 @@ class HostConversationSource internal constructor(
             }
         }
         scope.launch(entry.job) {
+            connection.repositories.collectLatest { repository ->
+                val remote = repository as? RemoteConversationRepository ?: return@collectLatest
+                remote.authoritativeCompletions.collect { completions ->
+                    updateAttention(entry, repository) {
+                        completions.filter { it.host == connection.serverId && remote.completionIsCurrent(it) }.forEach { completion ->
+                            alertEvents.tryEmit(
+                                AttentionAlert(
+                                    connection.serverId,
+                                    completion.conversation,
+                                    AttentionAlert.Kind.TurnCompleted,
+                                    completion.key,
+                                    completion.item.id.toULong(),
+                                    preview =
+                                        ownedCompletionPreview(
+                                            entry,
+                                            repository,
+                                        ) { remote.authoritativeCompletionPreview(completion) },
+                                    isCurrent = { previewIsCurrent(entry, repository) && remote.completionIsCurrent(completion) },
+                                ),
+                            )
+                            RelayLog.d { "event=attention_completion outcome=published" }
+                        }
+                    }
+                }
+            }
+        }
+        scope.launch(entry.job) {
             connection.repositories.collect { repository ->
                 if (repository == null) updateAttention(entry) { attention = attention.disconnected() }
             }
@@ -294,7 +326,24 @@ class HostConversationSource internal constructor(
         scope.launch(entry.job) {
             connection.repositories.collectLatest { repository ->
                 if (repository != null) {
-                    repository.observeHostReadMarks().collect { marks -> updateReadMarks(entry, repository, marks) }
+                    val requested = mutableMapOf<String, ULong>()
+                    repository.observeHostReadMarks().collect { marks ->
+                        updateReadMarks(entry, repository, marks)
+                        val remote = repository as? RemoteConversationRepository
+                        if (remote != null && previewIsCurrent(entry, repository)) {
+                            marks.forEach { (conversation, mark) ->
+                                val watermark = mark.unreadWatermark
+                                if (mark.threadSupported &&
+                                    watermark != null &&
+                                    watermark > (mark.readUpTo ?: 0uL) &&
+                                    requested[conversation] != watermark &&
+                                    remote.recoverAuthoritativeAttention(conversation)
+                                ) {
+                                    requested[conversation] = watermark
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -436,7 +485,15 @@ class HostConversationSource internal constructor(
         event: LiveSessionEvent.TurnEnd,
     ): suspend () -> String? {
         val repository = entry.connection.repositories.value
-        return {
+        return ownedCompletionPreview(entry, repository) { repository?.let { readCompletionPreview(it, event) } }
+    }
+
+    private fun ownedCompletionPreview(
+        entry: Held,
+        repository: ConversationRepository?,
+        read: suspend () -> String?,
+    ): suspend () -> String? =
+        {
             if (!previewIsCurrent(entry, repository)) throw CancellationException("retired attention source")
             val pending =
                 scope.async(entry.job) {
@@ -444,7 +501,7 @@ class HostConversationSource internal constructor(
                         val lookup =
                             async {
                                 withTimeoutOrNull(3_000) {
-                                    repository?.let { readCompletionPreview(it, event) }
+                                    read()
                                 }.also { if (it == null) RelayLog.d { "event=attention_preview outcome=fallback" } }
                             }
                         val retirement =
@@ -467,7 +524,6 @@ class HostConversationSource internal constructor(
                 pending.cancel()
             }
         }
-    }
 
     /** Read-only evidence: neither the local snapshot nor this one newest page is merged or persisted. */
     private suspend fun readCompletionPreview(
