@@ -391,7 +391,8 @@ class DeterministicInteractiveStreamE2ETest {
         try {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             val before = runBlocking { harnessThreadEvidence(repo).observe(conversation.id).first() }
-            val observation = OwnedReplyObservation(serverId, before, legacyProducer = true)
+            val observation =
+                OwnedReplyObservation(serverId, before, legacyProducer = true, knownSession = conversation.currentSessionId)
             peer.replyObservation = observation
             var produced: ProducedReplyEvidence? = null
             severLink()
