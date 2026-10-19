@@ -8643,16 +8643,19 @@ class InteractiveStreamE2ETest {
     private fun presentedHostConversationIds(
         serverId: String,
         ready: (Set<String>) -> Boolean = { true },
-    ): Set<String> = runBlocking {
-        val source = GlobalContext.get().get<HostConversationSource>()
-        withTimeout(LIST_TIMEOUT_MS) {
-            source.snapshots.map { snapshots ->
-                snapshots.singleOrNull { it.serverId == serverId && it.rowsLoaded }?.let {
-                    (it.channels + it.chats).mapTo(mutableSetOf()) { row -> row.id }
-                }
-            }.filterNotNull().first { ready(it) }
+    ): Set<String> =
+        runBlocking {
+            val source = GlobalContext.get().get<HostConversationSource>()
+            withTimeout(LIST_TIMEOUT_MS) {
+                source.snapshots
+                    .map { snapshots ->
+                        snapshots.singleOrNull { it.serverId == serverId && it.rowsLoaded }?.let {
+                            (it.channels + it.chats).mapTo(mutableSetOf()) { row -> row.id }
+                        }
+                    }.filterNotNull()
+                    .first { ready(it) }
+            }
         }
-    }
 
     /** The ids [serverId]'s live repository lists, read off whichever connection is current (#1036). */
     private fun hostConversationIds(serverId: String): Set<String> = hostConversationIds(serverId, "its conversation list") { true }
