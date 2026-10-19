@@ -10,7 +10,46 @@ untrimmed line boxes. `MarkdownReaderDesignTest.referencePlacesBarRuleAndBodyAtF
 retains density-1 exact gap assertions with the shared heading scale, 14/20sp prose and 16dp ordinary
 block spacing. Reference tops are heading 97dp, paragraph 141dp, subheading 217dp,
 first item 259dp, code 347dp and quote 421dp (#2284 shared panel).
-New Reader-screen integration checks remain assigned to #2276.
+All six levels also have destination-level coverage below.
+
+### Reader heading integration coverage (#2276)
+
+`MarkdownReaderHeadingTest` runs eight native-graphics cases: attachment retrieval from
+a temporary Markdown file and a held linked note, each in static light/dark themes at
+font scales 1.0/1.5. Every case checks H1–H6 against independent metric literals, the
+Roboto family, active `onSecondaryContainer` colour and `Trim.None`. Short and genuinely
+wrapping headings check each measured line box, full unclipped text height, final text,
+absence of overflow/ellipsis and scroll reachability. Bounds retain 20dp before headings,
+12dp after, one 20dp between consecutive headings and 28dp below the measured bar for
+the first H1. Spacing stays in dp at enlarged text. Existing first-paragraph, reference,
+chrome and interaction assertions remain; `MarkdownHeadingSpacingTest` owns the recursive
+container matrix. Production continues to use shared heading roles and gaps.
+
+For enlarged line boxes, use a native single-line `TextMeasurer` control built from
+independent Figma metric literals and `Trim.None`. Compose 1.10.4 resolves line height
+relative to scaled font size; neither multiplying nominal height by font scale nor
+direct sp conversion predicts the rendered box. Keep exact token/trim/scale checks and
+explicit nominal dp heights at scale 1.0 alongside the control. Per-line geometry keeps
+the existing density-aware pixel allowance; total height accounts for each line's rounding.
+
+The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2301#issuecomment-6258272047)
+records Linux acceptance on 2026-10-19 at
+`2862dbc98d87f48804b56c46cd54f56e0fcd8e7e`: JVM **6,020 executed/passed, 0 failed/errors,
+0 skipped**, including heading **8/8** and design **17/17**; managed Android 13 UI
+**334 executed/passed, 0 failed/errors, 1 skipped**; scripted **22 executed/passed,
+0 failed/errors, 0 skipped**. `renameAtFigmaViewport` was skipped, not passed.
+
+[Committed raw reports, commands, source identities and hashes](../../../app/src/test/resources/reader-headings-2276/)
+retain six separate focused runs at `1273cbe4b79e3602e07df59dcb9c7172ba109ab3`:
+heading 8, design 17, screen 26, typography 11, shared scale 5 and shared spacing 13,
+totalling **80 executed/passed, 0 failed/errors/skipped**. The separate post-format heading
+rerun at `f62364767ad4d361f3c68d728a05a25fcb2eb7dd` has **8 executed/passed,
+0 failed/errors/skipped**, with all eight named cases present and passed in its XML.
+Historical reports retain the controlled trimming mutation (**1 executed, 1 failed**),
+two incorrect scaling-oracle runs (**8 executed, 4 passed, 4 failed** each), all with
+zero errors/skips, and compiler heap diagnostics from an invocation that executed no tests.
+Those failures are not green evidence. macOS is outside this Linux ticket's verification
+scope; no live-provider run is required for this local rendering contract.
 
 ### Reader body typography coverage (#2283)
 
