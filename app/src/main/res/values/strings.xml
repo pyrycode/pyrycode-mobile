@@ -510,6 +510,8 @@
     <string name="thread_attachment_open">Open</string>
     <string name="thread_attachment_save">Save</string>
     <string name="thread_attachment_no_app">No app can open this file</string>
+    <string name="markdown_link_obsidian_not_installed">Obsidian is not installed</string>
+    <string name="markdown_link_open_failed">Could not open link</string>
     <string name="thread_attachment_open_failed">Couldn\'t open file</string>
     <string name="thread_attachment_saved">File saved</string>
     <string name="thread_attachment_save_failed">Couldn\'t save file</string>

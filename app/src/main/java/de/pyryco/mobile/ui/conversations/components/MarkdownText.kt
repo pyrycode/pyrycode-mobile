@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.platform.testTag
@@ -204,7 +205,7 @@ private fun MarkdownBlockGap(
 /**
  * [onOpenMarkdownPath] (#1050) opts a caller in to workspace notes: a link whose target is a markdown path
  * ([markdownLinkPath]) is handed to it instead of doing nothing. Only assistant replies pass it; with the
- * default every link keeps the `http` / `https` / `mailto` allowlist, which is what the reader relies on.
+ * default workspace paths stay inert and external links use the shared admission check.
  */
 @Composable
 fun MarkdownText(
@@ -236,10 +237,24 @@ fun MarkdownText(
 @Composable
 private fun rememberMarkdownUriHandler(onOpenMarkdownPath: ((String) -> Unit)?): UriHandler {
     val platformHandler = LocalUriHandler.current
+    val context = LocalContext.current
+    val onFailure by rememberUpdatedState(LocalMarkdownLinkFailure.current)
     val currentOnOpenMarkdownPath by rememberUpdatedState(onOpenMarkdownPath)
     val opensMarkdownPaths = onOpenMarkdownPath != null
-    return remember(platformHandler, opensMarkdownPaths) {
-        MarkdownUriHandler(platformHandler, opensMarkdownPaths) { currentOnOpenMarkdownPath }
+    val externalHandler =
+        remember(context, platformHandler) {
+            object : UriHandler {
+                override fun openUri(uri: String) {
+                    if (uri.substringBefore(':').equals("obsidian", ignoreCase = true)) {
+                        openObsidianLink(context, uri)?.let(onFailure)
+                    } else {
+                        platformHandler.openUri(uri)
+                    }
+                }
+            }
+        }
+    return remember(externalHandler, opensMarkdownPaths) {
+        MarkdownUriHandler(externalHandler, opensMarkdownPaths) { currentOnOpenMarkdownPath }
     }
 }
 
@@ -1463,7 +1478,8 @@ private val LinkScheme = Regex("""^[A-Za-z][A-Za-z0-9+.-]*:""")
  */
 internal fun markdownLinkPath(target: String): String? {
     val path = target.substringBeforeLast('#').replace(LinkLineSuffix, "")
-    if (LinkScheme.containsMatchIn(path)) return null
+    // Trim only for scheme detection: malformed URI shapes must never fall through to workspace reads.
+    if (LinkScheme.containsMatchIn(path.trimStart()) || "://" in path) return null
     return path.takeIf { it.endsWith(".md", ignoreCase = true) || it.endsWith(".markdown", ignoreCase = true) }
 }
 
@@ -1485,5 +1501,5 @@ internal fun routeMarkdownLink(
 
 internal fun isSafeLinkScheme(url: String): Boolean {
     val scheme = url.substringBefore(':', missingDelimiterValue = "").lowercase()
-    return scheme == "http" || scheme == "https" || scheme == "mailto"
+    return scheme == "http" || scheme == "https" || scheme == "mailto" || isSafeObsidianLink(url)
 }
