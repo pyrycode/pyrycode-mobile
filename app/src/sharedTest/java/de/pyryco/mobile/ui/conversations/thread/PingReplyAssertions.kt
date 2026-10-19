@@ -54,8 +54,11 @@ internal fun ownedReplyMatcher(record: ThreadEvidenceRecord): SemanticsMatcher =
             val rendered = normal(texts(root).joinToString(" "))
             // Table semantics may walk columns rather than rows. Check each cell's actual text;
             // dedicated Markdown assertions retain table contents and span-style checks.
-            markdownPlainText(record.message.content).lines().flatMap { it.split('\t') }
-                .filter { it.isNotBlank() }.all { normal(it) in rendered }
+            markdownPlainText(record.message.content)
+                .lines()
+                .flatMap { it.split('\t') }
+                .filter { it.isNotBlank() }
+                .all { normal(it) in rendered }
         }
 
 internal fun ComposeTestRule.ownedReplyDisplayed(reply: CompletedReplyObservation): Boolean =
