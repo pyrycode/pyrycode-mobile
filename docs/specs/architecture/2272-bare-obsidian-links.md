@@ -120,6 +120,8 @@ Scope forecast: at most 160 additional written lines across the existing probe, 
 
 Controlled red at `0f33e4062` reproduces exactly one failed test: expected one failure, observed two. Transaction origins are `history` at virtual time 100 and `writer` at 201; the effective test heap is 2147483648 bytes. Main merge `7b664eb63` brings the reviewed Gradle heap and #2270's code-span path; resolve the helper-name conflict by sharing `appendLinkText` between authored, code-span and bare links. The repaired probe explicitly advances only its main clock while the history transaction is held, asserts the writer clock stayed frozen, and releases the scheduled candidate after successful retry. Existing product security findings remain authoritative.
 
+Recovery green: exact method 1/1, cache class 9/9 and eight markdown classes 150/150, zero failures/errors/skips. `recovery-evidence.txt` records source equivalence to `86dc2f098`, effective independent 4 GiB heaps, identity and raw XML; complete dispatcher acceptance remains pending.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/markdown-text.md`, Streaming and Testing — explain real source completion versus lexer boundaries, punctuation, synthetic closers and caret; record final counted Linux acceptance once dispatcher gates pass.

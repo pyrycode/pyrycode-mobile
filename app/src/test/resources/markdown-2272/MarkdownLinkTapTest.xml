@@ -1,32 +1,35 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" tests="26" skipped="0" failures="0" errors="0" timestamp="2026-10-19T07:44:25.338Z" hostname="723893f7154c" time="13.798">
+<testsuite name="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" tests="29" skipped="0" failures="0" errors="0" timestamp="2026-10-19T09:03:23.708Z" hostname="723893f7154c" time="13.945">
   <properties/>
-  <testcase name="streamingReferenceLabels_neverActivateEmbeddedBareCandidates" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="5.078"/>
+  <testcase name="streamingReferenceLabels_neverActivateEmbeddedBareCandidates" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="4.767"/>
   <testcase name="streamingMalformedUris_stayInertWithWorkspaceOptIn" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="1.906"/>
-  <testcase name="finishedMalformedUris_stayInertWithWorkspaceOptIn" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.421"/>
-  <testcase name="finishedReferenceLabels_neverActivateEmbeddedBareCandidates" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.071"/>
-  <testcase name="allReaderHeadingLevels_keepWorkspaceLinksInertAndRouteWebLinks" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.142"/>
-  <testcase name="refusedBareCandidates_haveNoStylesAnnotationsOrActions" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.209"/>
-  <testcase name="bareRanges_endingInCompositeNodes_preserveExactTextAndAndroidTargets" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.216"/>
-  <testcase name="streamingWorkspaceOptInChanges_refreshAnnotationsAndUseTheCurrentCallback" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="3.237"/>
-  <testcase name="reader_links_keep_web_routing_and_inert_workspace_paths" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.195"/>
-  <testcase name="aStreamingDestination_becomesInertWhenRejected_andStaysInertOnSettlement" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.235"/>
-  <testcase name="aFinishedReply_handsTheNotesPathToTheThread_andNothingToAnotherApp" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.065"/>
-  <testcase name="finishedExplicitLinks_agreeWithRoutingAndHtml" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.164"/>
-  <testcase name="withoutTheOptIn_aNotesLinkStaysInert" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.05"/>
-  <testcase name="readerObsidianLaunchFailure_usesItsExistingErrorPill" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.08"/>
-  <testcase name="retainedObsidianLink_usesTheCurrentFailureSink" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.068"/>
-  <testcase name="aStreamingReply_handsTheNotesPathToTheThread" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.1"/>
-  <testcase name="aWebLinkInAReply_stillOpensThroughTheUriHandler" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.056"/>
-  <testcase name="bareRanges_crossParserTokensAndRetainSurroundingMarkdown" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.075"/>
-  <testcase name="workspaceOptInChanges_refreshAnnotationsAndUseTheCurrentCallback" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.062"/>
-  <testcase name="allHeadingLevels_routeWorkspaceAndWebLinks" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.092"/>
-  <testcase name="allStreamingHeadingLevels_routeWorkspaceAndWebLinks" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.093"/>
-  <testcase name="streamingExplicitLinks_agreeWithRoutingAndHtml" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.348"/>
-  <testcase name="bareObsidianLinks_preserveTargetsStylesAndAndroidRouting" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.066"/>
-  <testcase name="bareRecognition_excludesCodeAndAuthoredLabels" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.075"/>
-  <testcase name="theOperatorsOwnMessage_isNotALink" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.049"/>
-  <testcase name="barePunctuation_preservesAdmittedCharactersAndExactRanges" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.065"/>
+  <testcase name="finishedMalformedUris_stayInertWithWorkspaceOptIn" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.41"/>
+  <testcase name="finishedReferenceLabels_neverActivateEmbeddedBareCandidates" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.07"/>
+  <testcase name="allReaderHeadingLevels_keepWorkspaceLinksInertAndRouteWebLinks" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.146"/>
+  <testcase name="refusedBareCandidates_haveNoStylesAnnotationsOrActions" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.219"/>
+  <testcase name="bareRanges_endingInCompositeNodes_preserveExactTextAndAndroidTargets" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.223"/>
+  <testcase name="streamingWorkspaceOptInChanges_refreshAnnotationsAndUseTheCurrentCallback" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="3.203"/>
+  <testcase name="reader_links_keep_web_routing_and_inert_workspace_paths" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.194"/>
+  <testcase name="aStreamingDestination_becomesInertWhenRejected_andStaysInertOnSettlement" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.248"/>
+  <testcase name="aFinishedReply_handsTheNotesPathToTheThread_andNothingToAnotherApp" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.071"/>
+  <testcase name="finishedExplicitLinks_agreeWithRoutingAndHtml" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.192"/>
+  <testcase name="withoutTheOptIn_aNotesLinkStaysInert" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.051"/>
+  <testcase name="readerObsidianLaunchFailure_usesItsExistingErrorPill" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.084"/>
+  <testcase name="retainedObsidianLink_usesTheCurrentFailureSink" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.069"/>
+  <testcase name="aStreamingReply_handsTheNotesPathToTheThread" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.094"/>
+  <testcase name="codeSpanObsidianLaunchFailures_useTheExistingStaticNotices" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.05"/>
+  <testcase name="aWebLinkInAReply_stillOpensThroughTheUriHandler" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.052"/>
+  <testcase name="bareRanges_crossParserTokensAndRetainSurroundingMarkdown" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.073"/>
+  <testcase name="finishedCodeSpanUrls_useAuthoredLinkRouting" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.119"/>
+  <testcase name="workspaceOptInChanges_refreshAnnotationsAndUseTheCurrentCallback" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.063"/>
+  <testcase name="allHeadingLevels_routeWorkspaceAndWebLinks" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.106"/>
+  <testcase name="allStreamingHeadingLevels_routeWorkspaceAndWebLinks" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.09"/>
+  <testcase name="streamingExplicitLinks_agreeWithRoutingAndHtml" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.343"/>
+  <testcase name="bareObsidianLinks_preserveTargetsStylesAndAndroidRouting" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.082"/>
+  <testcase name="bareRecognition_excludesCodeAndAuthoredLabels" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.08"/>
+  <testcase name="theOperatorsOwnMessage_isNotALink" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.057"/>
+  <testcase name="barePunctuation_preservesAdmittedCharactersAndExactRanges" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.069"/>
+  <testcase name="streamingCodeSpanUrls_useAuthoredLinkRouting" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.282"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.MarkdownConversionsTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-10-19T09:04:11.944Z" hostname="723893f7154c" time="0.718">
+  <properties/>
+  <testcase name="plainText_dropsTheSyntaxTheRendererHides" classname="de.pyryco.mobile.ui.conversations.components.MarkdownConversionsTest" time="0.086"/>
+  <testcase name="html_writesImagesAsTheirAltText" classname="de.pyryco.mobile.ui.conversations.components.MarkdownConversionsTest" time="0.01"/>
+  <testcase name="htmlObsidianLinks_useReadOnlyAdmissionBeforeNormalization" classname="de.pyryco.mobile.ui.conversations.components.MarkdownConversionsTest" time="0.013"/>
+  <testcase name="html_writesOnlyTheText_forAnyOtherLink" classname="de.pyryco.mobile.ui.conversations.components.MarkdownConversionsTest" time="0.004"/>
+  <testcase name="html_rendersTheNote" classname="de.pyryco.mobile.ui.conversations.components.MarkdownConversionsTest" time="0.001"/>
+  <testcase name="html_keepsHrefOnly_forTheRenderersSchemes" classname="de.pyryco.mobile.ui.conversations.components.MarkdownConversionsTest" time="0.001"/>
+  <testcase name="html_escapesRawHtml_asText" classname="de.pyryco.mobile.ui.conversations.components.MarkdownConversionsTest" time="0.002"/>
+  <testcase name="clipBounds_leaveShortTextAlone_andCutLongHtmlAfterATag" classname="de.pyryco.mobile.ui.conversations.components.MarkdownConversionsTest" time="0.002"/>
+  <testcase name="aNoteAtTheReadersBound_convertsWithinTheClipBounds" classname="de.pyryco.mobile.ui.conversations.components.MarkdownConversionsTest" time="0.576"/>
+  <testcase name="html_neverLetsNoteTextOpenOrCloseAnAttribute" classname="de.pyryco.mobile.ui.conversations.components.MarkdownConversionsTest" time="0.002"/>
+  <testcase name="plainText_keepsCodeBlocksVerbatim_andTableCells" classname="de.pyryco.mobile.ui.conversations.components.MarkdownConversionsTest" time="0.004"/>
+  <testcase name="plainText_ofAllSixHeadingLevels_hasNoMarkers" classname="de.pyryco.mobile.ui.conversations.components.MarkdownConversionsTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

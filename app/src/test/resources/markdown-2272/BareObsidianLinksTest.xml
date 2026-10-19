@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-19T07:46:48.493Z" hostname="723893f7154c" time="0.06">
+<testsuite name="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-19T09:02:53.169Z" hostname="723893f7154c" time="0.061">
   <properties/>
-  <testcase name="refusedTokens_neverExposeAnAdmittedPrefixOrEmbeddedTarget" classname="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" time="0.04"/>
+  <testcase name="refusedTokens_neverExposeAnAdmittedPrefixOrEmbeddedTarget" classname="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" time="0.043"/>
   <testcase name="onlyRealStartsAdmitCandidates" classname="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" time="0.001"/>
   <testcase name="punctuation_validatesWholeThenTrimsTheMaximalRunOnce" classname="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" time="0.002"/>
   <testcase name="arrivingSourceEnd_blocksEvenIndependentlyValidPrefixesAndPunctuation" classname="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" time="0.001"/>
