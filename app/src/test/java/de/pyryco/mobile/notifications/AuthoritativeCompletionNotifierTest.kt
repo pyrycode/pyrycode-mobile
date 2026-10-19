@@ -24,6 +24,7 @@ import de.pyryco.mobile.di.AttentionAlert
 import de.pyryco.mobile.di.HostConversationConnection
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -131,7 +132,10 @@ class AuthoritativeCompletionNotifierTest {
             host.pump.fail(pending)
             runCurrent()
             assertEquals(pending.id, host.pump.query().id)
-            assertTrue(host.repository.authoritativeCompletions.value.isEmpty())
+            assertTrue(
+                host.repository.authoritativeCompletions.value
+                    .isEmpty(),
+            )
             assertFalse(File(folder.root, "alerts").exists())
         }
 
@@ -155,7 +159,10 @@ class AuthoritativeCompletionNotifierTest {
             host.pump.fail(pending, retryable = false)
             runCurrent()
             assertEquals(pending.id, host.pump.query().id)
-            assertTrue(host.repository.authoritativeCompletions.value.isEmpty())
+            assertTrue(
+                host.repository.authoritativeCompletions.value
+                    .isEmpty(),
+            )
             assertFalse(File(folder.root, "alerts").exists())
         }
 
@@ -173,7 +180,10 @@ class AuthoritativeCompletionNotifierTest {
             host.pump.finish(other, 20)
             runCurrent()
             assertEquals("a queued retry cannot cross a generation reset", other.id, host.pump.query().id)
-            assertTrue(host.repository.authoritativeCompletions.value.isEmpty())
+            assertTrue(
+                host.repository.authoritativeCompletions.value
+                    .isEmpty(),
+            )
             assertFalse(File(folder.root, "alerts").exists())
         }
 
@@ -184,6 +194,10 @@ class AuthoritativeCompletionNotifierTest {
             val request = host.pump.query()
             host.pump.batch(request, 3, listOf(item(2, "assistant_message"), item(3, "turn_end")))
             runCurrent()
+            assertTrue(
+                host.repository.authoritativeCompletions.value
+                    .isEmpty(),
+            )
             assertTrue(shadowOf(manager).allNotifications.isEmpty())
             // A malformed success must not certify already-upserted complete items.
             host.pump.push(
@@ -204,6 +218,10 @@ class AuthoritativeCompletionNotifierTest {
             )
             host.pump.push("turn_state", MobileJson.parseToJsonElement("""{"conversation_id":"same","state":"idle"}""") as JsonObject)
             runCurrent()
+            assertTrue(
+                host.repository.authoritativeCompletions.value
+                    .isEmpty(),
+            )
             assertTrue(shadowOf(manager).allNotifications.isEmpty())
             assertFalse(File(folder.root, "alerts").exists())
         }
@@ -358,6 +376,61 @@ class AuthoritativeCompletionNotifierTest {
         }
 
     @Test
+    fun retiredEnrichmentCannotConsumeReplacementCompletion() =
+        fixture {
+            notifier.dispose()
+            val alerts = MutableSharedFlow<AttentionAlert>(extraBufferCapacity = 8)
+            val preview = CompletableDeferred<String?>()
+            val replacementPreview = CompletableDeferred<String?>()
+            var oldOwnerCurrent = true
+            notifier =
+                AttentionNotifier(
+                    app,
+                    alerts,
+                    MutableStateFlow(true),
+                    isMuted = { _, _ -> false },
+                    agentOf = { _, _ -> null },
+                    nameOf = { _, _ -> null },
+                    isForeground = { false },
+                    ledgerFile = File(folder.root, "alerts"),
+                    dispatcher = dispatcher,
+                )
+            runCurrent()
+            alerts.emit(
+                AttentionAlert(
+                    "a",
+                    "same",
+                    AttentionAlert.Kind.TurnCompleted,
+                    "same-completion",
+                    preview = { preview.await() },
+                    isCurrent = { oldOwnerCurrent },
+                ),
+            )
+            runCurrent()
+            assertTrue(shadowOf(manager).allNotifications.isEmpty())
+            oldOwnerCurrent = false
+            alerts.emit(
+                AttentionAlert(
+                    "a",
+                    "same",
+                    AttentionAlert.Kind.TurnCompleted,
+                    "same-completion",
+                    preview = { replacementPreview.await() },
+                ),
+            )
+            runCurrent()
+            assertTrue(shadowOf(manager).allNotifications.isEmpty())
+            preview.complete("Retired private reply")
+            runCurrent()
+            assertTrue(shadowOf(manager).allNotifications.isEmpty())
+            replacementPreview.complete("Replacement certified reply")
+            runCurrent()
+            val posted = shadowOf(manager).allNotifications.single()
+            assertEquals("Replacement certified reply", posted.extras.getString(Notification.EXTRA_TEXT))
+            assertEquals(1, File(folder.root, "alerts").readLines().size)
+        }
+
+    @Test
     fun liveCompletionWaitsForCertifiedReplyAcrossQueryOverlap() =
         fixture {
             open()
@@ -430,6 +503,10 @@ class AuthoritativeCompletionNotifierTest {
                 )
             host.pump.live("same", olderRunning, 6)
             runCurrent()
+            assertTrue(
+                host.repository.authoritativeCompletions.value
+                    .isEmpty(),
+            )
             assertTrue("uncertified held completion must not spend the persistent ledger", !File(folder.root, "alerts").exists())
             assertTrue(shadowOf(manager).allNotifications.isEmpty())
             host.pump.finish(pending, 5)
@@ -818,7 +895,10 @@ class AuthoritativeCompletionNotifierTest {
             assertEquals(listOf(1L, 16L, 17L, 20L), snapshot.items.map { it.id })
             assertEquals(13L, snapshot.checkpoint)
             assertEquals(20L, snapshot.completedVersion)
-            assertTrue(host.repository.authoritativeCompletions.value.isEmpty())
+            assertTrue(
+                host.repository.authoritativeCompletions.value
+                    .isEmpty(),
+            )
             assertTrue(shadowOf(manager).allNotifications.isEmpty())
             assertFalse(File(folder.root, "alerts").exists())
             return pending
@@ -827,15 +907,27 @@ class AuthoritativeCompletionNotifierTest {
         fun certifyOverlapRecovery(pending: Envelope) {
             val fresh = host.pump.query()
             assertTrue("overlap must recover without another summary, completion or screen event", fresh.id != pending.id)
-            assertTrue(host.repository.authoritativeThreads.current("a", "same").repairNeeded)
+            assertTrue(
+                host.repository.authoritativeThreads
+                    .current("a", "same")
+                    .repairNeeded,
+            )
             host.pump.batch(fresh, 20, listOf(item(16, "assistant_message", rev = 17), item(17, "turn_end")))
             host.pump.finish(fresh, 20)
             runCurrent()
             val posted = shadowOf(manager).allNotifications.single()
             assertEquals("Certified private reply", posted.extras.getString(Notification.EXTRA_TEXT))
-            assertEquals(app.getString(R.string.notification_turn_completed_neutral), posted.publicVersion.extras.getString(Notification.EXTRA_TEXT))
+            assertEquals(
+                app.getString(R.string.notification_turn_completed_neutral),
+                posted.publicVersion.extras.getString(Notification.EXTRA_TEXT),
+            )
             assertEquals(HostConversationTarget("a", "same"), NotificationTap.target(shadowOf(posted.contentIntent).savedIntent))
-            assertEquals(20L, host.repository.authoritativeThreads.current("a", "same").checkpoint)
+            assertEquals(
+                20L,
+                host.repository.authoritativeThreads
+                    .current("a", "same")
+                    .checkpoint,
+            )
             host.pump.finish(pending, 19)
             host.summary(read = 1, shown = 17)
             runCurrent()

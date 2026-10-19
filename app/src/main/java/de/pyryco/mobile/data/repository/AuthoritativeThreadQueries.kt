@@ -196,13 +196,21 @@ internal class AuthoritativeThreadQueries(
     /** A terminal response releases the remote slot; partial/rejected work never grants a retry certificate. */
     private fun retryAttention(held: Active) {
         val request = held.decoder.request as? ThreadQueryRequest.CatchUp ?: return
-        if (closed || !enabled() || request.conversationId !in opened ||
+        if (closed ||
+            !enabled() ||
+            request.conversationId !in opened ||
             store.current(host, request.conversationId).generation != held.generation
-        ) return
+        ) {
+            return
+        }
         if (held.attentionRetries == 0) return
         val retry = Intent(request.conversationId, false, held.attentionRetries - 1, held.generation)
         val pending = queued.indexOfFirst { it.conversation == retry.conversation && !it.older }
-        if (pending < 0) queued.addLast(retry) else if (queued[pending].attentionRetries < retry.attentionRetries) queued[pending] = retry
+        if (pending < 0) {
+            queued.addLast(retry)
+        } else if (queued[pending].attentionRetries < retry.attentionRetries) {
+            queued[pending] = retry
+        }
         RelayLog.d { "event=attention_completion source=catch_up outcome=retry_queued" }
     }
 
@@ -265,7 +273,13 @@ internal class AuthoritativeThreadQueries(
                 }
             val id = nextId()
             ownedRequests += id
-            active = Active(ThreadQueryDecoder(host, connection, id, request, nowMillis = nowMillis), snapshot.generation, nowMillis(), intent.attentionRetries)
+            active =
+                Active(
+                    ThreadQueryDecoder(host, connection, id, request, nowMillis = nowMillis),
+                    snapshot.generation,
+                    nowMillis(),
+                    intent.attentionRetries,
+                )
             RelayLog.i { "event=thread_sync code=requested" }
             if (!send(Envelope(id, request.type, Clock.System.now().toString(), request.payload()))) {
                 retire("send_failed", remoteComplete = true)

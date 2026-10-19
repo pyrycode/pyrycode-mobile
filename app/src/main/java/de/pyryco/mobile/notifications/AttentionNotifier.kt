@@ -22,6 +22,7 @@ import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
@@ -49,8 +51,9 @@ private const val EXTRA_COMPLETION_ENTRY_ID = "de.pyryco.mobile.notification.COM
 /**
  * Posts one Android notification per new [AttentionAlert] (#685) while the app is in the background.
  *
- * Each alert is deduplicated **before** the gates: an alert already in the ledger is dropped, and a new
- * one is recorded even when the foreground, the switch, a mute or a missing permission then suppresses it.
+ * Each alert is deduplicated **before** the gates. Suppressed alerts are recorded immediately; eligible
+ * alerts are reserved while enriching and recorded at the final posting decision. A retired reservation
+ * cannot spend a replacement connection's identity.
  * So an alert spent in the foreground, while alerts were off or while its conversation was muted, never
  * posts later. The ledger persists, which
  * is what holds "at most once" across a reconnect's replay, a new wake window and process death.
@@ -85,6 +88,7 @@ class AttentionNotifier(
     private val notificationLock = Mutex()
     private var nextSequence = 0L
     private val latestAlerts = mutableMapOf<String, Long>()
+    private val pendingAlerts = mutableMapOf<String, AttentionAlert>()
 
     /** Android readback can lag notify; a present null records a prompt or unidentified completion replacement. */
     private val postedCompletionEntries = mutableMapOf<String, ULong?>()
@@ -132,48 +136,99 @@ class AttentionNotifier(
 
     private suspend fun handle(alert: AttentionAlert) {
         val kind = if (alert.kind == AttentionAlert.Kind.TurnCompleted) "turn" else "prompt"
-        val outcome =
+        val identity = digest(alert.serverId, alert.conversationId, alert.kind.name, alert.key)
+        val admission =
             when {
                 !alert.isCurrent() -> "superseded"
-                !ledger.add(digest(alert.serverId, alert.conversationId, alert.kind.name, alert.key)) -> "duplicate"
-                isForeground() -> "foreground"
-                !notificationsEnabled.first() -> "disabled"
-                isMuted(alert.serverId, alert.conversationId) -> "muted"
-                !permitted() -> "no_permission"
-                alert.kind == AttentionAlert.Kind.TurnCompleted &&
-                    readMarksOf(alert.serverId, alert.conversationId)?.coversCompletion(alert.historyEntryId) == true -> "read"
-                else -> {
-                    val tag = digest(alert.serverId, alert.conversationId)
-                    val sequence =
-                        notificationLock.withLock {
-                            (++nextSequence).also { latestAlerts[tag] = it }
-                        }
-                    scope.launch {
-                        val preview = notificationPreview(alert.preview?.invoke())
-                        // Only enrichment adds a wait after the first gate; never suspend under the post/cancel lock.
-                        val stillEnabled = alert.preview == null || notificationsEnabled.first()
-                        val posted =
+                !notificationLock.withLock {
+                    if (ledger.contains(identity) || pendingAlerts[identity]?.isCurrent() == true) {
+                        false
+                    } else {
+                        pendingAlerts[identity] = alert
+                        true
+                    }
+                } -> "duplicate"
+                else -> null
+            }
+        if (admission != null) {
+            RelayLog.d { "event=attention_alert outcome=$admission kind=$kind" }
+            return
+        }
+        var handedOff = false
+        try {
+            val outcome =
+                when {
+                    isForeground() -> "foreground"
+                    !notificationsEnabled.first() -> "disabled"
+                    isMuted(alert.serverId, alert.conversationId) -> "muted"
+                    !permitted() -> "no_permission"
+                    alert.kind == AttentionAlert.Kind.TurnCompleted &&
+                        readMarksOf(alert.serverId, alert.conversationId)?.coversCompletion(alert.historyEntryId) == true -> "read"
+                    else -> {
+                        val tag = digest(alert.serverId, alert.conversationId)
+                        val sequence =
                             notificationLock.withLock {
-                                when {
-                                    latestAlerts[tag] != sequence || !alert.isCurrent() -> "superseded"
-                                    isForeground() -> "foreground"
-                                    !stillEnabled -> "disabled"
-                                    isMuted(alert.serverId, alert.conversationId) -> "muted"
-                                    !permitted() -> "no_permission"
-                                    alert.kind == AttentionAlert.Kind.TurnCompleted &&
-                                        readMarksOf(
-                                            alert.serverId,
-                                            alert.conversationId,
-                                        )?.coversCompletion(alert.historyEntryId) == true -> "read"
-                                    else -> post(alert, preview)
+                                (++nextSequence).also { latestAlerts[tag] = it }
+                            }
+                        handedOff = true
+                        scope.launch {
+                            try {
+                                val preview = notificationPreview(alert.preview?.invoke())
+                                // Only enrichment adds a wait after the first gate; never suspend under the post/cancel lock.
+                                val stillEnabled = alert.preview == null || notificationsEnabled.first()
+                                val posted =
+                                    notificationLock.withLock {
+                                        if (pendingAlerts[identity] !== alert || !alert.isCurrent()) {
+                                            "superseded"
+                                        } else {
+                                            settlePending(alert, identity, consume = true)
+                                            when {
+                                                latestAlerts[tag] != sequence || !alert.isCurrent() -> "superseded"
+                                                isForeground() -> "foreground"
+                                                !stillEnabled -> "disabled"
+                                                isMuted(alert.serverId, alert.conversationId) -> "muted"
+                                                !permitted() -> "no_permission"
+                                                alert.kind == AttentionAlert.Kind.TurnCompleted &&
+                                                    readMarksOf(
+                                                        alert.serverId,
+                                                        alert.conversationId,
+                                                    )?.coversCompletion(alert.historyEntryId) == true -> "read"
+                                                else -> post(alert, preview)
+                                            }
+                                        }
+                                    }
+                                RelayLog.d { "event=attention_alert outcome=$posted kind=$kind" }
+                            } finally {
+                                withContext(NonCancellable) {
+                                    notificationLock.withLock { settlePending(alert, identity, consume = false) }
                                 }
                             }
-                        RelayLog.d { "event=attention_alert outcome=$posted kind=$kind" }
+                        }
+                        "enriching"
                     }
-                    "enriching"
+                }
+            if (!handedOff) {
+                notificationLock.withLock { settlePending(alert, identity, consume = alert.isCurrent()) }
+            }
+            RelayLog.d { "event=attention_alert outcome=$outcome kind=$kind" }
+        } finally {
+            if (!handedOff) {
+                withContext(NonCancellable) {
+                    notificationLock.withLock { settlePending(alert, identity, consume = false) }
                 }
             }
-        RelayLog.d { "event=attention_alert outcome=$outcome kind=$kind" }
+        }
+    }
+
+    /** Called under notificationLock; a retired task cannot settle a replacement's reservation. */
+    private fun settlePending(
+        alert: AttentionAlert,
+        identity: String,
+        consume: Boolean,
+    ) {
+        if (pendingAlerts[identity] !== alert) return
+        pendingAlerts.remove(identity)
+        if (consume) ledger.add(identity)
     }
 
     private fun permitted() =
@@ -365,12 +420,14 @@ private fun digest(vararg fields: String): String {
 
 /**
  * The digests of alerts already handled, newest last, bounded to [MAX_LEDGER_ENTRIES]. Touched only by the
- * notifier's single collector. Unreadable means empty; a failed write keeps the in-memory set.
+ * notifier's notification lock. Unreadable means empty; a failed write keeps the in-memory set.
  */
 internal class AlertLedger(
     private val file: File,
 ) {
     private var entries: LinkedHashSet<String>? = null
+
+    fun contains(digest: String): Boolean = (entries ?: load().also { entries = it }).contains(digest)
 
     /** Records [digest]; false when it was already recorded. */
     fun add(digest: String): Boolean {
