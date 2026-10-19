@@ -28,14 +28,19 @@ fun MarkdownText(
 `onSecondaryContainer` prose and table cells (#2283), 16dp ordinary block gaps,
 6dp sibling-item gaps (#2285) and 12sp/20sp monospace code (#2284).
 
-The 16dp gap also separates blocks inside list items and quotes in Thread (#2273)
+The ordinary 16dp gap also separates non-heading blocks inside list items and quotes in Thread (#2273)
 and Reader (#2285). Reader outer padding stays measured-bar-plus-28dp at the top,
 20dp at the sides and 16dp at the bottom.
-Column arrangements add gaps only between blocks, with no space before the first or
-after the last. User paragraphs, attachment/metadata gaps and bubble padding belong
+Shared ATX heading spacing (#2278) overrides the ordinary gap between rendered
+siblings: 20dp before a heading, otherwise 12dp after a heading. Consecutive
+headings have one 20dp gap, with the next heading taking precedence. This applies
+at settled/streaming roots and inside list items and quotes, after syntax-only
+children are filtered. First and last blocks have no outer heading spacing,
+including a single-heading container. SETEXT retains raw-body fallback and ordinary
+gaps; sibling-item gaps remain configured. Text scales with font size while these
+gaps stay in dp. User paragraphs, attachment/metadata gaps and bubble padding belong
 to [MessageBubble](message-bubble.md) and retain their independent values.
-Heading-specific spacing remains assigned to #2274. See the
-[bounds-test guidance](message-bubble-testing.md#testing) for settled and streaming coverage.
+See the [bounds-test guidance](message-bubble-testing.md#testing) for settled and streaming coverage.
 
 The reader uses untrimmed line-height boxes for headings and prose, including nested list and quote
 text; Android's default trimmed boxes otherwise shorten the Figma paragraph and list. Thread line
@@ -92,7 +97,44 @@ horizontal scrolling and physical header interception.
 [Reader bounds coverage and counted Linux acceptance](markdown-reader-screen-testing.md#ordinary-block-bounds-coverage-2285)
 pin 16dp ordinary gaps for both note sources, recursive list/quote content, panel
 boundaries, 6dp sibling gaps and unchanged outer padding. Reader heading-specific
-20/12dp integration remains with #2278/#2276.
+20/12dp screen integration remains with #2276.
+
+`MarkdownHeadingSpacingTest` adds 13 native-graphics layout-box tests for settled
+and streaming H1–H6, consecutive headings, nested lists/quotes, syntax-only
+children, single/first/last headings, preserved indentation and quote bounds,
+ordinary/item gaps and font scaling. Reader-presentation fixtures explicitly use
+12dp ordinary and 6dp item gaps, including the inline-marker path; that override
+proves configurability while the current Reader screen uses 16dp ordinary gaps.
+`headingTailKeepsSpacingThroughCompletionAndSettlement` checks each level from a
+growing heading through completed-block reuse and settled rendering, apart from
+the existing caret behavior.
+
+The [final #2278 verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/2288#issuecomment-6257269879)
+records Linux acceptance on 2026-10-19 at
+`3d23f64b96f327991a6883a3f7e4e9a278a077cb`. The full JVM/build gate executed
+**6,012 tests, 6,012 passed, 0 failed, 0 skipped**; its retained XML includes all
+13 heading-spacing methods, 17 Reader-design methods, 29 `MarkdownTextTest`
+methods and 12 `StreamingMarkdownTextTest` methods, all passed.
+Both `headingTailKeepsSpacingThroughCompletionAndSettlement` and
+`referencePlacesBarRuleAndBodyAtFigmaCoordinates` are present and passed in that
+full gate, rather than a separate focused verifier run. The UI gate executed
+334 tests, all passed, with 0 failed and 1 skipped
+(`RenameDialogCaptureTest.renameAtFigmaViewport`, unrelated to this change).
+Scripted-all executed 22, all passed, with 0 failed or skipped. Lint, Spotless,
+debug assembly and instrumented Kotlin compilation were included in the green
+JVM/build gate. macOS was outside this Linux ticket's verification scope.
+Counted XML was retained in
+`/work/Projects/pyrycode-mobile-agents/logs/verifier-gate_#2278_{4,5,6}.log`
+at documentation time.
+
+The earlier red gate remains historical: the Reader reference expected 16dp
+between paragraph and H2 although the renderer and coordinate table used 20dp.
+The repaired assertion passed in final acceptance. Keep the independent 16dp
+list-to-code assertion: changing all gap expectations together would hide a
+regression. The reference deliberately adds 8dp before H2 compared with the earlier 12dp
+fixture gap and moves subsequent coordinates with the heading policy; the quote position also reflects the shorter shared code panel
+from #2284. Main's bodyMedium typography, ordinary/item gaps and Reader outer
+padding remain intact. Reader-screen integration remains assigned to #2276.
 
 `MarkdownHeadingScaleTest` inspects rendered `TextLayoutResult` styles under native graphics,
 with dark/light × Thread/Reader cases. Each case checks H1–H6 size, line height, tracking,
@@ -105,7 +147,7 @@ headings across six levels. `StreamingMarkdownTextTest` extends pending-inline/c
 settlement coverage to all levels; `MarkdownLinkTapTest` taps rendered heading links to
 exercise platform and opt-in workspace-path routing. Parsing, typography and existing
 Reader geometry regressions complete the affected coverage. New Reader-screen integration
-coverage belongs to #2276; heading spacing belongs to a separate child of #2274.
+coverage belongs to #2276.
 
 The [#2277 verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/2282#issuecomment-6251474355)
 records Linux acceptance on 2026-10-18 at `5f300ed7ddf321706a849dc33f2da70b33481b55`.

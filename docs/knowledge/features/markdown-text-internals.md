@@ -31,12 +31,32 @@ The parse is keyed on the `markdown` string itself — the AST is rebuilt only w
 | `CODE_BLOCK` | Reader and thread: `CodeBlock` without a language header, using extracted source text and a copy control. |
 | _else_ | `Text(node.getTextInNode(source).trim(), style = style.body)` — fallback |
 
-`Column` arrangements use `style.blockSpacing` between top-level blocks and recursively inside list items and quotes; sibling list items use `style.listItemSpacing`. Thread defaults are 16dp between blocks and 4dp between sibling items (#2273); the reader explicitly supplies 16dp and 6dp (#2285). Gaps come from the columns, not per-element padding, so the first and last blocks align with the renderer bounds without added outer spacing. Measure code-block gaps against the code surface, including its internal padding, rather than against the code text. The reader bounds fixture uses a two-line shared panel, whose trimmed outer text
-boxes produce a 58dp surface (#2284), replacing the reader-only 64dp minimum.
-Measure the panel ancestor of its scrolling viewport, rather than padded text or the
-removed `reader-code-panel` tag. Keep exact 16dp gap assertions.
-Reader outer padding remains measured-bar-plus-28dp / 20dp gutters / 16dp bottom;
-heading-specific 20/12dp integration belongs to #2278/#2276.
+`MarkdownBlockGap(previous, next, ordinary)` owns sibling spacing in settled and
+streaming roots, both list-content paths (including Reader's inline marker), and
+quote children. It emits nothing without a previous rendered block; otherwise it
+chooses 20dp when the next block is ATX, 12dp when only the previous block is ATX,
+and `style.blockSpacing` otherwise. Consecutive headings therefore have one 20dp
+gap rather than added before/after padding. EOL/whitespace, list markers and task
+checkbox tokens, and quote markers are filtered before selecting neighbours.
+No heading padding is added at either container edge, even for a lone heading.
+SETEXT uses ordinary gaps and its existing raw-body fallback. Font scaling changes
+text boxes while these sibling gaps remain dp.
+
+Sibling list items still use `style.listItemSpacing`. Thread defaults are 16dp
+ordinary / 4dp item gaps (#2273); Reader supplies 16dp / 6dp (#2285). List
+indentation, quote chrome and Reader outer padding remain unchanged. Streaming
+keys and completed-block identity are retained; the standalone caret keeps its
+ordinary gap because it is not an AST heading sibling.
+
+Measure layout boxes rather than glyph ink. Measure code-block gaps against the
+code surface, including its internal padding, rather than code text. The Reader
+bounds fixture uses a two-line shared panel whose trimmed outer text boxes produce
+a 58dp surface (#2284), replacing the reader-only 64dp minimum. Measure the panel
+ancestor of its scrolling viewport, rather than padded text or the removed
+`reader-code-panel` tag. Keep ordinary 16dp assertions separate from heading
+20/12dp assertions. Reader outer padding remains measured-bar-plus-28dp / 20dp
+gutters / 16dp bottom; screen integration belongs to #2276. See
+[heading bounds coverage and Linux acceptance](markdown-text.md#testing).
 
 ATX headings use the [markdown-only scale](shared-typography.md#markdown-headings) and
 `onSecondaryContainer` in both presentations, retaining inline link colours and code spans.
@@ -298,4 +318,4 @@ private val TaskMarkCornerRadius = 3.dp
 private val TaskMarkTopInset = 4.dp   // sits the mark on the first text line, not the item's top edge
 ```
 
-Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256`; see [Tables](#tables)) — `internal` since #1067, the rest of this list stays file-private. Block spacing comes from `MarkdownTextStyle`, not a file-private constant: the message default is 16dp and the reader explicitly supplies 16dp, with 6dp sibling-item gaps. Text sizes use `MaterialTheme.typography` roles; the thread code role overrides line height to 20sp.
+Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256`; see [Tables](#tables)) — `internal` since #1067, the rest of this list stays file-private. Ordinary block spacing comes from `MarkdownTextStyle`: the message default is 16dp and the reader explicitly supplies 16dp, with 6dp sibling-item gaps. ATX sibling gaps are selected by `MarkdownBlockGap` independently of that ordinary value. Text sizes use `MaterialTheme.typography` roles; the thread code role overrides line height to 20sp.
