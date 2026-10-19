@@ -129,7 +129,7 @@ class MarkdownReaderDesignTest {
             assertDpEquals(20.dp, with(rule.density) { height.toDp() }, "paragraph line $line")
         }
         assertDpEquals(60.dp, paragraph.height, "three-line paragraph", pixels = ROUNDED_TEXT_BLOCK_PIXELS)
-        assertDpEquals(16.dp, subheading.top - paragraph.bottom, "gap after paragraph")
+        assertDpEquals(20.dp, subheading.top - paragraph.bottom, "gap after paragraph")
         items.forEach { assertDpEquals(20.dp, it.height, "list item height") }
         items.zipWithNext { above, below -> assertDpEquals(6.dp, below.top - above.bottom, "sibling item gap") }
         assertDpEquals(16.dp, code.top - items.last().bottom, "gap after list")
@@ -153,13 +153,13 @@ class MarkdownReaderDesignTest {
         val body =
             listOf(
                 "heading" to (heading.top to 97f),
-                // #2285 + #2283: 16dp block gaps with bodyMedium and the existing heading scale.
-                "paragraph" to (paragraph.top to 141f),
+                // #2278 + #2285 + #2283: bodyMedium, 16dp ordinary gaps and 20/12dp heading gaps.
+                "paragraph" to (paragraph.top to 137f),
                 "subheading" to (subheading.top to 217f),
-                "first item" to (firstItem.top to 259f),
-                "code" to (code.top to 347f),
+                "first item" to (firstItem.top to 255f),
+                "code" to (code.top to 343f),
                 // Shared CodeBlock uses its natural trimmed text box, without the old reader minimum height.
-                "quote" to (quote.top to 421f),
+                "quote" to (quote.top to 417f),
             )
         for (index in 1 until body.size) {
             val (name, block) = body[index]
