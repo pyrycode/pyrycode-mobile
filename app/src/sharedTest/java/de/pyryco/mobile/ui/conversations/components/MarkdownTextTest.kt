@@ -288,6 +288,19 @@ class MarkdownTextTest {
         )
     }
 
+    @Test
+    fun bare_obsidian_links_cover_exactly_the_admitted_url_in_each_prose_container() {
+        val url = "obsidian://open?vault=V&file=Note.md"
+        render("See $url. now\n\n- List $url. end\n\n| Note |\n| --- |\n| Cell $url. end |")
+        listOf("See $url. now", "List $url. end", "Cell $url. end").forEach { text ->
+            val rendered = annotatedTextOf(text)
+            val range = rendered.getLinkAnnotations(0, rendered.length).single()
+            assertEquals(text.indexOf(url), range.start)
+            assertEquals(text.indexOf(url) + url.length, range.end)
+            assertEquals(url, (range.item as androidx.compose.ui.text.LinkAnnotation.Url).url)
+        }
+    }
+
     /** The control for the test above: an authored markdown link still IS one. */
     @Test
     fun an_authored_link_is_still_a_link() {

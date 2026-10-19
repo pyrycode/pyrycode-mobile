@@ -79,5 +79,11 @@ None: the refined issue supplies the punctuation and completion contracts.
 - **Concurrency:** candidates are recomputed from each immutable source snapshot. Synthetic characters and caret presentation cannot establish completion; there are no new jobs or shared mutable caches.
 - **Threat model:** hostile daemon text is handled by strict admission, exclusions and explicit user activation. Malicious-relay interference, rooted-device token theft and UI capture retain existing transport/storage/platform controls; this renderer change creates no new channel for them.
 
-**Reviewer:** builder self-review per `builder/security-review.md`  
+**Reviewer:** builder self-review per `builder/security-review.md`
 **Date:** 2026-10-19
+
+## Revisions
+
+### 2026-10-19 — token traversal and focused execution
+
+The renderer overlays admitted source ranges while walking siblings, rather than joining only childless runs: a URL can contain parser punctuation or an interior Markdown node without becoming a truncated target. Only range boundaries in ordinary leaf tokens are eligible at a given level; code and authored-label subtrees remain protected. Single-tilde interiors recurse through the same walker so their styling survives a link. `appendLeaf` already has the real source end, so `StreamingMarkdown.kt` needs no production edit. The managed launcher accepts one Mobile test class per invocation; run the seven affected classes individually.

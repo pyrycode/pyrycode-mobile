@@ -7,6 +7,14 @@ import org.junit.Test
 /** #1050: which link targets are workspace markdown paths, and where a tap on each one goes. */
 class MarkdownLinkRoutingTest {
     @Test
+    fun bareObsidianTargets_useExactExternalTargetsWithWorkspaceOptIn() {
+        val targets = listOf("obsidian://open?vault=V&file=Note.md", "ObSiDiAn://open?file=A%2fB%20C.MD&vault=V+Plus")
+        val opened = mutableListOf<String>()
+        targets.forEach { target -> routeMarkdownLink(target, { error("workspace callback") }) { opened += it } }
+        assertEquals(targets, opened)
+    }
+
+    @Test
     fun malformedNoteUris_neverFallThroughToTheWorkspaceReader() {
         val uriShapes =
             listOf(

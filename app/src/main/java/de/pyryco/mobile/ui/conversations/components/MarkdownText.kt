@@ -1050,6 +1050,8 @@ private data class InlineColors(
     val codeSpanBackground: Color,
     val link: Color,
     val struck: Color,
+    /** Original source length in a growing block; null for settled rendering. */
+    val arrivingSourceEnd: Int? = null,
 )
 
 @Composable
@@ -1095,10 +1097,18 @@ private fun AnnotatedString.Builder.appendLeaf(
     val tail = streaming?.tail
     val header = tail?.header
     val probe = tail?.probe
+    val inlineColors = if (streaming != null) colors.copy(arrivingSourceEnd = source.length) else colors
     when {
         header != null && header.target === node -> append(header.text)
-        probe != null && tail.leaf === node -> appendInlineChildren(content(probe.node), probe.source, uriHandler, colors, probe.synthetic)
-        else -> appendInlineChildren(content(node), source, uriHandler, colors)
+        probe != null && tail.leaf === node ->
+            appendInlineChildren(
+                content(probe.node),
+                probe.source,
+                uriHandler,
+                inlineColors,
+                probe.synthetic,
+            )
+        else -> appendInlineChildren(content(node), source, uriHandler, inlineColors)
     }
     if (tail != null && tail.caretTarget === node) appendStreamingCaret(streaming.caretVisible)
 }
@@ -1253,32 +1263,13 @@ private fun AnnotatedString.Builder.appendInline(
                 append(linkText)
                 return
             }
-            withLink(
-                LinkAnnotation.Url(
-                    url = url,
-                    styles =
-                        TextLinkStyles(
-                            style =
-                                SpanStyle(
-                                    color = colors.link,
-                                    textDecoration = TextDecoration.Underline,
-                                ),
-                        ),
-                    linkInteractionListener =
-                        LinkInteractionListener { link ->
-                            // The handler decides: a markdown path, an allowed scheme, or nothing.
-                            (link as? LinkAnnotation.Url)?.url?.let(uriHandler::openUri)
-                        },
-                ),
-            ) {
-                append(linkText)
-            }
+            appendLink(linkText, url, uriHandler, colors)
         }
         MarkdownTokenTypes.EOL -> append(" ")
         // The total fallback, and the reason #681 could switch flavours without suppressing
         // anything: a node kind with no arm renders its own source characters. GFM_AUTOLINK is a
-        // childless leaf, so a bare URL appends as text and is never a link; INLINE_MATH has
-        // children whose leaves (DOLLAR, TEXT, WHITE_SPACE) rebuild the `$…$` span verbatim.
+        // childless leaf, so bare web URLs stay text; the sibling walk annotates only admitted Obsidian prose.
+        // INLINE_MATH has children whose leaves (DOLLAR, TEXT, WHITE_SPACE) rebuild the `$…$` span verbatim.
         else ->
             if (node.children.isEmpty()) {
                 append(textOutside(node, source, synthetic))
@@ -1286,6 +1277,21 @@ private fun AnnotatedString.Builder.appendInline(
                 appendInlineChildren(node.children, source, uriHandler, colors, synthetic)
             }
     }
+}
+
+private fun AnnotatedString.Builder.appendLink(
+    text: String,
+    target: String,
+    uriHandler: UriHandler,
+    colors: InlineColors,
+) {
+    withLink(
+        LinkAnnotation.Url(
+            url = target,
+            styles = TextLinkStyles(style = SpanStyle(color = colors.link, textDecoration = TextDecoration.Underline)),
+            linkInteractionListener = LinkInteractionListener { link -> (link as? LinkAnnotation.Url)?.url?.let(uriHandler::openUri) },
+        ),
+    ) { append(text) }
 }
 
 /** The constructs a synthetic closer can complete; each renders plain when one does. */
@@ -1308,10 +1314,17 @@ private fun textOutside(
     node: ASTNode,
     source: String,
     synthetic: IntRange,
+): String = textOutside(node.startOffset, node.endOffset, source, synthetic)
+
+private fun textOutside(
+    start: Int,
+    end: Int,
+    source: String,
+    synthetic: IntRange,
 ): String {
-    if (!overlaps(node, synthetic)) return node.getTextInNode(source).toString()
-    val before = if (node.startOffset < synthetic.first) source.substring(node.startOffset, synthetic.first) else ""
-    val after = if (node.endOffset > synthetic.last + 1) source.substring(synthetic.last + 1, node.endOffset) else ""
+    if (synthetic.isEmpty() || start > synthetic.last || end <= synthetic.first) return source.substring(start, end)
+    val before = if (start < synthetic.first) source.substring(start, synthetic.first) else ""
+    val after = if (end > synthetic.last + 1) source.substring(synthetic.last + 1, end) else ""
     return before + after
 }
 
@@ -1364,28 +1377,68 @@ private fun AnnotatedString.Builder.appendInlineChildren(
     colors: InlineColors,
     synthetic: IntRange = IntRange.EMPTY,
 ) {
+    if (children.isEmpty()) return
     val runs = singleTildeRuns(children, source)
+    val links =
+        bareObsidianRanges(source, children.first().startOffset until children.last().endOffset, colors.arrivingSourceEnd, synthetic)
+    var linkIndex = 0
     var index = 0
+    var cursor = children.first().startOffset
     while (index < children.size) {
+        val child = children[index]
+        while (linkIndex < links.size && links[linkIndex].first < cursor) linkIndex++
         val close = runs[index]
-        if (close == null) {
-            appendInline(children[index], source, uriHandler, colors, synthetic)
-            index++
-        } else if (overlaps(children[close], synthetic)) {
-            // A pair closed only by a streaming probe's tilde shows its text plain, without either tilde.
-            for (inner in index + 1 until close) {
-                appendInline(children[inner], source, uriHandler, colors, synthetic)
+        if (close != null) {
+            val inner = children.subList(index + 1, close)
+            if (overlaps(children[close], synthetic)) {
+                appendInlineChildren(inner, source, uriHandler, colors, synthetic)
+            } else {
+                withStyle(struckSpanStyle(colors)) { appendInlineChildren(inner, source, uriHandler, colors, synthetic) }
             }
             index = close + 1
         } else {
-            withStyle(struckSpanStyle(colors)) {
-                for (inner in index + 1 until close) {
-                    appendInline(children[inner], source, uriHandler, colors, synthetic)
+            val link = links.getOrNull(linkIndex)?.takeIf { it.first < child.endOffset }
+            if (link != null) {
+                linkIndex++
+                var last = index
+                while (last < children.lastIndex && children[last].endOffset <= link.last) last++
+                // A candidate can cross lexer tokens, but never borrow text from code or an authored label.
+                val covered = children.subList(index, last + 1)
+                if (child.children.isEmpty() && children[last].children.isEmpty() && covered.none { it.protectsBareLink(link) }) {
+                    append(textOutside(cursor, link.first, source, synthetic))
+                    val target = source.substring(link)
+                    appendLink(target, target, uriHandler, colors)
+                    cursor = link.last + 1
+                    index = last
+                    if (cursor == children[index].endOffset) {
+                        index++
+                        cursor = children.getOrNull(index)?.startOffset ?: cursor
+                    }
+                    continue
                 }
+                // Let nested Markdown dispatch decide its own content boundaries.
+                continue
             }
-            index = close + 1
+            if (cursor == child.startOffset) {
+                appendInline(child, source, uriHandler, colors, synthetic)
+            } else {
+                append(textOutside(cursor, child.endOffset, source, synthetic))
+            }
+            index++
         }
+        cursor = children.getOrNull(index)?.startOffset ?: cursor
     }
+}
+
+private fun ASTNode.protectsBareLink(range: IntRange): Boolean {
+    if (endOffset <= range.first || startOffset > range.last) return false
+    if (type == MarkdownElementTypes.CODE_SPAN ||
+        type == MarkdownElementTypes.INLINE_LINK ||
+        type == MarkdownElementTypes.IMAGE
+    ) {
+        return true
+    }
+    return children.any { it.protectsBareLink(range) }
 }
 
 private fun struckSpanStyle(colors: InlineColors): SpanStyle = SpanStyle(color = colors.struck, textDecoration = TextDecoration.LineThrough)
