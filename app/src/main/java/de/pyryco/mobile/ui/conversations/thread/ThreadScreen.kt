@@ -1191,7 +1191,13 @@ fun ThreadScreen(
                             contentPadding =
                                 PaddingValues(
                                     top = headerHeight + MessageAreaTopInset,
-                                    bottom = (composerHeight - ComposerTopGap - restAdjustment).coerceAtLeast(0.dp),
+                                    // Match the separately rounded layout gaps, especially at fractional density.
+                                    bottom =
+                                        with(density) {
+                                            (composerHeight.roundToPx() - ComposerTopGap.roundToPx() - restAdjustment.roundToPx())
+                                                .coerceAtLeast(0)
+                                                .toDp()
+                                        },
                                 ),
                             // #1509: a reversed list defaults to bottom-anchored; Figma `640:2646` starts a
                             // short stream under the header. An overflowing stream is unaffected.

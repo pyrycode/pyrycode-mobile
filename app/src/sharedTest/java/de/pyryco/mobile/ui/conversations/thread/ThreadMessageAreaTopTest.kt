@@ -30,7 +30,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.GraphicsMode
 
-/** #1646: full-screen drawing, unchanged empty/input alignment, and pills pinned below measured chrome. */
+/** #1646: full-screen drawing, empty/input alignment within measured chrome, and pinned top pills. */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @OptIn(ExperimentalTestApi::class)
@@ -71,8 +71,20 @@ class ThreadMessageAreaTopTest {
 
         val empty = rule.onNodeWithText(string(R.string.thread_empty_state)).getUnclippedBoundsInRoot()
         val field = rule.onNode(hasSetTextAction(), useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val header = rule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot()
+        val composer = rule.onNodeWithTag("thread-composer").getUnclippedBoundsInRoot()
+        val context = rule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG).getUnclippedBoundsInRoot()
+        val footerActions = rule.onNodeWithText(string(R.string.thread_footer_actions)).getUnclippedBoundsInRoot()
         assertEquals(INPUT_FIELD_TOP, field.top.value, 1f)
         assertEquals(EMPTY_TEXT_CENTRE, ((empty.top + empty.bottom) / 2).value, ONE_FRAME_PIXEL)
+        assertEquals(
+            "empty text stays centered between the header inset and composer",
+            ((header.bottom + 28.dp + composer.top) / 2).value,
+            ((empty.top + empty.bottom) / 2).value,
+            ONE_FRAME_PIXEL,
+        )
+        assertTrue("Context target must clear the editor", field.bottom <= context.top)
+        assertTrue("footer actions must clear the editor", field.bottom <= footerActions.top)
     }
 
     @Test
@@ -125,9 +137,9 @@ class ThreadMessageAreaTopTest {
         // Figma 533:1948's rule closes the bar at y 68–69; 621:3571, the message area, starts at y 69.
         const val RULE_BOTTOM = 69f
 
-        // Pre-change positions in the reference frame. The pill's dp-exact top is 97, one frame pixel lower.
-        const val EMPTY_TEXT_CENTRE = 423.9f
-        const val INPUT_FIELD_TOP = 814.2f
+        // #2321's 20dp taller composer raises the editor 20dp and the available-area center 10dp.
+        const val EMPTY_TEXT_CENTRE = 413.9f
+        const val INPUT_FIELD_TOP = 794.2f
         const val TOP_PILL_TOP = 97f
 
         // The forced frame scales density to about 0.774, where the old 16dp and 12dp gaps round to one pixel
