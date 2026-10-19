@@ -43,6 +43,12 @@ class PingReplyTest {
         assertTrue(composeTestRule.ownedReplyDisplayed(expected("Ping! Here is the reply.")))
     }
 
+    @Test fun ownedReplyAcceptsFormattedOrdinaryProseWithoutWeakeningContentChecks() {
+        showBoundaryFixture(Role.Assistant, "**Done.**\n\nHere is `ordinary prose`.")
+        assertTrue(composeTestRule.ownedReplyDisplayed(expected("**Done.**\n\nHere is `ordinary prose`.")))
+        assertFalse(composeTestRule.ownedReplyDisplayed(expected("**Done.**\n\nHere is `different prose`.")))
+    }
+
     @Test
     fun ownedReplyRejectsUserEcho() {
         showBoundaryFixture(Role.User, "ping")

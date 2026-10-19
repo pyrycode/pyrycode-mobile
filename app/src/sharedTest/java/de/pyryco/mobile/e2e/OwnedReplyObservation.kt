@@ -32,6 +32,8 @@ internal class CompletedReplyObservation(
 internal class OwnedReplyObservation(
     val host: String,
     val before: ThreadEvidence,
+    private val legacyProducer: Boolean = false,
+    private val knownSession: String? = null,
 ) {
     private var pump: Any? = null
     private var pumpCurrent: () -> Boolean = { true }
@@ -49,8 +51,28 @@ internal class OwnedReplyObservation(
     private var session: String? = null
     private val sessionReads = mutableSetOf<Long>()
     private var readSession: String? = null
+    private val passiveSessionReads = mutableMapOf<Pair<Any, Long>, Unit>()
+
+    @Synchronized fun sessionSending(connection: Any, request: Envelope) {
+        if (request.type == "request_session_settings" && request.field("conversation_id") == before.owner.conversation) {
+            passiveSessionReads[connection to request.id] = Unit
+        }
+    }
+
+    @Synchronized fun sessionReceived(connection: Any, frame: Envelope) {
+        val replyId = frame.inReplyTo ?: return
+        if (frame.type != "session_settings" || passiveSessionReads.remove(connection to replyId) == null) return
+        val id = (frame.payload as? JsonObject)?.get("session_id") as? JsonPrimitive ?: return
+        if (!id.isString || id.content.isBlank() || frame.sessionStateCleared != JsonPrimitive(false) ||
+            frame.conversationId?.let { it != JsonPrimitive(before.owner.conversation) } == true ||
+            frame.sessionProvenance.raw?.let { it != id } == true ||
+            readSession?.let { it != id.content } == true
+        ) {
+            failed = true
+        } else readSession = id.content
+    }
     private val producerStore =
-        if (before.owner.kind == ThreadEvidenceKind.Authoritative) {
+        if (before.owner.kind == ThreadEvidenceKind.Authoritative && !legacyProducer) {
             AuthoritativeThreadStore().also { store ->
                 val facts = before.records.mapNotNull { it.fact }
                 store.applyBatch(
@@ -75,17 +97,18 @@ internal class OwnedReplyObservation(
         connection: Any,
         request: Envelope,
         isCurrent: () -> Boolean = { true },
-    ) {
+    ): Boolean {
         if (request.type == "request_session_settings" &&
             request.field("conversation_id") == before.owner.conversation &&
             pump === connection &&
-            end != null
+            messageId != null
         ) {
             sessionReads += request.id
-            return
+            return false
         }
-        if (request.type != "send_message" || request.field("conversation_id") != before.owner.conversation) return
-        check(messageId == null) { "reply observation saw more than one send" }
+        if (request.type != "send_message" || request.field("conversation_id") != before.owner.conversation) return false
+        // Queue scenarios send and drop other messages while retaining the first accepted target.
+        if (messageId != null) return false
         pump = connection
         pumpCurrent = isCurrent
         this.request = request
@@ -96,6 +119,7 @@ internal class OwnedReplyObservation(
                     if (it.fact == null) it.message.ordinaryId == messageId else it.fact.field("message_id") == messageId
             },
         ) { "reply send reused a loaded identity" }
+        return true
     }
 
     @Synchronized fun sent(
@@ -147,6 +171,7 @@ internal class OwnedReplyObservation(
         frame.sessionProvenance.raw?.let(rawSessions::add)
         if (frame.type == "session_transition") failed = true
         val frameTurn = frame.field("turn_id")
+        if (end != null && frameTurn != null && frameTurn != turn) return
         if (echo == null) {
             frameTurn?.let(priorTurns::add)
             if (frame.type == "message" && frame.field("role") == "user" && frame.field("message_id") == messageId) echo = frame
@@ -185,6 +210,19 @@ internal class OwnedReplyObservation(
             end?.field("outcome") == "success" &&
             end?.field("is_error") == "false" &&
             end?.field("terminal_reason") == "completed"
+    }
+
+    /** Freeze producer evidence before a deliberate disconnect; this alone proves no phone delivery. */
+    @Synchronized fun produced(): ProducedReplyEvidence? {
+        if (!producerCompleted()) return null
+        val produced = if (producerStore != null) authoritativeReply() else null
+        val tagged = (rawSessions.singleOrNull() as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+        if (rawSessions.size > 1) return null
+        return ProducedReplyEvidence(
+            host, before.owner.conversation, checkNotNull(messageId), checkNotNull(turn),
+            session ?: readSession ?: tagged ?: knownSession,
+            produced?.second?.joinToString("") { it.field("text").orEmpty() } ?: deltas.joinToString("") { it.second },
+        )
     }
 
     private fun authoritativeReply(): Pair<ThreadItemDto, List<ThreadItemDto>>? {
@@ -270,7 +308,7 @@ internal class OwnedReplyObservation(
                     if (it.fact == null) {
                         it.message.ordinaryId == messageId
                     } else {
-                        it.fact.id == produced?.first?.id &&
+                        (produced == null || it.fact.id == produced.first.id) &&
                             it.fact.kind == "user_message" &&
                             it.fact.status == "delivered" &&
                             it.fact.field("message_id") == messageId
@@ -278,7 +316,7 @@ internal class OwnedReplyObservation(
             } ?: return null
         val recordSession = user.session ?: return null
         val tagged = (rawSessions.singleOrNull() as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
-        val ownedSession = recordSession.takeIf { it.isNotBlank() } ?: readSession ?: tagged ?: return null
+        val ownedSession = recordSession.takeIf { it.isNotBlank() } ?: readSession ?: tagged ?: knownSession ?: return null
         if (readSession != null && readSession != ownedSession) return null
         if (session != null && session != ownedSession) return null
         if (rawSessions.any { it != JsonPrimitive(ownedSession) }) return null
@@ -316,6 +354,12 @@ internal object OwnedReplyProbe {
     private val hosts = WeakHashMap<RelayTransport, String>()
 
     @Volatile private var active: OwnedReplyObservation? = null
+    private val sessionObservers = java.util.concurrent.CopyOnWriteArrayList<OwnedReplyObservation>()
+
+    fun <T> observingSessions(observation: OwnedReplyObservation, block: () -> T): T {
+        sessionObservers += observation
+        return try { block() } finally { sessionObservers -= observation }
+    }
 
     @Synchronized fun transport(
         host: String,
@@ -336,6 +380,7 @@ internal object OwnedReplyProbe {
                 flow {
                     try {
                         delegate.inbound.collect { frame ->
+                            sessionObservers.filter { it.host == host }.forEach { it.sessionReceived(connection, frame) }
                             active?.takeIf { it.host == host }?.received(connection, frame)
                             emit(frame)
                         }
@@ -345,10 +390,11 @@ internal object OwnedReplyProbe {
                 }
 
             override fun send(envelope: Envelope): Boolean {
+                sessionObservers.filter { it.host == host }.forEach { it.sessionSending(connection, envelope) }
                 val observation = active?.takeIf { it.host == host }
-                observation?.sending(connection, envelope) { delegate.state.value is PumpState.Open }
+                val targeted = observation?.sending(connection, envelope) { delegate.state.value is PumpState.Open } == true
                 return delegate.send(envelope).also {
-                    if (envelope.type == "send_message") observation?.sent(connection, it)
+                    if (targeted) observation?.sent(connection, it)
                 }
             }
 

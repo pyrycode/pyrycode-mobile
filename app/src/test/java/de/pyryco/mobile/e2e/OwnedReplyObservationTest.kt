@@ -657,4 +657,74 @@ class OwnedReplyObservationTest {
         assertTrue(ownedReplyFailure(true, true, listOf(1), false, contentMatches = false).message.orEmpty().contains("mismatched content"))
         assertFalse(ownedReplyFailure(true, false, emptyList(), false).message.orEmpty().contains("normal reply"))
     }
+    @Test fun retainedReplyRebindsOnlyTheSameCompleteFamilyOnTheCurrentOwner() {
+        for (kind in ThreadEvidenceKind.entries) {
+            val target = observation(kind)
+            producer(listOf("Done. ", "Ordinary prose."), kind = kind).forEach { target.received(pump, it) }
+            val held = evidence(kind, rows(listOf("Done. ", "Ordinary prose.")))
+            val captured = checkNotNull(target.admitted(held, repository))
+            val current = ThreadEvidence(held.owner.copy(connection = Any()), held.records)
+            assertNotNull(current.retainedReply(captured, "host"))
+            assertNull(current.retainedReply(captured, "wrong-host"))
+            assertNull(ThreadEvidence(current.owner.copy(conversation = "other"), current.records).retainedReply(captured, "host"))
+            assertNull(ThreadEvidence(current.owner.copy(epoch = "other"), current.records).retainedReply(captured, "host"))
+            assertNull(ThreadEvidence(current.owner, current.records, admitted = false).retainedReply(captured, "host"))
+            for (replacement in listOf(
+                current.records.dropLast(1), current.records + current.records.last(), current.records.reversed(),
+                current.records.dropLast(1) + ThreadEvidenceRecord(current.records.last().message, "truncated", "session", "turn", null, null, current.records.last().fact),
+            )) assertNull(ThreadEvidence(current.owner, replacement).retainedReply(captured, "host"))
+        }
+    }
+
+    @Test fun queuedSendsCannotReplaceTheFirstObservedSend() {
+        val target = observation()
+        assertFalse(target.sending(pump, frame("send_message", "message_id" to "dropped")))
+        producer().forEach { target.received(pump, it) }
+        assertNotNull(target.admitted(evidence(ThreadEvidenceKind.Legacy, rows()), repository))
+    }
+
+    @Test fun laterIndependentTurnDoesNotInvalidateAnAlreadyCompletedTarget() {
+        val target = observation()
+        producer().forEach { target.received(pump, it) }
+        target.received(pump, frame("assistant_delta", "turn_id" to "later", "seq" to "0", "text" to "unrelated"))
+        assertNotNull(target.admitted(evidence(ThreadEvidenceKind.Legacy, rows()), repository))
+    }
+
+    @Test fun producerEvidenceSurvivesDisconnectButStillNeedsExactCurrentAdmission() {
+        val target = observation()
+        producer().forEach { target.received(pump, it) }
+        val produced = checkNotNull(target.produced())
+        target.ended(pump)
+        val held = evidence(ThreadEvidenceKind.Legacy, rows())
+        val current = ThreadEvidence(held.owner.copy(connection = Any()), held.records)
+        assertNotNull(produced.admitted(current, "host"))
+        assertNull(produced.admitted(current, "other"))
+        assertNull(produced.admitted(ThreadEvidence(current.owner, emptyList()), "host"))
+        assertNull(produced.admitted(ThreadEvidence(current.owner, current.records + current.records.last()), "host"))
+        assertNull(produced.admitted(ThreadEvidence(current.owner, current.records, admitted = false), "host"))
+    }
+
+    @Test fun peerProducerBindsToAuthoritativeAdmittedIdentities() {
+        val held = evidence(ThreadEvidenceKind.Authoritative, rows())
+        val target = OwnedReplyObservation("host", ThreadEvidence(held.owner, emptyList()), legacyProducer = true)
+        target.sending(pump, frame("send_message", "message_id" to "sent"))
+        target.sent(pump, true)
+        producer().forEach { target.received(pump, it) }
+        assertNotNull(target.admitted(held, repository))
+    }
+
+    @Test fun passiveSessionBindingNeedsTheSameReadAndConnection() {
+        val target = observation()
+        producer().forEach { target.received(pump, it) }
+        val held = evidence(ThreadEvidenceKind.Legacy, rows().map { it.copy(sessionId = "") })
+        val phone = Any()
+        val request = frame("request_session_settings").copy(id = 42)
+        target.sessionSending(phone, request)
+        val response = Envelope(99, "session_settings", "", buildJsonObject { put("session_id", "session") }, inReplyTo = 42)
+        target.sessionReceived(Any(), response)
+        assertNull(target.admitted(held, repository))
+        target.sessionReceived(phone, response)
+        assertNotNull(target.admitted(held, repository))
+    }
+
 }

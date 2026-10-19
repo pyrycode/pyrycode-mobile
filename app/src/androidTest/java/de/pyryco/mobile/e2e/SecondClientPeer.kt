@@ -81,6 +81,7 @@ class SecondClientPeer(
 ) : AutoCloseable {
     internal val keyStore: DeviceStaticKeyStore = PeerDeviceKeyStore(pairing)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile internal var replyObservation: OwnedReplyObservation? = null
     private val received = MutableStateFlow<List<Envelope>>(emptyList())
     private val requestId = AtomicLong()
     private val closed = MutableStateFlow(false)
@@ -531,7 +532,12 @@ class SecondClientPeer(
         answers: Envelope.(Long) -> Boolean,
     ): RedialingLink.Attempt<Envelope> {
         val id = requestId.incrementAndGet()
-        if (!live.pump.send(Envelope(id = id, type = type, ts = Clock.System.now().toString(), payload = payload))) {
+        val envelope = Envelope(id = id, type = type, ts = Clock.System.now().toString(), payload = payload)
+        val observation = replyObservation
+        val targeted = observation?.sending(this, envelope) { !closed.value && live.pump.state.value is PumpState.Open } == true
+        val sent = live.pump.send(envelope)
+        if (targeted) observation?.sent(this, sent)
+        if (!sent) {
             return RedialingLink.Attempt.NotSent
         }
 
@@ -590,6 +596,7 @@ class SecondClientPeer(
      * `modal_shown` and `question_shown` to a new connection under its original id, and a client shows it once.
      */
     private fun record(envelope: Envelope) {
+        replyObservation?.received(this, envelope)
         val idField = PROMPT_ID_FIELDS[envelope.type]
         val id = idField?.let { envelope.payloadField(it) }
         received.update { frames ->
