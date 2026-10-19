@@ -43,6 +43,9 @@ The repository's inbound collector owns admission and updates a held `StateFlow`
 | Reconnect with a nonzero catch-up beyond the held paging window | `reconnectCatchUpCertifiesNewReplyBeyondTheHeldWindow` |
 | Batch without terminal success, rejection or unknown request | `partialAndRejectedRecoveryCannotPost` |
 | Query/live overlap, old/new revisions and duplicate completion | `overlapKeepsNewestAdmittedRevisionAndPostsOnce` |
+| Empty or narrower catch-up after certified tail recovery | `emptyCatchUpRetainsCertifiedTailPreview`, `successiveCatchUpsCertifyUpdatedTailRevision` |
+| Disjoint catch-up or reset after held tail certification | `disjointCatchUpCannotCertifyGapRevision`, `resetCannotReuseHeldTailCertification` |
+| Unplaced completion, reply or competing reply | `zeroOrderCompletionUsesSafeFallback`, `zeroOrderReplyUsesSafeFallback`, `unplacedReplyCannotOverridePlacedReply` |
 | Partial catch-up followed by an older live state | `partialCatchUpCannotBecomeCompletionViaOlderLiveState` |
 | Disconnect/reconnect and repeated wake | `reconnectAndRestartRetainLedgerIdentity` |
 | Process/notifier restart over the same ledger | `reconnectAndRestartRetainLedgerIdentity` |
@@ -71,6 +74,7 @@ Pending documentation stage: record demonstrated cause, repair and counted focus
 **Verdict:** PASS
 
 - Trust boundaries: completion publication follows decoder/store acceptance, with terminal query certification for recovered facts; no push payload or legacy content supplies evidence.
+- Preview certification: verifier MUST FIX findings addressed by requiring strictly positive order for both completion and every matching reply candidate. An unplaced candidate makes the reply range uncertifiable and uses fixed copy. Held tail certificates accumulate only within the same repository, host, conversation, epoch, generation and completion identity; each interval retains its successful captured revision bound. Contiguous intervals may merge, while gaps remain uncertified. No certificate or preview text enters diagnostics or persistent metadata.
 - Tokens/secrets: no acquisition, credential storage or rotation changes; no credential or preview logging.
 - Files/storage: reuse the existing atomic app-private no-backup digest ledger; new evidence stays in memory and redacts `toString`. No new path derived from daemon data.
 - Android surface: no exported component change; existing immutable owning-thread pending intent and separately built public notification remain.
@@ -84,6 +88,8 @@ Pending documentation stage: record demonstrated cause, repair and counted focus
 **Date:** 2026-10-19
 
 ## Revisions
+2026-10-19 (verifier rework): Findings 1 and 2 exposed preview certification gaps in the existing behaviour, with no new deliverable. Empty catch-up replaced useful tail proof, so `AuthoritativeCompletion` now retains accumulated successful source intervals from the previous evidence for the same owner and identity. Merge only overlapping/contiguous intervals; an empty success cannot erase coverage or certify a gap, and facts newer than their covering interval remain ineligible. Repository/epoch/generation replacement discards held proof. The wire's zero order is unplaced: completion and reply evidence require positive placement, and an unplaced matching reply forces safe fallback even beside a placed reply. The four requested integrated regressions fail before the repair; additional contiguous, gap and reset probes guard the retained revision and ownership fences. Rework forecast remains below 1,600 total written lines, with no additional exported type or consumer migration. Existing focused native evidence and unchanged assertions/recordings remain retained; complete Linux gates and documentation remain with their owning stages.
+
 2026-10-19: The retained native trace uses a nonzero catch-up whose completed reply lies after the held paging window. Preview proof now carries the successful query's exact source interval and captured version, rather than inferring later ordered coverage from a batch maximum or extending paging coverage. Newly created tail items can be certified by that interval; older parent/active extras outside coverage cannot. Pending live previews wait for the matching successful certificate, including when store publication resumes a collector before the query callback. Evidence is branded with its exact repository owner. The integrated fixture performs main's opt-in reset exchange before asserting certified recovery; an initial fixture that omitted this exchange was rejected before reaching the intended failure.
 
 2026-10-19: The existing `authoritativeCompletionUsesShownAvailabilityInsteadOfLegacyEntryCoverage` regression pins the supplied route's read semantics: confirmed reads cover available `lastShownVersion`, while unavailable shown metadata proves nothing. The new source probe preserves that rule, including retaining the alert while newer shown activity remains unread. Legacy known-entry suppression remains unchanged. No local read inference was added.

@@ -354,6 +354,7 @@ class RemoteConversationRepository internal constructor(
                         it,
                         certificate.checkpoint.version.toLong(),
                         (certificate.coverage as? ThreadQueryReply.Coverage.CatchUp)?.fromVersion,
+                        held.lastOrNull { fact -> fact.conversation == conversation && fact.item.id == it.id },
                     )
                 }
             (

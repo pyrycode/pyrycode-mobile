@@ -13,9 +13,44 @@ internal class AuthoritativeCompletion(
     private val generation: Long,
     val item: ThreadItemDto,
     val certifiedVersion: Long,
-    private val sourceFrom: ULong?,
+    sourceFrom: ULong?,
+    previous: AuthoritativeCompletion?,
 ) {
     val key: String = "thread:${epoch.length}:$epoch:${item.id}"
+    private val sourceRanges = certifiedRanges(sourceFrom, previous)
+
+    /** Ranges are (source version, captured version]; gaps never acquire certification by merging. */
+    private fun certifiedRanges(
+        sourceFrom: ULong?,
+        previous: AuthoritativeCompletion?,
+    ): List<ULongRange> {
+        val retained =
+            previous
+                ?.takeIf {
+                    it.owner === owner &&
+                        it.host == host &&
+                        it.conversation == conversation &&
+                        it.epoch == epoch &&
+                        it.generation == generation &&
+                        it.key == key &&
+                        it.item.session == item.session &&
+                        it.item.turn == item.turn &&
+                        it.item.rev <= item.rev
+                }?.sourceRanges
+                .orEmpty()
+        val captured = certifiedVersion.toULong()
+        val added = sourceFrom?.takeIf { it < captured }?.let { listOf(it..captured) }.orEmpty()
+        return buildList {
+            for (range in (retained + added).sortedBy { it.first }) {
+                val last = lastOrNull()
+                if (last != null && range.first <= last.last) {
+                    set(lastIndex, last.first..maxOf(last.last, range.last))
+                } else {
+                    add(range)
+                }
+            }
+        }
+    }
 
     fun isCurrent(snapshot: AuthoritativeThreadSnapshot): Boolean {
         if (snapshot.epoch != epoch || snapshot.generation != generation || snapshot.resetNeeded) return false
@@ -35,17 +70,19 @@ internal class AuthoritativeCompletion(
         }
         val coverage = snapshot.coverage ?: return null
         val completion = snapshot.items.firstOrNull { it.id == item.id } ?: return null
-        val end = completion.order ?: return null
+        val end = completion.order?.takeIf { it > 0 } ?: return null
         val session = completion.session?.takeIf { it.isNotBlank() } ?: return null
         val turn = completion.turn?.takeIf { it.isNotBlank() } ?: return null
 
         fun covered(fact: ThreadItemDto): Boolean {
-            val order = fact.order?.toULong() ?: return false
+            val order = fact.order?.takeIf { it > 0 }?.toULong() ?: return false
             if (fact.rev > certified) return false
             // Paging coverage stays fixed when a nonzero catch-up certifies newly created tail items.
             return order >= coverage.lowerOrder &&
                 order < coverage.upperOrder ||
-                sourceFrom?.let { fact.id.toULong() > it && order > it && order <= certified.toULong() } == true
+                sourceRanges.any { range ->
+                    fact.id.toULong() > range.first && order > range.first && order <= range.last && fact.rev.toULong() <= range.last
+                }
         }
         if (!covered(completion)) return null
         val replies =

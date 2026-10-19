@@ -15,6 +15,7 @@ import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
@@ -417,6 +418,182 @@ class AuthoritativeCompletionNotifierTest {
             assertTrue(shadowOf(manager).allNotifications.isEmpty())
         }
 
+    @Test
+    fun emptyCatchUpRetainsCertifiedTailPreview() =
+        fixture {
+            holdCertifiedTail()
+            assertEquals(
+                14uL,
+                host.repository.authoritativeThreads
+                    .current("a", "same")
+                    .coverage
+                    ?.upperOrder,
+            )
+            val first =
+                host.repository.authoritativeCompletions.value
+                    .single()
+            assertEquals("Certified private reply", host.repository.authoritativeCompletionPreview(first))
+            val empty = open()
+            assertEquals(JsonPrimitive(19), (empty.payload as JsonObject)["version"])
+            host.pump.finish(empty, 19)
+            runCurrent()
+            restart()
+            val notification = shadowOf(manager).allNotifications.single()
+            assertEquals("Certified private reply", notification.extras.getString(Notification.EXTRA_TEXT))
+            assertEquals(
+                app.getString(R.string.notification_turn_completed_neutral),
+                notification.publicVersion.extras.getString(Notification.EXTRA_TEXT),
+            )
+            assertEquals(1, File(folder.root, "alerts").readLines().size)
+        }
+
+    @Test
+    fun successiveCatchUpsCertifyUpdatedTailRevision() =
+        fixture {
+            holdCertifiedTail()
+            val next = open()
+            host.pump.batch(next, 21, listOf(item(16, "assistant_message", rev = 21, text = "Newest certified reply")))
+            host.pump.finish(next, 21)
+            runCurrent()
+            restart()
+            assertEquals(
+                "Newest certified reply",
+                shadowOf(manager)
+                    .allNotifications
+                    .single()
+                    .extras
+                    .getString(Notification.EXTRA_TEXT),
+            )
+        }
+
+    @Test
+    fun disjointCatchUpCannotCertifyGapRevision() =
+        fixture {
+            holdCertifiedTail()
+            val store = host.repository.authoritativeThreads
+            val held = store.current("a", "same")
+            // Another complete store publication advances the checkpoint without a query source interval.
+            store.establishComplete(
+                "a",
+                "same",
+                "e",
+                21,
+                listOf(ThreadItemDto.decode(item(16, "assistant_message", rev = 20))),
+                held.generation,
+            )
+            val next = open()
+            assertEquals(JsonPrimitive(21), (next.payload as JsonObject)["version"])
+            host.pump.finish(next, 22)
+            runCurrent()
+            restart()
+            assertEquals(
+                app.getString(R.string.notification_turn_completed_neutral),
+                shadowOf(manager)
+                    .allNotifications
+                    .single()
+                    .extras
+                    .getString(Notification.EXTRA_TEXT),
+            )
+        }
+
+    @Test
+    fun resetCannotReuseHeldTailCertification() =
+        fixture {
+            holdCertifiedTail()
+            val old =
+                host.repository.authoritativeCompletions.value
+                    .single()
+            host.repository.authoritativeRoute.reset("same", "e")
+            val fresh = open()
+            assertEquals(JsonPrimitive(0), (fresh.payload as JsonObject)["version"])
+            host.pump.batch(fresh, 19, listOf(item(16, "assistant_message", rev = 17), item(17, "turn_end")))
+            host.pump.push(
+                "thread_items",
+                buildJsonObject {
+                    put("conversation_id", "same")
+                    put("epoch", "e")
+                    put("version", 19)
+                    put("final", true)
+                    put("items", JsonArray(emptyList()))
+                    put("lower_order", 0)
+                    put("upper_order", 14)
+                    put("continuation", 0)
+                    put("older_exists", false)
+                },
+                fresh,
+            )
+            runCurrent()
+            assertFalse(old.isCurrent(host.repository.authoritativeThreads.current("a", "same")))
+            restart()
+            assertEquals(
+                app.getString(R.string.notification_turn_completed_neutral),
+                shadowOf(manager)
+                    .allNotifications
+                    .single()
+                    .extras
+                    .getString(Notification.EXTRA_TEXT),
+            )
+        }
+
+    @Test
+    fun zeroOrderReplyUsesSafeFallback() =
+        fixture {
+            val request = open()
+            val unplaced = JsonObject(item(2, "assistant_message") + ("order" to JsonPrimitive(0)))
+            host.pump.batch(request, 3, listOf(unplaced, item(3, "turn_end")))
+            host.pump.finish(request, 3)
+            runCurrent()
+            assertEquals(
+                app.getString(R.string.notification_turn_completed_neutral),
+                shadowOf(manager)
+                    .allNotifications
+                    .single()
+                    .extras
+                    .getString(Notification.EXTRA_TEXT),
+            )
+        }
+
+    @Test
+    fun zeroOrderCompletionUsesSafeFallback() =
+        fixture {
+            val request = open()
+            val unplaced = JsonObject(item(2, "assistant_message") + ("order" to JsonPrimitive(0)))
+            val completion = JsonObject(item(3, "turn_end") + ("order" to JsonPrimitive(0)))
+            host.pump.batch(request, 3, listOf(unplaced, completion))
+            host.pump.finish(request, 3)
+            runCurrent()
+            assertEquals(
+                app.getString(R.string.notification_turn_completed_neutral),
+                shadowOf(manager)
+                    .allNotifications
+                    .single()
+                    .extras
+                    .getString(Notification.EXTRA_TEXT),
+            )
+        }
+
+    @Test
+    fun unplacedReplyCannotOverridePlacedReply() =
+        fixture {
+            val request = open()
+            val unplaced = JsonObject(item(1, "assistant_message") + ("order" to JsonPrimitive(0)))
+            host.pump.batch(
+                request,
+                3,
+                listOf(unplaced, item(2, "assistant_message", text = "Newest certified reply"), item(3, "turn_end")),
+            )
+            host.pump.finish(request, 3)
+            runCurrent()
+            assertEquals(
+                app.getString(R.string.notification_turn_completed_neutral),
+                shadowOf(manager)
+                    .allNotifications
+                    .single()
+                    .extras
+                    .getString(Notification.EXTRA_TEXT),
+            )
+        }
+
     private fun fixture(block: suspend Harness.() -> Unit) =
         runTest {
             val previousSink = RelayLog.sink
@@ -466,6 +643,18 @@ class AuthoritativeCompletionNotifierTest {
             )
 
         fun runCurrent() = test.runCurrent()
+
+        fun holdCertifiedTail() {
+            notifier.dispose()
+            val baseline = open()
+            host.pump.batch(baseline, 13, listOf(item(1, "user_message")))
+            host.pump.finish(baseline, 13)
+            runCurrent()
+            val recovery = open()
+            host.pump.batch(recovery, 19, listOf(item(16, "assistant_message", rev = 17), item(17, "turn_end")))
+            host.pump.finish(recovery, 19)
+            runCurrent()
+        }
 
         fun open(
             owner: Host = host,
