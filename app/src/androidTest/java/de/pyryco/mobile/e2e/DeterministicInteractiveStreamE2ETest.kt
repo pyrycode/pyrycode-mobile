@@ -394,16 +394,19 @@ class DeterministicInteractiveStreamE2ETest {
             // This scripted fixture has no settings subscriber. Read the physical session through
             // the existing correlated probe; create-conversation summaries intentionally omit it.
             val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
-            val session = runBlocking {
-                withTimeout(THREAD_TIMEOUT_MS) {
-                    SettingsReadProbe.read(
-                        repo as RemoteConversationRepository,
-                        conversation.id,
-                        { coordinator.currentRepository.value === repo },
-                        { coordinator.hostReadings.liveSessionBindings[conversation.id] },
-                    ).sessionId.also { check(it.isNotBlank()) { "scripted conversation has no admitted session" } }
+            val session =
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        SettingsReadProbe
+                            .read(
+                                repo as RemoteConversationRepository,
+                                conversation.id,
+                                { coordinator.currentRepository.value === repo },
+                                { coordinator.hostReadings.liveSessionBindings[conversation.id] },
+                            ).sessionId
+                            .also { check(it.isNotBlank()) { "scripted conversation has no admitted session" } }
+                    }
                 }
-            }
             val before = runBlocking { harnessThreadEvidence(repo).observe(conversation.id).first() }
             val observation = OwnedReplyObservation(serverId, before, legacyProducer = true, knownSession = session)
             peer.replyObservation = observation
