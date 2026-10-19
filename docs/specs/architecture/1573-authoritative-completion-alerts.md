@@ -1,6 +1,7 @@
 # Authoritative completion alerts (#1573)
 
 ## Files read
+- `data/repository/AuthoritativeCompletion.kt`: `preview` and its `covered` guard; matching replies with unknown placement must invalidate certification instead of disappearing from candidate selection.
 - `data/repository/RemoteConversationRepository.kt`: `onInbound`, `authoritativeLiveEnabled` and `currentReadMarks`; authoritative input bypasses the legacy event producer.
 - `data/repository/AuthoritativeThreadRoute.kt`: `applyOutcome`; only fully assembled, accepted live mutations may publish completion facts.
 - `data/repository/AuthoritativeThreadQueries.kt`: `accept`; batches upsert facts, while the terminal successful response certifies recovery.
@@ -10,6 +11,7 @@
 - `notifications/AttentionNotifier.kt`: `handle`; persistent ledger, gates, enrichment, read cancellation and tap construction remain shared.
 - `notifications/AttentionPreview.kt`: `notificationPreview`; bounded inert private text and public redaction remain unchanged.
 - `notifications/AttentionNotifierSourceTest.kt`, `AttentionNotifierCoordinatorTest.kt`, `AttentionPreviewSourceTest.kt`: real repository/source/notifier harness patterns and ownership coverage.
+- `notifications/AuthoritativeCompletionNotifierTest.kt`: `unplacedReplyCannotOverridePlacedReply` and the repository/source/notifier harness for omitted placement and an admitted null clear.
 - `docs/knowledge/features/push-messaging-service.md`, `dependency-injection-host-conversation-source.md`, `remote-conversation-repository.md`, `relay-repository-coordinator.md`: ledger-before-gates, confirmed reads, supplied-route negotiation and retained-owner lessons.
 - Sibling `pyrycode/docs/protocol-mobile.md`: daemon thread updates, full thread item, thread query messages and Security model are the wire authority.
 - `docs/recorded-tests.md`: genuine capture, fresh replay, strict comparison and failed-artifact preservation.
@@ -46,6 +48,7 @@ The repository's inbound collector owns admission and updates a held `StateFlow`
 | Empty or narrower catch-up after certified tail recovery | `emptyCatchUpRetainsCertifiedTailPreview`, `successiveCatchUpsCertifyUpdatedTailRevision` |
 | Disjoint catch-up or reset after held tail certification | `disjointCatchUpCannotCertifyGapRevision`, `resetCannotReuseHeldTailCertification` |
 | Unplaced completion, reply or competing reply | `zeroOrderCompletionUsesSafeFallback`, `zeroOrderReplyUsesSafeFallback`, `unplacedReplyCannotOverridePlacedReply` |
+| Omitted reply placement or an admitted patch clearing placement to null | `omittedOrderReplyCannotCertifyPlacedReply`, `nullPlacementClearCannotCertifyPlacedReply` |
 | Partial catch-up followed by an older live state | `partialCatchUpCannotBecomeCompletionViaOlderLiveState` |
 | Disconnect/reconnect and repeated wake | `reconnectAndRestartRetainLedgerIdentity` |
 | Process/notifier restart over the same ledger | `reconnectAndRestartRetainLedgerIdentity` |
@@ -74,7 +77,7 @@ Pending documentation stage: record demonstrated cause, repair and counted focus
 **Verdict:** PASS
 
 - Trust boundaries: completion publication follows decoder/store acceptance, with terminal query certification for recovered facts; no push payload or legacy content supplies evidence.
-- Preview certification: verifier MUST FIX findings addressed by requiring strictly positive order for both completion and every matching reply candidate. An unplaced candidate makes the reply range uncertifiable and uses fixed copy. Held tail certificates accumulate only within the same repository, host, conversation, epoch, generation and completion identity; each interval retains its successful captured revision bound. Contiguous intervals may merge, while gaps remain uncertified. No certificate or preview text enters diagnostics or persistent metadata.
+- Preview certification: require strictly positive order for both completion and every matching reply candidate. Candidate selection must retain unknown placement, whether omitted in a full item or cleared to null by an admitted patch, so coverage validation rejects the entire reply range; explicit zero is also unplaced. Only known placement after the completion excludes an otherwise matching candidate. The integrated omitted-order and null-clear probes verify admission before requiring fixed private/public copy even beside a placed reply. Held tail certificates accumulate only within the same repository, host, conversation, epoch, generation and completion identity; each interval retains its successful captured revision bound. Contiguous intervals may merge, while gaps remain uncertified. No certificate or preview text enters diagnostics or persistent metadata.
 - Tokens/secrets: no acquisition, credential storage or rotation changes; no credential or preview logging.
 - Files/storage: reuse the existing atomic app-private no-backup digest ledger; new evidence stays in memory and redacts `toString`. No new path derived from daemon data.
 - Android surface: no exported component change; existing immutable owning-thread pending intent and separately built public notification remain.
@@ -88,6 +91,8 @@ Pending documentation stage: record demonstrated cause, repair and counted focus
 **Date:** 2026-10-19
 
 ## Revisions
+2026-10-19 (placement re-review, finding 1): The prior positive-order guard rejected explicit zero but candidate selection discarded null order before coverage validation. A shown main-thread assistant item with omitted order, or one whose admitted `thread_item_changed` patch clears order to null, therefore failed to invalidate a competing placed reply. Retain unknown placement among matching candidates and let `covered` reject the entire range, preserving exclusion of known replies after the completion. `omittedOrderReplyCannotCertifyPlacedReply` and `nullPlacementClearCannotCertifyPlacedReply` drive real repository admission and notification posting; the latter verifies the original placement and admitted cleared revision before recovery. Both failed before the repair on the notification-body assertion: 2 executed, 2 failed, 0 errors/skipped; failed XML is retained. This completes the same certification invariant, adds no type or consumer migration, and keeps total written work below 1,600 lines. Existing native evidence remains at its recorded revisions; assertions and recordings are unchanged.
+
 2026-10-19 (verifier rework): Findings 1 and 2 exposed preview certification gaps in the existing behaviour, with no new deliverable. Empty catch-up replaced useful tail proof, so `AuthoritativeCompletion` now retains accumulated successful source intervals from the previous evidence for the same owner and identity. Merge only overlapping/contiguous intervals; an empty success cannot erase coverage or certify a gap, and facts newer than their covering interval remain ineligible. Repository/epoch/generation replacement discards held proof. The wire's zero order is unplaced: completion and reply evidence require positive placement, and an unplaced matching reply forces safe fallback even beside a placed reply. The four requested integrated regressions fail before the repair; additional contiguous, gap and reset probes guard the retained revision and ownership fences. Rework forecast remains below 1,600 total written lines, with no additional exported type or consumer migration. Existing focused native evidence and unchanged assertions/recordings remain retained; complete Linux gates and documentation remain with their owning stages.
 
 2026-10-19: The retained native trace uses a nonzero catch-up whose completed reply lies after the held paging window. Preview proof now carries the successful query's exact source interval and captured version, rather than inferring later ordered coverage from a batch maximum or extending paging coverage. Newly created tail items can be certified by that interval; older parent/active extras outside coverage cannot. Pending live previews wait for the matching successful certificate, including when store publication resumes a collector before the query callback. Evidence is branded with its exact repository owner. The integrated fixture performs main's opt-in reset exchange before asserting certified recovery; an initial fixture that omitted this exchange was rejected before reaching the intended failure.

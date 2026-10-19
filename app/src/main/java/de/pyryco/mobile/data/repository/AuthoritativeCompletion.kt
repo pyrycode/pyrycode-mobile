@@ -85,6 +85,7 @@ internal class AuthoritativeCompletion(
                 }
         }
         if (!covered(completion)) return null
+        // Unknown placement must reach coverage validation and invalidate the entire reply range.
         val replies =
             snapshot.items.filter {
                 it.kind == "assistant_message" &&
@@ -92,7 +93,7 @@ internal class AuthoritativeCompletion(
                     it.turn == turn &&
                     (it.parent ?: 0) == 0L &&
                     it.shown &&
-                    it.order?.let { order -> order <= end } == true
+                    (it.order == null || it.order <= end)
             }
         if (replies.isEmpty() ||
             replies.any {

@@ -35,12 +35,14 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -592,6 +594,79 @@ class AuthoritativeCompletionNotifierTest {
                     .extras
                     .getString(Notification.EXTRA_TEXT),
             )
+        }
+
+    @Test
+    fun omittedOrderReplyCannotCertifyPlacedReply() =
+        fixture {
+            val request = open()
+            val unplaced = JsonObject(item(1, "assistant_message") - "order")
+            host.pump.batch(
+                request,
+                3,
+                listOf(unplaced, item(2, "assistant_message", text = "Newest certified reply"), item(3, "turn_end")),
+            )
+            host.pump.finish(request, 3)
+            runCurrent()
+            val admitted =
+                host.repository.authoritativeThreads
+                    .current("a", "same")
+                    .items
+                    .single { it.id == 1L }
+            assertNull(admitted.order)
+            assertEquals(1L, admitted.rev)
+            val posted = shadowOf(manager).allNotifications.single()
+            assertEquals(app.getString(R.string.notification_turn_completed_neutral), posted.extras.getString(Notification.EXTRA_TEXT))
+            assertEquals(posted.extras.getString(Notification.EXTRA_TEXT), posted.publicVersion.extras.getString(Notification.EXTRA_TEXT))
+        }
+
+    @Test
+    fun nullPlacementClearCannotCertifyPlacedReply() =
+        fixture {
+            val baseline = open()
+            host.pump.batch(
+                baseline,
+                2,
+                listOf(item(1, "assistant_message"), item(2, "assistant_message", text = "Newest certified reply")),
+            )
+            host.pump.finish(baseline, 2)
+            runCurrent()
+            assertEquals(
+                1L,
+                host.repository.authoritativeThreads
+                    .current("a", "same")
+                    .items
+                    .single { it.id == 1L }
+                    .order,
+            )
+            host.pump.push(
+                "thread_item_changed",
+                buildJsonObject {
+                    put("conversation_id", "same")
+                    put("epoch", "e")
+                    put("version", 3)
+                    put("item_id", 1)
+                    put("base_rev", 1)
+                    put("rev", 3)
+                    put("changes", buildJsonObject { put("order", JsonNull) })
+                },
+            )
+            runCurrent()
+            val admitted =
+                host.repository.authoritativeThreads
+                    .current("a", "same")
+                    .items
+                    .single { it.id == 1L }
+            assertNull(admitted.order)
+            assertEquals(3L, admitted.rev)
+            val recovery = open()
+            host.pump.batch(recovery, 4, listOf(item(4, "turn_end")))
+            host.pump.finish(recovery, 4)
+            runCurrent()
+            val posted = shadowOf(manager).allNotifications.single()
+            assertEquals(app.getString(R.string.notification_turn_completed_neutral), posted.extras.getString(Notification.EXTRA_TEXT))
+            assertEquals(posted.extras.getString(Notification.EXTRA_TEXT), posted.publicVersion.extras.getString(Notification.EXTRA_TEXT))
+            assertEquals(1, File(folder.root, "alerts").readLines().size)
         }
 
     private fun fixture(block: suspend Harness.() -> Unit) =
