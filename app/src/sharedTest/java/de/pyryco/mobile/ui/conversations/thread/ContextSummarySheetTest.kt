@@ -228,7 +228,7 @@ class ContextSummarySheetTest {
         )
         val track = rule.onNodeWithTag("context_category_bar_$index").getUnclippedBoundsInRoot()
         val fill = rule.onNodeWithTag("context_category_fill_$index", useUnmergedTree = true).getUnclippedBoundsInRoot()
-        assertEquals(track.width.value * fraction, fill.width.value, .51f)
+        assertEquals((track.right - track.left).value * fraction, (fill.right - fill.left).value, .51f)
     }
 
     private fun config(reading: ContextUsage) =
