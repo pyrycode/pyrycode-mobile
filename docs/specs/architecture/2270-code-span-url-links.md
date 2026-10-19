@@ -73,3 +73,22 @@ None.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-19
+
+## Revisions
+
+### 2026-10-19: repair managed Gradle heap exhaustion
+
+The verifier's retained run `50093862de9d52ee3cff8451ad7cda48ea03b76921fbd19752517deb38d236eb` at `84f71f02c28a085a7d0972d66d016030eacfc7ae` failed `lintAnalyzeDebug` with `Java heap space` while the combined graph also compiled Kotlin in-process. All 6,063 JVM tests passed, with zero failures or skips; source review found no feature defect. This is the same build-memory invariant, not an additional product behavior to split out.
+
+Additional files read: `gradle.properties` (`org.gradle.jvmargs`), `scripts/agent-tool.py` and the agents repository's managed `gradle-gate.py` (`launch`), plus `docs/knowledge/features/development-verification-gates.md` (owned JVM and host admission). The launcher takes the project heap setting into its actual foreground JVM and keeps Kotlin compilation in that process. No numeric feature branch overlaps `gradle.properties` at the repair's remote scan.
+
+Raise only `org.gradle.jvmargs` from `-Xmx2048m` to `-Xmx4096m`, retaining UTF-8 encoding. Admission, foreground ownership, Kotlin execution strategy, worker limits, instrumentation and all acceptance gates retain their existing contracts. The repair adds one configuration edit and this revision, with no new types, consumers, application state or error branches; total ticket work remains below 1,600 written lines.
+
+Verification: reproduce the lint/compilation pressure with a focused managed build at the old heap; report the actual JVM maximum heap and encoding using a temporary init script. Repeat fresh lint/compilation at 4 GiB, rerun affected markdown/Obsidian classes, then formatting, assembly and final pre-verification. Keep raw results and exact revisions. The complete coordinated JVM/build, Android UI and scripted-all gates remain pending for the dispatcher, regardless of focused results.
+
+Security re-review: PASS. The larger build-only heap accepts no daemon input and changes no application trust boundary, URI admission/routing, secrets, storage, Android components, crypto, transport, logs or coroutine lifecycle. Host admission still bounds concurrent work; no test-worker heap or process limits are raised.
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/knowledge/features/markdown-text.md` and `markdown-text-internals.md`, inline code/link and streaming sections: describe completed URL-only spans, unchanged admission/routing, retained styles and inert synthetic closers, bare prose and fences, as requested by the verifier.
+- Pending documentation stage: `docs/knowledge/features/development-verification-gates.md`, Gradle and source checks: record the managed 4 GiB build heap and final accepted Linux revision/counts after the complete dispatcher rerun. Preserve the earlier heap failure as failed evidence.
