@@ -100,6 +100,84 @@ class AuthoritativeCompletionNotifierTest {
         }
 
     @Test
+    fun nonCompletionLiveRaceFailureRecoversWithoutAnotherTrigger() =
+        fixture {
+            val pending = attentionWithHiddenLiveOverlap()
+            host.pump.fail(pending)
+            runCurrent()
+            certifyOverlapRecovery(pending)
+        }
+
+    @Test
+    fun nonCompletionLiveOverlapWithOlderSuccessRecoversWithoutAnotherTrigger() =
+        fixture {
+            val pending = attentionWithHiddenLiveOverlap()
+            host.pump.finish(pending, 19)
+            runCurrent()
+            certifyOverlapRecovery(pending)
+        }
+
+    @Test
+    fun attentionRecoveryStopsAfterTwoRetries() =
+        fixture {
+            var pending = attentionWithHiddenLiveOverlap()
+            repeat(2) { attempt ->
+                if (attempt == 0) host.pump.finish(pending, 19) else host.pump.fail(pending)
+                runCurrent()
+                val fresh = host.pump.query()
+                assertTrue("retry must request fresh certification", fresh.id != pending.id)
+                pending = fresh
+            }
+            host.pump.fail(pending)
+            runCurrent()
+            assertEquals(pending.id, host.pump.query().id)
+            assertTrue(host.repository.authoritativeCompletions.value.isEmpty())
+            assertFalse(File(folder.root, "alerts").exists())
+        }
+
+    @Test
+    fun retiredAttentionRecoveryCannotRetry() =
+        fixture {
+            val pending = attentionWithHiddenLiveOverlap()
+            val retired = host
+            replaceHost()
+            retired.pump.fail(pending)
+            runCurrent()
+            assertEquals(pending.id, retired.pump.query().id)
+            assertTrue(shadowOf(manager).allNotifications.isEmpty())
+            assertFalse(File(folder.root, "alerts").exists())
+        }
+
+    @Test
+    fun nonRetryableAttentionFailureCannotRetry() =
+        fixture {
+            val pending = attentionWithHiddenLiveOverlap()
+            host.pump.fail(pending, retryable = false)
+            runCurrent()
+            assertEquals(pending.id, host.pump.query().id)
+            assertTrue(host.repository.authoritativeCompletions.value.isEmpty())
+            assertFalse(File(folder.root, "alerts").exists())
+        }
+
+    @Test
+    fun resetCannotDispatchQueuedAttentionRetry() =
+        fixture {
+            val pending = attentionWithHiddenLiveOverlap()
+            host.repository.authoritativeThreads.reset("a", "other", "e")
+            host.repository.openAuthoritativeThread("other")
+            host.pump.fail(pending)
+            runCurrent()
+            val other = host.pump.query()
+            assertEquals(JsonPrimitive("other"), (other.payload as JsonObject)["conversation_id"])
+            host.repository.authoritativeRoute.reset("same", "e")
+            host.pump.finish(other, 20)
+            runCurrent()
+            assertEquals("a queued retry cannot cross a generation reset", other.id, host.pump.query().id)
+            assertTrue(host.repository.authoritativeCompletions.value.isEmpty())
+            assertFalse(File(folder.root, "alerts").exists())
+        }
+
+    @Test
     fun partialAndRejectedRecoveryCannotPost() =
         fixture {
             open()
@@ -719,6 +797,53 @@ class AuthoritativeCompletionNotifierTest {
 
         fun runCurrent() = test.runCurrent()
 
+        fun attentionWithHiddenLiveOverlap(): Envelope {
+            val baseline = open()
+            host.pump.batch(baseline, 13, listOf(item(1, "user_message")))
+            host.pump.finish(baseline, 13)
+            runCurrent()
+            val retained = host.repository.authoritativeThreads
+            host.available = false
+            host = Host("a", test.backgroundScope, retained)
+            connections.value = listOf(host.connection)
+            runCurrent()
+            host.summary(read = 1, shown = 17)
+            runCurrent()
+            val pending = host.pump.query()
+            assertEquals(JsonPrimitive(13), (pending.payload as JsonObject)["version"])
+            host.pump.batch(pending, 19, listOf(item(16, "assistant_message", rev = 17), item(17, "turn_end")))
+            host.pump.live("same", JsonObject(item(20, "user_message") + ("shown" to JsonPrimitive(false))), 20)
+            runCurrent()
+            val snapshot = retained.current("a", "same")
+            assertEquals(listOf(1L, 16L, 17L, 20L), snapshot.items.map { it.id })
+            assertEquals(13L, snapshot.checkpoint)
+            assertEquals(20L, snapshot.completedVersion)
+            assertTrue(host.repository.authoritativeCompletions.value.isEmpty())
+            assertTrue(shadowOf(manager).allNotifications.isEmpty())
+            assertFalse(File(folder.root, "alerts").exists())
+            return pending
+        }
+
+        fun certifyOverlapRecovery(pending: Envelope) {
+            val fresh = host.pump.query()
+            assertTrue("overlap must recover without another summary, completion or screen event", fresh.id != pending.id)
+            assertTrue(host.repository.authoritativeThreads.current("a", "same").repairNeeded)
+            host.pump.batch(fresh, 20, listOf(item(16, "assistant_message", rev = 17), item(17, "turn_end")))
+            host.pump.finish(fresh, 20)
+            runCurrent()
+            val posted = shadowOf(manager).allNotifications.single()
+            assertEquals("Certified private reply", posted.extras.getString(Notification.EXTRA_TEXT))
+            assertEquals(app.getString(R.string.notification_turn_completed_neutral), posted.publicVersion.extras.getString(Notification.EXTRA_TEXT))
+            assertEquals(HostConversationTarget("a", "same"), NotificationTap.target(shadowOf(posted.contentIntent).savedIntent))
+            assertEquals(20L, host.repository.authoritativeThreads.current("a", "same").checkpoint)
+            host.pump.finish(pending, 19)
+            host.summary(read = 1, shown = 17)
+            runCurrent()
+            assertSame(posted, shadowOf(manager).allNotifications.single())
+            assertEquals(fresh.id, host.pump.query().id)
+            assertEquals(1, File(folder.root, "alerts").readLines().size)
+        }
+
         fun holdCertifiedTail() {
             notifier.dispose()
             val baseline = open()
@@ -821,6 +946,19 @@ class AuthoritativeCompletionNotifierTest {
         }
 
         fun query() = sent.last { it.type == "thread_catch_up" }
+
+        fun fail(
+            request: Envelope,
+            retryable: Boolean = true,
+        ) = push(
+            "error",
+            buildJsonObject {
+                put("code", "thread.query_failed")
+                put("message", "thread query could not complete")
+                put("retryable", retryable)
+            },
+            request,
+        )
 
         fun push(
             type: String,
