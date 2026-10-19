@@ -22,6 +22,7 @@ import de.pyryco.mobile.di.RelayConnectionFactory
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.di.RelaySessionPumpFactory
 import de.pyryco.mobile.e2e.E2eTestApplication
+import de.pyryco.mobile.e2e.SettingsReadProbe
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -193,7 +194,9 @@ internal object RecordedSuiteNative {
                     messageTrail = get(),
                     pumpFactory =
                         RelaySessionPumpFactory { transport, factory, dispatcher, minimum ->
-                            session.hub.pump(transport) { NoiseSessionPump(transport, factory, dispatcher, onClientMinimum = minimum) }
+                            SettingsReadProbe.wrap(
+                                session.hub.pump(transport) { NoiseSessionPump(transport, factory, dispatcher, onClientMinimum = minimum) },
+                            )
                         },
                 )
             }

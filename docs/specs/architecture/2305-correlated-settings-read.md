@@ -32,6 +32,7 @@ The helper owns its collection jobs within `coroutineScope` and the existing thr
 | Session replacement, including reused identity | `sessionReplacementAbandonsRead` |
 | Correlated omitted applied field | `missingAppliedFieldIsReturned` |
 | Legacy subscription and refused send | `legacySubscriptionCorrelatesItsRead`, `refusedSendFailsExplicitly` |
+| Cancellation followed by another read, and pump termination | `cancelledReadCannotSupplyTheNextCallsReply`, `closedPumpFailsTheOutstandingRead` |
 
 ## Error handling
 Refused sends, pump end, ownership replacement and missing current-session evidence fail explicitly with static messages. Deadline expiry remains bounded by the existing timeout. Missing `effective_effort` is returned unchanged for `appliedEffortFooter` to reject, never filtered or replaced with saved effort.
@@ -41,3 +42,6 @@ Write controlled coroutine regressions first against the old first-non-held beha
 
 ## Open Questions
 None. Independent product/prerequisite failures remain failed or blocked evidence under their own trackers.
+
+## Revisions
+2026-10-19: Keep writes and restoration on the repository that supplied the fresh session, using `withFreshSettings`; acquiring another repository after a read could pair a retired session with a replacement connection. Authoritative admission is cross-checked synchronously in the inbound turn, after repository processing and before another frame can overwrite the reading. Legacy list rows deliberately contain placeholder session IDs, so legacy correlation uses the repository's cold request waiter and abandons a read on a matching `session_transition`, rather than deriving ownership from a list placeholder.
