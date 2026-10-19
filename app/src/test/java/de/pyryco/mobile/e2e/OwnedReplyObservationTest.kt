@@ -126,7 +126,8 @@ class OwnedReplyObservationTest {
                         replaceItem(frame) { item ->
                             if ((item["kind"] as? JsonPrimitive)?.content != "turn_end") item else {
                                 val content = item["content"] as JsonObject
-                                JsonObject(item + ("content" to JsonObject((content - "terminal_reason") + reason?.let { mapOf("terminal_reason" to it) }.orEmpty())))
+                                val fields = JsonObject((content - "terminal_reason") + reason?.let { mapOf("terminal_reason" to it) }.orEmpty())
+                                JsonObject(item + ("content" to fields))
                             }
                         }
                     } else frame
