@@ -8550,7 +8550,8 @@ class InteractiveStreamE2ETest {
             rows.zip(reply.records).all { (row, held) ->
                 row.message.id == held.message.id &&
                     (row.session == held.session || held.session.isNullOrEmpty() && row.session == reply.session) &&
-                    row.fullText == held.fullText && !row.message.isStreaming
+                    row.fullText == held.fullText &&
+                    !row.message.isStreaming
             }
     }
 
