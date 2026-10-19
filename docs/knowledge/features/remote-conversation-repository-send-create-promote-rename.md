@@ -12,12 +12,28 @@ primitive** the remaining mutations (#347/#348) reuse. The body now lives on `Me
 hand-off.
 
 **Supplied authoritative sends (#1986).** With the supplied host/capability route,
-`MessageCommands` records the list preview and registers provisional feedback in
+`MessageCommands` records the list preview and, for ordinary sends, registers provisional feedback in
 `AuthoritativeThreadStore` before awaiting the suspending public-identity read or
 sending. Identifying the pending send under the same store lock also checks held
 items, so delayed key storage cannot delay feedback or miss an early matching item.
 This route does not write a legacy thread echo/minted ledger. A retired supplied
 connection source refuses new sends before provisional registration.
+
+**Daemon-intercepted resets (#2308).** On the negotiated authoritative route,
+`isDaemonResetCommand` in `DaemonResetCommands.kt` recognizes `/clear` and `/reset`
+as exact, case-sensitive first tokens after trimming daemon whitespace; arguments
+are allowed. Its shared literal set is independent of the published slash-command
+menu. The classifier matches Go Unicode whitespace, including NEL and NBSP,
+excluding U+001C–U+001F and zero-width space. Default JVM trimming/tokenization
+would misclassify these boundaries.
+
+These ack-only commands bypass pending registration and device-identity lookup,
+while the registration callback still returns authoritative ownership. Returning
+false would select a legacy fallback bubble and merely replace the stuck Sending
+row. The retired-source guard, outbound text, list preview and ack/error handling
+remain intact; legacy/demo feedback retains its existing behavior. Reset commands
+do not clear unrelated pending sends. See the
+[repository regression contract](remote-conversation-repository-testing.md#testing).
 
 The empty `ack` confirms receipt only; success, timeout and late error never write
 accepted lifecycle or recreate retired feedback. Only an admitted `user_message`
