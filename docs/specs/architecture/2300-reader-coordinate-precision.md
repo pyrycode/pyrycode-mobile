@@ -19,6 +19,14 @@ Run the named reference method unchanged on managed Android 13 first and retain 
 
 ## Revisions
 
+### 2026-10-19 — Refined constituent contract before continuation
+
+The live issue now resolves the remaining native expectation: preserve the shared panel and derive its interval from independently checked constituents. In `referencePlacesBarRuleAndBodyAtFigmaCoordinates`, check the two-line code's 12sp/20sp monospace style, 20sp baseline advance and 34dp trimmed text height with the default pixel bound. Check each 12dp padding edge, panel height as measured text height plus two independently rounded padding values, and the following 16dp gap. A private `referenceCodeInterval` converts that constituent sum to dp; only the code-to-quote aggregate uses it. Its expectation never uses the observed panel height or top-to-top interval. Retain the existing 58dp panel assertion and every other reader check, with new exact constituent checks preserving 58dp/74dp at density 1.
+
+First add `codeIntervalRoundsConstituentsAndKeepsItsOnePixelBoundary` against the old aggregate model and observe its fractional-density failure. Then implement the constituent sum and verify both error directions accept one pixel and reject two, including exact and subpixel density-1 controls. Run the full affected JVM class and named Android 13 method on Linux; retain earlier red evidence and new raw reports, revisions, density and counts. No new device-only test, production edit, shared assertion edit or documentation-stage requirement is introduced.
+
+This remains one useful reader-assertion repair. Forecast: about 200 written lines across the test and plan, zero exported production types or consumer migrations, three acceptance criteria, no lifecycle/identity state or error branches. Current remote feature branches have no overlap with the design test. Complete gates and the post-merge sweep stay dispatcher-owned.
+
 ### 2026-10-19 — Snap the expected distance to the same pixel grid
 
 The first repaired Android run passed the original paragraph interval but exposed the next interval: the expected 38dp converts to 99.75 ideal pixels, while the actual snapped distance is 101 pixels. Comparing an ideal fractional pixel distance with a whole-pixel observation still mismatches coordinate systems. Round the expected distance to its nearest integer pixel too (100 pixels here), then retain the original one- or two-pixel integer limit. Whole-density comparisons remain exact. `nonintegralExpectedDistanceKeepsItsSnappedPixelBoundaries` covers both directions around that rounded expectation, including rejection beyond each limit. Retain the intermediate failed native report alongside the original failure. This remains the same local numeric-comparison repair; production geometry, reference dp values and allowance counts do not change.
