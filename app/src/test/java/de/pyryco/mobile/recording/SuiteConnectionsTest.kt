@@ -23,6 +23,106 @@ import kotlin.concurrent.thread
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteConnectionsTest {
+    @Test fun anUpcomingDisconnectCannotHideAnUnexpectedRequestOnAnOpenConnection() =
+        runTest {
+            val owner = "phone/host/0"
+            val hub =
+                SuiteConnections.replaying(
+                    backgroundScope,
+                    RecordedSuiteTape(
+                        listOf(
+                            SuiteStep("connect", owner),
+                            SuiteStep("open", owner),
+                            SuiteStep("transport_down", owner, delayMs = 1000),
+                            SuiteStep("close", owner),
+                            SuiteStep("inbound_end", owner),
+                        ),
+                    ),
+                )
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                runCurrent()
+                assertTrue(pump.state.value is PumpState.Open)
+                assertThrows(IllegalStateException::class.java) {
+                    pump.send(frame(90, "request_session_settings", """{"conversation_id":"chat"}"""))
+                }
+            } finally {
+                hub.close()
+            }
+        }
+
+    @Test fun aTransportThatWentDownRefusesLateSettingsBeforeTheSupervisorClosesIt() =
+        runTest {
+            val owner = "phone/host/0"
+            val hub =
+                SuiteConnections.replaying(
+                    backgroundScope,
+                    RecordedSuiteTape(
+                        listOf(
+                            SuiteStep("connect", owner),
+                            SuiteStep("open", owner),
+                            SuiteStep("transport_down", owner),
+                            SuiteStep("close", owner),
+                            SuiteStep("inbound_end", owner),
+                        ),
+                    ),
+                )
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                runCurrent()
+                val down = async { transport.events.first { it is TransportEvent.Down } }
+                runCurrent()
+                assertTrue(down.await() is TransportEvent.Down)
+                assertTrue(pump.state.value is PumpState.Open)
+                assertFalse(pump.send(frame(90, "request_session_settings", """{"conversation_id":"chat"}""")))
+                transport.close()
+                runCurrent()
+                hub.assertComplete()
+            } finally {
+                hub.close()
+            }
+        }
+
+    @Test fun aRecordedRefusalAfterTransportDownStillMatchesItsExactRequest() =
+        runTest {
+            val owner = "phone/host/0"
+            val request = frame(1, "request_session_settings", """{"conversation_id":"chat"}""")
+            val hub =
+                SuiteConnections.replaying(
+                    backgroundScope,
+                    RecordedSuiteTape(
+                        listOf(
+                            SuiteStep("connect", owner),
+                            SuiteStep("open", owner),
+                            SuiteStep("transport_down", owner),
+                            SuiteStep("client", owner, request, accepted = false),
+                            SuiteStep("close", owner),
+                            SuiteStep("inbound_end", owner),
+                        ),
+                        literalProducerIdentities = true,
+                    ),
+                )
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                runCurrent()
+                assertFalse(pump.send(request.copy(id = 90)))
+                transport.close()
+                runCurrent()
+                hub.assertComplete()
+            } finally {
+                hub.close()
+            }
+        }
+
     @Test fun phoneTeardownWaitsForACapturedReplacementAndItsQueriesEvenIfItClosesDuringTheWait() =
         runTest {
             val old = "phone/host/0"

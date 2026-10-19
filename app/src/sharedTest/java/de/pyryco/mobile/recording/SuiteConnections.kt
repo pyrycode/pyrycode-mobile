@@ -307,6 +307,7 @@ internal class SuiteConnections private constructor(
         val live: RelayTransport?,
     ) : RelayTransport {
         val localClose = AtomicBoolean()
+        val remoteClosed = AtomicBoolean()
         private val eventsChannel = Channel<TransportEvent>(Channel.UNLIMITED)
         var observePumpState: () -> Unit = {}
         override val inbound = live?.inbound ?: emptyFlow<InnerFrameV2>()
@@ -360,6 +361,7 @@ internal class SuiteConnections private constructor(
             code: Int?,
             reason: String?,
         ) {
+            remoteClosed.set(true)
             check(eventsChannel.trySend(TransportEvent.Down(code, reason, null)).isSuccess)
             eventsChannel.close()
         }
@@ -440,7 +442,7 @@ internal class SuiteConnections private constructor(
             synchronized(this@SuiteConnections) {
                 // NoiseSessionPump refuses locally once closed; a late upload chunk never reaches the wire.
                 // Explicitly captured refused calls still match their full payload and recorded result.
-                if ((connection.localClose.get() || state.value !is PumpState.Open) &&
+                if ((connection.localClose.get() || connection.remoteClosed.get() || state.value !is PumpState.Open) &&
                     !checkNotNull(tape).hasEligibleRefusal(connection.owner)
                 ) {
                     false
