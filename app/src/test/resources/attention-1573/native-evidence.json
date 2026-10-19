@@ -69,5 +69,34 @@
     "promptPosts": 0,
     "blocker": "https://github.com/pyrycode/pyrycode/issues/3636"
   },
-  "acceptance": "Pending Core #3636 and a passing focused prompt rerun; completion native acceptance passed."
+  "promptRecovery": {
+    "date": "2026-10-19",
+    "method": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect",
+    "mobileRevision": "4a06c43f8c1987244c64f0fe5c2a36819515046e",
+    "daemonRevision": "5fd0d600b629c9cc3637fc42eb353c8e965f9fde",
+    "daemonBinarySha256": "8539e88af07aa24a37f1a138486ee94354f98cfe814bb2cb9eb5661c41ffffec",
+    "evidenceRoot": "/work/Projects/pyrycode-mobile-agents/logs/evidence/1573/builder-20261019-prompt-recovery",
+    "runDirectory": "live-dauss_jo",
+    "harnessDirectory": "harness/fault-c91f17d974ac2f95f2436cadebde98e6",
+    "summaryFile": "summary.json",
+    "summarySha256": "bcf861414b9ff393009c84d52c6c5a75cba139a8b0a567177961bb77fcc2516b",
+    "xmlSha256": "a904d845298db1401796af502222416f91fda667bf545b792979847a88415991",
+    "processExit": 0,
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "phoneWake": "13:36:59.867",
+    "phoneFreshModalAccepted": "13:37:00.516",
+    "phonePromptPosted": "13:37:00.557",
+    "hostWake": "2026-10-19T13:37:00.488Z",
+    "clockNote": "Host and phone timestamps retain their respective clocks; no cross-clock ordering is inferred.",
+    "promptPostsAfterWake": 1,
+    "promptDuplicateDecisionsAfterWake": 1,
+    "verifiedPrivateFiles": 13,
+    "nativeAssertionsUnchanged": true,
+    "recordingsModified": false
+  },
+  "acceptance": "Both required focused Linux native methods passed. Historical failed artifacts are preserved. Complete Linux dispatcher gates, documentation and #2245 activation/recording holds remain separate."
 }
