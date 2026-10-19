@@ -177,8 +177,8 @@ private val ComposerTopGap = 16.dp
 private val ComposerBottomGap = 16.dp
 private val AttachmentStripTouchOverlap = 5.dp
 
-// The footer reserves 4dp top padding and a 16dp visual band. Its 28dp touch boxes include
-// 12dp bottom overflow; Compose expands them to 48dp without entering the input surface.
+// Trailing controls retain their 28dp boxes and 12dp bottom overflow. Context reserves a full
+// 48dp target above the visible icon band so its bottom edge remains inside the window.
 private val FooterTouchBottomOverflow = 12.dp
 private val FrameFooterTouchHeight = 28.dp
 

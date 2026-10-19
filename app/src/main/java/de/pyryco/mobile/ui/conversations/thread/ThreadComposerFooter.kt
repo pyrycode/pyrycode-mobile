@@ -257,7 +257,7 @@ private const val PENDING_ALPHA = 0.55f
  * It replaces #602's single monospace `model · effort` line (`ThreadStatusRow`). The design has no
  * footer affordance for the Status sheet, so a trailing icon keeps it one tap away. The design's
  * paperclip (#933) sits just before that icon and calls [onAttach], which opens the file picker. The context circle (#1660) leads the left group before Actions
- * and is non-interactive. Actions opens its menu.
+ * and opens the standalone Context sheet. Actions opens its menu.
  *
  * Stateless. Model, effort and permission choices live in the run configuration sheet. [onAnchorChanged]
  * reports the Actions button's window bounds so the screen can place its overlay above it.
@@ -363,7 +363,7 @@ private fun FooterTextRow(
     Layout(content = content, modifier = modifier) { measurables, constraints ->
         val circle = measurables.first().measure(constraints.copy(minWidth = 0, minHeight = 0))
         // The target uses the leading blank space and the visual gap, ending exactly at Actions.
-        // Its ring stays at the original origin; no visible control moves.
+        // The ring and Actions keep their original horizontal positions.
         val leading = ContextTouchLeadingInset.roundToPx()
         val button = measurables.last()
         val natural = button.maxIntrinsicWidth(constraints.maxHeight)
@@ -441,11 +441,12 @@ private fun ContextSegment(
     Box(
         modifier =
             modifier
-                .size(ContextTouchWidth, maxOf(touchHeight, FooterControlHeight + contentBottomPadding))
+                // Reserve the whole target: automatic expansion of the old 28dp box crossed the window bottom.
+                .size(ContextTouchWidth, maxOf(ContextTouchWidth, touchHeight, FooterControlHeight + contentBottomPadding))
                 .testTag(CONTEXT_USAGE_TEST_TAG)
                 .clickable(role = Role.Button, onClickLabel = stringResource(R.string.thread_open_context), onClick = onClick)
                 .padding(start = ContextTouchLeadingInset, bottom = contentBottomPadding),
-        contentAlignment = Alignment.CenterStart,
+        contentAlignment = Alignment.BottomStart,
     ) {
         Box(Modifier.size(ContextCircleSize, FooterControlHeight), contentAlignment = Alignment.TopStart) {
             Canvas(

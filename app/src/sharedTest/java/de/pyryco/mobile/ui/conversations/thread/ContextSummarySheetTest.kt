@@ -101,6 +101,7 @@ class ContextSummarySheetTest {
             Offset(local.width / 2, bounds.bottom - local.top - 1f),
         )) {
             target.performTouchInput { click(point) }
+            rule.runOnIdle { assertTrue("Context target tap=$point visual=$local touch=$bounds", screen.contextSheetOpen) }
             rule.onNodeWithText("Context").assertIsDisplayed()
             rule.onNodeWithText("Done").performClick()
         }
