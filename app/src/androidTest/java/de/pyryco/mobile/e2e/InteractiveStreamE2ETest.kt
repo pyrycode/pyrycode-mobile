@@ -8791,6 +8791,7 @@ class InteractiveStreamE2ETest {
                         displayed
                     }
                 } catch (failure: ComposeTimeoutException) {
+                    Log.i("OwnedReply", observation.producerState())
                     throw ownedReplyFailure(
                         producerFrames?.let { observation.completedBy(it()) } ?: observation.producerCompleted(),
                         if (readable) admitted != null else null,

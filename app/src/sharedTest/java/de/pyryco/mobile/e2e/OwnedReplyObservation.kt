@@ -223,6 +223,14 @@ internal class OwnedReplyObservation(
             end?.field("terminal_reason") == "completed"
     }
 
+    /** Structural diagnostics only: never include prompts, reply text or wire identities. */
+    @Synchronized fun producerState(): String =
+        "failed=$failed, closed=$closed, accepted=$accepted, current=${pumpCurrent()}, " +
+            "echo=${echo != null}, turn=${turn != null}, deltas=${deltas.size}, " +
+            "ordered=${deltas.map { it.first } == deltas.indices.toList()}, " +
+            "terminal=${end?.field("stop_reason")}/${end?.field("outcome")}/" +
+            "${end?.field("is_error")}/${end?.field("terminal_reason")}, sessions=${rawSessions.size}"
+
     /** Freeze producer evidence before a deliberate disconnect; this alone proves no phone delivery. */
     @Synchronized fun produced(): ProducedReplyEvidence? {
         if (!producerCompleted()) return null

@@ -415,7 +415,7 @@ class DeterministicInteractiveStreamE2ETest {
                             delay(50)
                         }
                     }
-                    produced = checkNotNull(observation.produced())
+                    produced = checkNotNull(observation.produced()) { observation.producerState() }
                     assertEquals("scripted fixture keeps its exact reply contract", "ping", produced!!.text)
                 }
             }
