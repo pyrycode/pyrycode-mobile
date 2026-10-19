@@ -3804,10 +3804,23 @@ hashes and signer identities. Private raw XML, logcat, transport evidence and th
 retained under `/work/Projects/pyrycode-mobile-agents/logs/evidence/1573/operator-manual-20261019/`.
 Earlier failed artifacts remain preserved.
 
-This is focused native proof. Complete configured dispatcher gates and independent review remain
-pending. The earlier accepted inherited recording failure is tracked in #2317. Recorded fixtures are
-unchanged. #2245 retains its separate activation and recording acceptance. The historical OnePlus
-incident remains unexplained.
+Independent read-only source review and the merged-main integration review passed with no findings.
+All six configured Linux checks passed at `3f6b8d262d6e28d6d54b0748ad04a0f5a319df3c`, containing
+main `dde1b41a6fde1dd0e545f9ad0e357b6256092fc8` and its #2317 repair. Script tests: 183 passed.
+The complete JVM graph freshly executed 6186 tests, all passed with zero failures, errors or skips;
+lint, formatting, APK assembly and instrumented compilation also passed. The full device selection
+executed 335 tests, all passed with zero failures or errors. Its one skipped case is the existing
+optional rename-dialog screenshot capture. All 67 recorded methods passed, including peer-turn reopen.
+The complete scripted selection passed all 21 scenarios: 22 executed and passed, zero failures,
+errors or skips. Final acceptance uses no inherited-failure exception.
+
+The private `full-verification-merged-main/` directory retains raw XML, logs, command records and a
+1048-file manifest with SHA-256 `1deeca8fefcff0f9864f9e7f6068cadf5c6d1ac9f73437cfde238882ef266096`.
+Earlier failed and interrupted runs remain preserved. Main's passive peer observer is unarmed for the
+two background methods; their bodies and the repaired production source remain unchanged. The native
+proof above stays bound to its recorded composition. Final publication changes only documentation.
+Recorded fixtures are unchanged. #2245 retains its separate activation and recording acceptance.
+The historical OnePlus incident remains unexplained.
 
 
 ### Correlated native settings reads (#2305)
