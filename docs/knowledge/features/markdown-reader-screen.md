@@ -28,8 +28,10 @@ remain 20dp and bottom padding 16dp, with the final block reachable at the scrol
 Both attachment and linked-note readers select M3 `bodyMedium`: regular Roboto 14sp/20sp,
 0.25sp tracking and `onSecondaryContainer` for paragraphs, list items and table cells (#2283).
 Ordinary blocks have 16dp gaps, recursively inside lists and quotes, with 6dp
-sibling-list-item gaps (#2285). Heading-specific 20/12dp integration remains with
-\#2278/#2276. ATX headings share the [markdown scale](shared-typography.md#markdown-headings)
+sibling-list-item gaps (#2285). The shared heading policy supplies 20dp before a heading,
+12dp after it and one 20dp gap between consecutive headings, without an outer heading
+gap (#2278/#2276). Both destinations have [native integration coverage](markdown-reader-screen-testing.md#reader-heading-integration-coverage-2276).
+ATX headings share the [markdown scale](shared-typography.md#markdown-headings)
 with Thread: H1 20/28sp, H2 18/26sp, H3 16/24sp (all Medium), and H4–H6 14/20sp Bold.
 Tracking is 0, 0, 0.15 and 0.25sp respectively; plain heading text uses `onSecondaryContainer`.
 Reader headings and prose use untrimmed line-height boxes; Thread retains its existing trimming.
