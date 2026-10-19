@@ -57,3 +57,7 @@ On the exact committed candidate, run scripted `ping`, the named basic live meth
 ## Open Questions
 
 None. If current producer evidence invalidates the send/turn correlation design, record the revised contract before implementation departs from this plan.
+
+## Revisions
+
+- 2026-10-19: `RemoteConversationRepository.observeThreadSnapshot` is cold and issues its existing legacy backfill probe on subscription. Keep one owned subscription for the whole observation and sample its latest source-bound emission, rather than resubscribing while polling Compose. This preserves the existing query contract and avoids repeated read traffic. Cancel and join that collector in `finally`. Controlled rendering regressions live beside the existing queue-removal regression in `PingReplyTest`, rather than adding a separate screen-test class.

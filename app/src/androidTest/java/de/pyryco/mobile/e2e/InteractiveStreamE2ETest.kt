@@ -166,6 +166,9 @@ import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
 import de.pyryco.mobile.ui.conversations.thread.completeSlashCommand
 import de.pyryco.mobile.ui.conversations.thread.dropdownLabel
 import de.pyryco.mobile.ui.conversations.thread.inert
+import de.pyryco.mobile.ui.conversations.thread.ownedReplyContentMatches
+import de.pyryco.mobile.ui.conversations.thread.ownedReplyDisplayed
+import de.pyryco.mobile.ui.conversations.thread.ownedReplyNodeCounts
 import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
 import de.pyryco.mobile.ui.conversations.thread.slashCommandOptions
 import de.pyryco.mobile.ui.conversations.thread.slashCommandTypeAheadRows
@@ -180,6 +183,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.filterNotNull
@@ -482,25 +487,22 @@ class InteractiveStreamE2ETest {
         }
 
         val conversationId = newHostConversationId(serverId, before)
-        val repository = hostRepository(serverId)
-
         // 4. Type the constrained prompt into the only editable field, then send.
-        composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
-        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
-
-        // 5. Match the displayed reply itself; queued prompt removal cannot offset this signal.
-        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-        val evidence = harnessThreadEvidence(repository)
-        val held =
-            runBlocking {
-                withTimeout(REPLY_TIMEOUT_MS) { evidence.observe(conversationId).first { it.loadedMainReply() != null } }
+        val observed =
+            awaitOwnedPhoneReply(serverId, conversationId) {
+                composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+                composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
             }
+
+        // 5. Use the admitted completed family and its actual displayed identities.
+        val evidence = harnessThreadEvidence(observed.owner.connection as ConversationRepository)
+        val held = observed.thread
         assertEquals("one delivered user echo", 1, held.userEchoCount(PING_PROMPT))
         val messages = held.records.map { it.message }
         val user = messages.single { it.role == Role.User && it.content == PING_PROMPT }
-        val assistant = messages.single { it.role == Role.Assistant }
+        val assistant = observed.records.last().message
         composeTestRule.assertSideMessageCopy(user)
-        composeTestRule.assertSideMessageCopy(assistant)
+        observed.records.forEach { composeTestRule.assertSideMessageCopy(it.message) }
         val userQuote = "User:\n\"${user.content}\"\n"
         composeTestRule.assertSideMessageReply(user, userQuote)
         composeTestRule.waitUntil(5_000) {
@@ -3439,8 +3441,7 @@ class InteractiveStreamE2ETest {
 
                 // 5. AC-1: a following message in the same thread gets a real reply, and that turn is the
                 //    conversation's second; the stopped turn's own reply was never drawn.
-                sendFromPhone(PING_PROMPT)
-                awaitPingReplyNamingLayer(peer, serverId, conversationId, priorTurnEnds = 1)
+                awaitPingReplyNamingLayer(peer, serverId, conversationId)
                 peerStep(
                     peer,
                     "await the ping turn's turn_end",
@@ -3594,8 +3595,7 @@ class InteractiveStreamE2ETest {
 
             // 2. A's first turn renders, ends and is cached by the open thread.
             openChatRow(nameA)
-            sendFromPhone(PING_PROMPT)
-            awaitPingReplyNamingLayer(peer, serverId, chatA, priorTurnEnds = 0)
+            awaitPingReplyNamingLayer(peer, serverId, chatA)
             awaitTurnEnd(peer, chatA, 1, "A's ping")
             awaitCachedAssistantReply(serverId, chatA)
 
@@ -8628,28 +8628,87 @@ class InteractiveStreamE2ETest {
         }
 
     /**
-     * [awaitDisplayedPingReply] for a ping sent after [priorTurnEnds] of [conversationId]'s turns ended. On
-     * timeout it names the first layer that did not hold the reply (#1456): the [peer]'s recorded frames, the
-     * phone's live repository for [serverId], or the thread screen's nodes.
+     * Send the follow-up under the owned observation boundary. The peer supplies independent producer
+     * evidence on timeout; its turn count never stands in for the targeted reply or repository delivery.
      */
     private fun awaitPingReplyNamingLayer(
         peer: SecondClientPeer,
         serverId: String,
         conversationId: String,
-        priorTurnEnds: Int,
     ) {
+        awaitOwnedPhoneReply(serverId, conversationId, { peer.recorded(conversationId) }) { sendFromPhone(PING_PROMPT) }
+    }
+
+    private fun awaitOwnedPhoneReply(
+        serverId: String,
+        conversationId: String,
+        producerFrames: (() -> List<Envelope>)? = null,
+        send: () -> Unit,
+    ): CompletedReplyObservation {
+        val repositories =
+            checkNotNull(
+                GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId),
+            ).coordinator.currentRepository
+        val scope = CoroutineScope(Dispatchers.Default)
+        val observed = MutableStateFlow<ThreadEvidence?>(null)
+        val collector =
+            scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                repositories.collectLatest { repository ->
+                    observed.value = null
+                    if (repository != null) {
+                        harnessThreadEvidence(repository).observe(conversationId).collect {
+                            if (repositories.value === repository) observed.value = it
+                        }
+                    }
+                }
+            }
         try {
-            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-        } catch (e: ComposeTimeoutException) {
-            val frames = peer.recorded(conversationId)
-            val nodes = composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).fetchSemanticsNodes().size
-            throw PingReplyEvidence(
-                peerTurnEnds = frames.count { it.type == "turn_end" },
-                peerSawReply = followUpPingReplyRecorded(frames, priorTurnEnds),
-                repositoryHoldsReply = liveRepositoryHoldsPingReply(serverId, conversationId),
-                replyNodes = nodes,
-                replyDisplayed = nodes == 1 && composeTestRule.onNode(pingReplyMatcher(), useUnmergedTree = true).isDisplayed(),
-            ).failure(expectedTurnEnds = priorTurnEnds + 1, cause = e)
+            val before = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { observed.filterNotNull().first() } }
+            val observation = OwnedReplyObservation(serverId, before)
+            return OwnedReplyProbe.observing(observation) {
+                var admitted: CompletedReplyObservation? = null
+                var readable = false
+                var counts = emptyList<Int>()
+                var displayed = false
+                var contentMatches = false
+
+                fun currentEvidence(): ThreadEvidence? = observed.value
+                Log.i("OwnedReply", "event=reply_observation_started route=${before.owner.kind}")
+                send()
+                try {
+                    composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                        observation.checkCurrent(repositories.value)
+                        val current = currentEvidence()
+                        readable = current != null
+                        admitted = current?.let { observation.admitted(it, repositories.value) }
+                        counts = admitted?.let { composeTestRule.ownedReplyNodeCounts(it) }.orEmpty()
+                        contentMatches = admitted?.let { composeTestRule.ownedReplyContentMatches(it) } == true
+                        displayed = admitted?.let { composeTestRule.ownedReplyDisplayed(it) } == true
+                        if (displayed) {
+                            val final = currentEvidence()?.let { observation.admitted(it, repositories.value) }
+                            displayed = final?.records?.map { it.message } == admitted?.records?.map { it.message }
+                            admitted = final
+                        }
+                        observation.checkCurrent(repositories.value)
+                        displayed
+                    }
+                } catch (failure: ComposeTimeoutException) {
+                    throw ownedReplyFailure(
+                        producerFrames?.let { observation.completedBy(it()) } ?: observation.producerCompleted(),
+                        if (readable) admitted != null else null,
+                        counts,
+                        displayed,
+                        failure,
+                        contentMatches = contentMatches,
+                    )
+                }
+                observation.checkCurrent(repositories.value)
+                Log.i("OwnedReply", "event=completed_reply_displayed route=${before.owner.kind} fragments=${counts.size}")
+                checkNotNull(admitted)
+            }
+        } finally {
+            scope.cancel()
+            runBlocking { collector.join() }
         }
     }
 

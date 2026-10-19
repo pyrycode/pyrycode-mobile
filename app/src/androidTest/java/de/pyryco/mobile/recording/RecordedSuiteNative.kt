@@ -22,6 +22,7 @@ import de.pyryco.mobile.di.RelayConnectionFactory
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.di.RelaySessionPumpFactory
 import de.pyryco.mobile.e2e.E2eTestApplication
+import de.pyryco.mobile.e2e.OwnedReplyProbe
 import de.pyryco.mobile.e2e.SettingsReadProbe
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -180,7 +181,10 @@ internal object RecordedSuiteNative {
                     get(),
                     RelayTransportFactory { pairing ->
                         session.remember(pairing)
-                        session.hub.transport(session.owner("phone", pairing.serverId)) { original.create(pairing) }
+                        OwnedReplyProbe.transport(
+                            pairing.serverId,
+                            session.hub.transport(session.owner("phone", pairing.serverId)) { original.create(pairing) },
+                        )
                     },
                     session.document?.replayClientInfo(clientInfo) ?: clientInfo,
                     pushTokens =
@@ -194,8 +198,13 @@ internal object RecordedSuiteNative {
                     messageTrail = get(),
                     pumpFactory =
                         RelaySessionPumpFactory { transport, factory, dispatcher, minimum ->
-                            SettingsReadProbe.wrap(
-                                session.hub.pump(transport) { NoiseSessionPump(transport, factory, dispatcher, onClientMinimum = minimum) },
+                            OwnedReplyProbe.wrap(
+                                transport,
+                                SettingsReadProbe.wrap(
+                                    session.hub.pump(
+                                        transport,
+                                    ) { NoiseSessionPump(transport, factory, dispatcher, onClientMinimum = minimum) },
+                                ),
                             )
                         },
                 )

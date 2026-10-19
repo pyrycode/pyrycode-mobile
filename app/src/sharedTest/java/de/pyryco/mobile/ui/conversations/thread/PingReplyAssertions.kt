@@ -3,10 +3,13 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.ComposeTestRule
+import de.pyryco.mobile.e2e.CompletedReplyObservation
+import de.pyryco.mobile.e2e.ThreadEvidenceRecord
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 
 internal const val PING_PROMPT = "Reply with exactly the word: ping (nothing else)."
@@ -30,3 +33,23 @@ internal fun ComposeTestRule.awaitDisplayedPingReply(timeoutMillis: Long) {
     waitUntil(timeoutMillis) { reply.isDisplayed() }
     reply.assertIsDisplayed()
 }
+
+/** Counts identities independently of content so duplicate rows cannot hide behind different wording. */
+internal fun ComposeTestRule.ownedReplyNodeCounts(reply: CompletedReplyObservation): List<Int> =
+    reply.records.map { onAllNodes(hasTestTag("assistant-reply:${it.message.id}"), useUnmergedTree = true).fetchSemanticsNodes().size }
+
+internal fun ownedReplyMatcher(record: ThreadEvidenceRecord): SemanticsMatcher =
+    record.message.content
+        .split(Regex("\\n\\s*\\n"))
+        .filter { it.isNotBlank() }
+        .fold(hasTestTag("assistant-reply:${record.message.id}")) { matcher, paragraph ->
+            matcher and hasAnyDescendant(hasText(paragraph.trim()))
+        }
+
+internal fun ComposeTestRule.ownedReplyDisplayed(reply: CompletedReplyObservation): Boolean =
+    ownedReplyNodeCounts(reply).all { it == 1 } &&
+        reply.records.all { onNode(ownedReplyMatcher(it), useUnmergedTree = true).isDisplayed() }
+
+internal fun ComposeTestRule.ownedReplyContentMatches(reply: CompletedReplyObservation): Boolean =
+    ownedReplyNodeCounts(reply).all { it == 1 } &&
+        reply.records.all { onAllNodes(ownedReplyMatcher(it), useUnmergedTree = true).fetchSemanticsNodes().size == 1 }
