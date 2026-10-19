@@ -1,0 +1,7 @@
+diff --git a/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt b/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt
+index 39c9f1a9c..8dfefb4a9 100644
+--- a/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt
++++ b/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt
+@@ -166 +166 @@
+-private val ReaderLineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Proportional, LineHeightStyle.Trim.None)
++private val ReaderLineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Proportional, LineHeightStyle.Trim.Both)

@@ -10,7 +10,46 @@ untrimmed line boxes. `MarkdownReaderDesignTest.referencePlacesBarRuleAndBodyAtF
 retains density-1 exact gap assertions with the shared heading scale, 14/20sp prose and 16dp ordinary
 block spacing. Reference tops are heading 97dp, paragraph 141dp, subheading 217dp,
 first item 259dp, code 347dp and quote 421dp (#2284 shared panel).
-New Reader-screen integration checks remain assigned to #2276.
+All six levels also have destination-level coverage below.
+
+### Reader heading integration coverage (#2276)
+
+`MarkdownReaderHeadingTest` runs eight native-graphics cases: attachment retrieval from
+a temporary Markdown file and a held linked note, each in static light/dark themes at
+font scales 1.0/1.5. Every case checks H1–H6 against independent metric literals, the
+Roboto family, active `onSecondaryContainer` colour and `Trim.None`. Short and genuinely
+wrapping headings check each measured line box, full unclipped text height, final text,
+absence of overflow/ellipsis and scroll reachability. Bounds retain 20dp before headings,
+12dp after, one 20dp between consecutive headings and 28dp below the measured bar for
+the first H1. Spacing stays in dp at enlarged text. Existing first-paragraph, reference,
+chrome and interaction assertions remain; `MarkdownHeadingSpacingTest` owns the recursive
+container matrix. Production continues to use shared heading roles and gaps.
+
+For enlarged line boxes, use a native single-line `TextMeasurer` control built from
+independent Figma metric literals and `Trim.None`. Compose 1.10.4 resolves line height
+relative to scaled font size; neither multiplying nominal height by font scale nor
+direct sp conversion predicts the rendered box. Keep exact token/trim/scale checks and
+explicit nominal dp heights at scale 1.0 alongside the control. Per-line geometry keeps
+the existing density-aware pixel allowance; total height accounts for each line's rounding.
+
+The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2301#issuecomment-6258272047)
+records Linux acceptance on 2026-10-19 at
+`2862dbc98d87f48804b56c46cd54f56e0fcd8e7e`: JVM **6,020 executed/passed, 0 failed/errors,
+0 skipped**, including heading **8/8** and design **17/17**; managed Android 13 UI
+**334 executed/passed, 0 failed/errors, 1 skipped**; scripted **22 executed/passed,
+0 failed/errors, 0 skipped**. `renameAtFigmaViewport` was skipped, not passed.
+
+[Committed raw reports, commands, source identities and hashes](../../../app/src/test/resources/reader-headings-2276/)
+retain six separate focused runs at `1273cbe4b79e3602e07df59dcb9c7172ba109ab3`:
+heading 8, design 17, screen 26, typography 11, shared scale 5 and shared spacing 13,
+totalling **80 executed/passed, 0 failed/errors/skipped**. The separate post-format heading
+rerun at `f62364767ad4d361f3c68d728a05a25fcb2eb7dd` has **8 executed/passed,
+0 failed/errors/skipped**, with all eight named cases present and passed in its XML.
+Historical reports retain the controlled trimming mutation (**1 executed, 1 failed**),
+two incorrect scaling-oracle runs (**8 executed, 4 passed, 4 failed** each), all with
+zero errors/skips, and compiler heap diagnostics from an invocation that executed no tests.
+Those failures are not green evidence. macOS is outside this Linux ticket's verification
+scope; no live-provider run is required for this local rendering contract.
 
 ### Reader body typography coverage (#2283)
 
@@ -76,7 +115,7 @@ All reader code forms use the shared panel; see [code blocks](markdown-text-inte
 attachment and linked-note readers, including light/dark cases, at 12sp/20sp monospace.
 Its bounds checks measure the panel ancestor of the code viewport, preserving the exact
 16dp gaps instead of depending on the removed `reader-code-panel` tag. The reference's
-two-line shared panel is naturally 58dp high because its text trims the outer line boxes;
+two-line shared panel is exactly 58dp high at density 1 because its text trims the outer line boxes;
 the old reader-only panel forced a 64dp minimum. Consequently the following quote starts
 at 421dp rather than 427dp. Keep prose/headings untrimmed and preserve existing spacing
 assertions and fractional-density allowances; code-panel reuse does not redefine those roles.
@@ -127,11 +166,31 @@ one-pixel default; only those two intervals and the paragraph's total height use
 and each following block gap separately with the default allowance. A wider
 cumulative allowance alone could conceal a real spacing regression.
 
-`adjacentBlockRoundingAllowanceKeepsItsPixelBoundary` uses the same private
-allowance constant as the coordinate method: both signs of two pixels pass,
-three pixels fail, and two pixels fail with the unchanged default. At density 1,
-even subpixel drift fails with the explicit allowance. See the shared
+At fractional density, the reader's private `assertBlockTopDistance` recovers each
+integer pixel coordinate before subtracting and rounds the expected dp distance onto
+the same pixel grid. Subtracting nonzero dp coordinates first can push an exact
+boundary outside its allowance through float cancellation. Comparing ideal fractional
+pixels also fails: 38dp at density 2.625 is 99.75px, whose snapped expectation is 100px.
+Whole-density comparisons remain exact dp comparisons; the shared `assertDpEquals`
+is unchanged. `nonzeroAdjacentTopsKeepTheirFractionalDensityPixelBoundaries` and
+`nonintegralExpectedDistanceKeepsItsSnappedPixelBoundaries` check both signs: one
+pixel passes by default, two fail; the selected two-pixel allowance accepts two and
+rejects three. Keep the zero-origin `adjacentBlockRoundingAllowanceKeepsItsPixelBoundary`
+control and density-1 subpixel rejection too. See the shared
 [pixel comparison guidance](development-verification-gates.md#where-a-screen-test-goes).
+
+The reference method independently checks code's 12sp/20sp monospace style, two
+lines, 20sp baseline advance and nominal 34dp trimmed text height. It checks each
+12dp padding edge, panel height as measured text height plus two separately rounded
+padding values, and the following 16dp gap. Only then does `referenceCodeInterval`
+derive the code-to-quote expectation from that text height and independently rounded
+padding/gap. Never derive it from the observed panel height or top-to-top distance.
+At density 2.625, 90px text + 32px + 32px padding + 42px gap yields 196px;
+rounding the nominal 74dp aggregate once yields 194px and misrepresents the layout.
+`codeIntervalRoundsConstituentsAndKeepsItsOnePixelBoundary` accepts one pixel in
+either direction and rejects two. Density 1 retains the exact 58dp panel and 74dp
+interval, including subpixel rejection. Widening the aggregate allowance would hide
+a spacing regression; production geometry and all existing limits stay unchanged.
 
 The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2297#issuecomment-6255306502)
 and retained XML record Linux x86_64 evidence on 2026-10-18:
@@ -184,6 +243,55 @@ The original `f8a397b` in-depth sweep remains failed: **1,726 executed,
 1,725 passed, 1 failed**. The next in-depth Linux main sweep remains
 dispatcher-owned and pending; neither focused confirmation nor the configured
 gates establish that sweep passed. macOS is outside this Linux ticket's scope.
+
+### Coordinate precision acceptance (#2300)
+
+The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2302#issuecomment-6258818306)
+records Linux x86_64 acceptance on 2026-10-19 at
+`e542066c6a7cce8bd33901ebc05740688e26cb57`. Configured gates: JVM **6,024
+executed/passed, 0 failed, 0 skipped**, including all **21** reader design methods;
+UI **334 executed/passed, 0 failed, 1 skipped**; scripted **22 executed/passed,
+0 failed, 0 skipped**. The reference method and boundary regressions passed in the
+JVM gate. The reference method did not run in the UI/scripted gates;
+`renameAtFigmaViewport` was skipped, not passed.
+
+Focused commands (class prefix `de.pyryco.mobile.ui.conversations.thread`):
+
+```bash
+python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest' --console=plain
+python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest#referencePlacesBarRuleAndBodyAtFigmaCoordinates'
+```
+
+Fresh retained XML confirms the JVM class **21 executed/passed, 0 failed/errors,
+0 skipped**, at `e930a69559528c9b79b4701be1ed43b9fca156f5` plus its retained
+source patch (only formatter-added braces differ from the reviewed test). Robolectric
+used density 1; numeric regressions explicitly used 2.625. The separate managed
+Android 13 Google ATD Pixel 2 run at clean source
+`171f9a18789fe874dd19b1174aaa2c86131db630`, density **2.625 (420 dpi)**,
+contains the exact reference method passed: **1 executed/passed, 0 failed/errors,
+0 skipped**. Its source snapshot matches the reviewed test.
+
+Raw reports, metadata, source snapshots/patches, device logs and hash manifests were
+retained at `/work/Projects/pyrycode-mobile-agents/logs/evidence/2300/` at review time:
+
+- `continuation-20261019/green-constituents-jvm/` and `green-native-171f9a187/`
+  hold those passes. `red-constituents-jvm/` retains the constituent regression
+  against the old model at `e930a69559528c9b79b4701be1ed43b9fca156f5` plus
+  its saved patch: **1 executed, 1 failed, 0 skipped**.
+- `builder-20261019/red-device/` retains the original cancellation failure:
+  `e9bc7466d4e00f78c464d2fa088b4f7c1d474cdc` plus saved patch, unchanged
+  reference method from production `23709b9b75aeb375982858c9abe5893339875f43`.
+  `intermediate-device/` at `f90f64c7a750a784ddc21e94435c8d46fe0f42e8`
+  retains the 99.75px-versus-101px failure; `remaining-code-interval-device/` at
+  `15f1a5e1b72026845f6d2acb94c0b558e43be5b5` retains 194px-versus-196px.
+  Each native run used density 2.625 and records **1 executed, 1 failed,
+  0 errors/skipped**. Earlier numeric red reports and 19-/20-method JVM passes
+  remain in the same folder; they do not establish native acceptance.
+
+These locations are subject to retention. Historical failures remain failures.
+The post-merge Linux sweep remains dispatcher-owned and pending; configured gates
+and focused passes do not establish its result. macOS is outside this ticket's
+verification scope.
 
 ### Native memory regression evidence (#1759)
 

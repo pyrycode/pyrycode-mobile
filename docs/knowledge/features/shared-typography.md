@@ -69,6 +69,12 @@ headings additionally use untrimmed line boxes. The native-graphics
 asserts rendered metrics and colour across both themes and presentations through streaming
 and settlement; [counted verification](markdown-text.md#testing) records the passing coverage.
 
+At enlarged text sizes, nominal line height multiplied by font scale and direct sp
+conversion both differ from Compose 1.10.4's native line box. Reader integration tests
+compare measured lines to an independent literal-based `TextMeasurer` control while
+retaining exact style/trim assertions, nominal scale-1 heights and existing pixel
+allowances. See [reader heading testing and evidence](markdown-reader-screen-testing.md#reader-heading-integration-coverage-2276).
+
 ## Verification and limits
 
 [`AppTypographyTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/theme/AppTypographyTest.kt)
