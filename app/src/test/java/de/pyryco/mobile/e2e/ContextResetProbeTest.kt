@@ -11,7 +11,9 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ContextResetProbeTest {
@@ -23,14 +25,16 @@ class ContextResetProbeTest {
             rig.reading = ContextUsage(26_181, 1_000_000, 3, null)
             rig.probe.delivered(rig.connection, rig.context(26_181, replyTo = 23))
             assertEquals(rig.reading, rig.probe.reply.await())
+            rig.probe.assertValid()
         }
 
     @Test fun correlatedReply_mustBeTheExactAdmittedReading() =
         runTest {
             val rig = Rig()
-            val failure = runCatching { rig.probe.delivered(rig.connection, rig.context(26_181, replyTo = 23)) }.exceptionOrNull()
+            rig.probe.delivered(rig.connection, rig.context(26_181, replyTo = 23))
+            val failure = runCatching { rig.probe.assertValid() }.exceptionOrNull()
             assertEquals("reset reply was not the exact admitted repository reading", failure?.message)
-            assertFalse(rig.probe.reply.isCompleted)
+            assertTrue(rig.probe.reply.isCancelled)
         }
 
     @Test fun oldProducerOrConnection_cannotSatisfyResetProof() =
@@ -51,17 +55,17 @@ class ContextResetProbeTest {
                             ),
                     )
                 }.exceptionOrNull()
-            assertEquals("reset context reply has a different producer", failure?.message)
+            assertEquals(null, failure)
+            assertEquals("reset context reply has a different producer", runCatching { rig.probe.assertValid() }.exceptionOrNull()?.message)
         }
 
     @Test fun anotherMessageOrRequest_isNotAResetOnlyProof() {
         val rig = Rig()
-        assertThrows(IllegalStateException::class.java) {
-            rig.probe.sending(rig.connection, frame("send_message", 24, """{"conversation_id":"c"}"""))
-        }
-        assertThrows(IllegalStateException::class.java) {
-            rig.probe.sending(rig.connection, frame("request_context_usage", 25, """{"conversation_id":"c"}"""))
-        }
+        assertNull(rig.probe.sending(rig.connection, frame("send_message", 24, """{"conversation_id":"c"}""")))
+        assertThrows(IllegalStateException::class.java) { rig.probe.assertValid() }
+        val duplicate = Rig()
+        assertNull(duplicate.probe.sending(duplicate.connection, frame("request_context_usage", 25, """{"conversation_id":"c"}""")))
+        assertThrows(IllegalStateException::class.java) { duplicate.probe.assertValid() }
     }
 
     private class Rig {

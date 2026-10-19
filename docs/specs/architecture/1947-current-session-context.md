@@ -38,7 +38,7 @@ Sizing: one session-freshness deliverable, four acceptance criteria, approximate
 
 ## State and concurrency model
 
-No new jobs, flows or dispatchers. The pairing-scoped projection adds one map of transition timestamps, written and read synchronously by the existing single inbound collector alongside its readings. It survives reconnects with `HostReadings`. Existing `viewModelScope` collects settings and conversation readings; the repository's single inbound collector publishes transition invalidation. Existing cancellation and background socket closure remain. Settings used for fallback are filtered in the same combined input that contains conversation identity, without resubscribing to the settings flow and its side effects.
+No new production jobs, flows or dispatchers. The pairing-scoped projection retains the latest transition and one pending request per conversation across reconnects with `HostReadings`. Its monitor joins outbound request registration with the existing serialized inbound collector; connection termination removes that connection's requests. Existing `viewModelScope` collects settings and conversation readings; the repository's single inbound collector publishes transition invalidation. Existing cancellation and background socket closure remain. Settings used for fallback are filtered in the same combined input that contains conversation identity, without resubscribing to the settings flow and its side effects.
 
 ## State transitions and identity reuse
 
@@ -93,6 +93,8 @@ None.
 **Date:** 2026-10-19
 
 ## Revisions
+
+- 2026-10-19 harness review: record unexpected sends as a probe failure while allowing the real pump send to proceed, because production intentionally absorbs fire-and-forget send exceptions. Assert the probe's health again after the surface checks so a violation after the first reply cannot be swallowed. Controlled probe tests cover this passive-failure contract. This changes only test evidence, not production admission or request behavior.
 
 - 2026-10-19 rework of `e52638392ccb`, findings 1 and 2: missing `asOf` proves only a non-remembered measurement, not current-session ownership. Add producer/correlation admission and invalidate before reset-ended request publication. Add production-inbound regressions and a passive test-only causal reset probe; require the exact admitted correlated reply in the native test, retaining both UI surfaces without another message. Under `behaviour-slices-v1`, this repairs the same session-freshness invariant and its proof. Forecast approximately 1100 total written lines including the inherited diff, new regressions, helper, plan and genuine recording refresh; no new exported production types, two updated production consumers, at most seven admission branches. Overlaps #1573/#2245 change separate repository functions; #2175 changes thread ownership/setup and remains separate from the legacy context fold and this reset method. Elevated risk remains appropriate; no visual geometry changes require a fresh Figma comparison.
 

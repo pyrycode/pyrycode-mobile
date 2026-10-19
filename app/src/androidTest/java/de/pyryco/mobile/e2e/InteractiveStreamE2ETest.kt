@@ -1396,6 +1396,7 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onNodeWithText(contextReading).performScrollTo().assertIsDisplayed()
                 composeTestRule.onNodeWithText("Done").performClick()
                 awaitContextSegment(THREAD_TIMEOUT_MS, "the fresh reading after closing Run configuration") { it == expected }
+                resetContext.assertValid()
             }
         }
     }

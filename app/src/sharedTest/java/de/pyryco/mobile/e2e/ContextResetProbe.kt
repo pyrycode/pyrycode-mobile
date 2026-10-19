@@ -66,13 +66,23 @@ internal object ContextResetProbe {
         private var boundary: ThreadItem.SessionBoundary? = null
         private var owner: Any? = null
         private var request: Pair<Long, CompletableDeferred<Boolean>>? = null
+        private var failure: IllegalStateException? = null
+
+        @Synchronized fun assertValid() {
+            failure?.let { throw it }
+        }
+
+        @Synchronized private fun fail(message: String) {
+            val error = failure ?: IllegalStateException(message).also { failure = it }
+            reply.completeExceptionally(error)
+        }
 
         @Synchronized fun before(
             connection: Any,
             frame: Envelope,
         ) {
             if (frame.type != "session_transition" || frame.field("conversation_id") != conversation) return
-            check(boundary == null) { "reset witness saw another replacement" }
+            if (boundary != null) return fail("reset witness saw another replacement")
             boundary = MobileJson.decodeFromJsonElement<SessionTransitionPayloadDto>(frame.payload).toBoundary()
             owner = connection
         }
@@ -82,10 +92,19 @@ internal object ContextResetProbe {
             frame: Envelope,
         ): CompletableDeferred<Boolean>? {
             if (boundary == null || frame.field("conversation_id") != conversation) return null
-            check(owner === connection) { "reset context connection changed" }
-            check(frame.type != "send_message") { "post-reset context required another phone message" }
+            if (owner !== connection) {
+                fail("reset context connection changed")
+                return null
+            }
+            if (frame.type == "send_message") {
+                fail("post-reset context required another phone message")
+                return null
+            }
             if (frame.type != "request_context_usage") return null
-            check(request == null) { "reset sent more than one additional context request" }
+            if (request != null) {
+                fail("reset sent more than one additional context request")
+                return null
+            }
             return CompletableDeferred<Boolean>().also { request = frame.id to it }
         }
 
@@ -97,18 +116,18 @@ internal object ContextResetProbe {
                 synchronized(this) {
                     request?.takeIf { owner === connection && it.first == frame.inReplyTo }
                 } ?: return
-            check(receipt.second.await()) { "reset context request was refused" }
-            check(frame.type == "context_usage") { "reset context request did not produce a reading" }
-            check(frame.field("conversation_id") == conversation) { "reset context reply changed conversation" }
+            if (!receipt.second.await()) return fail("reset context request was refused")
+            if (frame.type != "context_usage") return fail("reset context request did not produce a reading")
+            if (frame.field("conversation_id") != conversation) return fail("reset context reply changed conversation")
             val replaced = checkNotNull(boundary)
-            check(frame.sessionProvenance.raw?.let { it == JsonPrimitive(replaced.newSessionId) } != false) {
-                "reset context reply has a different producer"
+            if (frame.sessionProvenance.raw?.let { it != JsonPrimitive(replaced.newSessionId) } == true) {
+                return fail("reset context reply has a different producer")
             }
             val usage = checkNotNull(MobileJson.decodeFromJsonElement<ContextUsagePayloadDto>(frame.payload).toReading())
-            check(usage.asOf?.let { it >= replaced.occurredAt } != false) { "reset context reply predates replacement" }
-            check(
-                repository.observeContextUsage(conversation).first() == usage,
-            ) { "reset reply was not the exact admitted repository reading" }
+            if (usage.asOf?.let { it < replaced.occurredAt } == true) return fail("reset context reply predates replacement")
+            if (repository.observeContextUsage(conversation).first() != usage) {
+                return fail("reset reply was not the exact admitted repository reading")
+            }
             reply.complete(usage)
         }
     }
