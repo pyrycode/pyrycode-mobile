@@ -1,0 +1,73 @@
+{
+  "ticket": 1573,
+  "os": "Linux",
+  "date": "2026-10-19",
+  "repairRevision": "10733c13be1fa445d8e2f18fc7caa7bbd0c828e8",
+  "repairParent": "9bbae783b1ff769531f82cc1b415116156aeb426",
+  "activationCandidate": "80b2efa999f2a3560048d8e13c9de9041b34c8f9",
+  "composition": "e95c4d6ba363d6dce1d3f55563186ada652db958",
+  "diagnosticComposition": "4a06c43f8c1987244c64f0fe5c2a36819515046e",
+  "evidenceRoot": "/work/Projects/pyrycode-mobile-agents/logs/evidence/1573/builder-20261019-native-composed",
+  "summaryFile": "summary.json",
+  "summarySha256": "cb28327d6cc73ab593011ebba340d90eb84efe32586288f069963e4e835f8db8",
+  "claudeVersion": "2.1.280",
+  "deviceFingerprint": "google/sdk_gslim_x86_64/emulator64_x86_64:13/TE1A.220922.033/10836537:userdebug/dev-keys",
+  "deviceApi": 33,
+  "deviceAbi": "x86_64",
+  "commandPattern": "python3 scripts/android-test-gate.py live --tests <qualified method>",
+  "nativeAssertionsUnchanged": true,
+  "recordingsModified": false,
+  "attempts": [
+    {
+      "method": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread",
+      "composition": "e95c4d6ba363d6dce1d3f55563186ada652db958",
+      "daemonRevision": "664305939d73e5a146457503081d8232fcca5407",
+      "runDirectory": "live-u1iltzom",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "xmlSha256": "a560861c3b1ba29503575d84389d86b72a98dd7aed2c9f4ea842164e52b63db2"
+    },
+    {
+      "method": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect",
+      "composition": "e95c4d6ba363d6dce1d3f55563186ada652db958",
+      "daemonRevision": "daadf3c6798e88a418b68542e902daf47b934409",
+      "runDirectory": "live-5b2ze976",
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "xmlSha256": "a72d0a3dec84c2f192749959c7e0b172141ae762c8b167766c369d0dd3412587"
+    },
+    {
+      "method": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect",
+      "composition": "4a06c43f8c1987244c64f0fe5c2a36819515046e",
+      "daemonRevision": "daadf3c6798e88a418b68542e902daf47b934409",
+      "runDirectory": "live-m3w01dss",
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "xmlSha256": "c7d81df47d4a6e264305086ef803d092414e289d32c1e2fb8707734d20f8410d"
+    }
+  ],
+  "completionAfterWake": {
+    "certifiedCatchUp": "11:33:44.341",
+    "posted": "11:33:44.377",
+    "posts": 1,
+    "duplicateDecisions": 4,
+    "liveCompletionRecoveryRequests": 0
+  },
+  "promptDiagnostic": {
+    "clearWithProvenance": "11:57:43.483",
+    "freshModalWithoutProvenance": "11:57:43.494",
+    "admissionDecision": "session_live code=missing",
+    "promptPosts": 0,
+    "blocker": "https://github.com/pyrycode/pyrycode/issues/3636"
+  },
+  "acceptance": "Pending Core #3636 and a passing focused prompt rerun; completion native acceptance passed."
+}
