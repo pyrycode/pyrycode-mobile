@@ -740,4 +740,16 @@ class OwnedReplyObservationTest {
         target.sessionReceived(phone, response)
         assertNotNull(target.admitted(held, repository))
     }
+    @Test fun legacyHistoryMayResolveItsPlaceholderToTheCapturedSessionOnly() {
+        val target = OwnedReplyObservation("host", evidence(ThreadEvidenceKind.Legacy, emptyList()), knownSession = "session")
+        target.sending(pump, frame("send_message", "message_id" to "sent"))
+        target.sent(pump, true)
+        producer().forEach { target.received(pump, it) }
+        val initial = evidence(ThreadEvidenceKind.Legacy, rows().map { it.copy(sessionId = "") })
+        val captured = checkNotNull(target.admitted(initial, repository))
+        assertNotNull(evidence(ThreadEvidenceKind.Legacy, rows()).retainedReply(captured, "host"))
+        val wrongSession = evidence(ThreadEvidenceKind.Legacy, rows().map { it.copy(sessionId = "other") })
+        assertNull(wrongSession.retainedReply(captured, "host"))
+    }
+
 }

@@ -210,7 +210,7 @@ internal class OwnedReplyObservation(
     }
 
     @Synchronized fun producerCompleted(): Boolean {
-        if (failed || closed || !accepted) return false
+        if (failed || closed || !accepted || !pumpCurrent()) return false
         if (producerStore != null) return authoritativeReply() != null
         return echo != null &&
             turn != null &&

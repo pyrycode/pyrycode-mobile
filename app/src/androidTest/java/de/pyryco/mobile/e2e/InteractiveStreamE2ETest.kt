@@ -8462,8 +8462,13 @@ class InteractiveStreamE2ETest {
         awaitChannelList()
     }
 
-    private fun currentThread(serverId: String, conversationId: String, accept: (ThreadEvidence) -> Boolean): ThreadEvidence = runBlocking {
-        val repositories = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)).coordinator.currentRepository
+    private fun currentThread(
+        serverId: String,
+        conversationId: String,
+        accept: (ThreadEvidence) -> Boolean,
+    ): ThreadEvidence = runBlocking {
+        val connection = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId))
+        val repositories = connection.coordinator.currentRepository
         withTimeout(THREAD_TIMEOUT_MS) {
             repositories.firstOnLive({ harnessThreadEvidence(it).observe(conversationId) }) { it.admitted && accept(it) }
         }
@@ -8477,7 +8482,8 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasTestTag("assistant-reply:${record.message.id}"), useUnmergedTree = true).assertCountEquals(1)
             composeTestRule.onNode(ownedReplyMatcher(record), useUnmergedTree = true).assertIsDisplayed()
         }
-        val repositories = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(reply.host)).coordinator.currentRepository
+        val connection = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(reply.host))
+        val repositories = connection.coordinator.currentRepository
         check(repositories.value === held.owner.connection) { "retained reply source changed during rendering check" }
         val final = currentThread(reply.host, reply.owner.conversation) { true }
         check(final.owner.connection === held.owner.connection && final.retainedReply(reply, reply.host) != null) {
@@ -8505,7 +8511,9 @@ class InteractiveStreamE2ETest {
     private fun cacheRetains(reply: CompletedReplyObservation): Boolean {
         val rows = cachedRecords(reply).filter { it.message.role == Role.Assistant && it.turn == reply.turn && it.agentId == null }
         return rows.size == reply.records.size && rows.zip(reply.records).all { (row, held) ->
-            row.message.id == held.message.id && row.session == held.session && row.fullText == held.fullText && !row.message.isStreaming
+            row.message.id == held.message.id &&
+                (row.session == held.session || held.session.isNullOrEmpty() && row.session == reply.session) &&
+                row.fullText == held.fullText && !row.message.isStreaming
         }
     }
 
@@ -8639,7 +8647,8 @@ class InteractiveStreamE2ETest {
         peer: SecondClientPeer,
         serverId: String,
         conversationId: String,
-    ): CompletedReplyObservation = awaitOwnedPhoneReply(serverId, conversationId, { peer.recorded(conversationId) }) { sendFromPhone(PING_PROMPT) }
+    ): CompletedReplyObservation =
+        awaitOwnedPhoneReply(serverId, conversationId, { peer.recorded(conversationId) }) { sendFromPhone(PING_PROMPT) }
 
     private fun awaitOwnedPhoneReply(
         serverId: String,

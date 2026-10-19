@@ -77,8 +77,9 @@ internal fun ThreadEvidence.retainedReply(
         return null
     }
     val family =
-        (settledReply(owner, captured.records.first().session ?: return null, captured.turn) ?: return null)
-            .filter { it.message.content.isNotBlank() }
+        (settledTurnReply(owner, captured.turn) ?: return null).filter { it.message.content.isNotBlank() }
+    val originalSession = captured.records.first().session ?: return null
+    if (family.any { it.session != originalSession && (originalSession.isNotEmpty() || it.session != captured.session) }) return null
 
     fun key(record: ThreadEvidenceRecord): Any = record.fact?.id ?: record.message.ordinaryId
     if (family.size != captured.records.size ||
