@@ -163,7 +163,8 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {
-            it.maxHeapSize = "2g"
+            // The full Robolectric worker exhausted 2 GiB independently of the Gradle JVM (#2272).
+            it.maxHeapSize = "4g"
             // JUnit 4 tests run on the JUnit Platform's vintage engine, which maps a @Category to a tag, so that
             // TestTimeoutWatchdog sees every test start and finish.
             it.useJUnitPlatform {

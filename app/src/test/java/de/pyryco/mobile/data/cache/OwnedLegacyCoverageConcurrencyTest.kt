@@ -16,18 +16,22 @@ import de.pyryco.mobile.data.repository.UnsignedHistorySpan
 import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.data.repository.historyRowProofs
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -134,9 +138,21 @@ class OwnedLegacyCoverageConcurrencyTest {
         runTest {
             val fail = AtomicBoolean()
             val failedAttempts = AtomicInteger()
+            val historyCommit = CompletableDeferred<Unit>()
+            val finishCommit = CompletableDeferred<Unit>()
+            val writerClock = TestCoroutineScheduler()
             val cache =
                 open {
                     if (fail.get()) {
+                        val origin = currentCoroutineContext()[CoroutineName]?.name
+                        println(
+                            "controlled_commit origin=$origin virtualTime=${testScheduler.currentTime} writerTime=${writerClock.currentTime} heap=${Runtime.getRuntime().maxMemory()}",
+                        )
+                        assertEquals("only the explicit save may reach the failing transaction", "history", origin)
+                        if (origin == "history") {
+                            historyCommit.complete(Unit)
+                            finishCommit.await()
+                        }
                         failedAttempts.incrementAndGet()
                         throw IOException("controlled")
                     }
@@ -157,12 +173,17 @@ class OwnedLegacyCoverageConcurrencyTest {
                     }
                 }
             val source = Source()
-            val worker = UnconfinedTestDispatcher(testScheduler)
+            // Real Room suspensions must not let runTest auto-advance the unrelated 100 ms writer.
+            val worker = UnconfinedTestDispatcher(writerClock)
             val repository = CachingConversationRepository(source, intercepted, "Host", processingDispatcher = worker)
             val restored = CompletableDeferred<Unit>()
             val accepted = CompletableDeferred<Unit>()
             source.afterEmission = { if (it.rows == listOf(row(1))) accepted.complete(Unit) }
-            val reader = backgroundScope.launch(worker) { repository.observeThreadSnapshot("c").collect { restored.complete(Unit) } }
+            val reader =
+                backgroundScope.launch(worker + writerClock + CoroutineName("writer")) {
+                    repository.observeThreadSnapshot("c").collect { restored.complete(Unit) }
+                }
+            var saving: Deferred<Unit>? = null
             try {
                 restored.await()
                 source.snapshots.value = ThreadSnapshot(listOf(row(1)))
@@ -173,20 +194,38 @@ class OwnedLegacyCoverageConcurrencyTest {
                 accepted.await() // Source emission returns after the repository's writer accepts this exact snapshot.
                 assertEquals(setOf(row(1).legacyRowKey()), pendingKeys(repository))
                 fail.set(true)
-                repository.writeHistoryPosition("c", position(listOf(row(1))))
+                saving =
+                    async(
+                        worker + writerClock + CoroutineName("history"),
+                    ) { repository.writeHistoryPosition("c", position(listOf(row(1)))) }
+                historyCommit.await()
+                advanceTimeBy(101)
+                runCurrent()
+                finishCommit.complete(Unit)
+                saving.await()
+                assertEquals("the main clock must not release the scheduled writer", 0L, writerClock.currentTime)
                 assertEquals(1, failedAttempts.get())
                 assertEquals("row failure must retain the accepted intent", setOf(row(1).legacyRowKey()), pendingKeys(repository))
                 assertTrue(cache.readThread("Host", "c").isEmpty())
                 fail.set(false)
                 source.capture = ThreadSnapshot(emptyList()) // Retry must use the retained intent, not a resupplied live row.
-                repository.writeHistoryPosition("c", position(listOf(row(1))))
+                withContext(
+                    worker + writerClock + CoroutineName("retry"),
+                ) { repository.writeHistoryPosition("c", position(listOf(row(1)))) }
                 assertTrue(pendingKeys(repository).isEmpty())
+                writerClock.advanceTimeBy(101)
+                writerClock.runCurrent()
+                assertEquals("scheduled draining must not add a failed attempt", 1, failedAttempts.get())
                 reader.cancelAndJoin()
                 assertEquals(listOf(row(1)), open().readThread("Host", "c"))
             } finally {
                 fail.set(false)
                 finishHistory.complete(Unit)
-                withContext(NonCancellable) { reader.cancelAndJoin() }
+                finishCommit.complete(Unit)
+                withContext(NonCancellable) {
+                    saving?.await()
+                    reader.cancelAndJoin()
+                }
             }
         }
 

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-19T08:32:25.345Z" hostname="723893f7154c" time="4.027">
+  <properties/>
+  <testcase name="intentInvariant_rowFailureKeepsRetryableWork" classname="de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest" time="3.51"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
