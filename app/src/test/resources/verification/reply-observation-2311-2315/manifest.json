@@ -1,0 +1,106 @@
+{
+  "code_candidate": "9140d7d0beb18507b5361b99468789388f9e3ee6",
+  "base": "510d8173a2c4ccb1ca8d934c532fffad0c5d28ed",
+  "source_sha256": {
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/DeterministicInteractiveStreamE2ETest.kt": "75179c64fdf5e97ad31cca7991d7a6b81071502eac760ca654b607244d7063cc",
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/DurableGapProof.kt": "9ca9d04d85cfe630bba17617b9128d270b906f73ab94e728024e58a50b529de2",
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/E2eTestApplication.kt": "f45c70f063b5f5f27c3e3b4fd7774d3ef82a3b8f6f9bc209b6a07e9ba367fe33",
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt": "688a6e23620e544092dacf3033badda16f59b72eae0f62111412fa425fff8257",
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/SecondClientPeer.kt": "94e4d33299daf86993620d5482386a1c52e2e93b6d5379d8cc4c92455c88f929",
+    "app/src/androidTest/java/de/pyryco/mobile/recording/RecordedSuiteNative.kt": "84a0e58351f26218dc54ce8dce8b815cead84bd8f63bd6db74d29ca0b37b864e",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/MarkdownReplyRequirements.kt": "96e3a23fe1cafb46403f19ec6d53005be536046f69534de86dd58fd8b473cd03",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/OwnedReplyObservation.kt": "6ab1035064526dd4b5364b0cf8ddf2e3c8677483e80a92c06b4e4f1c435698e4",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/PingReplyDiagnosis.kt": "60d3ac2152cbe5f201f65b0bb5fd9777b38376f1436aa5b52bbbda304858e1f9",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/RetainedReplyEvidence.kt": "b638b4a73dfdee60920e56da70dfbeb4c9e290fce145f50bbd8e9b9c0d4d1fb9",
+    "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/PingReplyAssertions.kt": "71137abc55c63235f98f764e4c0524c23cea8b3e7b1120347b911a80ccc06df9",
+    "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/PingReplyTest.kt": "5e9cce9953833254008b7980cb3868a1eda4a49b754c04cb6c4dfa596f2f81f2",
+    "app/src/test/java/de/pyryco/mobile/e2e/MarkdownReplyRequirementsTest.kt": "b4589afc16a4ecd2aa72782285b3e7d25d32a0d3b0d9b168c3a89ffd9f034a1d",
+    "app/src/test/java/de/pyryco/mobile/e2e/OwnedReplyObservationTest.kt": "4d77611783ea63cfdc7c30ecb4f1e551e74ea36304932045b55b1223ac14a122",
+    "docs/specs/architecture/2311-owned-completed-reply.md": "6a19b5a7cd7963601a7d5a203bd7b74518dcca7a95854fdb382439e0d8a3975b",
+    "docs/specs/architecture/2312-2315-reply-observation-migration.md": "f2d729b6b6910ab756d351f9e22fc9825402aeef3fdf982dcf744b850db8179b"
+  },
+  "raw_xml_sha256": {
+    "controlled-candidate--TEST-de.pyryco.mobile.e2e.MarkdownReplyRequirementsTest.xml.gz": "c1e47bf37cf60d91a6357b4fd601cc2f35914333c4e7bbf6e6eebe37518e0468",
+    "controlled-candidate--TEST-de.pyryco.mobile.e2e.OwnedReplyObservationTest.xml.gz": "79bcc933657510002e37ef95700ad8a7d3ac9d85dc326e7ec727c6070bcd1714",
+    "controlled-candidate--TEST-de.pyryco.mobile.e2e.SettingsReadProbeTest.xml.gz": "49d87ab9d0efdcb3a590534a58f2a9aa1dd59f504eb1ecf813a6eb232136c3d9",
+    "controlled-candidate--TEST-de.pyryco.mobile.ui.conversations.thread.PingReplyTest.xml.gz": "66be781818eb6e55d9dbb947e20160311887c8f5d848daddbee69f14221ddeb4",
+    "controlled-final--TEST-de.pyryco.mobile.e2e.MarkdownReplyRequirementsTest.xml.gz": "51d57ebfbbc35cbb22493de37066d71eaa9a4b7c3dca97eebcc23345d3d0a5dc",
+    "controlled-final--TEST-de.pyryco.mobile.e2e.OwnedReplyObservationTest.xml.gz": "b4cf39b4847c88ebab84a5ab71f34ab49a317a0a98bae2eb36e22135d876b3c0",
+    "controlled-final--TEST-de.pyryco.mobile.e2e.SettingsReadProbeTest.xml.gz": "b15f657f260f41489d6d3221061d4aa4feef223208193c40ee836926a2e0b6f1",
+    "controlled-final--TEST-de.pyryco.mobile.ui.conversations.thread.PingReplyTest.xml.gz": "d8de2a24c9d4322cc90304b44ef40d8ae83a1ef4171c43eaa34a317b892e582b",
+    "controlled-first--TEST-de.pyryco.mobile.e2e.MarkdownReplyRequirementsTest.xml.gz": "2ff29339f1c53b03828739fb88a7085fa3de61447ce59a68666a0f691fef2673",
+    "controlled-first--TEST-de.pyryco.mobile.e2e.OwnedReplyObservationTest.xml.gz": "67acbb5cec4ac9bb8f6963cb31390a54b66b7c612afe9ca6cafd8a9e273a8091",
+    "controlled-first--TEST-de.pyryco.mobile.e2e.SettingsReadProbeTest.xml.gz": "01c57bbb11b1641abd6f2a5eaccebc113b7973e63fdcc953ed0fb4c748cd4d19",
+    "controlled-first--TEST-de.pyryco.mobile.ui.conversations.thread.PingReplyTest.xml.gz": "3280c2d4871b685c9002abc6b87ab152b3075318952a5214ccb539a07858daf8",
+    "live-sehcmt_6--0-TEST-dev33_google_atd_x86_64_Pixel_2(AVD) - 13-_app-.xml.gz": "5b5de6f9173f61295187fdb2d59b0ee8cacdf1cf72a06e763647e04fe6defbeb",
+    "live-sehcmt_6--dispatcher.xml.gz": "6eb0a63588e9ac398ee2d93e1a9c28cff6a7e8cb0a02a0bb00956601ebbd9550",
+    "scripted-5u8xp2cp--0-TEST-pixel2Api33Atd-_app-.xml.gz": "7be08dbea87997a040974aa79a4f1ba7fafe6e41b18b23eefcf3fd8e52b8a893",
+    "scripted-5u8xp2cp--dispatcher.xml.gz": "04644b7af3832ffff912d86f59991211acad30c76151a21d7ab17acf7e18e2b8",
+    "scripted-e5i5scd2--0-TEST-pixel2Api33Atd-_app-.xml.gz": "34c231b86e4ab386fd525dfd32bfd9b6910ffe05af295d0e3257ab663e7f74be",
+    "scripted-e5i5scd2--dispatcher.xml.gz": "9c0868ac8b2fae783a322eb4974464c4fddd85dba7cde2aa7cde3ae7b0f9aab4",
+    "scripted-gddip2d5--0-TEST-pixel2Api33Atd-_app-.xml.gz": "bf2edc5b707b971fd880134ea10946d70d412d62e941f45eaf478f6f2fada5c5",
+    "scripted-gddip2d5--dispatcher.xml.gz": "39f58d0164735c4845b9db6a0ae0ff76046757c0638282ff6b5fe2a5097085a4",
+    "scripted-iptwzbsf--0-TEST-pixel2Api33Atd-_app-.xml.gz": "09e9f98e0827d4dc45d535e1eb759f35dceeecb7f596ac2601925ff2506c634a",
+    "scripted-iptwzbsf--dispatcher.xml.gz": "95eae3dff491013f0cbae86c457625d6ab9c2ea346c8d12fd1c42651db625242",
+    "scripted-izo8u_ng--0-TEST-pixel2Api33Atd-_app-.xml.gz": "b4cbf1e7c8758f891ee56eff6ad570319fa6e877343a94d886899e6b23694cd2",
+    "scripted-izo8u_ng--dispatcher.xml.gz": "384aad4c62ec6bb218c89e258ff3f061798b3de1c66b0f5af42bc56d6f350a5a",
+    "scripted-k22fjsqe--0-TEST-pixel2Api33Atd-_app-.xml.gz": "cb88e6fbe6c623af303ce890ced7719d70ba85c62289d4787ed790a7e46b1dec",
+    "scripted-k22fjsqe--dispatcher.xml.gz": "1eff892e17c86ef6cb903d5f1f721289e230fe2bf5489b5c579608a55fdcd668",
+    "scripted-ve6zykty--0-TEST-pixel2Api33Atd-_app-.xml.gz": "6a433f3d3e0602c144389224c0846ffdec8ca9bfeb470345184d4e3395ac2c41",
+    "scripted-ve6zykty--dispatcher.xml.gz": "038d34fa3fbe454935dc0e1c617f4a6b1c964a4ca8728aedaa04251883fe70f7",
+    "scripted-wiwh0wtq--0-TEST-pixel2Api33Atd-_app-.xml.gz": "e3f1588e4f4847930d36521c8a4608d143b4b5e75279d7c56892d73269d9c66a",
+    "scripted-wiwh0wtq--dispatcher.xml.gz": "6ea69e991e302279b0959ccb95cffc1665523c4b8f6c7e1ad4cfa09222fdf37c",
+    "table-green.xml.gz": "6006ae8466489d1573ff1f3deefede8b3c9b5ccb010c36988fea527bb71c3cdb",
+    "table-red.xml.gz": "632f487b798b9085fc28b02a1feccf61ed4500b7113a92c8c5587c3c5d6ab431",
+    "ui-_9j6rdgy--0-TEST-pixel2Api33Atd_0-_app-.xml.gz": "79c6f79204efc5990b4fa4d6f1746b0f474460cd69cc40a60ea87f9102e99981",
+    "ui-_9j6rdgy--dispatcher.xml.gz": "067caf17efb51b1434578e0c4df4190f88e4f8253453a63545bf3cd5208d9da9",
+    "ui-ohz03zjx--0-TEST-pixel2Api33Atd_0-_app-.xml.gz": "7092f174d107050e4e12f5366a5a3d905190023f1a80002c36738f32a90bfb40",
+    "ui-ohz03zjx--dispatcher.xml.gz": "70633d07eb0607e3fcafa083deda2871c3931b70e331313e02adc108c0f40364",
+    "ui-sflwpesy--0-TEST-pixel2Api33Atd_0-_app-.xml.gz": "661c00ffb223a710bd9e603878ebaa2bd5f47f0e4749f93ae646172ffd9fa9a7",
+    "ui-sflwpesy--dispatcher.xml.gz": "c49dc767f4571674e30f7572133eeb09ef4e6afc9fbbaa00658f49004b654ba6",
+    "ui-tcuru8yw--0-TEST-pixel2Api33Atd_0-_app-.xml.gz": "aefa56d1f214a8461b8fa147f24198a0481bcb85384181b6dfae49f2f0b126d2",
+    "ui-tcuru8yw--dispatcher.xml.gz": "628dc9adf914cd0530c82495e7f98733147f5f6125a3b25a6236cb192f41fe2d"
+  },
+  "private_raw_archive_sha256": "fa39dd41e7e1fd217d560e4f1d3e78b0db3ecd4f8a13fe0754065e9a4cf70b08",
+  "private_raw_archives_sha256": {
+    "all-receipts.tar.gz": "feabc7c31b4fe76cd06e6658883ce58e3af5d05c05c53af5bf3ad8cb35df4cfe",
+    "controlled-candidate.tar.gz": "88e6f9c2619379e591ea041e18ba5066b52330744b8f27e218bd24ecf28372c9",
+    "controlled-final.tar.gz": "7fe895cdb3ef7365de25276a5434500d185308debf41c116e33ee7efaae4c572",
+    "initial-receipts.tar.gz": "fa39dd41e7e1fd217d560e4f1d3e78b0db3ecd4f8a13fe0754065e9a4cf70b08",
+    "live-scripted-receipts.tar.gz": "6170d467f0915c6377c7bb092739cbf68d2bf8238556a79b2a54fd038a637c53"
+  },
+  "outcomes": {
+    "controlled": {
+      "executed": 60,
+      "passed": 60,
+      "failed": 0,
+      "skipped": 0
+    },
+    "live": {
+      "executed": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    "required_recorded_latest": {
+      "executed": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    "additional_recorded": {
+      "executed": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    "scripted_distinct": {
+      "executed": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    "full_suite_run": false,
+    "dispatcher_verifier_pass_claimed": false
+  }
+}
