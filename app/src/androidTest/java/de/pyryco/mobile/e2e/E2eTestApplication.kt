@@ -187,7 +187,7 @@ class E2eTestApplication : Application() {
         repository: ConversationRepository,
         conversation: String,
     ): ThreadEvidenceOwner? {
-        val source = repository.runConfigurationReadings.currentConnection ?: return null
+        val source = repository.runConfigurationReadings?.currentConnection ?: return null
         val registry = GlobalContext.get().get<RelayConnectionRegistry>()
         val host =
             registry.hostConnections.value.singleOrNull {
