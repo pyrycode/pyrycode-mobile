@@ -78,7 +78,7 @@ A heading's own children are just the marker and one content node — `# Heading
 | `EMPH` | `withStyle(SpanStyle(fontStyle = Italic)) { recurse children }` |
 | `STRONG` | `withStyle(SpanStyle(fontWeight = Bold)) { recurse children }` |
 | `GFMElementTypes.STRIKETHROUGH` | `withStyle(SpanStyle(textDecoration = LineThrough, color = onSurfaceVariant)) { recurse children, filtering out the two TILDE tokens }` — only the `~~double~~` form arrives as this node; see [Strikethrough](#strikethrough) for the `~single~` form, which does not |
-| `CODE_SPAN` | `withStyle(SpanStyle(fontFamily = Monospace, background = surfaceContainer)) { append(text.trim('\`')) }` |
+| `CODE_SPAN` | Keep the displayed text with backticks removed inside monospace / `surfaceContainer` styling. An explicitly closed span containing one admitted external target adds the shared authored-link annotation over all displayed content; other code stays inert. |
 | `INLINE_LINK` | Check admission before `withLink`: admitted targets get one `LinkAnnotation.Url` over the label with the unchanged target and primary/underline styling; rejected targets use `append(linkText)` without link styling or annotation. |
 | `EOL` | `append(" ")` — collapses CommonMark soft-breaks to a single space |
 | _leaf token, no children_ | `append(node.getTextInNode(source).toString())` — this is the arm `GFM_AUTOLINK` hits (a childless leaf), so a bare URL renders as its own text and never as a link |
@@ -91,8 +91,31 @@ with `isSafeLinkScheme(target)` as the fallback for a plain `UriHandler`, includ
 the non-routing `inlineText` conversion. Finished replies, streaming replies and reader
 content share this arm. Rejected labels inherit surrounding text treatment. A streaming
 destination closed only by synthetic punctuation remains plain; completing a rejected
-destination and settling the same message never adds a link. Bare prose and code spans
-retain their existing literal behavior.
+destination and settling the same message never adds a link. Bare prose retains its
+literal behavior.
+
+Since #2270, completed code spans use a separate `code.trim()` candidate: it must
+be nonempty, contain no `isWhitespace()` characters and pass unchanged
+`isSafeLinkScheme`. This admits http, https, mailto and allowed Obsidian open links.
+It deliberately bypasses `MarkdownUriHandler.accepts`: workspace opt-in must not
+make relative markdown paths inside code tappable. Ordinary code, URLs mixed with
+words, two whitespace-separated URLs, internal tabs/newlines, unsafe schemes and
+refused Obsidian targets keep their previous code rendering.
+
+`appendLinkText` is shared with authored links. It adds exactly one
+`LinkAnnotation.Url` across the whole displayed code string, including edge
+whitespace, while its target is the trimmed candidate verbatim, preserving case
+and escapes. Primary colour and underline combine with the outer monospace font
+and code background. Its listener sends the exact target through `UriHandler` and
+`routeMarkdownLink`, retaining admission revalidation and existing Obsidian launch
+failure handling. There is no decoding, normalization or new opener here.
+
+The synthetic-overlap guard precedes inline dispatch. `appendSyntheticallyClosed`
+therefore keeps URL-only code plain and inert until the real closing backticks
+arrive; probing must never supply eligibility. The caret is appended outside the
+annotation, and completed-block reuse and settlement retain the same link. Bare
+prose URLs and URL-only fenced blocks remain unchanged. See
+[streaming and regression coverage](markdown-text.md#testing).
 
 **Every sibling-list walk goes through `appendInlineChildren(children, source, uriHandler, colors)`, not a per-child loop.** `appendInline`'s own `else` arm, its `EMPH` / `STRONG` / `STRIKETHROUGH` arms, and `HeadingBlock` all pass their (already-filtered) child list through it. The seam exists for one reason: pairing bare `~single~` tildes needs to see siblings together, which a node walked one at a time cannot do — see [Strikethrough](#strikethrough).
 
@@ -255,7 +278,9 @@ Admitted explicit links in finished and streaming replies have the existing
 primary colour/underline and exactly one URL annotation carrying the unchanged
 target. Activation rechecks admission through `routeMarkdownLink`. Rejected links
 retain only their visible labels, with no link styling, annotation or action.
-Bare prose URLs and code spans keep their literal behavior.
+Completed URL-only code spans use the same external check and activation route,
+with the stricter whole-content rule described in [Inline dispatch](#inline-dispatch).
+Bare prose URLs and fenced code keep their literal behavior.
 
 `AllowlistedLinkProvider.renderLink` and `AutolinkProvider` in
 `MarkdownConversions.kt` share external admission. For Obsidian, inline and
