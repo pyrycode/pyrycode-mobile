@@ -12,7 +12,7 @@ internal class AuthoritativeCompletion(
     private val epoch: String,
     private val generation: Long,
     val item: ThreadItemDto,
-    val certifiedVersion: Long?,
+    val certifiedVersion: Long,
     private val sourceFrom: ULong?,
 ) {
     val key: String = "thread:${epoch.length}:$epoch:${item.id}"
@@ -25,8 +25,10 @@ internal class AuthoritativeCompletion(
 
     /** Full authoritative items own their text; only a certified range proves which is the completed reply's last segment. */
     fun preview(snapshot: AuthoritativeThreadSnapshot): String? {
-        val certified = certifiedVersion ?: return null
-        if (!isCurrent(snapshot) || snapshot.repairNeeded || snapshot.checkpoint < snapshot.completedVersion ||
+        val certified = certifiedVersion
+        if (!isCurrent(snapshot) ||
+            snapshot.repairNeeded ||
+            snapshot.checkpoint < snapshot.completedVersion ||
             certified < snapshot.completedVersion
         ) {
             return null
@@ -41,7 +43,8 @@ internal class AuthoritativeCompletion(
             val order = fact.order?.toULong() ?: return false
             if (fact.rev > certified) return false
             // Paging coverage stays fixed when a nonzero catch-up certifies newly created tail items.
-            return order >= coverage.lowerOrder && order < coverage.upperOrder ||
+            return order >= coverage.lowerOrder &&
+                order < coverage.upperOrder ||
                 sourceFrom?.let { fact.id.toULong() > it && order > it && order <= certified.toULong() } == true
         }
         if (!covered(completion)) return null

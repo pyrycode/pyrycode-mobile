@@ -200,11 +200,12 @@ class RemoteConversationRepository internal constructor(
             onRepair = { authoritativeQueries.repair(it) },
             onApplied = { conversation, id, generation ->
                 val snapshot = authoritativeThreads.current(authoritativeHostId, conversation)
-                if (authoritativeLiveEnabled() && snapshot.generation == generation &&
+                if (authoritativeLiveEnabled() &&
+                    snapshot.generation == generation &&
                     snapshot.items.any { it.id == id && it.isCompletion() }
                 ) {
-                    publishAuthoritativeCompletions(conversation, generation, id)
                     authoritativeQueries.refreshAttention(conversation)
+                    RelayLog.d { "event=attention_completion source=live outcome=recovery_requested" }
                 }
             },
         )
@@ -332,15 +333,14 @@ class RemoteConversationRepository internal constructor(
     private fun publishAuthoritativeCompletions(
         conversation: String,
         generation: Long,
-        liveItem: Long? = null,
-        certificate: ThreadQueryReply.Success? = null,
+        certificate: ThreadQueryReply.Success,
     ): Boolean {
         if (!authoritativeLiveEnabled()) return false
         val snapshot = authoritativeThreads.current(authoritativeHostId, conversation)
         val epoch = snapshot.epoch ?: return false
         if (snapshot.generation != generation || snapshot.resetNeeded || snapshot.repairNeeded) return false
-        if (liveItem == null && snapshot.checkpoint < snapshot.completedVersion) return false
-        val items = snapshot.items.filter { it.isCompletion() && (liveItem == null || it.id == liveItem) }
+        if (snapshot.checkpoint < snapshot.completedVersion) return false
+        val items = snapshot.items.filter { it.isCompletion() }
         if (items.isEmpty()) return false
         completionFacts.update { held ->
             val recovered =
@@ -352,8 +352,8 @@ class RemoteConversationRepository internal constructor(
                         epoch,
                         generation,
                         it,
-                        certificate?.checkpoint?.version?.toLong(),
-                        (certificate?.coverage as? ThreadQueryReply.Coverage.CatchUp)?.fromVersion,
+                        certificate.checkpoint.version.toLong(),
+                        (certificate.coverage as? ThreadQueryReply.Coverage.CatchUp)?.fromVersion,
                     )
                 }
             (
@@ -362,7 +362,7 @@ class RemoteConversationRepository internal constructor(
                 } + recovered
             ).takeLast(512)
         }
-        RelayLog.d { "event=attention_completion source=${if (liveItem == null) "catch_up" else "live"} outcome=admitted" }
+        RelayLog.d { "event=attention_completion source=catch_up outcome=admitted" }
         return true
     }
 

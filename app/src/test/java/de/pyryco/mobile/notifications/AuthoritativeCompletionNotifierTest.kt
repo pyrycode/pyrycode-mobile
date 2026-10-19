@@ -334,6 +334,34 @@ class AuthoritativeCompletionNotifierTest {
         }
 
     @Test
+    fun partialCatchUpCannotBecomeCompletionViaOlderLiveState() =
+        fixture {
+            val baseline = open()
+            host.pump.batch(baseline, 1, listOf(item(1, "user_message")))
+            host.pump.finish(baseline, 1)
+            runCurrent()
+            val pending = open()
+            host.pump.batch(pending, 5, listOf(item(3, "turn_end", rev = 5)))
+            runCurrent()
+            val olderRunning =
+                JsonObject(
+                    item(3, "turn_end") + mapOf("status" to JsonPrimitive("running"), "active" to JsonPrimitive(true)),
+                )
+            host.pump.live("same", olderRunning, 6)
+            runCurrent()
+            assertTrue("uncertified held completion must not spend the persistent ledger", !File(folder.root, "alerts").exists())
+            assertTrue(shadowOf(manager).allNotifications.isEmpty())
+            host.pump.finish(pending, 5)
+            runCurrent()
+            val fresh = host.pump.query()
+            assertTrue(fresh.id != pending.id)
+            host.pump.batch(fresh, 6, listOf(item(2, "assistant_message"), item(3, "turn_end", rev = 5)))
+            host.pump.finish(fresh, 6)
+            runCurrent()
+            assertEquals(1, shadowOf(manager).allNotifications.size)
+        }
+
+    @Test
     fun resetReusingEpochRejectsRetiredQueryAndAcceptsFreshCompletion() =
         fixture {
             open()
@@ -500,7 +528,7 @@ class AuthoritativeCompletionNotifierTest {
         ) = pump.push(
             "conversations",
             MobileJson.parseToJsonElement(
-                    """{"conversations":[{"id":"same","name":"test","is_promoted":true,"cwd":"/test","last_message_ts":"$TS","last_used_at":"$TS","current_session_id":"s","read_up_to":$read,"last_shown_version":$shown}]}""",
+                """{"conversations":[{"id":"same","name":"test","is_promoted":true,"cwd":"/test","last_message_ts":"$TS","last_used_at":"$TS","current_session_id":"s","read_up_to":$read,"last_shown_version":$shown}]}""",
             ) as JsonObject,
         )
     }
