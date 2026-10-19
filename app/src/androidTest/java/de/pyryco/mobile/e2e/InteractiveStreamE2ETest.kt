@@ -608,7 +608,10 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
         val conversationId = newHostConversationId(serverId, before)
-        awaitOwnedPhoneReply(serverId, conversationId) { sendFromPhone(PING_PROMPT) }
+        awaitOwnedPhoneReply(serverId, conversationId) {
+            composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        }
 
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -668,7 +671,10 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
         val conversationId = newHostConversationId(serverId, before)
-        awaitOwnedPhoneReply(serverId, conversationId) { sendFromPhone(PING_PROMPT) }
+        awaitOwnedPhoneReply(serverId, conversationId) {
+            composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        }
 
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -703,7 +709,10 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
         val conversationId = newHostConversationId(serverId, before)
-        awaitOwnedPhoneReply(serverId, conversationId) { sendFromPhone(PING_PROMPT) }
+        awaitOwnedPhoneReply(serverId, conversationId) {
+            composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        }
 
         val reported = CONTEXT_REPORTED
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -1205,7 +1214,10 @@ class InteractiveStreamE2ETest {
         // 5. AC-2: send the constrained ping in the new workspace and assert the streamed reply renders —
         //    proving the created folder is usable as a live session's workspace against a real claude turn.
         val conversationId = newHostConversationId(serverId, before)
-        awaitOwnedPhoneReply(serverId, conversationId) { sendFromPhone(PING_PROMPT) }
+        awaitOwnedPhoneReply(serverId, conversationId) {
+            composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        }
 
         // 6. Re-open the thread picker through overflow after the chip unmounts and check Recent.
         openThreadWorkspacePicker()
@@ -1275,7 +1287,10 @@ class InteractiveStreamE2ETest {
         // 4. Prove the session is live (AC-3): send the constrained ping and wait for the streamed reply, so the
         //    session is genuinely exercised and there is above-delimiter content once it clears.
         //    The daemon may run a separate wrap-up turn after the New-session tap.
-        awaitOwnedPhoneReply(serverId, conversationId) { sendFromPhone(PING_PROMPT) }
+        awaitOwnedPhoneReply(serverId, conversationId) {
+            composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        }
 
         runBlocking {
             withTimeout(THREAD_TIMEOUT_MS) { repository.observeContextUsage(conversationId).filterNotNull().first() }
