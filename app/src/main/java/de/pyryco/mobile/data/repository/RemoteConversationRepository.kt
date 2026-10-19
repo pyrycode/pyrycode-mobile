@@ -1018,6 +1018,7 @@ class RemoteConversationRepository internal constructor(
                     // The MCP asks (#1343) register in their own ledger, disjoint by the same one counter.
                     mcpStatusProjection.applyRefusal(id, envelope.payload)
                     backgroundTaskStops.applyRefusal(id, envelope.payload)
+                    contextUsageProjection.forgetRequest(contextRequestOwner, id)
                 }
             TYPE_TURN_STATE, TYPE_ASSISTANT_DELTA, TYPE_TOOL_USE, TYPE_TOOL_RESULT, TYPE_TURN_END -> {
                 // A v2 structured live-session envelope (#385). AC #2: gate on the negotiated
@@ -1038,6 +1039,7 @@ class RemoteConversationRepository internal constructor(
                         // a thread opened mid-turn reads it at once. Only `turn_state` and `turn_end` move it.
                         turnPhaseProjection.apply(event)
                         if (event is LiveSessionEvent.TurnState && event.phase != LiveSessionEvent.TurnState.Phase.Idle) {
+                            contextUsageProjection.onTurnStarted(event.conversationId)
                             sessionErrorProjection.clear(event.conversationId)
                         }
                         // Fold the structured turn into the same thread store ([ThreadProjection]) the live
@@ -1170,7 +1172,9 @@ class RemoteConversationRepository internal constructor(
                 // How full this conversation's context window is, pushed after a turn or answering the phone's own
                 // ask (#945): see [ContextUsageProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    contextUsageProjection.apply(envelope, contextRequestOwner, sourceOwned = authoritativeLiveEnabled())
+                    contextUsageProjection
+                        .apply(envelope, contextRequestOwner, sourceOwned = authoritativeLiveEnabled())
+                        ?.let(::requestContextUsage)
                 }
             }
             TYPE_REPLY_SUGGESTION -> {

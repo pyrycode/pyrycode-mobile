@@ -58,6 +58,7 @@ The projection also holds a per-conversation refresh-enabled bit, cleared with e
 | Reconnect after replacement, then a delayed remembered reply | `reconnect_keepsTheReplacementBoundary` uses two real repositories sharing pairing-scoped `HostReadings` and proves rejection survives connection replacement. |
 | Repeat reset, idle and reconnect | Existing `ThreadViewModelContextUsageAskTest` proves one ask per reset end and open/reconnect requests. |
 | Replacement-session turns with successful or unavailable reset reply | `legacyTurns_refreshBothSurfaces_afterResetReply` and `legacyTurns_refreshBothSurfaces_afterUnavailableResetReply` drive production inbound, newer settings, untagged pushes, coalesced verification asks and both surfaces; delayed old pushes never render. The repository regression preserves the original untagged fixture. |
+| Remembered reset reply is rejected; a late error follows a new ask | `rejectedRememberedResetReply_allowsTheNextTurnToRefresh` proves a new turn can refresh after rejecting predecessor memory and that an older request's error cannot release the new ask. |
 | Recollection/configuration/process restart | Recollection and configuration changes keep the pairing-owned cutoff. Process restart discards both in-memory host readings and cutoffs; this change admits against transitions observed by the current host projection, without adding persistence. Existing settings identity reconstruction remains. |
 
 ## Error handling

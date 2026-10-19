@@ -247,6 +247,36 @@ class ThreadViewModelContextFreshnessTest {
         }
 
     @Test
+    fun rejectedRememberedResetReply_allowsTheNextTurnToRefresh() =
+        runTest {
+            val rig = rig()
+            rig.resetting(true)
+            runCurrent()
+            rig.transition("c1", "s1", "s2", at = LATER)
+            runCurrent()
+            val resetAsk = rig.pump.sent.last { it.type == "request_context_usage" }
+            rig.context("c1", used = 150_000, asOf = TS, replyTo = resetAsk.id)
+            runCurrent()
+            assertNull(rig.repo.observeContextUsage("c1").first())
+
+            rig.pump.push("turn_state", """{"conversation_id":"c1","state":"thinking"}""")
+            rig.pump.push("turn_end", """{"conversation_id":"c1","turn_id":"replacement-turn","stop_reason":"end_turn"}""")
+            rig.context("c1", used = 40_000)
+            runCurrent()
+            val refreshAsk = rig.pump.sent.last { it.type == "request_context_usage" }
+            assertNotEquals("a rejected remembered reply must release the pending ask", resetAsk.id, refreshAsk.id)
+            rig.pump.push("error", """{"code":"context_usage.unavailable","message":"Unavailable","retryable":true}""", resetAsk.id)
+            rig.context("c1", used = 150_000)
+            runCurrent()
+            assertEquals("a late error cannot release another request", refreshAsk.id, rig.pump.sent.last { it.type == "request_context_usage" }.id)
+            assertNull(rig.repo.observeContextUsage("c1").first())
+            rig.context("c1", used = 40_000, replyTo = refreshAsk.id)
+            runCurrent()
+            assertEquals(40_000L, rig.repo.observeContextUsage("c1").first()?.totalTokens)
+            assertEquals(20, rig.vm.state.value.runConfig.contextPercent)
+        }
+
+    @Test
     fun reconnect_keepsTheReplacementBoundary() =
         runTest {
             val readings = HostReadings()
@@ -286,6 +316,8 @@ class ThreadViewModelContextFreshnessTest {
             )
             runCurrent()
             assertNull("a current request cannot authorize old remembered data", reconnectedRepo.observeContextUsage("c1").first())
+            // A decoded terminal reply consumes its ask even when its remembered reading is stale.
+            reconnectedRepo.requestContextUsage("c1")
             reconnectedPump.push(
                 "context_usage",
                 """{"conversation_id":"c1","total_tokens":2000,"max_tokens":200000,"percentage":1}""",

@@ -35,6 +35,13 @@ internal class ContextUsageProjection {
     // Host-held across reconnects. The monitor joins outbound registration with inbound admission.
     private val latestTransitionByConversation = mutableMapOf<String, ThreadItem.SessionBoundary>()
     private val latestRequestByConversation = mutableMapOf<String, Pair<Any, Long>>()
+    private val refreshEnabled = mutableSetOf<String>()
+
+    /** A replacement-session turn enables legacy pushes as signals to verify, never as source proof. */
+    @Synchronized
+    fun onTurnStarted(conversationId: String) {
+        if (conversationId in latestTransitionByConversation) refreshEnabled += conversationId
+    }
 
     /** One pending ask per conversation; the opaque owner prevents id reuse across connections. */
     @Synchronized
@@ -49,6 +56,15 @@ internal class ContextUsageProjection {
     @Synchronized
     fun forgetRequests(owner: Any) {
         latestRequestByConversation.entries.removeAll { it.value.first === owner }
+    }
+
+    /** A terminal error releases only its connection's ask, so a later turn can try a new read. */
+    @Synchronized
+    fun forgetRequest(
+        owner: Any,
+        requestId: Long,
+    ) {
+        latestRequestByConversation.entries.removeAll { it.value.first === owner && it.value.second == requestId }
     }
 
     @Synchronized
@@ -67,13 +83,14 @@ internal class ContextUsageProjection {
      * and is dropped so the single inbound consumer survives, leaving any prior reading standing and never writing a
      * zero one. It folds no thread row, touches no stall and never reaches the session settings' transcript-derived
      * token counts. Drop silently — nothing here logs the payload.
+     * Returns a conversation needing a verified legacy refresh; the repository sends outside this monitor.
      */
     @Synchronized
     fun apply(
         envelope: Envelope,
         requestOwner: Any? = null,
         sourceOwned: Boolean = false,
-    ) {
+    ): String? {
         decodeContextUsage(envelope)?.let { (conversationId, reading) ->
             val boundary = latestTransitionByConversation[conversationId]
             val correlated =
@@ -86,14 +103,25 @@ internal class ContextUsageProjection {
                 // a current producer tag or this connection's post-invalidation request correlation.
                 if (!sourceOwned) {
                     val producer = envelope.sessionProvenance.raw
-                    if (producer != null && producer != JsonPrimitive(boundary.newSessionId)) return
-                    if (producer == null && !correlated) return
+                    if (producer != null && producer != JsonPrimitive(boundary.newSessionId)) return null
+                    if (producer == null && !correlated) {
+                        // Arrival cannot distinguish a current push from a delayed predecessor query.
+                        // After a new turn starts, use either as a signal to query the current binding.
+                        return conversationId.takeIf {
+                            it in refreshEnabled && it !in latestRequestByConversation &&
+                                envelope.inReplyTo == null && reading.asOf == null
+                        }
+                    }
                 }
-                if (reading.asOf?.let { it < boundary.occurredAt } == true) return
+                if (reading.asOf?.let { it < boundary.occurredAt } == true) {
+                    if (correlated) latestRequestByConversation.remove(conversationId)
+                    return null
+                }
             }
             if (correlated) latestRequestByConversation.remove(conversationId)
             readingByConversation.update { it + (conversationId to reading) }
         }
+        return null
     }
 
     /** The conversation's session was replaced, so its reading describes a gone context: drop it. */
@@ -113,6 +141,7 @@ internal class ContextUsageProjection {
     @Synchronized
     fun clear(conversationId: String) {
         latestRequestByConversation.remove(conversationId)
+        refreshEnabled.remove(conversationId)
         readingByConversation.update { it - conversationId }
     }
 
