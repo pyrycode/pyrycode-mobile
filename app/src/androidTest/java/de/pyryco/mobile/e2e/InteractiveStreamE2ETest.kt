@@ -5129,6 +5129,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_unreported))).assertCountEquals(0)
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_empty))).assertCountEquals(0)
             closeBackgroundTasks()
+            RecordedSuiteNative.checkpoint("background-task-running-ui-checked")
 
             // 4. Once this successful task finishes, the count is 0 and the panel shows its
             //    explicit completed outcome, or the later empty roster has removed it.
