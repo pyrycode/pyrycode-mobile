@@ -42,6 +42,7 @@ import org.robolectric.annotation.GraphicsMode
 @RunWith(AndroidJUnit4::class)
 class MarkdownReaderHeadingTest {
     @get:Rule val rule = createComposeRule()
+
     @get:Rule val files = TemporaryFolder()
 
     @Test fun lightAttachmentHeadings() = assertReader(linked = false, dark = false, fontScale = 1f)
@@ -126,23 +127,26 @@ class MarkdownReaderHeadingTest {
         val node = rule.onNodeWithText(text)
         val layout = node.layout()
         val style = layout.layoutInput.style
-        val size = when (level) {
-            1 -> 20
-            2 -> 18
-            3 -> 16
-            else -> 14
-        }
-        val height = when (level) {
-            1 -> 28
-            2 -> 26
-            3 -> 24
-            else -> 20
-        }
-        val tracking = when (level) {
-            1, 2 -> 0f
-            3 -> 0.15f
-            else -> 0.25f
-        }
+        val size =
+            when (level) {
+                1 -> 20
+                2 -> 18
+                3 -> 16
+                else -> 14
+            }
+        val height =
+            when (level) {
+                1 -> 28
+                2 -> 26
+                3 -> 24
+                else -> 20
+            }
+        val tracking =
+            when (level) {
+                1, 2 -> 0f
+                3 -> 0.15f
+                else -> 0.25f
+            }
         assertEquals("H$level family", FontFamily.SansSerif, style.fontFamily)
         assertEquals("H$level size", size.sp, style.fontSize)
         assertEquals("H$level line height", height.sp, style.lineHeight)

@@ -1,0 +1,13 @@
+diff --git a/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt b/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt
+index 39c9f1a9c..8dfefb4a9 100644
+--- a/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt
++++ b/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt
+@@ -163,7 +163,7 @@ internal val MarkdownFlavour = GFMFlavourDescriptor()
+ /** Reader blocks follow the dedicated reader reference; thread blocks retain their interactive chrome. */
+ enum class MarkdownPresentation { Thread, Reader }
+ 
+-private val ReaderLineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Proportional, LineHeightStyle.Trim.None)
++private val ReaderLineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Proportional, LineHeightStyle.Trim.Both)
+ 
+ /** Body presentation; headings and tables keep their own element-specific styles. */
+ data class MarkdownTextStyle(
