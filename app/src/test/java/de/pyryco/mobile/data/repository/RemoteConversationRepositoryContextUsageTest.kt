@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.SessionProvenance
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -251,7 +252,11 @@ class RemoteConversationRepositoryContextUsageTest {
             assertEquals(listOf(null, ContextUsage(150_000, 200_000, 75, asOf = null), null), readings)
             assertTrue(pump.sent.isEmpty())
 
-            pump.push(contextUsage("c1", total = 9_000, max = 200_000, percentage = 4, id = 3L))
+            pump.push(
+                contextUsage("c1", total = 9_000, max = 200_000, percentage = 4, id = 3L).copy(
+                    sessionProvenance = SessionProvenance(kotlinx.serialization.json.JsonPrimitive("s2")),
+                ),
+            )
             runCurrent()
             assertEquals(ContextUsage(9_000, 200_000, 4, asOf = null), readings.last())
         }

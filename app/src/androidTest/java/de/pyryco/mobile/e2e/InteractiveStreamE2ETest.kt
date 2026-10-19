@@ -185,7 +185,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -1302,99 +1301,102 @@ class InteractiveStreamE2ETest {
             .onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG)
             .assertCountEquals(0)
 
-        runBlocking {
-            // Observe before tapping: require invalidation followed by a reply, then check its source
-            // timestamp against the replacement boundary. Arrival alone cannot prove freshness (#1947).
-            // Settings fallback cannot satisfy this wait (#1761).
-            val freshReading =
-                async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
-                    withTimeout(REPLY_TIMEOUT_MS) {
-                        repository
-                            .observeContextUsage(conversationId)
-                            .dropWhile { it != null }
-                            .filterNotNull()
-                            .first()
+        ContextResetProbe.observing(serverId, conversationId, repository) { resetContext ->
+            runBlocking {
+                // Observe invalidation before tapping; the passive pump witness separately requires the
+                // reset request's exact admitted reply, never the first arbitrary non-null push (#1947).
+                val invalidation =
+                    async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
+                        withTimeout(REPLY_TIMEOUT_MS) {
+                            repository
+                                .observeContextUsage(conversationId)
+                                .first { it == null }
+                        }
+                    }
+
+                // 6. Open the real overflow menu and tap Reset session. The durable assertion uses
+                //    SESSION_BOUNDARY_TEST_TAG, independently of the action label.
+                composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).onFirst().performClick()
+
+                // 7. #965: the status area names the wrapping-up phase before any delimiter. The daemon lowers it only
+                //    once its wrap-up turn — a real claude turn writing the handoff note — has ended, so the phase is
+                //    held by that turn, not caught on timing. Restarting spans only the respawn and nothing holds it,
+                //    so it is left to ScriptedResettingTest.
+                val wrappingUp = string(R.string.thread_resetting_wrapping_up)
+                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasContentDescription(wrappingUp)).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule
+                    .onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG)
+                    .assertCountEquals(0)
+
+                // 8. The phase clears: no resetting label of either phase is left in the status area.
+                val resettingLabels =
+                    listOf(
+                        R.string.thread_resetting_wrapping_up,
+                        R.string.thread_resetting_restarting,
+                        R.string.thread_resetting_restarting_written,
+                        R.string.thread_resetting_restarting_skipped,
+                    ).map(::string)
+                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                    resettingLabels.all { label ->
+                        composeTestRule.onAllNodes(hasContentDescription(label)).fetchSemanticsNodes().isEmpty()
                     }
                 }
 
-            // 6. Open the real overflow menu and tap Reset session. The durable assertion uses
-            //    SESSION_BOUNDARY_TEST_TAG, independently of the action label.
-            composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).onFirst().performClick()
+                // 9. Reveal the newest row while waiting: the daemon's wrap-up reply can fill the viewport
+                //    before session_transition appends the delimiter. The delimiter must still be displayed, with no
+                //    explanation line under it (#1578).
+                composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
 
-            // 7. #965: the status area names the wrapping-up phase before any delimiter. The daemon lowers it only
-            //    once its wrap-up turn — a real claude turn writing the handoff note — has ended, so the phase is
-            //    held by that turn, not caught on timing. Restarting spans only the respawn and nothing holds it,
-            //    so it is left to ScriptedResettingTest.
-            val wrappingUp = string(R.string.thread_resetting_wrapping_up)
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasContentDescription(wrappingUp)).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule
-                .onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG)
-                .assertCountEquals(0)
-
-            // 8. The phase clears: no resetting label of either phase is left in the status area.
-            val resettingLabels =
-                listOf(
-                    R.string.thread_resetting_wrapping_up,
-                    R.string.thread_resetting_restarting,
-                    R.string.thread_resetting_restarting_written,
-                    R.string.thread_resetting_restarting_skipped,
-                ).map(::string)
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                resettingLabels.all { label -> composeTestRule.onAllNodes(hasContentDescription(label)).fetchSemanticsNodes().isEmpty() }
-            }
-
-            // 9. Reveal the newest row while waiting: the daemon's wrap-up reply can fill the viewport
-            //    before session_transition appends the delimiter. The delimiter must still be displayed, with no
-            //    explanation line under it (#1578).
-            composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
-
-            val boundary =
-                repository
-                    .observeMessages(conversationId)
-                    .first()
-                    .filterIsInstance<ThreadItem.SessionBoundary>()
-                    .single()
-            assertTrue("reset must replace the conversation's session", boundary.newSessionId != boundary.previousSessionId)
-            val usage = freshReading.await()
-            assertTrue(
-                "a remembered pre-replacement reading is not fresh even if it arrived after invalidation",
-                usage.asOf?.let { it >= boundary.occurredAt } ?: true,
-            )
-            assertTrue("post-reset context reading must have a usable token window", usage.maxTokens > 0)
-            val percent =
-                kotlin.math
-                    .floor(usage.totalTokens.toDouble() / usage.maxTokens * 100 + 0.5)
-                    .toInt()
-                    .coerceIn(0, 100)
-            val descriptionResource =
-                when {
-                    percent >= 85 -> R.string.cd_context_usage_high
-                    percent >= 70 -> R.string.cd_context_usage_warning
-                    else -> R.string.cd_context_usage
-                }
-            val expected = InstrumentationRegistry.getInstrumentation().targetContext.getString(descriptionResource, percent)
-            awaitContextSegment(THREAD_TIMEOUT_MS, "the fresh post-reset reading ($percent%)") { it == expected }
-
-            // The modal must show the same fresh reading without another user message (#1947).
-            openRunConfiguration()
-            val contextReading =
-                InstrumentationRegistry.getInstrumentation().targetContext.getString(
-                    R.string.status_sheet_context_used,
-                    percent,
+                val boundary =
+                    repository
+                        .observeMessages(conversationId)
+                        .first()
+                        .filterIsInstance<ThreadItem.SessionBoundary>()
+                        .single()
+                assertTrue("reset must replace the conversation's session", boundary.newSessionId != boundary.previousSessionId)
+                invalidation.await()
+                val usage = withTimeout(REPLY_TIMEOUT_MS) { resetContext.reply.await() }
+                assertEquals(
+                    "the reset request's exact reading must still be held",
+                    usage,
+                    repository.observeContextUsage(conversationId).first(),
                 )
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(contextReading).fetchSemanticsNodes().isNotEmpty()
+                assertTrue("post-reset context reading must have a usable token window", usage.maxTokens > 0)
+                val percent =
+                    kotlin.math
+                        .floor(usage.totalTokens.toDouble() / usage.maxTokens * 100 + 0.5)
+                        .toInt()
+                        .coerceIn(0, 100)
+                val descriptionResource =
+                    when {
+                        percent >= 85 -> R.string.cd_context_usage_high
+                        percent >= 70 -> R.string.cd_context_usage_warning
+                        else -> R.string.cd_context_usage
+                    }
+                val expected = InstrumentationRegistry.getInstrumentation().targetContext.getString(descriptionResource, percent)
+                awaitContextSegment(THREAD_TIMEOUT_MS, "the fresh post-reset reading ($percent%)") { it == expected }
+
+                // The modal must show the same fresh reading without another user message (#1947).
+                openRunConfiguration()
+                val contextReading =
+                    InstrumentationRegistry.getInstrumentation().targetContext.getString(
+                        R.string.status_sheet_context_used,
+                        percent,
+                    )
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodesWithText(contextReading).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.onNodeWithText("Context window").performScrollTo().assertIsDisplayed()
+                composeTestRule.onNodeWithText(contextReading).performScrollTo().assertIsDisplayed()
+                composeTestRule.onNodeWithText("Done").performClick()
+                awaitContextSegment(THREAD_TIMEOUT_MS, "the fresh reading after closing Run configuration") { it == expected }
             }
-            composeTestRule.onNodeWithText("Context window").performScrollTo().assertIsDisplayed()
-            composeTestRule.onNodeWithText(contextReading).performScrollTo().assertIsDisplayed()
-            composeTestRule.onNodeWithText("Done").performClick()
-            awaitContextSegment(THREAD_TIMEOUT_MS, "the fresh reading after closing Run configuration") { it == expected }
         }
     }
 

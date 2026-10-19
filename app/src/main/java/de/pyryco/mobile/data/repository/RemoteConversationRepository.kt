@@ -512,6 +512,7 @@ class RemoteConversationRepository internal constructor(
     val backgroundTasks: StateFlow<Map<String, BackgroundTaskRoster>> = backgroundTaskProjection.rosters
 
     private val suppliedModals = MutableStateFlow(HostModalState())
+    private val contextRequestOwner = Any()
     val authoritativeHostModals: StateFlow<HostModalState> get() = suppliedModals
     internal val usesAuthoritativeLiveState: Boolean get() = authoritativeLiveEnabled()
 
@@ -555,6 +556,7 @@ class RemoteConversationRepository internal constructor(
                 try {
                     pump.inbound.collect { envelope -> onInbound(envelope) }
                 } finally {
+                    contextUsageProjection.forgetRequests(contextRequestOwner)
                     expiry.cancel()
                     queryExpiry.cancel()
                     authoritativeQueries.abandon()
@@ -1087,7 +1089,7 @@ class RemoteConversationRepository internal constructor(
                 // How full this conversation's context window is, pushed after a turn or answering the phone's own
                 // ask (#945): see [ContextUsageProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    contextUsageProjection.apply(envelope)
+                    contextUsageProjection.apply(envelope, contextRequestOwner, sourceOwned = authoritativeLiveEnabled())
                 }
             }
             TYPE_REPLY_SUGGESTION -> {
@@ -1120,6 +1122,8 @@ class RemoteConversationRepository internal constructor(
                 // conversation_id / session ids / workspace_cwd are sensitive; nothing here logs the payload.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     decodeSessionTransition(envelope)?.let { (conversationId, boundary) ->
+                        // Invalidate ownership before resetting clears: that edge can issue the new ask.
+                        contextUsageProjection.onSessionTransition(conversationId, boundary)
                         threadProjection.appendSessionBoundary(conversationId, boundary)
                         conversationListProjection.updateCurrentSessionId(conversationId, boundary.newSessionId)
                         // Third write since #590: the session this conversation's settings describe has
@@ -1145,9 +1149,6 @@ class RemoteConversationRepository internal constructor(
                         // an absent key.
                         announcedModelProjection.clear(conversationId)
                         sessionFactsProjection.clear(conversationId)
-                        // Drop the replaced context and reject remembered replies measured before this
-                        // boundary. A fresh reply can fill it without another message (#1947).
-                        contextUsageProjection.onSessionTransition(conversationId, boundary.occurredAt)
                         // Ninth since #1360: the replaced session's switch-back offer is over. Emitted on the same
                         // flow as the refusals, so the two keep their wire order.
                         liveRefusalEvents.tryEmit(conversationId to LiveRefusalEvent.SessionReplaced)
@@ -1552,8 +1553,10 @@ class RemoteConversationRepository internal constructor(
                 payload = MobileJson.encodeToJsonElement(RequestContextUsagePayloadDto(conversationId = conversationId)),
             )
         try {
-            pump.send(request)
+            contextUsageProjection.recordRequest(conversationId, contextRequestOwner, request.id)
+            if (!pump.send(request)) contextUsageProjection.forgetRequest(conversationId, contextRequestOwner, request.id)
         } catch (e: Exception) {
+            contextUsageProjection.forgetRequest(conversationId, contextRequestOwner, request.id)
             // Absorbed: the next open or reconnect asks again.
         }
     }

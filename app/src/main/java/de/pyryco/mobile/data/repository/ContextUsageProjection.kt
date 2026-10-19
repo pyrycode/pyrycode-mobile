@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
-import kotlinx.datetime.Instant
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 
 /**
@@ -32,8 +32,33 @@ internal class ContextUsageProjection {
      */
     private val readingByConversation = MutableStateFlow<Map<String, ContextUsage>>(emptyMap())
 
-    // Host-held across reconnects, like the readings. Only the serialized inbound fold accesses it.
-    private val latestTransitionByConversation = mutableMapOf<String, Instant>()
+    // Host-held across reconnects. The monitor joins outbound registration with inbound admission.
+    private val latestTransitionByConversation = mutableMapOf<String, ThreadItem.SessionBoundary>()
+    private val latestRequestByConversation = mutableMapOf<String, Pair<Any, Long>>()
+
+    /** One pending ask per conversation; the opaque owner prevents id reuse across connections. */
+    @Synchronized
+    fun recordRequest(
+        conversationId: String,
+        owner: Any,
+        requestId: Long,
+    ) {
+        latestRequestByConversation[conversationId] = owner to requestId
+    }
+
+    @Synchronized
+    fun forgetRequests(owner: Any) {
+        latestRequestByConversation.entries.removeAll { it.value.first === owner }
+    }
+
+    @Synchronized
+    fun forgetRequest(
+        conversationId: String,
+        owner: Any,
+        requestId: Long,
+    ) {
+        if (latestRequestByConversation[conversationId] == (owner to requestId)) latestRequestByConversation.remove(conversationId)
+    }
 
     /**
      * Apply one `context_usage` envelope. Called only from the repository's `interactive`-gated arm. Routing is the
@@ -43,28 +68,51 @@ internal class ContextUsageProjection {
      * zero one. It folds no thread row, touches no stall and never reaches the session settings' transcript-derived
      * token counts. Drop silently — nothing here logs the payload.
      */
-    fun apply(envelope: Envelope) {
+    @Synchronized
+    fun apply(
+        envelope: Envelope,
+        requestOwner: Any? = null,
+        sourceOwned: Boolean = false,
+    ) {
         decodeContextUsage(envelope)?.let { (conversationId, reading) ->
             val boundary = latestTransitionByConversation[conversationId]
-            // The daemon can answer from memory after reset. Its source time, not reply arrival,
-            // determines whether it belongs to the replaced context. Fresh replies omit asOf.
-            if (boundary != null && reading.asOf?.let { it < boundary } == true) return
+            val correlated =
+                requestOwner != null &&
+                    envelope.inReplyTo != null &&
+                    latestRequestByConversation[conversationId] == (requestOwner to envelope.inReplyTo)
+            if (boundary != null) {
+                // No asOf means non-remembered, not current: old post-turn queries can finish late.
+                // Supplied live state has already passed SessionLiveAdmission. Legacy replies need
+                // a current producer tag or this connection's post-invalidation request correlation.
+                if (!sourceOwned) {
+                    val producer = envelope.sessionProvenance.raw
+                    if (producer != null && producer != JsonPrimitive(boundary.newSessionId)) return
+                    if (producer == null && !correlated) return
+                }
+                if (reading.asOf?.let { it < boundary.occurredAt } == true) return
+            }
+            if (correlated) latestRequestByConversation.remove(conversationId)
             readingByConversation.update { it + (conversationId to reading) }
         }
     }
 
     /** The conversation's session was replaced, so its reading describes a gone context: drop it. */
+    @Synchronized
     fun onSessionTransition(
         conversationId: String,
-        occurredAt: Instant,
+        boundary: ThreadItem.SessionBoundary,
     ) {
         val previous = latestTransitionByConversation[conversationId]
-        latestTransitionByConversation[conversationId] = previous?.let { maxOf(it, occurredAt) } ?: occurredAt
+        if (previous == null || boundary.occurredAt > previous.occurredAt) {
+            latestTransitionByConversation[conversationId] = boundary
+        }
         clear(conversationId)
     }
 
     /** Authoritative family invalidation clears the value while retaining its source-time boundary. */
+    @Synchronized
     fun clear(conversationId: String) {
+        latestRequestByConversation.remove(conversationId)
         readingByConversation.update { it - conversationId }
     }
 

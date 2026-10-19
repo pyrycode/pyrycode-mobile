@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.SessionProvenance
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.HostReadings
@@ -24,8 +25,10 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
@@ -46,6 +49,79 @@ class ThreadViewModelContextFreshnessTest {
         RelayLog.sink = previousSink
         Dispatchers.resetMain()
     }
+
+    @Test
+    fun delayedOldPush_neverRestoresContext() =
+        runTest {
+            val rig = rig()
+            rig.settings("s1", used = 100_000)
+            rig.context("c1", used = 150_000)
+            rig.context("c2", used = 80_000)
+            rig.resetting(true)
+            runCurrent()
+            rig.transition("c1", "s1", "s2")
+            runCurrent()
+            val resetAsk = rig.pump.sent.last { it.type == "request_context_usage" }
+            rig.context("c1", used = 150_000)
+            rig.context("c2", used = 60_000)
+            runCurrent()
+            assertNull("timestamp-free old push cannot undo invalidation", rig.repo.observeContextUsage("c1").first())
+            assertNull(rig.vm.state.value.runConfig.contextPercent)
+            assertEquals(
+                60_000L,
+                rig.repo
+                    .observeContextUsage("c2")
+                    .first()
+                    ?.totalTokens,
+            )
+
+            rig.settings("s2", used = 0)
+            runCurrent()
+            rig.context("c1", used = 150_000)
+            runCurrent()
+            assertNull(rig.repo.observeContextUsage("c1").first())
+            assertEquals("current settings remain usable", 0, rig.vm.state.value.runConfig.contextPercent)
+
+            rig.context("c1", used = 2_000, replyTo = resetAsk.id)
+            runCurrent()
+            assertEquals(1, rig.vm.state.value.runConfig.contextPercent)
+            rig.context("c1", used = 150_000)
+            rig.context("c1", used = 150_000, session = "s1")
+            runCurrent()
+            assertEquals(
+                "old pushes cannot overwrite the current reply",
+                2_000L,
+                rig.repo
+                    .observeContextUsage("c1")
+                    .first()
+                    ?.totalTokens,
+            )
+            rig.context("c1", used = 4_000, session = "s2")
+            runCurrent()
+            assertEquals("current tagged pushes still work", 2, rig.vm.state.value.runConfig.contextPercent)
+        }
+
+    @Test
+    fun oldRequestAndConflictingProducer_cannotAuthorizeContext() =
+        runTest {
+            val rig = rig()
+            val oldAsk = rig.pump.sent.last { it.type == "request_context_usage" }
+            rig.resetting(true)
+            runCurrent()
+            rig.transition("c1", "s1", "s2")
+            runCurrent()
+            val resetAsk = rig.pump.sent.last { it.type == "request_context_usage" }
+            assertNotEquals(oldAsk.id, resetAsk.id)
+            rig.context("c1", used = 150_000, replyTo = oldAsk.id)
+            runCurrent()
+            assertNull("a pre-reset request cannot authorize a late reply", rig.repo.observeContextUsage("c1").first())
+            rig.context("c1", used = 150_000, session = "s1", replyTo = resetAsk.id)
+            runCurrent()
+            assertNull("correlation cannot override a conflicting producer", rig.repo.observeContextUsage("c1").first())
+            rig.context("c1", used = 2_000, replyTo = resetAsk.id)
+            runCurrent()
+            assertEquals("current context renders before settings", 1, rig.vm.state.value.runConfig.contextPercent)
+        }
 
     @Test
     fun resetReplacement_hidesOldSources_thenAcceptsContextBeforeSettings() =
@@ -76,7 +152,14 @@ class ThreadViewModelContextFreshnessTest {
             runCurrent()
             assertEquals(asks + 1, rig.pump.sent.count { it.type == "request_context_usage" })
             assertNull(rig.vm.state.value.runConfig.contextPercent)
-            rig.context("c1", used = 2_000)
+            rig.context(
+                "c1",
+                used = 2_000,
+                replyTo =
+                    rig.pump.sent
+                        .last { it.type == "request_context_usage" }
+                        .id,
+            )
             runCurrent()
             assertEquals("fresh context must not wait for settings", 1, rig.vm.state.value.runConfig.contextPercent)
             rig.settings("s2", used = 80_000)
@@ -98,7 +181,7 @@ class ThreadViewModelContextFreshnessTest {
             rig.transition("c1", "s1", "s2", at = LATER)
             rig.resetting(false)
             runCurrent()
-            rig.context("c1", used = 150_000, asOf = TS)
+            rig.context("c1", used = 150_000, asOf = TS, session = "s2")
             runCurrent()
             assertNull("a remembered reply must not restore the replaced context", rig.repo.observeContextUsage("c1").first())
             assertNull("old settings cannot fill in for the rejected reply", rig.vm.state.value.runConfig.contextPercent)
@@ -112,7 +195,7 @@ class ThreadViewModelContextFreshnessTest {
 
             rig.settings("s2", used = 0)
             runCurrent()
-            rig.context("c1", used = 150_000, asOf = TS)
+            rig.context("c1", used = 150_000, asOf = TS, session = "s2")
             rig.context("c2", used = 60_000, asOf = TS)
             runCurrent()
             assertNull(rig.repo.observeContextUsage("c1").first())
@@ -126,9 +209,9 @@ class ThreadViewModelContextFreshnessTest {
                     ?.totalTokens,
             )
 
-            rig.context("c1", used = 2_000)
+            rig.context("c1", used = 2_000, session = "s2")
             runCurrent()
-            rig.context("c1", used = 150_000, asOf = TS)
+            rig.context("c1", used = 150_000, asOf = TS, session = "s2")
             runCurrent()
             assertEquals(
                 "late old replies cannot overwrite fresh context",
@@ -150,15 +233,15 @@ class ThreadViewModelContextFreshnessTest {
             // A replayed older boundary must not reopen admission for old readings.
             rig.transition("c1", "s1", "s2", at = TS)
             runCurrent()
-            rig.context("c1", used = 150_000, asOf = TS)
+            rig.context("c1", used = 150_000, asOf = TS, session = "s3")
             runCurrent()
             assertNull(rig.repo.observeContextUsage("c1").first())
             assertNull(rig.vm.state.value.runConfig.contextPercent)
 
-            rig.context("c1", used = 2_000, asOf = LATER)
+            rig.context("c1", used = 2_000, asOf = LATER, session = "s3")
             runCurrent()
             assertEquals("a reading at the boundary is current", 1, rig.vm.state.value.runConfig.contextPercent)
-            rig.context("c1", used = 4_000, asOf = "2026-10-12T00:02:00Z")
+            rig.context("c1", used = 4_000, asOf = "2026-10-12T00:02:00Z", session = "s3")
             runCurrent()
             assertEquals("a newer remembered reading is current", 2, rig.vm.state.value.runConfig.contextPercent)
         }
@@ -170,6 +253,7 @@ class ThreadViewModelContextFreshnessTest {
             val rig = rig(readings)
             rig.transition("c1", "s1", "s2", at = LATER)
             runCurrent()
+            rig.repo.requestContextUsage("c1")
             val reconnectedPump = Pump()
             val reconnectedRepo =
                 RemoteConversationRepository(
@@ -184,9 +268,28 @@ class ThreadViewModelContextFreshnessTest {
             )
             runCurrent()
             assertNull("reconnect must not forget the source boundary", reconnectedRepo.observeContextUsage("c1").first())
+            // An id reused on a new connection cannot satisfy the old connection's request ledger.
             reconnectedPump.push(
                 "context_usage",
                 """{"conversation_id":"c1","total_tokens":2000,"max_tokens":200000,"percentage":1}""",
+                rig.pump.sent
+                    .last { it.type == "request_context_usage" }
+                    .id,
+            )
+            runCurrent()
+            assertNull(reconnectedRepo.observeContextUsage("c1").first())
+            reconnectedRepo.requestContextUsage("c1")
+            reconnectedPump.push(
+                "context_usage",
+                """{"conversation_id":"c1","total_tokens":150000,"max_tokens":200000,"percentage":75,"as_of":"$TS"}""",
+                reconnectedPump.sent.last().id,
+            )
+            runCurrent()
+            assertNull("a current request cannot authorize old remembered data", reconnectedRepo.observeContextUsage("c1").first())
+            reconnectedPump.push(
+                "context_usage",
+                """{"conversation_id":"c1","total_tokens":2000,"max_tokens":200000,"percentage":1}""",
+                reconnectedPump.sent.last().id,
             )
             runCurrent()
             assertEquals(2_000L, reconnectedRepo.observeContextUsage("c1").first()?.totalTokens)
@@ -250,7 +353,7 @@ class ThreadViewModelContextFreshnessTest {
             assertNull(rig.repo.observeContextUsage("c2").first())
             rig.transition("c1", "s1", "s2")
             runCurrent()
-            rig.context("c2", used = 60_000)
+            rig.context("c2", used = 60_000, session = "other-new")
             runCurrent()
             assertNull(rig.vm.state.value.runConfig.contextPercent)
             assertEquals(
@@ -309,11 +412,15 @@ class ThreadViewModelContextFreshnessTest {
             conversation: String,
             used: Long,
             asOf: String? = null,
+            session: String? = null,
+            replyTo: Long? = null,
         ) = pump.push(
             "context_usage",
             """{"conversation_id":"$conversation","total_tokens":$used,"max_tokens":200000,"percentage":99,"categories":[],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0,"memory_files":[],"dropped_memory_files":0${asOf?.let {
                 ""","as_of":"$it""""
             } ?: ""}}""",
+            replyTo,
+            session,
         )
 
         fun transition(
@@ -345,8 +452,18 @@ class ThreadViewModelContextFreshnessTest {
             type: String,
             payload: String,
             replyTo: Long? = null,
+            session: String? = null,
         ) {
-            frames.trySend(Envelope(id++, type, TS, MobileJson.parseToJsonElement(payload), inReplyTo = replyTo))
+            frames.trySend(
+                Envelope(
+                    id++,
+                    type,
+                    TS,
+                    MobileJson.parseToJsonElement(payload),
+                    inReplyTo = replyTo,
+                    sessionProvenance = SessionProvenance(session?.let { JsonPrimitive(it) }),
+                ),
+            )
         }
     }
 

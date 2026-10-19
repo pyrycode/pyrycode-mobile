@@ -10,6 +10,8 @@
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ScriptedThreadHarness.kt`: production repository/ViewModel/screen graph for the unavailable and refreshed surfaces.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/StatusSheetTest.kt`: existing reading and modal interaction coverage.
 - `app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt`: extend `interactiveTurn_newSession_rendersSessionBoundaryDelimiter` after its fresh reply/footer assertions.
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/OwnedReplyObservation.kt` and `SettingsReadProbe.kt`: the existing passive pump seam processes receipts after production inbound admission; `ContextResetProbe` follows that seam with controlled `ContextResetProbeTest` checks.
+- `app/src/main/java/de/pyryco/mobile/data/repository/SessionLiveAdmission.kt`: supplied-state ownership remains enforced by the existing gate before context projection writes.
 - `docs/knowledge/features/thread-composer-footer-context-usage.md`, `status-sheet-readings.md`, `thread-screen.md`, and `remote-conversation-repository.md`: stale settings fallback and the shared percentage contract.
 - `docs/knowledge/features/development-verification-gates.md` and `docs/e2e-interactive-stream.md`: shared screen tests and real-daemon evidence ownership.
 - Sibling `pyrycode/docs/protocol-mobile.md`: canonical session/settings/context payloads and Security model; wire unchanged.
@@ -88,7 +90,7 @@ None.
 - [Threat model] Malicious relay delay/drop yields existing unavailable/error behavior without plaintext leakage. Hostile frames stay behind existing decoder/admission rules; this filter cannot authenticate a dishonest daemon. Rooted-device token theft and accessibility/screenshots remain existing platform/Keystore concerns, unchanged by numerical-source selection. No security posture is weakened.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
-**Date:** 2026-10-16
+**Date:** 2026-10-19
 
 ## Revisions
 

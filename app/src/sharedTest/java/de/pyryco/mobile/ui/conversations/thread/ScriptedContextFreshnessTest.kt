@@ -76,7 +76,7 @@ class ScriptedContextFreshnessTest {
         composeRule.onAllNodesWithText("Not reported yet").assertCountEquals(2)
         composeRule.onAllNodesWithText("75% used").assertCountEquals(0)
 
-        context(2_000)
+        context(2_000, sent.last { it.type == "request_context_usage" }.id)
         composeRule.waitUntil(5_000) { composeRule.onAllNodes(contextMatcher("1% used")).fetchSemanticsNodes().isNotEmpty() }
         contextReading("1% used").assertIsDisplayed()
         composeRule.onNodeWithText("Done").performClick()
@@ -99,11 +99,14 @@ class ScriptedContextFreshnessTest {
         composeRule.onNode(hasContentDescription(description)).assertIsDisplayed()
     }
 
-    private fun context(used: Long) =
-        push(
-            "context_usage",
-            """{"conversation_id":"c1","total_tokens":$used,"max_tokens":200000,"percentage":99,"categories":[],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0,"memory_files":[],"dropped_memory_files":0}""",
-        )
+    private fun context(
+        used: Long,
+        replyTo: Long? = null,
+    ) = push(
+        "context_usage",
+        """{"conversation_id":"c1","total_tokens":$used,"max_tokens":200000,"percentage":99,"categories":[],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0,"memory_files":[],"dropped_memory_files":0}""",
+        replyTo,
+    )
 
     private fun push(
         type: String,
