@@ -1,0 +1,50 @@
+Ticket: pyrycode/pyrycode-mobile#2318
+Platform: Linux; other operating systems are outside this ticket's verification scope.
+Method: de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_peerStartedTurn_continuesOnPhone
+Repair: #2317 / merged PR #2319, dde1b41a6fde1dd0e545f9ad0e357b6256092fc8.
+This is an evidence-only follow-up. Production, test logic, strict replay inputs, recording bytes and time bounds are unchanged.
+
+Original main sweep at d20e92cd4b5b58ef0ce6df1f87ca8b2c297b7699:
+1795 recorded, 1793 executed, 1792 passed, 1 failed, 0 errors, 2 skipped; exit 1.
+The sole failure is the named method. The original sweep remains failed.
+Original raw stdout/stderr: original-sweep/ under the persistent directory below.
+
+Reconciliation with #2317 (raw XML/logs/source metadata and SHA-256 manifests independently checked):
+- Baseline, plan-only 1b368c9f8 on test/product source d20e92cd4b5b58ef0ce6df1f87ca8b2c297b7699: 1 executed, 0 passed, 1 failed, 0 errors/skipped; 33.469 seconds.
+- The baseline completes initial reply display, then times out after 30000 ms finding the reopened user. Its phone log exposes strict request mismatch at step 27: the reopened backfill arrives after the expected backfill was consumed.
+- Cold-read experiment 2f36172fa47944defb6344127d47f784aad26705: 1 executed, 0 passed, 1 failed, 0 errors/skipped; 3.608 seconds. Another assertion read reproduces the strict mismatch at step 22. It remains failed.
+- Cause: cold assertion collections send backfill and consume the recorded reopen request before the application reopens. Offscreen retained-data loss was not established. Scrolling alone would not repair request admission.
+- Repaired source 69be40bebe9278c5779367febf608b5854cf3b87: 1 executed/passed, 0 failed/errors/skipped; 4.388 seconds.
+- Final repaired source 4a044b47a799a59f874a22f584a4974cdbd34ba1: 1 executed/passed, 0 failed/errors/skipped; 4.228 seconds.
+- Both repaired logs contain initial completion, reopened user display and reopened reply display through the current subscription. The user was already composed before explicit reveal; this is not evidence of original offscreen loss.
+- The repair uses the application's existing destination subscription, validates host/conversation/current connection and requires a different active subscription on reopen. Ended or replaced evidence cannot satisfy the check.
+- Current data must retain one exact peer user identity/content and the same completed assistant family/session/turn/row identities/content. User semantics are counted while displayed, before revealing assistant rows, and current evidence is checked again afterward.
+- Leave/reopen navigation, peer send/acknowledgement/completion, ownership/content checks, strict replay and all original bounds remain. No skip, recording refresh, timeout extension or production change obtains the pass.
+
+Accepted #2317 verifier evidence:
+Reviewed revision a320834c07f039cc40d98869f05fd0ca04f447ed; accepted PASS.
+UI gate raw counted XML: 336 recorded, 335 executed/passed, 0 failed/errors, 1 unrelated RenameDialogCaptureTest.renameAtFigmaViewport skip. The named method executes/passes once with zero skips.
+The accepted verdict separately records JVM 6155 executed/passed, scripted 22 executed/passed and the four affected focused classes totaling 48 passes. This ticket did not rerun complete configured gates.
+Verifier bundle run bc00cb670de64f6e5dff8a38d9d85253254c03ecbf3fa559636b8c7c2c559902, digest b65c36c47805369ba702bbb87307b139fb1536a788d8611d88783779c276586c.
+The full accepted stage record and retrieved bundle are retained privately below.
+
+Post-repair #2318 focused execution at e729ec077d0c0b7bfdaa0caaeafb77d12f52eaf2; application/test source matches dde1b41a6fde1dd0e545f9ad0e357b6256092fc8. Only this text summary was untracked during execution.
+Command: python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_peerStartedTurn_continuesOnPhone
+Exit 0; 1 executed, 1 passed, 0 failed/errors/skipped; testcase 4.255 seconds; raw XML timestamp 2026-10-19T20:05:12.
+Phone log confirms completed_reply_displayed, peer_reopen_user_displayed retained=1 composed_before_reveal=1 and peer_reopen_reply_displayed fragments=1 current_subscription=true.
+Fresh artifact source: build/dispatcher-tests/ui-__uf1q3m; persistent copy: focused/ below, including raw XML, dispatcher XML, logcat, phase/image metadata, revision and APK hashes.
+
+Post-repair dispatcher-owned Linux main sweep at dde1b41a6fde1dd0e545f9ad0e357b6256092fc8:
+UI_GATE_FULL=1 UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui; process exit 0.
+1795 recorded, 1793 executed, 1793 passed, 0 failed/errors, 2 skipped. The named peer-turn method executed/passed once, with zero skips.
+Skipped methods: RenameDialogCaptureTest.renameAtFigmaViewport and ComposerPasteTest.pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty; neither is this scenario.
+Raw stdout contains the complete counted XML; stderr records the successful build and final counted exit. Both and the dispatcher success state are retained in post-repair-main-sweep/ below. Original log stem: 2026-10-19T19-40-25-833Z_main-sweep_dde1b41.
+This passing configured main sweep reconciles the earlier sweep failure with the merged repair. Earlier failed reports retain their original outcomes; no universal suite-order claim follows from one sweep.
+
+Persistent private evidence: /work/Projects/pyrycode-mobile-agents/logs/evidence/2318/builder-20261019-post-repair/
+Raw XML/logs, source records and accepted verdict are copied with owner-only permissions; SHA256SUMS verifies retained bytes.
+Original #2317 evidence remains under logs/evidence/2317/builder-20261019-peer-turn/ and builder-20261019-passive-repair/ on the same agents volume.
+Fixture SHA-256: 23f2ebe9a48adc1ca95fb9d1859e8182318ffd857b438b3038f32f165848b7e3.
+
+Builder checks passed: lint, assembleDebug, compileDebugAndroidTestKotlin and spotlessApply. Final merge/assembly/pre-verify checks are recorded in the PR.
+Dispatcher acceptance still pending for #2318: complete configured verifier gates must execute/pass this method before verifier PASS. The required post-repair main sweep result is retained above. Focused success alone does not establish suite-order independence. No residual failure or wider investigation request was needed.
