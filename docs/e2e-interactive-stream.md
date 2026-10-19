@@ -3818,7 +3818,9 @@ The private `full-verification-merged-main/` directory retains raw XML, logs, co
 1048-file manifest with SHA-256 `1deeca8fefcff0f9864f9e7f6068cadf5c6d1ac9f73437cfde238882ef266096`.
 Earlier failed and interrupted runs remain preserved. Main's passive peer observer is unarmed for the
 two background methods; their bodies and the repaired production source remain unchanged. The native
-proof above stays bound to its recorded composition. Final publication changes only documentation.
+proof above stays bound to its recorded composition. Later main #2318 adds only static verification
+text and documentation. Application code, test code and recorded fixtures remain byte-identical to
+the full run; final metadata, documentation, formatting and static/package checks cover publication.
 Recorded fixtures are unchanged. #2245 retains its separate activation and recording acceptance.
 The historical OnePlus incident remains unexplained.
 
