@@ -108,5 +108,19 @@ Both repairs enforce the original exact-target/exclusion invariant, with no new 
 
 ## Documentation handoff
 
+### 2026-10-19 — recovery plan: verification capacity and writer coordination
+
+The recovery brief supersedes the unexecuted wider investigation. Retained verifier run `d69c1ee239efc24422a08fe97e635ec8f6ed269cf301a4a20fe56453617176dc` records separate lint/test-worker heap exhaustion and the row-failure probe counting two failures. These are verification repairs to the existing behaviour, with no additional product deliverable.
+
+Read `OwnedLegacyCoverageConcurrencyTest` (`open`, `Source`, intent probe), `CachingConversationRepository` (`ThreadWriter.schedule`, `persist`, `writeHistoryPosition`), Room's `classifiedTransaction`, `app/build.gradle.kts` test options, and the cache-testing/scheduler overviews. Snapshot acceptance does not isolate the scheduled 100 ms write from the explicit save.
+
+First run the original exact method and class. Instrument transaction origin and virtual time, hold the explicit history commit, and deliberately advance the timer to reproduce the double failure. Repair the fixture with a separately driven writer scheduler; advancing the main clock during real Room I/O must not release its timer. Keep the exact retained-intent, rollback, empty-capture retry, pruning and fresh-reader assertions. Release every barrier and join saves/readers in cleanup. Re-run the exact method and class through normal Linux admission, retaining red/green XML and raw results.
+
+Reuse reviewed commit `2dca08a77`'s `org.gradle.jvmargs=-Xmx4096m`; separately increase `unitTests.all.maxHeapSize` from 2g to 4g because the retained test-executor OOM cannot be repaired by the Gradle heap. Preserve admission, launcher, watchdog, exclusions and fixture sizes. Record effective heaps from a fresh test launch; focused runs cannot establish complete-suite capacity, which remains pending dispatcher verification.
+
+Scope forecast: at most 160 additional written lines across the existing probe, two build settings, this revision and compact evidence, within the branch's remaining 175-line margin. #2270 overlaps only the identical Gradle property; no dependency. No public signatures or production state change. Security recheck: rendering admission/labels and Android routing stay unchanged; test-origin diagnostics contain static labels, clocks and heap sizes only. File barriers remain scoped to the test and release on failure; no new credential, network or Android surface exists.
+
+This subsection records a recovery revision; existing product design and security findings remain authoritative.
+
 - Pending documentation stage: `docs/knowledge/features/markdown-text.md`, Streaming and Testing — explain real source completion versus lexer boundaries, punctuation, synthetic closers and caret; record final counted Linux acceptance once dispatcher gates pass.
 - Pending documentation stage: `docs/knowledge/features/markdown-text-internals.md`, Inline dispatch and Link safety — document the narrow bare-Obsidian exception, exact source ranges across composite nodes, unchanged routing/styling, punctuation fallback and code/authored-label exclusions, preserving literal bare web/email behaviour.
