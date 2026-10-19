@@ -1,0 +1,270 @@
+{
+  "ticket": 2202,
+  "disposition": "historical failure retained; cause unresolved; not reproduced under the recorded repaired-runner conditions",
+  "mobile_logic_changed": false,
+  "baseline": {
+    "mobile_revision": "33b1353bf5d8929f81690acf376ba47e51b82043",
+    "main_revision": "a0c7db693245cce59d67377f672d2bec4c7dca65",
+    "agents_revision": "49cd6dd07c163a7d0e9583850aafb28378ec0b3c",
+    "started_utc": "2026-10-17T01:08:08.158257+00:00",
+    "finished_utc": "2026-10-17T01:37:50.773480+00:00",
+    "command": "UI_GATE_FULL=1 ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui",
+    "profile": "Configured complete regular UI; UI_DEVICE_ALL and UI_SHARDS unset; one shard, device-only classes plus recorded-client scenarios; no in-depth sweep or real-Claude turn.",
+    "host": {
+      "dispatch_worker": "build-hp-1",
+      "container": "d334f32a9191",
+      "os": "Linux",
+      "kernel": "7.0.0-38-generic",
+      "architecture": "x86_64",
+      "cpu": "Intel Core i7-8700 @ 3.20GHz",
+      "logical_cpus": 12,
+      "memory_total_kib": 32626980,
+      "machine_id_sha256": "0340aee7eb3df81a608b91aa9abf2c1c69d6307cdd150b0e5fd6f64ceefe3b64",
+      "jdk": "OpenJDK 21.0.12.1"
+    },
+    "device": {
+      "profile": "pixel2Api33Atd",
+      "avd": "dev33_google_atd_x86_64_Pixel_2",
+      "serial": "emulator-5554",
+      "api": 33,
+      "abi": "x86_64",
+      "fingerprint": "google/sdk_gslim_x86_64/emulator64_x86_64:13/TE1A.220922.033/10836537:userdebug/dev-keys",
+      "animation_scales_during_tests": [
+        0,
+        0,
+        0
+      ]
+    },
+    "preparation": "Owned foreground Gradle JVM, in-process Kotlin, -Xmx2048m; shared host admission acquired after 229 seconds.",
+    "counts": {
+      "executed": 334,
+      "passed": 334,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1
+    },
+    "methods": {
+      "slowRestore_negativeControlRejectsTheSameFirstDrawBound": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "heldCpuPipeCancelsAndClosesItsDescriptor": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "skips": [
+      "de.pyryco.mobile.ui.conversations.components.RenameDialogCaptureTest#renameAtFigmaViewport"
+    ],
+    "exit": 0,
+    "gate_phase_epoch_seconds": {
+      "created": 1792199517.936906,
+      "waiting-for-admission": 1792199517.9464786,
+      "admitted": 1792199517.947083,
+      "preparation-started": 1792199517.9471333,
+      "preparation-finished": 1792199598.7162359,
+      "device-command-started": 1792199598.7163248,
+      "finished": 1792201070.747432
+    }
+  },
+  "source_sha256": {
+    "app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt": "07b697f780bf83202a39e31b5730f4429d86c64764012575738bde2629a36295",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/EmulatorCpuReadiness.kt": "b76344d827dd69b4356d27e1620e21c120668af0cc8fa8d36e05a5c1c2a9b33b",
+    "app/src/test/java/de/pyryco/mobile/e2e/EmulatorCpuReadinessTest.kt": "df15f0d6c7f3114adab4e239a8a94c952c7c1d226333d01c24d06db7079d303f",
+    "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/FragmentedHistoryFixture.kt": "59f23bda2db97ddb8f40c768f642c39d917e06ff0f11aad90624cb83a50bace1",
+    "app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt": "fb55c52e9272635cb45e3c26645b254bd3829f357d8a02b8c0b852e5f784faa6",
+    "app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt": "49dad7519f2fbabb5ca716bd4a93dbf967fb1da83d0bda77fadcecc06c7c578a",
+    "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt": "3f0e3b2c968c2aa205c7fac27cbb33c98a104fa8debce4db8702baebd970c4cf",
+    "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt": "c3506277f37f6c5f13c25f0c800d1516208d399a0a90fb47f26a181114ba2626"
+  },
+  "verified_contract": {
+    "readiness": "four consecutive 250 ms windows >=80% idle within 30000 ms",
+    "readiness_barriers": 17,
+    "readiness_windows": 68,
+    "idle_pct_range": [
+      82,
+      100
+    ],
+    "acquire_ms_range": [
+      0,
+      6
+    ],
+    "read_ms_range": [
+      10,
+      33
+    ],
+    "positive_openings": 16,
+    "positive_cumulative_phase_ranges_ms": {
+      "restored_ms": [
+        14,
+        341
+      ],
+      "snapshot_ms": [
+        19,
+        342
+      ],
+      "complete_ms": [
+        24,
+        353
+      ],
+      "drawn_ms": [
+        72,
+        433
+      ]
+    },
+    "minimum_draw_headroom_ms": 567,
+    "projection_hold_ms": 1100,
+    "slow_restore_ms": 3000,
+    "negative_control_cumulative_phases_ms": [
+      3015,
+      3052,
+      3080,
+      3123
+    ],
+    "draw_bound_ms": 1000,
+    "preserved": "Cold timed cache/repository/ViewModel construction; persisted ordinary and fragmented fixtures; offline and held-newest first/reopens; exact newest committed-frame endpoint; rows, marker anchors and request counts; held-pipe cancellation. No added skip, warmup, retry, assertion or threshold change."
+  },
+  "observation": {
+    "host_samples": 355,
+    "guest_samples": 289,
+    "host_device_phase": {
+      "intervals": 291,
+      "idle_pct": [
+        54.54,
+        98.98
+      ],
+      "steal_pct": [
+        0,
+        0
+      ],
+      "load_1m_range": [
+        0.35,
+        4.93
+      ]
+    },
+    "guest_whole_run": {
+      "intervals": 288,
+      "idle_pct": [
+        3.3,
+        99.6
+      ],
+      "steal_pct": [
+        0,
+        4.8
+      ]
+    },
+    "worker_events": 158,
+    "observer_elapsed_seconds_range": [
+      0.001213290001032874,
+      0.3800928529817611
+    ],
+    "limits": "Read-only observation approximately every five seconds adds overhead. Whole-device-phase intervals include boot and other methods; they do not measure CPU load at an individual subsecond draw. Per-opening readiness and cumulative phases are retained separately in openings.jsonl and raw phone logs."
+  },
+  "historical": {
+    "ticket": 2163,
+    "mobile_revision": "23176249515918b2a776c4b3429d8ce112d363e0",
+    "machine": "build-fractal-2",
+    "bundle_run": "edc1a2743fd7457add5d125199b9539eb42f8d4b0788e1caad9450d6299bf293",
+    "dispatcher_revision": "d4c8af22293409a05676782795d3eb25dede7a29",
+    "measurement_agents_revision": null,
+    "counts": {
+      "executed": 261,
+      "passed": 260,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 1
+    },
+    "delayed_projection_draw_ms": [
+      260,
+      357,
+      258,
+      207,
+      1434,
+      478,
+      1436,
+      506
+    ],
+    "case_order": "ordinary offline first/reopen, ordinary held-newest first/reopen, fragmented offline first/reopen, fragmented held-newest first/reopen",
+    "source_comparison": "All eight listed measurement-source hashes match. The unbound Room backend and wider production/test trees differ; no Room activation is part of this ticket.",
+    "unavailable": [
+      "Contemporaneous host/device CPU, load and process samples",
+      "Raw per-opening readiness and worker logs",
+      "Restore, snapshot, complete-content and committed-frame phase records beyond the eight final delayed-projection draw values",
+      "Original device image fingerprint and detailed host/device configuration",
+      "Exact measurement agents runner revision; the bundle identifies only dispatcherRevision"
+    ],
+    "attribution": "Historical failed counted XML, verdict and stderr retained. Source equality, runner remediation and a fresh complete pass do not establish historical cause or repair."
+  },
+  "comparison_2177": {
+    "pr": "https://github.com/pyrycode/pyrycode-mobile/pull/2203",
+    "inspected_assets": [
+      "comparison.json",
+      "resume-validation-20261017.json"
+    ],
+    "focused_baseline_revision": "4b21cef23ef9d395f667694ab2a6df97c380deaf",
+    "focused_current_revision": "e8a4508f23f1b99e0c22494656fad1fe4a9ecf7d",
+    "focused_agents_revision": "800e719515a91bf2040d9d26b0e0a802e931bca3",
+    "focused_counts_each": {
+      "executed": 4,
+      "passed": 4,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "baseline_fragmented_first_draw_ms": {
+      "normal_offline": 676,
+      "normal_held_newest": 609,
+      "projection_held_offline": 841,
+      "projection_held_held_newest": 678
+    },
+    "latest_resume_mobile_revision": "5e3e4471733f63e97ccb6c4fc5f054d8107f9445",
+    "latest_resume_agents_revision": "49cd6dd07c163a7d0e9583850aafb28378ec0b3c",
+    "latest_focused_counts": {
+      "executed": 4,
+      "passed": 3,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "latest_readiness_tracker": 2209,
+    "differences": "#2177 used focused class selection on Linux/build-fractal-2; this run uses complete current UI selection on Linux/build-hp-1, with 73 additional recorded-client cases versus #2163. All eight source hashes match both focused comparisons and the latest resume. The wider trees differ, including read-confirmation, DI/push and recorded-test changes. Runner 49cd6dd routes Gradle through its owned JVM launcher versus 800e719. These are recorded condition differences, not historical causal evidence.",
+    "readiness_limit": "This complete run passed readiness later in the full selection. It does not clear #2209's independently retained startup-load failures or replace #2177's gate handoff."
+  },
+  "evidence": {
+    "raw_directory": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2202/baseline-20261017/",
+    "raw_manifest_sha256": "314c33855de229498ec0e1cab06f0e2af16a76477bb5ac22fce56dbc0d105c55",
+    "raw_manifest_files": 348,
+    "raw_xml_sha256": {
+      "0-TEST-pixel2Api33Atd_0-_app-.xml": "54119dea02e7aa3b04578b2b5a5b1bc516399c553306f22509df573ac1bcca7d"
+    },
+    "dispatcher_xml_sha256": "58d92c880dc62dc1cf96ac353ad118137941d40b2feb2228e0a4731dee9df48a",
+    "historical_directory": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2202/historical-2163/",
+    "audit_directory": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2202/audit-baseline-20261017/",
+    "checks": "Verified every raw manifest entry; raw/aggregated XML identities and counts agree; all four selected methods executed/passed once; all 17 ordered phase records and readiness streaks verified; fixture row/durable/span counts and 16 positive bounds verified; eight source hashes checked against historical and all inspected #2177 comparisons."
+  },
+  "handoff": {
+    "final_configured_dispatcher_ui": "Pending: fresh complete dispatcher evidence with all four methods 1/1/0/0/0, all sixteen positive openings and negative-control phases before verifier PASS. This file is builder investigation evidence.",
+    "documentation": "Pending: docs/knowledge/features/thread-screen-testing-saved-first-draw.md, Readiness and sampling cancellation (#2143); retain #2177's readiness history and this complete-gate disposition.",
+    "operating_system": "Linux only; other operating systems are outside this ticket's verification scope."
+  }
+}

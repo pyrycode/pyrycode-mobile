@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" tests="17" skipped="0" failures="0" errors="0" timestamp="2026-10-18T18:30:15.810Z" hostname="723893f7154c" time="48.41">
+  <properties/>
+  <testcase name="retirementInvariant_deletionFencesHeldSavesAndOtherHost" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="3.4"/>
+  <testcase name="orderingInvariant_partialRestoreUnchangedOrderPreservesFinalTie" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="0.582"/>
+  <testcase name="orderingInvariant_heldUnchangedRevisionPersistsPlacementOnly" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="0.408"/>
+  <testcase name="retirementInvariant_resetWhileFinalFlushWaitsForWriteLock" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="0.059"/>
+  <testcase name="orderingInvariant_coalescedMovesPreserveFinalTies" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="0.129"/>
+  <testcase name="retirementInvariant_resetDuringFinalIoRetiresReusedEpoch" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="0.055"/>
+  <testcase name="identityInvariant_revisionsAndTiesSurviveRestart" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="0.044"/>
+  <testcase name="atomicInvariant_heldFailureAndFinalFlushKeepNewestFacts" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="0.049"/>
+  <testcase name="orderingInvariant_liveBeforeRestorePreservesAcceptedTie" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="0.501"/>
+  <testcase name="boundedInvariant_ownedRevisionAndCertificationPreserveUnloadedFacts" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="2.77"/>
+  <testcase name="retentionInvariant_trimClearsCertification" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="25.941"/>
+  <testcase name="orderingInvariant_repeatedMovesIntoTiesOnlyRewriteMovedFacts" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="0.07"/>
+  <testcase name="orderingInvariant_heldUnchangedPeerAnchorsChangedRevision" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="0.231"/>
+  <testcase name="retentionInvariant_coverageCompletionCannotReinstateTrimmedRange" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="13.358"/>
+  <testcase name="orderingInvariant_partialRestoreChangedOrderPreservesFinalTie" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="0.186"/>
+  <testcase name="atomicInvariant_postCommitCancellationPublishesBaselineBeforeFinalFlush" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="0.031"/>
+  <testcase name="admissionInvariant_deferredImportCannotBeOverwrittenByOwnedSaves" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="0.069"/>
+  <system-out><![CDATA[owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=2, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=3, ordinalWrites=1, retirementWrites=0) fullReads=1 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=1, ordinalWrites=0, retirementWrites=0) fullReads=1 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=2, ordinalWrites=0, retirementWrites=0) fullReads=1 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=1, ordinalWrites=0, retirementWrites=0) fullReads=1 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=2, ordinalWrites=0, retirementWrites=0) fullReads=1 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=2, ordinalWrites=0, retirementWrites=0) fullReads=1 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=2 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=2, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=1, headerWrites=1, ordinalReads=2, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=2, ordinalWrites=0, retirementWrites=0) fullReads=1 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=1, headerWrites=1, ordinalReads=2, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=1, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=1 replacements=1
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

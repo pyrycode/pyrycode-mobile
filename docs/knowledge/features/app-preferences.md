@@ -281,6 +281,11 @@ graph. A full suite can pass while the old callback remains broken because
 initialization timing determines whether it reaches the closed scope
 ([#1709](../../specs/architecture/1709-preferences-context-capture.md)).
 
+Instrumentation uses one Application-owned store across startup and rebuilds;
+see [Device gate ownership guidance](development-verification-gates.md#preference-ownership-across-ordinary-tests-and-replay).
+The production binding and `AppPreferencesTeardownTest`'s after-graph-close
+initialization contract remain unchanged.
+
 Reads are reactive: collectors receive the current persisted value on subscription and subsequent DataStore updates. Writes are `suspend` and durable on success. Host workspace writes, removal and migration return IO failures as `Result.failure`; cancellation propagates. A failed migration commits neither ownership nor transfer and can be retried. Legacy setters retain their throwing error behavior. Workspace operation logs contain static event/outcome codes, never server ids, paths or exception messages.
 
 ## Adding a preference

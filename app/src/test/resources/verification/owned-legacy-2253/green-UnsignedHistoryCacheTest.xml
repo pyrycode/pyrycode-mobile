@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-18T00:44:55.996Z" hostname="023c096c208b" time="0.598">
+  <properties/>
+  <testcase name="deltaRestoreInvariant_partialSegmentsKeepHeldTextAndGapAcrossFreshCache" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest" time="0.292"/>
+  <testcase name="restoreOrderInvariant_partialGapFillRetainsBothSidesWithoutCommands" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest" time="0.047"/>
+  <testcase name="durableWriteInvariant_failedRowsAndStateWritesKeepOnlyPriorClaims" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest" time="0.015"/>
+  <testcase name="legacyCompatibilityInvariant_positiveSignedDocumentRetainsRowsAndCoverage" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest" time="0.01"/>
+  <testcase name="retainedClaimsInvariant_staleLegacySlicesCannotRecertifyMissingContent" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest" time="0.068"/>
+  <testcase name="retainedClaimsInvariant_invalidMetadataRejectsClaimsWithoutLosingRows" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest" time="0.053"/>
+  <testcase name="retainedClaimsInvariant_validLegacySlicesSurviveRoundTripAndStaleBinding" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest" time="0.013"/>
+  <testcase name="retentionInvariant_staleStateCannotRecertifyRemovedMaximum" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest" time="0.006"/>
+  <testcase name="retainedRowsInvariant_malformedHistoryCannotHideReadableRows" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest" time="0.004"/>
+  <testcase name="retainedClaimsInvariant_invalidLegacySlicesRejectMetadataWithoutLosingRows" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest" time="0.077"/>
+  <testcase name="receivedIdentityInvariant_roundTripRetainsEveryUnsignedMetadataField" classname="de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest" time="0.004"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

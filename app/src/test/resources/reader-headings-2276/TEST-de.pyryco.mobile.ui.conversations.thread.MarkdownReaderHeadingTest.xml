@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderHeadingTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-19T01:33:30.406Z" hostname="723893f7154c" time="6.928">
+  <properties/>
+  <testcase name="lightLinkedHeadings" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderHeadingTest" time="5.231"/>
+  <testcase name="darkAttachmentHeadingsAtLargeText" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderHeadingTest" time="0.231"/>
+  <testcase name="lightAttachmentHeadings" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderHeadingTest" time="0.194"/>
+  <testcase name="darkLinkedHeadings" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderHeadingTest" time="0.174"/>
+  <testcase name="lightLinkedHeadingsAtLargeText" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderHeadingTest" time="0.154"/>
+  <testcase name="darkAttachmentHeadings" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderHeadingTest" time="0.162"/>
+  <testcase name="lightAttachmentHeadingsAtLargeText" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderHeadingTest" time="0.152"/>
+  <testcase name="darkLinkedHeadingsAtLargeText" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderHeadingTest" time="0.122"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

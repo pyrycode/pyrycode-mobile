@@ -13,6 +13,19 @@ spec.loader.exec_module(suite)
 
 
 class SuiteDriverTest(unittest.TestCase):
+    def test_recording_commands_select_only_recorded_rows_and_reject_scripted_requests(self):
+        method = 'interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog'
+        manifest = {'scenarios': [{'method': 'recorded', 'fixture': 'recorded.json'},
+                    {'method': method, 'scripted': {'scenario': 'session-error',
+                     'test': 'de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#' + method}}]}
+        self.assertEqual([row['method'] for row in suite.selected_rows(manifest, ready=True)], ['recorded'])
+        with tempfile.TemporaryDirectory() as directory:
+            methods = Path(directory) / 'methods.json'
+            methods.write_text(json.dumps([method]))
+            with self.assertRaises(ValueError): suite.selected_rows(manifest, methods, ready=True)
+        manifest['scenarios'][1]['scripted']['scenario'] = 'ping'
+        with self.assertRaises(ValueError): suite.selected_rows(manifest, ready=True)
+
     def test_stopping_full_verification_preserves_completed_cases_and_counts_the_rest_unrun(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -317,9 +330,25 @@ class SuiteDriverTest(unittest.TestCase):
         self.assertNotEqual(suite.contract(original), suite.contract(moved))
 
     def test_wrong_installed_apk_is_rejected_before_native_execution(self):
-        from unittest.mock import patch
-        with patch.object(suite.legacy, 'adb', side_effect=[b'package:/data/app/test/base.apk\n', b'0' * 64 + b'  /data/app/test/base.apk\n']):
-            with self.assertRaises(ValueError): suite.installed_apks('emulator-5582')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            apk = root / 'app/build/outputs/apk/debug/app-debug.apk'
+            apk.parent.mkdir(parents=True)
+            apk.write_bytes(b'controlled built APK')
+            recording = root / 'recording.json'
+            recording.write_text(json.dumps(self.fixture()))
+            installed = suite.digest(b'different installed APK').encode()
+            with mock.patch.object(suite, 'ROOT', root), \
+                 mock.patch.object(suite.legacy, 'adb', side_effect=[
+                     b'package:/data/app/test/base.apk\n', installed + b'  /data/app/test/base.apk\n',
+                 ]) as adb, mock.patch.object(suite, 'instrument') as instrument:
+                with self.assertRaisesRegex(ValueError, '^Installed Android package differs from the built package$'):
+                    suite.replay('emulator-5582', recording)
+                self.assertEqual([
+                    mock.call('emulator-5582', 'shell', 'pm', 'path', suite.PACKAGE),
+                    mock.call('emulator-5582', 'shell', 'sha256sum', '/data/app/test/base.apk'),
+                ], adb.call_args_list)
+                instrument.assert_not_called()
 
     def test_old_recordings_compare_only_mutually_declared_polling_models(self):
         original = self.fixture()

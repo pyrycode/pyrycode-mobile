@@ -14,6 +14,7 @@ import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -22,6 +23,94 @@ import kotlin.concurrent.thread
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteConnectionsTest {
+    @Test fun aRacingCloseCannotHideTheCapturedRefusedAttachmentRequest() =
+        runTest {
+            val request = frame(1, "request_attachment", """{"conversation_id":"chat","attachment_id":"file"}""")
+            val hub =
+                SuiteConnections.replaying(
+                    backgroundScope,
+                    RecordedSuiteTape(
+                        listOf(
+                            SuiteStep("connect", "phone"),
+                            SuiteStep("open", "phone"),
+                            SuiteStep("close", "phone"),
+                            SuiteStep("client", "phone", request, accepted = false),
+                            SuiteStep("inbound_end", "phone"),
+                        ),
+                        literalProducerIdentities = true,
+                    ),
+                )
+            val transport = hub.transport("phone") { error("Live transport started") }
+            transport.connect()
+            val pump = hub.pump(transport) { error("Live pump started") }
+            pump.start()
+            runCurrent()
+            val started = CountDownLatch(1)
+            val failure = AtomicReference<Throwable?>()
+            var closer: Thread? = null
+            try {
+                synchronized(hub) {
+                    closer =
+                        thread {
+                            started.countDown()
+                            try {
+                                transport.close()
+                            } catch (error: Throwable) {
+                                failure.set(error)
+                            }
+                        }
+                    check(started.await(5, TimeUnit.SECONDS))
+                    val worker = checkNotNull(closer)
+                    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+                    while (worker.state != Thread.State.BLOCKED && System.nanoTime() < deadline) Thread.yield()
+                    assertEquals(Thread.State.BLOCKED, worker.state)
+                    // The supervisor and coordinator can both close this connection. The second
+                    // close must finish the tape transition before the cut retrieval sends.
+                    pump.close()
+                    assertFalse(pump.send(request.copy(id = 90)))
+                }
+                checkNotNull(closer).join(5000)
+                assertFalse(checkNotNull(closer).isAlive)
+                assertEquals(null, failure.get())
+                runCurrent()
+                hub.assertComplete()
+            } finally {
+                closer?.join(5000)
+                hub.close()
+            }
+        }
+
+    @Test fun aCapturedRefusalStillRejectsAChangedAttachmentAfterClose() =
+        runTest {
+            val hub =
+                SuiteConnections.replaying(
+                    backgroundScope,
+                    RecordedSuiteTape(
+                        listOf(
+                            SuiteStep("connect", "phone"),
+                            SuiteStep("open", "phone"),
+                            SuiteStep("close", "phone"),
+                            SuiteStep("client", "phone", frame(1, "request_attachment", """{"attachment_id":"file"}"""), accepted = false),
+                        ),
+                        literalProducerIdentities = true,
+                    ),
+                )
+            try {
+                val transport = hub.transport("phone") { error("Live transport started") }
+                transport.connect()
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                runCurrent()
+                pump.close()
+                assertThrows(IllegalStateException::class.java) {
+                    pump.send(frame(90, "request_attachment", """{"attachment_id":"wrong"}"""))
+                }
+                assertThrows(IllegalStateException::class.java) { hub.assertComplete() }
+            } finally {
+                hub.close()
+            }
+        }
+
     @Test fun aSendWaitingBehindCloseCannotUseAnEarlierOpenState() =
         runTest {
             val hub =
@@ -127,6 +216,40 @@ class SuiteConnectionsTest {
             hub.close()
         }
 
+    @Test fun negativeObservationWaitsForRequestsAndDeliveryButNotTheCapturedTimeout() =
+        runTest {
+            val entries =
+                listOf(
+                    SuiteStep("connect", "phone"),
+                    SuiteStep("open", "phone"),
+                    SuiteStep("client", "phone", frame(1, "request_model_list")),
+                    SuiteStep("daemon", "phone", frame(2, "model_list", reply = 1), delayMs = 100),
+                    SuiteStep("client", "control", frame(1, "test-control:negative-absence", """{"body":"never-word"}"""), delayMs = 83417),
+                    SuiteStep("close", "phone"),
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, RecordedSuiteTape(entries))
+            val transport = hub.transport("phone") { error("Live transport started") }
+            transport.connect()
+            val pump = hub.pump(transport) { error("Live pump started") }
+            pump.start()
+            runCurrent()
+            val observation = async { hub.beforeNegativeObservation("never-word") }
+            runCurrent()
+            assertFalse(observation.isCompleted)
+            pump.send(frame(90, "request_model_list"))
+            runCurrent()
+            assertFalse(observation.isCompleted)
+            advanceTimeBy(120)
+            runCurrent()
+            observation.await()
+            assertEquals("model_list", pump.inbound.first().type)
+            assertEquals(120L, testScheduler.currentTime)
+            hub.control("negative-absence", "never-word") { error("Live control started") }
+            pump.close()
+            hub.assertComplete()
+            hub.close()
+        }
+
     private fun frame(
         id: Long,
         type: String,
@@ -224,6 +347,60 @@ class SuiteConnectionsTest {
             }
         }
 
+    @Test fun replayScalesCapturedGapsWithAFloorThatNeverExceedsTheCapture() {
+        assertEquals(0L, SuiteConnections.replayDelayMs(0))
+        assertEquals(1L, SuiteConnections.replayDelayMs(1))
+        assertEquals(20L, SuiteConnections.replayDelayMs(20))
+        assertEquals(20L, SuiteConnections.replayDelayMs(150))
+        assertEquals(50L, SuiteConnections.replayDelayMs(500))
+        assertEquals(2697L, SuiteConnections.replayDelayMs(26975))
+    }
+
+    @Test fun everyOriginalSpeedScenarioNamesAShippedRecording() {
+        assertTrue(SuiteConnections.ORIGINAL_SPEED_SCENARIOS.isNotEmpty())
+        SuiteConnections.ORIGINAL_SPEED_SCENARIOS.forEach { scenario ->
+            assertTrue(scenario, java.io.File("src/androidTest/assets/recorded/suite/$scenario.json").isFile)
+        }
+    }
+
+    @Test fun anOriginalSpeedScenarioKeepsItsExactRecordedGaps() =
+        runTest {
+            val entries =
+                listOf(
+                    SuiteStep("connect", "phone"),
+                    SuiteStep("open", "phone"),
+                    SuiteStep("client", "phone", frame(1, "send_message")),
+                    SuiteStep("daemon", "phone", frame(2, "turn_state")),
+                    SuiteStep("daemon", "phone", frame(3, "turn_end"), delayMs = 500),
+                    SuiteStep("close", "phone"),
+                )
+            val scenario = SuiteConnections.ORIGINAL_SPEED_SCENARIOS.first()
+            val hub =
+                SuiteConnections.replaying(
+                    backgroundScope,
+                    RecordedSuiteTape(entries),
+                    originalSpeed = scenario in SuiteConnections.ORIGINAL_SPEED_SCENARIOS,
+                )
+            val transport = hub.transport("phone") { error("Live transport started") }
+            transport.connect()
+            val pump = hub.pump(transport) { error("Live pump started") }
+            pump.start()
+            runCurrent()
+            pump.send(frame(20, "send_message"))
+            runCurrent()
+            assertEquals("turn_state", pump.inbound.first().type)
+            val finished = async { pump.inbound.first() }
+            advanceTimeBy(499)
+            runCurrent()
+            assertFalse(finished.isCompleted)
+            advanceTimeBy(1)
+            runCurrent()
+            assertEquals("turn_end", finished.await().type)
+            pump.close()
+            hub.assertComplete()
+            hub.close()
+        }
+
     @Test fun recordedCadencePreservesIntermediateObservations() =
         runTest {
             val entries =
@@ -245,7 +422,8 @@ class SuiteConnectionsTest {
             runCurrent()
             assertEquals("turn_state", pump.inbound.first().type)
             val finished = async { pump.inbound.first() }
-            advanceTimeBy(499)
+            // The captured 500 ms gap replays scaled to 50 ms; order and the intermediate state remain.
+            advanceTimeBy(49)
             runCurrent()
             assertFalse(finished.isCompleted)
             advanceTimeBy(1)

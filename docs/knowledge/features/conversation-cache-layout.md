@@ -4,6 +4,23 @@ Split from [Conversation cache](conversation-cache.md); this topic retains the s
 
 ## Layout
 
+Since #2161, `appModule` binds `MigratingConversationCache` through
+`openConversationCache(Context)`. Both thread families now live in Room at
+`<noBackupFilesDir>/conversation-cache.db`, including its sidecars. Lists and read
+positions still use `FileConversationCache` under `<noBackupFilesDir>/conversations`;
+settings and attachment storage are unchanged. The paths below describe those metadata
+files and the version-1 thread sources retained for migration and downgrade compatibility.
+
+Database version 3 adds `file_imports` through additive `AutoMigration(from = 2, to = 3)`;
+the complete upgrade chain is 1 → 2 → 3, with exported `1.json`, `2.json` and `3.json`
+schemas and no destructive fallback. The ledger's primary key is `(host, conversation,
+family)`, with static `outcome` values. Families are `legacy`, `authoritative` and `host`;
+a host-wide retirement uses family `host` and conversation `""`. Imported content/evidence
+and its completion marker commit in one transaction. Completed imports leave their source
+bytes intact until explicit conversation or host removal; the ledger prevents a leftover
+file from replacing a newer database save. See [import classification and write
+refusals](conversation-cache-contract.md#the-contract) and [durable retirement](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost).
+
 ```
 <root>/<sha256hex(serverId)>/conversations.json
 <root>/<sha256hex(serverId)>/threads/<sha256hex(conversationId)>.json   (#797)
@@ -54,7 +71,7 @@ the round-trip is exact to the nanosecond rather than truncated to millisecond p
 ### Indexed legacy Room layout (#2162)
 
 [ADR 0009](../decisions/0009-room-for-indexed-conversation-cache.md) records the approved
-SQLite/Room choice. `ConversationCacheDatabase` starts at schema version 1, using Room 2.8.4
+SQLite/Room choice. `ConversationCacheDatabase` originally shipped at schema version 1, using Room 2.8.4
 and KSP 2.3.6; the exported schema lives under `app/src/main/roomSchemas/`.
 `openConversationCacheDatabase(Context)` in `di/ConversationCacheDatabaseFactory.kt` opens
 `<noBackupFilesDir>/conversation-cache.db`. Its journal, WAL and SHM sidecars share that
@@ -88,10 +105,58 @@ save coordinator or background history download is introduced. See
 [the bounded contract](conversation-cache-contract.md#indexed-legacy-operations-and-pages-2162)
 for continuation and optional-evidence rules.
 
-This backend is independently callable and unbound: #2161 owns file import/application binding,
-\#2163 owns authoritative Room storage, and #2068 owns reader activation/owned partial writes.
+The backend is independently callable and is now used by the migration-aware application
+cache (#2161), alongside authoritative Room storage (#2163). #2068 owns bounded reader
+activation and owned partial writes.
 Legacy evidence cannot certify authoritative facts. Conversation lists, read positions, settings
 and attachment bytes retain their existing storage.
+
+### The additive version 1 → 2 migration and authoritative tables (#2163)
+
+`ConversationCacheDatabase` raises its schema from version 1 to version 2 through Room's
+`AutoMigration(from = 1, to = 2)` — additive only: it adds the two authoritative tables below
+without altering or dropping any of the three legacy tables, so an existing on-disk database
+from #2162 opens and keeps every legacy row, header and evidence entry it already held. There
+is no destructive fallback. The exported schema for both versions lives under
+`app/src/main/roomSchemas/de.pyryco.mobile.data.cache.ConversationCacheDatabase/`
+(`1.json`, `2.json`, with `3.json` added by #2161).
+`AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence`
+builds a real on-disk version 1 database from the checked-in `1.json` schema, seeds legacy
+content, reopens it through Room's full 1 → 2 → 3 automatic migration chain, and asserts the
+legacy rows/evidence are unchanged before writing and reading back an authoritative replacement on the upgraded file.
+
+Two new tables, scoped and indexed the same way as the legacy three:
+
+- `authoritative_headers`: one row per exact host/conversation owner, holding the committed
+  epoch, a per-write replacement generation (a fresh UUID minted on every write, not a content
+  hash), `appliedVersion`, `checkpoint`, an optional serialized `SavedThreadCoverage` and the
+  item count written with it.
+- `authoritative_items`: one row per owner, epoch and item id, with a stable sorted `ordinal`
+  and the item's full raw JSON payload. A unique index over `(host, conversation, epoch,
+  ordinal)` keeps bounded reverse selection (`ORDER BY ordinal DESC LIMIT`) indexed for
+  `newestPage`/`beforePage`, the same shape `legacy_rows`' ordinal indexing already uses.
+
+Composite primary keys on both tables make epoch part of item and header identity, so two
+epochs for the same owner — or the same ids reused under a different owner — never collide.
+See [the authoritative contract](conversation-cache-contract.md#indexed-authoritative-room-storage-and-pages-2163)
+for the storage operations, validation, page/continuation and certification rules built on
+this schema.
+
+**Atomic scoped removal of both families.** `ConversationCacheDatabase.removeScope(host,
+conversation)` is the one place that deletes rows from all five tables — the three legacy
+plus the two authoritative — for an exact host or host/conversation, in a single Room
+transaction. `LegacyRoomStorage.removeConversation`/`removeHost` and
+`AuthoritativeRoomStorage.removeConversation`/`removeHost` all call this shared operation, so a
+scoped removal through either backend clears both families together; a conversation or host
+that still has rows in one family after a removal call indicates a bug, not a partial-removal
+contract. This is deliberately **not** used by ordinary replacement writes: `LegacyRoomStorage`'s
+`writeThread` keeps calling its own family-local row/evidence delete-then-insert, and
+`AuthoritativeRoomStorage.writeAuthoritativeThread` deletes and reinserts only the authoritative
+tables, so writing one family's facts never touches the other family's content for the same
+owner. `AuthoritativeRoomStorageTest.ownershipInvariant_familiesAndRemovalStayIsolated` pins
+both halves: a legacy write/removal leaves authoritative facts alone and an authoritative
+write/removal leaves legacy rows and evidence alone, for the same owner and across sibling
+owners that share an id under a different host, conversation or case.
 
 ### The cache-local record must mirror every `Conversation` field (#999)
 
@@ -107,6 +172,23 @@ default keeps a document written before this field existed readable, the same re
 other additive field in this cache (see `CachedAttachment` above). Adding a boolean like this to
 `Conversation` means updating this record and both mapping functions, not only the DTOs — check
 here first, before the wire layer, since a cache miss is the harder failure to notice.
+
+`CachedConversation.pinnedAt: String? = null` (#2213) mirrors `Conversation.pinnedAt` beside `muted`
+and `workspaceLabel`, following `lastUsedAt`'s exact-text convention rather than epoch millis:
+`Conversation.toRecord()` writes `pinnedAt?.toString()`, and `CachedConversation.toDomain()` restores it
+with `pinnedAt?.let(Instant::parse)`, so a pin round-trips to the nanosecond across a fresh cache
+instance. The host and conversation id stay the hashed-directory scope this cache already uses, so two
+hosts sharing a conversation id keep independent pins — there is no cross-host identity to collide on.
+The `= null` default keeps a document written before this field existed readable as unpinned, the same
+reasoning as `muted`'s own default; `readConversations` does not retroactively repair such a document,
+it only reads it as unpinned until the next write. A malformed stored `pinnedAt` (one that does not parse
+as an `Instant`) withholds the whole document under this cache's existing parse-failure behavior — see
+[Failure model — graceful reads, reporting mutations](conversation-cache-failure-model.md#failure-model--graceful-reads-reporting-mutations)
+— rather than rewriting or dropping only that field; `FileConversationCacheTest` pins that the stored bytes
+are left untouched. Unlike `agent` below, this field was added to the cache in the same ticket that added
+it to the DTOs, so there is no cold-start window where a restored row reads unpinned while the live list
+disagrees — `HostConversationSource`'s cold-start publish and the first live `conversations`/
+`conversation_updated` snapshot agree on the same field from the start.
 
 **Known gap, not yet fixed: `agent` ([#1108](https://github.com/pyrycode/pyrycode-mobile/issues/1108)).**
 `Conversation.agent` was added without touching this cache — deliberately out of that ticket's scope, since
@@ -137,7 +219,11 @@ status, inputFields: Map<String, String> = emptyMap())` — `inputFields` added 
 `Bash` row keeps its described/simple [header](tool-call-row.md#subject-and-elapsed-text) instead of
 falling back to the `input_summary` précis; the default keeps a document written before #1575 (no
 `inputFields` key) readable with empty fields, the same additive pattern as `CachedMessage.attachments`
-(#983). `parentToolUseId`, `denial` and `resultDetail` stay uncached. `CachedBoundary(previousSessionId,
+(#983). `denial` and `resultDetail` stay uncached. `CachedToolCall.parentToolUseId: String? = null`
+(#2221) is the tool-row half of subagent nesting: it is written from `ToolCall.parentToolUseId.ifEmpty
+{ null }` and read back with `.orEmpty()`, the same nullable-not-`""`-defaulted shape as
+`CachedMessage.parentToolUseId` below, for the same reason — see that field for the full rationale.
+`CachedBoundary(previousSessionId,
 newSessionId, reason, occurredAt, workspaceCwd:
 String? = null)` round out the two original row kinds. `CachedBanner(level, text, truncated,
 occurredAt)`, `CachedCompaction(preTokens: Long? = null, postTokens: Long? = null, manual,
@@ -158,15 +244,28 @@ from `CachedSegment`; when reconciliation converts legacy content to segments, o
 metadata is cleared. See [Message identities](data-model.md#message) and
 [restore ownership](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
 
-Assistant attribution (`Message.parentToolUseId`, #1826) is also absent from disk serialization;
-The reconciliation field above does not add attribution storage or change the document version. Cache-only assistant rows
-therefore restore with unknown (empty) attribution. Same-conversation wire/history evidence enriches
-those rows in memory through `mergeCachedRows`, including legacy rows without recoverable segment
-records. The wrapper retains reconciled rows across reconnect, so a later unattributed cache copy
-cannot erase a known parent. A process restart can lose that hint until fresh evidence arrives.
-See [parent precedence through seams and merges](remote-conversation-repository-assistant-reply-segments.md#parent-attribution-through-seams-and-merges-1826)
-for conflict handling. File-cache round-trip and wrapper probes verify omission from stored bytes,
-restoration as empty, enrichment and reconnect retention without a cache migration.
+Assistant attribution (`Message.parentToolUseId`, #1826) is persisted as of #2221, which supersedes
+\#1826's "disk serialization is unchanged" / "attribution is not serialized" decision for this field.
+`CachedMessage.parentToolUseId: String? = null` is written from `Message.parentToolUseId.ifEmpty { null
+}` and read back with `.orEmpty()`. The reconciliation field above still does not carry attribution — it
+is a separate mechanism — and the document version is unchanged: the field is additive and nullable
+rather than `""`-defaulted, so with `explicitNulls = false` a parentless main-thread row encodes byte-
+for-byte as it did before #2221 and its `cachedThreadRowProof`/stored coverage hashes stay valid. Only a
+row that carries a parent gains the key.
+
+A document written before #2221 has no key for either `parentToolUseId`, so it restores with both empty
+(unattributed/top level) exactly as before, through the same `ignoreUnknownKeys`/default-field mechanism
+every other additive cache field here uses — it is not retroactively repaired. From then on, same-
+conversation wire/history evidence still enriches an unattributed restored row in memory through
+`mergeCachedRows`, including legacy rows without recoverable segment records, and the wrapper still
+retains reconciled rows across reconnect, so a later unattributed cache copy cannot erase a known
+parent. What #2221 changes is that the *next* write of an enriched row — including the collector's final
+flush on cancellation — persists the parent it learned, so a subsequent restore (including after a
+process restart) already carries it instead of relying solely on in-memory enrichment. See [parent
+precedence through seams and merges](remote-conversation-repository-assistant-reply-segments.md#parent-attribution-through-seams-and-merges-1826)
+for conflict handling. `AssistantParentCacheTest.diskFormatKeepsAttribution_wireEvidenceEnrichesUnattributedRows_andReconnectKeepsIt`
+and `LegacyRowCodecTest` verify the attributed round trip, the pre-#2221 unattributed restore, enrichment
+and reconnect/flush retention, and that a parentless row's encoded bytes and proof are unchanged.
 
 `CachedAttachment(attachmentId, displayName: String? = null, mimeType: String? = null)` (#983) maps
 `Message.attachments` 1:1; `explicitNulls = false` omits a `null` hint on encode rather than writing
@@ -266,6 +365,10 @@ owns independent lazy views; accessing them does not add disk fields.
 pins these properties alongside existing signed/unsigned validation tests.
 
 ### The thread document's two writers (#1354)
+
+These describe the retained `FileConversationCache` compatibility writer. Since #2161,
+application thread writes use Room through the migration-aware cache; the repository's
+ordering and successful-baseline rules below still apply.
 
 Both writers rewrite one thread document under the file cache's `Mutex`, preserving the other
 half. Since #2018 they encode the same `CachedThread` serializer/configuration directly

@@ -112,6 +112,31 @@ The permission recording above remains separate. The complete suite inventories 
 annotated real-Claude method in `scripts/recorded-suite-inventory.py`. Its native runner
 calls each original scenario body through the real repository and Compose interface.
 Two workspace scenarios remain explicitly retired because their controls were removed.
+The current routine runner contains 67 recordings. Three further original methods are
+owned by the existing scripted suite because both versions execute the same assertions:
+
+| Original scenario | Retained scripted scenario | Shared assertions |
+| --- | --- | --- |
+| Session-error recovery | `session-error` | Retained and dropped backlog recovery, message identity and original-host restoration |
+| Finished reply selection | `selection-copy` | Real Android word selection, Copy menu and clipboard result |
+| Reply suggestion | `reply-suggestion` | Long-press send, one user echo and revisioned suggestion removal |
+
+The manifest names each exact scripted method. The inventory requires that annotated
+method and its original harness mapping to remain enabled. It accepts no other scripted
+exemptions. These three methods remain in the explicit live selection. Their recordings
+are no longer shipped or counted as successful captures. No other recording used them.
+The 72 original methods therefore comprise 67 recordings, three scripted owners and
+two obsolete workspace methods. Every scripted scenario remains in the normal gate.
+The word-reveal scenario and its recording were removed on 2026-10-17 at Juhana's
+request, because text appearing at once is acceptable.
+
+Recording capture, replay and strict compatibility commands below select the 67 retained
+recordings. Scripted ownership never supplies a capture or compatibility receipt.
+Missing recordings, changed contracts, package mismatches and incomplete counted
+evidence still fail. Historical 71- and 68-recording receipts describe earlier selections.
+Removing the repeated routine native executions accounts for 42.416 seconds in one
+retained Mac run. This is expected test work saved, not a measured whole-verifier gain.
+
 Missing recordings fail the inventory. They never count as converted scenarios.
 The normal Gradle `check` task enforces this inventory, including capture and replay hashes.
 
@@ -140,6 +165,17 @@ The full suite preserves all mutating commands in recorded order. Independent co
 may progress separately. Background queries match their complete owner, payload and count.
 Their responses wait for their actual correlated requests and preceding recorded commands.
 Moving a query earlier cannot expose a future action's answer.
+
+During suite replay, `RecordedSuiteDocument.replayClientInfo` supplies the phone's
+`device_name` from captured `register_push_token` requests to the native connection
+factory. Only owners named `phone` or prefixed `phone/` supply this label; peer identities
+stay separate. The current client's version is retained. A recording without phone
+registration keeps the runner's identity, and inconsistent captured phone labels fail.
+Live capture uses the actual device identity. This lets an ARM capture replay on an x86
+emulator while every registration still matches its complete recorded payload, count and
+server owner. Arbitrary device names remain invalid. Capture provenance and raw fixture
+bytes are unchanged.
+
 File downloads are read-only queries. They may race other reads, including a model
 lookup after reconnect. The attachment identity and complete request remain exact.
 Upload chunks and user messages remain ordered commands. Downloaded chunks cannot be
@@ -190,8 +226,105 @@ contract. These cannot emit daemon messages. Any explicitly captured refused cal
 requires its complete request payload and must be consumed.
 Checking the pump's close state and accepting a send share one lock. A sender queued
 before teardown cannot reuse an earlier open-state check after that connection closes.
-Recorded stream events retain cadence. Real push delivery, encryption, transport recovery
-and timing obligations retain their external checks.
+Recorded stream events keep their exact order, but replay compresses their cadence.
+Each captured gap replays at one tenth of its length, `SuiteConnections.REPLAY_DELAY_DIVISOR`.
+A nonzero gap keeps at least 20 ms, or its captured length when that is shorter, so
+consecutive frames still reach the screen in separate UI frames and intermediate states
+stay observable. Recordings keep the real captured gaps; only the player shortens them.
+Replay proves payload, order and correlation, not timing, so the shorter wait drops no
+coverage.
+
+A few recordings replay at their captured speed instead. They are listed by scenario name in
+`SuiteConnections.ORIGINAL_SPEED_SCENARIOS` and selected when the suite loads the tape.
+Each asserts a transient on-screen state that lasts only as long as a captured gap, so the
+scaled gap could end it before the assertion sees it. The new-session scenario is listed
+because it waits for the "wrapping up" label, which lasts about 4.5 seconds in the recording.
+Add a scenario only after it fails at the scaled speed and the failed wait is such a
+transient. Do not add one for a slow or flaky device; a unit test checks that each
+listed name has a shipped recording. Checkpoints, close readiness and negative observations wait for released
+messages, not tape time, and the negative window stays its fixed one second.
+Real push delivery, encryption, transport recovery and timing obligations retain their
+external checks.
+
+### Atomic transport close (#2219)
+
+`RecordedTransport.close` runs on the same hub monitor as `ReplayPump.send`, not only on
+the pump's own close-state lock above. Before this, `close` published `localClose` and ran
+its lifecycle transition without holding that monitor, so a send already inside the monitor
+could observe the transport as closed while the strict tape still required the close step
+itself to be consumed first. `hasEligibleRefusal` then saw no pending close and let the send
+bypass exact matching, so the tape's captured refused `request_attachment` and its
+`inbound_end` were never drained; the scenario's own retry and recovery still passed, and
+only the final teardown checkpoint hung for the full 30-second deadline. This produced the
+historical fail-then-pass on `interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile`:
+[#2213's Linux UI gate](https://github.com/pyrycode/pyrycode-mobile/issues/2213) failed the
+method with replay progress `matched=32 remaining=3` and exactly that close, refused request
+and `inbound_end` pending, then its focused rerun passed 1/1 in 6.65 seconds — evidence of the
+race, not proof of its absence. An earlier fail-then-pass of the same method occurred in
+[#2208](https://github.com/pyrycode/pyrycode-mobile/issues/2208). Serializing `close` on the hub monitor makes a second closer wait behind an unfinished
+first close, so the tape's close step is always consumed before any send can see the
+transport as closed.
+
+`SuiteConnectionsTest#aRacingCloseCannotHideTheCapturedRefusedAttachmentRequest` forces this
+overlap directly: it holds the hub monitor, starts a transport close on another thread,
+confirms that thread blocks on the monitor, then closes the pump and sends the refused
+request from the holder before releasing it, and asserts the tape still completes.
+`aCapturedRefusalStillRejectsAChangedAttachmentAfterClose` is the companion negative case —
+a changed attachment identity after close still fails strict matching and leaves the tape
+incomplete. Both join the existing `aSendWaitingBehindCloseCannotUseAnEarlierOpenState`.
+Against the pre-fix source (`bf1bf2ba0`) the racing-close regression failed twice, each one
+executed/one failed/zero skipped, both leaving precisely the refused attachment request and
+`inbound_end` unconsumed — the same shape as the historical gate failure. After the fix
+(`3c4ccf7f8`), `SuiteConnectionsTest` passed 15/15 and `RecordedSuiteTapeTest` passed 23/23,
+and the dispatcher's Linux UI gate executed and passed
+`interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile` with its original restart,
+link-cut, Retry and recovered-file assertions intact. The builder additionally ran five
+consecutive focused native executions of that method with no failures or skips (8.897,
+8.169, 8.624, 8.274 and 7.809 seconds), all against identical source hashes. The retained
+evidence index is
+[`recorded-close-2219/evidence.json`](../app/src/test/resources/verification/recorded-close-2219/evidence.json);
+raw XML, output, phone diagnostics and source snapshots were kept under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2219/atomic-close-20261017/` at review
+time and are pruned after 30 days, so the counted results above, not that path, are the
+durable record.
+
+**Second cause: the supervisor's own close could race its cancelled loop.** After the
+fix above was in the failing tree, the method stalled again on macOS in [#2173's UI
+gate](https://github.com/pyrycode/pyrycode-mobile/issues/2173), on commit `00d9118fd3`:
+`setHostLink(up = true)` timed out after 30 s with the repository still absent, and the
+same-tree rerun passed. A temporary, uncommitted match trace on a normal device run ruled
+out replay scheduling — the list, MCP and context asks matched 258 ms before
+`request_history`, so the history reply never had a window to overtake an earlier ask.
+The trace instead placed the cut's `attachment_request` on the main thread while the
+captured `close` was consumed on the cancelled supervisor loop's own worker thread,
+inside its `finally`. `RelayConnectionSupervisor.close` cancelled the loop before reading
+`liveConnection`; if the loop's `finally` cleared `liveConnection` and closed its
+transport between the cancel and that read, `close()` closed nothing and returned, and
+the cut's thread could then send the retrieval request on a transport the loop had not
+closed yet. The tape failed on that request before its captured close, the app absorbed
+the failure as `Unavailable`, and the next generation's `connect` rethrew the stored
+failure — the `host link reconnect timed out; repository present=false` signature. The
+same run's `interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes` failure
+(`step 17`, a chunk reaching the tape before its close) is the same race, not a separate
+cause; that scenario's fix is tracked under #2138.
+
+The fix: `close()` now reads the live transport before cancelling the loop, and closes
+that transport itself (or one an `Up` published meanwhile) before returning, so it can no
+longer return with the socket still open underneath an in-app cut. See
+`RelayConnectionSupervisor.close` in
+`app/src/main/java/de/pyryco/mobile/data/network/RelayConnectionSupervisor.kt`.
+`RelayConnectionSupervisorTest#close_closesTheLiveTransportBeforeReturning_whenTheCancelledLoopClearsItFirst`
+forces the race with a single-thread loop dispatcher that holds `close()`'s caller inside
+cancellation dispatch until the loop's `finally` has cleared `liveConnection` and parked
+in the transport's close; against the pre-fix source it failed with zero completed closes
+(38 executed, 1 failed, 0 skipped), and passed 38/38 after the fix.
+`SuiteConnectionsTest` (15 tests, including the two #2220 regressions above) and
+`RecordedSuiteTapeTest` (23 tests) both stayed green — a reply-ordering fix in
+`RecordedSuiteTape.drain` was drafted for this same failure, tested and then reverted once
+the trace pointed at the supervisor instead, so the tape gained no new hold logic from
+this ticket. `RecordedSuiteTape.progress()` does keep the `first-failure=<sticky
+failure>` field it gained during that investigation, naming the first tape mismatch a
+teardown failure is based on.
 
 ### Observation checkpoints and separate verification results
 
@@ -226,11 +359,35 @@ bounded model above. The shared guarantees are exact actions, request correlatio
 connection termination after required work, observation boundaries and complete consumption.
 Do not interpret copying Desktop's checkpoints as copying its entire scheduler.
 
-Replay restores the instrumentation arguments, prior pairings and preferences, and the
-ordinary application graph after each case, including failures. Recorded mode must not
-leak into another device test or make its ordinary-mode check silently skip. A device
-regression enters an incomplete replay, requires that replay to fail, then checks that
-the arguments and ordinary repository binding are restored.
+### Replay isolation
+
+`E2eTestApplication` owns one preference DataStore for the instrumentation process.
+Both startup paths and every graph rebuild bind that same instance through a fresh
+override module. An ordinary isolated Koin graph can close without discarding the
+Application's preference factory or opening a competing owner of `app_prefs`.
+Replay isolates values in that store; it does not isolate cases in separate processes
+or preference files. The store remains active until process exit.
+
+Replay restores the instrumentation arguments, prior pairings and preferences, then
+rebuilds the ordinary application graph after each case, including failures. Rebuilds
+run on main with no Activity alive, unregister the old lifecycle observer and dispose
+the old registry and host sources. Recorded mode must not leak into another device
+test or make its ordinary-mode check silently skip.
+
+A seeded fixture must also restore its own original snapshot and rebuild the ordinary
+graph in `finally`. Direct snapshot restoration bypasses the observable pairing-store
+revision, so the registry created after replay can otherwise retain a synthetic host
+connection after its persisted pairing disappears. Cleanup must release that connection
+and restore exactly the original registry hosts as well as persisted state, even when
+the seeded assertion fails.
+
+`RecordedSuiteIsolationDeviceTest` covers ordinary graph closure with real file I/O,
+two successive incomplete replays with ordinary graph closure between them, and a
+successful original ping scenario. Two additional probes await synthetic registry
+ownership before checking cleanup after normal return and deliberate assertion failure.
+See [Device gate evidence for #2208](knowledge/features/development-verification-gates.md#linux-ownership-repair-evidence-2208)
+for counted Linux results. These checks remain offline; they do not establish fresh
+Claude compatibility, encrypted transport, real push delivery or live timing.
 
 Failed runs can export separately named private application traces. Their format cannot
 be loaded as a successful recording. Compressed diagnostic archives are excluded from
@@ -252,10 +409,64 @@ replay can render the same required screens without that interval. The v4 model 
 presentation and actual acknowledgements. It preserves original feature assertions and the
 explicit read/attention tests instead of forcing that incidental interval to repeat.
 
+### Cross-architecture replay evidence, 2026-10-17
+
+Verification scope for [#2201](https://github.com/pyrycode/pyrycode-mobile/issues/2201)
+was Linux x86_64, Android API 33. The original reported eleven-case failure output was
+not recovered. The failed results below are fresh controlled reproductions using the
+exact pre-repair document and native factory from `50ba564df`, with current regressions.
+A temporary unit-only API bridge returned the runner identity; native reproduction used
+the original factory directly. The bridge is absent from the repaired source.
+
+The phone-identity regression sends the registration through the strict tape before
+asserting identity equality. Checking equality first would fail without demonstrating
+the actual request mismatch. Keep the separate wrong-registration-payload rejection
+check so selecting the captured input cannot conceal relaxed matching.
+
+| Check | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Pre-repair document regressions | 11 | 8 | 3 | 0 |
+| Pre-repair affected native method | 1 | 0 | 1 | 0 |
+| Restored recording unit selection, `f402e5972` | 85 | 85 | 0 | 0 |
+| Restored full native recorded class, `f402e5972` | 71 | 71 | 0 | 0 |
+| Current recording unit selection, `323213178` | 86 | 86 | 0 | 0 |
+| Current full native recorded class, `323213178` | 71 | 71 | 0 | 0 |
+
+All rows had zero errors. The failed document case
+`replayUsesCapturedPhoneNameWhileKeepingCurrentVersionAndExactTape` and native method
+`interactiveTurn_pingPrompt_footerShowsContextUsage` reached the strict
+`register_push_token` mismatch. Both passed after restoration; the native method passed
+within each full 71-case run. All eleven document cases, including
+`replayStillRejectsWrongRegistrationPayloads`, passed in both repaired unit selections.
+The native runs removed credentials and recorded zero producer invocations. All 73
+original recording/index JSON files retained their hashes.
+
+The [content-free evidence index](../app/src/androidTest/assets/recorded-2201/evidence.json)
+records commands, revisions, report hashes and retained failed/repaired evidence locations.
+Raw evidence was stored under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2201/`:
+`rework-20261016-identity/` holds the failed/repaired XML, phone logs, source snapshots
+and reproduction patch; `current-20261017/` holds the current unit and native reports.
+Their manifests verified all 111 and 100 files respectively. These private paths identify
+where raw captures were retained at review time; the counted results above survive pruning.
+
+The separate scripted read-confirmation failure
+[#2198](https://github.com/pyrycode/pyrycode-mobile/issues/2198) is resolved by
+[PR #2199](https://github.com/pyrycode/pyrycode-mobile/pull/2199), merged as `a0c7db693`
+and included through `8ddba7509`. Its complete Linux dispatcher `scripted-all` run at
+`894bc402a` executed and passed 22 tests, with zero failures, errors or skips, including
+both ping methods. Raw counted XML was retained at
+`resolved-2198-20261017/logs/verifier-gate__2198_8.log` under the same evidence root;
+all 128 bundle manifest entries verified. The
+[verifier PASS and evidence review](https://github.com/pyrycode/pyrycode-mobile/pull/2207#issuecomment-6228349651)
+distinguishes this historical run from the current candidate's complete scripted gate.
+Earlier failed captures remain failures. macOS was outside this ticket's verification scope.
+
 ## Complete-suite rollout evidence, 2026-10-16
 
-The inventory accounts for all 73 original native methods. All 71 active scenarios have
-reviewed genuine recordings. Two workspace scenarios remain explicitly retired.
+At rollout, the inventory accounted for all 73 original native methods. All 71 active
+scenarios had reviewed genuine recordings. Two workspace scenarios were explicitly retired.
+The current routine selection is described above and does not rewrite these historical results.
 
 | Check | Reported | Failed | Skipped |
 | --- | ---: | ---: | ---: |

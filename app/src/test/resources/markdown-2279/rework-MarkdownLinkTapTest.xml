@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-18T16:00:32.613Z" hostname="723893f7154c" time="10.017">
+  <properties/>
+  <testcase name="streamingWorkspaceOptInChanges_refreshAnnotationsAndUseTheCurrentCallback" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="4.528"/>
+  <testcase name="reader_links_keep_web_routing_and_inert_workspace_paths" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.229"/>
+  <testcase name="aStreamingDestination_becomesInertWhenRejected_andStaysInertOnSettlement" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.275"/>
+  <testcase name="aFinishedReply_handsTheNotesPathToTheThread_andNothingToAnotherApp" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.094"/>
+  <testcase name="finishedExplicitLinks_agreeWithRoutingAndHtml" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.155"/>
+  <testcase name="withoutTheOptIn_aNotesLinkStaysInert" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.058"/>
+  <testcase name="aStreamingReply_handsTheNotesPathToTheThread" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.1"/>
+  <testcase name="aWebLinkInAReply_stillOpensThroughTheUriHandler" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.057"/>
+  <testcase name="workspaceOptInChanges_refreshAnnotationsAndUseTheCurrentCallback" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.068"/>
+  <testcase name="allHeadingLevels_routeWorkspaceAndWebLinks" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.108"/>
+  <testcase name="allStreamingHeadingLevels_routeWorkspaceAndWebLinks" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.1"/>
+  <testcase name="streamingExplicitLinks_agreeWithRoutingAndHtml" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.308"/>
+  <testcase name="theOperatorsOwnMessage_isNotALink" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="0.05"/>
+  <testcase name="allReaderHeadingLevels_keepWorkspaceLinksInertAndRouteWebLinks" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkTapTest" time="3.337"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

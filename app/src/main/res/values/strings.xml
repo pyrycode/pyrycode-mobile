@@ -36,12 +36,19 @@
     <string name="cd_tree_host_reconnect">Reconnect %1$s</string>
     <string name="cd_tree_host_update">Update Pyrycode to use %1$s</string>
     <string name="tree_host_update_required">Update Pyrycode to use this host.</string>
+    <string name="tree_host_thread_missing">Update this host\'s Pyrycode daemon to use it.</string>
     <string name="tree_host_update_required_version">Update Pyrycode to version %1$s or newer to use this host.</string>
     <!-- A workspace row's pencil (#905), in both sections; %1$s is the workspace's (clamped) shown name. -->
     <string name="cd_tree_workspace_edit">Edit workspace %1$s</string>
     <string name="cd_tree_workspace_new_channel">New channel in %1$s</string>
     <string name="cd_tree_host_new_channel">New channel on %1$s</string>
     <string name="tree_host_section_label">%1$s on %2$s</string>
+    <!-- The shared Pinned group above every host and its row controls (#2215). -->
+    <string name="tree_pinned_section">Pinned</string>
+    <!-- A pinned channel row's host suffix after the channel name; the quotes keep the leading space. -->
+    <string name="tree_pinned_host_suffix">" · %1$s"</string>
+    <string name="cd_tree_pin_channel">Pin channel</string>
+    <string name="cd_tree_unpin_channel">Unpin channel</string>
     <!-- A tree conversation row's status dot (#878): one per attention state, so the meaning never rests on colour. -->
     <string name="cd_conversation_attention_waiting">Waiting for your answer</string>
     <string name="cd_conversation_attention_running">Running</string>
@@ -194,6 +201,7 @@
     <string name="thread_usage_limit_nearly">Nearly at usage limit</string>
     <string name="thread_usage_limit_five_hour">" - 5-hour window"</string>
     <string name="thread_usage_limit_seven_day">" - 7-day window"</string>
+    <string name="thread_usage_limit_percent">", %1$d%% used"</string>
     <string name="thread_usage_limit_resets">", resets %1$s"</string>
     <string name="thread_usage_limit_resets_on">", resets %1$s at %2$s"</string>
     <!-- #1357: recovery advice after a stopped turn, desktop's copy. %1$s is the conversation's agent name, so an
@@ -502,6 +510,8 @@
     <string name="thread_attachment_open">Open</string>
     <string name="thread_attachment_save">Save</string>
     <string name="thread_attachment_no_app">No app can open this file</string>
+    <string name="markdown_link_obsidian_not_installed">Obsidian is not installed</string>
+    <string name="markdown_link_open_failed">Could not open link</string>
     <string name="thread_attachment_open_failed">Couldn\'t open file</string>
     <string name="thread_attachment_saved">File saved</string>
     <string name="thread_attachment_save_failed">Couldn\'t save file</string>

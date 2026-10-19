@@ -176,6 +176,97 @@ geometry is separate from the toolbar's 24dp glyphs and 52dp left-control centre
 the host; the section fold and plus have separate targets, and the plus does not fold the section. See
 [Create channel control](#workspace-row-create-channel-control-958).
 
+## Pinned group (#2215)
+
+One shared **Pinned** group draws above every host, outside every fold — folding a host or either of
+its sections never hides it. It is absent entirely when no channel is pinned.
+[`pinnedChannels(hosts)`](channel-list-viewmodel.md#pinnedchannels-and-setpinned-2215) is a pure function
+of `HostChannelListState.hosts` (live or cached), so `ConversationTree` derives it the same way it derives
+the per-host sort: `remember(hostState.hosts, selectionOnly) { if (selectionOnly) emptyList() else
+pinnedChannels(hostState.hosts) }`, drawn via the private `treeHost`-sibling `treePinned` before the
+`forEachIndexed` over hosts. A host's Channels section filters out any row with a non-null `pinnedAt`
+(`sections[index].channels` already excludes it) unless `selectionOnly`, so a pinned channel is drawn
+exactly once — in Pinned, never also under its host. Chats are never filtered this way: they carry no pin
+control and `pinnedChannels` only reads `host.channels`, so a chat can never appear in the group even if a
+future bug set its `pinnedAt`. A pinned archived channel cannot exist either, since
+[`HostConversationSnapshot.channels`](dependency-injection-host-conversation-source.md) already excludes
+archived rows for cached and live lists alike.
+
+**Order.** Oldest `pinnedAt` first, then `serverId`, then `conversation.id`, both compared as UTF-16
+code units via `String.compareTo` — the same code-unit rule [the per-host sort](#conversation-tree-731)
+uses, so two pinned rows with an exact tie in `pinnedAt` (a push and a reconnect re-list reporting the
+same instant from different hosts) still land in one deterministic order, independent of which host's
+snapshot updates first or how `hostState.hosts` happens to be enumerated.
+
+**Confirmed-only placement.** The group reads only each host's confirmed `Conversation.pinnedAt`; nothing
+about it is optimistic. A pin or unpin tap calls
+[`ChannelListViewModel.setPinned`](channel-list-viewmodel.md#pinnedchannels-and-setpinned-2215), which
+changes no view-model state on any path — not on launch, not on success, not on failure. A row moves only
+when the owning host's own conversation stream reports the new `pinnedAt`, so a pending request, a
+refusal, or a dropped reply all leave the group exactly as the host last confirmed it. A duplicate push of
+the same record or a reconnect re-list cannot duplicate a row: the group is rebuilt from the current
+snapshot on every emission, not accumulated.
+
+**Rows.** Each row is a `TreeConversationRow` carrying its own host's name as `hostName`, which renders
+"channel · host" as one `AnnotatedString` — see "Trailing pin control and row suffix" below for how
+the two parts are clamped. `selected`, `onClick` and the pin action all use
+`row.target = HostConversationTarget(entry.host.serverId, conversation.id)`, the row's own host, exactly
+like every other tree row's "Row target and selection" rule under [Conversation tree](#conversation-tree-731)
+— a colliding conversation id pinned on two hosts
+stays two distinct rows with two distinct targets. The item key is
+`treeItemKey("pinned", serverId, conversationId)`, so the same length-prefixing that protects every other
+tree key protects this one too.
+
+**Disconnected treatment.** When the owning host's `connectionStatus.relay.isDisconnected()` is true — the
+same classification [the host row](#host-row-reconnect-control-840) uses — the pinned row's name, " ·
+host" suffix and status dot all draw in `colorScheme.error`, and the row's leading region (dot and text,
+not the trailing control) draws at `DISCONNECTED_ROW_ALPHA = 0.60f`. Its visible Unpin control stays on
+screen but is disabled (`TreePinControl.UnpinDisabled`): tapping it sends nothing, and `TreeRowControl`'s
+`enabled` parameter (new for this ticket) keeps the node and its content description but drops the click
+and tints the glyph in Material's disabled content colour (`onSurface` at 38%) instead of `primary`. This
+is a deliberate override of the Figma frame, which draws that control at full strength; the ticket records
+the override explicitly. Reconnection restores normal colours and the enabled Unpin control on the very
+next snapshot, the same way a disconnected host's section-plus controls reappear on reconnect under
+[Add controls](#add-controls-738).
+A cached pin of a host that has never reconnected since restart renders this way immediately — the row
+needs only the cached `pinnedAt` and the cached `connectionStatus`, neither of which requires a live list
+— the same cached-render rule [Add controls](#add-controls-738) already relies on for a disconnected
+host's own section-plus controls.
+
+**Trailing pin control and row suffix.** `TreeConversationRow` gained `hostName: String? = null`,
+`disconnected: Boolean = false`, `pinControl: TreePinControl = TreePinControl.None` (`None`, `Pin`,
+`Unpin`, `UnpinDisabled`), `pinTestTag: String? = null` and `onPinToggled: () -> Unit = {}`, all defaulted
+so every existing caller is unchanged. The name and the " · host" suffix (`R.string.tree_pinned_host_suffix`)
+are each clamped through `boundedRowText` **separately**, before they are joined into one
+`buildAnnotatedString` — the security review's finding: concatenating first and clamping once would let a
+hostile daemon-authored host name make the whole label unbounded even though the channel name alone was
+safe. The suffix span alone is `onSurfaceVariant`; disconnected overrides both spans to `error`.
+A non-`None` `pinControl` adds a trailing `TreeRowControl` at `ConversationBandHeight`, in the same column
+as the host pen and section plus: `ic_tree_pin` (11.29412 × 16dp, Font Awesome Free 7 `thumbtack`) labelled
+`cd_tree_pin_channel` ("Pin channel") for `Pin`, or `ic_tree_unpin` (16 × 16dp, `thumbtack-slash`) labelled
+`cd_tree_unpin_channel` ("Unpin channel") otherwise. Both drawables follow the existing crop-to-bounds,
+scale-to-drawn-size recipe `ic_tree_edit.xml` and `ic_tree_server.xml` use. A connected host's **unpinned**
+Channels row (never Chats, never while `selectionOnly`) gets `pinControl = Pin`; the shared group's rows
+get `Unpin` or `UnpinDisabled` as above. `treeConversationPinTestTag(serverId, conversationId)` gives each
+control a handle that stays distinct even when the same conversation id collides across two hosts, the
+same length-prefixed-both-parts shape `treeHostEditTestTag` and the other row-control tags use.
+
+**Selection-only exclusion.** A share or selection picker (`selectionOnly = true`) draws no Pinned group
+and no pin controls at all — `ConversationTree` short-circuits `pinned` to `emptyList()` and every Channels
+row keeps `pinControl = None` regardless of `pinnedAt`, so a pinned channel still appears once, under its
+host, in that tree, matching every picker's existing grouping and selection behaviour from before this
+ticket.
+
+**Device-capture lesson (#2215, carried from #1563).** `SidebarTreeCaptureTest.capture` is a device-only
+test with no JVM/Robolectric equivalent, so none of the new focused unit coverage exercises it. Before
+this ticket, #1563 recorded that the selected channel row's trailing edge, in the host pen's column,
+opened the row — true only because that column drew nothing of its own. That stopped being true the
+moment a connected host's channel row grew a Pin control in that exact column: the capture's coordinate
+tap there now must expect `TreePinToggled`, not `TreeRowTapped`. A trailing control added to a shared row
+can silently invalidate a device capture that taps raw coordinates, since no focused JVM test runs that
+file at all — search `app/src/androidTest/` for coordinate taps on any screen a change touches, not just
+the sharedTest suite, before calling a row-level change done.
+
 ## Host row edit control (#744)
 
 Host rows drew the two connection dots beside this pencil (`ConnectionLegPair`) from #744 through #1009;
@@ -252,7 +343,23 @@ chevron and pencil remain — a too-old host can still be edited or
 unpaired — even though the Figma frame omits the chevron; the row remains the fold control for every
 disconnected state, and dropping that affordance for one state was left out of scope.
 
-`TreeHostRow` reads `connectionStatus.relay.isDisconnected()` and, when true, draws the design's
+**Missing daemon thread support (#2244, opt-in).** `HostConversationSource` carries the coordinator's
+`threadMissing` verdict through its exact-bundle/generation guard into the host snapshot; `treeHost`
+passes it to `TreeHostRow`. Missing draws the same error-coloured `titleSmall` host name and server glyph
+even while connected. Its caption is “Update this host's Pyrycode daemon to use it.”
+(`tree_host_thread_missing`), using the existing name-aligned `bodySmall`/`onSurfaceVariant` layout.
+The caption and host-named “Reconnect %1$s” plug remain while folded; edit and unpair remain available.
+Missing survives disconnect and handshaking, and a later acknowledgement granting both required
+capabilities removes this treatment. See [connection-owned verdicts](remote-conversation-repository.md#opt-in-thread-negotiation-2244).
+
+Reconnect targets only that row's host. For Missing, registry `retryHost` closes that exact bundle's
+supervisor before `retry()`: retry alone cannot redial an already connected supervisor. Foreground,
+disposal and bundle-identity checks still apply, and ordinary failure supervision remains available.
+If `UpdateRequired` also applies, its app-update caption and Play Store action take priority over the
+daemon caption and plug; the app-too-old terminal behaviour is unchanged. Production activation is
+deferred to #2245, so this opt-in row contract does not yet advertise thread support in production.
+
+`TreeHostRow` reads `connectionStatus.relay.isDisconnected() || daemonUpdate` and, when true, draws the design's
 disconnected treatment. `FoldableTreeRow` gained an optional `accent: Color? = null` (default `null` keeps
 today's `onSurfaceVariant`/`onSurface` tints); the host row passes `colorScheme.error` for both the glyph
 and the name when disconnected. A `TreeRowControl` with `Icons.Filled.Power` is drawn before the pencil,

@@ -87,7 +87,7 @@ suspend one-shots (`createDiscussion`, `promote`, `archive`, `unarchive`, `delet
 attachment-naming one, #830 — follow the identical snapshot-or-throw shape below), `createWorkspaceFolder`, `requestScreenSnapshot`,
 `setSessionSettings` ([#544](../codebase/544.md), the facade delegation [#543](../codebase/543.md)
 deliberately deferred), `requestHistory` (#623), `requestSystemPrompt`/`setSystemPrompt` (#823),
-`setMuted` (#1000), **and**
+`setMuted` (#1000), `setPinned` (#2214), **and**
 `requestHostSystemPrompt`/`setHostSystemPrompt` (#1774, snapshot-or-result), and
 `uploadAttachment` (#829, another one-shot that does **not** follow the snapshot-or-throw shape below —
 see [Uploads — snapshot-or-result](#uploads--snapshot-or-result-829))), **and** the one capability property
@@ -96,15 +96,15 @@ see [Uploads — snapshot-or-result](#uploads--snapshot-or-result-829))), **and*
 `observeStall` (#395), `observeQueue` (#460), `observeApiRetry` (#593), `observeCompacting` (#596),
 `observeThinkingProgress` (#801), `observeUsageLimit` (#802),
 `setSessionSettings` (#543), `requestHistory` (#623), `requestSystemPrompt`/`setSystemPrompt` (#823),
-`setMuted` (#1000), **and** `mutationsSupported` (#507)), so
+`setMuted` (#1000), `setPinned` (#2214), **and** `mutationsSupported` (#507)), so
 delegation is faithful and nothing silently falls back to a default. `setSessionSettings`, `requestHistory`,
-`requestSystemPrompt`/`setSystemPrompt` and `setMuted` all follow the
+`requestSystemPrompt`/`setSystemPrompt`, `setMuted` and `setPinned` all follow the
 plain one-shot snapshot-or-throw shape below — none introduces a new
 delegation posture; `requestHistory` forwards its `cursor`/`limit` verbatim, the same pass-through the
 shape already gives every other multi-arg one-shot, `setSystemPrompt` forwards its `systemPrompt`
 verbatim including a `null` clear — the facade neither pre-checks the 8192-byte limit nor short-circuits
-an over-limit value; that stays the live repository's `require(...)` — and `setMuted` forwards its
-`Boolean` verbatim, `true` and `false` alike, the same one-line hand-off `createChannel` uses.
+an over-limit value; that stays the live repository's `require(...)` — and `setMuted`/`setPinned` both
+forward their `Boolean` verbatim, `true` and `false` alike, the same one-line hand-off `createChannel` uses.
 
 ## How it works
 
@@ -492,4 +492,9 @@ See the [remote invariant probes](remote-conversation-repository-testing.md#test
   mute-flag write, forwarded verbatim with the plain snapshot-or-throw shape; no new delegation posture.
   See [Remote conversation repository — session settings, archive, delete and workspace
   change](remote-conversation-repository-conversation-writes.md#setmutedconversationid-muted--the-mute-flag-write-1000).
+- Delegated one-shot: `setPinned` ([#2214](https://github.com/pyrycode/pyrycode-mobile/issues/2214)) — the
+  host-owned pin write, `setMuted`'s shape with a second argument name; forwarded verbatim (`conversationId`,
+  `pinned`) with no connection throwing `IllegalStateException`. See [Remote conversation repository —
+  session settings, archive, delete and workspace
+  change](remote-conversation-repository-conversation-writes.md#setpinnedconversationid-pinned--the-pin-flag-write-2214).
 - DI: [Dependency injection](dependency-injection.md).

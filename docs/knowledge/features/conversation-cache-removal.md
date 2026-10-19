@@ -4,31 +4,43 @@ Split from [Conversation cache](conversation-cache.md); this topic retains the s
 
 ## Removal on unpair — `forgetRemovedHost`
 
-[#798](../../specs/architecture/798-clear-cache-on-removal.md) wires `removeHost` to the one place a
-pairing is actually removed: `internal fun forgetRemovedHost(drafts: ComposerDraftStore, cache:
-Lazy<ConversationCache>, attachments: Lazy<AttachmentStore>): suspend (String) -> Unit` in
-`di/ObservablePairedServerStore.kt` is the production `onHostRemoved` hook
-`ObservablePairedServerStore.remove` runs once `delegate.remove` and the revision bump have both
-succeeded — see [paired server store § Wiring & usage](paired-server-store.md#wiring--usage) for the
-hook's own contract. It clears the host's composer drafts first (`ComposerDraftStore.clearHost`, see
-[Thread screen § Composer draft ownership](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership)), then, inside one
-`withContext(NonCancellable)` block so a view model cleared mid-cleanup cannot strand the forgotten
-host's content or files on disk, calls `cache.value.removeHost(serverId)` and then
-[`attachments.value.removeHost(serverId)`](attachment-retrieval.md#host-store--datacacheattachmentstorekt)
-(#900) — each runs whether or not the other one failed. A failed cache removal logs the static
-`event=host_cache_remove_failed`; a failed attachment removal logs the static
-`event=host_attachments_remove_failed`. Neither is surfaced — the pairing is already gone by then, so
-reporting a failure would claim the host is still paired when it is not — and neither logs the id or the
-removal's own message.
+`ObservablePairedServerStore.remove` calls the production `forgetRemovedHost` hook after
+pairing removal and revision publication. It clears composer drafts and MCP failure
+acknowledgements, then removes sharing shortcuts, cache content and attachments under
+`NonCancellable`. Cache and attachment removals each run even if the other returns a failure.
+Static `event=host_cache_remove_failed` / `event=host_attachments_remove_failed` diagnostics
+contain no owner or exception message; cleanup failure does not claim the already removed
+pairing is still present. See [paired-server wiring](paired-server-store.md#wiring--usage).
 
-`cache` and `attachments` are both `Lazy`, not their plain types, so resolving the paired-server store
-binding never constructs either: both roots are `Context`-derived directories (the cache's is
-`Context.noBackupFilesDir`, see § Root and storage scope above; the attachment store's is
-`noBackupFilesDir/attachments`), and the JVM tests that resolve `appModule`'s paired-server store without
-a `Context` would otherwise fail with `MissingAndroidContextException` the moment that binding runs. The
-Koin binding is `single { ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }, lazy { get() })) }`.
+Since #2161, `MigratingConversationCache` serializes imports, thread saves and scoped removal
+under one mutex. Lock order remains repository `historyWrites`, cache mutex, then storage/file
+mutex; there is no second repository save coordinator. Confirmed conversation removal deletes
+both Room families and evidence and records both family `retired` markers in one transaction,
+then deletes the file-backed metadata, read position and both source documents. Host removal
+clears both families for that exact host, replaces its ledger rows with a host-wide `retired`
+marker, then removes the host's file directory. A committed retirement prevents leftover
+sources from re-importing after cleanup failure or restart. Same-id owners on other hosts
+remain readable. A failed database retirement is reported as failure, not successful removal.
 
-Named rather than written inline in `appModule`, for the same reason the #790 draft eviction was: a
+Host removal also installs an in-process thread-write fence (`host_retired`), protecting against
+held, queued or final saves from the closing repository. Neither a read nor `writeConversations`
+lifts it: the forgotten host's own list collector can still publish a stale list. Only a
+successfully persisted pairing invokes `onHostSaved` → `admitSavedHost` → `cache.admitHost`,
+which takes the same mutex and lifts the fence for that host. Admission retains the durable
+host retirement marker so leftover pre-unpair sources remain ineligible for import. On restart
+there are no closing-process writers, while the durable marker still prevents resurrection.
+
+`ObservablePairedServerStore.save` leaves pairing persistence cancellable. Once persistence
+succeeds, revision publication and saved-host admission finish together under `NonCancellable`.
+Cancellation while admission waits on the cache mutex therefore cannot strand a persisted
+pairing behind the write fence; failed persistence admits nothing. There is no new job or scope.
+
+`appModule` supplies `admitSavedHost(lazy { get() })` as `onHostSaved` and
+`forgetRemovedHost(...)` as `onHostRemoved`. The cache and attachment dependencies remain
+`Lazy`, so resolving the pairing store in a context-free fixture does not construct their
+Android-derived roots. See [dependency injection](dependency-injection.md#how-it-works).
+
+`forgetRemovedHost` is named rather than written inline in `appModule`, for the same reason the #790 draft eviction was: a
 JVM test that restates the hook as its own lambda stays green if production forgets a step, while one
 that binds `forgetRemovedHost` itself cannot. `HostChannelListViewModelTest`'s fixture binds
 `forgetRemovedHost(drafts, lazyOf(cache), lazyOf(attachments))` over a real `FileConversationCache` and a

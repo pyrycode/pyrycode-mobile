@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
@@ -49,6 +51,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
@@ -71,6 +74,9 @@ import de.pyryco.mobile.ui.conversations.components.OptionsOverlayPlacement
 import de.pyryco.mobile.ui.conversations.components.TreeConversationRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostSectionRow
+import de.pyryco.mobile.ui.conversations.components.TreePinControl
+import de.pyryco.mobile.ui.conversations.components.isDisconnected
+import de.pyryco.mobile.ui.conversations.components.treeConversationPinTestTag
 import de.pyryco.mobile.ui.conversations.thread.LocalNavigationErrorNotice
 import de.pyryco.mobile.ui.conversations.thread.NavigationErrorPill
 import de.pyryco.mobile.ui.host.HostEditorModal
@@ -95,6 +101,11 @@ import kotlin.time.Duration.Companion.minutes
 internal const val TREE_CHANNEL_ROW_TEST_TAG: String = "tree-channel-row"
 
 internal const val TREE_CHAT_ROW_TEST_TAG: String = "tree-chat-row"
+
+/** The shared Pinned group's rows and its closing rule (#2215), the same kind of handle. */
+internal const val TREE_PINNED_ROW_TEST_TAG: String = "tree-pinned-row"
+
+internal const val TREE_PINNED_RULE_TEST_TAG: String = "tree-pinned-rule"
 
 /**
  * The channel list itself — the device suites' handle for "a paired launch has landed here" (#736).
@@ -138,6 +149,9 @@ private val TreeHostGap = 16.dp
 private val TreeConversationGap = 4.dp
 private val TreeConversationInset = 12.dp
 
+// The Pinned heading takes the tree's 28dp section band (#2215).
+private val TreePinnedHeadingHeight = 28.dp
+
 // The outer Scaffold in MainActivity owns the system-bar insets.
 private val TreeBottomInset = 16.dp
 
@@ -166,6 +180,12 @@ sealed interface ChannelListEvent {
 
     data class TreeFoldToggled(
         val key: TreeFoldKey,
+    ) : ChannelListEvent
+
+    /** A channel row's pin control: ask the row's **own** host to set [pinned] (#2215). */
+    data class TreePinToggled(
+        val target: HostConversationTarget,
+        val pinned: Boolean,
     ) : ChannelListEvent
 
     data object SettingsTapped : ChannelListEvent
@@ -694,12 +714,17 @@ private fun ConversationTree(
     // Sorted here, not in treeHost: the placeholder is a string resource, and the drawn label and the
     // sorted label must come from the same string.
     val untitled = stringResource(R.string.untitled_discussion)
+    // A pinned channel is drawn once, in Pinned (#2215); selection-only pickers keep today's grouping.
+    val pinned = remember(hostState.hosts, selectionOnly) { if (selectionOnly) emptyList() else pinnedChannels(hostState.hosts) }
     val sections =
-        remember(hostState.hosts, untitled) {
+        remember(hostState.hosts, untitled, selectionOnly) {
             val comparator = conversationLabelComparator(untitled)
             hostState.hosts.map { entry ->
                 SortedSections(
-                    channels = entry.host.channels.sortedWith(comparator),
+                    channels =
+                        entry.host.channels
+                            .filter { selectionOnly || it.pinnedAt == null }
+                            .sortedWith(comparator),
                     chats = entry.host.chats.sortedWith(comparator),
                 )
             }
@@ -708,9 +733,70 @@ private fun ConversationTree(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = TreeGutter, end = TreeGutter, bottom = TreeBottomInset),
     ) {
+        if (pinned.isNotEmpty()) treePinned(pinned, hostState, onEvent, conversationSelectionEnabled)
         hostState.hosts.forEachIndexed { index, entry ->
             treeHost(index, entry, sections[index], hostState, onEvent, selectionOnly, conversationSelectionEnabled)
         }
+    }
+}
+
+/**
+ * The shared Pinned group (#2215): a heading, the rows in [pinnedChannels] order, and the rule before the
+ * first host. Drawn outside every fold, so no host or section collapse hides it. Each row's tap, key and
+ * pin action carry its own host's `serverId` with the conversation id, so colliding ids stay apart.
+ *
+ * A row whose host the host row accents as disconnected draws the error treatment; its unpin stays visible
+ * but is disabled until the host is connected again (the ticket's override of the frame's full-strength
+ * control).
+ */
+private fun LazyListScope.treePinned(
+    pinned: List<PinnedChannel>,
+    hostState: HostChannelListState,
+    onEvent: (ChannelListEvent) -> Unit,
+    conversationSelectionEnabled: Boolean,
+) {
+    item(key = treeItemKey("pinned-heading")) {
+        Text(
+            text = stringResource(R.string.tree_pinned_section),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = TreePinnedHeadingHeight)
+                    .wrapContentHeight(Alignment.CenterVertically)
+                    .semantics { heading() },
+        )
+    }
+    itemsIndexed(
+        items = pinned,
+        key = { _, row -> treeItemKey("pinned", row.entry.host.serverId, row.conversation.id) },
+    ) { rowIndex, row ->
+        val host = row.entry.host
+        val target = row.target
+        Box(modifier = Modifier.padding(top = if (rowIndex == 0) 0.dp else TreeConversationGap)) {
+            TreeConversationRow(
+                conversationName = row.conversation.name?.takeIf { it.isNotBlank() } ?: stringResource(R.string.untitled_discussion),
+                hostName = host.displayName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.unnamed_host),
+                selected = target == hostState.selected,
+                onClick = { onEvent(ChannelListEvent.TreeRowTapped(target)) },
+                modifier = Modifier.testTag(TREE_PINNED_ROW_TEST_TAG),
+                attention = row.entry.attentionFor(row.conversation.id),
+                enabled = conversationSelectionEnabled,
+                disconnected = host.connectionStatus.relay.isDisconnected(),
+                pinControl = if (hostState.isHostConnected(host.serverId)) TreePinControl.Unpin else TreePinControl.UnpinDisabled,
+                onPinToggled = { onEvent(ChannelListEvent.TreePinToggled(target, pinned = false)) },
+                pinTestTag = treeConversationPinTestTag(host.serverId, row.conversation.id),
+            )
+        }
+    }
+    item(key = treeItemKey("pinned-rule")) {
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = TreeHostGap).testTag(TREE_PINNED_RULE_TEST_TAG),
+            thickness = 1.dp,
+            color = sidebarRuleColor(),
+        )
     }
 }
 
@@ -753,6 +839,7 @@ private fun LazyListScope.treeHost(
                     { onEvent(ChannelListEvent.TreeHostEditTapped(host.serverId)) }
                 },
             modifier = Modifier.padding(top = if (index == 0) 0.dp else TreeHostGap),
+            threadMissing = host.threadMissing,
             onReconnectTapped = {
                 onEvent(
                     when (host.connectionStatus.relay) {
@@ -812,6 +899,15 @@ private fun LazyListScope.treeHost(
                     modifier = Modifier.testTag(section.rowTestTag),
                     attention = entry.attentionFor(conversation.id),
                     enabled = conversationSelectionEnabled,
+                    // #2215: a connected host's channels pin from their row; the row moves on confirmation.
+                    pinControl =
+                        if (section == ConversationTreeSection.Channels && connected && !selectionOnly) {
+                            TreePinControl.Pin
+                        } else {
+                            TreePinControl.None
+                        },
+                    onPinToggled = { onEvent(ChannelListEvent.TreePinToggled(target, pinned = true)) },
+                    pinTestTag = treeConversationPinTestTag(host.serverId, conversation.id),
                     // 15:8 draws no pen on a conversation row (#1563): a channel is edited from its thread's
                     // Edit (#1561), a chat renamed from its thread's Rename.
                 )
@@ -903,7 +999,7 @@ private fun previewHostState(now: Instant): HostChannelListState {
                 listOf(
                     previewConversation("c1", "kitchenclaw refactor", brain, now - 12.minutes, true),
                     previewConversation("c2", "pyrycode discord integration", brain, now - 4.hours, true),
-                    previewConversation("c3", "rocd-thinking", mobile, now - 3.days, true),
+                    previewConversation("c3", "rocd-thinking", mobile, now - 3.days, true).copy(pinnedAt = now - 2.days),
                 ),
             chats =
                 listOf(
@@ -916,7 +1012,7 @@ private fun previewHostState(now: Instant): HostChannelListState {
             serverId = "macbook",
             displayName = null,
             status = ConnectionStatus(RelayLinkStatus.Reconnecting(secondsRemaining = 12), PyrycodeLinkStatus.Down),
-            channels = listOf(previewConversation("c4", "Culinary Corner", brain, now - 9.days, true)),
+            channels = listOf(previewConversation("c4", "Culinary Corner", brain, now - 9.days, true).copy(pinnedAt = now - 5.days)),
             chats = listOf(previewConversation("d3", "Quick regex for log parsing", DEFAULT_SCRATCH_CWD, now - 9.days, false)),
         )
     return HostChannelListState(

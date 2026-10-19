@@ -1,0 +1,375 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 3,
+    "identityHash": "aaad290c087325d131052aca2a1efa43",
+    "entities": [
+      {
+        "tableName": "legacy_headers",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`host` TEXT NOT NULL, `conversation` TEXT NOT NULL, `generation` TEXT NOT NULL, `cursor` TEXT, `atStart` INTEGER NOT NULL, `coverageHeader` TEXT, PRIMARY KEY(`host`, `conversation`))",
+        "fields": [
+          {
+            "fieldPath": "host",
+            "columnName": "host",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "conversation",
+            "columnName": "conversation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cursor",
+            "columnName": "cursor",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "atStart",
+            "columnName": "atStart",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coverageHeader",
+            "columnName": "coverageHeader",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "host",
+            "conversation"
+          ]
+        }
+      },
+      {
+        "tableName": "legacy_rows",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`host` TEXT NOT NULL, `conversation` TEXT NOT NULL, `ordinal` INTEGER NOT NULL, `payload` TEXT NOT NULL, PRIMARY KEY(`host`, `conversation`, `ordinal`))",
+        "fields": [
+          {
+            "fieldPath": "host",
+            "columnName": "host",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "conversation",
+            "columnName": "conversation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ordinal",
+            "columnName": "ordinal",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "host",
+            "conversation",
+            "ordinal"
+          ]
+        }
+      },
+      {
+        "tableName": "legacy_evidence",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`host` TEXT NOT NULL, `conversation` TEXT NOT NULL, `kind` TEXT NOT NULL, `key` TEXT NOT NULL, `part` INTEGER NOT NULL, `ordinal` INTEGER NOT NULL, `low` TEXT NOT NULL, `high` TEXT NOT NULL, `payload` TEXT NOT NULL, PRIMARY KEY(`host`, `conversation`, `kind`, `key`, `part`))",
+        "fields": [
+          {
+            "fieldPath": "host",
+            "columnName": "host",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "conversation",
+            "columnName": "conversation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "key",
+            "columnName": "key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "part",
+            "columnName": "part",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ordinal",
+            "columnName": "ordinal",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "low",
+            "columnName": "low",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "high",
+            "columnName": "high",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "host",
+            "conversation",
+            "kind",
+            "key",
+            "part"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_legacy_evidence_host_conversation_ordinal",
+            "unique": false,
+            "columnNames": [
+              "host",
+              "conversation",
+              "ordinal"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_legacy_evidence_host_conversation_ordinal` ON `${TABLE_NAME}` (`host`, `conversation`, `ordinal`)"
+          },
+          {
+            "name": "index_legacy_evidence_host_conversation_kind_low_high",
+            "unique": false,
+            "columnNames": [
+              "host",
+              "conversation",
+              "kind",
+              "low",
+              "high"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_legacy_evidence_host_conversation_kind_low_high` ON `${TABLE_NAME}` (`host`, `conversation`, `kind`, `low`, `high`)"
+          },
+          {
+            "name": "index_legacy_evidence_host_conversation_kind_high",
+            "unique": false,
+            "columnNames": [
+              "host",
+              "conversation",
+              "kind",
+              "high"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_legacy_evidence_host_conversation_kind_high` ON `${TABLE_NAME}` (`host`, `conversation`, `kind`, `high`)"
+          }
+        ]
+      },
+      {
+        "tableName": "authoritative_headers",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`host` TEXT NOT NULL, `conversation` TEXT NOT NULL, `epoch` TEXT NOT NULL, `generation` TEXT NOT NULL, `appliedVersion` INTEGER NOT NULL, `checkpoint` INTEGER NOT NULL, `coverage` TEXT, `itemCount` INTEGER NOT NULL, PRIMARY KEY(`host`, `conversation`))",
+        "fields": [
+          {
+            "fieldPath": "host",
+            "columnName": "host",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "conversation",
+            "columnName": "conversation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "epoch",
+            "columnName": "epoch",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appliedVersion",
+            "columnName": "appliedVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "checkpoint",
+            "columnName": "checkpoint",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coverage",
+            "columnName": "coverage",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "itemCount",
+            "columnName": "itemCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "host",
+            "conversation"
+          ]
+        }
+      },
+      {
+        "tableName": "authoritative_items",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`host` TEXT NOT NULL, `conversation` TEXT NOT NULL, `epoch` TEXT NOT NULL, `id` INTEGER NOT NULL, `ordinal` INTEGER NOT NULL, `orderKey` INTEGER NOT NULL, `payload` TEXT NOT NULL, PRIMARY KEY(`host`, `conversation`, `epoch`, `id`))",
+        "fields": [
+          {
+            "fieldPath": "host",
+            "columnName": "host",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "conversation",
+            "columnName": "conversation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "epoch",
+            "columnName": "epoch",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ordinal",
+            "columnName": "ordinal",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orderKey",
+            "columnName": "orderKey",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "host",
+            "conversation",
+            "epoch",
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_authoritative_items_host_conversation_epoch_ordinal",
+            "unique": true,
+            "columnNames": [
+              "host",
+              "conversation",
+              "epoch",
+              "ordinal"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_authoritative_items_host_conversation_epoch_ordinal` ON `${TABLE_NAME}` (`host`, `conversation`, `epoch`, `ordinal`)"
+          }
+        ]
+      },
+      {
+        "tableName": "file_imports",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`host` TEXT NOT NULL, `conversation` TEXT NOT NULL, `family` TEXT NOT NULL, `outcome` TEXT NOT NULL, PRIMARY KEY(`host`, `conversation`, `family`))",
+        "fields": [
+          {
+            "fieldPath": "host",
+            "columnName": "host",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "conversation",
+            "columnName": "conversation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "family",
+            "columnName": "family",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "outcome",
+            "columnName": "outcome",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "host",
+            "conversation",
+            "family"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'aaad290c087325d131052aca2a1efa43')"
+    ]
+  }
+}

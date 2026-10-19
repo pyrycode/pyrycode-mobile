@@ -62,6 +62,13 @@ interface ConversationCache {
         saved: SavedAuthoritativeThread,
     ): Result<Unit> = Result.success(Unit)
 
+    /** Explicit new incarnation; ordinary replacements must preserve committed retirement fences. */
+    suspend fun resetAuthoritativeThread(
+        serverId: String,
+        conversationId: String,
+        saved: SavedAuthoritativeThread,
+    ): Result<Unit> = writeAuthoritativeThread(serverId, conversationId, saved)
+
     /**
      * The thread rows last written for [conversationId] under [serverId] (#797), in arrival order.
      *
@@ -137,6 +144,13 @@ interface ConversationCache {
      * An unknown host is a successful no-op, so a caller unpairing a host need not check first.
      */
     suspend fun removeHost(serverId: String): Result<Unit>
+
+    /**
+     * [serverId] was paired, possibly again after [removeHost] (#2161). A cache that refuses a forgotten host's thread
+     * writes in this process, so a closing repository's held or final save cannot recreate its content, accepts them
+     * again from here. The default holds no such fence.
+     */
+    suspend fun admitHost(serverId: String) = Unit
 
     /**
      * Remove every cached artefact keyed by [conversationId] under [serverId], leaving that host's

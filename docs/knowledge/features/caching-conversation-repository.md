@@ -267,97 +267,74 @@ only place a cache failure can reach this wrapper — writes fail independently 
 
 ### The merge base moves at a connection boundary, not on every emission
 
-The naive version — fixing the merge base to the once-read `restored` snapshot for the whole
-collection — shipped first and failed review (PR #837, first pass): `StableConversationRepository`
-emits `emptyList()` on every disconnect (and again before a new connection's first page), so
-`drawn` collapsed to the open-time snapshot on every disconnect, and the write-when-changed rule
-wrote that shrunk snapshot back. Read → background → process death → offline reopen came back
-blank on a first-read thread, which is the ticket's headline scenario.
-
-The fix: the merge base is not fixed for the whole collection. It starts as `restored`. Each time
-`live` is empty **and suppression is empty** — a connection boundary — the base moves to
-`settledThreadRows(lastDrawn)`, the rows the screen already drew with their in-flight (streaming / running-tool) rows stripped. While
-live rows are flowing inside one connection, the base stays fixed, so a row the live side
-deliberately removes (`RemoteConversationRepository.removeOwnEcho` on a dropped queued send) is
-still honoured and not resurrected by an accumulating union — the same reasoning that ruled out an
-accumulating union for the original restored-snapshot design.
-
-The base also retains durable ordering: restore seeds `baseOrder` from persisted coverage, and
-a connection boundary combines it with the last live order. Each merge receives
-`baseOrder + snapshot.unsignedHistoryOrder`. Rows and ordering therefore survive reconnect together.
-Drawn rows are emitted and retained in `drawnThreads` before a cache write. The observer hands
-untrimmed `drawn` to `writeThread`, under the shared `historyWrites` mutex with a tombstone check
-inside the lock. Only a successful write advances the shared persisted baseline; static failure
-logging exposes no rows, ids or cursors.
-
-An empty visible snapshot with nonempty suppression is a pending-delivery reading within the
-same connection, not a disconnect. Rebasing there would lose the fixed restore base and its
-attachment metadata. The filtered drawn rows are emitted and cached, so reopening cannot
-resurrect a hidden queued echo before its delivered push.
-
-After the rebase, `cacheableThreadRows(drawn)` matches the previous accepted candidate, so
-a disconnect creates no new settled change or quiet-period delay. Already pending rows still
-persist, and an earlier failed write remains retryable. `settledThreadRows` (not
-`cacheableThreadRows`) is the rebase's own function: it drops only in-flight rows and applies no row-count bound, so a thread longer than
-[`MAX_CACHED_THREAD_ROWS`](conversation-cache-contract.md#the-contract) does not visibly shrink on screen
-the moment its connection drops.
-
-**Accepted residual:** the rebased base can carry a queued send's echo that the live side would
-have dropped, if that echo is the *only* live row at the moment of disconnect — the accumulating
-union's edge case, reintroduced at connection boundaries only. Not fixed: a queued send implies a
-running turn with its own live rows, so the case has not been observed. See the plan's `##
-Revisions` entry (2026-09-23) for the full argument.
-
-**Known non-blocking follow-on (verifier finding, PR #837 second pass, accepted):** the rebased
-base can also carry a previous connection's `ThreadItem.UnrecognizedMessage` rows, whose id
-(`RemoteConversationRepository.unrecognizedRowId`) is a per-connection counter
-(`"unrecognized-<n>"`). That id's KDoc assumes no reader ever observes rows from two connection
-instances merged — an assumption the rebase breaks. After a reconnect, the new connection's first
-unrecognized frame can collide on id with a rebased row from the old connection, and the merge
-(`mergeCachedRows` since #983, `mergeHistoryRows` before it — both share the same `alreadyHolds` join)
-drops the older one in its usual fail-safe direction. The only effect is an earlier diagnostic row
-silently disappearing; this cannot produce a duplicate key or a crash. Deferred, not fixed.
+See [connection-boundary merging](caching-conversation-repository-connection-boundary.md) for
+rebasing, deliberate removals and the retained reconnect evidence.
 
 ## What is written, and when
 
 **Supplied authoritative persistence (#2149).** Internal `observeAuthoritativeThread`,
-`openAuthoritativeThread` and `resetAuthoritativeThread` seams share the existing `ThreadWriter`.
+`openAuthoritativeThread`, `removeAuthoritativeFact` and `resetAuthoritativeThread` seams share
+the existing `ThreadWriter` persistence path.
 With a supplied `RemoteConversationRepository` whose store accessor matches this host, the
 wrapper uses that remote's authoritative store; otherwise it owns an offline store.
-Production route activation and combined live proof remain with #1988; the stable-delegate
+Production route activation and combined live proof remain with #2245; the stable-delegate
 legacy route described below is unchanged.
 
 Observation restores the [separate atomic record](conversation-cache-contract.md#the-contract)
-and accepts full items plus epoch, applied progress, checkpoint and continuous coverage as one
-candidate. Metadata-only certification changes also persist. The same 100 ms quiet period,
+and captures immutable raw facts plus epoch, applied progress, checkpoint and continuous coverage.
+Ordinary Room saves use `AuthoritativeUpsertCache` through `MigratingConversationCache`: under
+`historyWrites`, `persistAuthoritative` selects changed identities against the shared successful
+candidate, or the collection's restored baseline. Omission preserves unloaded facts. Metadata-only
+certification and placement-only changes also persist atomically. File caches and doubles without
+the capability retain full replacement; import admission and host retirement still apply.
+Bounded reader activation remains with #2252. Explicit owned removal (#2256) uses a store-minted
+capture of one authoritative identity, binding the minting store, exact host/conversation,
+epoch/incarnation, runtime generation and held revision. Partial omission, hydration and settlement
+filtering never mint removal intent. Removing a parent does not cascade to its children.
+The same 100 ms quiet period,
 replaceable pending slot and serialized writer serve these candidates; reset generations bypass
-the delay. Ordinary delivery remains independent of held disk I/O. Failed saves keep the document
-and successful baseline intact, enabling next-emission or final-flush retry.
+the delay. Ordinary delivery remains independent of held disk I/O. Failed saves keep durable facts,
+metadata and the successful baseline intact, enabling next-emission or final-flush retry.
+
+Removal atomically persists its identity fence with deletion and conservative metadata through
+that same path. The fence filters delayed candidates, replay and restore across disk reopen.
+Checkpoint stays zero and coverage null while any fence exists, even after replay completion;
+applied progress remains monotonic within the same epoch/incarnation. Explicit reset alone starts
+a new incarnation and clears fences, including with reused epoch text. Replacement-only caches
+receive `resetAuthoritativeThread`, rather than ordinary replacement, for that operation.
+The migration-aware Room fallback preserves import-observation and host-retirement admission
+before its atomic reset. Room/file replacements retain committed fences, reject stale incarnations
+and independently reject new fences captured before a newer durable revision. These seams add
+no daemon verb, UI action or negotiated capability.
 
 Open restores before asking the remote query dispatcher. Reconnect resumes only the certified
 checkpoint, so an interrupted reply may leave newer full items saved alongside the prior
 checkpoint/coverage. Offline restore establishes neither connected-daemon capability nor current
 transient progress; protocol selection still requires current connection negotiation.
 
-**Legacy row persistence.** The write is the thread **as drawn** — restored-plus-live with
-exclusions applied — never the live projection alone: right after a reconnect the live side holds only the newest page, and
-writing it alone would shrink the cache. [`cacheableThreadRows`](conversation-cache-contract.md#the-contract)
-is the single definition of what may reach disk, shared with `ConversationCache`'s own write path
-so the two can never disagree; the wrapper only decides *when* to call it, and, since #1354,
-`writeThread` itself applies `cacheableThreadRows` to what it is handed — see below.
+**Legacy row persistence (#2253).** Candidates come from the reconciled thread as drawn,
+with [`cacheableThreadRows`](conversation-cache-contract.md#the-contract) defining disk eligibility.
+The production `MigratingConversationCache` supplies `OwnedLegacyCache`: `ThreadWriter` sends
+changed owned rows with observed neighbour anchors and deliberate removals through its import-aware
+Room mutation path. An incomplete view preserves unobserved saved rows and unrelated evidence.
+Changed/removed producing claims are invalidated atomically; held identities and ordinals survive.
+This changes no negotiated route or legacy-fallback verdict and activates no partial reader.
 
-**`observeMessages` hands `writeThread` the drawn rows, not the already-trimmed cacheable ones
-(#1354).** The wrapper compares its `cacheable` rows against successful persisted rows to decide
-*whether* to write, but the call itself passes `drawn`, because `writeThread`'s own contract is to
-do the trimming and to drop a saved history position when that trim moves the oldest kept row away
-from it (see [Conversation cache § The thread document's two
-writers](conversation-cache-layout.md#the-thread-documents-two-writers-1354)). A first version of this
-change kept passing `cacheable` here, which meant the cache never actually saw a thread get
-trimmed — a verifier finding on PR #1470: the direct-to-cache test that wrote 100001 rows passed,
-but a thread that reached the same size through this wrapper kept a position that no longer
-matched the oldest saved row, a silent, permanent gap in a very long saved channel. The lesson: a
-cache rule that depends on the shape of its input has to be tested through its real caller, not
-only called directly with the shape the rule expects.
+Removal intents compare successive observed raw drawn views: a previously cacheable identity
+absent from the next raw view can be removed, including confirmed projection removals and
+suppressed queued echoes. An unsettled row still present in raw rows cannot be removed merely
+because cache policy excludes it. Its later disappearance on disconnect also supplies no removal
+intent. Intents survive coalescing/failure until settled reappearance or a successful newer fence
+supersedes them; subtracting a partial candidate from disk would wrongly delete unowned history.
+
+Caches without this capability retain whole-thread replacement. The wrapper passes **untrimmed
+drawn rows** to `writeThread`, comparing cacheable rows only to decide whether to write (#1354).
+Otherwise the cache cannot detect retention loss and reset stale cursor/completeness claims, as
+the real-caller regression on PR #1470 demonstrated. Owned Room mutations enforce the same cap
+from the saved header count, selecting oldest excess rows and invalidating affected evidence.
+Coverage saves use the same owned row capability plus selective received-evidence updates
+(#2254); broad replacement APIs and file compatibility remain. See the [owned storage contract and counted
+restart/mutation results](conversation-cache-legacy-mutations.md#owned-incremental-legacy-mutations-2253).
 
 Since [#1967](../../specs/architecture/1967-coalesced-thread-writes.md), a collection-owned
 writer accepts immutable candidates after downstream emission returns. Cache-policy filtering
@@ -395,21 +372,58 @@ checkpoint/coverage wins. Repair derives from merged applied progress and retain
 plus current repair requests: stale partial disk progress cannot reopen repair after newer live
 certification. Disk does not supply runtime generation or repair flags.
 
+An accepted exact-owner, generation-checked restore can initialize the shared authoritative
+baseline under `historyWrites` before any observer save succeeds. It records the validated
+committed disk snapshot with capture zero, never the merged live view or a successful live capture.
+Without this baseline, explicitly removing one fact from an unchanged partial view rewrites all
+retained owned payloads. Restore unions same-incarnation fences and cannot restore certification
+for retired identities; old-incarnation restores reject.
+
 Authoritative candidates carry store generation and wrapper capture sequence. Inside the same
 `historyWrites` lock used by legacy row/position writes and deletion, persistence rejects deleted
 destinations, retired generations and captures older than the successful authoritative baseline.
 Started atomic mutation and baseline publication finish together in `NonCancellable`; failure
 advances no baseline. Older observers and final flushes cannot overwrite a newer committed record.
 
+`removeAuthoritativeFact` takes the same lock, rechecks capture ownership/revision under the store
+lock, then acknowledges only committed retirement or a proven committed superseding reset.
+Cancellation before admission creates no acknowledged retirement; once admitted, persistence and
+baseline publication finish together. A transient failure retains the uncommitted fence and its
+recovery placement for the same capture to retry. A definitive `AuthoritativeRemovalRejected`
+arrives only after rollback and carries the validated newer durable fact internally. The writer
+withdraws just that matching uncommitted generation/incarnation/revision fence and restores the
+fact, leaving the prior durable record/certificate intact. No failed mutation advances the baseline.
+
+Rejection recovery preserves current and observed tie order as well as disk order. Admission
+captures same-order peers, including identities hidden by other pending removals; otherwise
+rejecting B then A from `[A,B,C]` can restore `[B,A,C]`. Recovery uses the nearest surviving
+successor/predecessor without minting a placement move, and retains each captured order key so
+different ties cannot acquire a relationship. After successful commit and baseline publication,
+`commitRemovals` releases only matching recovery entries by generation/incarnation/retirement
+revision. Durable fences remain. Failed work and newer removals admitted during held I/O retain
+their evidence. Keeping every successful removal's copied peer list until reset would retain
+quadratic history for tied or absent-order facts.
+
+Accepted tie placement has its own store publication counter, independent of payload revision,
+within the epoch/runtime generation. Captures retain this evidence through coalescing and initial
+restore: saved peers can arrive behind an unchanged live identity. Under `historyWrites`, pending
+placements are selected against the shared successful placement capture, including unchanged
+peers in candidate order. Mutation and successful payload/placement bookkeeping finish together.
+Filtering placement by payload revision loses these relationships even if single-item tests pass.
+The [owned storage contract](conversation-cache-contract.md#owned-incremental-authoritative-mutations-2255)
+describes atomic tie blocks, certification prerequisites and stale-page restart.
+
 Reset retirement is accepted non-cancellably on the worker **before downstream delivery**.
 Ordinary candidates retain acceptance after delivery. Cleanup joins started work, then refreshes
 retirement after suspended delivery and again inside the write lock. After each successful final
-mutation/bookkeeping it rechecks generation and commits a newer retirement before returning.
+mutation/bookkeeping it rechecks generation and same-generation removal fences and commits a
+newer retirement before returning. Old snapshots are reconciled with current fences inside the lock.
 Checking only before lock acquisition or mutation misses resets arriving during lock waits or
 final I/O after collection has ended. Cleanup stops on mutation failure with static reporting;
 it does not loop on failed storage or promise persistence through force-stop.
 
-`resetAuthoritativeThread` returns `Result<Unit>` after durable replacement. Supersession alone
+`resetAuthoritativeThread` returns `Result<Unit>` after durable retirement and commit, including
+when a new runtime generation reuses the same epoch string. Supersession alone
 cannot acknowledge reset: a rejected candidate succeeds only when the committed baseline proves
 that generation or a later one reached disk. A superseded reset whose replacement is still held
 or failed reports a content-free failure (`event=authoritative_cache_reset_failed`);
@@ -437,21 +451,39 @@ Only rows are replaced in the emitted snapshot; suppression, unsigned order and 
 remain those of the captured generation. Restored rows create no sight claims, history requests
 or read commands. The list-only observer compares rows on the worker and emits distinct lists
 on the collector. Snapshot generations are allocated at upstream capture, before worker
-processing can suspend; held drawn rows carry that generation into coverage saves.
+processing can suspend; held drawn rows carry that generation into coverage saves. Coverage
+capture precedes suspending `first()` cleanup, fencing newer accepted/delivered/completed work (#2254).
 
 The wrapper's `historyWrites` mutex serializes observer writes, coverage-null position writes,
-the complete coverage row/state operation and confirmed deletion. Lock order is wrapper then
-file cache, with no callback into the wrapper. Both row writers publish their successful
+the complete coverage row/state operation and confirmed deletion. Lock order is wrapper,
+migration-aware cache, storage mutex, then Room transaction (or file cache for replacement-only
+implementations), with no callback into the wrapper. Both row writers publish their successful
 `persistedThreads` baseline under this lock; it survives collection restarts. A writer also
 remembers its completed candidate by identity, so cleanup cannot repeat that completed write
 after another collector persists newer rows. Later candidates still compare against the shared
 successful rows, not an obsolete collection-local baseline.
+
+Ordinary successes also advance the shared capture fence (#2253). Each owned candidate carries
+the capture of each actual row change and removal; only intents newer than that fence are eligible.
+A later snapshot cannot renew unchanged stale text from an older collector after reconnect. On
+success, baseline application preserves newer content the candidate did not change and unowned
+rows in their neighbour slots. Failure advances neither baseline nor fence. Ownership indexes
+initialize lazily after cached first draw on worker acceptance, only for capable caches; doing
+that traversal for replacement caches doubled the existing 100000-row processing budget.
+
+Pending row intents retain original captures. Coverage merges them without pre-trimming, with
+newer intents taking precedence, and satisfies only contributing captures. Both row writers
+conditionally retire satisfied intents, preserving concurrent replacements and failed retries.
+Acceptance refuses satisfied work; evidence failure cannot restore retired payloads.
 
 Lock acquisition and snapshot processing remain cancellable. Once either row writer starts a
 mutation, the mutation and its successful baseline update finish together in `NonCancellable`
 under `historyWrites`. Atomic replacement can commit before a cancellable dispatcher return
 delivers success: joining a cancelled writer alone would otherwise leave disk and baseline
 inconsistent and could skip a newer removal during flush. Failed writes update no baseline.
+Confirmed deletion tombstones before waiting; host forgetting
+waits for held cache work, removes it and refuses delayed/final saves through host retirement.
+Neither path can be undone by cleanup or restart; colliding ids under another host remain exact.
 
 Normal upstream completion, upstream failure and collector cancellation run non-cancellable
 cleanup: cancel/join the timer and writer, then attempt the latest accepted pending candidate
@@ -492,52 +524,57 @@ evidence keeps their `unknown`/`unsignedIncomplete` true and saved `atStart` fal
 terminal page; the authoritative unsigned claims and `unsignedUnknown` remain independent.
 See [history resumption](remote-conversation-repository-reads-and-thread-store-history-paging.md#resuming-from-the-saved-position-1354).
 
-**Coverage saves write reconciled rows before state.** `writeHistoryPosition` obtains the current
-delegate snapshot, then holds `historyWrites` across selecting held drawn rows (or a fallback
-file read), suppression filtering, the durable-order-aware merge, `writeThread`, and the state
-write. If the row write fails it logs `history_rows_write_failed` and returns without advancing
-state. Coverage binds to exact retained row/delta proofs; the file writer validates these against
-stored rows again. Interruption between writes leaves older conservative state, never new claims
-for rows absent from storage. Excluded transient/raw-envelope rows stay excluded; only metadata
-persists. Delta matches inside legacy whole turns prove retention, not completeness.
-Their whole-row proof alone is insufficient: restore and stale binding also require bounded,
-non-overlapping slices in unsigned durable order with matching fragment hashes. Removing a
-maximum-id producer terminates the retained interval rather than wrapping its successor to zero.
+**Coverage saves commit owned rows before received evidence (#2254).** Capture the delegate
+snapshot at emission, then hold `historyWrites` across reconciliation, row mutation, successful
+bookkeeping and the separate evidence write. `OwnedLegacyCoverageCache` reconciles successful
+held rows, pending intents, suppression and durable order. Changed cacheable renderer identities, neighbour anchors and deliberate
+observed removals go through `mutateLegacyRows`. Unloaded rows and unrelated evidence survive;
+held identities keep ordinals. Localized saves reuse restore/metadata observations. File caches
+and replacement-only doubles retain untrimmed `writeThread` followed by bound history replacement, including trim accounting.
 
-**Capture order and save completion answer different questions (#1967).** After a successful
-coverage row write, `persistedThreads` records its actual cacheable rows and satisfies observer
-candidates through the maximum of the history snapshot's capture generation and the selected
-drawn base's generation. A candidate captured before that boundary cannot rewrite newer rows
-or coverage merely because its worker resumes later. Later drawn generations remain eligible.
-Observer successes replace the shared row baseline while preserving coverage satisfaction;
-otherwise resubscription could compare against older coverage rows and skip a needed write.
+After row success, publish the actual successful row baseline, capture satisfaction and incremented
+`coverageRevision` together in `NonCancellable`, and retire satisfied intents. Failed rows log
+`history_rows_write_failed`, advance none of these and attempt no evidence. Evidence commits
+separately: its failure logs `history_position_write_failed`, keeps receipt differences retryable
+and leaves only prior conservative claims after row invalidation. It cannot undo successful row
+bookkeeping, including cancellation after commit. Claims require committed rows.
 
-Allocate the observer generation immediately when capturing each upstream snapshot,
-before any optional-history read or saved-order dispatch (#2050). A newer coverage
-save may complete during either suspension; assigning the old snapshot a later
-generation would let it overwrite those newer rows and claims. Four controlled
-read/dispatch × quiet-period/cancellation probes withhold the next merge and check
-fresh-cache rows, full saved position and write history. When deferred order changes
-capture timing, assert the exact older-snapshot/newer-removal emission sequence
-rather than assuming a single emission, while retaining persistence assertions.
+**Capture order and successful completion are separate fences.** Older collectors and reconnects
+cannot renew unchanged stale content. Satisfaction covers only contributing captures; newer
+accepted changes/removals remain eligible. Observers capture the successful coverage revision at
+entry before restoration can suspend. Coverage completed before entry does not itself turn an
+unchanged empty/streaming-only failed restore into write work. A coverage row success during the
+collection admits a newer deliberate removal even when its rows match the original restore,
+even after evidence failure. Ordinary success preserves coverage revision/satisfaction while
+advancing shared rows. Neither fence is a wire/disk field.
 
-Each successful coverage row write also advances `coverageRevision`, even if the subsequent
-position write fails or is cancelled. The observer captures that successful revision at entry,
-before restoration can suspend. Retained coverage completed before entry cannot alone turn an
-unchanged empty or streaming-only failed restore into a write. A save completed during restoration
-can supersede this collection's candidate, even if captured before entry: a later generation
-that intentionally removes its rows must remain eligible. Changed candidates and failed-write
-retries remain independent of this exception. Capture generations reject stale work; successful
-completion revisions distinguish overlapping saves from already retained coverage. Neither is a
-wire or disk field. Row success publishes rows, satisfaction and revision together in the
-non-cancellable section described above; position failure cannot undo that successful row write.
+Observed received positions are remembered separately from successful rows. Seed from existing
+restore/metadata reads; advance receipt memory only after evidence success, retaining omitted
+unowned facts. Compare typed claims and intervals before serialization. Supply the current
+position, previous observation and observed rows to `writeOwnedLegacyCoverage`; absence outside
+ownership authorizes no deletion. Null position explicitly clears metadata without deleting rows,
+under the same mutex/tombstone guard; a sentinel prevents delayed metadata reads reseeding the
+cleared baseline.
 
-The complete operation passes untrimmed rows and uses shared cache-policy trim accounting. If
-rows exceed the cap, the later position write also resets backwards cursor to empty and `atStart`
-to false while retaining validated, conservative coverage. Otherwise a state write could undo the
-row writer's reset: a direct row-writer test misses this production interleaving. Removed or changed
-rows invalidate all their producing entry claims. Coverage-null writes use the same mutex and
-tombstone guard, preserving default-tolerant repository behavior.
+Proofs bind exact committed rows/deltas and non-overlapping fragment slices, bounds and hashes in
+unsigned durable order through `ULong.MAX_VALUE`. Delta matches prove retention, not completeness.
+Stale owned proofs withdraw claims while keeping
+rows readable; a changed/new unbound producer outside row ownership rejects evidence until its
+row settles. Connected producing-entry invalidation accounts for all siblings before deletion,
+including losses created in this transaction. Additive claims preserve unchanged sibling bindings;
+recovery validates every relevant sibling before clearing that producer's loss. Repeating received
+spans cannot restore invalidated certification. Unidentified retention loss persists independently
+of producer claims and requires explicit metadata-clear/full-replacement recovery plus newly
+received coverage; incremental saves cannot restore the discarded cursor/completeness.
+
+Span extension and producer subtraction preserve an existing received gap anchor/walk while the
+anchor belongs to the retained older span and the edge remains the adjacent newer span's start.
+Invalid anchors lose their walks. Receipt differences skip unchanged facts, so row invalidation
+must preserve valid progress itself. Only relevant committed bounds can admit replay of received
+recovery anchors. Local continuation/exhaustion creates no daemon cursor, received continuity or
+server exhaustion. Evidence commits invalidate old local tokens; recover by traversal from newest.
+See [owned coverage and Linux evidence](conversation-cache-legacy-mutations.md#owned-coverage-and-received-evidence-2254)
+for loss recovery, 135 passed focused checks, bounded 20/18000-row work and configured-gate results.
 
 This replaces #1354's accepted position-before-row window and unresolved saved-position gaps.
 Newest asks preserve coverage and queue behind outstanding asks; reader pulls fill one targeted
@@ -555,52 +592,23 @@ evidence](../../e2e-interactive-stream.md#verification-status).
 
 ## Wiring — under `decorateRepository`, not in it
 
-`ThreadDestinationFactory.repository(serverId, bundle)` (`di/AppModule.kt`) wraps the
-`StableConversationRepository` it builds in `CachingConversationRepository` **before** handing the
-result to the `decorateRepository` hook:
-
-```kotlin
-decorateRepository(
-    if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId, attachments) else stable,
-)
-```
-
-`attachments` (#899) follows `cache` through the same conditional — a blank `serverId` gets neither, so
-retrieved files, like restored rows, are never filed under the empty id's namespace.
-
-`E2eTestApplication` replaces `decorateRepository` with `::TappingConversationRepository` for its
-instrumented harness. Because the cache sits *underneath* that hook rather than inside it, the
-tapping decorator still observes the restored, merged thread — a cache wired the other way round
-would be invisible to exactly the harness [#850](https://github.com/pyrycode/pyrycode-mobile/issues/850)
-uses to prove offline reading and reconnect reconciliation live. The demo branch
-(`FakeConversationRepository`) never reaches this code path and gets no
-cache. A blank `serverId` (a malformed route) also gets no cache, so restored rows are never filed
-under the empty id's namespace.
-
-`hostConversationModule(useRelay, decorateRepository)` passes `cache = if (useRelay) get() else
-null` into `ThreadDestinationFactory`'s constructor — the same `useRelay` gate
-[`HostConversationSource.relay(get(), cache = get())`](dependency-injection-host-conversation-source.md#restore-from-the-on-disk-cache-796)
-already follows for the host-list restore. No new Koin binding was added for this ticket; both
-consumers resolve the single `ConversationCache` #796 bound.
-
-`ThreadDestinationFactory` gained the matching `attachments: AttachmentStore? = null` constructor
-param (#899), gated `if (useRelay) get() else null` the same way as `cache`, resolving the app's single
-`AttachmentStore` bound in `AppModule` over `File(androidContext().noBackupFilesDir, "attachments")`.
-Because that `get()` runs inside the `single { ThreadDestinationFactory(...) }` block, any Koin
-container that resolves a `ThreadDestinationFactory` under `useRelay = true` now needs an
-`AttachmentStore` binding too — see [Dependency injection §
-AttachmentStore](dependency-injection.md#attachmentstore-and-context-free-thread-destination-containers-899)
-for the four test containers that needed the same `InertConversationCache`-shaped override.
-
-Three `RelayConnectionFactoryTest` containers build a thread destination under `useRelay = true`
-with no `androidContext()`. Resolving the cache in `ThreadDestinationFactory` meant those
-containers now need the same `single<ConversationCache> { InertConversationCache }` override their
-sibling container already carried for #796 — before this change only `HostConversationSource`'s
-containers needed it. Any future container built the same way inherits this requirement.
+See [repository wiring](caching-conversation-repository-wiring.md#wiring--under-decoraterepository-not-in-it)
+for composition, attachment storage and context-free test containers.
 
 ## Testing
 
 See [Caching conversation repository — testing](caching-conversation-repository-testing.md) for worker scheduling, restore, reconnect and coalesced persistence coverage.
+
+The [retained #2255 focused evidence](conversation-cache-contract.md#retained-authoritative-mutation-and-restart-evidence)
+records 149 Linux passes at `a0d7f4467`, zero failures/errors/skips, covering owned upserts,
+writer cleanup, retry, cancellation, reset, deletion and exact restart state.
+
+The [#2256 retirement evidence](conversation-cache-contract.md#retained-explicit-retirement-evidence-2256)
+records builder-reported 105 focused Linux passes at `3a9a1fa2e5e5b13cdb40bf5da0b79a33f01400bd`
+and the accepted verifier's independent count of the same 105 affected methods in its full JVM
+run, with zero affected failures/errors/skips. It distinguishes unavailable original focused XML
+from the retained verifier report, names the fallback-reset, pending-rejection and recovery-lifetime
+probes, and preserves the unrelated full-suite failure/retry. Documentation produced no test runs.
 
 ## Related
 

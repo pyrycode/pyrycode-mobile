@@ -35,6 +35,7 @@ import kotlinx.serialization.json.encodeToStream
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.time.DateTimeException
@@ -134,11 +135,9 @@ class FileConversationCache(
                 try {
                     val document = authoritativeDocumentFor(serverId, conversationId)
                     if (!document.isFile) return@withLock null
-                    val record = MobileJson.decodeFromString<CachedAuthoritativeThread>(document.readText())
-                    require(record.version == VERSION && record.serverId == serverId && record.conversationId == conversationId)
-                    record.saved.toSnapshot()
+                    val saved = decodeAuthoritative(document.readText(), serverId, conversationId)
                     RelayLog.d { "conversation_cache operation=read_authoritative status=ok" }
-                    record.saved
+                    saved
                 } catch (error: Exception) {
                     val code = failureCode(error) ?: throw error
                     RelayLog.d { "conversation_cache operation=read_authoritative status=failed code=$code" }
@@ -147,16 +146,129 @@ class FileConversationCache(
             }
         }
 
+    /**
+     * #2161: the legacy document classified for import, decoded exactly as [readThread] and [readHistoryPosition]
+     * read it: invalid optional history leaves the rows readable with no history.
+     */
+    internal suspend fun legacySource(
+        serverId: String,
+        conversationId: String,
+    ): SavedSource<LegacySource> =
+        source(threadDocumentFor(serverId, conversationId)) { bytes ->
+            val record = threadReadJson.decodeFromString<CachedThreadRows>(bytes.toString(Charsets.UTF_8))
+            val rows = validatedRows(CachedThread(record.version, record.rows))
+            val history =
+                try {
+                    decodedHistory(bytes, rows)
+                } catch (error: Exception) {
+                    failureCode(error) ?: throw error
+                    null
+                }
+            LegacySource(rows, history)
+        }
+
+    /** #2161: the owner-checked authoritative envelope classified for import, validated as [readAuthoritativeThread] does. */
+    internal suspend fun authoritativeSource(
+        serverId: String,
+        conversationId: String,
+    ): SavedSource<SavedAuthoritativeThread> =
+        source(authoritativeDocumentFor(serverId, conversationId)) { bytes ->
+            decodeAuthoritative(bytes.toString(Charsets.UTF_8), serverId, conversationId)
+        }
+
+    /** Reads never repair: a rejected document keeps its bytes, and only IO or access failures stay retryable. */
+    private suspend fun <T> source(
+        document: File,
+        decode: (ByteArray) -> T,
+    ): SavedSource<T> =
+        withContext(ioDispatcher) {
+            mutex.withLock {
+                try {
+                    // Boolean file predicates suppress access errors; only a missing-path exception proves absence.
+                    val bytes = Files.readAllBytes(document.toPath())
+                    if (threadReadJson.decodeFromString<CachedVersion>(bytes.toString(Charsets.UTF_8)).version != VERSION) {
+                        SavedSource.Rejected("unsupported_version")
+                    } else {
+                        SavedSource.Readable(decode(bytes))
+                    }
+                } catch (_: NoSuchFileException) {
+                    SavedSource.Absent
+                } catch (error: Exception) {
+                    when (val code = failureCode(error) ?: throw error) {
+                        "invalid_data" -> SavedSource.Rejected(code)
+                        else -> SavedSource.Unavailable(code)
+                    }
+                }
+            }
+        }
+
+    private fun decodeAuthoritative(
+        text: String,
+        serverId: String,
+        conversationId: String,
+    ): SavedAuthoritativeThread {
+        val record = MobileJson.decodeFromString<CachedAuthoritativeThread>(text)
+        require(record.version == VERSION && record.serverId == serverId && record.conversationId == conversationId)
+        record.saved.toSnapshot()
+        return record.saved
+    }
+
     override suspend fun writeAuthoritativeThread(
         serverId: String,
         conversationId: String,
         saved: SavedAuthoritativeThread,
+    ): Result<Unit> = replaceAuthoritative(serverId, conversationId, saved, reset = false)
+
+    override suspend fun resetAuthoritativeThread(
+        serverId: String,
+        conversationId: String,
+        saved: SavedAuthoritativeThread,
+    ): Result<Unit> = replaceAuthoritative(serverId, conversationId, saved, reset = true)
+
+    private suspend fun replaceAuthoritative(
+        serverId: String,
+        conversationId: String,
+        saved: SavedAuthoritativeThread,
+        reset: Boolean,
     ): Result<Unit> =
-        mutate("write_authoritative") {
-            writeAtomically(
-                authoritativeDocumentFor(serverId, conversationId),
-                MobileJson.encodeToString(CachedAuthoritativeThread(VERSION, serverId, conversationId, saved.retained())),
-            )
+        authoritativeWrites.withLock {
+            mutate("write_authoritative") {
+                val incoming = saved.toSnapshot()
+                val document = authoritativeDocumentFor(serverId, conversationId)
+                val previous =
+                    if (reset) {
+                        null
+                    } else {
+                        try {
+                            decodeAuthoritative(Files.readAllBytes(document.toPath()).toString(Charsets.UTF_8), serverId, conversationId)
+                        } catch (_: java.nio.file.NoSuchFileException) {
+                            null
+                        }
+                    }
+                require(previous == null || previous.incarnation == saved.incarnation)
+                require(previous == null || previous.epoch == saved.epoch || previous.retirements.isEmpty())
+                val held = previous?.takeIf { it.epoch == saved.epoch }
+                held?.toSnapshot()?.let { durable ->
+                    for (item in durable.items) {
+                        val revision = saved.retirements[item.id] ?: continue
+                        if (item.id !in durable.retirements && item.rev > revision) throw AuthoritativeRemovalRejected(item)
+                    }
+                }
+                val retired = saved.retirements + held?.retirements.orEmpty()
+                val kept =
+                    saved
+                        .copy(
+                            items = incoming.items.filterNot { it.id in retired }.map { it.raw },
+                            appliedVersion = maxOf(saved.appliedVersion, held?.appliedVersion ?: 0),
+                            retirements = retired,
+                            checkpoint = if (retired.isEmpty()) saved.checkpoint else 0,
+                            coverage = saved.coverage.takeIf { retired.isEmpty() },
+                        ).retained()
+                writeAtomically(
+                    document,
+                    MobileJson.encodeToString(CachedAuthoritativeThread(VERSION, serverId, conversationId, kept)),
+                )
+            }
         }
 
     override suspend fun writeThread(
@@ -326,24 +438,30 @@ class FileConversationCache(
             "event=thread_cache_restored rows=${rows.size} read_ms=${(read - started) / 1_000_000} " +
                 "decode_ms=${(decoded - read) / 1_000_000} validate_ms=${(validated - decoded) / 1_000_000}"
         }
-        return DecodedThread(document, bytes, rows) {
-            val startedHistory = System.nanoTime()
-            val text = bytes.toString(Charsets.UTF_8)
-            val recordHistory =
-                try {
-                    threadReadJson.decodeFromString<CachedTypedThreadHeader>(text).history
-                } catch (_: SerializationException) {
-                    decodeHistory(threadReadJson.decodeFromString<CachedThreadHeader>(text).history)
-                }
-            val stored = validatedHistory(recordHistory, rows)
-            val metadata = System.nanoTime()
-            val history = stored?.copy(coverage = stored.coverage?.retainedBy(rows))?.toDomain()
-            RelayLog.d {
-                "event=thread_cache_history_restored rows=${rows.size} metadata_ms=${(metadata - startedHistory) / 1_000_000} " +
-                    "proofs_ms=${(System.nanoTime() - metadata) / 1_000_000}"
+        return DecodedThread(document, bytes, rows) { decodedHistory(bytes, rows) }.also { decodedThread = it }
+    }
+
+    /** The one history reader shared by [readHistoryPosition] and [legacySource], so an import cannot drift from it. */
+    private fun decodedHistory(
+        bytes: ByteArray,
+        rows: List<ThreadItem>,
+    ): HistoryPosition? {
+        val startedHistory = System.nanoTime()
+        val text = bytes.toString(Charsets.UTF_8)
+        val recordHistory =
+            try {
+                threadReadJson.decodeFromString<CachedTypedThreadHeader>(text).history
+            } catch (_: SerializationException) {
+                decodeHistory(threadReadJson.decodeFromString<CachedThreadHeader>(text).history)
             }
-            history
-        }.also { decodedThread = it }
+        val stored = validatedHistory(recordHistory, rows)
+        val metadata = System.nanoTime()
+        val history = stored?.copy(coverage = stored.coverage?.retainedBy(rows))?.toDomain()
+        RelayLog.d {
+            "event=thread_cache_history_restored rows=${rows.size} metadata_ms=${(metadata - startedHistory) / 1_000_000} " +
+                "proofs_ms=${(System.nanoTime() - metadata) / 1_000_000}"
+        }
+        return history
     }
 
     /** Read every current byte and EOF without allocating another whole-document copy. */
@@ -526,11 +644,19 @@ class FileConversationCache(
                     RelayLog.d { "conversation_cache operation=$operation status=ok" }
                     Result.success(Unit)
                 } catch (error: Exception) {
-                    val code = failureCode(error) ?: throw error
+                    val code = if (error is AuthoritativeRemovalRejected) "stale_removal" else failureCode(error) ?: throw error
                     RelayLog.d { "conversation_cache operation=$operation status=failed code=$code" }
                     // A serialization or IO message can embed a conversation name or cwd, and a crash
                     // reporter prints causes: the code travels, the cause never does.
-                    Result.failure(ConversationCacheException("conversation cache $operation failed: $code"))
+                    Result.failure(
+                        if (error is AuthoritativeRemovalRejected) {
+                            error
+                        } else {
+                            ConversationCacheException(
+                                "conversation cache $operation failed: $code",
+                            )
+                        },
+                    )
                 }
             }
         }
@@ -568,12 +694,47 @@ class FileConversationCache(
             .joinToString("") { "%02x".format(it) }
 
     private companion object {
+        val authoritativeWrites = Mutex()
         const val DOCUMENT_NAME = "conversations.json"
         const val THREADS_DIRECTORY = "threads"
         const val POSITIONS_DOCUMENT_NAME = "read-positions.json"
         const val VERSION = 1
     }
 }
+
+/** #2161: a saved file classified before import. Only [Unavailable] (IO or access) is retried; nothing here repairs. */
+internal sealed interface SavedSource<out T> {
+    data object Absent : SavedSource<Nothing>
+
+    class Readable<T>(
+        val value: T,
+    ) : SavedSource<T> {
+        override fun toString(): String = "Readable(redacted)"
+    }
+
+    /** [code] is `invalid_data` or `unsupported_version`; the rejected bytes stay on disk. */
+    data class Rejected(
+        val code: String,
+    ) : SavedSource<Nothing>
+
+    data class Unavailable(
+        val code: String,
+    ) : SavedSource<Nothing>
+}
+
+/** A legacy document's rows and the history [FileConversationCache.readHistoryPosition] would return beside them. */
+internal class LegacySource(
+    val rows: List<ThreadItem>,
+    val history: HistoryPosition?,
+) {
+    override fun toString(): String = "LegacySource(rows=${rows.size}, redacted)"
+}
+
+/** Only the envelope version, read first so another version is classified rather than misread as damage. */
+@Serializable
+private data class CachedVersion(
+    val version: Int,
+)
 
 /** The read positions of one host (#877), versioned like [CachedConversations]. */
 @Serializable
@@ -620,6 +781,7 @@ private data class CachedConversation(
     val archived: Boolean = false,
     val muted: Boolean = false,
     val workspaceLabel: String? = null,
+    val pinnedAt: String? = null,
 )
 
 private fun Conversation.toRecord() =
@@ -635,6 +797,7 @@ private fun Conversation.toRecord() =
         archived = archived,
         muted = muted,
         workspaceLabel = workspaceLabel,
+        pinnedAt = pinnedAt?.toString(),
     )
 
 private fun CachedConversation.toDomain() =
@@ -650,6 +813,7 @@ private fun CachedConversation.toDomain() =
         archived = archived,
         muted = muted,
         workspaceLabel = workspaceLabel,
+        pinnedAt = pinnedAt?.let(Instant::parse),
     )
 
 /**
@@ -737,6 +901,8 @@ private data class CachedMessage(
     val segment: CachedSegment? = null,
     /** Local ordinary-row identity survives emitted collision aliases and restart. */
     val reconciliationId: String? = null,
+    /** #2221: [Message.parentToolUseId], `null` for the main thread so a parentless row encodes as before. */
+    val parentToolUseId: String? = null,
 )
 
 /**
@@ -760,7 +926,11 @@ private data class CachedAttachment(
     override fun toString(): String = "CachedAttachment(attachmentId=$attachmentId)"
 }
 
-/** [inputFields] (#1575) defaults to empty, so a tool record written before fields were kept reads back with none. */
+/**
+ * [inputFields] (#1575) defaults to empty, so a tool record written before fields were kept reads back with none.
+ * [parentToolUseId] (#2221) is `null` for the main thread, so a parentless record keeps its pre-#2221 bytes and
+ * row proof, and a record written before parents were kept reads back at top level.
+ */
 @Serializable
 private data class CachedToolCall(
     val toolName: String,
@@ -768,6 +938,7 @@ private data class CachedToolCall(
     val output: String,
     val status: ToolCallStatus,
     val inputFields: Map<String, String> = emptyMap(),
+    val parentToolUseId: String? = null,
 )
 
 @Serializable
@@ -879,12 +1050,23 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
                         role = message.role,
                         content = message.content,
                         timestamp = message.timestamp.toString(),
-                        tool = message.toolCall?.let { CachedToolCall(it.toolName, it.input, it.output, it.status, it.inputFields) },
+                        tool =
+                            message.toolCall?.let {
+                                CachedToolCall(
+                                    it.toolName,
+                                    it.input,
+                                    it.output,
+                                    it.status,
+                                    it.inputFields,
+                                    it.parentToolUseId.ifEmpty { null },
+                                )
+                            },
                         attachments = message.attachments.map { CachedAttachment(it.attachmentId, it.displayName, it.mimeType) },
                         segment =
                             message.segment?.let { segment ->
                                 CachedSegment(segment.turnId, segment.deltas.map { it.seq }, segment.deltas.map { it.length })
                             },
+                        parentToolUseId = message.parentToolUseId.ifEmpty { null },
                     ),
             )
         is ThreadItem.SessionBoundary ->
@@ -922,9 +1104,20 @@ private fun CachedThreadRow.toDomain(): ThreadItem {
                 content = message.content,
                 timestamp = parseThreadInstant(message.timestamp),
                 isStreaming = false,
-                toolCall = message.tool?.let { ToolCall(it.toolName, it.input, it.output, it.status, it.inputFields) },
+                toolCall =
+                    message.tool?.let {
+                        ToolCall(
+                            it.toolName,
+                            it.input,
+                            it.output,
+                            it.status,
+                            it.inputFields,
+                            parentToolUseId = it.parentToolUseId.orEmpty(),
+                        )
+                    },
                 attachments = message.attachments.map { MessageAttachment(it.attachmentId, it.displayName, it.mimeType) },
                 segment = message.segment?.toDomain(message.content),
+                parentToolUseId = message.parentToolUseId.orEmpty(),
             ),
         )
     }

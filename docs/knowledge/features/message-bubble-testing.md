@@ -4,6 +4,17 @@ Test coverage and fixture guidance for [MessageBubble](message-bubble.md).
 
 ## Testing
 
+`MarkdownTypographyTest` uses native graphics and unclipped dp bounds to check
+settled and streaming paragraph→paragraph, paragraph→list, list→code and
+code→paragraph gaps at 16dp (#2273). Measure the code surface via the header's
+parent, including its padding and copy rail; measuring padded code text would
+conflate internal insets with inter-block spacing. First/last blocks must align
+with renderer bounds, proving no added outer spacing. Keep the recursive
+list-item/quote checks, 4dp sibling-item checks and both reader routes' explicit
+12dp block override alongside these fixtures. This markdown gap is independent
+of user paragraphs, attachment/metadata gaps and bubble padding documented in
+[MessageBubble](message-bubble.md).
+
 `ThreadStreamingRevealTest` pauses the Compose clock through the real
 `ThreadScreen`: pre-open text is immediate, appended text retains its prefix and
 reveals progressively, and reopening before catch-up shows all arrived text.
@@ -37,8 +48,8 @@ is still streaming: a final-body check can pass even if progressive display is b
 therefore holds two arrived deltas until the displayed-prefix checkpoint, then uses
 an explicit second enqueue to release completion. Require reply identity, repository
 settlement and idle phase before checking the final body; a blinking caret's absence
-is insufficient. The real-Claude word-reveal twin remains ignored and manual because
-its transient window cannot be fenced. Keep cadence and catch-up deadlines in local
+is insufficient. The real-Claude word-reveal method was removed on 2026-10-17: its
+transient window cannot be fenced, and immediate text is acceptable. Keep cadence and catch-up deadlines in local
 step tests. See the [scenario and manual evidence limits](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
 `app/src/test/.../components/StreamingRevealStepTest.kt` covers the pure

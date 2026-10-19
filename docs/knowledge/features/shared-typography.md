@@ -29,6 +29,52 @@ size, line height and tracking. Component widths and spacing belong to their
 owning screens; the shared ramp does not fix text height, so Android font scaling
 continues to apply.
 
+## Markdown reader body
+
+Both [reader entry points](markdown-reader-screen.md#what-it-does) use regular Roboto
+`bodyMedium` 14/20 with 0.25sp tracking and `onSecondaryContainer` for prose, lists and
+table cells (#2283), matching thread body metrics. Quote paragraphs use regular
+`onSurfaceVariant` at the same metrics beside their 3dp bar; links keep their colour
+and underline. The reader locally uses centered, untrimmed line boxes, including
+[table cells](markdown-text-internals.md#tables); the shared type ramp is unchanged.
+
+Native-graphics `MarkdownTypographyTest` checks both entry points and themes for
+metrics, colours, spans and measured 20sp line boxes. A size assertion alone cannot
+catch trimming. Geometry coverage keeps a deliberately wrapping list fixture at the
+smaller size and retains the continuation-at-gutter contract; see
+[counted reader evidence](markdown-reader-screen-testing.md#reader-body-typography-coverage-2283).
+
+## Markdown headings
+
+[`MarkdownTypography`](../../../app/src/main/java/de/pyryco/mobile/ui/theme/MarkdownTypography.kt)
+owns the ATX H1–H6 scale from Figma `892:13442` (#2277), shared by settled and streaming
+[Thread rendering](markdown-text.md) and the [Reader](markdown-reader-screen.md).
+All levels use explicit `FontFamily.SansSerif` (Roboto on Android). Sizes, line heights
+and tracking use `sp`:
+
+| Level | Weight | Size / line height | Tracking |
+| --- | ---: | ---: | ---: |
+| H1 | 500 | 20 / 28 | 0 |
+| H2 | 500 | 18 / 26 | 0 |
+| H3 | 500 | 16 / 24 | 0.15 |
+| H4–H6 | 700 | 14 / 20 | 0.25 |
+
+H3 derives from `MaterialTheme.typography.titleMedium`, overriding its family and tracking
+locally. This Compose version supplies 0.2sp tracking for that role; reusing it unchanged
+misses Figma’s 0.15sp. H1, H2 and H4–H6 use dedicated tokens. `AppTypography` and other
+screens’ shared roles stay unchanged. Plain heading text uses `onSecondaryContainer` in
+the active theme; inline link and code spans keep their existing treatments. Reader
+headings additionally use untrimmed line boxes. The native-graphics
+[`MarkdownHeadingScaleTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MarkdownHeadingScaleTest.kt)
+asserts rendered metrics and colour across both themes and presentations through streaming
+and settlement; [counted verification](markdown-text.md#testing) records the passing coverage.
+
+At enlarged text sizes, nominal line height multiplied by font scale and direct sp
+conversion both differ from Compose 1.10.4's native line box. Reader integration tests
+compare measured lines to an independent literal-based `TextMeasurer` control while
+retaining exact style/trim assertions, nominal scale-1 heights and existing pixel
+allowances. See [reader heading testing and evidence](markdown-reader-screen-testing.md#reader-heading-integration-coverage-2276).
+
 ## Verification and limits
 
 [`AppTypographyTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/theme/AppTypographyTest.kt)

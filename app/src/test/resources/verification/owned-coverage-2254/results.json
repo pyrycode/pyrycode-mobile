@@ -1,0 +1,337 @@
+{
+  "ticket": 2254,
+  "operatingSystem": "Linux",
+  "sourceRevision": "fca9ce26bebb33f74d2c10da1ba67c746c3a6765",
+  "focusedChecks": [
+    {
+      "selector": "de.pyryco.mobile.data.repository.CoalescedThreadWritesTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.repository.CoalescedThreadWritesTest",
+      "revision": "9f9a11e0e3fbdecda37d9bb7e868dbae6f7a125c",
+      "executed": 41,
+      "passed": 41,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T03:01:39.864Z",
+      "report": "green-CoalescedThreadWritesTest.xml.gz",
+      "skipReasons": []
+    },
+    {
+      "selector": "de.pyryco.mobile.data.repository.HistoryDurabilityTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.repository.HistoryDurabilityTest",
+      "revision": "9f9a11e0e3fbdecda37d9bb7e868dbae6f7a125c",
+      "executed": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T03:05:06.198Z",
+      "report": "green-HistoryDurabilityTest.xml.gz",
+      "skipReasons": []
+    },
+    {
+      "selector": "de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.repository.UnsignedHistoryCacheTest lint assembleDebug",
+      "revision": "9f9a11e0e3fbdecda37d9bb7e868dbae6f7a125c",
+      "executed": 11,
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T03:11:26.691Z",
+      "report": "green-UnsignedHistoryCacheTest.xml.gz",
+      "skipReasons": []
+    },
+    {
+      "selector": "de.pyryco.mobile.data.cache.LegacyRoomStorageTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.LegacyRoomStorageTest",
+      "revision": "9f9a11e0e3fbdecda37d9bb7e868dbae6f7a125c",
+      "executed": 18,
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T03:14:59.262Z",
+      "report": "green-LegacyRoomStorageTest.xml.gz",
+      "skipReasons": []
+    },
+    {
+      "selector": "de.pyryco.mobile.data.cache.MigratingConversationCacheTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.MigratingConversationCacheTest",
+      "revision": "9f9a11e0e3fbdecda37d9bb7e868dbae6f7a125c",
+      "executed": 15,
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T03:33:20.194Z",
+      "report": "green-MigratingConversationCacheTest.xml.gz",
+      "skipReasons": []
+    },
+    {
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest lint",
+      "revision": "fca9ce26bebb33f74d2c10da1ba67c746c3a6765",
+      "executed": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T03:47:49.114Z",
+      "report": "green-OwnedLegacyCoverageTest.xml.gz",
+      "skipReasons": []
+    },
+    {
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest",
+      "revision": "fca9ce26bebb33f74d2c10da1ba67c746c3a6765",
+      "executed": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T03:50:39.097Z",
+      "report": "green-OwnedLegacyCoverageConcurrencyTest.xml.gz",
+      "skipReasons": []
+    },
+    {
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyWritesTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyWritesTest",
+      "revision": "fca9ce26bebb33f74d2c10da1ba67c746c3a6765",
+      "executed": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T03:50:54.274Z",
+      "report": "green-OwnedLegacyWritesTest.xml.gz",
+      "skipReasons": []
+    },
+    {
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyConcurrencyTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyConcurrencyTest",
+      "revision": "fca9ce26bebb33f74d2c10da1ba67c746c3a6765",
+      "executed": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T03:52:56.543Z",
+      "report": "green-OwnedLegacyConcurrencyTest.xml.gz",
+      "skipReasons": []
+    },
+    {
+      "selector": "de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest",
+      "revision": "fca9ce26bebb33f74d2c10da1ba67c746c3a6765",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T03:53:11.598Z",
+      "report": "green-OwnedLegacyMigrationTest.xml.gz",
+      "skipReasons": []
+    },
+    {
+      "selector": "de.pyryco.mobile.data.cache.AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence",
+      "revision": "fca9ce26bebb33f74d2c10da1ba67c746c3a6765",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T03:56:33.784Z",
+      "report": "green-AuthoritativeRoomStorageTest.xml.gz",
+      "skipReasons": []
+    }
+  ],
+  "revisionNotes": "Coverage and coverage-concurrency probes are rerun on the final source revision. Earlier retained regressions ran at 9f9a11e0e3fbdecda37d9bb7e868dbae6f7a125c, before the isolated producer-evidence guard. During MigratingConversationCacheTest only, an unselected producer probe was being added; production and selected test sources matched that revision.",
+  "totals": {
+    "executed": 124,
+    "passed": 124,
+    "failed": 0,
+    "skipped": 0
+  },
+  "boundedWork": {
+    "histories": [
+      20,
+      18000
+    ],
+    "ownedRows": 1,
+    "sameReceivedChange": "Replace newest committed row proof and advance unknown walk; import/restore excluded.",
+    "countsForEach": {
+      "rowReads": 2,
+      "rowDecodes": 2,
+      "rowSerializations": 2,
+      "rowWrites": 1,
+      "evidenceReads": 13,
+      "evidenceDecodes": 2,
+      "evidenceWrites": 11,
+      "evidenceSerializations": 7,
+      "legacySqlStatements": 38
+    },
+    "coverage": "No full row/evidence read or broad replacement; partial ownership probe separately owns 200 of 18000 rows and preserves all 17800 unloaded rows and their exact evidence after reopening."
+  },
+  "historicalChecks": [
+    {
+      "report": "red-baseline.xml.gz",
+      "baseRevision": "8d2888d9c",
+      "sourceState": "Test-first two-probe form, before implementation; uncommitted test source was subsequently expanded.",
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "executed": 2,
+      "failed": 2,
+      "skipped": 0,
+      "timestamp": "2026-10-18T01:56:44.702Z",
+      "failedTests": [
+        "ownershipInvariant_partialCoveragePreservesUnloadedRowsAndEvidence",
+        "boundedInvariant_coverageSaveDoesNotScaleWithSavedHistory"
+      ]
+    },
+    {
+      "report": "red-first-implementation.xml.gz",
+      "baseRevision": "8d2888d9c",
+      "sourceState": "Uncommitted initial eight-probe implementation; framework SQL statement-count difference, subsequently narrowed to legacy-table SQL while retaining no-scan/no-replacement assertions.",
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "executed": 8,
+      "failed": 1,
+      "skipped": 0,
+      "timestamp": "2026-10-18T02:16:09.896Z",
+      "failedTests": [
+        "boundedInvariant_coverageSaveDoesNotScaleWithSavedHistory"
+      ]
+    },
+    {
+      "report": "green-initial-concurrency.xml.gz",
+      "revision": "6556dfc4383b217f407d4024feeb448d3843dd52",
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest",
+      "executed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-18T02:34:25.316Z",
+      "failedTests": []
+    },
+    {
+      "report": "red-gap-walk.xml.gz",
+      "baseRevision": "6556dfc4383b217f407d4024feeb448d3843dd52",
+      "sourcePatch": "red-edge-probes.patch.gz",
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "executed": 9,
+      "failed": 1,
+      "skipped": 0,
+      "timestamp": "2026-10-18T02:40:07.975Z",
+      "failedTests": [
+        "anchorInvariant_extendingSpanKeepsReceivedGapWalk"
+      ]
+    },
+    {
+      "report": "red-capture-order.xml.gz",
+      "baseRevision": "6556dfc4383b217f407d4024feeb448d3843dd52",
+      "sourcePatch": "red-capture-probes.patch.gz",
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest.captureInvariant_firstSnapshotCleanupCannotRenewOldCoverage",
+      "executed": 1,
+      "failed": 1,
+      "skipped": 0,
+      "timestamp": "2026-10-18T02:44:47.061Z",
+      "failedTests": [
+        "captureInvariant_firstSnapshotCleanupCannotRenewOldCoverage"
+      ]
+    },
+    {
+      "report": "red-uncommitted-producer.xml.gz",
+      "baseRevision": "9f9a11e0e3fbdecda37d9bb7e868dbae6f7a125c",
+      "sourcePatch": "red-uncommitted-producer.patch.gz",
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest",
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.OwnedLegacyCoverageTest.certificationInvariant_uncommittedProducerWaitsForCommittedRow",
+      "executed": 1,
+      "failed": 1,
+      "skipped": 0,
+      "timestamp": "2026-10-18T03:39:23.488Z",
+      "failedTests": [
+        "certificationInvariant_uncommittedProducerWaitsForCommittedRow"
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "file": "green-AuthoritativeRoomStorageTest.xml.gz",
+      "sha256": "ccb79fdd0a3612ce01c9601510050b7443057c470271f6e4392c9a6b6edb0b03"
+    },
+    {
+      "file": "green-CoalescedThreadWritesTest.xml.gz",
+      "sha256": "f50c21e4776b66aef00691ed53f0f5a57fa518bfab241939e166edcfdaf3d95f"
+    },
+    {
+      "file": "green-HistoryDurabilityTest.xml.gz",
+      "sha256": "ef14f947bd05757e9edec8481d6523305a9df5c8e2fc1fb4c470c38cc24c60b5"
+    },
+    {
+      "file": "green-LegacyRoomStorageTest.xml.gz",
+      "sha256": "e8e4af8317e9b4cbf85dec56e477a9b7288c2e311e4a934bdd90f8a2b468d3b4"
+    },
+    {
+      "file": "green-MigratingConversationCacheTest.xml.gz",
+      "sha256": "bf1340955d079eee7a922535ddfabda2c8ac3697a77dd5d21cff0a7067ca96b3"
+    },
+    {
+      "file": "green-OwnedLegacyConcurrencyTest.xml.gz",
+      "sha256": "127cae65578f813b2772bfdebcadf1ed9e8a6d07d3d1fb7ddc9fe4a6c85eff54"
+    },
+    {
+      "file": "green-OwnedLegacyCoverageConcurrencyTest.xml.gz",
+      "sha256": "bc5f0a7b941055780b904e3457780b7295a70d9e97076e99fe28026ce9d65075"
+    },
+    {
+      "file": "green-OwnedLegacyCoverageTest.xml.gz",
+      "sha256": "ceb415bcc52e927a13adde6b77f2c2c18384e1416faefd543361d5fe28517ae2"
+    },
+    {
+      "file": "green-OwnedLegacyMigrationTest.xml.gz",
+      "sha256": "4730f1ab9428de44c550334882d3730dd505efa27ca06950db54d289f9583678"
+    },
+    {
+      "file": "green-OwnedLegacyWritesTest.xml.gz",
+      "sha256": "df8302fb72129c94db9a554e01a14eaa03086650ada40852331a53b84a692371"
+    },
+    {
+      "file": "green-UnsignedHistoryCacheTest.xml.gz",
+      "sha256": "1618f5d2228f44aa1d602e71a14c35e3018e4374360e11f7f730ab261d87c5c5"
+    },
+    {
+      "file": "green-initial-concurrency.xml.gz",
+      "sha256": "4052cfe779aa92694bd75388aaf4223e2b113a44eaec1b64ae8a73319b4962c9"
+    },
+    {
+      "file": "red-baseline.xml.gz",
+      "sha256": "3e2ca46a212b6f984c6c801679cf2db3c9578305c644a86b2a466eea8ab8fb16"
+    },
+    {
+      "file": "red-capture-order.xml.gz",
+      "sha256": "1424c3f316b243d1f0047db774d9faa3278842ebdc537f342593d71cba895478"
+    },
+    {
+      "file": "red-capture-probes.patch.gz",
+      "sha256": "a70196dc32783ce488c0297e8d5e1390cc298513cffa1b77fa742bfa68efb0cf"
+    },
+    {
+      "file": "red-edge-probes.patch.gz",
+      "sha256": "8f8ff569e5b6182fd86a13a884c8e8aae128c9e345727b90487d4f35e8863b90"
+    },
+    {
+      "file": "red-first-implementation.xml.gz",
+      "sha256": "1a5c8c8f44571e98f02140ad69e86a28255cd43143af7b5d871bc1916d5f7ff8"
+    },
+    {
+      "file": "red-gap-walk.xml.gz",
+      "sha256": "e99e9e5ad63148dad9945a2bdf2ee792af184b83d73030ca6a8c2e8f68a45c36"
+    },
+    {
+      "file": "red-uncommitted-producer.patch.gz",
+      "sha256": "6fc61291119ac12e9c4085d4bc8372cd1cefa836ad1ae50de4fce36f7e7fbdeb"
+    },
+    {
+      "file": "red-uncommitted-producer.xml.gz",
+      "sha256": "141892fca2a87cf60e4e6b32d5bb05b89ca936b62865d269a5365d625cc2af56"
+    }
+  ],
+  "pending": [
+    "Dispatcher-owned complete configured JVM, UI and scripted gates.",
+    "Documentation-stage contract updates named in the plan and PR."
+  ],
+  "otherOperatingSystems": "Outside this ticket verification scope."
+}

@@ -1,0 +1,185 @@
+Test admission: waiting (0 s so far).
+Test admission: waiting (30 s so far).
+Test admission: waiting (60 s so far).
+Test admission: waiting (90 s so far).
+Test admission: waiting (120 s so far).
+Test admission: waiting (150 s so far).
+Test admission: waiting (180 s so far).
+Test admission: waiting (210 s so far).
+Test admission: waiting (240 s so far).
+Test admission: waiting (270 s so far).
+Test admission: waiting (300 s so far).
+Test admission: waiting (330 s so far).
+Test admission: waiting (360 s so far).
+Test admission: waiting (390 s so far).
+Test admission: waiting (420 s so far).
+Test admission: waiting (450 s so far).
+Test admission: waiting (480 s so far).
+Test admission: waiting (510 s so far).
+Test admission: waiting (540 s so far).
+Test admission: waiting (570 s so far).
+Test admission: waiting (600 s so far).
+Test admission: waiting (630 s so far).
+Test admission: waiting (660 s so far).
+Test admission: waiting (691 s so far).
+Test admission: acquired after 698s waiting
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig FROM-CACHE
+> Task :app:generateDebugResources FROM-CACHE
+> Task :app:processDebugGoogleServices FROM-CACHE
+> Task :app:packageDebugResources FROM-CACHE
+> Task :app:processDebugNavigationResources FROM-CACHE
+> Task :app:parseDebugLocalResources FROM-CACHE
+> Task :app:generateDebugRFile FROM-CACHE
+> Task :app:javaPreCompileDebug FROM-CACHE
+> Task :app:mapDebugSourceSetPaths
+> Task :app:compileDebugNavigationResources FROM-CACHE
+> Task :app:checkDebugAarMetadata
+> Task :app:mergeDebugResources FROM-CACHE
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug FROM-CACHE
+> Task :app:processDebugMainManifest FROM-CACHE
+> Task :app:processDebugManifest FROM-CACHE
+> Task :app:processDebugManifestForPackage FROM-CACHE
+> Task :app:processDebugResources FROM-CACHE
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest FROM-CACHE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets
+> Task :app:packageDebugUnitTestForUnitTest
+> Task :app:processDebugUnitTestManifest
+> Task :app:generateDebugUnitTestConfig
+> Task :app:kspDebugKotlin
+> Task :app:compileDebugKotlin
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/push/PushTokenRefresher.kt:48:45 'val token: Task<String!>' is deprecated. Deprecated in Java.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/push/PyryMessagingService.kt:35:18 This declaration overrides a deprecated member but is not marked as deprecated itself. Add the '@Deprecated' annotation or suppress the diagnostic.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/conversations/components/ChannelInfoSheet.kt:688:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt:610:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MessageBubble.kt:449:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MessageMetaRow.kt:13:8 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MessageMetaRow.kt:90:14 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MessageMetaRow.kt:113:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/conversations/share/ShareIntake.kt:41:39 'fun get(p0: String!): Any?' is deprecated. Deprecated in Java.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/conversations/share/ShareIntake.kt:46:46 'fun get(p0: String!): Any?' is deprecated. Deprecated in Java.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/conversations/share/ShareIntake.kt:67:34 'fun get(p0: String!): Any?' is deprecated. Deprecated in Java.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/conversations/thread/AttachmentActions.kt:100:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to field.
+- To opt in to applying to both value parameter and field, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/conversations/thread/AttachmentSendFailure.kt:14:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to field.
+- To opt in to applying to both value parameter and field, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/conversations/thread/MarkdownReaderScreen.kt:344:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt:1353:19 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt:1448:14 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/main/java/de/pyryco/mobile/ui/settings/DebugBundleDownload.kt:74:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to field.
+- To opt in to applying to both value parameter and field, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+
+> Task :app:compileDebugJavaWithJavac FROM-CACHE
+> Task :app:processDebugJavaRes
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:kspDebugUnitTestKotlin
+> Task :app:compileDebugUnitTestKotlin
+Warning: truncated output (original token count: 29182)
+Total output lines: 339
+
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/e2e/SideMessageCopyTest.kt:62:51 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/e2e/SideMessageCopyTest.kt:76:42 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MarkdownTextTest.kt:9:8 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MarkdownTextTest.kt:116:42 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MarkdownTextTest.kt:520:40 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageBubbleTest.kt:10:8 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageBubbleTest.kt:72:40 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageBubbleTest.kt:103:41 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageBubbleTest.kt:106:42 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageBubbleTest.kt:160:42 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageBubbleTest.kt:310:42 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageBubbleTest.kt:406:46 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageBubbleTest.kt:463:42 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageBubbleTest.kt:481:42 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageMetaRowToggleTest.kt:7:8 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageMetaRowToggleTest.kt:58:40 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageMetaRowToggleTest.kt:105:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageReplyTargetsTest.kt:13:8 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageReplyTargetsTest.kt:57:18 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageReplyTargetsTest.kt:111:50 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadFrameCaptureTest.kt:12:8 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadFrameCaptureTest.kt:69:18 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadFrameCaptureTest.kt:104:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/data/diagnostics/MessageTrailTest.kt:40:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/data/diagnostics/MessageTrailTest.kt:82:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/data/diagnostics/MessageTrailTest.kt:87:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/data/diagnostics/MessageTrailTest.kt:106:17 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/data/diagnostics/MessageTrailTest.kt:128:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/data/diagnostics/MessageTrailTest.kt:130:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryAttachmentOfferTest.kt:51:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryAttachmentOfferTest.kt:55:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryAttachmentOfferTest.kt:57:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/da…24182 tokens truncated…outines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/PeerWaitTest.kt:78:40 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/PeerWaitTest.kt:90:30 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/PeerWaitTest.kt:100:38 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/PeerWaitTest.kt:124:30 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/PeerWaitTest.kt:131:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/PeerWaitTest.kt:134:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/PeerWaitTest.kt:158:38 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/PeerWaitTest.kt:190:50 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/PeerWaitTest.kt:209:46 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/PeerWaitTest.kt:216:30 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/PeerWaitTest.kt:235:26 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/RedialingLinkTest.kt:74:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/RedialingLinkTest.kt:78:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/RedialingLinkTest.kt:79:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/RedialingLinkTest.kt:105:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/RedialingLinkTest.kt:148:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/RedialingLinkTest.kt:163:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/e2e/RedialingLinkTest.kt:164:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/notifications/AttentionNotifierTest.kt:154:34 'fun get(p0: String!): Any?' is deprecated. Deprecated in Java.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/notifications/AttentionNotifierTest.kt:286:57 'fun get(p0: String!): Any?' is deprecated. Deprecated in Java.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/push/PushTokenRefresherTest.kt:64:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/push/PushTokenRefresherTest.kt:78:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/push/PushTokenRefresherTest.kt:85:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/push/PushTokenRefresherTest.kt:95:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/push/PushTokenRefresherTest.kt:99:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/push/PushTokenRefresherTest.kt:110:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/push/PushTokenRefresherTest.kt:134:17 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/push/PushTokenRefresherTest.kt:136:17 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/push/PushTokenRefresherTest.kt:141:17 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/push/PushTokenRefresherTest.kt:162:17 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/push/PushTokenRefresherTest.kt:168:17 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/src/test/java/de/pyryco/mobile/push/PyryMessagingServiceTest.kt:103:13 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes
+
+> Task :app:testDebugUnitTest
+
+OwnedLegacyCoverageConcurrencyTest > intentInvariant_rowFailureKeepsRetryableWork FAILED
+    java.lang.AssertionError at OwnedLegacyCoverageConcurrencyTest.kt:134
+
+OwnedLegacyCoverageConcurrencyTest > revisionInvariant_rowSuccessSurvivesEvidenceFailureAndCancellation FAILED
+    java.lang.AssertionError at OwnedLegacyCoverageConcurrencyTest.kt:423
+
+2 tests completed, 2 failed
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:testDebugUnitTest'.
+> There were failing tests. See the report at: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2291/app/build/reports/tests/testDebugUnitTest/index.html
+
+* Try:
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+
+BUILD FAILED in 3m 14s
+
+> Task :app:testDebugUnitTest FAILED
+33 actionable tasks: 16 executed, 17 from cache

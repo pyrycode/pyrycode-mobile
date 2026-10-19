@@ -13,7 +13,9 @@ import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.model.batchFor
 import de.pyryco.mobile.data.model.reconnected
 import de.pyryco.mobile.data.model.reduce
+import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.CAPABILITY_STOP_BACKGROUND_TASK
+import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RelayTransport
@@ -44,6 +46,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -325,6 +328,64 @@ class RelayRepositoryCoordinator(
                 } ?: flowOf(false)
             }.stateIn(scope, SharingStarted.Eagerly, false)
 
+    private val threadSupportState = MutableStateFlow<ThreadSupport>(ThreadSupport.Unverified)
+
+    /** Current authenticated verdict; a retained Supported value never outlives its connection. */
+    @OptIn(InternalCoroutinesApi::class, ExperimentalForInheritanceCoroutinesApi::class)
+    val threadSupport: StateFlow<ThreadSupport> =
+        object : StateFlow<ThreadSupport> {
+            override val value: ThreadSupport
+                get() =
+                    threadSupportState.value.let { verdict ->
+                        if (verdict is ThreadSupport.Supported && liveRepository() !== verdict.connection) {
+                            ThreadSupport.Unverified
+                        } else {
+                            verdict
+                        }
+                    }
+            override val replayCache: List<ThreadSupport> get() = listOf(value)
+
+            override suspend fun collect(collector: FlowCollector<ThreadSupport>): Nothing = threadSupportState.collect(collector)
+        }
+
+    val threadMissing: StateFlow<Boolean> =
+        threadSupportState.map { it is ThreadSupport.Missing }.stateIn(scope, SharingStarted.Eagerly, false)
+
+    init {
+        if (authoritativeHostId.isNotEmpty()) {
+            scope.launch {
+                activeConnection.collectLatest { connection ->
+                    if (connection != null) {
+                        connection.pump.state.collect { state -> updateThreadVerdict(connection, state) }
+                    }
+                }
+            }
+        }
+    }
+
+    @Synchronized
+    private fun updateThreadVerdict(
+        connection: Connection,
+        state: PumpState,
+    ) {
+        if (!job.isActive || activeConnection.value !== connection || connections.value !== connection.transport) return
+        if (state is PumpState.Open) {
+            val supported = CAPABILITY_THREAD in state.capabilities && CAPABILITY_INTERACTIVE in state.capabilities
+            threadSupportState.value =
+                if (supported) ThreadSupport.Supported(connection.repo) else ThreadSupport.Missing(connection.repo)
+            RelayLog.d { "event=thread_negotiation verdict=${if (supported) "supported" else "missing"}" }
+        } else {
+            retireThreadVerdict()
+        }
+    }
+
+    private fun retireThreadVerdict() {
+        if (threadSupportState.value is ThreadSupport.Supported) {
+            threadSupportState.value = ThreadSupport.Unverified
+            RelayLog.d { "event=thread_negotiation verdict=unverified" }
+        }
+    }
+
     /** Subscription follows this host across reconnects; no old connection events are replayed. */
     @OptIn(ExperimentalCoroutinesApi::class)
     fun observeBackgroundTaskStopRefusals(conversationId: String): Flow<String> =
@@ -392,7 +453,13 @@ class RelayRepositoryCoordinator(
                 pump,
                 childScope,
                 deviceName,
-                negotiatedCapabilities = { (pump.state.value as? PumpState.Open)?.capabilities.orEmpty() },
+                negotiatedCapabilities = {
+                    if (authoritativeHostId.isEmpty() || (childScope.isActive && transport === connections.value)) {
+                        (pump.state.value as? PumpState.Open)?.capabilities.orEmpty()
+                    } else {
+                        emptySet()
+                    }
+                },
                 replayCursor = replayCursor,
                 finishedBackgroundTasks = finishedBackgroundTasks,
                 hostReadings = hostReadings,
@@ -449,6 +516,7 @@ class RelayRepositoryCoordinator(
     private fun teardownActive() {
         val current = activeConnection.value ?: return
         activeConnection.value = null
+        retireThreadVerdict()
         current.repo.endSwitchAgentRequests()
         current.repo.endBackgroundTaskStops()
         current.repo.endDebugBundle()

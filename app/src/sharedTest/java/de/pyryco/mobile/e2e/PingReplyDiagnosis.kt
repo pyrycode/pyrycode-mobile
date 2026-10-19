@@ -83,7 +83,33 @@ internal fun followUpPingReplyRecorded(
 internal fun holdsPingReply(items: List<ThreadItem>): Boolean =
     items.any { it is ThreadItem.MessageItem && it.message.role == Role.Assistant && it.message.content.isPingReply() }
 
-private fun String.isPingReply(): Boolean = trim().equals("ping", ignoreCase = true)
+internal fun String.isPingReply(): Boolean = trim().equals("ping", ignoreCase = true)
 
 // A diagnostic read must not throw over a malformed frame, so a non-primitive field reads as absent.
 private fun Envelope.field(name: String): String? = ((payload as? JsonObject)?.get(name) as? JsonPrimitive)?.contentOrNull
+
+/** Independent observations of the same send; no terminal count stands in for another stage. */
+internal fun ownedReplyFailure(
+    producerCompleted: Boolean,
+    repositoryHoldsReply: Boolean?,
+    identityCounts: List<Int>,
+    displayed: Boolean,
+    cause: Throwable? = null,
+    contentMatches: Boolean = true,
+): AssertionError {
+    val stage =
+        when {
+            !producerCompleted -> "host: no completed successful main reply for the send"
+            repositoryHoldsReply == null -> "phone repository: unreadable"
+            !repositoryHoldsReply -> "phone repository: completed producer reply was not admitted"
+            identityCounts.isEmpty() || identityCounts.any { it == 0 } -> "thread screen: missing admitted reply identity"
+            identityCounts.any { it > 1 } -> "thread screen: duplicate admitted reply identity"
+            !contentMatches -> "thread screen: admitted reply identity has mismatched content"
+            else -> "thread list: admitted reply identity is composed but not displayed"
+        }
+    return AssertionError(
+        "owned completed reply never displayed; $stage " +
+            "(producer=$producerCompleted, repository=$repositoryHoldsReply, identities=$identityCounts, displayed=$displayed)",
+        cause,
+    )
+}

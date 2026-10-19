@@ -16,10 +16,15 @@ a moved background Agent family keeps the same parent relationships and indentat
 **What it computes.** A tool row's [`Message.id`](data-model.md) is its own `tool_use_id`; its
 [`ToolCall.parentToolUseId`](data-model.md) (#810) names the `Agent`/`Task` call whose subagent made it,
 or `""` for the main thread. A row's depth is `0` when `parentToolUseId` is empty or names no *tool* row
-loaded in the thread (an older page not yet fetched, an id belonging to some other kind of row, or —
-because the disk cache doesn't persist the field — any cache-restored row), otherwise `1 +` its parent's
-depth. The map holds only rows with depth `> 0`; a row absent from it renders at top level, which is what
-`?: 0` above falls back to.
+loaded in the thread (an older page not yet fetched, or an id belonging to some other kind of row),
+otherwise `1 +` its parent's depth. The map holds only rows with depth `> 0`; a row absent from it
+renders at top level, which is what `?: 0` above falls back to.
+
+The disk cache persists this field as of #2221 ([conversation cache layout § the thread document's
+row kinds](conversation-cache-layout.md)), so a row restored from a cache document written at or after
+that ticket nests exactly as it did before the reopen, for both foreground and background Agents. Only a
+document written before #2221 has no stored parent and restores every row at top level, until fresh wire
+evidence re-attributes it in memory.
 
 Depth zero does not establish that a call belongs to the main thread. The
 [status selector](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311)
@@ -397,6 +402,17 @@ when closed: it belongs to the header. All other child keys are absent, and open
 restores every child's individual key. Keep pointer taps, expansion semantics and owned
 prose visibility assertions alongside membership; membership alone cannot distinguish the
 closed representative from its first child.
+
+**A screen test that calls `verifyAgentRunNavigation` must mount with collapse on, explicitly.**
+`AuthoritativeScenarioScreenTest`'s `mount` helper defaults `collapseToolUses` to `false`, matching
+`ThreadScreen`'s own parameter default, so a call site that leaves it unset runs the proof over the
+unfolded tree — no run header ever forms, so "Show tool uses"/"Hide tool uses" assertions fail, and
+the failure reads like a navigation regression rather than a test-setup gap (#2238, diagnosing a
+report against PR #2237). `settledAgentRunNavigatesOpensAndClosesOverDaemonBuiltThread` mounts
+`finishedAgentScenarioItems()` with `collapseToolUses = true` and takes `agentId`/`runId`/`childIds`
+from `ThreadEvidence.agentFamily`, proving the same collapse/reopen/navigation contract over a
+daemon-built thread that `BackgroundAgentBlocksScreenTest.settledNavigationThenOwnedPointerTapsOpenAndCloseALongChildRun`
+already proves over the legacy fixtures.
 
 A screen-level `ToolRunCollapseTest` (`app/src/sharedTest/.../thread/`) covers the composable
 end to end: collapse/expand both directions with the flush join and sub-agent indent preserved; a run

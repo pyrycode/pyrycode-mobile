@@ -5,6 +5,7 @@ import org.gradle.api.tasks.PathSensitivity
 import org.gradle.process.ExecOperations
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.time.Duration
 import javax.inject.Inject
 
 plugins {
@@ -162,15 +163,29 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {
-            it.maxHeapSize = "2g"
-            if (!providers
-                    .gradleProperty("fullRetentionTests")
-                    .orElse("false")
-                    .get()
-                    .toBoolean()
-            ) {
-                it.useJUnit { excludeCategories("de.pyryco.mobile.verification.FullRetentionTest") }
+            // The full Robolectric worker exhausted 2 GiB independently of the Gradle JVM (#2272).
+            it.maxHeapSize = "4g"
+            // JUnit 4 tests run on the JUnit Platform's vintage engine, which maps a @Category to a tag, so that
+            // TestTimeoutWatchdog sees every test start and finish.
+            it.useJUnitPlatform {
+                // The controlled launcher exercises this intentionally unfinished runner with an injected halt callback.
+                excludeTags("de.pyryco.mobile.verification.TestTimeoutWatchdogTest\$ControlledRunnerFixture")
+                if (!providers
+                        .gradleProperty("fullRetentionTests")
+                        .orElse("false")
+                        .get()
+                        .toBoolean()
+                ) {
+                    excludeTags("de.pyryco.mobile.verification.FullRetentionTest")
+                }
+                // The discovery regression must exercise the exclusions actually configured for this Gradle run.
+                it.systemProperty("pyry.excludedTestTags", excludeTags.joinToString(","))
             }
+            // A hung test fails with a thread dump after this limit instead of blocking the gate (#2161). The slowest
+            // ordinary test took 16 s on 2026-10-17. -PtestTimeoutSeconds=0 turns the limit off.
+            it.systemProperty("pyry.testTimeoutSeconds", providers.gradleProperty("testTimeoutSeconds").orElse("180").get())
+            // Backstop below the dispatcher's 60-minute limit; a full run takes about 4 minutes.
+            it.timeout.set(Duration.ofMinutes(30))
             // Robolectric reads FileDescriptor internals when it sets up Android 16 shared memory.
             it.jvmArgs("--add-opens=java.base/java.io=ALL-UNNAMED", "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED")
             // Independent expectation lets the binding test catch an incorrectly generated flag.
@@ -287,6 +302,9 @@ dependencies {
     implementation(libs.snipme.highlights)
     lintChecks(libs.compose.lint.checks)
     testImplementation(libs.junit)
+    testImplementation(platform(libs.junit.bom))
+    testImplementation(libs.junit.platform.launcher)
+    testRuntimeOnly(libs.junit.vintage.engine)
     // Test-only PSI parser for the fail-closed snackbar routing contract (#1750).
     testImplementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:${libs.versions.kotlin.get()}")
     testImplementation(libs.kotlinx.coroutines.test)

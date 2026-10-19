@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import java.util.UUID
 
 /** Admitted daemon facts and provisional feedback. Certification excludes local sends. */
 internal data class AuthoritativeThreadSnapshot(
@@ -26,9 +27,18 @@ internal data class AuthoritativeThreadSnapshot(
     val generation: Long = 0,
     val coverage: AuthoritativeThreadCoverage? = null,
     val pendingSends: List<AuthoritativePendingSend> = emptyList(),
+    val orderMoves: Map<Long, AuthoritativeOrderMove> = emptyMap(),
+    val incarnation: String = "",
+    val retirements: Map<Long, Long> = emptyMap(),
 ) {
     override fun toString(): String = "AuthoritativeThreadSnapshot(content=***)"
 }
+
+/** Runtime evidence of entry or the last accepted move, retained even when snapshots are conflated. */
+internal data class AuthoritativeOrderMove(
+    val capture: Long,
+    val before: Boolean,
+)
 
 /** Certified continuous ordered history; parent/active extras do not contribute to this range. */
 internal data class AuthoritativeThreadCoverage(
@@ -42,6 +52,152 @@ internal enum class AuthoritativeThreadOutcome { Applied, Ignored, RepairNeeded,
 
 /** In-memory facts keyed by source and conversation, independent of legacy projection/cache. */
 internal class AuthoritativeThreadStore {
+    private class RemovalPlacement(
+        val order: Long,
+        val peers: List<Long>,
+    )
+
+    private val removalPeers = mutableMapOf<Pair<String, String>, MutableMap<Long, RemovalPlacement>>()
+
+    /** Content-free retained recovery size, independent of durable fences. */
+    @Synchronized
+    internal fun retainedRemovalPeerCount(): Int = removalPeers.values.sumOf { scope -> scope.values.sumOf { it.peers.size } }
+
+    /** Called under historyWrites only after the mutation and successful baseline have committed. */
+    @Synchronized
+    fun commitRemovals(
+        host: String,
+        conversation: String,
+        generation: Long,
+        incarnation: String,
+        retirements: Map<Long, Long>,
+    ) {
+        val current = current(host, conversation)
+        if (current.generation != generation || current.incarnation != incarnation) return
+        val key = host to conversation
+        val pending = removalPeers[key] ?: return
+        pending.keys.removeAll { id -> retirements[id]?.let { it == current.retirements[id] } == true }
+        if (pending.isEmpty()) removalPeers.remove(key)
+    }
+
+    /** A capture of one owned authoritative fact, never inferred from absence or a projected row. */
+    internal class Removal internal constructor(
+        val host: String,
+        val conversation: String,
+        val epoch: String,
+        val incarnation: String,
+        val generation: Long,
+        val id: Long,
+        val revision: Long,
+        internal val owner: AuthoritativeThreadStore,
+    ) {
+        override fun toString(): String = "AuthoritativeRemoval(redacted)"
+    }
+
+    @Synchronized
+    fun captureRemoval(
+        host: String,
+        conversation: String,
+        id: Long,
+    ): Removal? {
+        val current = current(host, conversation)
+        val epoch = current.epoch ?: return null
+        if (current.resetNeeded) return null
+        return current.items.firstOrNull { it.id == id }?.let {
+            Removal(host, conversation, epoch, current.incarnation, current.generation, id, it.rev, this)
+        }
+    }
+
+    @Synchronized
+    fun remove(target: Removal): AuthoritativeThreadOutcome {
+        val current = current(target.host, target.conversation)
+        if (target.owner !== this ||
+            current.resetNeeded ||
+            current.epoch != target.epoch ||
+            current.incarnation != target.incarnation ||
+            current.generation != target.generation
+        ) {
+            return AuthoritativeThreadOutcome.StaleGeneration
+        }
+        if (target.id in current.retirements) return AuthoritativeThreadOutcome.Ignored
+        val held = current.items.firstOrNull { it.id == target.id } ?: return AuthoritativeThreadOutcome.Ignored
+        if (held.rev != target.revision) return AuthoritativeThreadOutcome.Ignored
+        val pending = removalPeers.getOrPut(target.host to target.conversation) { mutableMapOf() }
+        val order = orderKey(held)
+        val peers =
+            current.items
+                .filter { orderKey(it) == order }
+                .map { it.id }
+                .toMutableList()
+        // Other uncommitted removals still own tie relationships if storage later refuses them.
+        for ((id, placement) in pending) {
+            if (placement.order != order) continue
+            val split = placement.peers.indexOf(id)
+            val before =
+                placement.peers
+                    .drop(split + 1)
+                    .firstOrNull { it in peers }
+                    ?.let(peers::indexOf)
+            val after =
+                placement.peers
+                    .take(split)
+                    .asReversed()
+                    .firstOrNull { it in peers }
+                    ?.let { peers.indexOf(it) + 1 }
+            peers.add(before ?: after ?: 0, id)
+        }
+        pending[target.id] = RemovalPlacement(order, peers)
+        publish(
+            target.host,
+            target.conversation,
+            current.copy(
+                items = current.items.filterNot { it.id == target.id },
+                retirements = current.retirements + (target.id to target.revision),
+            ),
+        )
+        RelayLog.i { "event=thread_store code=removed" }
+        return AuthoritativeThreadOutcome.Applied
+    }
+
+    /** Withdraw only an uncommitted intent whose exact revision storage definitively superseded. */
+    @Synchronized
+    fun rejectRemoval(
+        host: String,
+        conversation: String,
+        generation: Long,
+        incarnation: String,
+        revision: Long,
+        held: ThreadItemDto,
+    ) {
+        val current = current(host, conversation)
+        if (current.generation != generation || current.incarnation != incarnation || current.retirements[held.id] != revision) return
+        val peers = removalPeers[host to conversation]?.get(held.id)?.peers.orEmpty()
+        val split = peers.indexOf(held.id).coerceAtLeast(0)
+        val positions =
+            current.items
+                .mapIndexedNotNull { index, item ->
+                    if (orderKey(item) == orderKey(held)) item.id to index else null
+                }.toMap()
+        val before = peers.drop(split + 1).firstNotNullOfOrNull { positions[it] }
+        val after =
+            peers
+                .take(split)
+                .asReversed()
+                .firstNotNullOfOrNull { positions[it] }
+                ?.plus(1)
+        val restored = current.items.toMutableList().apply { add(before ?: after ?: size, held) }
+        publishSnapshot(
+            host,
+            conversation,
+            current.copy(
+                items = ordered(restored),
+                completedVersion = maxOf(current.completedVersion, held.rev),
+                retirements = current.retirements - held.id,
+            ),
+            preservePlacement = true,
+        )
+    }
+
     private val snapshots = MutableStateFlow<Map<Pair<String, String>, AuthoritativeThreadSnapshot>>(emptyMap())
 
     @Synchronized
@@ -115,7 +271,9 @@ internal class AuthoritativeThreadStore {
         if (generation != current.generation || current.generation != 0L) return AuthoritativeThreadOutcome.StaleGeneration
         if (current.resetNeeded || (current.epoch != null && current.epoch != saved.epoch)) return AuthoritativeThreadOutcome.Ignored
         if (host.isEmpty() || conversation.isEmpty() || saved.epoch.isNullOrEmpty()) return AuthoritativeThreadOutcome.Ignored
-        val merged = merge(current.items, saved.items, saved.completedVersion) ?: return AuthoritativeThreadOutcome.Ignored
+        if (current.incarnation.isNotEmpty() && current.incarnation != saved.incarnation) return AuthoritativeThreadOutcome.Ignored
+        val retirements = saved.retirements + current.retirements
+        val merged = merge(current.items, saved.items, saved.completedVersion, retirements) ?: return AuthoritativeThreadOutcome.Ignored
         val adoptCertification = current.checkpoint == 0L
         val completedVersion = maxOf(current.completedVersion, saved.completedVersion)
         val checkpoint = if (adoptCertification) saved.checkpoint else current.checkpoint
@@ -124,12 +282,15 @@ internal class AuthoritativeThreadStore {
             conversation,
             current.copy(
                 epoch = saved.epoch,
+                incarnation = saved.incarnation,
+                retirements = retirements,
                 items = ordered(merged),
                 completedVersion = completedVersion,
                 checkpoint = checkpoint,
                 coverage = if (adoptCertification && current.coverage == null) saved.coverage else current.coverage,
                 repairNeeded = current.repairNeeded || completedVersion > checkpoint,
             ),
+            restoring = true,
         )
         RelayLog.i { "event=thread_store code=restored" }
         return AuthoritativeThreadOutcome.Applied
@@ -216,7 +377,7 @@ internal class AuthoritativeThreadStore {
     ): AuthoritativeThreadOutcome {
         guard(host, conversation, epoch, generation)?.let { return it }
         val current = current(host, conversation)
-        val merged = merge(current.items, items, version) ?: return requestRepair(host, conversation)
+        val merged = merge(current.items, items, version, current.retirements) ?: return requestRepair(host, conversation)
         publish(
             host,
             conversation,
@@ -245,7 +406,7 @@ internal class AuthoritativeThreadStore {
         guard(host, conversation, epoch, generation)?.let { return it }
         val current = current(host, conversation)
         if (version < current.completedVersion) return requestRepair(host, conversation)
-        val merged = merge(current.items, items, version) ?: return requestRepair(host, conversation)
+        val merged = merge(current.items, items, version, current.retirements) ?: return requestRepair(host, conversation)
         publish(
             host,
             conversation,
@@ -354,6 +515,7 @@ internal class AuthoritativeThreadStore {
             conversation,
             AuthoritativeThreadSnapshot(
                 epoch = epoch,
+                incarnation = UUID.randomUUID().toString(),
                 generation = generation,
                 repairNeeded = true,
                 pendingSends = current(host, conversation).pendingSends,
@@ -379,6 +541,9 @@ internal class AuthoritativeThreadStore {
                 conversation,
                 AuthoritativeThreadSnapshot(
                     epoch = current.epoch,
+                    incarnation = current.incarnation,
+                    retirements = current.retirements,
+                    completedVersion = if (current.retirements.isEmpty()) 0 else current.completedVersion,
                     generation = current.generation + 1,
                     repairNeeded = true,
                     resetNeeded = true,
@@ -395,11 +560,13 @@ internal class AuthoritativeThreadStore {
         held: List<ThreadItemDto>,
         incoming: List<ThreadItemDto>,
         version: Long,
+        retirements: Map<Long, Long>,
     ): List<ThreadItemDto>? {
         if (!number(version)) return null
-        val merged = held.associateBy { it.id }.toMutableMap()
+        val merged = held.filterNot { it.id in retirements }.associateBy { it.id }.toMutableMap()
         for (item in incoming) {
             if (!valid(item, version)) return null
+            if (item.id in retirements) continue
             val previous = merged[item.id]
             if (previous != null && previous.kind != item.kind) return null
             if (previous == null || item.rev > previous.rev) merged[item.id] = item
@@ -421,16 +588,69 @@ internal class AuthoritativeThreadStore {
     private fun number(value: Long): Boolean = value in 0..9007199254740991L
 
     // Zero is an explicit patch clear, never a position; stable ties never invent id/arrival ordering.
-    private fun ordered(items: List<ThreadItemDto>): List<ThreadItemDto> =
-        items.sortedBy { item -> item.order?.takeIf { it > 0L } ?: Long.MAX_VALUE }
+    private fun ordered(items: List<ThreadItemDto>): List<ThreadItemDto> = items.sortedBy(::orderKey)
+
+    private fun orderKey(item: ThreadItemDto): Long = item.order?.takeIf { it > 0L } ?: Long.MAX_VALUE
 
     private fun publish(
         host: String,
         conversation: String,
         snapshot: AuthoritativeThreadSnapshot,
+        restoring: Boolean = false,
+    ) = publishSnapshot(host, conversation, snapshot, restoring)
+
+    private fun publishSnapshot(
+        host: String,
+        conversation: String,
+        snapshot: AuthoritativeThreadSnapshot,
+        restoring: Boolean = false,
+        preservePlacement: Boolean = false,
     ) {
+        val previous = current(host, conversation)
+        val sameGeneration = previous.generation == snapshot.generation && previous.epoch == snapshot.epoch
+        if (!sameGeneration) {
+            removalPeers.remove(
+                host to conversation,
+            )
+        } else {
+            removalPeers[host to conversation]?.keys?.retainAll(snapshot.retirements.keys)
+        }
+        val held = if (sameGeneration) previous.items.associateBy { it.id } else emptyMap()
+        val moves = if (sameGeneration) previous.orderMoves.toMutableMap() else mutableMapOf()
+        val capture = (moves.values.maxOfOrNull { it.capture } ?: 0) + 1
+        val restoredOrders =
+            if (restoring) {
+                snapshot.items.filter { it.id !in held }.mapTo(mutableSetOf()) { it.order?.takeIf { order -> order > 0 } ?: Long.MAX_VALUE }
+            } else {
+                emptySet()
+            }
+        snapshot.items.takeUnless { preservePlacement }.orEmpty().forEach { item ->
+            val old = held[item.id]
+            if (old == null && !restoring) {
+                // Merge appends newly held identities, even when they already exist outside a partial restore.
+                moves[item.id] = AuthoritativeOrderMove(capture, before = false)
+            } else if (old != null) {
+                val oldOrder = old.order?.takeIf { it > 0 } ?: Long.MAX_VALUE
+                val newOrder = item.order?.takeIf { it > 0 } ?: Long.MAX_VALUE
+                // Restore appends saved peers behind live facts, superseding their earlier entry/move hints.
+                if (newOrder in restoredOrders || oldOrder != newOrder) {
+                    moves[item.id] = AuthoritativeOrderMove(capture, before = newOrder in restoredOrders || newOrder > oldOrder)
+                }
+            }
+        }
         val unresolved = snapshot.pendingSends.filterNot { pending -> snapshot.items.any { it.matchesPending(pending) } }
         if (unresolved.size != snapshot.pendingSends.size) RelayLog.i { "event=thread_send code=settled" }
-        snapshots.value = snapshots.value + ((host to conversation) to snapshot.copy(pendingSends = unresolved))
+        val certified =
+            if (snapshot.retirements.isEmpty()) {
+                snapshot
+            } else {
+                snapshot.copy(
+                    checkpoint = 0,
+                    coverage = null,
+                    repairNeeded = true,
+                )
+            }
+        snapshots.value =
+            snapshots.value + ((host to conversation) to certified.copy(pendingSends = unresolved, orderMoves = moves.toMap()))
     }
 }

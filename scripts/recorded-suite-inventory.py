@@ -9,6 +9,40 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt'
 MANIFEST = ROOT / 'app/src/androidTest/assets/recorded/suite.json'
+SCRIPTED_SOURCE = ROOT / 'app/src/androidTest/java/de/pyryco/mobile/e2e/DeterministicInteractiveStreamE2ETest.kt'
+HARNESS = ROOT / 'scripts/e2e-emulator.sh'
+SCRIPTED_CLASS = 'de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#'
+SCRIPTED_OWNERS = {
+    'interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog': {
+        'scenario': 'session-error', 'test': SCRIPTED_CLASS + 'interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog'},
+    'interactiveTurn_finishedReply_systemCopyCopiesSelectedWord': {
+        'scenario': 'selection-copy', 'test': SCRIPTED_CLASS + 'interactiveTurn_seededChannel_systemCopyCopiesSelectedWord'},
+    'interactiveTurn_replySuggestion_longPressSends': {
+        'scenario': 'reply-suggestion', 'test': SCRIPTED_CLASS + 'interactiveTurn_seededChannel_replySuggestionLongPressSends'},
+}
+
+
+def scripted_owner(row):
+    if 'scripted' not in row:
+        return None
+    owner = row['scripted']
+    if (row.get('method') not in SCRIPTED_OWNERS or owner != SCRIPTED_OWNERS[row['method']] or
+            any(row.get(key) for key in ['fixture', 'evidence', 'retired'])):
+        raise ValueError('Unexpected scripted ownership or conflicting recording evidence')
+    method = owner['test'].split('#')[1]
+    enabled = {name for annotations, name in re.findall(
+        r'((?:^[ \t]*@[^\n]*\n)+)[ \t]*fun[ \t]+(\w+)\s*\(', SCRIPTED_SOURCE.read_text(), re.MULTILINE)
+        if re.search(r'@Test\b', annotations) and not re.search(r'@(?:org\.junit\.)?Ignore\b', annotations)}
+    mappings = [re.findall(r'^      TEST_METHOD="([A-Za-z_][A-Za-z0-9_]*)"$', body, re.MULTILINE)
+                for scenario, body in re.findall(r'^    ([a-z][a-z-]*)\)\n(.*?)^      ;;', HARNESS.read_text(),
+                                                 re.MULTILINE | re.DOTALL) if scenario == owner['scenario']]
+    if method not in enabled or mappings != [[method]]:
+        raise ValueError('Scripted owner must retain its enabled native method and scenario mapping')
+    return owner
+
+
+def recorded_rows(manifest):
+    return [row for row in manifest['scenarios'] if scripted_owner(row) is None and not row.get('retired')]
 
 
 def methods(source):
@@ -57,8 +91,12 @@ def audit(manifest, actual, selected, directory):
         raise ValueError('Live selection contains unknown methods')
     if set(manifest['liveSelection']) != selected:
         raise ValueError('Recorded suite live selection changed')
-    completed, pending, retired = [], [], []
+    completed, pending, retired, scripted = [], [], [], {}
     for row in rows:
+        owner = scripted_owner(row)
+        if owner is not None:
+            scripted[row['method']] = owner
+            continue
         if row.get('retired'):
             if row['method'] not in {
                     'interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace',
@@ -85,11 +123,12 @@ def audit(manifest, actual, selected, directory):
                 not counted(evidence.get('replay'), checksum) or evidence['capture'].get('source') != document.get('source')):
             raise ValueError('Recorded suite counted evidence is incomplete')
         completed.append(row['method'])
-    return {'total': len(actual), 'liveSelected': len(selected), 'recorded': len(completed), 'retired': retired, 'pending': pending}
+    return {'total': len(actual), 'liveSelected': len(selected), 'recorded': len(completed),
+            'scripted': scripted, 'retired': retired, 'pending': pending}
 
 
 def audit_live(manifest, summary):
-    rows = [row for row in manifest['scenarios'] if not row.get('retired')]
+    rows = recorded_rows(manifest)
     receipts = summary.get('results', [])
     expected = {row['method'] for row in rows}
     if (summary.get('required') != len(rows) or summary.get('verified') != len(rows) or summary.get('failures') != [] or
@@ -130,7 +169,7 @@ def main():
     report = audit(manifest, methods(SOURCE.read_text()),
                    curated((ROOT / 'scripts/e2e-emulator.sh').read_text()), args.manifest.parent)
     audit_runner((ROOT / 'app/src/androidTest/java/de/pyryco/mobile/recording/RecordedMobileSuiteTest.kt').read_text(),
-                 methods(SOURCE.read_text()), set(report['retired']))
+                 methods(SOURCE.read_text()), set(report['retired']) | set(report['scripted']))
     if args.require_live:
         audit_live(manifest, json.loads(args.live_evidence.read_text()))
     print(json.dumps(report))

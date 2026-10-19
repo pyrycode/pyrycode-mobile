@@ -45,6 +45,7 @@ internal class SuiteConnections private constructor(
     private val tape: RecordedSuiteTape?,
     private val capture: SuiteCapture?,
     private val onExternal: (SuiteStep) -> Unit = { error("Unexpected recorded external event") },
+    private val originalSpeed: Boolean = false,
 ) : AutoCloseable {
     private val scope = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
     private val transports = mutableMapOf<String, RecordedTransport>()
@@ -74,7 +75,7 @@ internal class SuiteConnections private constructor(
                     is Delivery.Barrier -> delivery.done.complete(Unit)
                     is Delivery.Steps -> for (step in delivery.values) {
                         try {
-                            delay(step.delayMs)
+                            delay(if (originalSpeed) step.delayMs else replayDelayMs(step.delayMs))
                             route(step)
                         } catch (error: Throwable) {
                             failure.compareAndSet(null, error)
@@ -214,6 +215,14 @@ internal class SuiteConnections private constructor(
         control("checkpoint", name) { }
     }
 
+    suspend fun beforeNegativeObservation(name: String) {
+        if (tape == null) return
+        withTimeout(90000) {
+            while (!tape.negativeObservationReady(name)) delay(10)
+            awaitIdle()
+        }
+    }
+
     fun observeExternal(event: String) {
         checkNotNull(capture).observe(SuiteStep("external", "android", detail = buildJsonObject { put("event", event) }))
     }
@@ -314,20 +323,23 @@ internal class SuiteConnections private constructor(
 
         override fun send(frame: InnerFrameV2): Boolean = live?.send(frame) ?: error("Raw transport use during application replay")
 
-        override fun close() {
-            if (localClose.get()) return
-            observePumpState()
-            if (!localClose.compareAndSet(false, true)) return
-            try {
-                lifecycle("close", owner)
-            } catch (error: Throwable) {
-                if (capture != null) throw error
-                // Report at the outer rule, after the scenario's own assertion and physical teardown.
-                failure.compareAndSet(null, error)
-            } finally {
-                if (live != null) live.close() else pumps[owner]?.localClosed()
+        override fun close() =
+            synchronized(this@SuiteConnections) {
+                // Publish closure and consume its lifecycle under the send lock. A second closer
+                // must not return while the first has hidden the tape's following refused request.
+                if (localClose.get()) return@synchronized
+                observePumpState()
+                if (!localClose.compareAndSet(false, true)) return@synchronized
+                try {
+                    lifecycle("close", owner)
+                } catch (error: Throwable) {
+                    if (capture != null) throw error
+                    // Report at the outer rule, after the scenario's own assertion and physical teardown.
+                    failure.compareAndSet(null, error)
+                } finally {
+                    if (live != null) live.close() else pumps[owner]?.localClosed()
+                }
             }
-        }
 
         fun remoteDown(
             code: Int?,
@@ -447,11 +459,32 @@ internal class SuiteConnections private constructor(
     }
 
     companion object {
+        /**
+         * Replay proves payload, order and correlation, not timing (docs/recorded-tests.md), so captured
+         * gaps shrink by this divisor. Capture still records the real gaps; recordings stay unchanged.
+         */
+        const val REPLAY_DELAY_DIVISOR = 10L
+
+        /** A nonzero gap keeps this much, or its captured value if shorter, so frames stay in separate UI frames. */
+        const val REPLAY_MIN_GAP_MS = 20L
+
+        /**
+         * Recordings that replay at their captured speed. Each one asserts a transient on-screen state
+         * that lasts only as long as a captured gap, so the scaled gap could end it before the
+         * assertion sees it. The new-session scenario waits for the "wrapping up" label, which the
+         * recording holds for about 4.5 seconds; scaled, it lasts about 0.45 seconds.
+         */
+        val ORIGINAL_SPEED_SCENARIOS = setOf("interactiveTurn_newSession_rendersSessionBoundaryDelimiter")
+
+        fun replayDelayMs(capturedMs: Long): Long =
+            if (capturedMs <= 0) 0 else maxOf(capturedMs / REPLAY_DELAY_DIVISOR, minOf(capturedMs, REPLAY_MIN_GAP_MS))
+
         fun replaying(
             scope: CoroutineScope,
             tape: RecordedSuiteTape,
+            originalSpeed: Boolean = false,
             onExternal: (SuiteStep) -> Unit = { error("Unexpected recorded external event") },
-        ) = SuiteConnections(scope, tape, null, onExternal)
+        ) = SuiteConnections(scope, tape, null, onExternal, originalSpeed)
 
         fun recording(
             scope: CoroutineScope,

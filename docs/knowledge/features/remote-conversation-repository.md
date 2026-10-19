@@ -175,6 +175,38 @@ mutation-consuming affordance needs its own reachability check before the flag c
 gating consumer reads it (through the [facade](stable-conversation-repository.md)) to hide these actions
 until that milestone lands. See [`../codebase/507.md`](../codebase/507.md).
 
+## Opt-in thread negotiation (#2244)
+
+A non-empty `authoritativeHostId` opts the coordinator and repository into the required-thread contract.
+Split A remains opt-in: production hello capabilities, replay cursor and
+`RelayConnectionFactory.create`'s empty authoritative host configuration are unchanged. #2245 owns
+production activation together with negotiated provider/screen binding and suppression of cached content
+for Missing hosts. Advertising `thread` before that screen binding would suppress the raw frames the
+current production thread still needs. #2246 owns the genuine restart scenario and captures.
+
+`ThreadSupport` starts Unverified. Only the current authenticated `PumpState.Open` acknowledgement
+grants Supported, and it must grant both `thread` and `interactive`; every other granted set is Missing.
+Saved items and previous acknowledgements never grant support. Losing or retiring Supported returns
+Unverified, including direct replacement and permanent close. Missing stays through disconnect and
+handshaking until a later capable acknowledgement replaces it. The host row receives the derived
+`threadMissing` flag; see [its caption and reconnect control](channel-list-screen-tree-and-controls.md#host-row-reconnect-control-840).
+
+The verdict and content requests belong to the exact host and connection. Verdict writes check the
+current connection/transport under the coordinator monitor. Cancelling switched collectors alone leaves
+a scheduling window for retained synchronous callbacks: the repository capability supplier also checks
+the current transport and connection child scope at call entry. `threadSupport.value` checks live
+ownership as well. A retired pump's late Open cannot restore support or reopen queries. Host-keyed
+stores retain separate items across reconnects even when hosts reuse conversation and item IDs;
+negotiation changes no ordering, deduplication, paging, settlement or read semantics.
+
+For an opted-in host, collecting `observeThreadSnapshot` emits the existing legacy projection without
+sending backfill. `requestHistory` and `requestAttentionHistory` throw
+`IllegalStateException("legacy_content_request_refused")` without sending, before and after negotiation.
+Authoritative open/page requests refuse before acknowledgement, for Missing, and after retirement;
+only the current supported connection can resume them. Metadata/control traffic remains available.
+New diagnostics contain only `event=thread_negotiation verdict=supported|missing|unverified` (one static
+verdict per event) or `event=legacy_content_request_refused`, without IDs, epochs, capabilities or content.
+
 ## Daemon conversation read marks
 
 `observeReadMarks(conversationId)` exposes default-tolerant
@@ -329,6 +361,30 @@ would reset latest ids and put new unread entries behind an already-read checkpo
 ## Testing
 
 See [repository testing and read-evidence invariant probes](remote-conversation-repository-testing.md#testing).
+
+For #2244, [PR #2248's verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/2248#issuecomment-6242623814)
+records Linux validation of `6eac1ecfa2396762ccffdda69700f3b67d0776df` on 2026-10-17:
+
+| Dispatcher suite | Executed / passed | Failed | Skipped |
+| --- | ---: | ---: | ---: |
+| JVM | 5,881 / 5,881 | 0 | 0 |
+| Device UI | 334 / 334 | 0 | 1 |
+| Scripted-all | 22 / 22 | 0 | 0 |
+
+The fresh JVM JUnit report contains all 11 `NegotiatedThreadActivationTest` methods, both
+`ThreadMissingHostRetryTest` methods and all three `TreeHostRowThreadMissingTest` methods, each passed
+with zero failures/errors/skips. These executed within the full JVM suite: capability combinations,
+sticky Missing, supported reconnect, retirement and retained callbacks, colliding hosts, zero content
+requests for Missing, legacy snapshot/history/attention refusal, supported paging, unchanged production
+configuration, static logs, connected host-specific redial, lifecycle fences, folded caption and
+app-update priority. The unrelated `RenameDialogCaptureTest.renameAtFigmaViewport` was skipped, not passed.
+macOS is outside this Linux ticket's scope; this opt-in slice requires no live capture.
+
+The JVM report was embedded in `$AGENTS_REPO_PATH/logs/verifier-gate_#2244_5.log` at review time;
+verifier evidence bundle `4cfe914579e9409b117ae8396de03fbe06c860fef7ecbeb4f475aba8a6dda51f`
+retains the verdict and gate-log captures. The builder's baseline remains 2 executed, 2 failed, 0 skipped:
+unwanted backfill and a retained query accepted at transport replacement. Those failures motivated the
+unconditional legacy refusal and synchronous ownership checks above; they are not passes.
 
 ## Related
 

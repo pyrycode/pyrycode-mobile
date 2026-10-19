@@ -18,6 +18,7 @@ import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -32,6 +33,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
@@ -78,6 +80,8 @@ class MarkdownTextTest {
 
     /** Colours the assertions compare against, captured from the same theme the content renders in. */
     private var onSurfaceVariant: Color = Color.Unspecified
+    private var codeBackground: Color = Color.Unspecified
+    private var linkColor: Color = Color.Unspecified
 
     /** Stands in for the system clipboard, which an instrumented app cannot reliably read back. */
     private val clipboard = RecordingClipboard()
@@ -85,12 +89,12 @@ class MarkdownTextTest {
     private val copyCode: String get() = context.getString(R.string.cd_thread_copy_code)
 
     @Test
-    fun message_paragraphs_follow_the_twelve_dp_component_gap() {
+    fun message_paragraphs_follow_the_sixteen_dp_component_gap() {
         render("First paragraph.\n\nSecond paragraph.")
 
         val first = composeTestRule.onNodeWithText("First paragraph.").getUnclippedBoundsInRoot()
         val second = composeTestRule.onNodeWithText("Second paragraph.").getUnclippedBoundsInRoot()
-        assertEquals(12.dp.value, (second.top - first.bottom).value, 1.5f)
+        assertEquals(16.dp.value, (second.top - first.bottom).value, 0.6f)
     }
 
     @Test
@@ -113,6 +117,8 @@ class MarkdownTextTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
                 onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
+                codeBackground = MaterialTheme.colorScheme.surfaceContainer
+                linkColor = MaterialTheme.colorScheme.primary
                 CompositionLocalProvider(LocalClipboardManager provides clipboard) {
                     Box(
                         modifier =
@@ -287,6 +293,19 @@ class MarkdownTextTest {
         )
     }
 
+    @Test
+    fun bare_obsidian_links_cover_exactly_the_admitted_url_in_each_prose_container() {
+        val url = "obsidian://open?vault=V&file=Note.md"
+        render("See $url. now\n\n- List $url. end\n\n| Note |\n| --- |\n| Cell $url. end |")
+        listOf("See $url. now", "List $url. end", "Cell $url. end").forEach { text ->
+            val rendered = annotatedTextOf(text)
+            val range = rendered.getLinkAnnotations(0, rendered.length).single()
+            assertEquals(text.indexOf(url), range.start)
+            assertEquals(text.indexOf(url) + url.length, range.end)
+            assertEquals(url, (range.item as androidx.compose.ui.text.LinkAnnotation.Url).url)
+        }
+    }
+
     /** The control for the test above: an authored markdown link still IS one. */
     @Test
     fun an_authored_link_is_still_a_link() {
@@ -294,6 +313,84 @@ class MarkdownTextTest {
 
         val annotated = annotatedTextOf("Visit the site now")
         assertEquals(1, annotated.getLinkAnnotations(0, annotated.text.length).size)
+    }
+
+    @Test
+    fun completed_code_span_urls_keep_their_text_styles_and_exact_annotation() {
+        val codes =
+            listOf(
+                "http://example.com/a",
+                "HTTPS://example.com/A%2fb?q=One%20Two#Top",
+                "mailto:Name@example.com?subject=Hello%20World",
+                "ObSiDiAn://open?vault=Second%20brain&file=A%2fPlan.MD&paneType=tab",
+                "  https://example.com/padded  ",
+                "\tmailto:Name@example.com\t",
+                "\u00a0https://example.com/unicode\u2003",
+            )
+        render(codes.mapIndexed { index, code -> "Before$index ``$code`` after" }.joinToString("\n\n"))
+
+        codes.forEachIndexed { index, code ->
+            val prefix = "Before$index "
+            val annotated = annotatedTextOf("$prefix$code after")
+            val range = annotated.getLinkAnnotations(0, annotated.length).single()
+            assertEquals(prefix.length, range.start)
+            assertEquals(prefix.length + code.length, range.end)
+            val link = range.item as LinkAnnotation.Url
+            assertEquals(code.trim(), link.url)
+            assertEquals(linkColor, link.styles?.style?.color)
+            assertEquals(TextDecoration.Underline, link.styles?.style?.textDecoration)
+            assertEquals(
+                listOf(code),
+                annotated.substringsStyled { it.fontFamily == FontFamily.Monospace && it.background == codeBackground },
+            )
+        }
+    }
+
+    @Test
+    fun other_code_spans_keep_their_text_and_code_style_without_links() {
+        val codes =
+            listOf(
+                "ordinary code",
+                "   ",
+                "https://example.com other words",
+                "https://one.example https://two.example",
+                "https://example.com/a\tb",
+                "https://example.com/a\nb",
+                "https://example.com/a\u00a0b",
+                "javascript:alert(1)",
+                "data:text/html,x",
+                "file:///tmp/Plan.md",
+                "content://notes/Plan.md",
+                "notes/Plan.md",
+                "obsidian://new?file=Plan.md",
+                "obsidian://open?append=text",
+                "obsidian://open?file=x.hta/",
+                "obsidian://open?file=%ED%A0%80",
+                "obsidian://open?file=a%26append=text",
+                "obsidian://open?file=Plan.md#",
+                "obsidian://open?%66ile=Plan.md",
+            )
+        render(codes.mapIndexed { index, code -> "Before$index `$code` after" }.joinToString("\n\n"))
+
+        codes.forEachIndexed { index, code ->
+            val annotated = annotatedTextOf("Before$index $code after")
+            assertTrue(code, annotated.getLinkAnnotations(0, annotated.length).isEmpty())
+            assertEquals(
+                listOf(code),
+                annotated.substringsStyled { it.fontFamily == FontFamily.Monospace && it.background == codeBackground },
+            )
+            assertTrue(annotated.spanStyles.none { it.item.color == linkColor || it.item.textDecoration == TextDecoration.Underline })
+        }
+    }
+
+    @Test
+    fun a_url_only_fenced_block_keeps_its_plain_code_rendering() {
+        render("```\nhttps://example.com\n```")
+
+        val annotated = annotatedTextOf("https://example.com")
+        assertTrue(annotated.getLinkAnnotations(0, annotated.length).isEmpty())
+        assertTrue(annotated.spanStyles.isEmpty())
+        composeTestRule.onNodeWithContentDescription(copyCode).assertIsDisplayed()
     }
 
     @Test
@@ -372,11 +469,14 @@ class MarkdownTextTest {
      */
     @Test
     fun atx_headings_render_without_the_marker_whitespace() {
-        render("# One\n\n## Two\n\n### Three\n\n## Trailing ##\n")
+        render("# One\n\n## Two\n\n### Three\n\n#### Four\n\n##### Five\n\n###### Six\n\n## Trailing ##\n")
 
         composeTestRule.onNodeWithText("One").assertIsDisplayed()
         composeTestRule.onNodeWithText("Two").assertIsDisplayed()
         composeTestRule.onNodeWithText("Three").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Four").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Five").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Six").assertIsDisplayed()
         // The closed form pads the content at BOTH ends — the space before the closing marker is
         // inside `ATX_CONTENT` too — so both edges come off together.
         composeTestRule.onNodeWithText("Trailing").assertIsDisplayed()
@@ -389,18 +489,22 @@ class MarkdownTextTest {
      */
     @Test
     fun a_heading_keeps_its_inline_markup_and_its_interior_spacing() {
-        render("## `code` and **bold** and [link](https://example.com)")
+        render(
+            (1..6).joinToString("\n\n") { "${"#".repeat(it)} `code$it`  and **bold** and [link](https://example.com) ${"#".repeat(it)}" },
+        )
 
-        val annotated = annotatedTextOf("code and bold and link")
-        assertEquals(
-            listOf("code"),
-            annotated.substringsStyled { it.fontFamily == FontFamily.Monospace },
-        )
-        assertEquals(
-            listOf("bold"),
-            annotated.substringsStyled { it.fontWeight == FontWeight.Bold },
-        )
-        assertEquals(1, annotated.getLinkAnnotations(0, annotated.text.length).size)
+        for (level in 1..6) {
+            val annotated = annotatedTextOf("code$level  and bold and link")
+            assertEquals(
+                listOf("code$level"),
+                annotated.substringsStyled { it.fontFamily == FontFamily.Monospace },
+            )
+            assertEquals(
+                listOf("bold"),
+                annotated.substringsStyled { it.fontWeight == FontWeight.Bold },
+            )
+            assertEquals(1, annotated.getLinkAnnotations(0, annotated.text.length).size)
+        }
     }
 
     /**
@@ -409,9 +513,10 @@ class MarkdownTextTest {
      */
     @Test
     fun a_marker_only_heading_renders_without_throwing() {
-        render("##\n\nAfter the empty heading\n")
+        render((1..6).joinToString("\n\n") { "#".repeat(it) } + "\n\nAfter the empty heading\n")
 
         composeTestRule.onNodeWithText("After the empty heading").assertIsDisplayed()
+        for (level in 1..6) composeTestRule.onNodeWithText("#".repeat(level)).assertDoesNotExist()
     }
 
     // ------------------------------------------------------------------ #657 — code blocks
@@ -422,6 +527,20 @@ class MarkdownTextTest {
 
         composeTestRule.onNodeWithTag(CODE_BLOCK_HEADER_TAG).assertIsDisplayed().assertTextEquals("kotlin")
         composeTestRule.onNodeWithContentDescription(copyCode).assertIsDisplayed().assertHasClickAction()
+    }
+
+    @Test
+    fun reader_code_forms_keep_only_the_labelled_header_and_visible_copy_controls() {
+        render("```kotlin\nval x = 1\n```\n\n```\nbare fence\n```\n\n    indented block\n", reader = true)
+
+        composeTestRule.onAllNodesWithTag(CODE_BLOCK_HEADER_TAG).assertCountEquals(1)
+        composeTestRule.onNodeWithTag(CODE_BLOCK_HEADER_TAG).assertTextEquals("kotlin")
+        val controls = composeTestRule.onAllNodesWithContentDescription(copyCode)
+        controls.assertCountEquals(3)
+        for (index in 0..2) controls[index].assertIsDisplayed().assertHasClickAction()
+        assertTrue(annotatedTextOf("val x = 1").spanStyles.isNotEmpty())
+        assertTrue(annotatedTextOf("bare fence").spanStyles.isEmpty())
+        assertTrue(annotatedTextOf("indented block").spanStyles.isEmpty())
     }
 
     /**
@@ -455,16 +574,32 @@ class MarkdownTextTest {
             "Intro prose.\n\n" +
                 "```kotlin\nfun a() {\n    val x = 1\n\n\n    return x\n}\n```\n\n" +
                 "Between.\n\n" +
-                "```\nsecond\n  block\n```\n",
+                "```\nsecond\n  block  \n```\n\n" +
+                "    third\n      indented  \n\n    last\n",
             reader = reader,
         )
 
         val controls = composeTestRule.onAllNodesWithContentDescription(copyCode)
-        controls.assertCountEquals(2)
+        controls.assertCountEquals(3)
         controls[0].performClick()
         assertEquals("fun a() {\n    val x = 1\n\n\n    return x\n}", clipboard.copied)
         controls[1].performClick()
-        assertEquals("second\n  block", clipboard.copied)
+        assertEquals("second\n  block  ", clipboard.copied)
+        controls[2].performClick()
+        assertEquals("third\n  indented  \n\nlast", clipboard.copied)
+    }
+
+    @Test
+    fun reader_code_copy_keeps_original_text_under_the_clipboard_bound() {
+        val content = "  original <script> & `code`  \n".repeat(4000)
+        render("```\n$content```", reader = true)
+
+        composeTestRule
+            .onNodeWithContentDescription(copyCode)
+            .performScrollTo()
+            .assertIsDisplayed()
+            .performClick()
+        assertEquals(content.take(MAX_CLIPBOARD_CHARS), clipboard.copied)
     }
 
     /**
@@ -478,15 +613,27 @@ class MarkdownTextTest {
     @Test
     fun reader_a_long_line_scrolls_inside_the_block_while_label_and_copy_stay_put() = assertCodeScrolling(reader = true)
 
-    private fun assertCodeScrolling(reader: Boolean) {
+    @Test
+    fun reader_unlabelled_code_scrolls_while_copy_stays_put() = assertCodeScrolling(reader = true, language = null)
+
+    @Test
+    fun reader_indented_code_scrolls_while_copy_stays_put() = assertCodeScrolling(reader = true, indented = true)
+
+    private fun assertCodeScrolling(
+        reader: Boolean,
+        language: String? = "kotlin",
+        indented: Boolean = false,
+    ) {
         val longLine = "val numbers = listOf(" + (1..40).joinToString() + ")"
-        render("```kotlin\n$longLine\n```\n", maxWidth = CONTAINER_MAX_WIDTH, reader = reader)
+        val markdown = if (indented) "    $longLine\n" else "```${language.orEmpty()}\n$longLine\n```\n"
+        render(markdown, maxWidth = CONTAINER_MAX_WIDTH, reader = reader)
 
         val label = composeTestRule.onNodeWithTag(CODE_BLOCK_HEADER_TAG)
         val copy = composeTestRule.onNodeWithContentDescription(copyCode)
         val viewport = composeTestRule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.HorizontalScrollAxisRange))
         val code = composeTestRule.onNodeWithText(longLine)
-        val labelBefore = label.getBoundsInRoot()
+        val labelBefore = if (!indented && language != null) label.getBoundsInRoot() else null
+        if (labelBefore == null) label.assertDoesNotExist()
         val copyBefore = copy.getBoundsInRoot()
         val codeBefore = code.getUnclippedBoundsInRoot()
 
@@ -499,8 +646,10 @@ class MarkdownTextTest {
         composeTestRule.waitForIdle()
 
         assertTrue("the code did not scroll", code.getUnclippedBoundsInRoot().left < codeBefore.left)
-        assertEquals(labelBefore, label.getBoundsInRoot())
+        if (labelBefore != null) assertEquals(labelBefore, label.getBoundsInRoot())
         assertEquals(copyBefore, copy.getBoundsInRoot())
+        copy.performTouchInput { click() }
+        assertEquals(longLine, clipboard.copied)
         val containerWidth =
             composeTestRule.onNodeWithTag(CONTAINER_TAG).getUnclippedBoundsInRoot().width
         assertTrue(

@@ -195,6 +195,17 @@ really advances virtual time. When adding a finite watchdog or timeout, drive on
 the intended deadline with `advanceTimeBy(...)` followed by `runCurrent()`;
 `advanceUntilIdle()` also advances newly armed watchdogs.
 
+With real Room I/O, a scheduler drain cannot acknowledge snapshot acceptance (#2291).
+`CachingConversationRepository.observeThreadSnapshot` can suspend on history reading before
+publication, and its collector receives publication before `ThreadWriter.accept` runs. In
+`OwnedLegacyCoverageConcurrencyTest`, await the exact snapshot's `Source.afterEmission` callback:
+the source's `emit` returns only after the repository collector finishes acceptance. A `first()`
+capture aborts emission before that callback, so it cannot accidentally acknowledge the live
+reader. This establishes acceptance, not row commit or evidence-write success; observe those
+operations separately. Keep deliberate read/publication holds to prove delivery and scheduler
+drains cannot satisfy the acceptance signal. Release all holds and join owned saves/readers in
+`finally` before closing Room. See [owned coverage acceptance probes and counted Linux evidence](conversation-cache-testing.md#owned-coverage-snapshot-acceptance-2291).
+
 Compose's `waitUntil` uses a wall-clock deadline while advancing the Compose clock
 one frame per poll. A fixture's virtual timer can therefore remain unfinished at
 timeout under constrained scheduling. In the delayed rename regression (#2014),
@@ -269,6 +280,23 @@ the affected test runs alone (#1075, mirroring the pattern `AppPreferencesTest.r
 and `HostWorkspacePreferencesTest` — see [App preferences § Testing](app-preferences.md#testing) —
 already used correctly). Hold the first scope's `Job` in a named `val` and call `job1.join()` right after
 `scope1.cancel()`, before constructing the second store.
+
+For a child on a paused `StandardTestDispatcher`, cancellation followed by one scheduler drain
+and `join()` can still hang: an IO cancellation continuation may arrive after the drain.
+Drive the child's selected scheduler until `isCompleted`, with a deadline that progresses on
+a real dispatcher independently of virtual time. A timeout around `join()` alone does not bound
+an enclosing scope's implicit wait for that child. Own the reader in an independent scope,
+cancel that owner on every exit, release held work in `finally`, and report timeout diagnostics
+without an unbounded join. `MigratingConversationCacheTest` keeps this helper local to its
+cancelled-import probe, under `NonCancellable + Dispatchers.Default` with a 10-second deadline.
+
+Its late-continuation regression explicitly queues completion after the initial drain; sleeps
+and repeated passing retries cannot establish that ordering. Its non-completion regression
+awaits the cleanup caller while the child's non-cancellable finalizer remains held, then releases
+the gate in guaranteed cleanup with bounded fallback draining. Releasing the finalizer before
+checking the caller would let a broken structured-wait path pass. See
+[cancelled committed import cleanup](conversation-cache-testing.md#cancelled-committed-import-cleanup-2260)
+for the named probes and retained red/green Linux evidence.
 
 A JVM unit test that constructs or resolves a component backed by `Dispatchers.Default` — a Koin
 singleton reached without an injected test dispatcher, for example — must stop it before that test

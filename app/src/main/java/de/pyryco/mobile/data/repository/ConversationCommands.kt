@@ -19,6 +19,7 @@ import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RenameConversationPayloadDto
 import de.pyryco.mobile.data.network.SetConversationMutedPayloadDto
+import de.pyryco.mobile.data.network.SetConversationPinnedPayloadDto
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.PLATFORM_FCM
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_ARCHIVE_CONVERSATION
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_CREATE_CONVERSATION
@@ -31,6 +32,7 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.T
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_REGISTER_PUSH_TOKEN
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_RENAME_CONVERSATION
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SET_CONVERSATION_MUTED
+import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SET_CONVERSATION_PINNED
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_UNARCHIVE_CONVERSATION
 import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.Clock
@@ -188,8 +190,7 @@ internal class ConversationCommands(
 
     /**
      * The shared `create_conversation` round trip behind [createDiscussion] and [createChannel]: send
-     * [payload], await the correlated `conversation_created`, decode it through [ConversationResponseDto]
-     * and only then insert it into [ConversationListProjection].
+     * [payload] and return the correlated `conversation_created` row published by the inbound collector.
      */
     private suspend fun create(payload: CreateConversationPayloadDto): Conversation {
         val request =
@@ -199,10 +200,7 @@ internal class ConversationCommands(
                 ts = Clock.System.now().toString(),
                 payload = MobileJson.encodeToJsonElement(payload),
             )
-        // Throws on a server `error` / not-Open session; the decode + confirmed insert below are
-        // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
-        val reply = requests.sendAndAwaitReply(request)
-        return conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+        return requests.sendAndAwaitConversation(request)
     }
 
     /**
@@ -244,10 +242,7 @@ internal class ConversationCommands(
                         PromoteConversationPayloadDto(conversationId = conversationId, name = name, cwd = cwd),
                     ),
             )
-        // Throws on a server `error` / not-Open session; the decode + confirmed upsert below are
-        // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
-        val reply = requests.sendAndAwaitReply(request)
-        return conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+        return requests.sendAndAwaitConversation(request)
     }
 
     /**
@@ -432,16 +427,13 @@ internal class ConversationCommands(
                 ts = Clock.System.now().toString(),
                 payload = MobileJson.encodeToJsonElement(ArchiveConversationPayloadDto(conversationId = conversationId)),
             )
-        // Throws on a server `error` / not-Open session; the decode + confirmed upsert below are
-        // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
-        val reply = requests.sendAndAwaitReply(request)
-        conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+        requests.sendAndAwaitConversation(request)
     }
 
     /**
      * Set or clear [conversationId]'s mute flag over v2 `set_conversation_muted` (#1000, server
      * pyrycode#2572) — [sendArchiveToggle]'s round trip with a [SetConversationMutedPayloadDto]: await the
-     * correlated `conversation_updated`, decode it, and only then fold it into [ConversationListProjection].
+     * correlated `conversation_updated`, published by the inbound collector before this command resumes.
      * The daemon also pushes the same record uncorrelated to the requester; that push takes the ordinary
      * uncorrelated fold, and both are upserts by id, so the list keeps one row. Same failure contract as
      * [sendArchiveToggle]: nothing is folded on an `error`, a disconnected session or a malformed reply.
@@ -460,8 +452,31 @@ internal class ConversationCommands(
                         SetConversationMutedPayloadDto(conversationId = conversationId, muted = muted),
                     ),
             )
-        val reply = requests.sendAndAwaitReply(request)
-        conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+        requests.sendAndAwaitConversation(request)
+    }
+
+    /**
+     * Pin or unpin [conversationId] over v2 `set_conversation_pinned` (#2214, server pyrycode#3538) —
+     * [setMuted]'s round trip with a [SetConversationPinnedPayloadDto]. Nothing is written here: the
+     * correlated `conversation_updated` is folded by the inbound collector before this command resumes,
+     * and the host's matching uncorrelated push upserts the same record by id, so the list keeps one row
+     * carrying the host's `pinned_at`. Same failure contract as [setMuted]; nothing is logged here.
+     */
+    suspend fun setPinned(
+        conversationId: String,
+        pinned: Boolean,
+    ) {
+        val request =
+            Envelope(
+                id = requests.nextRequestId(),
+                type = TYPE_SET_CONVERSATION_PINNED,
+                ts = Clock.System.now().toString(),
+                payload =
+                    MobileJson.encodeToJsonElement(
+                        SetConversationPinnedPayloadDto(conversationId = conversationId, pinned = pinned),
+                    ),
+            )
+        requests.sendAndAwaitConversation(request)
     }
 
     /**
@@ -570,10 +585,7 @@ internal class ConversationCommands(
                         RenameConversationPayloadDto(conversationId = conversationId, name = name),
                     ),
             )
-        // Throws on a server `error` / not-Open session; the decode + confirmed upsert below are
-        // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
-        val reply = requests.sendAndAwaitReply(request)
-        return conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
+        return requests.sendAndAwaitConversation(request)
     }
 
     /**

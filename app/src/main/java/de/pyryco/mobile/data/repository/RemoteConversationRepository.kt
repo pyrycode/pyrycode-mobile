@@ -198,7 +198,7 @@ class RemoteConversationRepository internal constructor(
     /**
      * The conversation list and the last-message previews (#913): the list projection, the most-recent
      * message per conversation, and every write that folds into either. [onInbound] hands it the
-     * `conversations` snapshot, and the mutations and the `message` / `conversation_updated` /
+     * `conversations` snapshot, and the `conversation_created` / `conversation_updated` / `message` /
      * `workspace_updated` / `session_transition` arms fold into it once they have decoded their frame.
      */
     private val conversationListProjection = ConversationListProjection { CAPABILITY_THREAD in negotiatedCapabilities() }
@@ -358,7 +358,10 @@ class RemoteConversationRepository internal constructor(
                     throw IllegalStateException("send source unavailable")
                 }
                 val enabled = authoritativeHostId.isNotEmpty() && authoritativeLiveEnabled()
-                if (enabled) {
+                if (enabled && isDaemonResetCommand(message.content)) {
+                    // These sends receive only an ack, with no user_message to retire feedback.
+                    RelayLog.i { "event=thread_send code=reset_feedback_skipped" }
+                } else if (enabled) {
                     authoritativeThreads.registerPending(authoritativeHostId, conversation, null, message)
                     authoritativeThreads.identifyPending(
                         authoritativeHostId,
@@ -392,7 +395,6 @@ class RemoteConversationRepository internal constructor(
         SessionSettingsCommands(
             requests = relayRequests,
             negotiatedCapabilities = negotiatedCapabilities,
-            conversationList = conversationListProjection,
             readings = hostReadings,
         )
 
@@ -578,7 +580,8 @@ class RemoteConversationRepository internal constructor(
     }
 
     private fun authoritativeLiveEnabled(): Boolean =
-        authoritativeHostId.isNotEmpty() &&
+        !authoritativeCommandsEnded &&
+            authoritativeHostId.isNotEmpty() &&
             setOf(CAPABILITY_THREAD, CAPABILITY_INTERACTIVE).all { it in negotiatedCapabilities() }
 
     /** Supplied transient progress, never a durable item or read checkpoint. */
@@ -830,23 +833,14 @@ class RemoteConversationRepository internal constructor(
                     }
                 threadProjection.appendMessages(rows)
             }
-            TYPE_CONVERSATION_UPDATED -> {
-                // TWO kinds of producer, and the protocol requires a client to accept both (#721): a
-                // *correlated* reply (promote / rename / archive / unarchive / change_workspace /
-                // set_system_prompt), and an *unsolicited push* (`pyry channel new` on the host, or the
-                // one-shot auto-naming of a never-named conversation) that carries no `in_reply_to`.
-                // Both fold here by the payload's own `id`, which is what makes a rename made on another
-                // client reach this phone's live list (and, since #720, carries that row's
-                // `workspace_label` with it) instead of waiting for the next snapshot.
-                // A correlated reply folds here too, before its waiter completes (#996). The waiter's
-                // own upsert runs on the caller's scope, and a thread popped straight after Save
-                // cancels that scope between this completion and the caller's resumption, so the
-                // reply had no other writer and the list kept the old name. The caller's later upsert
-                // writes the same row again, which the projection's conflation absorbs.
-                // Decode-or-drop guards the fold only: a malformed payload mutates nothing, still reaches
-                // its waiter verbatim (whose own decode then throws), and the single inbound consumer
-                // survives. Drop silently — the record carries the conversation's name and cwd, so
-                // nothing here logs the payload.
+            TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED -> {
+                // Updates include correlated replies and other-device pushes, keyed by payload id.
+                // Creates are replies only; the host announces new conversations with an update.
+                if (envelope.type == TYPE_CONVERSATION_CREATED && relayRequests.waiter(envelope.inReplyTo) == null) return
+                // Publish once, in inbound arrival order, before completing the request (#996, #2213).
+                // A resumed caller must not republish its older reply over a newer queued record.
+                // Capture the row as stored for its return value, even if the caller is cancelled.
+                // Malformed replies change nothing and fail the command without exposing payload text.
                 val record =
                     try {
                         MobileJson.decodeFromJsonElement<ConversationResponseDto>(envelope.payload)
@@ -854,11 +848,13 @@ class RemoteConversationRepository internal constructor(
                         RelayLog.w { "event=conversation_read_update outcome=malformed" }
                         null
                     }
-                record?.let {
-                    conversationListProjection.upsertConversation(it)
-                    conversationCommands.confirmAgentSwitch(it, envelope.payload)
-                }
-                relayRequests.waiter(envelope.inReplyTo)?.complete(envelope.payload)
+                val stored =
+                    record?.let {
+                        val conversation = conversationListProjection.upsertConversation(it)
+                        if (envelope.type == TYPE_CONVERSATION_UPDATED) conversationCommands.confirmAgentSwitch(it, envelope.payload)
+                        conversation
+                    }
+                relayRequests.completeConversationReply(envelope.inReplyTo, envelope.payload, stored)
             }
             TYPE_WORKSPACE_UPDATED -> {
                 // A workspace-label notification (#721). Like `conversation_updated` it has two kinds of
@@ -890,7 +886,7 @@ class RemoteConversationRepository internal constructor(
                 conversationListProjection.applyWorkspaceLabel(decoded.path, decoded.label)
                 waiter?.complete(envelope.payload)
             }
-            TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_DELETED,
+            TYPE_ACK, TYPE_CONVERSATION_DELETED,
             TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED, TYPE_WORKSPACE_FOLDER_CREATED,
             TYPE_RECENT_WORKSPACES_LIST, TYPE_HISTORY_PAGE, TYPE_SESSION_SETTINGS, TYPE_SYSTEM_PROMPT, TYPE_HOST_SYSTEM_PROMPT,
             ->
@@ -920,9 +916,6 @@ class RemoteConversationRepository internal constructor(
                 // harmless; and `complete` is idempotent so a duplicate reply is harmless. A `system_prompt`
                 // (#823) is the same shape for [requestSystemPrompt]: no conversation_id, so it is routed
                 // by `in_reply_to` alone, and without this entry its waiter would never complete.
-                // `conversation_created` stays here deliberately: unlike `conversation_updated` (which
-                // #721 moved to its own arm above) it is a correlated reply only — the create-on-host
-                // push is a `conversation_updated`, not a `conversation_created`.
                 relayRequests.waiter(envelope.inReplyTo)?.complete(envelope.payload)
             TYPE_ERROR ->
                 // Failure reply to a correlated request (#346): unblock the waiter exceptionally with
@@ -1466,6 +1459,7 @@ class RemoteConversationRepository internal constructor(
         cursor: String,
         limit: Int,
     ): HistoryPage {
+        refuseRetiredLegacyContent()
         val page = readHistoryPage(conversationId, cursor, limit)
         page.entries
             .asSequence()
@@ -1477,7 +1471,18 @@ class RemoteConversationRepository internal constructor(
     }
 
     /** Notification enrichment fetches one newest page without changing rows, coverage or read facts. */
-    internal suspend fun requestAttentionHistory(conversationId: String): HistoryPage = readHistoryPage(conversationId, "", 0)
+    internal suspend fun requestAttentionHistory(conversationId: String): HistoryPage {
+        refuseRetiredLegacyContent()
+        return readHistoryPage(conversationId, "", 0)
+    }
+
+    /** An opted-in host never requests legacy content, irrespective of its negotiated verdict. */
+    private fun refuseRetiredLegacyContent() {
+        if (authoritativeHostId.isNotEmpty()) {
+            RelayLog.d { "event=legacy_content_request_refused" }
+            throw IllegalStateException("legacy_content_request_refused")
+        }
+    }
 
     private suspend fun readHistoryPage(
         conversationId: String,
@@ -1591,7 +1596,11 @@ class RemoteConversationRepository internal constructor(
 
     override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
         flow {
-            pump.send(backfillSinceRequest(conversationId))
+            if (authoritativeHostId.isEmpty()) {
+                pump.send(backfillSinceRequest(conversationId))
+            } else {
+                RelayLog.d { "event=legacy_content_request_refused" }
+            }
             emitAll(threadProjection.observeSnapshot(conversationId))
         }
 
@@ -1856,6 +1865,12 @@ class RemoteConversationRepository internal constructor(
         muted: Boolean,
     ): Unit = conversationCommands.setMuted(conversationId, muted)
 
+    /** Pin or unpin over `set_conversation_pinned` (#2214); see [ConversationCommands.setPinned]. */
+    override suspend fun setPinned(
+        conversationId: String,
+        pinned: Boolean,
+    ): Unit = conversationCommands.setPinned(conversationId, pinned)
+
     override fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> =
         conversationListProjection.observeReadMarks(conversationId)
 
@@ -2013,6 +2028,9 @@ class RemoteConversationRepository internal constructor(
 
         /** Request: set or clear a conversation's mute flag (#1000, pyrycode#2572). Reply is `conversation_updated`, also pushed uncorrelated. */
         const val TYPE_SET_CONVERSATION_MUTED = "set_conversation_muted"
+
+        /** Request: pin or unpin a conversation on its host (#2214, pyrycode#3538). Reply is `conversation_updated`, also pushed uncorrelated. */
+        const val TYPE_SET_CONVERSATION_PINNED = "set_conversation_pinned"
 
         /** Request: permanently delete an existing conversation (#532, #822 `DeleteConversationPayload`). */
         const val TYPE_DELETE_CONVERSATION = "delete_conversation"

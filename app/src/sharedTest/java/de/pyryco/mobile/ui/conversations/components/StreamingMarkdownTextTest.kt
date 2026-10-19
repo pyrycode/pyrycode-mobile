@@ -15,6 +15,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.font.FontFamily
@@ -263,6 +264,87 @@ class StreamingMarkdownTextTest {
 
     private fun AnnotatedString.withoutCaret(): String = text.removeSuffix(STREAMING_CARET_GLYPH)
 
+    @Test
+    fun bareObsidianPrefixes_waitForRealCompletion() {
+        renderBoth()
+        composeTestRule.runOnIdle { caret.value = true }
+        val url = "obsidian://open?vault=V&file=Note"
+        listOf(url.dropLast(2), url, "$url!", "$url&unknown=x", "$url.hta").forEach { prefix ->
+            val rendered = streamedText("See $prefix")
+            assertEquals("See $prefix$STREAMING_CARET_GLYPH", rendered.text)
+            assertTrue(prefix, rendered.getLinkAnnotations(0, rendered.length).isEmpty())
+        }
+        composeTestRule.runOnIdle { settled.value = "See $url.hta" }
+        assertTrue(drawn(SETTLED_TAG).single().links.isEmpty())
+    }
+
+    @Test
+    fun bareObsidianBoundaries_completeParagraphListAndTableTails() {
+        renderBoth()
+        val url = "obsidian://open?vault=V&file=Note.md"
+        listOf("See " to " ", "- See " to " ", "| Header |\n| --- |\n| See " to "|").forEach { (prefix, closer) ->
+            val growing = streamedText(prefix + url)
+            assertTrue(prefix, growing.getLinkAnnotations(0, growing.length).isEmpty())
+            val completed = streamedText(prefix + url + closer)
+            val range = completed.getLinkAnnotations(0, completed.length).single()
+            assertEquals(url, (range.item as LinkAnnotation.Url).url)
+            assertEquals(url, completed.text.substring(range.start, range.end))
+        }
+        val pending = streamedText("**See $url")
+        assertEquals("See $url", pending.withoutCaret())
+        assertTrue(pending.getLinkAnnotations(0, pending.length).isEmpty())
+        val closed = streamedText("**See $url**")
+        assertEquals(url, (closed.getLinkAnnotations(0, closed.length).single().item as LinkAnnotation.Url).url)
+    }
+
+    @Test
+    fun bareObsidianSettlement_linksTheCompleteTarget() {
+        val source = mutableStateOf("See obsidian://open?vault=V&file=Note")
+        val streaming = mutableStateOf(true)
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                if (streaming.value) StreamingMarkdownText(source.value, caretVisible = true) else MarkdownText(source.value)
+            }
+        }
+
+        fun rendered() =
+            composeTestRule
+                .onNodeWithText(source.value, substring = true)
+                .fetchSemanticsNode()
+                .config[SemanticsProperties.Text]
+                .single()
+        assertTrue(rendered().getLinkAnnotations(0, rendered().length).isEmpty())
+        composeTestRule.runOnIdle { streaming.value = false }
+        val final = rendered()
+        val range = final.getLinkAnnotations(0, final.length).single()
+        assertEquals(source.value.substringAfter("See "), (range.item as LinkAnnotation.Url).url)
+        assertEquals(4, range.start)
+        assertEquals(final.length, range.end)
+    }
+
+    @Test
+    fun bareCompositeEndpoints_waitForCompletion_andSettleToExactTargets() {
+        renderBoth()
+        composeTestRule.runOnIdle { caret.value = true }
+        listOf("A*B*", "A**B**", "A~~B~~", "A~B~", "A*B***C**").forEach { file ->
+            val url = "obsidian://open?file=$file"
+            listOf("See " to " ", "- See " to " ", "| Header |\n| --- |\n| See " to "|").forEach { (prefix, closer) ->
+                val pending = streamedText(prefix + url)
+                assertTrue(pending.getLinkAnnotations(0, pending.length).isEmpty())
+                val completed = streamedText(prefix + url + closer)
+                val range = completed.getLinkAnnotations(0, completed.length).single()
+                assertEquals(url, (range.item as LinkAnnotation.Url).url)
+                assertEquals(4, range.start)
+                assertEquals(4 + url.length, range.end)
+                assertEquals("See $url", completed.withoutCaret().trimEnd())
+                composeTestRule.runOnIdle { settled.value = prefix + url }
+                val final = drawn(SETTLED_TAG).last()
+                assertEquals("See $url", final.text)
+                assertEquals(listOf("4-${4 + url.length}:$url"), final.links)
+            }
+        }
+    }
+
     private fun AnnotatedString.hasNoFormatting(): Boolean =
         spanStyles.none {
             it.item.fontWeight == FontWeight.Bold ||
@@ -313,6 +395,55 @@ class StreamingMarkdownTextTest {
         assertTrue(complete.spanStyles.any { it.item.fontFamily == FontFamily.Monospace })
         val link = complete.getLinkAnnotations(0, complete.length).single()
         assertEquals("https://example.com", (link.item as LinkAnnotation.Url).url)
+    }
+
+    @Test
+    fun codeSpanUrl_waitsForItsRealCloser_andSettlesUnchanged() {
+        renderBoth()
+        val targets = listOf("http://example.com", "HTTPS://example.com/A%2fb", "mailto:a@example.com", "ObSiDiAn://open?file=A%2fPlan.MD")
+        for (target in targets) {
+            for (delimiter in listOf("`", "``")) {
+                val pending = "Before $delimiter $target "
+                val plain = streamedText(pending)
+                assertEquals("Before  $target ", plain.text)
+                assertTrue(plain.hasNoFormatting())
+
+                val complete = pending + delimiter
+                for (blink in listOf(true, false, true)) {
+                    composeTestRule.runOnIdle { caret.value = blink }
+                    val linked = streamedText(complete)
+                    assertEquals("Before  $target " + if (blink) STREAMING_CARET_GLYPH else "", linked.text)
+                    val range = linked.getLinkAnnotations(0, linked.length).single()
+                    assertEquals(7, range.start)
+                    assertEquals(9 + target.length, range.end)
+                    assertEquals(target, (range.item as LinkAnnotation.Url).url)
+                    assertTrue(linked.spanStyles.any { it.item.fontFamily == FontFamily.Monospace })
+                }
+                composeTestRule.runOnIdle {
+                    streamed.value = "$complete\n\nNext block\n\nGrowing"
+                    settled.value = streamed.value
+                }
+                composeTestRule.waitForIdle()
+                assertSameBody(target, drawn(SETTLED_TAG), drawn(STREAMING_TAG))
+                composeTestRule.runOnIdle { caret.value = false }
+            }
+        }
+    }
+
+    @Test
+    fun allHeadingLevels_keepPendingInlineContentAndTheCaret_thenSettleExactly() {
+        renderBoth()
+        composeTestRule.runOnIdle { caret.value = true }
+        for (level in 1..6) {
+            val marker = "#".repeat(level)
+            for ((pending, expected) in listOf("**bold" to "bold", "`code" to "code", "[link](https://exam" to "link")) {
+                val text = streamedText("$marker $pending")
+                assertEquals("H$level", expected + STREAMING_CARET_GLYPH, text.text)
+                assertTrue("H$level pending content stays plain", text.hasNoFormatting())
+            }
+            val source = "$marker `code`  and **bold** and [link](https://example.com)\n\nFollowing paragraph\n"
+            assertSettlesUnchanged("H$level completed heading", source)
+        }
     }
 
     @Test

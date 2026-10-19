@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,8 +40,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.platform.testTag
@@ -69,6 +67,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.ui.theme.MarkdownTypography
 import dev.snipme.highlights.Highlights
 import dev.snipme.highlights.model.CodeStructure
 import dev.snipme.highlights.model.PhraseLocation
@@ -170,16 +169,43 @@ private val ReaderLineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Pr
 /** Body presentation; headings and tables keep their own element-specific styles. */
 data class MarkdownTextStyle(
     val body: TextStyle,
-    val blockSpacing: Dp = 12.dp,
+    val blockSpacing: Dp = 16.dp,
     val listItemSpacing: Dp = 4.dp,
     val code: TextStyle? = null,
     val presentation: MarkdownPresentation = MarkdownPresentation.Thread,
 )
 
+private val AtxHeadingTypes =
+    setOf(
+        MarkdownElementTypes.ATX_1,
+        MarkdownElementTypes.ATX_2,
+        MarkdownElementTypes.ATX_3,
+        MarkdownElementTypes.ATX_4,
+        MarkdownElementTypes.ATX_5,
+        MarkdownElementTypes.ATX_6,
+    )
+
+/** Only sibling blocks own gaps; the next heading takes precedence over the previous one. */
+@Composable
+private fun MarkdownBlockGap(
+    previous: ASTNode?,
+    next: ASTNode,
+    ordinary: Dp,
+) {
+    if (previous == null) return
+    val gap =
+        when {
+            next.type in AtxHeadingTypes -> 20.dp
+            previous.type in AtxHeadingTypes -> 12.dp
+            else -> ordinary
+        }
+    Spacer(Modifier.height(gap))
+}
+
 /**
  * [onOpenMarkdownPath] (#1050) opts a caller in to workspace notes: a link whose target is a markdown path
  * ([markdownLinkPath]) is handed to it instead of doing nothing. Only assistant replies pass it; with the
- * default every link keeps the `http` / `https` / `mailto` allowlist, which is what the reader relies on.
+ * default workspace paths stay inert and external links use the shared admission check.
  */
 @Composable
 fun MarkdownText(
@@ -195,11 +221,13 @@ fun MarkdownText(
         }
     val blockStyle =
         if (style.presentation == MarkdownPresentation.Reader) style.copy(body = style.body.readerLineHeight(style.presentation)) else style
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(blockStyle.blockSpacing),
-    ) {
-        root.children.forEach { child ->
+    val blocks =
+        remember(root) {
+            root.children.filter { it.type != MarkdownTokenTypes.EOL && it.type != MarkdownTokenTypes.WHITE_SPACE }
+        }
+    Column(modifier = modifier) {
+        blocks.forEachIndexed { index, child ->
+            MarkdownBlockGap(blocks.getOrNull(index - 1), child, blockStyle.blockSpacing)
             MarkdownBlock(child, markdown, uriHandler, blockStyle)
         }
     }
@@ -209,12 +237,36 @@ fun MarkdownText(
 @Composable
 private fun rememberMarkdownUriHandler(onOpenMarkdownPath: ((String) -> Unit)?): UriHandler {
     val platformHandler = LocalUriHandler.current
+    val context = LocalContext.current
+    val onFailure by rememberUpdatedState(LocalMarkdownLinkFailure.current)
     val currentOnOpenMarkdownPath by rememberUpdatedState(onOpenMarkdownPath)
-    return remember(platformHandler) {
-        object : UriHandler {
-            override fun openUri(uri: String) = routeMarkdownLink(uri, currentOnOpenMarkdownPath, platformHandler::openUri)
+    val opensMarkdownPaths = onOpenMarkdownPath != null
+    val externalHandler =
+        remember(context, platformHandler) {
+            object : UriHandler {
+                override fun openUri(uri: String) {
+                    if (uri.substringBefore(':').equals("obsidian", ignoreCase = true)) {
+                        openObsidianLink(context, uri)?.let(onFailure)
+                    } else {
+                        platformHandler.openUri(uri)
+                    }
+                }
+            }
         }
+    return remember(externalHandler, opensMarkdownPaths) {
+        MarkdownUriHandler(externalHandler, opensMarkdownPaths) { currentOnOpenMarkdownPath }
     }
+}
+
+/** Admission is shared by both render paths; activation always rechecks the current callback. */
+private class MarkdownUriHandler(
+    private val platformHandler: UriHandler,
+    private val opensMarkdownPaths: Boolean,
+    private val currentMarkdownCallback: () -> ((String) -> Unit)?,
+) : UriHandler {
+    fun accepts(target: String): Boolean = isSafeLinkScheme(target) || (opensMarkdownPaths && markdownLinkPath(target) != null)
+
+    override fun openUri(uri: String) = routeMarkdownLink(uri, currentMarkdownCallback(), platformHandler::openUri)
 }
 
 /** The caret a streaming reply draws after its newest text. It is never part of the parsed source. */
@@ -258,17 +310,16 @@ internal fun StreamingMarkdownText(
     val snapshot = remember(cache, source) { cache.update(source) }
     val blocks = remember(snapshot) { snapshot.blocks.filter { it.isContent } }
     val uriHandler = rememberMarkdownUriHandler(onOpenMarkdownPath)
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(style.blockSpacing),
-    ) {
+    Column(modifier = modifier) {
         blocks.forEachIndexed { index, block ->
             key(block.key) {
+                MarkdownBlockGap(blocks.getOrNull(index - 1)?.node, block.node, style.blockSpacing)
                 val trailing = index == blocks.lastIndex
                 StreamingBlock(block, uriHandler, style, if (trailing) snapshot.tail else null, trailing && caretVisible, observer)
             }
         }
         if (blocks.isEmpty() || snapshot.tail.caretTarget == null) {
+            if (blocks.isNotEmpty()) Spacer(Modifier.height(style.blockSpacing))
             // Alpha rather than presence, so a blink never moves the lines around it.
             Text(STREAMING_CARET_GLYPH, Modifier.alpha(if (caretVisible) 1f else 0f), style = style.body)
         }
@@ -321,13 +372,21 @@ private fun MarkdownBlock(
                 node,
                 source,
                 uriHandler,
-                MaterialTheme.typography.headlineSmall.readerLineHeight(style.presentation),
+                MarkdownTypography.h1.readerLineHeight(style.presentation),
                 style.reader,
             )
         MarkdownElementTypes.ATX_2 ->
-            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleLarge.readerLineHeight(style.presentation), style.reader)
+            HeadingBlock(node, source, uriHandler, MarkdownTypography.h2.readerLineHeight(style.presentation), style.reader)
         MarkdownElementTypes.ATX_3 ->
-            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleMedium.readerLineHeight(style.presentation), style.reader)
+            HeadingBlock(
+                node,
+                source,
+                uriHandler,
+                MarkdownTypography.h3(MaterialTheme.typography.titleMedium).readerLineHeight(style.presentation),
+                style.reader,
+            )
+        MarkdownElementTypes.ATX_4, MarkdownElementTypes.ATX_5, MarkdownElementTypes.ATX_6 ->
+            HeadingBlock(node, source, uriHandler, MarkdownTypography.h4ToH6.readerLineHeight(style.presentation), style.reader)
         MarkdownElementTypes.PARAGRAPH ->
             Text(
                 text = buildInline(node, source, uriHandler, style.reader),
@@ -340,7 +399,7 @@ private fun MarkdownBlock(
         MarkdownElementTypes.BLOCK_QUOTE ->
             BlockQuoteBlock(node, source, uriHandler, style)
         GFMElementTypes.TABLE ->
-            TableBlock(node, source, uriHandler)
+            TableBlock(node, source, uriHandler, style)
         MarkdownElementTypes.CODE_FENCE -> {
             val code = fencedCodeText(node, source)
             val language =
@@ -350,28 +409,20 @@ private fun MarkdownBlock(
                     ?.toString()
                     ?.trim()
                     ?.takeIf { it.isNotEmpty() }
-            if (style.presentation == MarkdownPresentation.Reader && language == null) {
-                ReaderCodeBlock(code, style.code ?: MaterialTheme.typography.bodySmall)
-            } else {
-                CodeBlock(
-                    code,
-                    language,
-                    copyable = true,
-                    textStyle = style.code ?: MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
-                )
-            }
+            CodeBlock(
+                code,
+                language,
+                copyable = true,
+                textStyle = style.code ?: MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
+            )
         }
         MarkdownElementTypes.CODE_BLOCK ->
-            if (style.presentation == MarkdownPresentation.Reader) {
-                ReaderCodeBlock(indentedCodeText(node, source), style.code ?: MaterialTheme.typography.bodySmall)
-            } else {
-                CodeBlock(
-                    indentedCodeText(node, source),
-                    language = null,
-                    copyable = true,
-                    textStyle = style.code ?: MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
-                )
-            }
+            CodeBlock(
+                indentedCodeText(node, source),
+                language = null,
+                copyable = true,
+                textStyle = style.code ?: MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
+            )
         else -> {
             val text = node.getTextInNode(source).toString().trim()
             if (text.isNotEmpty()) {
@@ -417,7 +468,11 @@ private fun HeadingBlock(
                 appendLeaf(content, source, uriHandler, colors, streaming) { it.trimmedContent() }
             }
         }
-    Text(text = if (breakLongRuns) text.withBreaksInLongRuns() else text, style = style)
+    Text(
+        text = if (breakLongRuns) text.withBreaksInLongRuns() else text,
+        style = style,
+        color = MaterialTheme.colorScheme.onSecondaryContainer,
+    )
 }
 
 @Composable
@@ -438,7 +493,7 @@ private fun ListBlock(
             if (style.presentation == MarkdownPresentation.Reader && checkBox == null && lead?.type == MarkdownElementTypes.PARAGRAPH) {
                 // #1533: Figma `553:2574` writes each item as one `•  text` paragraph, so a wrapped line
                 // returns to the list's edge instead of hanging under the item text.
-                Column(verticalArrangement = Arrangement.spacedBy(style.blockSpacing)) {
+                Column {
                     Text(
                         text =
                             buildAnnotatedString {
@@ -448,7 +503,8 @@ private fun ListBlock(
                         style = style.body,
                     )
                     // The frame draws no nested content; later blocks keep the old hang so nesting still reads.
-                    blocks.drop(1).forEach { child ->
+                    blocks.drop(1).forEachIndexed { blockIndex, child ->
+                        MarkdownBlockGap(blocks[blockIndex], child, style.blockSpacing)
                         Box(Modifier.padding(start = ReaderListContinuationIndent)) {
                             MarkdownBlock(child, source, uriHandler, style)
                         }
@@ -469,10 +525,11 @@ private fun ListBlock(
                     TaskMark(isCheckedTaskMark(checkBox.getTextInNode(source).toString()))
                 }
                 Spacer(Modifier.width(ListItemIndent))
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(style.blockSpacing),
-                ) {
-                    blocks.forEach { child -> MarkdownBlock(child, source, uriHandler, style) }
+                Column {
+                    blocks.forEachIndexed { blockIndex, child ->
+                        MarkdownBlockGap(blocks.getOrNull(blockIndex - 1), child, style.blockSpacing)
+                        MarkdownBlock(child, source, uriHandler, style)
+                    }
                 }
             }
         }
@@ -551,58 +608,29 @@ private fun BlockQuoteBlock(
                     .background(barColor),
         )
         Spacer(Modifier.width(BlockquoteContentIndent))
-        Column(verticalArrangement = Arrangement.spacedBy(style.blockSpacing)) {
-            node.children
-                .filter {
-                    it.type != MarkdownTokenTypes.BLOCK_QUOTE &&
-                        it.type != MarkdownTokenTypes.WHITE_SPACE &&
-                        it.type != MarkdownTokenTypes.EOL
-                }.forEach { child ->
-                    if (child.type == MarkdownElementTypes.PARAGRAPH) {
-                        Text(
-                            text = buildInline(child, source, uriHandler, reader),
-                            style =
-                                style.body.copy(
-                                    color = if (reader) MaterialTheme.colorScheme.onSurfaceVariant else style.body.color,
-                                    fontStyle = if (reader) FontStyle.Normal else FontStyle.Italic,
-                                ),
-                        )
-                    } else {
-                        MarkdownBlock(child, source, uriHandler, style)
-                    }
+        val blocks =
+            node.children.filter {
+                it.type != MarkdownTokenTypes.BLOCK_QUOTE &&
+                    it.type != MarkdownTokenTypes.WHITE_SPACE &&
+                    it.type != MarkdownTokenTypes.EOL
+            }
+        Column {
+            blocks.forEachIndexed { index, child ->
+                MarkdownBlockGap(blocks.getOrNull(index - 1), child, style.blockSpacing)
+                if (child.type == MarkdownElementTypes.PARAGRAPH) {
+                    Text(
+                        text = buildInline(child, source, uriHandler, reader),
+                        style =
+                            style.body.copy(
+                                color = if (reader) MaterialTheme.colorScheme.onSurfaceVariant else style.body.color,
+                                fontStyle = if (reader) FontStyle.Normal else FontStyle.Italic,
+                            ),
+                    )
+                } else {
+                    MarkdownBlock(child, source, uriHandler, style)
                 }
+            }
         }
-    }
-}
-
-/** The reader's unlabelled code panel from Figma 553:2574; a tap still copies this block's bounded source. */
-@Composable
-private fun ReaderCodeBlock(
-    content: String,
-    textStyle: TextStyle,
-) {
-    // Match the one- and two-line reference boxes; longer content grows naturally without a huge min constraint.
-    val minimumLines = if ('\n' in content) 2 else 1
-    val minimumHeight = 24.dp + with(LocalDensity.current) { textStyle.lineHeight.toDp() } * minimumLines
-    val clipboard = LocalClipboardManager.current
-    val copyDescription = stringResource(R.string.cd_thread_copy_code)
-    Surface(
-        onClick = { clipboard.setText(AnnotatedString(content.take(MAX_CLIPBOARD_CHARS))) },
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .heightIn(min = minimumHeight)
-                .testTag("reader-code-panel")
-                .semantics { contentDescription = copyDescription },
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surfaceContainer,
-    ) {
-        Text(
-            text = content,
-            modifier = Modifier.horizontalScroll(rememberScrollState()).padding(12.dp),
-            style = textStyle.copy(fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant),
-            softWrap = false,
-        )
     }
 }
 
@@ -626,6 +654,7 @@ private fun TableBlock(
     node: ASTNode,
     source: String,
     uriHandler: UriHandler,
+    textStyle: MarkdownTextStyle,
 ) {
     val colors = currentInlineColors()
     val streaming = LocalStreamingTail.current
@@ -665,7 +694,7 @@ private fun TableBlock(
                 Column(modifier = Modifier.width(IntrinsicSize.Max)) {
                     rows.forEachIndexed { rowIndex, cells ->
                         val cell = cells.getOrNull(column)
-                        val style = MaterialTheme.typography.bodyMedium
+                        val style = if (textStyle.reader) textStyle.body else MaterialTheme.typography.bodyMedium
                         Text(
                             text =
                                 if (cell == null) {
@@ -1021,6 +1050,8 @@ private data class InlineColors(
     val codeSpanBackground: Color,
     val link: Color,
     val struck: Color,
+    /** Original source length in a growing block; null for settled rendering. */
+    val arrivingSourceEnd: Int? = null,
 )
 
 @Composable
@@ -1066,10 +1097,18 @@ private fun AnnotatedString.Builder.appendLeaf(
     val tail = streaming?.tail
     val header = tail?.header
     val probe = tail?.probe
+    val inlineColors = if (streaming != null) colors.copy(arrivingSourceEnd = source.length) else colors
     when {
         header != null && header.target === node -> append(header.text)
-        probe != null && tail.leaf === node -> appendInlineChildren(content(probe.node), probe.source, uriHandler, colors, probe.synthetic)
-        else -> appendInlineChildren(content(node), source, uriHandler, colors)
+        probe != null && tail.leaf === node ->
+            appendInlineChildren(
+                content(probe.node),
+                probe.source,
+                uriHandler,
+                inlineColors,
+                probe.synthetic,
+            )
+        else -> appendInlineChildren(content(node), source, uriHandler, inlineColors)
     }
     if (tail != null && tail.caretTarget === node) appendStreamingCaret(streaming.caretVisible)
 }
@@ -1206,8 +1245,16 @@ private fun AnnotatedString.Builder.appendInline(
                     background = colors.codeSpanBackground,
                 ),
             ) {
-                append(node.getTextInNode(source).toString().trim('`'))
+                val code = node.getTextInNode(source).toString().trim('`')
+                val target = code.trim()
+                if (target.isNotEmpty() && target.none { it.isWhitespace() } && isSafeLinkScheme(target)) {
+                    appendLinkText(code, target, uriHandler, colors)
+                } else {
+                    append(code)
+                }
             }
+        // Authored labels are never bare prose, even when their destination is refused or unresolved.
+        in BareLinkLabelContainers -> append(textOutside(node, source, synthetic))
         MarkdownElementTypes.INLINE_LINK -> {
             val linkText = inlineLinkText(node, source, synthetic)
             val url =
@@ -1219,38 +1266,52 @@ private fun AnnotatedString.Builder.appendInline(
                     ?.removePrefix("<")
                     ?.removeSuffix(">")
                     ?: ""
-            withLink(
-                LinkAnnotation.Url(
-                    url = url,
-                    styles =
-                        TextLinkStyles(
-                            style =
-                                SpanStyle(
-                                    color = colors.link,
-                                    textDecoration = TextDecoration.Underline,
-                                ),
-                        ),
-                    linkInteractionListener =
-                        LinkInteractionListener { link ->
-                            // The handler decides: a markdown path, an allowed scheme, or nothing.
-                            (link as? LinkAnnotation.Url)?.url?.let(uriHandler::openUri)
-                        },
-                ),
-            ) {
+            val admitted = (uriHandler as? MarkdownUriHandler)?.accepts(url) ?: isSafeLinkScheme(url)
+            if (!admitted) {
                 append(linkText)
+                return
             }
+            appendLinkText(linkText, url, uriHandler, colors)
         }
         MarkdownTokenTypes.EOL -> append(" ")
         // The total fallback, and the reason #681 could switch flavours without suppressing
         // anything: a node kind with no arm renders its own source characters. GFM_AUTOLINK is a
-        // childless leaf, so a bare URL appends as text and is never a link; INLINE_MATH has
-        // children whose leaves (DOLLAR, TEXT, WHITE_SPACE) rebuild the `$…$` span verbatim.
+        // childless leaf, so bare web URLs stay text; the sibling walk annotates only admitted Obsidian prose.
+        // INLINE_MATH has children whose leaves (DOLLAR, TEXT, WHITE_SPACE) rebuild the `$…$` span verbatim.
         else ->
             if (node.children.isEmpty()) {
                 append(textOutside(node, source, synthetic))
             } else {
                 appendInlineChildren(node.children, source, uriHandler, colors, synthetic)
             }
+    }
+}
+
+private fun AnnotatedString.Builder.appendLinkText(
+    text: String,
+    target: String,
+    uriHandler: UriHandler,
+    colors: InlineColors,
+) {
+    withLink(
+        LinkAnnotation.Url(
+            url = target,
+            styles =
+                TextLinkStyles(
+                    style =
+                        SpanStyle(
+                            color = colors.link,
+                            textDecoration = TextDecoration.Underline,
+                        ),
+                ),
+            linkInteractionListener =
+                LinkInteractionListener { link ->
+                    // The handler decides: a markdown path, an allowed scheme, or nothing.
+                    (link as? LinkAnnotation.Url)?.url?.let(uriHandler::openUri)
+                },
+        ),
+    ) {
+        append(text)
     }
 }
 
@@ -1274,10 +1335,17 @@ private fun textOutside(
     node: ASTNode,
     source: String,
     synthetic: IntRange,
+): String = textOutside(node.startOffset, node.endOffset, source, synthetic)
+
+private fun textOutside(
+    start: Int,
+    end: Int,
+    source: String,
+    synthetic: IntRange,
 ): String {
-    if (!overlaps(node, synthetic)) return node.getTextInNode(source).toString()
-    val before = if (node.startOffset < synthetic.first) source.substring(node.startOffset, synthetic.first) else ""
-    val after = if (node.endOffset > synthetic.last + 1) source.substring(synthetic.last + 1, node.endOffset) else ""
+    if (synthetic.isEmpty() || start > synthetic.last || end <= synthetic.first) return source.substring(start, end)
+    val before = if (start < synthetic.first) source.substring(start, synthetic.first) else ""
+    val after = if (end > synthetic.last + 1) source.substring(synthetic.last + 1, end) else ""
     return before + after
 }
 
@@ -1330,28 +1398,82 @@ private fun AnnotatedString.Builder.appendInlineChildren(
     colors: InlineColors,
     synthetic: IntRange = IntRange.EMPTY,
 ) {
+    if (children.isEmpty()) return
     val runs = singleTildeRuns(children, source)
+    val links =
+        bareObsidianRanges(source, children.first().startOffset until children.last().endOffset, colors.arrivingSourceEnd, synthetic)
+    var linkIndex = 0
     var index = 0
+    var cursor = children.first().startOffset
     while (index < children.size) {
+        val child = children[index]
+        while (linkIndex < links.size && links[linkIndex].first < cursor) linkIndex++
         val close = runs[index]
-        if (close == null) {
-            appendInline(children[index], source, uriHandler, colors, synthetic)
-            index++
-        } else if (overlaps(children[close], synthetic)) {
-            // A pair closed only by a streaming probe's tilde shows its text plain, without either tilde.
-            for (inner in index + 1 until close) {
-                appendInline(children[inner], source, uriHandler, colors, synthetic)
+        if (close != null) {
+            val inner = children.subList(index + 1, close)
+            if (overlaps(children[close], synthetic)) {
+                appendInlineChildren(inner, source, uriHandler, colors, synthetic)
+            } else {
+                withStyle(struckSpanStyle(colors)) { appendInlineChildren(inner, source, uriHandler, colors, synthetic) }
             }
             index = close + 1
         } else {
-            withStyle(struckSpanStyle(colors)) {
-                for (inner in index + 1 until close) {
-                    appendInline(children[inner], source, uriHandler, colors, synthetic)
+            val link = links.getOrNull(linkIndex)?.takeIf { it.first < child.endOffset }
+            if (link != null) {
+                linkIndex++
+                var last = index
+                while (last < children.lastIndex && children[last].endOffset <= link.last) last++
+                // A candidate can cross lexer tokens, but never borrow text from code or an authored label.
+                val covered = children.subList(index, last + 1)
+                if (child.type != GFMTokenTypes.GFM_AUTOLINK &&
+                    child.children.isEmpty() &&
+                    (children[last].children.isEmpty() || children[last].endOffset == link.last + 1) &&
+                    covered.none { it.protectsBareLink(link) }
+                ) {
+                    append(textOutside(cursor, link.first, source, synthetic))
+                    val target = source.substring(link)
+                    appendLinkText(target, target, uriHandler, colors)
+                    cursor = link.last + 1
+                    index = last
+                    if (cursor == children[index].endOffset) {
+                        index++
+                        cursor = children.getOrNull(index)?.startOffset ?: cursor
+                    }
+                    continue
                 }
+                // Let nested Markdown dispatch decide its own content boundaries.
+                continue
             }
-            index = close + 1
+            if (cursor == child.startOffset) {
+                appendInline(child, source, uriHandler, colors, synthetic)
+            } else {
+                append(textOutside(cursor, child.endOffset, source, synthetic))
+            }
+            index++
         }
+        cursor = children.getOrNull(index)?.startOffset ?: cursor
     }
+}
+
+private val BareLinkLabelContainers =
+    setOf(
+        MarkdownElementTypes.AUTOLINK,
+        MarkdownElementTypes.FULL_REFERENCE_LINK,
+        MarkdownElementTypes.SHORT_REFERENCE_LINK,
+        MarkdownElementTypes.LINK_TEXT,
+        MarkdownElementTypes.LINK_LABEL,
+    )
+
+private fun ASTNode.protectsBareLink(range: IntRange): Boolean {
+    if (endOffset <= range.first || startOffset > range.last) return false
+    if (type == MarkdownElementTypes.CODE_SPAN ||
+        type == MarkdownElementTypes.INLINE_LINK ||
+        type == MarkdownElementTypes.IMAGE ||
+        type in BareLinkLabelContainers
+    ) {
+        return true
+    }
+    return children.any { it.protectsBareLink(range) }
 }
 
 private fun struckSpanStyle(colors: InlineColors): SpanStyle = SpanStyle(color = colors.struck, textDecoration = TextDecoration.LineThrough)
@@ -1444,7 +1566,8 @@ private val LinkScheme = Regex("""^[A-Za-z][A-Za-z0-9+.-]*:""")
  */
 internal fun markdownLinkPath(target: String): String? {
     val path = target.substringBeforeLast('#').replace(LinkLineSuffix, "")
-    if (LinkScheme.containsMatchIn(path)) return null
+    // Trim only for scheme detection: malformed URI shapes must never fall through to workspace reads.
+    if (LinkScheme.containsMatchIn(path.trimStart()) || "://" in path) return null
     return path.takeIf { it.endsWith(".md", ignoreCase = true) || it.endsWith(".markdown", ignoreCase = true) }
 }
 
@@ -1466,5 +1589,5 @@ internal fun routeMarkdownLink(
 
 internal fun isSafeLinkScheme(url: String): Boolean {
     val scheme = url.substringBefore(':', missingDelimiterValue = "").lowercase()
-    return scheme == "http" || scheme == "https" || scheme == "mailto"
+    return scheme == "http" || scheme == "https" || scheme == "mailto" || isSafeObsidianLink(url)
 }

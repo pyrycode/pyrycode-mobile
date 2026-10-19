@@ -12,6 +12,18 @@ constructed with `backgroundScope` so its collector auto-cancels at test end. `c
 built from the same object-wrapped-array fixture shape as `ConversationsPayloadTest` via
 `MobileJson.parseToJsonElement(raw)`.
 
+`AuthoritativeSendRepositoryTest` negotiates both thread and interactive capabilities
+with an ack-only fake pump for typed reset commands (#2308). Check pending sends,
+projected Sending rows and legacy snapshot rows both before and after ack: checking
+only pending state would miss an accidental legacy fallback bubble. The matrix
+covers both aliases, all 25 daemon whitespace characters and arguments, with case,
+longer-name, later-token, zero-width-space and JVM-only separator nonmatches.
+Repeated resets must retain unrelated pending feedback. A subsequent ordinary send
+must stay Sending after ack until its matching authoritative item arrives, then
+appear once as the last row even on duplicate delivery. Clearing all feedback on
+ack or on reset would incorrectly satisfy a reset-only assertion. See
+[send ownership and classification](remote-conversation-repository-send-create-promote-rename.md#sendmessageconversationid-text--the-first-mutation-346).
+
 > **Test idiom (reusable across the sibling slices #313/#314/#329):** drive the push→demux→project→emit
 > cascade with **`runCurrent()`, not `advanceUntilIdle()`**. With a `Channel.receiveAsFlow()` inbound
 > feeding a single repository-internal collector on `backgroundScope`, `advanceUntilIdle()` does not

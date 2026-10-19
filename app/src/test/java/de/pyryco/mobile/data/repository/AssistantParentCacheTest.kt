@@ -65,15 +65,25 @@ class AssistantParentCacheTest {
     }
 
     @Test
-    fun diskFormatStaysUnattributed_wireEvidenceEnrichesRows_andReconnectKeepsItInMemory() =
+    fun diskFormatKeepsAttribution_wireEvidenceEnrichesUnattributedRows_andReconnectKeepsIt() =
         runTest(UnconfinedTestDispatcher()) {
             for (evidenceSeq in 0..2) {
                 val cache = FileConversationCache(tmp.newFolder(), UnconfinedTestDispatcher(testScheduler))
                 val original = rows(listOf(0, 1, 2), PARENT)
                 assertTrue(cache.writeThread("host", "c", original).isSuccess)
                 val restored = cache.readThread("host", "c")
-                assertEquals("", restored.messages().single().parentToolUseId)
+                assertEquals(PARENT, restored.messages().single().parentToolUseId)
                 assertEquals(original.messages().single().segment, restored.messages().single().segment)
+                // A document written before #2221, or a row whose parent was never known, restores unattributed.
+                assertTrue(cache.writeThread("host", "c", rows(listOf(0, 1, 2), "")).isSuccess)
+                assertEquals(
+                    "",
+                    cache
+                        .readThread("host", "c")
+                        .messages()
+                        .single()
+                        .parentToolUseId,
+                )
                 val live = MutableStateFlow<List<ThreadItem>>(emptyList())
                 val delegate =
                     object : ConversationRepository by FakeConversationRepository() {
@@ -108,8 +118,11 @@ class AssistantParentCacheTest {
                 assertEquals(enriched, emissions.last())
                 live.value = rows(listOf((evidenceSeq + 1) % 3), "")
                 assertEquals(enriched, emissions.last())
+                job.cancel()
+                job.join()
+                // The collector's final flush persists the enriched row, parent included.
                 assertEquals(
-                    "",
+                    PARENT,
                     cache
                         .readThread("host", "c")
                         .messages()
@@ -117,7 +130,6 @@ class AssistantParentCacheTest {
                         .parentToolUseId,
                 )
                 assertTrue(logs.none { PARENT in it })
-                job.cancel()
             }
         }
 
