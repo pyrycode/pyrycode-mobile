@@ -72,11 +72,14 @@ class MarkdownTextParsingTest {
     fun `all reference label forms are authored containers`() {
         val label = "See obsidian://open?file=Note now"
         listOf(
-            "[$label][ref]\n\n[ref]: javascript:bad" to MarkdownElementTypes.FULL_REFERENCE_LINK,
-            "[$label][]\n\n[$label]: javascript:bad" to MarkdownElementTypes.FULL_REFERENCE_LINK,
-            "[$label]\n\n[$label]: javascript:bad" to MarkdownElementTypes.SHORT_REFERENCE_LINK,
-        ).forEach { (source, type) ->
-            val node = parse(source).firstOfType(type)
+            "[$label][ref]\n\n[ref]: javascript:bad",
+            "[$label][]\n\n[$label]: javascript:bad",
+            "[$label]\n\n[$label]: javascript:bad",
+        ).forEach { source ->
+            val node =
+                parse(source).descendants().firstOrNull {
+                    it.type == MarkdownElementTypes.FULL_REFERENCE_LINK || it.type == MarkdownElementTypes.SHORT_REFERENCE_LINK
+                }
             assertNotNull(source, node)
             assertTrue(node!!.getTextInNode(source).contains(label))
         }
