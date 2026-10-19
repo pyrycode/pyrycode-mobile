@@ -5,6 +5,9 @@ import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayTransport
+import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.repository.AuthoritativeThreadRoute
+import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.data.repository.ManagedSessionPump
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.JsonElement
@@ -44,6 +47,25 @@ internal class OwnedReplyObservation(
     private var failed = false
     private var closed = false
     private var session: String? = null
+    private val sessionReads = mutableSetOf<Long>()
+    private var readSession: String? = null
+    private val producerStore =
+        if (before.owner.kind == ThreadEvidenceKind.Authoritative) {
+            AuthoritativeThreadStore().also { store ->
+                val facts = before.records.mapNotNull { it.fact }
+                store.applyBatch(
+                    host,
+                    before.owner.conversation,
+                    checkNotNull(before.owner.epoch),
+                    facts.maxOfOrNull { it.rev } ?: 0,
+                    facts,
+                    0,
+                )
+            }
+        } else {
+            null
+        }
+    private val producerRoute = producerStore?.let { AuthoritativeThreadRoute(host, it) }
 
     init {
         require(before.owner.host == null || before.owner.host == host) { "reply observation host mismatch" }
@@ -54,6 +76,14 @@ internal class OwnedReplyObservation(
         request: Envelope,
         isCurrent: () -> Boolean = { true },
     ) {
+        if (request.type == "request_session_settings" &&
+            request.field("conversation_id") == before.owner.conversation &&
+            pump === connection &&
+            end != null
+        ) {
+            sessionReads += request.id
+            return
+        }
         if (request.type != "send_message" || request.field("conversation_id") != before.owner.conversation) return
         check(messageId == null) { "reply observation saw more than one send" }
         pump = connection
@@ -61,7 +91,10 @@ internal class OwnedReplyObservation(
         this.request = request
         messageId = checkNotNull(request.field("message_id")) { "reply send has no identity" }
         check(
-            before.records.none { it.message.role == Role.User && it.message.ordinaryId == messageId },
+            before.records.none {
+                it.message.role == Role.User &&
+                    if (it.fact == null) it.message.ordinaryId == messageId else it.fact.field("message_id") == messageId
+            },
         ) { "reply send reused a loaded identity" }
     }
 
@@ -76,9 +109,39 @@ internal class OwnedReplyObservation(
         connection: Any,
         frame: Envelope,
     ) {
-        if (pump !== connection || frame.field("conversation_id") != before.owner.conversation) return
+        if (pump !== connection) return
+        if (frame.type == "session_settings" && frame.inReplyTo in sessionReads) {
+            val id = (frame.payload as? JsonObject)?.get("session_id") as? JsonPrimitive
+            if (id == null || !id.isString || id.content.isBlank()) return
+            val wrongConversation =
+                frame.field("conversation_id")?.let { it != before.owner.conversation } == true ||
+                    frame.conversationId?.let { it != JsonPrimitive(before.owner.conversation) } == true
+            val wrongSession = frame.sessionProvenance.raw?.let { it != id } == true || readSession?.let { it != id.content } == true
+            if (wrongConversation ||
+                wrongSession ||
+                frame.sessionStateCleared != JsonPrimitive(false)
+            ) {
+                failed = true
+            } else {
+                readSession = id.content
+            }
+            return
+        }
+        if (frame.field("conversation_id") != before.owner.conversation) return
         if (frame.conversationId != null && frame.conversationId != JsonPrimitive(before.owner.conversation)) {
             failed = true
+            return
+        }
+        if (producerStore != null) {
+            if (frame.type !in setOf("thread_item_added", "thread_item_changed", "thread_text_append")) return
+            if (frame.field("epoch") != before.owner.epoch) {
+                failed = true
+                return
+            }
+            val id = frame.field("item_id")?.toLongOrNull()
+            val known = producerStore.current(host, before.owner.conversation).items.any { it.id == id }
+            if (frame.type != "thread_item_added" && !known) return
+            producerRoute?.accept(frame)
             return
         }
         frame.sessionProvenance.raw?.let(rawSessions::add)
@@ -110,11 +173,10 @@ internal class OwnedReplyObservation(
         if (pump === connection) closed = true
     }
 
-    @Synchronized fun producerCompleted(): Boolean =
-        !failed &&
-            !closed &&
-            accepted &&
-            echo != null &&
+    @Synchronized fun producerCompleted(): Boolean {
+        if (failed || closed || !accepted) return false
+        if (producerStore != null) return authoritativeReply() != null
+        return echo != null &&
             turn != null &&
             deltas.isNotEmpty() &&
             deltas.map { it.first } == deltas.indices.toList() &&
@@ -123,12 +185,67 @@ internal class OwnedReplyObservation(
             end?.field("outcome") == "success" &&
             end?.field("is_error") == "false" &&
             end?.field("terminal_reason") == "completed"
+    }
+
+    private fun authoritativeReply(): Pair<ThreadItemDto, List<ThreadItemDto>>? {
+        val snapshot = producerStore?.current(host, before.owner.conversation) ?: return null
+        if (snapshot.repairNeeded || snapshot.resetNeeded || snapshot.epoch != before.owner.epoch) return null
+        val user =
+            snapshot.items.singleOrNull {
+                it.kind == "user_message" &&
+                    it.field("message_id") == messageId &&
+                    it.status == "delivered" &&
+                    !it.active &&
+                    (it.order ?: 0) > 0
+            } ?: return null
+        val ownedSession = user.session?.takeIf { it.isNotBlank() } ?: return null
+        if (snapshot.items.any { it.kind == "session_divider" && (it.order ?: 0) > (user.order ?: 0) }) return null
+        val afterUser = snapshot.items.filter { it.session == ownedSession && (it.order ?: 0) > (user.order ?: 0) }
+        val nextUser =
+            afterUser
+                .filter { it.kind == "user_message" && it.status == "delivered" }
+                .minOfOrNull { it.order ?: Long.MAX_VALUE } ?: Long.MAX_VALUE
+        val candidate =
+            afterUser.sortedBy { it.order }.firstOrNull {
+                it.kind == "assistant_message" &&
+                    (it.parent ?: 0) == 0L &&
+                    (it.order ?: 0) < nextUser &&
+                    !it.turn.isNullOrBlank() &&
+                    it.turn !in priorTurns
+            } ?: return null
+        if (turn != null && turn != candidate.turn || session != null && session != ownedSession) return null
+        turn = candidate.turn
+        session = ownedSession
+        val family = afterUser.filter { it.kind == "assistant_message" && it.turn == turn && (it.parent ?: 0) == 0L }.sortedBy { it.order }
+        if (family.any {
+                it.active ||
+                    !it.shown ||
+                    it.status !in setOf("done", "finished") ||
+                    it.field("text").isNullOrBlank() ||
+                    (it.order ?: 0) >= nextUser
+            }
+        ) {
+            return null
+        }
+        val terminal = afterUser.singleOrNull { it.kind == "turn_end" && it.turn == turn && (it.parent ?: 0) == 0L } ?: return null
+        if (terminal.active ||
+            terminal.status != "done" ||
+            terminal.field("stop_reason") != "end_turn" ||
+            terminal.field("outcome") != "success" ||
+            terminal.field("is_error") != "false" ||
+            terminal.field("terminal_reason") != "completed"
+        ) {
+            return null
+        }
+        return user to family
+    }
 
     /** A peer may prove production even when nothing arrived at the phone; it proves no later stage. */
     @Synchronized fun completedBy(frames: List<Envelope>): Boolean {
         val sentRequest = request ?: return false
         val peer = Any()
-        val copy = OwnedReplyObservation(host, before)
+        val legacy = before.owner.copy(kind = ThreadEvidenceKind.Legacy, epoch = null, generation = null)
+        val copy = OwnedReplyObservation(host, ThreadEvidence(legacy, before.records))
         copy.sending(peer, sentRequest)
         copy.sent(peer, accepted)
         frames.forEach { copy.received(peer, it) }
@@ -146,27 +263,38 @@ internal class OwnedReplyObservation(
     ): CompletedReplyObservation? {
         checkCurrent(current)
         if (!producerCompleted() || !evidence.admitted || !before.owner.matches(evidence.owner)) return null
+        val produced = if (producerStore != null) authoritativeReply() else null
         val user =
             evidence.records.singleOrNull {
                 it.message.role == Role.User &&
                     if (it.fact == null) {
                         it.message.ordinaryId == messageId
                     } else {
-                        val queued = (echo?.payload as? JsonObject)?.get("queued_msg_id")
-                        queued != null &&
+                        it.fact.id == produced?.first?.id &&
                             it.fact.kind == "user_message" &&
                             it.fact.status == "delivered" &&
-                            (it.fact.content as? JsonObject)?.get("queued_msg_id") == queued
+                            it.fact.field("message_id") == messageId
                     }
             } ?: return null
-        val ownedSession = user.session?.takeIf { it.isNotBlank() } ?: return null
+        val recordSession = user.session ?: return null
+        val tagged = (rawSessions.singleOrNull() as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+        val ownedSession = recordSession.takeIf { it.isNotBlank() } ?: readSession ?: tagged ?: return null
+        if (readSession != null && readSession != ownedSession) return null
         if (session != null && session != ownedSession) return null
         if (rawSessions.any { it != JsonPrimitive(ownedSession) }) return null
         val ownedTurn = turn ?: return null
         if (user.turn != null && user.turn != ownedTurn) return null
-        val family = evidence.settledReply(before.owner, ownedSession, ownedTurn) ?: return null
+        val family = evidence.settledReply(before.owner, recordSession, ownedTurn) ?: return null
         if (family.any { it.agentId != null } || family.map { it.message.id }.distinct().size != family.size) return null
-        val text = deltas.joinToString("") { it.second }
+        if (produced != null &&
+            (
+                family.map { it.fact?.id } != produced.second.map { it.id } ||
+                    family.zip(produced.second).any { (record, fact) -> (record.fact?.rev ?: 0) < fact.rev }
+            )
+        ) {
+            return null
+        }
+        val text = produced?.second?.joinToString("") { it.field("text").orEmpty() } ?: deltas.joinToString("") { it.second }
         if (family.joinToString("") { it.fullText } != text || family.any { it.message.isStreaming }) return null
         session = ownedSession
         return CompletedReplyObservation(
@@ -246,3 +374,5 @@ internal object OwnedReplyProbe {
 }
 
 private fun Envelope.field(name: String): String? = ((payload as? JsonObject)?.get(name) as? JsonPrimitive)?.content
+
+private fun ThreadItemDto.field(name: String): String? = ((content as? JsonObject)?.get(name) as? JsonPrimitive)?.content

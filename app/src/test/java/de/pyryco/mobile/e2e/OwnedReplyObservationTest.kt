@@ -5,25 +5,249 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.SegmentDelta
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.SessionProvenance
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 class OwnedReplyObservationTest {
+    private val savedSink = RelayLog.sink
+    private val logs = mutableListOf<String>()
+
+    @Before fun captureLogs() {
+        RelayLog.sink = { _, _, message -> logs += message }
+    }
+
+    @After fun restoreLogs() {
+        RelayLog.sink = savedSink
+        assertFalse(logs.any { "normal reply" in it || "First suffix" in it })
+    }
+
     private val repository = Any()
     private val pump = Any()
+
+    @Test fun legacyPlaceholderSessionNeedsCorrelatedCurrentSessionEvidence() {
+        val observation = observation()
+        producer().forEach { observation.received(pump, it) }
+        val blank = evidence(ThreadEvidenceKind.Legacy, rows().map { it.copy(sessionId = "") })
+        assertTrue(observation.producerCompleted())
+        assertNull(observation.admitted(blank, repository))
+        val query = frame("request_session_settings").copy(id = 2)
+        observation.sending(pump, query)
+        val reply = Envelope(2, "session_settings", "", buildJsonObject { put("session_id", "session") }, inReplyTo = query.id)
+        observation.received(pump, reply.copy(inReplyTo = 99))
+        assertNull(observation.admitted(blank, repository))
+        observation.received(pump, reply)
+        assertEquals("session", checkNotNull(observation.admitted(blank, repository)).session)
+        observation.received(pump, frame("session_transition"))
+        assertNull(observation.admitted(blank, repository))
+    }
+
+    private fun authoritativeFrames(texts: List<String> = listOf("Ping! A normal reply.")): List<Envelope> {
+        val facts =
+            evidence(ThreadEvidenceKind.Authoritative, rows(texts)).records.map { checkNotNull(it.fact) }.map { fact ->
+                val content = fact.content as JsonObject
+                ThreadItemDto.decode(
+                    JsonObject(
+                        fact.raw + ("rev" to JsonPrimitive(fact.id)) +
+                            if (fact.kind ==
+                                "user_message"
+                            ) {
+                                mapOf("content" to JsonObject(content + ("message_id" to JsonPrimitive("sent"))))
+                            } else {
+                                emptyMap()
+                            },
+                    ),
+                )
+            }
+        val end =
+            ThreadItemDto.decode(
+                buildJsonObject {
+                    put("id", facts.size + 1)
+                    put("rev", facts.size + 1)
+                    put("order", facts.size + 1)
+                    put("session", "session")
+                    put("turn", "turn")
+                    put("kind", "turn_end")
+                    put("active", false)
+                    put("status", "done")
+                    put("shown", false)
+                    put("summary", "")
+                    put(
+                        "content",
+                        buildJsonObject {
+                            put("stop_reason", "end_turn")
+                            put("outcome", "success")
+                            put("is_error", false)
+                            put("terminal_reason", "completed")
+                        },
+                    )
+                },
+            )
+        return (facts + end).map { fact ->
+            Envelope(
+                1,
+                "thread_item_added",
+                "",
+                buildJsonObject {
+                    put("conversation_id", "chat")
+                    put("epoch", "epoch")
+                    put("version", fact.rev)
+                    put("item", fact.raw)
+                },
+            )
+        }
+    }
+
+    @Test fun authoritativeWireFramesEstablishProductionWithoutLegacyEvents() {
+        val observation = observation(ThreadEvidenceKind.Authoritative)
+        authoritativeFrames().forEach { observation.received(pump, it) }
+        assertTrue(observation.producerCompleted())
+        assertNotNull(observation.admitted(evidence(ThreadEvidenceKind.Authoritative, rows()), repository))
+    }
+
+    private fun replaceItem(
+        frame: Envelope,
+        change: (JsonObject) -> JsonObject,
+    ): Envelope {
+        val payload = frame.payload as JsonObject
+        return frame.copy(payload = JsonObject(payload + ("item" to change(payload["item"] as JsonObject))))
+    }
+
+    @Test fun authoritativeProducerRejectsWrongSessionRoleChildAndCompletion() {
+        val frames = authoritativeFrames()
+        val bad =
+            listOf(
+                Triple(0, "session", JsonPrimitive("earlier")),
+                Triple(1, "session", JsonPrimitive("earlier")),
+                Triple(1, "kind", JsonPrimitive("notice")),
+                Triple(1, "parent", JsonPrimitive(99)),
+                Triple(1, "active", JsonPrimitive(true)),
+                Triple(1, "status", JsonPrimitive("failed")),
+                Triple(1, "status", JsonPrimitive("interrupted")),
+                Triple(1, "turn", JsonPrimitive("earlier")),
+            )
+        for ((index, key, value) in bad) {
+            val observation = observation(ThreadEvidenceKind.Authoritative)
+            frames
+                .mapIndexed { at, frame -> if (at == index) replaceItem(frame) { JsonObject(it + (key to value)) } else frame }
+                .forEach { observation.received(pump, it) }
+            assertFalse(observation.producerCompleted())
+        }
+        for ((key, value) in listOf(
+            "outcome" to JsonPrimitive("error_max_turns"),
+            "is_error" to JsonPrimitive(true),
+            "terminal_reason" to JsonPrimitive("interrupted"),
+        )) {
+            val observation = observation(ThreadEvidenceKind.Authoritative)
+            frames.dropLast(1).forEach { observation.received(pump, it) }
+            observation.received(
+                pump,
+                replaceItem(frames.last()) {
+                    JsonObject(it + ("content" to JsonObject((it["content"] as JsonObject) + (key to value))))
+                },
+            )
+            assertFalse(observation.producerCompleted())
+        }
+    }
+
+    @Test fun authoritativeAppendsAndPatchesRequireTheirOwnCompletionAndRepositoryRevision() {
+        val texts = listOf("First suffix")
+        val frames = authoritativeFrames(texts)
+        val observation = observation(ThreadEvidenceKind.Authoritative)
+        observation.received(pump, frames.first())
+        observation.received(
+            pump,
+            replaceItem(frames[1]) {
+                JsonObject(
+                    it +
+                        mapOf(
+                            "active" to JsonPrimitive(true),
+                            "status" to JsonPrimitive("running"),
+                            "content" to buildJsonObject { put("text", "First") },
+                        ),
+                )
+            },
+        )
+        observation.received(
+            pump,
+            Envelope(
+                1,
+                "thread_text_append",
+                "",
+                buildJsonObject {
+                    put("conversation_id", "chat")
+                    put("epoch", "epoch")
+                    put("version", 3)
+                    put("item_id", 2)
+                    put("base_rev", 2)
+                    put("rev", 3)
+                    put("text", " suffix")
+                },
+            ),
+        )
+        assertFalse(observation.producerCompleted())
+        observation.received(
+            pump,
+            Envelope(
+                1,
+                "thread_item_changed",
+                "",
+                buildJsonObject {
+                    put("conversation_id", "chat")
+                    put("epoch", "epoch")
+                    put("version", 4)
+                    put("item_id", 2)
+                    put("base_rev", 3)
+                    put("rev", 4)
+                    put(
+                        "changes",
+                        buildJsonObject {
+                            put("active", false)
+                            put("status", "done")
+                        },
+                    )
+                },
+            ),
+        )
+        val terminal =
+            replaceItem(frames.last()) {
+                JsonObject(
+                    it + mapOf("id" to JsonPrimitive(5), "rev" to JsonPrimitive(5), "order" to JsonPrimitive(5)),
+                )
+            }
+        observation.received(pump, terminal.copy(payload = JsonObject((terminal.payload as JsonObject) + ("version" to JsonPrimitive(5)))))
+        assertTrue(observation.producerCompleted())
+        assertNull(observation.admitted(evidence(ThreadEvidenceKind.Authoritative, emptyList()), repository))
+        assertNull(observation.admitted(evidence(ThreadEvidenceKind.Authoritative, rows(texts)), repository))
+        val facts =
+            evidence(ThreadEvidenceKind.Authoritative, rows(texts)).records.map { checkNotNull(it.fact) }.map {
+                if (it.kind == "assistant_message") ThreadItemDto.decode(JsonObject(it.raw + ("rev" to JsonPrimitive(4)))) else it
+            }
+        val current =
+            authoritativeThreadEvidence(
+                "host",
+                "chat",
+                repository,
+                AuthoritativeThreadSnapshot(epoch = "epoch", generation = 2, items = facts),
+            )
+        assertNotNull(observation.admitted(current, repository))
+    }
 
     private fun frame(
         type: String,
@@ -55,23 +279,37 @@ class OwnedReplyObservationTest {
     private fun producer(
         texts: List<String> = listOf("Ping! A normal reply."),
         ending: Boolean = true,
+        kind: ThreadEvidenceKind = ThreadEvidenceKind.Legacy,
     ): List<Envelope> =
-        listOf(frame("message", "role" to "user", "message_id" to "sent", "queued_msg_id" to "7")) +
-            texts.mapIndexed { seq, text -> frame("assistant_delta", "turn_id" to "turn", "seq" to "$seq", "text" to text) } +
-            if (ending) {
-                listOf(
-                    frame(
-                        "turn_end",
-                        "turn_id" to "turn",
-                        "stop_reason" to "end_turn",
-                        "outcome" to "success",
-                        "is_error" to "false",
-                        "terminal_reason" to "completed",
-                    ),
-                )
-            } else {
-                emptyList()
-            }
+        if (kind ==
+            ThreadEvidenceKind.Authoritative
+        ) {
+            authoritativeFrames(texts).let { if (ending) it else it.dropLast(1) }
+        } else {
+            listOf(
+                frame(
+                    "message",
+                    "role" to "user",
+                    "message_id" to "sent",
+                    "queued_msg_id" to "7",
+                ),
+            ) +
+                texts.mapIndexed { seq, text -> frame("assistant_delta", "turn_id" to "turn", "seq" to "$seq", "text" to text) } +
+                if (ending) {
+                    listOf(
+                        frame(
+                            "turn_end",
+                            "turn_id" to "turn",
+                            "stop_reason" to "end_turn",
+                            "outcome" to "success",
+                            "is_error" to "false",
+                            "terminal_reason" to "completed",
+                        ),
+                    )
+                } else {
+                    emptyList()
+                }
+        }
 
     private fun message(
         id: String,
@@ -113,7 +351,7 @@ class OwnedReplyObservationTest {
                             ThreadItemDto.decode(
                                 buildJsonObject {
                                     put("id", (index + 1).toLong())
-                                    put("rev", 1)
+                                    put("rev", index + 1)
                                     put("order", (index + 1).toLong())
                                     put(
                                         "kind",
@@ -128,7 +366,7 @@ class OwnedReplyObservationTest {
                                         },
                                     )
                                     put("session", message.sessionId)
-                                    put("turn", message.segment?.turnId ?: "turn")
+                                    message.segment?.turnId?.let { put("turn", it) }
                                     put("status", if (message.role == Role.User) "delivered" else status)
                                     put("active", message.isStreaming)
                                     put("shown", shown)
@@ -138,7 +376,10 @@ class OwnedReplyObservationTest {
                                         "content",
                                         buildJsonObject {
                                             put("text", message.content)
-                                            if (message.role == Role.User) put("queued_msg_id", 7)
+                                            if (message.role == Role.User) {
+                                                put("queued_msg_id", 7)
+                                                put("message_id", "sent")
+                                            }
                                         },
                                     )
                                 },
@@ -157,7 +398,7 @@ class OwnedReplyObservationTest {
                 listOf("First paragraph. ", "And another reply fragment!"),
             )) {
                 val observation = observation(kind)
-                producer(texts).forEach { observation.received(pump, it) }
+                producer(texts, kind = kind).forEach { observation.received(pump, it) }
                 val admitted = checkNotNull(observation.admitted(evidence(kind, rows(texts)), repository))
                 assertEquals(texts.joinToString(""), admitted.producerText)
                 assertEquals("host", admitted.host)
@@ -187,7 +428,7 @@ class OwnedReplyObservationTest {
                 reply.copy(content = " "),
             )) {
                 val observation = observation(kind)
-                producer().forEach { observation.received(pump, it) }
+                producer(kind = kind).forEach { observation.received(pump, it) }
                 assertNull("$kind rejects ${wrong.role}", observation.admitted(evidence(kind, listOf(good.first(), wrong)), repository))
             }
         }
@@ -209,7 +450,7 @@ class OwnedReplyObservationTest {
                 },
             )) {
                 val observation = observation(kind)
-                producer().forEach { observation.received(pump, it) }
+                producer(kind = kind).forEach { observation.received(pump, it) }
                 assertTrue(observation.producerCompleted())
                 assertNull(observation.admitted(evidence(kind, messages), repository))
             }
@@ -325,12 +566,12 @@ class OwnedReplyObservationTest {
     @Test fun authoritativeItemCompletionIsIndependentOfProducerCompletion() {
         for (status in listOf("failed", "interrupted", "running")) {
             val observation = observation(ThreadEvidenceKind.Authoritative)
-            producer().forEach { observation.received(pump, it) }
+            producer(kind = ThreadEvidenceKind.Authoritative).forEach { observation.received(pump, it) }
             assertTrue(observation.producerCompleted())
             assertNull(observation.admitted(evidence(ThreadEvidenceKind.Authoritative, rows(), status), repository))
         }
         val observation = observation(ThreadEvidenceKind.Authoritative)
-        producer().forEach { observation.received(pump, it) }
+        producer(kind = ThreadEvidenceKind.Authoritative).forEach { observation.received(pump, it) }
         assertNull(observation.admitted(evidence(ThreadEvidenceKind.Authoritative, rows(), shown = false), repository))
     }
 
@@ -350,7 +591,7 @@ class OwnedReplyObservationTest {
     @Test fun retiredHostConversationConnectionEpochAndGenerationCannotBeAdmitted() {
         for (kind in ThreadEvidenceKind.entries) {
             val observation = observation(kind)
-            producer().forEach { observation.received(pump, it) }
+            producer(kind = kind).forEach { observation.received(pump, it) }
             val held = evidence(kind, rows())
             for (owner in listOf(
                 held.owner.copy(host = "other"),

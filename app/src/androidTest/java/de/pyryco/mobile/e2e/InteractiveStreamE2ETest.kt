@@ -8663,7 +8663,7 @@ class InteractiveStreamE2ETest {
                 }
             }
         try {
-            val before = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { observed.filterNotNull().first() } }
+            val before = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { observed.filterNotNull().first { it.admitted } } }
             val observation = OwnedReplyObservation(serverId, before)
             return OwnedReplyProbe.observing(observation) {
                 var admitted: CompletedReplyObservation? = null
