@@ -392,13 +392,16 @@ class DeterministicInteractiveStreamE2ETest {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             // Conversation-created rows intentionally omit physical session IDs. Use the binding
             // admitted by the thread's existing correlated settings read before cutting the link.
-            val session = runBlocking {
-                withTimeout(THREAD_TIMEOUT_MS) {
-                    repo.observeConversations(ConversationFilter.All)
-                        .first { rows -> rows.any { it.id == conversation.id && it.currentSessionId.isNotBlank() } }
-                        .single { it.id == conversation.id }.currentSessionId
+            val session =
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        repo
+                            .observeConversations(ConversationFilter.All)
+                            .first { rows -> rows.any { it.id == conversation.id && it.currentSessionId.isNotBlank() } }
+                            .single { it.id == conversation.id }
+                            .currentSessionId
+                    }
                 }
-            }
             val before = runBlocking { harnessThreadEvidence(repo).observe(conversation.id).first() }
             val observation = OwnedReplyObservation(serverId, before, legacyProducer = true, knownSession = session)
             peer.replyObservation = observation
