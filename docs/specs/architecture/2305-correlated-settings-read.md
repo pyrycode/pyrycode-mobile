@@ -28,11 +28,13 @@ The helper owns its collection jobs within `coroutineScope` and the existing thr
 | Earlier minimal/held/cleared/unrelated settings | `earlierSnapshotsCannotCompleteCurrentRead` |
 | Reply during send | `immediateReplyIsRetained` |
 | Fresh reply equals current value | `equalValuedReplyCompletes` |
-| Connection/repository/host replacement | `replacementCannotReturnRetiredReply` |
+| Connection/repository/host replacement | `replacementCannotReturnRetiredReply`, `legacyRereadAfterOwnerReplacementFailsExplicitly` |
 | Session replacement, including reused identity | `sessionReplacementAbandonsRead` |
 | Correlated omitted applied field | `missingAppliedFieldIsReturned` |
 | Legacy subscription and refused send | `legacySubscriptionCorrelatesItsRead`, `refusedSendFailsExplicitly` |
 | Cancellation followed by another read, and pump termination | `cancelledReadCannotSupplyTheNextCallsReply`, `closedPumpFailsTheOutstandingRead` |
+| Legacy envelope names another conversation/session or explicitly clears | `legacyWrongConversationCannotCompleteTheRead`, `legacyConflictingSessionCannotCompleteTheRead`, `legacyExplicitNoSessionCannotDescribeANamedSession`, `legacyExplicitClearCannotCompleteTheRead` |
+| Same-owner revision invalidates an outstanding or just-delivered read | `legacySameOwnerRefreshReplacesThePendingReceipt`, `legacyRefreshAfterDeliveryDoesNotFailTheHelper` |
 
 ## Error handling
 Refused sends, pump end, ownership replacement and missing current-session evidence fail explicitly with static messages. Deadline expiry remains bounded by the existing timeout. Missing `effective_effort` is returned unchanged for `appliedEffortFooter` to reject, never filtered or replaced with saved effort.
@@ -46,7 +48,17 @@ None. Independent product/prerequisite failures remain failed or blocked evidenc
 ## Revisions
 2026-10-19: Keep writes and restoration on the repository that supplied the fresh session, using `withFreshSettings`; acquiring another repository after a read could pair a retired session with a replacement connection. Authoritative admission is cross-checked synchronously in the inbound turn, after repository processing and before another frame can overwrite the reading. Legacy list rows deliberately contain placeholder session IDs, so legacy correlation uses the repository's cold request waiter and abandons a read on a matching `session_transition`, rather than deriving ownership from a list placeholder.
 
+2026-10-19, verifier rework: Findings 1 and 2 repair the same current-owner read invariant. Legacy metadata may be omitted, but present envelope conversation identity must match the request, present session provenance must agree with the decoded settings session, and an explicit clear cannot complete a read. A correlated conflicting legacy reply fails explicitly because the production waiter has already consumed it; production admission is unchanged. Replace the single request latch with per-request receipts: a revision-driven read on the same pump retires the previous receipt and restarts the bounded wait, including its repository-observation cross-check. A changed pump, repository/host ownership or session transition still abandons the helper. Preserve immediate replies and equal-valued replies. Regressions plus the named recorded operator-bypass method prove the repair; rerun the two ticket-required live methods only. No recordings or production files change. Added work remains below 1600 total written lines, with no new exported type or caller migration. No in-flight branch overlaps the two helper files.
+
+## Documentation handoff
+- Pending for documentation stage: `docs/e2e-interactive-stream.md`, settings helper/live verification guidance: document request correlation, route-specific subscription/refresh, ownership rejection and same-owner reread lifecycle; retain exact Linux counts/identities and the distinction from #2245 activation.
+- Pending for documentation stage: `docs/knowledge/features/remote-conversation-repository-session-settings-read.md`, settings-read section: describe the native test helper contract without changing production admission or substituting saved effort for applied effort. Preserve the six unexecuted live callers recorded in PR #2310.
+
 ## Validation evidence
+2026-10-19, Linux verifier rework: the preserved helper at `dc6ac402c9ff1cab86df570d81840ae2a860485d` with the seven new regressions executed 20 tests: 13 passed, 7 failed, zero errors/skips. Four failures demonstrate acceptance of conflicting/cleared legacy replies; three demonstrate the superseded-request lifecycle failure. Raw XML and exact helper/test sources with hashes are retained at `/work/Projects/pyrycode-mobile-agents/logs/evidence/2305/20261019-rework-linux/controlled-red/`. The preceding test-setup compilation failure executed zero tests and is not a pass.
+
+The repaired helper's focused `SettingsReadProbeTest` run executed 20 tests, all passed with zero failures/errors/skips, including a repeat after keeping ownership/termination observation continuously registered during receipt replacement. `spotlessApply`, lint (zero errors), debug APK assembly and native Kotlin compilation passed. Final raw controlled XML and lint XML with hashes are retained in the sibling `controlled-green/` directory.
+
 2026-10-19, Linux x86_64, main-based Mobile `8f6b92586a412dd39b77c65098b44140c0cf2813`:
 - `python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.e2e.SettingsReadProbeTest' --console=plain`: exit 0; 13 executed, 13 passed, zero failures/errors/skips. The preserved old-helper run executed two regressions and failed both on accepting an earlier snapshot.
 - `PYRY_GATE_EVIDENCE_DIR=/work/Projects/pyrycode-mobile-agents/logs/evidence/2305/20261019-resume-linux timeout 1800 python3 scripts/android-test-gate.py live --tests 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive'`: exit 0; two executed, two passed, zero failures/errors/skips. Raw XML names both methods; inherited-effort took 7.303 seconds and reconnect-footer 44.302 seconds.

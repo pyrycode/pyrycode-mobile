@@ -21,6 +21,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -197,6 +198,78 @@ class SettingsReadProbeTest {
             val reply = fixture.reply(fixture.request().id, "high")
             fixture.deliver(reply.copy(conversationId = null, sessionProvenance = SessionProvenance()))
             assertEquals(EffectiveEffort.Applied("high"), result.await().effectiveEffort)
+        }
+
+    @Test fun legacyWrongConversationCannotCompleteTheRead() =
+        runTest {
+            assertLegacyConflict { it.copy(conversationId = JsonPrimitive("other")) }
+        }
+
+    @Test fun legacyConflictingSessionCannotCompleteTheRead() =
+        runTest {
+            assertLegacyConflict { it.copy(sessionProvenance = SessionProvenance(JsonPrimitive("other"))) }
+        }
+
+    @Test fun legacyExplicitNoSessionCannotDescribeANamedSession() =
+        runTest {
+            assertLegacyConflict { it.copy(sessionProvenance = SessionProvenance(JsonNull)) }
+        }
+
+    @Test fun legacyExplicitClearCannotCompleteTheRead() =
+        runTest {
+            assertLegacyConflict { it.copy(sessionStateCleared = JsonPrimitive(true)) }
+        }
+
+    private suspend fun TestScope.assertLegacyConflict(conflict: (Envelope) -> Envelope) {
+        val fixture = Fixture(this, authoritative = false)
+        val result = async { runCatching { fixture.read() } }
+        runCurrent()
+        fixture.deliver(conflict(fixture.reply(fixture.request().id, "high")))
+        runCurrent()
+        assertTrue("a conflicting correlated reply fails explicitly", result.await().isFailure)
+    }
+
+    @Test fun legacySameOwnerRefreshReplacesThePendingReceipt() =
+        runTest {
+            val fixture = Fixture(this, authoritative = false)
+            val result = async { fixture.read() }
+            runCurrent()
+            val retired = fixture.request()
+            fixture.repo.refreshSessionSettings("c")
+            runCurrent()
+            val current = fixture.request()
+            assertTrue("revision invalidation sends a new read", current.id != retired.id)
+            fixture.deliver(fixture.reply(retired.id, "high"))
+            runCurrent()
+            assertFalse("a cancelled request cannot satisfy the reread", result.isCompleted)
+            fixture.deliver(fixture.reply(current.id, "high"))
+            assertEquals(EffectiveEffort.Applied("high"), result.await().effectiveEffort)
+        }
+
+    @Test fun legacyRefreshAfterDeliveryDoesNotFailTheHelper() =
+        runTest {
+            val fixture = Fixture(this, authoritative = false)
+            val result = async { fixture.read() }
+            runCurrent()
+            val previous = fixture.request()
+            fixture.deliver(fixture.reply(previous.id, "high"))
+            fixture.repo.refreshSessionSettings("c")
+            runCurrent()
+            val current = fixture.request()
+            if (!result.isCompleted) fixture.deliver(fixture.reply(current.id, "high"))
+            assertEquals(EffectiveEffort.Applied("high"), result.await().effectiveEffort)
+        }
+
+    @Test fun legacyRereadAfterOwnerReplacementFailsExplicitly() =
+        runTest {
+            val fixture = Fixture(this, authoritative = false)
+            val result = async { runCatching { fixture.read() } }
+            runCurrent()
+            fixture.current = false
+            fixture.repo.refreshSessionSettings("c")
+            runCurrent()
+            fixture.deliver(fixture.reply(fixture.request().id, "high"))
+            assertEquals("settings read owner changed", result.await().exceptionOrNull()?.message)
         }
 
     @Test fun refusedSendFailsExplicitly() =
