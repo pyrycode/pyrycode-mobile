@@ -64,6 +64,17 @@ notes. With the default `null`, including inside the reader, workspace paths sta
 
 Parse memoisation, block and inline dispatch, tables, task lists, strikethrough, code blocks, the link-safety allowlist, markdown-path links and the file-private spacing constants moved to [MarkdownText — how it works](markdown-text-internals.md) under the docs guard's size cap (#1533).
 
+Since #2270, an explicitly completed inline code span becomes tappable when its
+whole trimmed content is one nonempty, whitespace-free target admitted by the
+shared external-link check: http, https, mailto or an allowed Obsidian open link.
+The display keeps edge whitespace, monospace font and code background, adding the
+authored-link colour and underline. One annotation covers the entire displayed
+code content and opens the exact trimmed target, including its case and escapes,
+through the existing routing and failure handling. Workspace paths inside code,
+ordinary code, mixed text, refused targets, bare prose URLs and fenced blocks keep
+their existing behavior. See [inline dispatch](markdown-text-internals.md#inline-dispatch)
+for the admission boundary.
+
 ## Configuration
 
 - **Library dependencies:** `implementation(libs.jetbrains.markdown)` (parser; catalog pin `jetbrainsMarkdown = "0.7.3"`) and `implementation(libs.snipme.highlights)` (code-block tokeniser since #130; catalog pin `snipmeHighlights = "1.1.0"`) in `app/build.gradle.kts`. No KSP, no kapt, no proguard rules for either.
@@ -83,12 +94,31 @@ Parse memoisation, block and inline dispatch, tables, task lists, strikethrough,
 - **Definitions are the exception.** The 0.7.3 definition matcher reads a label across lines, blank ones included, for up to 999 characters, and a title up to the next blank line. A block with a line opening `[` after indentation, `>` or a list marker stays mutable, with every block after it, while that label is open, or once closed as `]:` until a complete blank line follows the `]:`. The blank line must follow the `]:` and not the block, because the label itself can cross blank lines; the seeded fuzz found that case.
 - **A table cannot interrupt a paragraph in 0.7.3.** Pipe lines after a paragraph, list item or quote stay in that block, so desktop's two-line rule (pyrycode-desktop#1751) is not needed here. `StreamingMarkdownTest` replays all three cases.
 - **Pending inline constructs show their text plain.** For the trailing paragraph, heading or table cell while it can still grow, `probeInline` appends closers for the openers the parse left unpaired, innermost first, and re-runs the parser's own `parseInline` until nothing new pairs, at most `MAX_PROBE_PARSES` (12) extra parses. What a synthetic closer completes renders without its punctuation, style or link, and the synthetic characters never render, so nothing unfinished can be tapped. Code, autolinks and link targets are opaque to the probe. Single tildes use this renderer's own pairing.
+- **URL-only code waits for real completion (#2270).** A synthetic backtick closer
+  leaves it plain and inert. Its real single- or multiple-backtick closer enables
+  the same eligibility rule as settled rendering. Caret blinks stay outside its
+  annotation; freezing the block and settling the reply preserve its link and styles.
 - **Pending table header.** A trailing paragraph whose first line has an unescaped pipe, followed by nothing or a partial delimiter row, is probed with a delimiter row sized by `GitHubTableMarkerBlock.splitByPipes`. If that parses as a table, its header cells show as plain text with spaces between them. `| A | B |` over a growing `---` reads as a setext heading until the row gains its pipes, so it is probed the same way. The probe row is never drawn.
 - **Caret.** Appended to the trailing leaf's built text, never to the parsed source, so it cannot become code content or part of a link target. It is drawn only while the blink is on, as before #1766, so a blink-off frame shows exactly the arrived text. When the reply ends in something else, such as an open fence, it takes its own line and blinks by alpha.
 - **Settlement.** For complete markdown the probe pairs nothing, so `MarkdownText` draws the same text, spans, link targets and line breaks at the same width, apart from the caret. One ambiguity is inherent and pinned by a test: a final `see ~/path` looks like an open strikethrough while streaming, so it shows `see /path` until the reply ends.
 - **Test seam.** An optional `StreamingMarkdownObserver` parameter reports each parsed tail and each composed block. Production passes none.
 
 ## Testing
+
+`MarkdownTextTest` checks URL-only code admission/rejection, the exact target and
+full displayed annotation range including edge spaces, retained code styles and
+authored-link colour/underline, workspace-path exclusion and unchanged fences.
+`MarkdownLinkTapTest.finishedCodeSpanUrls_useAuthoredLinkRouting` and
+`streamingCodeSpanUrls_useAuthoredLinkRouting` cover repeated activation and
+Obsidian failure notices. Native-graphics
+`StreamingMarkdownTextTest.codeSpanUrl_waitsForItsRealCloser_andSettlesUnchanged`
+checks single/multiple backticks, synthetic-to-real completion, caret exclusion,
+frozen-block reuse and settlement. The unchanged
+`a_bare_url_renders_as_text_and_is_not_a_link` remains the bare-prose regression.
+All four named methods are present and passed in retained full-gate XML and in
+the fresh focused Linux reports at `2dca08a77de10a46ac078b1000ad87d2df0978ee`.
+See [accepted #2270 counts and evidence](development-verification-gates.md#managed-build-heap-and-linux-acceptance-2270)
+for the cached full-suite result, 124 freshly executed focused checks and device gates.
 
 [Shared reader code coverage and counted Linux evidence](markdown-reader-screen-testing.md#shared-code-panel-coverage-2284)
 cover every code form, original-source bounded copying, stationary copy rails,

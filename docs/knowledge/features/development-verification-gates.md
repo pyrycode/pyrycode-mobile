@@ -201,6 +201,51 @@ client process. Matching client/build JVM options avoid the detached single-use
 worker that --no-daemon alone can create. Kotlin compilation stays in that JVM.
 Build-cache reuse remains enabled.
 
+### Managed build heap and Linux acceptance (#2270)
+
+`gradle.properties` sets `org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8`.
+The managed foreground JDK 21 build takes this 4 GiB heap setting, with Kotlin
+compilation in the same process. Host admission, test-worker limits and required
+checks retain their existing contracts. The retained builder probe confirmed
+4,096 MiB and UTF-8; increasing a test-worker heap would not address pressure in
+this shared lint/compiler JVM.
+
+The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2303#issuecomment-6262970789)
+records Linux acceptance on 2026-10-19 at
+`2dca08a77de10a46ac078b1000ad87d2df0978ee`, run
+`b313906b4707c9d234e3e43d0083b89db541cbad3e2f205879769cf132c841f1`:
+
+| Check | Evidence |
+| --- | --- |
+| Combined `jvm-test-gate.py --with-build-checks` | Verified cached XML: 6,063 passed, 0 failed/errors, 0 skipped; **0 JVM tests newly executed**, `testDebugUnitTest FROM-CACHE`. Lint, formatting, debug assembly and instrumented Kotlin compilation completed successfully. |
+| Fresh focused builder JVM checks at accepted source | 124 executed/passed, 0 failed/errors, 0 skipped. Markdown text 32, taps 21, streaming rendering 13, parsing 28, routing 6, streaming parser 15, Obsidian admission 5 and launch 4. |
+| Android UI | 335 executed/passed, 0 failed/errors, 1 skipped: unrelated `RenameDialogCaptureTest.renameAtFigmaViewport`. |
+| Scripted-all | 22 executed/passed, 0 failed/errors, 0 skipped; zero real Claude turns. |
+| Script unit tests | 183 executed, OK. Pre-verification and docs guard also passed. |
+
+The retained JVM XML includes passing bare-URL, code-span completion and finished/
+streaming activation regressions; [renderer testing](markdown-text.md#testing)
+names them. Cached full-suite acceptance must stay distinct from fresh focused
+execution. No real-Claude/provider or external-app live run was required or
+performed. macOS was outside this Linux ticket's verification scope.
+
+Earlier run `50093862de9d52ee3cff8451ad7cda48ea03b76921fbd19752517deb38d236eb`
+at `84f71f02c28a085a7d0972d66d016030eacfc7ae` remains **failed**:
+`lintAnalyzeDebug` exhausted the 2 GiB Java heap while 6,063 JVM tests passed,
+zero failed/skipped. The narrower original-heap control at
+`6bb7e66dc558b566ae5c5b9115990fef092db30f` confirmed 2,048 MiB/UTF-8 and
+passed fresh lint plus both test Kotlin compilations (38 tasks executed); it did
+not reproduce the coordinated failure. It does not erase that failure or replace
+complete-gate acceptance at 4 GiB.
+
+At documentation time, joined dispatcher XML and build output were retained at
+`$AGENTS_REPO_PATH/logs/verifier-gate_#2270_{4,5,6}.{log,stderr.log}`.
+The fresh focused XML, heap probe, lint reports, control and earlier failed bundle
+were retained under
+`$AGENTS_REPO_PATH/logs/evidence/2270/heap-repair-2dca08a77/`.
+The accepted verdict and uploaded bundle remain addressable by the run ID above;
+these raw-file paths describe where the evidence was retained at the time.
+
 Every JVM unit test has a 180-second limit, Robolectric and `sharedTest` classes included.
 Unit tests run on the JUnit Platform's Vintage engine; `TestTimeoutWatchdog`, registered
 under `app/src/test/resources/META-INF/services`, tracks each execution occurrence and
