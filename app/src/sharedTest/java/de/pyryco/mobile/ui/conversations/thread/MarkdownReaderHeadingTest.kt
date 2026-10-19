@@ -149,7 +149,7 @@ class MarkdownReaderHeadingTest {
         assertEquals("H$level weight", if (level <= 3) FontWeight.Medium else FontWeight.Bold, style.fontWeight)
         assertEquals("H$level colour", color, style.color)
         assertEquals("H$level trim", LineHeightStyle.Trim.None, style.lineHeightStyle?.trim)
-        assertEquals(fontScale, layout.layoutInput.density.fontScale)
+        assertEquals("font scale", fontScale, layout.layoutInput.density.fontScale, 0f)
         assertFalse("H$level visual overflow", layout.hasVisualOverflow)
         if (wrapped) assertTrue("H$level must wrap", layout.lineCount > 1) else assertEquals("H$level single line", 1, layout.lineCount)
         assertEquals(text.length, layout.getLineEnd(layout.lineCount - 1, visibleEnd = true))
