@@ -223,30 +223,47 @@ This closed two visible defects at once, both following from "the copied text mu
 
 ## Link safety — scheme allowlist
 
-`#129` carries the `security-sensitive` label. The mitigation is a predicate at the bottom of `MarkdownText.kt`, `internal` since #1067 so [the reader's Copy as HTML](markdown-reader-screen.md#copy-and-refresh-menu-since-1067) shares this one allowlist rather than keeping a second copy:
+`isSafeLinkScheme` in `MarkdownText.kt` is the shared external-target admission
+check for rendering, HTML hrefs and activation. Mobile's existing `http`, `https`
+and `mailto` admission remains unchanged. Since #2280 it also delegates to
+`isSafeObsidianLink` in `ObsidianLinks.kt`, following Desktop's read-only note rule:
 
-```kotlin
-internal fun isSafeLinkScheme(url: String): Boolean {
-    val scheme = url.substringBefore(':', missingDelimiterValue = "").lowercase()
-    return scheme == "http" || scheme == "https" || scheme == "mailto"
-}
-```
+- The target is exactly `obsidian://open`, optionally followed by `?query`. Only
+  scheme case varies; `open` is lowercase. Leading whitespace, userinfo, ports,
+  paths and fragments (even an empty `#`) are rejected. Compare the lowercased
+  scheme with ASCII `obsidian`: Kotlin's broader `ignoreCase` admits Unicode
+  lookalikes such as dotless i and long s.
+- Split the raw query on literal `&`, and each non-empty pair at its first `=`.
+  Missing `=` means an empty value; empty pairs are ignored. Keys are literal,
+  case-sensitive `vault`, `file`, `path` or `paneType`, never percent-decoded.
+  Every occurrence of a repeated key and every value is checked.
+- Values use strict `decodeURIComponent`-equivalent percent/UTF-8 decoding; a
+  literal `+` stays plus. Malformed escapes and invalid UTF-8 fail admission.
+  Raw `%26` and `%23` anywhere in the query are refused, case-insensitively.
+- Decoded `file`/`path` values cannot contain a colon. For validation only, replace
+  backslashes with slashes and remove trailing slashes. The last segment must
+  have no dot or end in `.md`, ignoring case. Dotted names require `.md`;
+  `x.hta/`, `x.hta\` and `x.hta.` fail. Validation never rewrites the target.
 
-External targets use this predicate at render time and again at activation through
-`routeMarkdownLink`. **Rejected explicit links are inert labels**: no URL annotation,
-link colour or underline is added, and tapping starts nothing. `http`, `https` and
-`mailto` remain admitted, including mixed-case schemes; `obsidian`, `javascript`,
-`data`, `file`, `content` and unknown schemes remain rejected. Admission introduces
-no target normalisation. Workspace Markdown paths have the separate opt-in described
-below.
+Bare open, vault-only links, nested notes and empty values can therefore pass;
+write parameters (`prepend`, `append`), `action`, encoded/unknown keys, other
+Obsidian actions and non-note extensions cannot. `javascript`, `data`, `file`,
+`content` and unknown schemes remain blocked. External rejection also has to hold
+at the independent [workspace fallback](#markdown-path-links-since-1050).
 
-`AllowlistedLinkProvider.renderLink` and `AutolinkProvider` in `MarkdownConversions.kt`
-share `isSafeLinkScheme` for HTML href admission. Rejected explicit targets emit only
-their visible labels; workspace paths receive no HTML href even when an assistant
-renderer would have a workspace callback. HTML retains its existing destination
-normalisation and escaping.
+Admitted explicit links in finished and streaming replies have the existing
+primary colour/underline and exactly one URL annotation carrying the unchanged
+target. Activation rechecks admission through `routeMarkdownLink`. Rejected links
+retain only their visible labels, with no link styling, annotation or action.
+Bare prose URLs and code spans keep their literal behavior.
 
-**Why allowlist, not denylist.** A denylist (`intent://`, `javascript:`, …) is fragile against future scheme additions and against case / whitespace tricks (`InTeNt://`, `\tjavascript:`). The allowlist is enforced at the `lowercase()` scheme prefix, so it rejects anything that doesn't normalise to `http` / `https` / `mailto`. New schemes that turn out safe later (e.g. `tel:` for click-to-dial) are an explicit one-line addition rather than a silent default.
+`AllowlistedLinkProvider.renderLink` and `AutolinkProvider` in
+`MarkdownConversions.kt` share external admission. For Obsidian, inline and
+reference-link destinations are read from the authored AST nodes before the HTML
+library normalizes dots, backslashes or entities. Admission and the escaped href
+use that raw destination; normalization must not turn a rejected target into an
+admitted one. Existing web/mailto normalization and HTML escaping remain in place.
+Rejected explicit links emit only their labels; workspace paths get no HTML href.
 
 **Out of scope** (each is acceptable for Phase 0):
 
@@ -262,10 +279,17 @@ normalisation and escaping.
 
 `onOpenMarkdownPath` lets a workspace-note link in an assistant reply open [the in-app reader](markdown-reader-screen.md) instead of doing nothing, without touching `isSafeLinkScheme` or any block-walker signature — every private block function still takes a plain `UriHandler`.
 
-- `internal fun markdownLinkPath(target: String): String?` — the path to send, or `null` when [target] is not a markdown path. Strips a trailing `#fragment` (from the *last* `#` — `a.md#x#y` keeps `#x` as part of the path and so is not a markdown path; harmless, since the link then just stays inert rather than misrouting), then a trailing `:line` or `:line:column` (digits only, `LinkLineSuffix`), then requires no URL scheme (`LinkScheme`, RFC 3986's `^[A-Za-z][A-Za-z0-9+.-]*:`) and a `.md` / `.markdown` suffix, any case. Stripping the `:line` suffix *before* the scheme check is what keeps `Plan.md:12` from reading as scheme `plan.md`. The stripped path is returned exactly as written — the phone never decodes, resolves or confines it; the daemon's `read_workspace_file` does.
+- `internal fun markdownLinkPath(target: String): String?` — the path to send, or `null` when [target] is not a markdown path. Strips a trailing `#fragment` (from the *last* `#` — `a.md#x#y` keeps `#x` as part of the path and so is not a markdown path; harmless, since the link then just stays inert rather than misrouting), then a trailing `:line` or `:line:column` (digits only, `LinkLineSuffix`), then rejects `://` anywhere and any URL scheme (`LinkScheme`, RFC 3986's `^[A-Za-z][A-Za-z0-9+.-]*:`) detected after validation-only `trimStart()`, and requires a `.md` / `.markdown` suffix, any case. Stripping the `:line` suffix *before* the scheme check is what keeps `Plan.md:12` from reading as scheme `plan.md`. The stripped path is returned exactly as written — the phone never decodes, resolves or confines it; the daemon's `read_workspace_file` does.
 - `internal fun routeMarkdownLink(target, onOpenMarkdownPath, openUri)` — a markdown path with a non-null callback goes to the callback and never to `openUri`; anything else falls through to the existing `isSafeLinkScheme` allowlist.
 - Both `MarkdownText` and `StreamingMarkdownText` use `rememberMarkdownUriHandler` to wrap `LocalUriHandler.current` in a private `MarkdownUriHandler`. Recursive walkers keep their plain `UriHandler` signatures. Its `accepts(target)` admits an external allowlisted scheme or a `markdownLinkPath(target)` only when workspace opt-in is present. Reader/default callers omit that opt-in, so workspace labels have neither link styling nor a URL annotation.
 - The handler is remembered by the platform handler and the boolean `onOpenMarkdownPath != null`. Adding or removing opt-in changes handler identity and rebuilds annotations even for unchanged source and completed streaming blocks. Replacing one non-null callback with another keeps the handler stable, preserving completed-block reuse. Only activation reads the latest callback through `rememberUpdatedState`; `openUri` independently calls `routeMarkdownLink`, so a retained listener cannot invoke a removed or stale callback.
+
+External denial alone is insufficient: whitespace-prefixed `obsidian:open`,
+`obsidian:/open` and authority-shaped targets ending in `.md` must never become
+workspace reads. Strip leading whitespace only to detect a scheme, never to
+rewrite an admitted external target or returned workspace path. Reader callers
+remain without workspace opt-in; admitted Obsidian links use Android opening
+independently of that opt-in.
 
 Consumer wiring: [`MessageBubble`](message-bubble.md)'s `onOpenMarkdownLink` parameter reaches both assistant render paths (finished `MarkdownText` and the streaming `StreamingAssistantBody` / `StreamingAssistantBodyView` chain) but not `UserMessageBubble`, which never receives it. [Thread screen](thread-screen.md) and [Markdown reader screen](markdown-reader-screen.md#linked-note-live-since-1050) cover the ViewModel-side single-read guard and the route the callback ultimately drives.
 
@@ -288,6 +312,30 @@ settlement, reader-body and reader-heading checks and the unchanged
 the two failed reader-heading runs; the earlier
 [`evidence.txt`](../../../app/src/test/resources/markdown-2279/evidence.txt) retains
 the routing, HTML, parser and streaming focused results and their source revisions.
+
+## Obsidian link testing (#2280)
+
+`ObsidianLinkAdmissionTest` ports Desktop's matrix and adds strict invalid UTF-8,
+repeated-value and Unicode-scheme cases. `MarkdownLinkRoutingTest` and finished/
+streaming `MarkdownLinkTapTest` regressions cover whitespace-prefixed opaque,
+single/double/triple-slash targets with workspace opt-in: visible inert labels,
+absent styles/annotations, HTML parity and no callbacks. Legitimate workspace
+paths and exact callback targets remain covered. Repeated physical matrix taps
+advance event timestamps by 1,000ms to avoid entering text-selection gestures;
+these probes use native Robolectric graphics without dropping tap assertions.
+
+The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2295)
+at `27d54809ecd32a05c4b1ab866dfc466f4c2e9c46` records the completed Linux JVM gate:
+6,056 executed/passed, zero failed/skipped. Its 87 affected checks all passed:
+routing 6, taps 18, Markdown text 29, admission 5, launch 4, conversions 12 and
+transient errors 13, with zero failures/errors/skips. Named regressions include
+`malformedNoteUris_neverFallThroughToTheWorkspaceReader`,
+`finishedMalformedUris_stayInertWithWorkspaceOptIn`,
+`streamingMalformedUris_stayInertWithWorkspaceOptIn`,
+`schemeCaseFolding_neverAdmitsUnicodeLookalikes` and the unchanged
+`a_bare_url_renders_as_text_and_is_not_a_link`. See
+[reader native evidence](markdown-reader-screen.md#testing) for Android delivery,
+static failure outcomes and retained raw reports.
 
 ## File-private spacing constants
 

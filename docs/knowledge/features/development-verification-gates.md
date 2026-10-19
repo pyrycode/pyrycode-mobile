@@ -202,14 +202,58 @@ worker that --no-daemon alone can create. Kotlin compilation stays in that JVM.
 Build-cache reuse remains enabled.
 
 Every JVM unit test has a 180-second limit, Robolectric and `sharedTest` classes included.
-Unit tests run on the JUnit Platform's vintage engine, so `TestTimeoutWatchdog`, registered
-under `app/src/test/resources/META-INF/services`, sees each test start and finish. A test past
-the limit prints `TEST TIMEOUT` with the test name and a full thread dump to the Gradle log, and
-its thread is interrupted so the test fails and the run continues. A test still running 30 seconds
-later, one that passes despite the interrupt, or a second timeout in the same run halts the test
-JVM, so the gate fails within minutes instead of hanging (#2161). The slowest ordinary test took
-16 seconds. `-PtestTimeoutSeconds=N` changes the limit and `0` removes it. The Gradle task itself
-stops after 30 minutes, below the dispatcher's 60-minute limit.
+Unit tests run on the JUnit Platform's Vintage engine; `TestTimeoutWatchdog`, registered
+under `app/src/test/resources/META-INF/services`, tracks each execution occurrence and
+its runner thread. Terminal finish/skip callbacks cancel deadlines and release grace
+waiters. Expiry and terminal cleanup share synchronized ownership: even a dequeued
+old timer cannot interrupt a completed test or a later occurrence reusing its unique
+ID. Duplicate starts cannot replace an armed execution; timeout counts belong to
+occurrences rather than reusable IDs (#2280).
+
+A running test past the limit prints `TEST TIMEOUT` with its name and a full thread
+dump to the Gradle log, then interrupts its runner. A recorded FAILED result can
+complete within the unchanged 30-second grace; SUCCESSFUL, ABORTED or skipped after
+interruption still fails the gate. Remaining active after grace or a second timeout
+in the JVM halts it. Container/plan teardown with unfinished children cancels their
+deadlines and fails closed immediately as an execution-protocol error, preserving
+execution identities and the original exception type. Vintage can finish a failed
+runner container without finishing its child: this must not later look like a
+rendering hang while idle SDK executors and a shutting-down worker await a stale
+deadline. The original earlier full-suite initiating exception remains unclassified.
+
+The deliberately unfinished `EscapingFixture` carries the test-only
+`ControlledRunnerFixture` category, whose exact Vintage tag is unconditionally
+excluded in `unitTests.all`, including retention opt-in. Selecting only its parent
+class cannot prove normal discovery is safe: nested custom-runner fixtures can be
+discovered independently. `ordinaryDiscoveryExcludesControlledRunnerFixture` uses
+the actual Gradle `JUnitPlatformOptions.excludeTags` exposed to the test JVM and
+asserts zero fixture discoveries/starts, armed deadlines or termination. The
+unfiltered `vintageRunnerExceptionRetiresItsUnfinishedChild` launcher retains its
+injected termination callback and proves immediate fail-closed cleanup.
+
+Linux focused evidence at `27d54809ecd32a05c4b1ab866dfc466f4c2e9c46` on host
+`7fbbed191d61`: `TestTimeoutWatchdogTest` executed/passed 16 methods with zero
+failures/errors/skips, both normally and with `-PfullRetentionTests=true`. Separate
+red controls for the missing fixture category and missing Gradle exclusion each
+executed 16 methods, with 15 passed, one failed and zero errors/skips. The refused
+prefix selector executed zero tests and is not a pass. Raw XML, configuration
+snapshots and lifecycle traces were retained at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2280/builder-discovery-20261019-27d54809e/discovery-repair/`
+under `green/`, `retention-opt-in/`, `red/` and `config-red/`.
+
+Those focused passes initially left complete gates pending. The
+[accepted same-head verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2295)
+then confirmed all 16 watchdog regressions in the complete Linux JVM/build gate:
+6,056 executed/passed, zero failed/skipped, with no standalone fixture report.
+UI completed with 335 executed/passed, zero failed/errors and one unrelated skipped
+rename capture; scripted-all completed with 22 executed/passed, zero failed/errors/
+skipped. Historical aborted invocations remain failed/incomplete evidence.
+See [native identity and retained evidence](markdown-reader-screen.md#testing).
+
+`-PtestTimeoutSeconds=N` changes the limit and `0` removes it. The Gradle task
+itself stops after 30 minutes, below the dispatcher's 60-minute limit. Neither
+\#2280's lifecycle repair nor fixture isolation raises the 180-second limit or
+30-second grace, or disables application-test watchdog coverage.
 
 For filesystem tests that assert permission preservation, set the fixture's
 starting mode explicitly before exercising the code. `mkdir(mode=0o755)` is

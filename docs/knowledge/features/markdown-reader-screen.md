@@ -84,7 +84,7 @@ and the [palette plan](../../specs/architecture/1162-thread-reader-canvas.md).
 
 Reader failures show as an inert Error pill from frame `696:5101` (#1747): right-aligned with 20dp
 gutters, 28dp below the measured bar through its rule, over the body without moving it. A failed
-Refresh, a failed open in another app and a failed save share one queue with the thread's rules: first in,
+Refresh, a failed open in another app, a failed Obsidian launch and a failed save share one queue with the thread's rules: first in,
 first out, the full accessibility-adjusted Short time each, cancelled when the reader closes.
 “File saved” uses an inert Default pill below errors in the same right-aligned overlay
 column, separated by 12dp (#1851). Its separate composition-owned FIFO gives repeated
@@ -98,6 +98,19 @@ matches notice placement from `696:5101` and Default treatment from `696:5065`;
 `696:5101` itself depicts an Error arm. Copy has no failure notice. The error
 capture is `reader-error.png` in the
 [design-1220 thread index](../../../app/src/androidTest/assets/design-1220/thread/index.md).
+
+Obsidian launch failures reuse that Error pill in both Thread and Reader (#2280).
+`ActivityNotFoundException` produces “Obsidian is not installed”; another launch
+exception produces “Could not open link”. `LocalMarkdownLinkFailure` carries only
+these static `MarkdownLinkNotice` values to the nearest screen's existing
+`TransientErrorNoticeState`. Equal failures remain separate FIFO occurrences with
+the full accessibility-adjusted timeout, including when queued behind attachment
+errors; disposal cancels active and queued notices. The retained URI listener uses
+`rememberUpdatedState` for the current sink. Both screens resolve resource copy
+with `stringResource` during composition and remember sinks by that copy and their
+queue/scope, avoiding stale configuration text and streaming sink churn.
+Exceptions are caught unread: neither their messages nor URL/query content enters
+notices or diagnostics; the launch log contains only static event/outcome codes.
 
 ## Routing a tap to the reader
 
@@ -238,6 +251,16 @@ decided (2026-09-24) that the reader always shows the file as it is on the host 
 attachment path above there is no local second read to reuse — the thread's one read *is* what the reader
 shows.
 
+An admitted explicit `obsidian://open?...` link instead opens Obsidian through
+Android `ACTION_VIEW`, never `readWorkspaceFile` or this note-reader route.
+`openObsidianLink` rechecks the [strict shared admission](markdown-text-internals.md#link-safety--scheme-allowlist)
+and passes the exact target, preserving case, escapes and query. It adds
+`FLAG_ACTIVITY_NEW_TASK` only when the context is not an Activity. Denied targets
+start nothing. No package lookup or production visibility declaration is needed.
+Workspace opt-in still controls only schemeless Markdown paths; whitespace-prefixed
+URI shapes are rejected before that fallback. Inside either reader, workspace
+paths stay inert while admitted external links remain usable.
+
 - `internal suspend fun readLinkedMarkdown(repository, conversationId, path): MarkdownDocument?` — one
   `repository.readWorkspaceFile(conversationId, path)` (#1049). A `Fetched` result whose `content.size` is at
   most `MAX_MARKDOWN_READER_BYTES` is copied to a `ByteArray` and decoded with the same `decodeUtf8Strictly`
@@ -305,6 +328,40 @@ The top bar's overflow menu — copy as markdown/plain text/HTML, Refresh, Open 
 See [reader testing](markdown-reader-screen-testing.md#testing) for coordinate and
 typography checks, fractional-density bounds, retained acceptance evidence and
 reader regression coverage.
+
+`ObsidianLinkLaunchTest` checks Activity/non-Activity flags, exact targets, denied
+no-ops and both failure outcomes with exception message accessors that throw.
+`ThreadTransientErrorTest` activates real links into both visible errors and
+checks queuing/repeated failures; screen disposal remains covered by
+`leavingTheScreen_cancelsActiveAndQueuedErrors`. Renderer and malformed-URI
+regressions are listed in [link testing](markdown-text-internals.md#obsidian-link-testing-2280).
+
+Linux focused native evidence at source
+`27d54809ecd32a05c4b1ab866dfc466f4c2e9c46` executed/passed
+`ObsidianIntentDeliveryTest.actionView_reachesControlledHandler_withUnchangedUri`:
+1 executed/passed, zero failed/errors/skipped. It proves actual `ACTION_VIEW`
+delivery to a controlled test-APK handler with the URI unchanged, without Obsidian
+installation or a Claude turn. The handler is platform-only Java: Kotlin runtime
+classes supplied by the instrumented app are unavailable in the test APK's
+separate activity process. No production manifest change was required.
+
+Host: Linux x86_64 `7fbbed191d61`; device: Android 13/API 33 Google ATD x86_64,
+`pixel2Api33Atd_0`, fingerprint
+`google/sdk_gslim_x86_64/emulator64_x86_64:13/TE1A.220922.033/10836537:userdebug/dev-keys`.
+Managed image identity:
+`3eb41e577fca08bb114bb2c67eb96c68f04b3c4541ea6163ef7f37a2593c5a43`.
+Raw XML, phone logs, source/configuration snapshots and `SHA256SUMS` were retained
+at `/work/Projects/pyrycode-mobile-agents/logs/evidence/2280/builder-discovery-20261019-27d54809e/`,
+with native run `ui-6n1d0a_1` under `discovery-repair/native/`.
+
+The same-head [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2295)
+confirms the required native method also passed in the complete UI gate:
+335 executed/passed, zero failed/errors, one unrelated skipped
+`RenameDialogCaptureTest.renameAtFigmaViewport`. JVM/build completed with 6,056
+executed/passed and zero failed/skipped; scripted-all completed with 22
+executed/passed and zero failed/errors/skipped. These complete results supersede
+the earlier pending-gate handoff without reclassifying historical failed captures.
+macOS is outside this Linux ticket's verification scope.
 
 ## Related
 
