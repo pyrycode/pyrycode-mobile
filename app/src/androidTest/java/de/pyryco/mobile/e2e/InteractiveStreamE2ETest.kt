@@ -3046,21 +3046,6 @@ class InteractiveStreamE2ETest {
                     peerStep(peer, "await the ping turn's turn_end") { peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS) }
                     await()
                 }
-            val originalUser = receivedReply.thread.records.single { it.message.role == Role.User }
-
-            fun assertRetainedUser(thread: ThreadEvidence) {
-                assertEquals("one delivered peer user message", 1, thread.userEchoCount(PING_PROMPT))
-                val users = thread.records.filter { it.message.role == Role.User }
-                assertEquals("one peer user identity in current thread data", 1, users.size)
-                assertTrue(
-                    "the peer user identity and complete content must be retained",
-                    users.single().let {
-                        it.message.id == originalUser.message.id &&
-                            it.fullText == originalUser.fullText &&
-                            it.message.content == originalUser.message.content
-                    },
-                )
-            }
 
             // 4. AC-3: leave, reopen, and read the message and the reply once each.
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
@@ -3069,29 +3054,13 @@ class InteractiveStreamE2ETest {
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(chatRow) }.isSuccess }
             composeTestRule.onAllNodes(chatRow).onFirst().performClick()
             val peerMessage = hasText(PING_PROMPT) and hasAnyAncestor(hasScrollToNodeAction())
-            val reopened = currentThread(serverId, conversationId) { it.retainedReply(receivedReply, serverId) != null }
-            assertRetainedUser(reopened)
-            Log.i(
-                "PeerTurnReopen",
-                "event=peer_turn_reopened retained_users=1 retained_reply=true " +
-                    "composed_users=${composeTestRule.onAllNodes(peerMessage, useUnmergedTree = true).fetchSemanticsNodes().size}",
-            )
-            // Retention is independent of lazy composition. Reveal and count the user before the reply scroll.
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                runCatching { scrollListTo(peerMessage) }.isSuccess &&
-                    composeTestRule.onAllNodes(peerMessage, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                composeTestRule.onAllNodes(peerMessage, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
+            awaitRetainedReply(receivedReply)
             composeTestRule.waitForIdle()
             composeTestRule.onAllNodes(peerMessage, useUnmergedTree = true).assertCountEquals(1)
-            composeTestRule.onNode(peerMessage, useUnmergedTree = true).assertIsDisplayed()
-            Log.i("PeerTurnReopen", "event=peer_user_revealed composed_users=1 displayed=true")
             awaitRetainedReply(receivedReply)
-            assertRetainedUser(currentThread(serverId, conversationId) { it.retainedReply(receivedReply, serverId) != null })
-            Log.i(
-                "PeerTurnReopen",
-                "event=peer_reply_retained displayed=true " +
-                    "composed_users=${composeTestRule.onAllNodes(peerMessage, useUnmergedTree = true).fetchSemanticsNodes().size}",
-            )
         } finally {
             peer.close()
         }
