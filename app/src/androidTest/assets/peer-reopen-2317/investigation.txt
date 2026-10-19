@@ -1,0 +1,27 @@
+Ticket: pyrycode/pyrycode-mobile#2317
+OS: Linux (build-hp-1); no other OS requested or tested.
+Method: de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_peerStartedTurn_continuesOnPhone
+Command for both fresh runs: python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_peerStartedTurn_continuesOnPhone
+
+Baseline: plan-only revision 1b368c9f8, test/product source d20e92cd4b5b58ef0ce6df1f87ca8b2c297b7699.
+Artifacts: build/dispatcher-tests/ui-era9kcfe (copied to persistent baseline directory below).
+Exit 1; executed 1, passed 0, failed 1, errors 0, skipped 0; testcase 33.469 seconds.
+Initial completed_reply_displayed is logged before leaving the thread.
+Primary failure: original 30000 ms reopened peer-message wait.
+Suppressed failure: unexpected backfill_since at replay request step 27, from the reopened screen's StableConversationRepository subscription.
+
+Diagnostic candidate: 2f36172fa47944defb6344127d47f784aad26705.
+Artifacts: build/dispatcher-tests/ui-ltlageds (copied to persistent cold-read-experiment directory below).
+Exit 1; executed 1, passed 0, failed 1, errors 0, skipped 0; testcase 3.608 seconds.
+Failure: unexpected backfill_since at replay request step 22, from the added currentThread read.
+The candidate compiled and spotlessApply passed, but its device test failed. The implementation was subsequently reverted.
+
+Cause: observeThreadSnapshot sends backfill_since before emitting the thread projection. withOwnedReply adds a cold subscription before the peer sends. Extra observation consumes the fixture's later reopen backfill, leaving the reopened UI subscription rejected by strict replay. currentThread and awaitRetainedReply also collect cold observeMessages flows; they are not passive reads. This prevents the proposed scroll-only repair from establishing a pass. Offscreen content is not proved.
+The fixture contains two initial backfill requests with refusals and one reopen request with no correlated reply. SuitePolledReads correctly refuses to normalize the entire group as unsupported polling. No replay contract or fixture was changed.
+Fixture SHA-256: 23f2ebe9a48adc1ca95fb9d1859e8182318ffd857b438b3038f32f165848b7e3
+
+Persistent private evidence: /work/Projects/pyrycode-mobile-agents/logs/evidence/2317/builder-20261019-peer-turn/
+Subdirectories inherited/, baseline/, cold-read-experiment/ each contain source.json and SHA256SUMS. Fresh runs retain raw XML, dispatcher count XML, phone logcat, managed-image metadata and phase records, copied with owner-only permissions and byte-verified hashes.
+Inherited evidence bundle: d741c47f89628f0342b37c4422a080d21b93eb85782d0b2711d9358128bc81d4, build-fractal-2, from #1573. Its baseline XML reports one executed, one failed, zero skips on d20e92cd4b5b.
+
+Outcome: needs refinement of the existing single deliverable to permit source-owned passive reply/thread observation without additional cold requests, with wrong-owner and no-extra-request regressions. Current ticket explicitly excludes reply-observation contract changes. No completed repair, passing method, full gate, lint pass, final pre-verify pass or PR is claimed.
