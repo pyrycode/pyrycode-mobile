@@ -1,0 +1,27 @@
+# Manual reply observation validation (#2311–#2315)
+
+Implementation is test-only. Production source, capture prompts, and recorded fixtures are unchanged. All five workflow items remain Halted with `needs-human:operator-hold` to prevent concurrent dispatcher work. No full suite was run.
+
+## Controlled checks
+
+The four selected regression classes executed 60 tests: OwnedReplyObservationTest 26, PingReplyTest 12, MarkdownReplyRequirementsTest 2, SettingsReadProbeTest 20. All passed; no errors or skips. The initial 60-test run used `4f8db1716` plus formatter output. A second 60-test pass on `bdf56788d` covers the final shared observation and diagnostic code. Later changes only affect the deterministic durable-gap fixture and formatting, not these controlled classes or their implementation.
+
+Both legacy and authoritative evidence routes are covered by controlled tests. Native and recorded runs use the existing legacy repository route (`useRelayRepository=true`, Android API 33, pixel2Api33Atd); activation of the authoritative product route remains outside this work.
+
+## Existing recordings
+
+Eleven distinct methods passed: basic reply, inherited effort, new session, channel edit/reset, peer queue, offline read, Stop follow-up, Markdown, status-sheet model, footer context usage, and built-in MCP listing. Six passed in `ui-_9j6rdgy`; reset and Markdown passed after repairs in `ui-ohz03zjx`; the last three passed in `ui-tcuru8yw`. Counts: initial 8 executed / 6 passed / 2 failed; repaired 2 / 2 / 0; additional 3 / 3 / 0. No skips. The initial receipts predate the optional-terminal-reason compatibility repair. A later run of all eight ticket-required recorded methods passed 8 / 8 / 0 / 0 on `bb886541c` plus its retained formatter output, matching commit `02d7b4dbb`; later deterministic-only changes do not affect recorded methods or the shared boundary.
+
+Original failures are preserved: adding a send checkpoint broke strict reset replay (fixed by retaining the original UI action), and row-wise table text was incompatible with column-wise semantics traversal (fixed by checking the actual individual cell text). The table regression has a separate 1 executed / 1 failed red receipt on `edd423470` and 12 executed / 12 passed green screen-class receipt after `a5fac7747`.
+
+## Scripted and live checks
+
+The eight required native live methods all passed on `fc510bd0e`: 8 executed / 8 passed / 0 failed / 0 skipped, with Claude 2.1.280 over the production TLS relay. Their exact XML and APK identities are retained in `runtime-fc510.json`. Scripted reply-suggestion and mid-turn reconnect each passed 1 executed / 1 passed / 0 failed / 0 skipped. The subsequent deterministic-only change obtains the physical session with `SettingsReadProbe.read` before cutting the link; conversation-created summaries intentionally omit it and this host-post-only fixture has no automatic settings subscriber. This explicit read is confined to the scripted fixture. It changes none of the eight live consumers or shared observation code. The final scripted ping/durable-gap run (`scripted-wiwh0wtq`) passed 2 executed / 2 passed / 0 failed / 0 skipped. Its formatted source exactly matches committed candidate `9140d7d0b`, confirmed by SHA-256 for every changed source file; APK and runtime identities are retained in `runtime-final.json`. The original scripted ping run (`scripted-e5i5scd2`) executed 2 / passed 0 / failed 2, with no skips. Its first failure rejected an otherwise successful producer terminal with optional `terminal_reason` empty. The following seeded test ran after that abort without the intended reconnect and timed out. A diagnostic rerun reproduced the first-stage state: accepted send, current connection, delivered echo, fresh turn, one ordered text delta, stop_reason=end_turn, outcome=success, is_error=false, terminal_reason empty. The repair permits absent/empty optional reason alongside mandatory success fields; it still rejects explicit failure reasons and malformed reason types on both routes.
+
+The passive-session fixture variant subsequently timed out before sending because the host-post-only fixture has no settings subscriber. An interim run supplied the empty create-conversation summary session and passed, but that is not accepted as physical-session proof. The final fixture instead uses the existing correlated settings-read boundary explicitly. One replay command used the live class selector and was rejected before execution; its zero executed tests are not counted. The corrected `RecordedMobileSuiteTest` selection executed all eight methods successfully.
+
+## Retention
+
+`*.xml.gz` files are unmodified raw JUnit reports compressed with a deterministic gzip timestamp. Device-level and dispatcher XML describe the same execution; do not add their counts together. The initial controlled reports and later controlled reports overlap as well.
+
+Raw logs and per-method logcat remain under `/work/Projects/.manual-reply-assertions-2311-2315/build/{manual-validation,dispatcher-tests}` in container `pyrycode-mobile-dispatcher` on build-hp-1. An additional raw archive is retained privately in this Codex task's `work/validation-evidence`; pairing output is excluded from that archive. Receipt hashes and runtime identities are recorded in the manifest alongside this report. Intermediate recording runs retain their revisions and raw reports; per-run APK hashes were not captured for those intermediate runs. This report does not claim a dispatcher verifier PASS or full configured-suite acceptance.
