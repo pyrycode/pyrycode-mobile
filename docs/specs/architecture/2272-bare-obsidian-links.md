@@ -93,3 +93,7 @@ The renderer overlays admitted source ranges while walking siblings, rather than
 The rejection regression exposed an active Obsidian substring inside `https://example.com/(obsidian://open?file=Note)`. An opening parenthesis within an existing GFM web-autolink token is not a prose candidate start. Reject starts inside `GFM_AUTOLINK`, while still allowing an Obsidian candidate to span other tokens. The same native regression covers the `www` form; its initial failed report is retained as `app/src/test/resources/markdown-2272/embedded-web-red.xml`. This closes a boundary of the existing bare-web exclusion without changing admission.
 
 The equivalent angle-bracket probe exposed the same problem in `AUTOLINK` labels. That authored construct now appends its unchanged literal source without bare recognition; `angle-web-red.xml` retains the failing proof. Run the rejection matrix in finished and streaming renderers. This is the same container-exclusion invariant, not another behaviour.
+
+### 2026-10-19 — parser probe bounds
+
+The new parser test incorrectly assumed the union of URL-intersecting tokens equals the URL: TEXT tokens can also contain the surrounding prose. Preserve the multi-token assertion and require extraction within the real paragraph/list/cell leaf to return exactly the URL range, while allowing surrounding characters in the tokens. The production overlay already handles those partial leaves; its 30 Markdown text and 23 routing screen cases passed. `parser-boundary-red.xml` retains this test-assumption failure.

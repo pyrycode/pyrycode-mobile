@@ -42,7 +42,11 @@ class MarkdownTextParsingTest {
             val leaf = root.descendants().last { it.type == MarkdownElementTypes.PARAGRAPH || it.type == GFMTokenTypes.CELL }
             val parts = leaf.children.filter { it.endOffset > source.indexOf(url) && it.startOffset < source.indexOf(url) + url.length }
             assertTrue("candidate is split into tokens", parts.size > 1)
-            assertEquals(url, source.substring(parts.first().startOffset, parts.last().endOffset))
+            assertTrue(source.substring(parts.first().startOffset, parts.last().endOffset).contains(url))
+            assertEquals(
+                listOf(source.indexOf(url) until source.indexOf(url) + url.length),
+                bareObsidianRanges(source, leaf.startOffset until leaf.endOffset),
+            )
         }
     }
 
