@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.McpStatus
@@ -82,6 +83,10 @@ sealed interface ThreadEvent {
     data object ChannelInfo : ThreadEvent
 
     data object ChannelInfoDismiss : ThreadEvent
+
+    data object ContextOpen : ThreadEvent
+
+    data object ContextDismiss : ThreadEvent
 
     /** A channel's menu Edit (#1561): opens Edit channel on this conversation. A discussion keeps [Rename]. */
     data object EditChannel : ThreadEvent
@@ -241,6 +246,7 @@ data class ThreadUiState(
     // which gates that modal's OK and Archive as the list gates them on its host's connection.
     val channelEditor: ChannelEditorState? = null,
     val hostAvailable: Boolean = true,
+    val contextSheetOpen: Boolean = false,
 )
 
 /**
@@ -383,6 +389,10 @@ data class ThreadRunConfig(
     val confirmedSwitchChoice: ThreadModelChoice? = null,
     /** Bounded confirmed display independent of radio identity; supplies no settings authority. */
     val confirmedModelLabel: String? = null,
+    /** The held breakdown and exact scalar source selected alongside [contextPercent]. Display only. */
+    val contextUsage: ContextUsage? = null,
+    val contextUsedTokens: Long? = null,
+    val contextMaxTokens: Long? = null,
 ) {
     private val ownChoices get() = choices.filter { it.agent == agent }
     private val ownOverflowChoices get() = overflowChoices.filter { it.agent == agent }

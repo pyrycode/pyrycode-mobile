@@ -15,6 +15,9 @@
 - `app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryContextUsageTest.kt`: existing routing and malformed-frame fixtures.
 - `app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelContextUsageTest.kt`: reading priority and live replacements.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadComposerFooterWidthTest.kt`, `ContextUsageCircleTest.kt`, `ThreadComposerFooterTest.kt`: pointer routing, circle pixels and semantics.
+- `app/src/androidTest/java/de/pyryco/mobile/design/ThreadDesignCaptureTest.kt`: `assertFooterAboveKeyboard` preserves the ring's geometry and real IME coverage through its separate visual tag.
+- `app/src/test/java/de/pyryco/mobile/data/repository/HostReadingFrames.kt`: `assertHeld` includes the newly retained model in existing reconnect assertions.
+- `app/src/test/java/de/pyryco/mobile/data/repository/AuthoritativeSessionLiveTest.kt`, `ThreadReadClaimsTest.kt`, `ScriptedPingReadEvidenceTest.kt` and `app/src/test/java/de/pyryco/mobile/e2e/ScriptedReplyReadCheckpointTest.kt`: complete context wire fixtures retain their original live-state and checkpoint assertions.
 - `docs/knowledge/features/thread-composer-footer-context-usage.md`: remembered scalars and single computed percent; settings must not be subscribed twice.
 - `docs/knowledge/features/thread-screen.md`, `mobile-modal.md`, `development-verification-gates.md`: modal obstruction and shared native-test conventions.
 - Core `docs/protocol-mobile.md`, sections `context_usage` and Security model: wire source of truth; remembered empty lists are not fresh reports.
@@ -38,7 +41,7 @@ Extend `ContextUsage` with defaulted model, ordered category records and a Long 
 
 `runConfigFlow` carries the held reading plus the exact used/window pair selected alongside `contextPercent`; it does not add a settings subscriber. Claude requires a held context reading for its header. Codex shows the selected pair only when it has a usable maximum, with no model or categories. Remembered readings show only a scalar header; `asOf` suppresses categories even if a producer supplies some. A fresh empty list with no dropped entries hides Categories; a positive dropped count is displayed independently.
 
-Add Context open/dismiss events and a ViewModel-owned visibility flow projected into `ThreadUiState`. `ThreadScreen` dispatches from the footer and mounts the stateless `ContextSummarySheet(state, onEvent)` while open. Visibility blocks read-sight qualification. The footer reserves a real 48 dp circle action slot without overlapping Actions; the inner 15 dp ring, track, stroke, thresholds and semantics remain intact.
+Add Context open/dismiss events and a ViewModel-owned visibility flow projected into `ThreadUiState`. `ThreadScreen` dispatches from the footer and mounts the stateless `ContextSummarySheet(state, onEvent)` while open. Visibility blocks read-sight qualification. The footer measures a 48 dp-wide circle action target, using the leading blank space and visual gap so it ends exactly where Actions starts. Existing minimum touch expansion supplies 48 dp height; the inner 15 dp ring, track, stroke, thresholds and visual positions remain intact.
 
 Token formatting matches desktop's one decimal thousands with `.0` removed. Category progress uses Double division before scaling, clamps to 0..1 and uses zero for a nonpositive maximum. Counts never size allocations. The existing modal scrolls the content and pins dismissal chrome.
 
@@ -55,7 +58,7 @@ Visibility is transient per destination ViewModel, not persisted. All changes us
 | Remembered reading, then fresh reading | Scalar-only remembered header; fresh categories return; `rememberedReadingHidesCategories` |
 | Session clear, then same conversation reading | Repository clears then refills; existing transition tests plus `contextSheetVisibilityAndReadingStayLive` |
 | Other conversation or reconnect | Existing repository isolation/reconnect tests remain; no new routing identity |
-| Configuration change/recollection | ViewModel owns visibility; `contextSheetVisibilityAndReadingStayLive` recollects current state |
+| Configuration change/recollection | ViewModel owns visibility; `contextSheetSurvivesRecollectionAndUsesLatestReading` recollects current state |
 | Destination disposal/process restore | New ViewModel starts closed; default-state assertion in visibility test |
 | Codex source becomes usable/unusable | `codexUsesEligibleScalarSource`, shared `codexShowsOnlyTotalsOrPending` |
 
@@ -67,7 +70,7 @@ Malformed frames preserve the held reading and cannot certify history read evide
 
 Write failing repository contract tests first, then implement decoder/model; write failing sheet and ViewModel tests before wiring. Keep raw Linux XML and HTML reports outside the tree under `/tmp/builder-2321/` before later runs overwrite them. Record executed, failed and skipped counts in the PR.
 
-Focused tests cover strict category fields, missing/null lists and dropped counts, empty/unknown keys, remembered readings, equality, inert bounded text and history evidence. ViewModel tests cover visibility, source priority, updates and clears. Shared AndroidJUnit4 native Compose tests cover the actual ThreadScreen footer opener, physical touch bounds/routing, all three dismissal routes, pending/loaded/updating/remembered/Codex states, overflow scrolling, long names and clamped 4 dp bars. Retain existing circle pixels and footer interaction coverage. No device-only tests or live turns are needed for this UI/decode change. Run lint, APK assembly, shared-test instrumented compilation, formatting and final pre-verify; complete suites stay dispatcher-owned.
+Focused tests cover strict category fields, missing/null lists and dropped counts, empty/unknown keys, remembered readings, equality, inert bounded text and history evidence. ViewModel tests cover visibility, source priority, updates and clears. Shared AndroidJUnit4 native Compose tests cover the actual ThreadScreen footer opener, physical touch bounds/routing, all three dismissal routes, pending/loaded/updating/remembered/Codex states, overflow scrolling, long names and clamped 4 dp bars. Retain existing circle pixels and footer interaction coverage. No new device-only tests or live turns are needed for this UI/decode change. Run lint, APK assembly, shared-test instrumented compilation, formatting and final pre-verify; complete suites stay dispatcher-owned.
 
 ## Open Questions
 
@@ -78,11 +81,17 @@ None. Source selection follows the footer; remembered breakdowns are always with
 - Pending documentation stage: `app/src/androidTest/assets/design-1220/README.md`, add loaded, waiting and Codex frame links moved from #2224.
 - Pending documentation stage: `docs/knowledge/features/thread-composer-footer-context-usage.md`, describe the tap entry point, totals, fresh categories, remembered and Codex states. Inventory and allowance docs remain with #2322, #2323 and #2226.
 
+## Revisions
+
+- 2026-10-19: retaining the new fields changes structural reading equality. Fourteen existing expected-reading construction sites and four scalar-only wire fixtures need updates, exceeding the simultaneous-consumer forecast. The sizing floor in `builder/handoffs.md` keeps this work together: splitting off decoder plumbing would leave a slice consumed only by this summary UI, verified only by private decoder tests. Preserve all existing routing/read-checkpoint assertions and build the one useful summary behavior. Production constructor callers remain source-compatible through defaults.
+- 2026-10-19: existing footer capture assertions pin both circle origin and the visual Actions gap. Use `FooterTextRow`'s existing measured placement to extend the new target into blank leading space and the gap, retaining all visual positions. Shared pointer-edge tests prove the expanded target and adjacent Actions routing.
+- 2026-10-19: retain the public context tag on the merged action node so existing live/replay selectors still see its computed reading. Give the inner ring a separate static tag; shared pixel/geometry tests and `ThreadDesignCaptureTest` select that ring with all original visual assertions intact. Run the existing `footerAt320By700` device method to retain real IME/footer proof; this is an existing device-only reason, not a new device-only test.
+
 ## Security review
 
 **Verdict:** PASS
 
-- Trust boundaries: MUST FIX addressed in design: strict field presence and primitive kinds in `ContextUsagePayloadDto.toReading`; bounded model/category text rendered only by Compose Text. History evidence shares this boundary.
+- Trust boundaries: handled by strict field presence and primitive kinds in `ContextUsagePayloadDto.toReading`; bounded model/category text renders only through Compose Text. History evidence shares this boundary. No remaining finding.
 - Tokens/secrets: no credential generation, storage or new credential input. Totals and text never enter logs.
 - Files/storage: no persistence or file access introduced; model/category text never becomes a path or cache key.
 - Android attack surface: no manifest, exported component, intent, deep link or WebView additions. Opener/action labels are client-owned.

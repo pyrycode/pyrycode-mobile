@@ -276,7 +276,7 @@ class ThreadComposerFooterTest {
         assertTrue(composerCommands.isEmpty())
     }
 
-    private fun contextSegment() = composeTestRule.onNode(hasTestTag(CONTEXT_USAGE_TEST_TAG))
+    private fun contextSegment() = composeTestRule.onNode(hasTestTag(CONTEXT_RING_TEST_TAG), useUnmergedTree = true)
 
     // #1660: the footer announces the computed percentage, and the Status sheet
     // one tap away shows the same figure.
@@ -307,7 +307,7 @@ class ThreadComposerFooterTest {
         composeTestRule.onAllNodes(hasText("%", substring = true)).assertCountEquals(0)
     }
 
-    // #946 AC#3: a newer reading replaces the shown one; the segment is a display and opens nothing.
+    // The inner ring remains a display; its larger parent owns the Context action (#2321).
     @Test
     fun contextSegment_showsAReplacedReading_andOpensNoOverlay() {
         setThread(baseConfig.copy(contextPercent = 12))

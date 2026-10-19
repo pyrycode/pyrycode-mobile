@@ -149,7 +149,7 @@ internal object HostReadingFrames {
     ) {
         assertEquals(AnnouncedModel(model, truncated = false), reads.announcedModel(conversationId))
         assertEquals(SessionFacts("2.1.0", "default", null), reads.sessionFacts(conversationId))
-        assertEquals(ContextUsage(50_000, 200_000, 25, null), reads.contextUsage(conversationId))
+        assertEquals(ContextUsage(50_000, 200_000, 25, null, model = "claude-opus-5-5"), reads.contextUsage(conversationId))
         assertEquals("allowed_warning", reads.usageLimit(conversationId)?.status)
         assertEquals(listOf("compact"), reads.slashCommandMenu(conversationId)?.rows?.map { it.name })
     }

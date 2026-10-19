@@ -464,7 +464,7 @@ class ThreadDesignCaptureTest {
         val a = attach.getUnclippedBoundsInRoot()
         val b = tune.getUnclippedBoundsInRoot()
         val actions = rule.onNodeWithText("Actions", useUnmergedTree = true).getUnclippedBoundsInRoot()
-        val context = rule.onNodeWithTag("thread_footer_context_usage", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val context = rule.onNodeWithTag("thread_footer_context_ring", useUnmergedTree = true).getUnclippedBoundsInRoot()
         assertEquals(24f, a.right.value - a.left.value, 0.5f)
         assertEquals(16f, a.bottom.value - a.top.value, 0.5f)
         assertEquals(12f, b.left.value - a.right.value, 0.5f)
@@ -478,7 +478,7 @@ class ThreadDesignCaptureTest {
         assertEquals("Context slot centred in left group", slotTop, context.top.value, 0.5f)
         val density = design.view.resources.displayMetrics.density
         rule
-            .onNodeWithTag("thread_footer_context_usage", useUnmergedTree = true)
+            .onNodeWithTag("thread_footer_context_ring", useUnmergedTree = true)
             .assertContentDescriptionEquals("Context usage warning, 84%")
         if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
             // Hardware drawing can trail semantics; a warning description alone cannot fence a snapshot.

@@ -198,7 +198,7 @@ class ThreadComposerFooterWidthTest {
                 }
             }
         }
-        val circle = composeTestRule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG)
+        val circle = composeTestRule.onNodeWithTag(CONTEXT_RING_TEST_TAG, useUnmergedTree = true)
         circle
             .assertIsDisplayed()
             .assertWidthIsEqualTo(15.dp)

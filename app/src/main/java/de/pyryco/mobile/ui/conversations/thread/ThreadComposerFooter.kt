@@ -274,6 +274,7 @@ fun ThreadComposerFooter(
     touchHeight: Dp = FooterButtonMinHeight,
     contentBottomPadding: Dp = 0.dp,
     connected: Boolean = true,
+    onContextClick: () -> Unit = {},
 ) {
     // #1032: the text controls share one weighted slot, measured after the paperclip and the Status opener,
     // so a footer full of long labels shrinks the labels and never squeezes out the two icons.
@@ -286,7 +287,12 @@ fun ThreadComposerFooter(
         horizontalArrangement = Arrangement.spacedBy(FooterButtonGap),
     ) {
         FooterTextRow(modifier = Modifier.weight(1f).alignBy(FooterFirstRowBottom).padding(start = FooterGroupInset)) {
-            ContextSegment(percent = runConfig.contextPercent, modifier = Modifier.padding(bottom = contentBottomPadding))
+            ContextSegment(
+                percent = runConfig.contextPercent,
+                onClick = onContextClick,
+                touchHeight = touchHeight,
+                contentBottomPadding = contentBottomPadding,
+            )
             FooterButton(
                 label = stringResource(R.string.thread_footer_actions),
                 clickLabel = stringResource(R.string.thread_footer_open_actions),
@@ -356,16 +362,18 @@ private fun FooterTextRow(
 ) {
     Layout(content = content, modifier = modifier) { measurables, constraints ->
         val circle = measurables.first().measure(constraints.copy(minWidth = 0, minHeight = 0))
-        val gap = FooterButtonGap.roundToPx()
+        // The target uses the leading blank space and the visual gap, ending exactly at Actions.
+        // Its ring stays at the original origin; no visible control moves.
+        val leading = ContextTouchLeadingInset.roundToPx()
         val button = measurables.last()
         val natural = button.maxIntrinsicWidth(constraints.maxHeight)
-        val available = (constraints.maxWidth - circle.width - gap).coerceAtLeast(0)
+        val available = (constraints.maxWidth - circle.width + leading).coerceAtLeast(0)
         val cap = footerShrinkCap(listOf(natural), available)
         val actions = button.measure(Constraints(maxWidth = minOf(natural, cap), maxHeight = constraints.maxHeight))
         val height = maxOf(circle.height, actions.height)
         layout(constraints.maxWidth, height, mapOf(FooterFirstRowBottom to height)) {
-            circle.placeRelative(0, (height - circle.height) / 2)
-            actions.placeRelative(circle.width + gap, height - actions.height)
+            circle.placeRelative(-leading, (height - circle.height) / 2)
+            actions.placeRelative(circle.width - leading, height - actions.height)
         }
     }
 }
@@ -403,10 +411,16 @@ internal fun contextUsageStep(percent: Int): ContextUsageStep =
         else -> ContextUsageStep.Normal
     }
 
-/** A dynamic, non-interactive ring; null is unavailable and never announced as zero usage. */
+private val ContextTouchWidth = 48.dp
+private val ContextTouchLeadingInset = ContextTouchWidth - ContextCircleSize - FooterButtonGap
+
+/** The unchanged ring inside its larger action target; null never announces zero usage. */
 @Composable
 private fun ContextSegment(
     percent: Int?,
+    onClick: () -> Unit,
+    touchHeight: Dp,
+    contentBottomPadding: Dp,
     modifier: Modifier = Modifier,
 ) {
     val step = percent?.let(::contextUsageStep)
@@ -424,25 +438,35 @@ private fun ContextSegment(
             ContextUsageStep.High -> MaterialTheme.colorScheme.error
             else -> MaterialTheme.colorScheme.primary
         }
-    Box(modifier = modifier.size(ContextCircleSize, FooterControlHeight), contentAlignment = Alignment.TopStart) {
-        Canvas(
-            modifier = Modifier.size(ContextCircleSize).testTag(CONTEXT_USAGE_TEST_TAG).semantics { contentDescription = description },
-        ) {
-            val stroke = ContextCircleStroke.toPx()
-            val radius = (size.minDimension - stroke) / 2f
-            drawCircle(color = track, radius = radius, style = Stroke(stroke))
-            if (percent == 100) {
-                drawCircle(color = used, radius = radius, style = Stroke(stroke))
-            } else if (percent != null && percent > 0) {
-                drawArc(
-                    color = used,
-                    startAngle = -90f,
-                    sweepAngle = -360f * percent / 100f,
-                    useCenter = false,
-                    topLeft = Offset(stroke / 2f, stroke / 2f),
-                    size = Size(size.width - stroke, size.height - stroke),
-                    style = Stroke(stroke),
-                )
+    Box(
+        modifier =
+            modifier
+                .size(ContextTouchWidth, maxOf(touchHeight, FooterControlHeight + contentBottomPadding))
+                .testTag(CONTEXT_USAGE_TEST_TAG)
+                .clickable(role = Role.Button, onClickLabel = stringResource(R.string.thread_open_context), onClick = onClick)
+                .padding(start = ContextTouchLeadingInset, bottom = contentBottomPadding),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(Modifier.size(ContextCircleSize, FooterControlHeight), contentAlignment = Alignment.TopStart) {
+            Canvas(
+                modifier = Modifier.size(ContextCircleSize).testTag(CONTEXT_RING_TEST_TAG).semantics { contentDescription = description },
+            ) {
+                val stroke = ContextCircleStroke.toPx()
+                val radius = (size.minDimension - stroke) / 2f
+                drawCircle(color = track, radius = radius, style = Stroke(stroke))
+                if (percent == 100) {
+                    drawCircle(color = used, radius = radius, style = Stroke(stroke))
+                } else if (percent != null && percent > 0) {
+                    drawArc(
+                        color = used,
+                        startAngle = -90f,
+                        sweepAngle = -360f * percent / 100f,
+                        useCenter = false,
+                        topLeft = Offset(stroke / 2f, stroke / 2f),
+                        size = Size(size.width - stroke, size.height - stroke),
+                        style = Stroke(stroke),
+                    )
+                }
             }
         }
     }
@@ -450,6 +474,8 @@ private fun ContextSegment(
 
 /** Marks the footer's context-usage segment for the rung-3 scenario (#946). A static tag; never daemon text. */
 const val CONTEXT_USAGE_TEST_TAG = "thread_footer_context_usage"
+
+internal const val CONTEXT_RING_TEST_TAG = "thread_footer_context_ring"
 
 /** Figma's `Input footer button`. A disabled button still shows its value, without the chevron that
  *  promises a menu. [note] explains the value in the state description when no write is pending (#889). */

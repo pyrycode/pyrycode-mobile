@@ -122,7 +122,11 @@ class ScriptedPingReadEvidenceTest {
 
     private fun originalReceipts(): List<HistoryEntry> =
         listOf(
-            entry(12u, "context_usage", """{"conversation_id":"c","total_tokens":1,"max_tokens":10,"percentage":10}"""),
+            entry(
+                12u,
+                "context_usage",
+                """{"conversation_id":"c","model":"","total_tokens":1,"max_tokens":10,"percentage":10,"categories":[],"dropped_categories":0}""",
+            ),
             entry(11u, "turn_state", """{"conversation_id":"c","state":"idle"}"""),
             entry(10u, "turn_end", """{"conversation_id":"c","turn_id":"t","stop_reason":"end_turn"}"""),
             entry(9u, "assistant_delta", """{"conversation_id":"c","turn_id":"t","seq":0,"text":"seen"}"""),

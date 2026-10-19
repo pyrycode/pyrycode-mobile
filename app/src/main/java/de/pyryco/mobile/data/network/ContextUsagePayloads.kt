@@ -1,9 +1,13 @@
 package de.pyryco.mobile.data.network
 
+import de.pyryco.mobile.data.repository.ContextCategory
 import de.pyryco.mobile.data.repository.ContextUsage
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.longOrNull
 
 /**
  * The `context_usage` frame (#945, pyrycode#2370/#2371/#2461): how full a conversation's context window is, in
@@ -11,15 +15,11 @@ import kotlinx.serialization.Serializable
  * [RequestContextUsagePayloadDto], so nothing here reads `in_reply_to`. Decode-only. Always decode through
  * [MobileJson].
  *
- * Wire SSOT: pyrycode `docs/protocol-mobile.md` § `context_usage`. Only the scalars are declared: the four
- * numbers are **strict-required with no Kotlin default**, so a frame missing one fails the decode instead of
- * becoming a zero reading, which the contract says a client cannot tell from an empty context. [asOf] is the
- * one optional key, present only on a remembered answer.
+ * Wire SSOT: pyrycode `docs/protocol-mobile.md` § `context_usage`. Summary fields are strict-required;
+ * only [asOf] is optional, present on remembered answers. Raw primitives prevent string/number coercion.
  *
- * **SECURITY.** `model` and every inventory string (`categories`, `mcp_tools`, `memory_files`) are claude- or
- * workspace-authored. They are not declared, so [MobileJson]'s `ignoreUnknownKeys` discards them at the
- * boundary and none can reach the UI, a log, a path or an actuation. `conversation_id` is daemon-authored and
- * is the caller's routing key.
+ * **SECURITY.** Model/category strings become bounded inert Text only. Other inventories remain ignored.
+ * `conversation_id` alone is the daemon-authored routing key. Never emit caught decode exceptions.
  */
 @Serializable
 internal data class ContextUsagePayloadDto(
@@ -28,7 +28,20 @@ internal data class ContextUsagePayloadDto(
     @SerialName("max_tokens") val maxTokens: Long,
     val percentage: Int,
     @SerialName("as_of") val asOf: String? = null,
-)
+    val model: JsonElement,
+    val categories: List<ContextCategoryPayloadDto>,
+    @SerialName("dropped_categories") val droppedCategories: JsonElement,
+) {
+    override fun toString(): String = "ContextUsagePayloadDto(<redacted>)"
+}
+
+@Serializable
+internal data class ContextCategoryPayloadDto(
+    val name: JsonElement,
+    val tokens: JsonElement,
+) {
+    override fun toString(): String = "ContextCategoryPayloadDto(<redacted>)"
+}
 
 /**
  * Map a decoded [ContextUsagePayloadDto] to a [ContextUsage], or **null** for a negative
@@ -36,8 +49,18 @@ internal data class ContextUsagePayloadDto(
  * thread shows is computed from the token counts downstream (#1411), not here. A malformed [ContextUsagePayloadDto.asOf] makes [Instant.parse] throw
  * [IllegalArgumentException], which the caller's decoder catches, so that frame drops too.
  */
-internal fun ContextUsagePayloadDto.toReading(): ContextUsage? =
-    if (percentage < 0) null else ContextUsage(totalTokens, maxTokens, percentage, asOf?.let(Instant::parse))
+internal fun ContextUsagePayloadDto.toReading(): ContextUsage? {
+    if (percentage < 0) return null
+    val modelText = (model as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+    val dropped = (droppedCategories as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull ?: return null
+    val rows =
+        categories.map { category ->
+            val name = (category.name as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+            val tokens = (category.tokens as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull ?: return null
+            ContextCategory(name.take(512), tokens)
+        }
+    return ContextUsage(totalTokens, maxTokens, percentage, asOf?.let(Instant::parse), modelText.take(512), rows, dropped)
+}
 
 /**
  * `request_context_usage` (#945, pyrycode#2431): ask for a fresh reading of one conversation now rather than at

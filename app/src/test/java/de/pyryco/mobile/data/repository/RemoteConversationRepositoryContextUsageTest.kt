@@ -12,6 +12,9 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -42,8 +45,8 @@ class RemoteConversationRepositoryContextUsageTest {
             assertEquals(
                 listOf(
                     null,
-                    ContextUsage(totalTokens = 50_000, maxTokens = 200_000, percentage = 31, asOf = null),
-                    ContextUsage(totalTokens = 120_000, maxTokens = 1_000_000, percentage = 12, asOf = null),
+                    expectedUsage(totalTokens = 50_000, maxTokens = 200_000, percentage = 31, asOf = null),
+                    expectedUsage(totalTokens = 120_000, maxTokens = 1_000_000, percentage = 12, asOf = null),
                 ),
                 readings,
             )
@@ -72,7 +75,7 @@ class RemoteConversationRepositoryContextUsageTest {
             runCurrent()
 
             assertEquals(
-                ContextUsage(80_000, 200_000, 40, asOf = Instant.parse("2026-09-16T08:30:00Z")),
+                expectedUsage(80_000, 200_000, 40, asOf = Instant.parse("2026-09-16T08:30:00Z")),
                 readings.last(),
             )
         }
@@ -159,7 +162,7 @@ class RemoteConversationRepositoryContextUsageTest {
             pump.push(contextUsage("c1", total = 40_000, max = 200_000, percentage = 20, inReplyTo = ask, id = 1L))
             runCurrent()
 
-            assertEquals(listOf(null, ContextUsage(40_000, 200_000, 20, asOf = null)), readings)
+            assertEquals(listOf(null, expectedUsage(40_000, 200_000, 20, asOf = null)), readings)
         }
 
     // Both refusals leave the reading as it was, throw nothing into the collector, and the next frame still applies.
@@ -178,11 +181,11 @@ class RemoteConversationRepositoryContextUsageTest {
             pump.push(refusal(pump.sent.last().id, "conversation.not_found", id = 3L))
             runCurrent()
 
-            assertEquals(listOf(null, ContextUsage(50_000, 200_000, 25, asOf = null)), readings)
+            assertEquals(listOf(null, expectedUsage(50_000, 200_000, 25, asOf = null)), readings)
 
             pump.push(contextUsage("c1", total = 60_000, max = 200_000, percentage = 30, id = 4L))
             runCurrent()
-            assertEquals(ContextUsage(60_000, 200_000, 30, asOf = null), readings.last())
+            assertEquals(expectedUsage(60_000, 200_000, 30, asOf = null), readings.last())
         }
 
     @Test
@@ -228,11 +231,11 @@ class RemoteConversationRepositoryContextUsageTest {
             pump.push(probe("context_usage", "[]", id = 13L))
             runCurrent()
 
-            assertEquals(listOf(null, ContextUsage(50_000, 200_000, 25, asOf = null)), readings)
+            assertEquals(listOf(null, expectedUsage(50_000, 200_000, 25, asOf = null)), readings)
 
             pump.push(contextUsage("c1", total = 60_000, max = 200_000, percentage = 30, id = 14L))
             runCurrent()
-            assertEquals(ContextUsage(60_000, 200_000, 30, asOf = null), readings.last())
+            assertEquals(expectedUsage(60_000, 200_000, 30, asOf = null), readings.last())
         }
 
     // ---- session_transition ---------------------------------------------------------------------------
@@ -248,12 +251,12 @@ class RemoteConversationRepositoryContextUsageTest {
 
             pump.push(sessionTransition("c1", id = 2L))
             runCurrent()
-            assertEquals(listOf(null, ContextUsage(150_000, 200_000, 75, asOf = null), null), readings)
+            assertEquals(listOf(null, expectedUsage(150_000, 200_000, 75, asOf = null), null), readings)
             assertTrue(pump.sent.isEmpty())
 
             pump.push(contextUsage("c1", total = 9_000, max = 200_000, percentage = 4, id = 3L))
             runCurrent()
-            assertEquals(ContextUsage(9_000, 200_000, 4, asOf = null), readings.last())
+            assertEquals(expectedUsage(9_000, 200_000, 4, asOf = null), readings.last())
         }
 
     @Test
@@ -289,7 +292,7 @@ class RemoteConversationRepositoryContextUsageTest {
             pump.push(sessionTransition("c2", id = 3L))
             runCurrent()
 
-            assertEquals("c1 neither changed nor re-emitted", listOf(null, ContextUsage(50_000, 200_000, 25, asOf = null)), c1)
+            assertEquals("c1 neither changed nor re-emitted", listOf(null, expectedUsage(50_000, 200_000, 25, asOf = null)), c1)
         }
 
     // A frame correlated to some other request but naming c2 lands under c2, never c1.
@@ -306,7 +309,7 @@ class RemoteConversationRepositoryContextUsageTest {
             assertEquals(listOf<ContextUsage?>(null), c1)
             val c2 = collect(repo.observeContextUsage("c2"))
             runCurrent()
-            assertEquals(listOf<ContextUsage?>(ContextUsage(1_000, 200_000, 1, asOf = null)), c2)
+            assertEquals(listOf<ContextUsage?>(expectedUsage(1_000, 200_000, 1, asOf = null)), c2)
         }
 
     // ---- reconnect --------------------------------------------------------------------------------------
@@ -328,10 +331,31 @@ class RemoteConversationRepositoryContextUsageTest {
 
             assertTrue(pumpA.sent.isEmpty())
             assertTrue(pumpB.sent.isEmpty())
-            assertEquals(listOf(null, ContextUsage(50_000, 200_000, 25, asOf = null), null), readings)
+            assertEquals(listOf(null, expectedUsage(50_000, 200_000, 25, asOf = null), null), readings)
         }
 
     // ---- Fixtures ---------------------------------------------------------------------------------------
+
+    private fun expectedUsage(
+        totalTokens: Long,
+        maxTokens: Long,
+        percentage: Int,
+        asOf: Instant?,
+    ) = ContextUsage(
+        totalTokens,
+        maxTokens,
+        percentage,
+        asOf,
+        model = "claude-opus-5-5",
+        categories =
+            if (asOf ==
+                null
+            ) {
+                listOf(ContextCategory("Messages", totalTokens))
+            } else {
+                emptyList()
+            },
+    )
 
     private fun TestScope.repo(): Pair<FakeSessionPump, RemoteConversationRepository> {
         val pump = FakeSessionPump()
@@ -358,9 +382,10 @@ class RemoteConversationRepositoryContextUsageTest {
         id: Long,
     ): Envelope {
         val asOfKey = asOf?.let { ""","as_of":"$it"""" } ?: ""
+        val categories = if (asOf == null) """[{"name":"Messages","tokens":$total}]""" else "[]"
         val payload =
             """{"conversation_id":"$conversationId","model":"claude-opus-5-5","total_tokens":$total,""" +
-                """"max_tokens":$max,"percentage":$percentage,"categories":[{"name":"Messages","tokens":$total}],""" +
+                """"max_tokens":$max,"percentage":$percentage,"categories":$categories,""" +
                 """"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0,"memory_files":[],""" +
                 """"dropped_memory_files":0$asOfKey}"""
         return Envelope(id = id, type = "context_usage", ts = TS, payload = MobileJson.parseToJsonElement(payload), inReplyTo = inReplyTo)
@@ -394,7 +419,21 @@ class RemoteConversationRepositoryContextUsageTest {
         type: String,
         payload: String,
         id: Long,
-    ): Envelope = Envelope(id = id, type = type, ts = TS, payload = MobileJson.parseToJsonElement(payload))
+    ): Envelope {
+        val parsed = MobileJson.parseToJsonElement(payload)
+        // Keep malformed scalar cases complete in the newly required summary fields, so each still
+        // exercises its original scalar rejection rather than failing first on a missing category list.
+        val complete =
+            if (type == "context_usage" && parsed is JsonObject) {
+                JsonObject(
+                    mapOf("model" to JsonPrimitive(""), "categories" to JsonArray(emptyList()), "dropped_categories" to JsonPrimitive(0)) +
+                        parsed,
+                )
+            } else {
+                parsed
+            }
+        return Envelope(id = id, type = type, ts = TS, payload = complete)
+    }
 
     /** Channel-backed fake of the inbound surface: unlimited buffer so pushes pre-subscription survive. */
     private class FakeSessionPump(

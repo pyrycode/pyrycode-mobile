@@ -678,6 +678,10 @@ fun ThreadScreen(
                             Modifier
                                 .frameHeightWithTouchOverflow(bottom = FooterTouchBottomOverflow),
                         onAttach = openAttachmentPicker,
+                        onContextClick = {
+                            openControl = null
+                            onOverflowEvent(ThreadEvent.ContextOpen)
+                        },
                         agent = state.agent,
                         touchHeight = FrameFooterTouchHeight,
                         contentBottomPadding = FooterTouchBottomOverflow,
@@ -875,6 +879,7 @@ fun ThreadScreen(
                                 modalState == ModalUiState.Hidden &&
                                     shownQuestion == null &&
                                     !state.channelInfoOpen &&
+                                    !state.contextSheetOpen &&
                                     !backgroundTasksOpen &&
                                     !sheetVisible &&
                                     !state.showRenameDialog &&
@@ -1554,6 +1559,9 @@ fun ThreadScreen(
             },
             permissionPending = state.runConfig.pendingPermission != null,
         )
+    }
+    if (state.contextSheetOpen) {
+        ContextSummarySheet(state = state, onEvent = onOverflowEvent)
     }
     if (state.channelInfoOpen) {
         val uriHandler = LocalUriHandler.current
