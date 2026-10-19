@@ -95,9 +95,10 @@ class MarkdownReaderHeadingTest {
                 headingColor = MaterialTheme.colorScheme.onSecondaryContainer
                 CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
                     val measurer = rememberTextMeasurer()
-                    referenceLineHeights = (1..6).map { level ->
-                        measurer.measure("Ag", style = expectedStyle(level)).size.height
-                    }
+                    referenceLineHeights =
+                        (1..6).map { level ->
+                            measurer.measure("Ag", style = expectedStyle(level)).size.height
+                        }
                     if (linked) {
                         LinkedMarkdownReaderDestination(note, reread = { null }, onBack = {})
                     } else {
