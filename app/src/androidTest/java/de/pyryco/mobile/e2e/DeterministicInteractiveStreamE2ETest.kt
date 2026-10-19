@@ -43,6 +43,7 @@ import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
+import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.threadSnapshots
@@ -390,18 +391,19 @@ class DeterministicInteractiveStreamE2ETest {
             )
         try {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
-            // Conversation-created rows intentionally omit physical session IDs. Use the binding
-            // admitted by the thread's existing correlated settings read before cutting the link.
-            val session =
-                runBlocking {
-                    withTimeout(THREAD_TIMEOUT_MS) {
-                        repo
-                            .observeConversations(ConversationFilter.All)
-                            .first { rows -> rows.any { it.id == conversation.id && it.currentSessionId.isNotBlank() } }
-                            .single { it.id == conversation.id }
-                            .currentSessionId
-                    }
+            // This scripted fixture has no settings subscriber. Read the physical session through
+            // the existing correlated probe; create-conversation summaries intentionally omit it.
+            val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
+            val session = runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    SettingsReadProbe.read(
+                        repo as RemoteConversationRepository,
+                        conversation.id,
+                        { coordinator.currentRepository.value === repo },
+                        { coordinator.hostReadings.liveSessionBindings[conversation.id] },
+                    ).sessionId.also { check(it.isNotBlank()) { "scripted conversation has no admitted session" } }
                 }
+            }
             val before = runBlocking { harnessThreadEvidence(repo).observe(conversation.id).first() }
             val observation = OwnedReplyObservation(serverId, before, legacyProducer = true, knownSession = session)
             peer.replyObservation = observation
