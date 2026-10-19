@@ -125,6 +125,55 @@ class MarkdownLinkTapTest {
     fun streamingExplicitLinks_agreeWithRoutingAndHtml() = assertExplicitLinks(isStreaming = true)
 
     @Test
+    fun finishedCodeSpanUrls_useAuthoredLinkRouting() = assertCodeSpanRouting(isStreaming = false)
+
+    @Test
+    fun streamingCodeSpanUrls_useAuthoredLinkRouting() = assertCodeSpanRouting(isStreaming = true)
+
+    private fun assertCodeSpanRouting(isStreaming: Boolean) {
+        val source = mutableStateOf("")
+        show { MessageBubble(message(Role.Assistant, source.value, isStreaming), onOpenMarkdownLink = { paths += it }) }
+        val targets =
+            listOf(
+                "http://example.com/a.md",
+                "HTTPS://example.com/A%2fb?q=One%20Two#Top",
+                "mailto:Name@example.com",
+                "ObSiDiAn://open?vault=Second%20brain&file=A%2fPlan.MD",
+            )
+        targets.forEachIndexed { index, target ->
+            composeTestRule.runOnIdle { source.value = "Before ` $target ` after\n\nEnd$index." }
+            composeTestRule.waitUntil(TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText("End$index.", substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            tapLink("Before  $target  after")
+            assertEquals(targets.take(index + 1), opened)
+        }
+        composeTestRule.runOnIdle { source.value = "Before `notes/Plan.md` after\n\nNo workspace read." }
+        composeTestRule.waitUntil(TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText("No workspace read.", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        assertInert("Before notes/Plan.md after")
+        assertEquals(emptyList<String>(), paths)
+        assertEquals(targets, opened)
+    }
+
+    @Test
+    fun codeSpanObsidianLaunchFailures_useTheExistingStaticNotices() {
+        val notices = mutableListOf<MarkdownLinkNotice>()
+        show {
+            CompositionLocalProvider(LocalMarkdownLinkFailure provides { notices += it }) {
+                MarkdownText("`obsidian://open`")
+            }
+        }
+        launchFailure = ActivityNotFoundException("private target must not appear")
+        tapLink("obsidian://open")
+        launchFailure = SecurityException("private target must not appear")
+        tapLink("obsidian://open")
+        assertEquals(listOf(MarkdownLinkNotice.OBSIDIAN_NOT_INSTALLED, MarkdownLinkNotice.OPEN_FAILED), notices)
+        assertEquals(emptyList<String>(), opened)
+    }
+
+    @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun finishedMalformedUris_stayInertWithWorkspaceOptIn() = assertMalformedUris(isStreaming = false)
 

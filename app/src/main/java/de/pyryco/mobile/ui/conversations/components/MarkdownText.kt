@@ -1235,7 +1235,13 @@ private fun AnnotatedString.Builder.appendInline(
                     background = colors.codeSpanBackground,
                 ),
             ) {
-                append(node.getTextInNode(source).toString().trim('`'))
+                val code = node.getTextInNode(source).toString().trim('`')
+                val target = code.trim()
+                if (target.isNotEmpty() && target.none { it.isWhitespace() } && isSafeLinkScheme(target)) {
+                    appendLinkText(code, target, uriHandler, colors)
+                } else {
+                    append(code)
+                }
             }
         MarkdownElementTypes.INLINE_LINK -> {
             val linkText = inlineLinkText(node, source, synthetic)
@@ -1253,26 +1259,7 @@ private fun AnnotatedString.Builder.appendInline(
                 append(linkText)
                 return
             }
-            withLink(
-                LinkAnnotation.Url(
-                    url = url,
-                    styles =
-                        TextLinkStyles(
-                            style =
-                                SpanStyle(
-                                    color = colors.link,
-                                    textDecoration = TextDecoration.Underline,
-                                ),
-                        ),
-                    linkInteractionListener =
-                        LinkInteractionListener { link ->
-                            // The handler decides: a markdown path, an allowed scheme, or nothing.
-                            (link as? LinkAnnotation.Url)?.url?.let(uriHandler::openUri)
-                        },
-                ),
-            ) {
-                append(linkText)
-            }
+            appendLinkText(linkText, url, uriHandler, colors)
         }
         MarkdownTokenTypes.EOL -> append(" ")
         // The total fallback, and the reason #681 could switch flavours without suppressing
@@ -1285,6 +1272,34 @@ private fun AnnotatedString.Builder.appendInline(
             } else {
                 appendInlineChildren(node.children, source, uriHandler, colors, synthetic)
             }
+    }
+}
+
+private fun AnnotatedString.Builder.appendLinkText(
+    text: String,
+    target: String,
+    uriHandler: UriHandler,
+    colors: InlineColors,
+) {
+    withLink(
+        LinkAnnotation.Url(
+            url = target,
+            styles =
+                TextLinkStyles(
+                    style =
+                        SpanStyle(
+                            color = colors.link,
+                            textDecoration = TextDecoration.Underline,
+                        ),
+                ),
+            linkInteractionListener =
+                LinkInteractionListener { link ->
+                    // The handler decides: a markdown path, an allowed scheme, or nothing.
+                    (link as? LinkAnnotation.Url)?.url?.let(uriHandler::openUri)
+                },
+        ),
+    ) {
+        append(text)
     }
 }
 
