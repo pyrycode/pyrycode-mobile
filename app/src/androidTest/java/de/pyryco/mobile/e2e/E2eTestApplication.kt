@@ -18,6 +18,7 @@ import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.di.RelayConnectionFactory
+import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.di.RelaySessionPumpFactory
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
@@ -155,7 +156,13 @@ class E2eTestApplication : Application() {
      */
     private fun tappedRelayRepositoryModule(): Module =
         module {
-            includes(hostConversationModule(useRelay = true, decorateRepository = ::TappingConversationRepository))
+            includes(
+                hostConversationModule(useRelay = true, decorateRepository = { repository ->
+                    TappingConversationRepository(repository) { conversation, upstream ->
+                        PassiveThreadProbe.tap({ passiveThreadOwner(repository, conversation) }, upstream)
+                    }
+                }),
+            )
             single<ConversationRepository> { TappingConversationRepository(get<StableConversationRepository>()) }
             single {
                 val original = get<RelayTransportFactory>()
@@ -175,6 +182,23 @@ class E2eTestApplication : Application() {
                 )
             }
         }
+
+    private fun passiveThreadOwner(
+        repository: ConversationRepository,
+        conversation: String,
+    ): ThreadEvidenceOwner? {
+        val source = repository.runConfigurationReadings.currentConnection ?: return null
+        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+        val host =
+            registry.hostConnections.value.singleOrNull {
+                registry
+                    .connectionFor(it.serverId)
+                    ?.coordinator
+                    ?.currentRepository
+                    ?.value === source
+            } ?: return null
+        return ThreadEvidenceOwner(host.serverId, conversation, source, ThreadEvidenceKind.Legacy)
+    }
 
     private fun requireArg(
         args: Bundle,
