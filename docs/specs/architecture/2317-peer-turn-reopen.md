@@ -80,3 +80,9 @@ Forecast: approximately 650-800 written lines including tests, wiring and this r
 ## Open Questions
 
 None. The refiner resolved the observer-contract scope; implementation must preserve source ownership and strict replay.
+
+## Verification
+
+The controlled source-reuse regression failed before permanent retirement (five executed, one failed, zero skips), then all seven passive-observer tests passed. Existing owned-reply, decorator and shared rendering classes passed 26, 3 and 12 cases respectively: 48 total, zero failures/errors/skips. The named recorded method passed on Linux at `69be40bebe9278c5779367febf608b5854cf3b87` and again after the final main merge at `4a044b47a799a59f874a22f584a4974cdbd34ba1`: each run executed/passed one, zero failures/errors/skips. The final run took 4.228 seconds and observed the reopened user row already composed before reveal. Strict replay and the fixture hash are unchanged; the observed failure was request admission, not proved offscreen loss.
+
+Private raw evidence with source metadata and verified hashes is under `/work/Projects/pyrycode-mobile-agents/logs/evidence/2317/builder-20261019-passive-repair/`; earlier failures remain under the original evidence directory. The checked summary is `app/src/androidTest/assets/peer-reopen-2317/investigation.txt`. One intermediate instrumented compile attempted zero tests and was corrected for the optional source reader; no pass is attributed to it. Lint passed. Final pre-verify results belong in the PR; dispatcher full configured gates and suite-order acceptance remain pending.
