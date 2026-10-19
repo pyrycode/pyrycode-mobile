@@ -3071,7 +3071,6 @@ class InteractiveStreamE2ETest {
                     val reading = reopened
                     val evidence = reading?.let(passive::evidence)
                     evidence != null &&
-                        reading != null &&
                         evidence.retainedPeerUser(peerUser, reading.owner, receivedReply.session) != null &&
                         evidence.retainedReply(receivedReply, serverId) != null
                 }

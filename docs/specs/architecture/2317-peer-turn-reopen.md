@@ -59,13 +59,13 @@ The probe opens no coroutine, repository collection or request. Synchronize its 
 
 | Event | Required proof |
 | --- | --- |
-| Application collection starts and emits | `PassiveThreadObservationTest` proves exact pass-through and one upstream collection/request. |
-| Probe sampled repeatedly | Same test proves sampling adds no collections/requests. |
-| Leave/reopen, even with equal rows | Subscription-lifetime regression rejects old token and requires a new active collection; named recorded scenario proves navigation. |
-| Subscription ends or is replaced | Focused regression rejects ended/replaced readings, including equal identifiers. |
-| Connection, host or conversation changes | Focused regression rejects mismatched ownership and captured connection replacement. |
-| Lease closes, including failure | Cleanup regression proves no retained readings and a later lease starts empty. |
-| Retained row disappears, duplicates or changes | Existing owned/retained reply regressions plus exact user retention regression reject them. |
+| Application collection starts and emits | `samplingObservesExactApplicationSnapshotsWithoutCollectionsOrRequests` proves exact pass-through and one upstream collection/request. |
+| Probe sampled repeatedly | `samplingObservesExactApplicationSnapshotsWithoutCollectionsOrRequests` proves sampling adds no collections/requests; `inactiveProbeDoesNotResolveOwnershipOrChangeDelivery` covers opt-out. |
+| Leave/reopen, even with equal rows | `reopenRequiresANewActiveSubscriptionEvenWhenItsRowsAreIdentical` rejects the old token; `RecordedMobileSuiteTest.interactiveTurn_peerStartedTurn_continuesOnPhone` proves navigation. |
+| Subscription ends or is replaced | `reopenRequiresANewActiveSubscriptionEvenWhenItsRowsAreIdentical` and `upstreamFailurePropagatesAndRetiresItsSubscription` reject ended readings. |
+| Connection, host or conversation changes | `connectionReplacementNeverRelabelsOldSnapshots` rejects replacement and reuse; `retainedUserRequiresOriginalIdentityCompleteContentAndUniqueDelivery` rejects mismatched ownership. |
+| Lease closes, including failure | `closingScopeReleasesReadingsAndCannotLeakIntoALaterScope` proves no retained readings and a later lease starts empty; `upstreamFailurePropagatesAndRetiresItsSubscription` covers failure cleanup. |
+| Retained row disappears, duplicates or changes | `retainedUserRequiresOriginalIdentityCompleteContentAndUniqueDelivery` and `OwnedReplyObservationTest.retainedReplyRebindsOnlyTheSameCompleteFamilyOnTheCurrentOwner` reject them. |
 
 ## Error handling
 
