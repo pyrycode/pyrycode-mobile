@@ -457,6 +457,8 @@ private fun ThreadItemDto.field(name: String): String? = ((content as? JsonObjec
 private fun JsonObject?.isSuccessfulReplyEnd(): Boolean {
     fun field(name: String) = (this?.get(name) as? JsonPrimitive)?.content
     val reason = this?.get("terminal_reason")
-    return field("stop_reason") == "end_turn" && field("outcome") == "success" && field("is_error") == "false" &&
+    return field("stop_reason") == "end_turn" &&
+        field("outcome") == "success" &&
+        field("is_error") == "false" &&
         (reason == null || reason is JsonPrimitive && reason.isString && reason.content in setOf("", "completed"))
 }
