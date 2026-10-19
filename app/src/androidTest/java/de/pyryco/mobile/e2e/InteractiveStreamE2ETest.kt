@@ -5258,18 +5258,28 @@ class InteractiveStreamE2ETest {
                 },
             )
             // Raw peer task/tool facts only locate the admitted Agent; rendered identities come from evidence.
-            val evidence =
-                runBlocking {
-                    withTimeout(THREAD_TIMEOUT_MS) {
-                        liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) {
-                            it.agentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn) != null
+            val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
+            var displayedEvidence: AgentReplyEvidence? = null
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                val current =
+                    runBlocking {
+                        withTimeoutOrNull(1000) {
+                            liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { true }
                         }
                     }
-                }.let {
-                    checkNotNull(it.agentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn)) {
-                        "the held Agent must supply its own paragraph"
-                    }
+                val candidate = current?.agentReplyEvidence(current.owner, task.taskId, agentId, childTurn, mainTurn)
+                val index =
+                    candidate?.let {
+                        list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:${it.runId}")
+                    } ?: -1
+                if (index < 0) {
+                    false
+                } else {
+                    displayedEvidence = candidate
+                    true
                 }
+            }
+            val evidence = checkNotNull(displayedEvidence) { "the held Agent must supply its own displayed tool run" }
             // Body identity excludes user prompts and accepts any reply wording or Markdown.
             val reply = hasTestTag("assistant-reply:${evidence.heldReply.message.id}")
             val child = hasTestTag("background-agent-child:${evidence.agent.block}")
@@ -5288,7 +5298,6 @@ class InteractiveStreamE2ETest {
                     SemanticsMatcher("opened owned Agent run") {
                         it.config.getOrNull(SemanticsActions.OnClick)?.label == collapseLabel
                     }
-            val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
             list.performScrollToNode(run)
             composeTestRule.onNode(closedRun).assertExists()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
