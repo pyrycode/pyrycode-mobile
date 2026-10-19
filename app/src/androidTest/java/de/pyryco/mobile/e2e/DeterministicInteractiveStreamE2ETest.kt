@@ -390,6 +390,10 @@ class DeterministicInteractiveStreamE2ETest {
             )
         try {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            val before = runBlocking { harnessThreadEvidence(repo).observe(conversation.id).first() }
+            val observation = OwnedReplyObservation(serverId, before, legacyProducer = true)
+            peer.replyObservation = observation
+            var produced: ProducedReplyEvidence? = null
             severLink()
             composeTestRule.onNodeWithText("e2e1833-baseline-000").assertIsDisplayed()
             proof.missPages(name) {
@@ -411,9 +415,11 @@ class DeterministicInteractiveStreamE2ETest {
                             delay(50)
                         }
                     }
+                    produced = checkNotNull(observation.produced())
+                    assertEquals("scripted fixture keeps its exact reply contract", "ping", produced!!.text)
                 }
             }
-            proof.catchUp(::restoreLink, "e2e1833-completed-turn", "ping", listOf(hasText("e2e1833-baseline-000")))
+            proof.catchUp(::restoreLink, "e2e1833-completed-turn", checkNotNull(produced), listOf(hasText("e2e1833-baseline-000")))
             assertEquals("cached older row retained", 1, proof.messages().count { it == "e2e1833-baseline-000" })
         } finally {
             peer.close()

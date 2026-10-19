@@ -167,8 +167,8 @@ import de.pyryco.mobile.ui.conversations.thread.dropdownLabel
 import de.pyryco.mobile.ui.conversations.thread.inert
 import de.pyryco.mobile.ui.conversations.thread.ownedReplyContentMatches
 import de.pyryco.mobile.ui.conversations.thread.ownedReplyDisplayed
-import de.pyryco.mobile.ui.conversations.thread.ownedReplyNodeCounts
 import de.pyryco.mobile.ui.conversations.thread.ownedReplyMatcher
+import de.pyryco.mobile.ui.conversations.thread.ownedReplyNodeCounts
 import de.pyryco.mobile.ui.conversations.thread.slashCommandOptions
 import de.pyryco.mobile.ui.conversations.thread.slashCommandTypeAheadRows
 import de.pyryco.mobile.ui.onboarding.ScannerEvent
@@ -540,26 +540,38 @@ class InteractiveStreamE2ETest {
             val cell = "cell$stamp"
             val end = "end$stamp"
             val body = "**$bold** `$inline`\n\n```text\n$code\n```\n\n| Key | Value |\n| --- | --- |\n| $cell | present |\n\n$end"
-            val observed = awaitOwnedPhoneReply(serverId, chat) {
-            sendFromPhone(
-                "Reply with exactly the following markdown body, preserving every word and its formatting. " +
-                    "Do not use tools or surround the whole response with another code fence:\n\n" + body,
-            )
-            }
+            val observed =
+                awaitOwnedPhoneReply(serverId, chat) {
+                    sendFromPhone(
+                        "Reply with exactly the following markdown body, preserving every word and its formatting. " +
+                            "Do not use tools or surround the whole response with another code fence:\n\n" + body,
+                    )
+                }
             awaitTurnEnd(peer, chat, 1, "the formatted markdown reply")
             val reply = observed.producerText
             assertEquals("peer and phone producer evidence agree", assistantText(peer, chat), reply)
-            assertTrue("producer omitted a required Markdown construct or marker",
-                MarkdownReplyRequirements(bold, inline, code, cell, end).satisfiedBy(reply))
-            val inReply = observed.records.map { hasAnyAncestor(hasTestTag("assistant-reply:${it.message.id}")) }
-                .reduce { left, right -> left or right }
+            assertTrue(
+                "producer omitted a required Markdown construct or marker",
+                MarkdownReplyRequirements(bold, inline, code, cell, end).satisfiedBy(reply),
+            )
+            val inReply =
+                observed.records
+                    .map { hasAnyAncestor(hasTestTag("assistant-reply:${it.message.id}")) }
+                    .reduce { left, right -> left or right }
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasText(end) and inReply, useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
                     composeTestRule.onAllNodesWithText("▎").fetchSemanticsNodes().isEmpty()
             }
-            fun styled(marker: String, accepts: (androidx.compose.ui.text.SpanStyle) -> Boolean): Boolean =
-                composeTestRule.onAllNodes(hasText(marker, substring = true) and inReply, useUnmergedTree = true)
-                    .fetchSemanticsNodes().flatMap { it.config[SemanticsProperties.Text] }.any { formatted ->
+
+            fun styled(
+                marker: String,
+                accepts: (androidx.compose.ui.text.SpanStyle) -> Boolean,
+            ): Boolean =
+                composeTestRule
+                    .onAllNodes(hasText(marker, substring = true) and inReply, useUnmergedTree = true)
+                    .fetchSemanticsNodes()
+                    .flatMap { it.config[SemanticsProperties.Text] }
+                    .any { formatted ->
                         formatted.spanStyles.any { accepts(it.item) && formatted.text.substring(it.start, it.end) == marker }
                     }
             assertTrue("bold marker must render bold", styled(bold) { it.fontWeight == FontWeight.Bold })
@@ -2837,9 +2849,10 @@ class InteractiveStreamE2ETest {
             }
             composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).onFirst().performClick()
             composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
-            val secondReply = awaitOwnedPhoneReply(serverId, id) {
-                sendFromPhone("Reply with exactly the word: pong (nothing else).")
-            }
+            val secondReply =
+                awaitOwnedPhoneReply(serverId, id) {
+                    sendFromPhone("Reply with exactly the word: pong (nothing else).")
+                }
             assertNotEquals("reset must bind a distinct session", firstReply.session, secondReply.session)
             assertNotEquals("reset must bind a new turn", firstReply.turn, secondReply.turn)
             val live = hostRepository(serverId)
@@ -3012,11 +3025,12 @@ class InteractiveStreamE2ETest {
 
             // 2. AC-1: the peer, as its own device, sends into that conversation and observes its frames.
             peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
-            val receivedReply = withOwnedReply(serverId, conversationId, peer = peer) { await ->
-                peerStep(peer, "send the ping and await its ack") { peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS) }
-                peerStep(peer, "await the ping turn's turn_end") { peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS) }
-                await()
-            }
+            val receivedReply =
+                withOwnedReply(serverId, conversationId, peer = peer) { await ->
+                    peerStep(peer, "send the ping and await its ack") { peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS) }
+                    peerStep(peer, "await the ping turn's turn_end") { peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS) }
+                    await()
+                }
 
             // 4. AC-3: leave, reopen, and read the message and the reply once each.
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
@@ -3230,83 +3244,88 @@ class InteractiveStreamE2ETest {
             // 2. The peer starts the conversation with a turn that stops on a permission prompt. The prompt
             //    stays outstanding until step 6, so every queue step runs while that turn is still open.
             withOwnedReply(serverId, conversationId, peer = peer) { awaitWaitReply ->
-            val permissionModalId =
-                runBlocking {
-                    peer.open(CONNECT_TIMEOUT_MS)
-                    peer.sendMessage(conversationId, WAIT_PROMPT, THREAD_TIMEOUT_MS)
-                    peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS)
+                val permissionModalId =
+                    runBlocking {
+                        peer.open(CONNECT_TIMEOUT_MS)
+                        peer.sendMessage(conversationId, WAIT_PROMPT, THREAD_TIMEOUT_MS)
+                        peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS)
+                    }
+
+                // 3. AC-2: the phone's message queues behind it, on the phone and in the peer's snapshot.
+                withOwnedReply(serverId, conversationId) { awaitQueuedReply ->
+                    sendFromPhone(PING_PROMPT)
+                    awaitQueuedRow(PING_PROMPT)
+                    runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == PING_PROMPT } } }
+
+                    // 4. AC-3: a message the phone queues and drops leaves both backlogs and the phone's thread; the
+                    //    ping stays queued.
+                    sendFromPhone(DROP_PROMPT)
+                    awaitQueuedRow(DROP_PROMPT)
+                    runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == DROP_PROMPT } } }
+                    val dropControl = hasContentDescription(queuedDropDescription) and hasAnyAncestor(queuedRow(DROP_PROMPT))
+                    // A real scroll pauses following before revealing an older action above the held prompt.
+                    composeTestRule.onNodeWithTag(THREAD_MESSAGE_REGION_TEST_TAG).performTouchInput {
+                        swipeDown(startY = height * 0.3f, endY = height * 0.7f)
+                    }
+                    scrollListTo(dropControl)
+                    composeTestRule.onNode(dropControl).performClick()
+                    awaitGoneFromThread(DROP_PROMPT)
+                    runBlocking {
+                        peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue ->
+                            queue.none { it.text == DROP_PROMPT } && queue.any { it.text == PING_PROMPT }
+                        }
+                    }
+
+                    // 5. AC-3: a message the peer queues is a plain queued row on the phone until the peer drops it.
+                    val peerItem =
+                        runBlocking {
+                            peer.sendMessage(conversationId, PEER_QUEUED_PROMPT, THREAD_TIMEOUT_MS)
+                            peer
+                                .awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == PEER_QUEUED_PROMPT } }
+                                .first { it.text == PEER_QUEUED_PROMPT }
+                        }
+                    awaitQueuedRow(PEER_QUEUED_PROMPT)
+                    peer.dequeueMessage(conversationId, peerItem.queuedMsgId)
+                    awaitGoneFromThread(PEER_QUEUED_PROMPT)
+                    runBlocking {
+                        peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.none { it.text == PEER_QUEUED_PROMPT } }
+                    }
+
+                    // 6. AC-1 / AC-2: the peer allows the command, the turn ends, and the ping drains and runs; the
+                    //    peer sees that turn end and an empty backlog, and the phone draws the reply and the prompt
+                    //    once each, no longer queued.
+                    runBlocking {
+                        peer.allowOnce(permissionModalId, THREAD_TIMEOUT_MS)
+                        peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
+                        peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.isEmpty() }
+                    }
+                    val waitReplyObservation = awaitWaitReply()
+                    val queuedReplyObservation = awaitQueuedReply()
+                    composeTestRule.waitForIdle()
+                    composeTestRule.onAllNodes(inThreadList(PING_PROMPT), useUnmergedTree = true).assertCountEquals(1)
+                    composeTestRule.onAllNodes(queuedRow(PING_PROMPT)).assertCountEquals(0)
+
+                    // 6b. #1558: the drained ping sits where claude received it — below the wait turn's last row, its
+                    //     reply, and above the ping's own reply — not at the slot it was typed into mid-turn.
+                    val tops =
+                        (
+                            waitReplyObservation.records.map(::ownedReplyMatcher) +
+                                listOf(inThreadList(PING_PROMPT)) + queuedReplyObservation.records.map(::ownedReplyMatcher)
+                        ).map {
+                            composeTestRule
+                                .onNode(it, useUnmergedTree = true)
+                                .fetchSemanticsNode()
+                                .boundsInRoot.top
+                        }
+                    assertTrue("expected wait reply, ping prompt, ping reply top to bottom; tops $tops", tops == tops.sorted())
+                    assertTrue("two of the messages share a row; tops $tops", tops.distinct().size == tops.size)
+
+                    // 7. AC-3: with the backlog empty nothing dropped can run, and no dropped reply was ever drawn.
+                    composeTestRule.onAllNodes(inThreadList(DROP_PROMPT), useUnmergedTree = true).assertCountEquals(0)
+                    composeTestRule.onAllNodes(inThreadList(PEER_QUEUED_PROMPT), useUnmergedTree = true).assertCountEquals(0)
+                    composeTestRule.onAllNodes(hasText(DROP_REPLY), useUnmergedTree = true).assertCountEquals(0)
+                    composeTestRule.onAllNodes(hasText(PEER_QUEUED_REPLY), useUnmergedTree = true).assertCountEquals(0)
                 }
-
-            // 3. AC-2: the phone's message queues behind it, on the phone and in the peer's snapshot.
-            withOwnedReply(serverId, conversationId) { awaitQueuedReply ->
-            sendFromPhone(PING_PROMPT)
-            awaitQueuedRow(PING_PROMPT)
-            runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == PING_PROMPT } } }
-
-            // 4. AC-3: a message the phone queues and drops leaves both backlogs and the phone's thread; the
-            //    ping stays queued.
-            sendFromPhone(DROP_PROMPT)
-            awaitQueuedRow(DROP_PROMPT)
-            runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == DROP_PROMPT } } }
-            val dropControl = hasContentDescription(queuedDropDescription) and hasAnyAncestor(queuedRow(DROP_PROMPT))
-            // A real scroll pauses following before revealing an older action above the held prompt.
-            composeTestRule.onNodeWithTag(THREAD_MESSAGE_REGION_TEST_TAG).performTouchInput {
-                swipeDown(startY = height * 0.3f, endY = height * 0.7f)
-            }
-            scrollListTo(dropControl)
-            composeTestRule.onNode(dropControl).performClick()
-            awaitGoneFromThread(DROP_PROMPT)
-            runBlocking {
-                peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue ->
-                    queue.none { it.text == DROP_PROMPT } && queue.any { it.text == PING_PROMPT }
-                }
-            }
-
-            // 5. AC-3: a message the peer queues is a plain queued row on the phone until the peer drops it.
-            val peerItem =
-                runBlocking {
-                    peer.sendMessage(conversationId, PEER_QUEUED_PROMPT, THREAD_TIMEOUT_MS)
-                    peer
-                        .awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == PEER_QUEUED_PROMPT } }
-                        .first { it.text == PEER_QUEUED_PROMPT }
-                }
-            awaitQueuedRow(PEER_QUEUED_PROMPT)
-            peer.dequeueMessage(conversationId, peerItem.queuedMsgId)
-            awaitGoneFromThread(PEER_QUEUED_PROMPT)
-            runBlocking {
-                peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.none { it.text == PEER_QUEUED_PROMPT } }
-            }
-
-            // 6. AC-1 / AC-2: the peer allows the command, the turn ends, and the ping drains and runs; the
-            //    peer sees that turn end and an empty backlog, and the phone draws the reply and the prompt
-            //    once each, no longer queued.
-            runBlocking {
-                peer.allowOnce(permissionModalId, THREAD_TIMEOUT_MS)
-                peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
-                peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.isEmpty() }
-            }
-            val waitReplyObservation = awaitWaitReply()
-            val queuedReplyObservation = awaitQueuedReply()
-            composeTestRule.waitForIdle()
-            composeTestRule.onAllNodes(inThreadList(PING_PROMPT), useUnmergedTree = true).assertCountEquals(1)
-            composeTestRule.onAllNodes(queuedRow(PING_PROMPT)).assertCountEquals(0)
-
-            // 6b. #1558: the drained ping sits where claude received it — below the wait turn's last row, its
-            //     reply, and above the ping's own reply — not at the slot it was typed into mid-turn.
-            val tops =
-                (waitReplyObservation.records.map(::ownedReplyMatcher) +
-                    listOf(inThreadList(PING_PROMPT)) + queuedReplyObservation.records.map(::ownedReplyMatcher)).map {
-                    composeTestRule.onNode(it, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.top
-                }
-            assertTrue("expected wait reply, ping prompt, ping reply top to bottom; tops $tops", tops == tops.sorted())
-            assertTrue("two of the messages share a row; tops $tops", tops.distinct().size == tops.size)
-
-            // 7. AC-3: with the backlog empty nothing dropped can run, and no dropped reply was ever drawn.
-            composeTestRule.onAllNodes(inThreadList(DROP_PROMPT), useUnmergedTree = true).assertCountEquals(0)
-            composeTestRule.onAllNodes(inThreadList(PEER_QUEUED_PROMPT), useUnmergedTree = true).assertCountEquals(0)
-            composeTestRule.onAllNodes(hasText(DROP_REPLY), useUnmergedTree = true).assertCountEquals(0)
-            composeTestRule.onAllNodes(hasText(PEER_QUEUED_REPLY), useUnmergedTree = true).assertCountEquals(0)
-            }
             }
         } finally {
             peer.close()
@@ -3499,37 +3518,43 @@ class InteractiveStreamE2ETest {
             assertDrawnOnce(inThreadList(PING_PROMPT), *firstReply.records.map(::ownedReplyMatcher).toTypedArray())
 
             // 5. AC-2: while the phone is offline the peer's turn runs to its end; the phone draws none of it.
-            val offlineObservation = OwnedReplyObservation(
-                serverId, firstReply.thread, legacyProducer = true, knownSession = firstReply.session,
-            )
+            val offlineObservation =
+                OwnedReplyObservation(
+                    serverId,
+                    firstReply.thread,
+                    legacyProducer = true,
+                    knownSession = firstReply.session,
+                )
             var missedReply: ProducedReplyEvidence? = null
             peer.replyObservation = offlineObservation
             try {
-            gap.missPages(chatName) {
-                runBlocking {
-                    // Host post acceptance precedes delivery; fence the first batch before the reply.
-                    withTimeout(WAIT_TURN_TIMEOUT_MS) {
-                        while (peer.recorded(conversationId).none {
-                                it.type == "assistant_delta" && peer.field(it, "text") == gap.lastOlderPost
+                gap.missPages(chatName) {
+                    runBlocking {
+                        // Host post acceptance precedes delivery; fence the first batch before the reply.
+                        withTimeout(WAIT_TURN_TIMEOUT_MS) {
+                            while (peer.recorded(conversationId).none {
+                                    it.type == "assistant_delta" && peer.field(it, "text") == gap.lastOlderPost
+                                }
+                            ) {
+                                delay(50)
                             }
-                        ) {
-                            delay(50)
                         }
-                    }
-                    peer.sendMessage(conversationId, OFFLINE_PROMPT, THREAD_TIMEOUT_MS)
-                    // Posts also end turns. Only the second interactive completion settles this reply.
-                    withTimeout(WAIT_TURN_TIMEOUT_MS) {
-                        while (peer.recorded(conversationId).count {
-                                it.type == "turn_end" && peer.field(it, "producer") != "channel_post"
-                            } < 2
-                        ) {
-                            delay(50)
+                        peer.sendMessage(conversationId, OFFLINE_PROMPT, THREAD_TIMEOUT_MS)
+                        // Posts also end turns. Only the second interactive completion settles this reply.
+                        withTimeout(WAIT_TURN_TIMEOUT_MS) {
+                            while (peer.recorded(conversationId).count {
+                                    it.type == "turn_end" && peer.field(it, "producer") != "channel_post"
+                                } < 2
+                            ) {
+                                delay(50)
+                            }
                         }
+                        missedReply = checkNotNull(offlineObservation.produced()) { "offline producer turn did not complete successfully" }
                     }
-                    missedReply = checkNotNull(offlineObservation.produced()) { "offline producer turn did not complete successfully" }
                 }
+            } finally {
+                peer.replyObservation = null
             }
-            } finally { peer.replyObservation = null }
             val produced = checkNotNull(missedReply)
             composeTestRule.waitForIdle()
             composeTestRule.onAllNodes(inThreadList(OFFLINE_PROMPT), useUnmergedTree = true).assertCountEquals(0)
@@ -3598,81 +3623,82 @@ class InteractiveStreamE2ETest {
             // 3. AC-2: A's second turn waits on its permission prompt; A leaves before any of its reply exists.
             val pendingReply = OwnedReplyObservation(serverId, firstReply.thread, knownSession = firstReply.session)
             OwnedReplyProbe.observing(pendingReply) {
-            sendFromPhone(WAIT_PROMPT)
-            val modalId = peerStep(peer, "await A's permission prompt") { peer.awaitPermissionModal(chatA, REPLY_TIMEOUT_MS) }
-            assertTrue("held turn must not already be complete", !pendingReply.producerCompleted())
-            leaveThread()
-            openChatRow(nameB)
-            assertShowingThread(nameB, nameA)
+                sendFromPhone(WAIT_PROMPT)
+                val modalId = peerStep(peer, "await A's permission prompt") { peer.awaitPermissionModal(chatA, REPLY_TIMEOUT_MS) }
+                assertTrue("held turn must not already be complete", !pendingReply.producerCompleted())
+                leaveThread()
+                openChatRow(nameB)
+                assertShowingThread(nameB, nameA)
 
-            // 4. AC-2: released with B open, A's turn ends; the phone folds that turn_end while B is still shown.
-            val source = GlobalContext.get().get<HostConversationSource>()
-            val repository = checkNotNull(source.repositoryFor(serverId))
-            runBlocking {
-                // Subscribe before release: the alert proves the phone folded this exact completion.
-                val completed =
-                    async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
-                        withTimeout(WAIT_TURN_TIMEOUT_MS) {
-                            source.alerts.first {
-                                it.serverId == serverId && it.conversationId == chatA && it.kind == AttentionAlert.Kind.TurnCompleted
+                // 4. AC-2: released with B open, A's turn ends; the phone folds that turn_end while B is still shown.
+                val source = GlobalContext.get().get<HostConversationSource>()
+                val repository = checkNotNull(source.repositoryFor(serverId))
+                runBlocking {
+                    // Subscribe before release: the alert proves the phone folded this exact completion.
+                    val completed =
+                        async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
+                            withTimeout(WAIT_TURN_TIMEOUT_MS) {
+                                source.alerts.first {
+                                    it.serverId == serverId && it.conversationId == chatA && it.kind == AttentionAlert.Kind.TurnCompleted
+                                }
                             }
                         }
+                    peerStep(peer, "allow A's prompt") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+                    val turnEnd =
+                        peerStep(peer, "await A's held turn_end") {
+                            peer.awaitFrame(chatA, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
+                        }
+                    val turnId = checkNotNull(peer.field(turnEnd, "turn_id")) { "A's turn_end has no turn_id" }
+                    assertTrue("the phone counted a different off-screen completion", completed.await().key == turnId)
+                    val entryId = checkNotNull(turnEnd.historyEntryId) { "A's turn_end has no durable identity" }
+                    val replyEntry =
+                        checkNotNull(
+                            peer
+                                .recorded(chatA)
+                                .filter {
+                                    it.type == "assistant_delta" && peer.field(it, "turn_id") == turnId
+                                }.mapNotNull { it.historyEntryId }
+                                .maxOrNull(),
+                        ) { "A's completed reply has no durable identity" }
+                    assertTrue("A's reply precedes its completion", replyEntry < entryId)
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        repository.observeReadMarks(chatA).filterNotNull().first {
+                            val latest = it.latestEntryId
+                            val read = it.readUpTo
+                            latest != null && latest >= replyEntry && read != null && latest > read
+                        }
+                        source.attention.first { it[serverId]?.get(chatA) == ConversationAttention.Unread }
                     }
-                peerStep(peer, "allow A's prompt") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
-                val turnEnd =
-                    peerStep(peer, "await A's held turn_end") {
-                        peer.awaitFrame(chatA, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
-                    }
-                val turnId = checkNotNull(peer.field(turnEnd, "turn_id")) { "A's turn_end has no turn_id" }
-                assertTrue("the phone counted a different off-screen completion", completed.await().key == turnId)
-                val entryId = checkNotNull(turnEnd.historyEntryId) { "A's turn_end has no durable identity" }
-                val replyEntry =
-                    checkNotNull(
-                        peer
-                            .recorded(chatA)
-                            .filter {
-                                it.type == "assistant_delta" && peer.field(it, "turn_id") == turnId
-                            }.mapNotNull { it.historyEntryId }
-                            .maxOrNull(),
-                    ) { "A's completed reply has no durable identity" }
-                assertTrue("A's reply precedes its completion", replyEntry < entryId)
-                withTimeout(THREAD_TIMEOUT_MS) {
-                    repository.observeReadMarks(chatA).filterNotNull().first {
-                        val latest = it.latestEntryId
-                        val read = it.readUpTo
-                        latest != null && latest >= replyEntry && read != null && latest > read
-                    }
-                    source.attention.first { it[serverId]?.get(chatA) == ConversationAttention.Unread }
                 }
-            }
-            assertShowingThread(nameB, nameA)
-            val produced = checkNotNull(pendingReply.produced()) { "offscreen reply did not complete successfully" }
-            assertNotEquals(firstReply.turn, produced.turn)
+                assertShowingThread(nameB, nameA)
+                val produced = checkNotNull(pendingReply.produced()) { "offscreen reply did not complete successfully" }
+                assertNotEquals(firstReply.turn, produced.turn)
 
-            // 5. AC-2: still in B, cut and restore the link; A's cache never received the reply.
-            setHostLink(serverId, up = false)
-            setHostLink(serverId, up = true)
-            assertNoCachedReply(firstReply, produced)
+                // 5. AC-2: still in B, cut and restore the link; A's cache never received the reply.
+                setHostLink(serverId, up = false)
+                setHostLink(serverId, up = true)
+                assertNoCachedReply(firstReply, produced)
 
-            // 6. AC-1: opening A is the only gesture; its newest-page ask brings the reply, every row once and in order.
-            leaveThread()
-            openChatRow(nameA)
-            val recovered = currentThread(serverId, chatA) { produced.admitted(it, serverId) != null }
-            val actualReply = checkNotNull(produced.admitted(recovered, serverId))
-            awaitRetainedReply(firstReply)
-            awaitRetainedReply(actualReply)
-            val rows = listOf(inThreadList(PING_PROMPT)) + firstReply.records.map(::ownedReplyMatcher) +
-                listOf(inThreadList(WAIT_PROMPT)) + actualReply.records.map(::ownedReplyMatcher)
-            assertDrawnOnce(*rows.toTypedArray())
-            val tops =
-                rows.map {
-                    composeTestRule
-                        .onNode(it, useUnmergedTree = true)
-                        .fetchSemanticsNode()
-                        .boundsInRoot.top
-                }
-            assertTrue("expected ping, its reply, the held prompt and its reply top to bottom; tops $tops", tops == tops.sorted())
-            assertTrue("two of the messages share a row; tops $tops", tops.distinct().size == tops.size)
+                // 6. AC-1: opening A is the only gesture; its newest-page ask brings the reply, every row once and in order.
+                leaveThread()
+                openChatRow(nameA)
+                val recovered = currentThread(serverId, chatA) { produced.admitted(it, serverId) != null }
+                val actualReply = checkNotNull(produced.admitted(recovered, serverId))
+                awaitRetainedReply(firstReply)
+                awaitRetainedReply(actualReply)
+                val rows =
+                    listOf(inThreadList(PING_PROMPT)) + firstReply.records.map(::ownedReplyMatcher) +
+                        listOf(inThreadList(WAIT_PROMPT)) + actualReply.records.map(::ownedReplyMatcher)
+                assertDrawnOnce(*rows.toTypedArray())
+                val tops =
+                    rows.map {
+                        composeTestRule
+                            .onNode(it, useUnmergedTree = true)
+                            .fetchSemanticsNode()
+                            .boundsInRoot.top
+                    }
+                assertTrue("expected ping, its reply, the held prompt and its reply top to bottom; tops $tops", tops == tops.sorted())
+                assertTrue("two of the messages share a row; tops $tops", tops.distinct().size == tops.size)
             }
         } finally {
             peer.close()
@@ -8466,13 +8492,14 @@ class InteractiveStreamE2ETest {
         serverId: String,
         conversationId: String,
         accept: (ThreadEvidence) -> Boolean,
-    ): ThreadEvidence = runBlocking {
-        val connection = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId))
-        val repositories = connection.coordinator.currentRepository
-        withTimeout(THREAD_TIMEOUT_MS) {
-            repositories.firstOnLive({ harnessThreadEvidence(it).observe(conversationId) }) { it.admitted && accept(it) }
+    ): ThreadEvidence =
+        runBlocking {
+            val connection = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId))
+            val repositories = connection.coordinator.currentRepository
+            withTimeout(THREAD_TIMEOUT_MS) {
+                repositories.firstOnLive({ harnessThreadEvidence(it).observe(conversationId) }) { it.admitted && accept(it) }
+            }
         }
-    }
 
     private fun awaitRetainedReply(reply: CompletedReplyObservation): CompletedReplyObservation {
         val held = currentThread(reply.host, reply.owner.conversation) { it.retainedReply(reply, reply.host) != null }
@@ -8497,35 +8524,51 @@ class InteractiveStreamE2ETest {
      * ever holds settled rows, and the open thread's collector writes them after drawing them, so this is
      * the phone's own proof that the reply settled — not another device's copy of `turn_end`.
      */
-    private fun cachedRecords(reply: CompletedReplyObservation): List<ThreadEvidenceRecord> = runBlocking {
-        val cache = GlobalContext.get().get<ConversationCache>()
-        when (reply.owner.kind) {
-            ThreadEvidenceKind.Legacy -> legacyThreadEvidence(reply.host, reply.owner.conversation, Any(),
-                cache.readThread(reply.host, reply.owner.conversation)).records
-            ThreadEvidenceKind.Authoritative -> cache.readAuthoritativeThread(reply.host, reply.owner.conversation)?.let {
-                authoritativeThreadEvidence(reply.host, reply.owner.conversation, Any(), it.toSnapshot()).records
-            }.orEmpty()
+    private fun cachedRecords(reply: CompletedReplyObservation): List<ThreadEvidenceRecord> =
+        runBlocking {
+            val cache = GlobalContext.get().get<ConversationCache>()
+            when (reply.owner.kind) {
+                ThreadEvidenceKind.Legacy ->
+                    legacyThreadEvidence(
+                        reply.host,
+                        reply.owner.conversation,
+                        Any(),
+                        cache.readThread(reply.host, reply.owner.conversation),
+                    ).records
+                ThreadEvidenceKind.Authoritative ->
+                    cache
+                        .readAuthoritativeThread(reply.host, reply.owner.conversation)
+                        ?.let {
+                            authoritativeThreadEvidence(reply.host, reply.owner.conversation, Any(), it.toSnapshot()).records
+                        }.orEmpty()
+            }
         }
-    }
 
     private fun cacheRetains(reply: CompletedReplyObservation): Boolean {
         val rows = cachedRecords(reply).filter { it.message.role == Role.Assistant && it.turn == reply.turn && it.agentId == null }
-        return rows.size == reply.records.size && rows.zip(reply.records).all { (row, held) ->
-            row.message.id == held.message.id &&
-                (row.session == held.session || held.session.isNullOrEmpty() && row.session == reply.session) &&
-                row.fullText == held.fullText && !row.message.isStreaming
-        }
+        return rows.size == reply.records.size &&
+            rows.zip(reply.records).all { (row, held) ->
+                row.message.id == held.message.id &&
+                    (row.session == held.session || held.session.isNullOrEmpty() && row.session == reply.session) &&
+                    row.fullText == held.fullText && !row.message.isStreaming
+            }
     }
 
     private fun awaitCachedAssistantReply(reply: CompletedReplyObservation) {
         runBlocking { withTimeout(THREAD_TIMEOUT_MS) { while (!cacheRetains(reply)) delay(CACHE_POLL_MS) } }
     }
 
-    private fun assertNoCachedReply(baseline: CompletedReplyObservation, missed: ProducedReplyEvidence) {
+    private fun assertNoCachedReply(
+        baseline: CompletedReplyObservation,
+        missed: ProducedReplyEvidence,
+    ) {
         assertTrue("cache must retain the exact baseline reply", cacheRetains(baseline))
-        assertTrue("cache must not already hold the missed turn", cachedRecords(baseline).none {
-            it.message.role == Role.Assistant && it.turn == missed.turn
-        })
+        assertTrue(
+            "cache must not already hold the missed turn",
+            cachedRecords(baseline).none {
+                it.message.role == Role.Assistant && it.turn == missed.turn
+            },
+        )
     }
 
     /** The open thread is [name]'s: its name is shown and [other]'s is not. */
@@ -8655,10 +8698,11 @@ class InteractiveStreamE2ETest {
         conversationId: String,
         producerFrames: (() -> List<Envelope>)? = null,
         send: () -> Unit,
-    ): CompletedReplyObservation = withOwnedReply(serverId, conversationId, producerFrames = producerFrames) { await ->
-        send()
-        await()
-    }
+    ): CompletedReplyObservation =
+        withOwnedReply(serverId, conversationId, producerFrames = producerFrames) { await ->
+            send()
+            await()
+        }
 
     private fun <T> withOwnedReply(
         serverId: String,
@@ -8688,6 +8732,7 @@ class InteractiveStreamE2ETest {
         try {
             val before = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { observed.filterNotNull().first { it.admitted } } }
             val observation = OwnedReplyObservation(serverId, before, legacyProducer = peer != null, knownSession = knownSession)
+
             fun await(): CompletedReplyObservation {
                 var admitted: CompletedReplyObservation? = null
                 var readable = false
@@ -8733,7 +8778,11 @@ class InteractiveStreamE2ETest {
             } else {
                 check(peer.replyObservation == null) { "peer reply observation already armed" }
                 peer.replyObservation = observation
-                try { OwnedReplyProbe.observingSessions(observation) { block(::await) } } finally { peer.replyObservation = null }
+                try {
+                    OwnedReplyProbe.observingSessions(observation) { block(::await) }
+                } finally {
+                    peer.replyObservation = null
+                }
             }
         } finally {
             scope.cancel()

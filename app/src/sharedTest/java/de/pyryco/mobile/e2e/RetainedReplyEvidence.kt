@@ -81,7 +81,7 @@ internal fun ThreadEvidence.retainedReply(
     val originalSession = captured.records.first().session ?: return null
     if (family.any { it.session != originalSession && (originalSession.isNotEmpty() || it.session != captured.session) }) return null
 
-    fun key(record: ThreadEvidenceRecord): Any = record.fact?.id ?: record.message.ordinaryId
+    fun key(record: ThreadEvidenceRecord): Any = record.fact?.id ?: record.message.id
     if (family.size != captured.records.size ||
         family.map(::key) != captured.records.map(::key) ||
         family.zip(captured.records).any { (now, old) -> now.fullText != old.fullText || now.message.content != old.message.content } ||
