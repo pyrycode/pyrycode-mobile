@@ -16,3 +16,9 @@ One useful behaviour slice: reliable reader coordinate assertions, proved by bou
 ## Testing strategy
 
 Run the named reference method unchanged on managed Android 13 first and retain its failed report. Add a failing numeric regression using nonzero snapped coordinates at density 2.625 in both error directions; accept two pixels, reject three, reject two under the default one-pixel limit, and preserve exact density-1 checks including subpixel rejection. Then repair the private helper and run the full `MarkdownReaderDesignTest` JVM class and the named Android method on Linux. Existing zero-origin boundary assertions remain. Retain raw reports, source revisions, density and counted outcomes, including failures, in persistent ticket evidence. The complete gates and post-merge sweep remain dispatcher-owned. Run focused lint/build/format/compile checks and final `pre-verify.py --gradle` after merging main. No live-provider evidence or new device-only test is needed.
+
+## Revisions
+
+### 2026-10-19 — Snap the expected distance to the same pixel grid
+
+The first repaired Android run passed the original paragraph interval but exposed the next interval: the expected 38dp converts to 99.75 ideal pixels, while the actual snapped distance is 101 pixels. Comparing an ideal fractional pixel distance with a whole-pixel observation still mismatches coordinate systems. Round the expected distance to its nearest integer pixel too (100 pixels here), then retain the original one- or two-pixel integer limit. Whole-density comparisons remain exact. `nonintegralExpectedDistanceKeepsItsSnappedPixelBoundaries` covers both directions around that rounded expectation, including rejection beyond each limit. Retain the intermediate failed native report alongside the original failure. This remains the same local numeric-comparison repair; production geometry, reference dp values and allowance counts do not change.

@@ -220,6 +220,23 @@ class MarkdownReaderDesignTest {
         }
     }
 
+    @Test fun nonintegralExpectedDistanceKeepsItsSnappedPixelBoundaries() {
+        val density = 2.625f
+        val previous = (361f / density).dp
+        // The reader's 38dp interval is 99.75px, represented by a 100px snapped distance.
+        for (direction in listOf(-1, 1)) {
+            fun current(pixels: Int) = ((461f + direction * pixels) / density).dp
+            assertBlockTopDistance(38.dp, previous, current(1), density = density)
+            assertBlockTopDistance(38.dp, previous, current(2), pixels = ROUNDED_TEXT_BLOCK_PIXELS, density = density)
+            assertThrows(AssertionError::class.java) {
+                assertBlockTopDistance(38.dp, previous, current(2), density = density)
+            }
+            assertThrows(AssertionError::class.java) {
+                assertBlockTopDistance(38.dp, previous, current(3), pixels = ROUNDED_TEXT_BLOCK_PIXELS, density = density)
+            }
+        }
+    }
+
     private fun assertBlockTopDistance(
         expected: Dp,
         previous: Dp,
@@ -234,7 +251,9 @@ class MarkdownReaderDesignTest {
             // Bounds originate at integer pixels. Recover each edge before dp subtraction can
             // push an exact pixel boundary outside its allowance through float cancellation.
             val actualPixels = (current.value * density).roundToInt() - (previous.value * density).roundToInt()
-            assertEquals(message, expected.value * density, actualPixels.toFloat(), pixels.toFloat())
+            // Compare the Figma distance on the same pixel grid, retaining the pixel-count limit.
+            val expectedPixels = (expected.value * density).roundToInt()
+            assertEquals(message, expectedPixels.toFloat(), actualPixels.toFloat(), pixels.toFloat())
         }
     }
 
