@@ -231,15 +231,19 @@ private fun UnrecognizedSite.wireToken(): String =
  */
 internal class TappingConversationRepository(
     private val delegate: ConversationRepository,
+    private val observeThread: ((String, Flow<ThreadSnapshot>) -> Flow<ThreadSnapshot>)? = null,
 ) : ConversationRepository by delegate,
     ThreadSnapshotSource {
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = observeThreadSnapshot(conversationId).map { it.rows }
 
-    override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
-        delegate.threadSnapshots(conversationId).onEach { snapshot ->
-            UnrecognizedRowRecorder.record(snapshot.rows)
-            DurableHistoryProbe.record(conversationId, snapshot.rows)
-        }
+    override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> {
+        val observed =
+            delegate.threadSnapshots(conversationId).onEach { snapshot ->
+                UnrecognizedRowRecorder.record(snapshot.rows)
+                DurableHistoryProbe.record(conversationId, snapshot.rows)
+            }
+        return observeThread?.invoke(conversationId, observed) ?: observed
+    }
 
     override suspend fun requestHistory(
         conversationId: String,
