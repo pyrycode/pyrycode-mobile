@@ -1404,7 +1404,9 @@ private fun AnnotatedString.Builder.appendInlineChildren(
                 while (last < children.lastIndex && children[last].endOffset <= link.last) last++
                 // A candidate can cross lexer tokens, but never borrow text from code or an authored label.
                 val covered = children.subList(index, last + 1)
-                if (child.children.isEmpty() && children[last].children.isEmpty() && covered.none { it.protectsBareLink(link) }) {
+                if (child.type != GFMTokenTypes.GFM_AUTOLINK &&
+                    child.children.isEmpty() && children[last].children.isEmpty() && covered.none { it.protectsBareLink(link) }
+                ) {
                     append(textOutside(cursor, link.first, source, synthetic))
                     val target = source.substring(link)
                     appendLink(target, target, uriHandler, colors)

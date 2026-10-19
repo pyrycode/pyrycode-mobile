@@ -69,7 +69,7 @@ None: the refined issue supplies the punctuation and completion contracts.
 
 **Verdict:** PASS
 
-- **Trust boundaries:** daemon text becomes actionable only through the shared admission function. Whole-candidate validation and the pending-end guard prevent unsafe or growing prefixes from gaining an action. Tests must attempt unknown-key, malformed-escape and non-note suffix bypasses.
+- **Trust boundaries:** daemon text becomes actionable only through the shared admission function. Whole-candidate validation and the pending-end guard prevent unsafe or growing prefixes from gaining an action. Starts within existing GFM web-autolink tokens remain inert. Tests attempt unknown-key, malformed-escape, non-note suffix and embedded-web-target bypasses.
 - **Tokens:** no generation, storage or credential access; exact targets are held only in annotations and never logged.
 - **Files and storage:** no file access or persistence. Scheme admission and unchanged routing prevent Obsidian targets from becoming workspace reads.
 - **Android attack surface:** reuse the existing ACTION_VIEW opener and safe failure notices; no exported component, intent filter, provider or WebView is added.
@@ -87,3 +87,7 @@ None: the refined issue supplies the punctuation and completion contracts.
 ### 2026-10-19 — token traversal and focused execution
 
 The renderer overlays admitted source ranges while walking siblings, rather than joining only childless runs: a URL can contain parser punctuation or an interior Markdown node without becoming a truncated target. Only range boundaries in ordinary leaf tokens are eligible at a given level; code and authored-label subtrees remain protected. Single-tilde interiors recurse through the same walker so their styling survives a link. `appendLeaf` already has the real source end, so `StreamingMarkdown.kt` needs no production edit. The managed launcher accepts one Mobile test class per invocation; run the seven affected classes individually.
+
+### 2026-10-19 — preserve whole bare web URLs
+
+The rejection regression exposed an active Obsidian substring inside `https://example.com/(obsidian://open?file=Note)`. An opening parenthesis within an existing GFM web-autolink token is not a prose candidate start. Reject starts inside `GFM_AUTOLINK`, while still allowing an Obsidian candidate to span other tokens. The same native regression covers the `www` form; its initial failed report is retained as `app/src/test/resources/markdown-2272/embedded-web-red.xml`. This closes a boundary of the existing bare-web exclusion without changing admission.

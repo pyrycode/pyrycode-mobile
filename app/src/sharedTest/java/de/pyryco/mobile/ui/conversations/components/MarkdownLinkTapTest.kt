@@ -127,12 +127,13 @@ class MarkdownLinkTapTest {
             listOf(
                 "obsidian://open?vault=V&file=Note.md",
                 "ObSiDiAn://open?vault=Second%20brain&file=A%2fPlan.MD&paneType=tab",
+                "obsidian://open?vault=www.example.com&file=Note",
             )
-        val text = "Open ${targets[0]} and ${targets[1]} now"
+        val text = "Open ${targets.joinToString(" and ")} now"
         show { MarkdownText(text, onOpenMarkdownPath = { paths += it }) }
         val rendered = annotated(text)
         val ranges = rendered.getLinkAnnotations(0, rendered.length)
-        assertEquals(2, ranges.size)
+        assertEquals(targets.size, ranges.size)
         ranges.zip(targets).forEach { (range, target) ->
             assertEquals(text.indexOf(target), range.start)
             assertEquals(text.indexOf(target) + target.length, range.end)
@@ -168,6 +169,8 @@ class MarkdownLinkTapTest {
             "https://example.com",
             "www.example.com",
             "a@example.com",
+            "https://example.com/(obsidian://open?file=Note)",
+            "www.example.com/(obsidian://open?file=Note)",
         ).forEach { target ->
             val text = "Before $target after"
             composeTestRule.runOnIdle { source.value = text }
