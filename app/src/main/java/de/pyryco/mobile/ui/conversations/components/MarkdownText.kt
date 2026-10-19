@@ -1247,8 +1247,8 @@ private fun AnnotatedString.Builder.appendInline(
             ) {
                 append(node.getTextInNode(source).toString().trim('`'))
             }
-        // An authored autolink's label is not bare prose; preserve its existing literal rendering.
-        MarkdownElementTypes.AUTOLINK -> append(textOutside(node, source, synthetic))
+        // Authored labels are never bare prose, even when their destination is refused or unresolved.
+        in BareLinkLabelContainers -> append(textOutside(node, source, synthetic))
         MarkdownElementTypes.INLINE_LINK -> {
             val linkText = inlineLinkText(node, source, synthetic)
             val url =
@@ -1408,7 +1408,7 @@ private fun AnnotatedString.Builder.appendInlineChildren(
                 val covered = children.subList(index, last + 1)
                 if (child.type != GFMTokenTypes.GFM_AUTOLINK &&
                     child.children.isEmpty() &&
-                    children[last].children.isEmpty() &&
+                    (children[last].children.isEmpty() || children[last].endOffset == link.last + 1) &&
                     covered.none { it.protectsBareLink(link) }
                 ) {
                     append(textOutside(cursor, link.first, source, synthetic))
@@ -1436,11 +1436,21 @@ private fun AnnotatedString.Builder.appendInlineChildren(
     }
 }
 
+private val BareLinkLabelContainers =
+    setOf(
+        MarkdownElementTypes.AUTOLINK,
+        MarkdownElementTypes.FULL_REFERENCE_LINK,
+        MarkdownElementTypes.SHORT_REFERENCE_LINK,
+        MarkdownElementTypes.LINK_TEXT,
+        MarkdownElementTypes.LINK_LABEL,
+    )
+
 private fun ASTNode.protectsBareLink(range: IntRange): Boolean {
     if (endOffset <= range.first || startOffset > range.last) return false
     if (type == MarkdownElementTypes.CODE_SPAN ||
         type == MarkdownElementTypes.INLINE_LINK ||
-        type == MarkdownElementTypes.IMAGE
+        type == MarkdownElementTypes.IMAGE ||
+        type in BareLinkLabelContainers
     ) {
         return true
     }

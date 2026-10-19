@@ -322,6 +322,29 @@ class StreamingMarkdownTextTest {
         assertEquals(final.length, range.end)
     }
 
+    @Test
+    fun bareCompositeEndpoints_waitForCompletion_andSettleToExactTargets() {
+        renderBoth()
+        composeTestRule.runOnIdle { caret.value = true }
+        listOf("A*B*", "A**B**", "A~~B~~", "A~B~", "A*B***C**").forEach { file ->
+            val url = "obsidian://open?file=$file"
+            listOf("See " to " ", "- See " to " ", "| Header |\n| --- |\n| See " to "|").forEach { (prefix, closer) ->
+                val pending = streamedText(prefix + url)
+                assertTrue(pending.getLinkAnnotations(0, pending.length).isEmpty())
+                val completed = streamedText(prefix + url + closer)
+                val range = completed.getLinkAnnotations(0, completed.length).single()
+                assertEquals(url, (range.item as LinkAnnotation.Url).url)
+                assertEquals(4, range.start)
+                assertEquals(4 + url.length, range.end)
+                assertEquals("See $url", completed.withoutCaret().trimEnd())
+                composeTestRule.runOnIdle { settled.value = prefix + url }
+                val final = drawn(SETTLED_TAG).last()
+                assertEquals("See $url", final.text)
+                assertEquals(listOf("4-${4 + url.length}:$url"), final.links)
+            }
+        }
+    }
+
     private fun AnnotatedString.hasNoFormatting(): Boolean =
         spanStyles.none {
             it.item.fontWeight == FontWeight.Bold ||

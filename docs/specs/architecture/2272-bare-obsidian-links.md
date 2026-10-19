@@ -69,7 +69,7 @@ None: the refined issue supplies the punctuation and completion contracts.
 
 **Verdict:** PASS
 
-- **Trust boundaries:** daemon text becomes actionable only through the shared admission function. Whole-candidate validation and the pending-end guard prevent unsafe or growing prefixes from gaining an action. Starts within existing GFM web-autolink tokens and authored autolink labels remain inert. Tests attempt unknown-key, malformed-escape, non-note suffix and embedded-web-target bypasses.
+- **Trust boundaries:** daemon text becomes actionable only through the shared admission function. Whole-candidate validation and the pending-end guard prevent unsafe or growing prefixes from gaining an action. The original review missed full/collapsed/shortcut reference labels: these must be protected alongside inline links, autolinks, images and code, both during overlay selection and recursive dispatch. Reference constructs retain their existing inert presentation; no authored-label subtree runs bare recognition. Finished/streaming native tests assert absent annotations, styles and activation for every reference form with a refused authored destination. Tests also attempt unknown-key, malformed-escape, non-note suffix and embedded-web-target bypasses.
 - **Tokens:** no generation, storage or credential access; exact targets are held only in annotations and never logged.
 - **Files and storage:** no file access or persistence. Scheme admission and unchanged routing prevent Obsidian targets from becoming workspace reads.
 - **Android attack surface:** reuse the existing ACTION_VIEW opener and safe failure notices; no exported component, intent filter, provider or WebView is added.
@@ -97,3 +97,16 @@ The equivalent angle-bracket probe exposed the same problem in `AUTOLINK` labels
 ### 2026-10-19 — parser probe bounds
 
 The new parser test incorrectly assumed the union of URL-intersecting tokens equals the URL: TEXT tokens can also contain the surrounding prose. Preserve the multi-token assertion and require extraction within the real paragraph/list/cell leaf to return exactly the URL range, while allowing surrounding characters in the tokens. The production overlay already handles those partial leaves; its 30 Markdown text and 23 routing screen cases passed. `parser-boundary-red.xml` retains this test-assumption failure.
+
+### 2026-10-19 — verifier repairs: composite endpoints and reference labels
+
+Finding 1 exposed the endpoint restriction in `appendInlineChildren`: a complete admitted URL ending at an emphasis, strong or strike node must consume that entire node verbatim, including its delimiters. Permit fully consumed composite endpoints while retaining recursive dispatch for partial composite boundaries and the code/authored-label veto. `MarkdownTextParsingTest.admitted bare targets can end in composite inline nodes`, `MarkdownLinkTapTest.bareRanges_endingInCompositeNodes_preserveExactTextAndAndroidTargets` and `StreamingMarkdownTextTest.bareCompositeEndpoints_waitForCompletion_andSettleToExactTargets` cover paragraph/list/table targets, sibling constructs, exact ranges, Android delivery, real termination and settlement without premature activation.
+
+Finding 2 exposed missing reference-label protection. Share one authored-label container set between `appendInline` and `protectsBareLink`, including full/collapsed references, shortcut references, `LINK_TEXT`, `LINK_LABEL` and autolinks. Preserve their literal source rather than recursing into bare recognition. The parser test pins all three forms; `finishedReferenceLabels_neverActivateEmbeddedBareCandidates` and `streamingReferenceLabels_neverActivateEmbeddedBareCandidates` prove absent actions with workspace opt-in. The security review above now names this previously missed boundary explicitly.
+
+Both repairs enforce the original exact-target/exclusion invariant, with no new public types, consumer signature changes or independent behaviour. The repair is forecast at approximately 350 written lines including tests, plan and raw evidence, keeping the full branch below 1600. Remote #2270 overlaps the code-span arm and link helper; keep these edits local to prose overlay and label dispatch. #1766 remains a closed historical overlap. The Figma frame was inspected again; primary/underline treatment and geometry remain as authored links.
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/knowledge/features/markdown-text.md`, Streaming and Testing — explain real source completion versus lexer boundaries, punctuation, synthetic closers and caret; record final counted Linux acceptance once dispatcher gates pass.
+- Pending documentation stage: `docs/knowledge/features/markdown-text-internals.md`, Inline dispatch and Link safety — document the narrow bare-Obsidian exception, exact source ranges across composite nodes, unchanged routing/styling, punctuation fallback and code/authored-label exclusions, preserving literal bare web/email behaviour.

@@ -262,6 +262,70 @@ class MarkdownLinkTapTest {
     }
 
     @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun bareRanges_endingInCompositeNodes_preserveExactTextAndAndroidTargets() {
+        val source = mutableStateOf("")
+        show { MarkdownText(source.value, onOpenMarkdownPath = { paths += it }) }
+        val expected = mutableListOf<String>()
+        listOf("A*B*", "A**B**", "A~~B~~", "A~B~", "A*B***C**").forEach { file ->
+            val url = "obsidian://open?file=$file"
+            val text = "See $url now"
+            listOf(text, "- $text", "| Header |\n| --- |\n| $text |").forEach { markdown ->
+                composeTestRule.runOnIdle { source.value = markdown }
+                val rendered = annotated(text)
+                val range = rendered.getLinkAnnotations(0, rendered.length).single()
+                assertEquals(4, range.start)
+                assertEquals(4 + url.length, range.end)
+                assertEquals(url, rendered.text.substring(range.start, range.end))
+                val link = range.item as LinkAnnotation.Url
+                assertEquals(url, link.url)
+                assertEquals(linkColor, link.styles?.style?.color)
+                assertEquals(TextDecoration.Underline, link.styles?.style?.textDecoration)
+                composeTestRule.onNodeWithText(text).performFirstLinkClick()
+                expected += url
+                assertEquals(expected, opened)
+                assertTrue(paths.isEmpty())
+            }
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun finishedReferenceLabels_neverActivateEmbeddedBareCandidates() = assertReferenceLabels(streaming = false)
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun streamingReferenceLabels_neverActivateEmbeddedBareCandidates() = assertReferenceLabels(streaming = true)
+
+    private fun assertReferenceLabels(streaming: Boolean) {
+        val source = mutableStateOf("")
+        show {
+            if (streaming) {
+                StreamingMarkdownText(source.value, caretVisible = false, onOpenMarkdownPath = { paths += it })
+            } else {
+                MarkdownText(source.value, onOpenMarkdownPath = { paths += it })
+            }
+        }
+        val label = "See obsidian://open?file=Note now"
+        listOf(
+            "[$label][ref]\n\n[ref]: javascript:bad",
+            "[$label][]\n\n[$label]: javascript:bad",
+            "[$label]\n\n[$label]: javascript:bad",
+        ).forEach { markdown ->
+            composeTestRule.runOnIdle { source.value = markdown }
+            val texts =
+                composeTestRule
+                    .onAllNodesWithText(label, substring = true)
+                    .fetchSemanticsNodes()
+                    .map { it.config[SemanticsProperties.Text].single().text }
+            assertTrue(texts.isNotEmpty())
+            texts.forEach { assertInert(it, beforeTapMillis = 1_000) }
+            assertTrue(opened.isEmpty())
+            assertTrue(paths.isEmpty())
+        }
+    }
+
+    @Test
     fun streamingExplicitLinks_agreeWithRoutingAndHtml() = assertExplicitLinks(isStreaming = true)
 
     @Test

@@ -50,6 +50,38 @@ class MarkdownTextParsingTest {
         }
     }
 
+    @Test
+    fun `admitted bare targets can end in composite inline nodes`() {
+        listOf(
+            "*B*" to MarkdownElementTypes.EMPH,
+            "**B**" to MarkdownElementTypes.STRONG,
+            "~~B~~" to GFMElementTypes.STRIKETHROUGH,
+        ).forEach { (suffix, type) ->
+            val url = "obsidian://open?file=A$suffix"
+            listOf("See $url now", "- See $url now", "| Header |\n| --- |\n| See $url now |").forEach { source ->
+                val leaf = parse(source).descendants().last { it.type == MarkdownElementTypes.PARAGRAPH || it.type == GFMTokenTypes.CELL }
+                val endpoint = leaf.children.single { it.endOffset == source.indexOf(url) + url.length }
+                assertEquals(type, endpoint.type)
+                assertTrue(isSafeLinkScheme(url))
+                assertEquals("See $url now", inlineText(leaf.children, source).trim())
+            }
+        }
+    }
+
+    @Test
+    fun `all reference label forms are authored containers`() {
+        val label = "See obsidian://open?file=Note now"
+        listOf(
+            "[$label][ref]\n\n[ref]: javascript:bad" to MarkdownElementTypes.FULL_REFERENCE_LINK,
+            "[$label][]\n\n[$label]: javascript:bad" to MarkdownElementTypes.FULL_REFERENCE_LINK,
+            "[$label]\n\n[$label]: javascript:bad" to MarkdownElementTypes.SHORT_REFERENCE_LINK,
+        ).forEach { (source, type) ->
+            val node = parse(source).firstOfType(type)
+            assertNotNull(source, node)
+            assertTrue(node!!.getTextInNode(source).contains(label))
+        }
+    }
+
     // ---------------------------------------------------------------- alignments
 
     @Test
