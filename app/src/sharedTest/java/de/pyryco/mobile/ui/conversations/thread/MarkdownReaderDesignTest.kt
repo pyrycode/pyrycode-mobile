@@ -44,6 +44,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
@@ -165,7 +166,7 @@ class MarkdownReaderDesignTest {
             val (name, block) = body[index]
             val (above, previous) = body[index - 1]
             val pixels = if (above == "paragraph" || above == "first item") ROUNDED_TEXT_BLOCK_PIXELS else 1
-            assertDpEquals((block.second - previous.second).dp, block.first - previous.first, "$name below $above", pixels = pixels)
+            assertBlockTopDistance((block.second - previous.second).dp, previous.first, block.first, "$name below $above", pixels = pixels)
         }
         assertEquals(20f, code.left.value, 1f)
         assertEquals(372f, code.width.value, 1f)
@@ -186,6 +187,54 @@ class MarkdownReaderDesignTest {
             assertThrows(AssertionError::class.java) {
                 assertDpEquals(0.dp, (direction * beyondDefault).dp)
             }
+        }
+    }
+
+    @Test fun nonzeroAdjacentTopsKeepTheirFractionalDensityPixelBoundaries() {
+        val density = 2.625f
+        for (direction in listOf(-1, 1)) {
+            // These nonzero origins round the dp subtraction outward in both directions.
+            val previousPx = if (direction < 0) 352f else 361f
+            val previous = (previousPx / density).dp
+
+            fun current(pixels: Int) = ((previousPx + 210f + direction * pixels) / density).dp
+            assertBlockTopDistance(80.dp, previous, current(2), pixels = ROUNDED_TEXT_BLOCK_PIXELS, density = density)
+            assertBlockTopDistance(80.dp, previous, current(1), density = density)
+            assertThrows(AssertionError::class.java) {
+                assertBlockTopDistance(80.dp, previous, current(3), pixels = ROUNDED_TEXT_BLOCK_PIXELS, density = density)
+            }
+            assertThrows(AssertionError::class.java) {
+                assertBlockTopDistance(80.dp, previous, current(2), density = density)
+            }
+        }
+    }
+
+    @Test fun nonzeroAdjacentTopsRemainExactAtDensityOne() {
+        for (pixels in listOf(1, ROUNDED_TEXT_BLOCK_PIXELS)) {
+            assertBlockTopDistance(80.dp, 137.dp, 217.dp, pixels = pixels, density = 1f)
+            for (direction in listOf(-1, 1)) {
+                assertThrows(AssertionError::class.java) {
+                    assertBlockTopDistance(80.dp, 137.dp, (217f + direction * 0.001f).dp, pixels = pixels, density = 1f)
+                }
+            }
+        }
+    }
+
+    private fun assertBlockTopDistance(
+        expected: Dp,
+        previous: Dp,
+        current: Dp,
+        message: String? = null,
+        pixels: Int = 1,
+        density: Float = rule.density.density,
+    ) {
+        if (density % 1f == 0f) {
+            assertEquals(message, expected.value, (current - previous).value, 0f)
+        } else {
+            // Bounds originate at integer pixels. Recover each edge before dp subtraction can
+            // push an exact pixel boundary outside its allowance through float cancellation.
+            val actualPixels = (current.value * density).roundToInt() - (previous.value * density).roundToInt()
+            assertEquals(message, expected.value * density, actualPixels.toFloat(), pixels.toFloat())
         }
     }
 
