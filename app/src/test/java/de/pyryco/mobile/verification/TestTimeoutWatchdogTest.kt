@@ -3,17 +3,20 @@ package de.pyryco.mobile.verification
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.experimental.categories.Category
 import org.junit.platform.engine.TestDescriptor
 import org.junit.platform.engine.TestExecutionResult
 import org.junit.platform.engine.UniqueId
 import org.junit.platform.engine.discovery.DiscoverySelectors.selectClass
 import org.junit.platform.engine.support.descriptor.AbstractTestDescriptor
 import org.junit.platform.engine.support.descriptor.EngineDescriptor
+import org.junit.platform.launcher.TagFilter
 import org.junit.platform.launcher.TestExecutionListener
 import org.junit.platform.launcher.TestIdentifier
 import org.junit.platform.launcher.core.LauncherConfig
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder
 import org.junit.platform.launcher.core.LauncherFactory
+import org.junit.platform.launcher.listeners.SummaryGeneratingListener
 import org.junit.runner.Description
 import org.junit.runner.RunWith
 import org.junit.runner.Runner
@@ -93,6 +96,24 @@ class TestTimeoutWatchdogTest {
             .command
             .run()
         assertTrue(interrupted.isEmpty())
+    }
+
+    @Test fun ordinaryDiscoveryExcludesControlledRunnerFixture() {
+        val summary = SummaryGeneratingListener()
+        val launcher = LauncherFactory.create(LauncherConfig.builder().enableTestExecutionListenerAutoRegistration(false).build())
+        launcher.execute(
+            LauncherDiscoveryRequestBuilder
+                .request()
+                .selectors(selectClass(EscapingFixture::class.java))
+                .filters(TagFilter.excludeTags(requireNotNull(System.getProperty("pyry.excludedTestTags")).split(',')))
+                .build(),
+            watchdog,
+            summary,
+        )
+        assertEquals("ordinary discovery must not find the deliberately unfinished child", 0, summary.summary.testsFoundCount)
+        assertEquals("ordinary discovery must not start the deliberately unfinished child", 0, summary.summary.testsStartedCount)
+        assertTrue("excluded fixtures must not arm deadlines", timer.tasks.isEmpty())
+        assertTrue(halted.isEmpty())
     }
 
     @Test fun genuineHangStillInterruptsAndHaltsAfterGrace() {
@@ -268,6 +289,10 @@ class TestTimeoutWatchdogTest {
         assertTrue(interrupted.isEmpty())
     }
 
+    interface ControlledRunnerFixture
+
+    // Only the nested launcher with an injected halt callback may execute this fixture.
+    @Category(ControlledRunnerFixture::class)
     @RunWith(EscapingRunner::class)
     class EscapingFixture
 
