@@ -114,6 +114,30 @@ class OwnedReplyObservationTest {
         }
     }
 
+    @Test fun optionalTerminalReasonDoesNotReplaceMandatorySuccessfulCompletion() {
+        for (kind in ThreadEvidenceKind.entries) {
+            for (reason in listOf(null, JsonPrimitive(""), JsonPrimitive("completed"), JsonPrimitive("interrupted"), JsonPrimitive(false))) {
+                val target = observation(kind)
+                val frames = producer(kind = kind).map { frame ->
+                    if (kind == ThreadEvidenceKind.Legacy && frame.type == "turn_end") {
+                        val fields = frame.payload as JsonObject
+                        frame.copy(payload = JsonObject((fields - "terminal_reason") + reason?.let { mapOf("terminal_reason" to it) }.orEmpty()))
+                    } else if (kind == ThreadEvidenceKind.Authoritative && frame.type == "thread_item_added") {
+                        replaceItem(frame) { item ->
+                            if ((item["kind"] as? JsonPrimitive)?.content != "turn_end") item else {
+                                val content = item["content"] as JsonObject
+                                JsonObject(item + ("content" to JsonObject((content - "terminal_reason") + reason?.let { mapOf("terminal_reason" to it) }.orEmpty())))
+                            }
+                        }
+                    } else frame
+                }
+                frames.forEach { target.received(pump, it) }
+                val succeeds = reason == null || reason == JsonPrimitive("") || reason == JsonPrimitive("completed")
+                assertEquals("$kind terminal reason $reason", succeeds, target.producerCompleted())
+            }
+        }
+    }
+
     @Test fun authoritativeWireFramesEstablishProductionWithoutLegacyEvents() {
         val observation = observation(ThreadEvidenceKind.Authoritative)
         authoritativeFrames().forEach { observation.received(pump, it) }

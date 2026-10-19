@@ -217,10 +217,7 @@ internal class OwnedReplyObservation(
             deltas.isNotEmpty() &&
             deltas.map { it.first } == deltas.indices.toList() &&
             deltas.joinToString("") { it.second }.isNotBlank() &&
-            end?.field("stop_reason") == "end_turn" &&
-            end?.field("outcome") == "success" &&
-            end?.field("is_error") == "false" &&
-            end?.field("terminal_reason") == "completed"
+            (end?.payload as? JsonObject).isSuccessfulReplyEnd()
     }
 
     /** Structural diagnostics only: never include prompts, reply text or wire identities. */
@@ -290,10 +287,7 @@ internal class OwnedReplyObservation(
         val terminal = afterUser.singleOrNull { it.kind == "turn_end" && it.turn == turn && (it.parent ?: 0) == 0L } ?: return null
         if (terminal.active ||
             terminal.status != "done" ||
-            terminal.field("stop_reason") != "end_turn" ||
-            terminal.field("outcome") != "success" ||
-            terminal.field("is_error") != "false" ||
-            terminal.field("terminal_reason") != "completed"
+            !(terminal.content as? JsonObject).isSuccessfulReplyEnd()
         ) {
             return null
         }
@@ -451,3 +445,12 @@ internal object OwnedReplyProbe {
 private fun Envelope.field(name: String): String? = ((payload as? JsonObject)?.get(name) as? JsonPrimitive)?.content
 
 private fun ThreadItemDto.field(name: String): String? = ((content as? JsonObject)?.get(name) as? JsonPrimitive)?.content
+
+// The daemon forwards terminal_reason verbatim; older/scripted producers leave it empty.
+// The terminal boundary and all success fields are still mandatory, and explicit failure reasons fail.
+private fun JsonObject?.isSuccessfulReplyEnd(): Boolean {
+    fun field(name: String) = (this?.get(name) as? JsonPrimitive)?.content
+    val reason = this?.get("terminal_reason")
+    return field("stop_reason") == "end_turn" && field("outcome") == "success" && field("is_error") == "false" &&
+        (reason == null || reason is JsonPrimitive && reason.isString && reason.content in setOf("", "completed"))
+}
