@@ -1407,6 +1407,10 @@ its own conversations through the paired host's own repository — `RelayConnect
 session and cannot take a model or effort write; `create_conversation` binds one before it replies.
 Every method restores the settings it changed with `set_session_settings` on the same session and clears
 the remembered level in `finally`, so a red run cannot leave a write behind for a later method.
+Preparation, post-mutation checks and restoration use the
+[correlated settings helper](#settings-helper-correlation-2305); writes stay on the repository that
+supplied their session.
+
 `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` (**one** real-claude turn, since #1308) keeps
 chat X inherited (no pick, no explicit saved model) and sends it one real ping. After the reply, the test
 computes the expected marked row itself from the fresh model menu and the host repository's own announced
@@ -1762,7 +1766,9 @@ lifecycle. They reuse #545's settings helpers and #850's `setHostLink` / `cycleH
 `interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive` runs a ping, cuts and restores the link,
 and confirms that the footer keeps its context percentage across the reconnect, matching #1317. The
 inherited model's selected row follows the held model announcement. Effort and permission settle on a
-live settings reply. Since #1397, `freshSettings` skips the held reply that #1320 emits first. The second
+live settings reply. Since #2305, `freshSettings` requires its own current-owner correlated reply;
+skipping the held reply that #1320 emits first is insufficient. See
+[settings helper guidance](#settings-helper-correlation-2305). The second
 ping must finish and deliver a context reading with a token count greater than the held reading. A saved
 percentage alone cannot prove freshness, because both turns can round to the same percentage. A model
 picked from the footer after that turn is confirmed by another live settings reply.
@@ -3198,6 +3204,39 @@ Environment checks for a new host (the recorded API 33 run passed these paths):
   probe before starting the daemon would fail faster than the 30 s connect timeout; the gate already
   reports the down relay as a failed execution.
 
+### Settings helper correlation (#2305)
+
+`InteractiveStreamE2ETest.freshSettings` uses the shared-test `SettingsReadProbe` to
+establish a new settings read and match the reply's `in_reply_to` to its outgoing ID.
+The subscription is installed first: legacy observation sends its own cold read;
+authoritative observation only projects state, so an explicit refresh follows subscription.
+The test-only wrapper registers the ID before send, preserving immediate replies, and
+forwards the single inbound stream to the repository before inspecting delivery.
+
+Completion requires the current owning host bundle, repository, connection and session.
+Authoritative reads check reconciled provenance and the admitted projection in the same
+inbound turn. Legacy reads use the repository's cold waiter and reject present conflicting
+envelope conversation/session metadata and explicit clears; omitted legacy metadata is
+compatible. Legacy list session placeholders cannot establish ownership, and a matching
+`session_transition` abandons the call. Replacement, refused send or pump termination fails
+explicitly within the existing thread timeout. `withFreshSettings` keeps mutations and
+restoration on the repository that returned their session.
+
+A same-owner revision reread replaces the receipt and resets its observation without
+extending the deadline. Superseded waits are cancelled, completion checks receipt identity,
+and ownership/termination observation stays registered through the swap. A second request
+on the same owner is normal; treating every reread as connection replacement broke the
+recorded operator-bypass scenario.
+
+Earlier minimal, held, cleared and unrelated snapshots cannot complete this wait.
+Value equality is only a repository admission cross-check: an equal-valued correlated
+reply can complete. A genuinely correlated reply missing `effective_effort` reaches the
+unchanged `appliedEffortFooter` assertion. Saved effort cannot replace applied effort.
+Repository admission and response-wording assertions retain their existing behavior.
+See the [owning settings-read topic](knowledge/features/remote-conversation-repository-session-settings-read.md#native-test-reads-2305)
+and [counted Linux evidence](#correlated-native-settings-reads-2305). The focused `--tests`
+launcher selects the named methods; recorded UI execution supplies no live-Claude proof.
+
 ## Deterministic mode (rung 4)
 
 `DETERMINISTIC=1` swaps real claude for the scripted `fakeclaude` backend (pyrycode #642), which runs
@@ -3727,6 +3766,105 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+### Correlated native settings reads (#2305)
+
+[PR #2310](https://github.com/pyrycode/pyrycode-mobile/pull/2310) repairs the shared
+native settings wait; it adds no rung-3 scenario or `DeterministicInteractiveStreamE2ETest`
+twin and changes no recordings. The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2310#issuecomment-6268847225)
+reviewed Mobile `cd4cd5111689fb45d3e1837750fbcde379d384d1` on Linux x86_64.
+The focused rework below tested Mobile `2ddff36966891396894f5acb67d03d29830c9051`;
+only documentation changed afterward.
+
+| Linux run (2026-10-19) | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Preserved helper `dc6ac402c9ff1cab86df570d81840ae2a860485d`, expanded controlled regressions | 20 | 13 | 7 | 0 | 0 |
+| Repaired `SettingsReadProbeTest` | 20 | 20 | 0 | 0 | 0 |
+| Focused recorded operator-bypass UI | 1 | 1 | 0 | 0 | 0 |
+| Focused inherited-effort and reconnect-footer live | 2 | 2 | 0 | 0 | 0 |
+| Final configured JVM/build gate | 6109 | 6109 | 0 | 0 | 0 |
+| Final configured UI gate | 335 | 335 | 0 | 0 | 1 |
+| Final configured scripted-all gate | 22 | 22 | 0 | 0 | 0 |
+
+The controlled XML includes passing immediate/equal-valued replies, missing-applied-field,
+owner/session replacement, cancellation, pump termination, legacy conflicting metadata and
+same-owner reread cases. The seven failures against the preserved helper expose four legacy
+ownership/clear cases and three reread lifecycle cases. A preceding setup compilation failure
+executed zero tests. Final UI skipped `RenameDialogCaptureTest#renameAtFigmaViewport`.
+The gate report confirms the named helper regressions and recorded operator-bypass passed;
+UI/replay results are separate from real-Claude execution.
+
+The focused recorded method was
+`RecordedMobileSuiteTest#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`
+(25.011 seconds), selected with `python3 scripts/android-test-gate.py ui --tests`, on
+Android 13/API 33 managed `pixel2Api33Atd`. Focused live XML independently names
+`InteractiveStreamE2ETest#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`
+(7.114 seconds) and
+`InteractiveStreamE2ETest#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive`
+(43.563 seconds), both executed and passed using:
+
+```bash
+python3 scripts/android-test-gate.py live --tests 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive'
+```
+
+Live identity: daemon binary revision `0484cb018fbc4db77eac418ccf7234d23d6d31ad`,
+SHA256 `5cc81df3ce4e016133432aa76b023ed2ab662acee0c479ae9238fc362f1b6a16`;
+Go build metadata reports `vcs.modified=false`. The retention-time source checkout
+`fe78d60a0ccfb6d7c809bc317403244f0c2118f7` is a separate identity, not that binary's
+revision. Claude Code **2.1.280**, connected Android 13/API 33 emulator, default
+stream-json runner without a main-daemon config file, `PYRY_MOBILE_V2=1`, isolated
+test daemons, managed OAuth route and `wss://pyrycode-relay.pyryco.de`.
+These are **main-based legacy-route** passes; controlled tests cover the authoritative
+helper route. They do not certify an activated #2245 candidate or replace its historical
+failed captures/final recording gate. Model-menu protocol work remains pyrycode/pyrycode#3609.
+macOS is outside this Linux ticket's verification scope.
+
+At documentation time raw artifacts were retained under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2305/20261019-rework-linux/`:
+`controlled-red/` and `controlled-green/` contain XML and source/lint evidence;
+`ui-rkp0flou/` contains recorded XML, phone log and device/phase metadata;
+`live-y13yaf8c/` contains native XML, phone/emulator logs and phase timings;
+`harness/fault-0bee21c70818b42230866c21dfa824ec/` contains daemon diagnostics,
+source inputs and hashes. The 29-file root manifest SHA256 is
+`47ef08f9db7c3e044c9972134aa56a4ed80c328b29c9de5af4e40dbd440024dd`.
+These retention paths may be pruned; the counts and identities above survive here.
+A local relay log is unavailable because delivery used the remote TLS relay.
+
+The earlier accepted focused live run on Mobile
+`8f6b92586a412dd39b77c65098b44140c0cf2813` also executed/passed both methods
+(2 executed/passed, zero failed/errors/skips; 7.303 and 44.302 seconds), using daemon
+binary/source `a2cab7d3b2c8eb81682df9288d4d05a021c8f400`, SHA256
+`9f850d56966a607ba558abbc77737ee2931d27aacc6a27cbacc731e77b735c1b`,
+with the same Claude/Android/runner/route configuration. Its controlled run passed
+13/13, zero failed/errors/skips. Raw captures were retained under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2305/20261019-resume-linux/`
+(`controlled-green/`, `live-3zdw2vzc/`, `harness/fault-01c5960f1ee7a5391034c2ca860205d8/`),
+with bundle `088b7244d8ea2d39133df2a8372e61cb96526e40addb43655aaa7a91bf680b6d`.
+
+The [earlier verifier failure](https://github.com/pyrycode/pyrycode-mobile/pull/2310#issuecomment-6267478241)
+remains failed evidence: UI 335 executed/334 passed/1 failed plus 1 skipped;
+exact-method replay 1 executed/1 failed/0 skipped; merged-main comparison
+1 executed/1 passed/0 skipped. Its first failing stage was the settings helper's
+superseded-read exception in recorded operator-bypass, repaired by #2305. Bundle
+`0ce4c327c4328095e9f928c412044324b9f76f73c2233b3c0acff4f90e7b186d`, digest
+`04c1acc0df285945c855411c3645c47732acbc2b9139919e751c84a31b4e8ef8`, retains that verdict/log evidence.
+The later green runs do not turn those historical failures into passes.
+
+Six additional `InteractiveStreamE2ETest` live helper callers remain **unexecuted/pending**
+for this repair, as recorded in PR #2310:
+
+- `interactiveTurn_chosenEffort_appliesFromTheFirstTurn`
+- `interactiveTurn_modelChange_roundTripsAndStaysPerConversation`
+- `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`
+- `interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel`
+- `interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage`
+- `interactiveTurn_sendQueuedNow_reachesRunningTurn`
+
+Recorded operator-bypass execution does not establish its live result. No additional live
+execution of these six was supplied or scheduled by this documentation run. The configured
+gates above completed; the pending callers and #2245 activation remain distinct evidence
+limits. No unit, device or live tests were run during documentation. The pre-ship command
+remains `python3 scripts/android-test-gate.py live`.
 
 ### Offline Retry registration evidence (#2137)
 
@@ -6907,6 +7045,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Correlated settings helper (#2305):** The shared wait now matches its current-owner
+  request receipt, including normal same-owner rereads. Both required rung-3
+  `InteractiveStreamE2ETest` methods passed in focused Linux live execution; the
+  [evidence section](#correlated-native-settings-reads-2305) preserves all six additional
+  unexecuted live callers. No scenario or `DeterministicInteractiveStreamE2ETest` twin was
+  added. #2245 still owns activation, historical failed captures and its final recording
+  gate. The pre-ship command remains `python3 scripts/android-test-gate.py live`.
 
 - **Permission-isolation diagnostics (#1896):** The existing rung-3
   `InteractiveStreamE2ETest.interactiveTurn_permissionPrompts_heldPerConversation`

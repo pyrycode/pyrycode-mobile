@@ -12,8 +12,12 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.network.NoiseSessionPump
+import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.StableConversationRepository
+import de.pyryco.mobile.di.RelayConnectionFactory
+import de.pyryco.mobile.di.RelaySessionPumpFactory
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
 import de.pyryco.mobile.di.hostConversationModule
@@ -152,6 +156,19 @@ class E2eTestApplication : Application() {
         module {
             includes(hostConversationModule(useRelay = true, decorateRepository = ::TappingConversationRepository))
             single<ConversationRepository> { TappingConversationRepository(get<StableConversationRepository>()) }
+            single {
+                RelayConnectionFactory(
+                    get(),
+                    get(),
+                    get(),
+                    pushTokens = get<AppPreferences>().pushToken,
+                    messageTrail = get(),
+                    pumpFactory =
+                        RelaySessionPumpFactory { transport, factory, dispatcher, minimum ->
+                            SettingsReadProbe.wrap(NoiseSessionPump(transport, factory, dispatcher, onClientMinimum = minimum))
+                        },
+                )
+            }
         }
 
     private fun requireArg(
