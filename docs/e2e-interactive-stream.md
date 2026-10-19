@@ -3767,6 +3767,44 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+### Authoritative completion alerts (#1573)
+
+Manual validation on 2026-10-19 covers certified background completion recovery and notification
+ownership through preview enrichment. All 163 focused Linux tests passed with zero failures, errors
+or skips. Formatting, compilation of every Kotlin source set, Android lint, debug APK assembly,
+pre-verification and the documentation guard passed. The before-fix evidence retains two query/live
+recovery failures and a separate retired-preview failure. The final focused class passes all 31 cases.
+
+Both original native methods ran with unchanged bodies and assertions:
+
+| Linux Android method | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread` | 1 | 1 | 0 | 0 | 0 |
+| `interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect` | 1 | 1 | 0 | 0 | 0 |
+
+The completion case verifies real FCM wake, exactly one alert, private preview, public redaction and
+the owning-thread tap. The adjacent prompt case verifies actual delivery and duplicate suppression
+across reconnect. The managed device is Google ATD Android 13/API 33 x86_64 Pixel 2. The installed
+Claude Code version is 2.1.280.
+
+Tested repair: `0ac045bee9b30573a138d584d50147dcceb6f486`. Private native composition: `c52b5c5935db6561a2a16f3b81f65e35ac597fc0`, containing that repair and preserved
+activation candidate `80b2efa999f2a3560048d8e13c9de9041b34c8f9`. The daemon binary revision is
+`5fd0d600b629c9cc3637fc42eb353c8e965f9fde`, SHA-256
+`8539e88af07aa24a37f1a138486ee94354f98cfe814bb2cb9eb5661c41ffffec`.
+The retained daemon source checkout is a separate identity and is recorded in the receipt.
+
+The [manual validation receipt](../app/src/test/resources/attention-1573/manual-validation.json)
+records exact source and unchanged-method hashes, per-class counts, device labels, app/test APK
+hashes and signer identities. Private raw XML, logcat, transport evidence and the source bundle are
+retained under `/work/Projects/pyrycode-mobile-agents/logs/evidence/1573/operator-manual-20261019/`.
+Earlier failed artifacts remain preserved.
+
+This is focused native proof. Complete configured dispatcher gates and independent review remain
+pending. The earlier accepted inherited recording failure is tracked in #2317. Recorded fixtures are
+unchanged. #2245 retains its separate activation and recording acceptance. The historical OnePlus
+incident remains unexplained.
+
+
 ### Correlated native settings reads (#2305)
 
 [PR #2310](https://github.com/pyrycode/pyrycode-mobile/pull/2310) repairs the shared
