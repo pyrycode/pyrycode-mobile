@@ -18,8 +18,8 @@ import de.pyryco.mobile.data.network.MobileJson
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
-import org.junit.Before
 import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -98,9 +98,11 @@ class ScriptedContextFreshnessTest {
         val openingAsk = sent.last { it.type == "request_context_usage" }.id
         harness.pushResetting(true, "wrapping_up", "pending")
         composeRule.waitUntil(5_000) {
-            composeRule.onAllNodesWithContentDescription(
-                InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_resetting_wrapping_up),
-            ).fetchSemanticsNodes().isNotEmpty()
+            composeRule
+                .onAllNodesWithContentDescription(
+                    InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_resetting_wrapping_up),
+                ).fetchSemanticsNodes()
+                .isNotEmpty()
         }
         harness.pushSessionTransition("s1", "s2", "clear")
         awaitFooter("Context usage unavailable")
@@ -122,9 +124,11 @@ class ScriptedContextFreshnessTest {
         for ((turn, tokens) in listOf(1 to 40_000L, 2 to 60_000L)) {
             harness.pushTurnState("thinking")
             composeRule.waitUntil(5_000) {
-                composeRule.onAllNodesWithContentDescription(
-                    InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_thinking),
-                ).fetchSemanticsNodes().isNotEmpty()
+                composeRule
+                    .onAllNodesWithContentDescription(
+                        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_thinking),
+                    ).fetchSemanticsNodes()
+                    .isNotEmpty()
             }
             harness.pushAssistantDelta("replacement-$turn", 1, "Current session reply $turn")
             harness.pushTurnEnd("replacement-$turn")

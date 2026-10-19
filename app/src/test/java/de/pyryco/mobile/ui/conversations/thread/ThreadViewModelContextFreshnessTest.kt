@@ -268,11 +268,25 @@ class ThreadViewModelContextFreshnessTest {
             rig.pump.push("error", """{"code":"context_usage.unavailable","message":"Unavailable","retryable":true}""", resetAsk.id)
             rig.context("c1", used = 150_000)
             runCurrent()
-            assertEquals("a late error cannot release another request", refreshAsk.id, rig.pump.sent.last { it.type == "request_context_usage" }.id)
+            assertEquals(
+                "a late error cannot release another request",
+                refreshAsk.id,
+                rig.pump.sent
+                    .last {
+                        it.type ==
+                            "request_context_usage"
+                    }.id,
+            )
             assertNull(rig.repo.observeContextUsage("c1").first())
             rig.context("c1", used = 40_000, replyTo = refreshAsk.id)
             runCurrent()
-            assertEquals(40_000L, rig.repo.observeContextUsage("c1").first()?.totalTokens)
+            assertEquals(
+                40_000L,
+                rig.repo
+                    .observeContextUsage("c1")
+                    .first()
+                    ?.totalTokens,
+            )
             assertEquals(20, rig.vm.state.value.runConfig.contextPercent)
         }
 

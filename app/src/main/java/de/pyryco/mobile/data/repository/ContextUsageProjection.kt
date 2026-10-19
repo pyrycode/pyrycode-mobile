@@ -108,8 +108,10 @@ internal class ContextUsageProjection {
                         // Arrival cannot distinguish a current push from a delayed predecessor query.
                         // After a new turn starts, use either as a signal to query the current binding.
                         return conversationId.takeIf {
-                            it in refreshEnabled && it !in latestRequestByConversation &&
-                                envelope.inReplyTo == null && reading.asOf == null
+                            it in refreshEnabled &&
+                                it !in latestRequestByConversation &&
+                                envelope.inReplyTo == null &&
+                                reading.asOf == null
                         }
                     }
                 }
