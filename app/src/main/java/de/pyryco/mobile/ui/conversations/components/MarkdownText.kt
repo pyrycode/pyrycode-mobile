@@ -1247,6 +1247,8 @@ private fun AnnotatedString.Builder.appendInline(
             ) {
                 append(node.getTextInNode(source).toString().trim('`'))
             }
+        // An authored autolink's label is not bare prose; preserve its existing literal rendering.
+        MarkdownElementTypes.AUTOLINK -> append(textOutside(node, source, synthetic))
         MarkdownElementTypes.INLINE_LINK -> {
             val linkText = inlineLinkText(node, source, synthetic)
             val url =
@@ -1405,7 +1407,9 @@ private fun AnnotatedString.Builder.appendInlineChildren(
                 // A candidate can cross lexer tokens, but never borrow text from code or an authored label.
                 val covered = children.subList(index, last + 1)
                 if (child.type != GFMTokenTypes.GFM_AUTOLINK &&
-                    child.children.isEmpty() && children[last].children.isEmpty() && covered.none { it.protectsBareLink(link) }
+                    child.children.isEmpty() &&
+                    children[last].children.isEmpty() &&
+                    covered.none { it.protectsBareLink(link) }
                 ) {
                     append(textOutside(cursor, link.first, source, synthetic))
                     val target = source.substring(link)

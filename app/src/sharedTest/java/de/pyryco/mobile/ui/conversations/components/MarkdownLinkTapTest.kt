@@ -151,30 +151,45 @@ class MarkdownLinkTapTest {
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun refusedBareCandidates_haveNoStylesAnnotationsOrActions() {
         val source = mutableStateOf("")
-        show { MarkdownText(source.value, onOpenMarkdownPath = { paths += it }) }
-        listOf(
-            "obsidian://new?vault=V&file=Note",
-            "obsidian://open?file=Note&append=x",
-            "obsidian://open?file=Note&unknown=x",
-            "obsidian://open?file=x.hta.",
-            "obsidian://open?file=%GG",
-            "obsidian://open?file=%ED%A0%80",
-            "obsidian://open?file=Note%26append=x",
-            "obsidian://open?file=Note%23fragment",
-            "obsidian://open?file=Note#fragment",
-            "obsidian://open?file=Note&unknown=*value*",
-            "javascript:alert(1)",
-            "file:///tmp/a.md",
-            "http://example.com",
-            "https://example.com",
-            "www.example.com",
-            "a@example.com",
-            "https://example.com/(obsidian://open?file=Note)",
-            "www.example.com/(obsidian://open?file=Note)",
-        ).forEach { target ->
-            val text = "Before $target after"
-            composeTestRule.runOnIdle { source.value = text }
-            assertInert(text.replace("*value*", "value"), beforeTapMillis = 1_000)
+        val streaming = mutableStateOf(false)
+        show {
+            if (streaming.value) {
+                StreamingMarkdownText(source.value, caretVisible = false, onOpenMarkdownPath = { paths += it })
+            } else {
+                MarkdownText(source.value, onOpenMarkdownPath = { paths += it })
+            }
+        }
+        val targets =
+            listOf(
+                "obsidian://new?vault=V&file=Note",
+                "obsidian://open?file=Note&append=x",
+                "obsidian://open?file=Note&unknown=x",
+                "obsidian://open?file=x.hta.",
+                "obsidian://open?file=%GG",
+                "obsidian://open?file=%ED%A0%80",
+                "obsidian://open?file=Note%26append=x",
+                "obsidian://open?file=Note%23fragment",
+                "obsidian://open?file=Note#fragment",
+                "obsidian://open?file=Note&unknown=*value*",
+                "javascript:alert(1)",
+                "file:///tmp/a.md",
+                "http://example.com",
+                "https://example.com",
+                "www.example.com",
+                "a@example.com",
+                "https://example.com/(obsidian://open?file=Note)",
+                "www.example.com/(obsidian://open?file=Note)",
+                "<https://example.com/(obsidian://open?file=Note)>",
+            )
+        listOf(false, true).forEach { isStreaming ->
+            targets.forEach { target ->
+                val text = "Before $target after"
+                composeTestRule.runOnIdle {
+                    streaming.value = isStreaming
+                    source.value = text
+                }
+                assertInert(text.replace("*value*", "value"), beforeTapMillis = 1_000)
+            }
         }
         assertEquals(emptyList<String>(), opened)
         assertEquals(emptyList<String>(), paths)
