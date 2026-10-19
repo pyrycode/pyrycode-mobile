@@ -118,6 +118,8 @@ class MarkdownReaderDesignTest {
         val subheading = rule.onNodeWithText("Next steps").getUnclippedBoundsInRoot()
         val firstItem = rule.onNodeWithText("Pin all five agents repos", substring = true).getUnclippedBoundsInRoot()
         val paragraphLayout = layout("The main board runs four roles", substring = true)
+        val codeText = rule.onNodeWithText("pyry release --both\npyry status").getUnclippedBoundsInRoot()
+        val codeLayout = layout("pyry release --both\npyry status")
         val items =
             listOf(firstItem) +
                 listOf("Measure token spend per role", "Retire the old single-role runner").map {
@@ -134,6 +136,20 @@ class MarkdownReaderDesignTest {
         items.forEach { assertDpEquals(20.dp, it.height, "list item height") }
         items.zipWithNext { above, below -> assertDpEquals(6.dp, below.top - above.bottom, "sibling item gap") }
         assertDpEquals(16.dp, code.top - items.last().bottom, "gap after list")
+
+        assertEquals(12.sp, codeLayout.layoutInput.style.fontSize)
+        assertEquals(20.sp, codeLayout.layoutInput.style.lineHeight)
+        assertEquals(FontFamily.Monospace, codeLayout.layoutInput.style.fontFamily)
+        assertEquals(2, codeLayout.lineCount)
+        val baselineAdvance = codeLayout.getLineBaseline(1) - codeLayout.getLineBaseline(0)
+        assertDpEquals(20.dp, with(rule.density) { baselineAdvance.toDp() }, "code baseline advance")
+        assertDpEquals(34.dp, with(rule.density) { codeLayout.size.height.toDp() }, "two trimmed code lines")
+        assertBlockTopDistance(12.dp, code.top, codeText.top, "code top padding")
+        assertBlockTopDistance(12.dp, codeText.bottom, code.bottom, "code bottom padding")
+        val paddingPx = with(rule.density) { 12.dp.roundToPx() }
+        val panelHeight = with(rule.density) { (codeLayout.size.height + paddingPx + paddingPx).toDp() }
+        assertBlockTopDistance(panelHeight, code.top, code.bottom, "code panel from text and padding")
+        assertBlockTopDistance(16.dp, code.bottom, quote.top, "gap after code")
 
         assertEquals(56f, title.left.value, 1f)
         assertEquals(24f, title.top.value, 1f)
@@ -166,7 +182,13 @@ class MarkdownReaderDesignTest {
             val (name, block) = body[index]
             val (above, previous) = body[index - 1]
             val pixels = if (above == "paragraph" || above == "first item") ROUNDED_TEXT_BLOCK_PIXELS else 1
-            assertBlockTopDistance((block.second - previous.second).dp, previous.first, block.first, "$name below $above", pixels = pixels)
+            val expected =
+                if (above == "code") {
+                    referenceCodeInterval(codeLayout.size.height, rule.density.density)
+                } else {
+                    (block.second - previous.second).dp
+                }
+            assertBlockTopDistance(expected, previous.first, block.first, "$name below $above", pixels = pixels)
         }
         assertEquals(20f, code.left.value, 1f)
         assertEquals(372f, code.width.value, 1f)
@@ -235,6 +257,38 @@ class MarkdownReaderDesignTest {
                 assertBlockTopDistance(38.dp, previous, current(3), pixels = ROUNDED_TEXT_BLOCK_PIXELS, density = density)
             }
         }
+    }
+
+    @Test fun codeIntervalRoundsConstituentsAndKeepsItsOnePixelBoundary() {
+        val density = 2.625f
+        val expected = referenceCodeInterval(textHeightPx = 90, density = density)
+        // 90px trimmed text + 32px per padding edge + 42px following gap.
+        assertEquals(196f, expected.value * density, 0.0001f)
+        val previous = (901f / density).dp
+        for (direction in listOf(-1, 1)) {
+            assertBlockTopDistance(expected, previous, ((1097f + direction) / density).dp, density = density)
+            assertThrows(AssertionError::class.java) {
+                assertBlockTopDistance(expected, previous, ((1097f + direction * 2) / density).dp, density = density)
+            }
+        }
+        val exact = referenceCodeInterval(textHeightPx = 34, density = 1f)
+        assertEquals(74.dp, exact)
+        assertBlockTopDistance(exact, 343.dp, 417.dp, density = 1f)
+        for (direction in listOf(-1, 1)) {
+            assertThrows(AssertionError::class.java) {
+                assertBlockTopDistance(exact, 343.dp, (417f + direction * 0.001f).dp, density = 1f)
+            }
+        }
+    }
+
+    private fun referenceCodeInterval(
+        textHeightPx: Int,
+        density: Float,
+    ): Dp {
+        // Compose rounds each padding edge and the following gap separately, after text layout.
+        val paddingPx = (12f * density).roundToInt()
+        val gapPx = (16f * density).roundToInt()
+        return ((textHeightPx + paddingPx + paddingPx + gapPx) / density).dp
     }
 
     private fun assertBlockTopDistance(
