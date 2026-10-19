@@ -106,8 +106,6 @@ Finding 2 exposed missing reference-label protection. Share one authored-label c
 
 Both repairs enforce the original exact-target/exclusion invariant, with no new public types, consumer signature changes or independent behaviour. The repair is forecast at approximately 350 written lines including tests, plan and raw evidence, keeping the full branch below 1600. Remote #2270 overlaps the code-span arm and link helper; keep these edits local to prose overlay and label dispatch. #1766 remains a closed historical overlap. The Figma frame was inspected again; primary/underline treatment and geometry remain as authored links.
 
-## Documentation handoff
-
 ### 2026-10-19 — recovery plan: verification capacity and writer coordination
 
 The recovery brief supersedes the unexecuted wider investigation. Retained verifier run `d69c1ee239efc24422a08fe97e635ec8f6ed269cf301a4a20fe56453617176dc` records separate lint/test-worker heap exhaustion and the row-failure probe counting two failures. These are verification repairs to the existing behaviour, with no additional product deliverable.
@@ -121,6 +119,8 @@ Reuse reviewed commit `2dca08a77`'s `org.gradle.jvmargs=-Xmx4096m`; separately i
 Scope forecast: at most 160 additional written lines across the existing probe, two build settings, this revision and compact evidence, within the branch's remaining 175-line margin. #2270 overlaps only the identical Gradle property; no dependency. No public signatures or production state change. Security recheck: rendering admission/labels and Android routing stay unchanged; test-origin diagnostics contain static labels, clocks and heap sizes only. File barriers remain scoped to the test and release on failure; no new credential, network or Android surface exists.
 
 This subsection records a recovery revision; existing product design and security findings remain authoritative.
+
+## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/markdown-text.md`, Streaming and Testing — explain real source completion versus lexer boundaries, punctuation, synthetic closers and caret; record final counted Linux acceptance once dispatcher gates pass.
 - Pending documentation stage: `docs/knowledge/features/markdown-text-internals.md`, Inline dispatch and Link safety — document the narrow bare-Obsidian exception, exact source ranges across composite nodes, unchanged routing/styling, punctuation fallback and code/authored-label exclusions, preserving literal bare web/email behaviour.

@@ -16,6 +16,8 @@ import de.pyryco.mobile.data.repository.UnsignedHistorySpan
 import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.data.repository.historyRowProofs
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -134,10 +136,20 @@ class OwnedLegacyCoverageConcurrencyTest {
         runTest {
             val fail = AtomicBoolean()
             val failedAttempts = AtomicInteger()
+            val historyCommit = CompletableDeferred<Unit>()
+            val finishCommit = CompletableDeferred<Unit>()
+            val writerFailed = CompletableDeferred<Unit>()
             val cache =
                 open {
                     if (fail.get()) {
+                        val origin = currentCoroutineContext()[CoroutineName]?.name
+                        println("controlled_commit origin=$origin virtualTime=${testScheduler.currentTime} heap=${Runtime.getRuntime().maxMemory()}")
+                        if (origin == "history") {
+                            historyCommit.complete(Unit)
+                            finishCommit.await()
+                        }
                         failedAttempts.incrementAndGet()
+                        if (origin == "writer") writerFailed.complete(Unit)
                         throw IOException("controlled")
                     }
                 }
@@ -162,7 +174,8 @@ class OwnedLegacyCoverageConcurrencyTest {
             val restored = CompletableDeferred<Unit>()
             val accepted = CompletableDeferred<Unit>()
             source.afterEmission = { if (it.rows == listOf(row(1))) accepted.complete(Unit) }
-            val reader = backgroundScope.launch(worker) { repository.observeThreadSnapshot("c").collect { restored.complete(Unit) } }
+            val reader = backgroundScope.launch(worker + CoroutineName("writer")) { repository.observeThreadSnapshot("c").collect { restored.complete(Unit) } }
+            var saving: kotlinx.coroutines.Deferred<Unit>? = null
             try {
                 restored.await()
                 source.snapshots.value = ThreadSnapshot(listOf(row(1)))
@@ -173,7 +186,13 @@ class OwnedLegacyCoverageConcurrencyTest {
                 accepted.await() // Source emission returns after the repository's writer accepts this exact snapshot.
                 assertEquals(setOf(row(1).legacyRowKey()), pendingKeys(repository))
                 fail.set(true)
-                repository.writeHistoryPosition("c", position(listOf(row(1))))
+                saving = async(CoroutineName("history")) { repository.writeHistoryPosition("c", position(listOf(row(1)))) }
+                historyCommit.await()
+                advanceTimeBy(101)
+                runCurrent()
+                finishCommit.complete(Unit)
+                saving.await()
+                writerFailed.await()
                 assertEquals(1, failedAttempts.get())
                 assertEquals("row failure must retain the accepted intent", setOf(row(1).legacyRowKey()), pendingKeys(repository))
                 assertTrue(cache.readThread("Host", "c").isEmpty())
@@ -186,7 +205,11 @@ class OwnedLegacyCoverageConcurrencyTest {
             } finally {
                 fail.set(false)
                 finishHistory.complete(Unit)
-                withContext(NonCancellable) { reader.cancelAndJoin() }
+                finishCommit.complete(Unit)
+                withContext(NonCancellable) {
+                    saving?.await()
+                    reader.cancelAndJoin()
+                }
             }
         }
 
