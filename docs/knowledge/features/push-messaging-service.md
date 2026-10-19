@@ -9,7 +9,7 @@ a surfaced prompt, coalescing per device for 30 s; pyrycode-relay#130 sends the 
 deployed. A push therefore does wake the app in production, on a device image with Play services.
 
 [§ Attention alerts and the tap route](#attention-alerts-and-the-tap-route-685) below (#685) is the
-alert *publisher* this wake feeds: it needs no push to fire, only a saved host that is still connected
+alert *publisher* this wake feeds: its legacy live path needs no push to fire, only a saved host that is still connected
 when the app backgrounds, so it was proven complete against fakes and Robolectric before any push had
 reached the phone. [#955](https://github.com/pyrycode/pyrycode-mobile/issues/955) is the live
 end-to-end proof: a real FCM push from the production relay wakes the backgrounded app both for a turn
@@ -198,29 +198,30 @@ the same "Robolectric doesn't construct one" fact `PyryMessagingServiceTest` bel
 
 ## Attention alerts and the tap route (#685)
 
-`notifications/AttentionNotifier.kt` posts an Android notification for each `AttentionAlert` that
-[`HostConversationSource.alerts`](dependency-injection-host-conversation-source.md#attention-alerts-685)
-emits — a turn the attention fold counted for the first time, or a prompt newly outstanding, on any
-saved host. It needs no push: the source emits from the same live-event and modal/batch collectors that
-already drive `attention`, so an alert can fire the moment the app backgrounds while a host is still
-connected. That window is narrow in production — `LifecycleConnectionDriver` closes every host on
-`onStop`, and only a push wake reopens one. #955's live run proved the reopened window reaches this
-notifier: the daemon's `push_wake` (above) brings FCM in, `onPushWake` reconnects the host, the missed
-event replays on the fresh connection, and the alert posts from there — one notification, whether the
-missed event is a `TurnEnd` or a newly outstanding prompt. This package's own tests
-(`AttentionNotifierTest`, `HostConversationSourceAttentionTest`) prove the pipeline with fakes for the
-deterministic gates.
+`AttentionNotifier` posts a notification for the saved host and conversation supplied by `HostConversationSource.alerts`.
+Legacy connections retain the live-event attention fold and outstanding-prompt collectors. On the
+authoritative route, successful catch-up certifies completion from the owning repository, host,
+conversation and generation. An unread summary can recover a turn completed while disconnected,
+without observing a running edge. Retryable terminal failure or certification behind newer live
+state queues at most two fresh attention queries in the existing remote slot. Partial, rejected
+or retired work cannot publish completion. Push only reopens saved hosts for the existing wake window.
 
-**Dedupe runs before the gates, not after.** `AttentionNotifier.handle` records an alert's digest in
-`AlertLedger` first; only a digest new to the ledger is even considered for the foreground, switch, mute
-and permission checks below, followed by confirmed-read suppression. So an alert that arrives while
-the app is foregrounded, while alerts are off, or while its conversation is muted, is spent — it can never post later once
-background/enabled/unmuted/permission line up. The ledger holds
-`SHA-256` digests over length-prefixed `(serverId, conversationId, kind, key)`, one per line in
-`noBackupFilesDir/attention_alerts`, capped at the newest 512, written temp-then-rename. This is what
-holds "at most once" across a reconnect's replay, a repeated `modal_shown` frame, a new wake window and
-process death — the same digests survive a process restart because the file does. Read suppression
-also spends the alert, and cancellation never erases the ledger or makes a replay eligible again.
+Private reply text additionally needs certified coverage, positive placement and matching settled
+main-thread reply evidence. Useful coverage survives empty or narrower catch-up; gaps, missing
+placement and explicit placement clears require fixed fallback copy. Public notification text
+remains fixed. No legacy history supplies an authoritative preview. See
+[the focused #1573 evidence](../../e2e-interactive-stream.md#authoritative-completion-alerts-1573).
+
+**Deduplication runs before the gates.** An eligible preview is reserved in memory while preparing.
+A current pending duplicate is ignored. A retired or cancelled task cannot consume or remove its
+replacement reservation. Suppression for foreground state, disabled alerts, mute, missing permission or confirmed reads
+records the alert immediately. Eligible alerts enter the permanent record at their final
+posting decision. Completed posts and legitimate suppression stay spent across reconnect, repeated
+wakes and process restart. Read cancellation does not erase that record.
+
+The unchanged ledger stores length-prefixed host, conversation, kind and key as SHA-256 digests in
+`noBackupFilesDir/attention_alerts`. It retains the newest 512 entries and writes temp-then-rename.
+Neither previews nor plaintext identities enter the ledger.
 
 **The gates, checked in this order, each read fresh (none is cached):** not foregrounded
 (`ProcessLifecycleOwner`'s state `< STARTED`) → `AppPreferences.notificationsEnabled` → muted (below,
@@ -237,12 +238,14 @@ Cancellation bypasses all posting gates and is harmless when the notification is
 answers a prompt nor changes Running/WaitingForAnswer: Idle, thread viewing and local persisted
 positions do not prove a daemon read.
 
-For a notification without a known completion checkpoint, both confirmed `readUpTo` and known
-`latestEntryId` must be present, with `readUpTo >= latestEntryId`. Zero and unsigned equality count.
-A known completion instead compares its own envelope `historyEntryId` with the confirmed mark.
-Read 5/latest 6 must suppress a replay of completion 5 and remove it if confirmation arrives after
-posting, even though entry 6 remains unread. Future unread completions and prompt alerts retain the
-existing posting gates; prompts do not undergo completion-read suppression.
+On legacy connections a known completion compares its own history checkpoint with the confirmed
+read mark. Read 5/latest 6 covers completion 5. Without a known completion, confirmed read and latest
+entry must both be present, with read at least latest. Zero and unsigned equality count.
+
+On the authoritative thread route, confirmed read coverage uses the available last-shown position.
+Unavailable shown metadata proves nothing; newer known unread activity retains the alert. Local
+positions cannot supply confirmed coverage. Future unread completions and prompt alerts retain the
+posting gates; prompts do not undergo completion-read suppression.
 
 Post and cancel share a mutex. Completion coverage is checked after any suspended preference read,
 just before posting. Cancellation reads the current projection inside that mutex and requires both
