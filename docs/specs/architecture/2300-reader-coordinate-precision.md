@@ -4,6 +4,8 @@
 
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/MarkdownReaderDesignTest.kt`: `referencePlacesBarRuleAndBodyAtFigmaCoordinates` subtracts nonzero dp coordinates; `adjacentBlockRoundingAllowanceKeepsItsPixelBoundary` currently probes around zero only.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/PixelSnapping.kt`: `assertDpEquals` preserves exact whole-density comparisons and explicit pixel limits; its shared callers stay unchanged.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt`: `CodeBlock` uses trimmed text and separately rounded body padding.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/MarkdownReaderScreen.kt`: `MarkdownReaderScreen` supplies the existing code typography and ordinary block gap.
 - `docs/knowledge/features/markdown-reader-screen.md`: reader geometry and typography contract.
 - `docs/knowledge/features/markdown-reader-screen-testing.md`: retain constituent gap/height checks alongside adjacent-top checks.
 
@@ -26,6 +28,8 @@ The live issue now resolves the remaining native expectation: preserve the share
 First add `codeIntervalRoundsConstituentsAndKeepsItsOnePixelBoundary` against the old aggregate model and observe its fractional-density failure. Then implement the constituent sum and verify both error directions accept one pixel and reject two, including exact and subpixel density-1 controls. Run the full affected JVM class and named Android 13 method on Linux; retain earlier red evidence and new raw reports, revisions, density and counts. No new device-only test, production edit, shared assertion edit or documentation-stage requirement is introduced.
 
 This remains one useful reader-assertion repair. Forecast: about 200 written lines across the test and plan, zero exported production types or consumer migrations, three acceptance criteria, no lifecycle/identity state or error branches. Current remote feature branches have no overlap with the design test. Complete gates and the post-merge sweep stay dispatcher-owned.
+
+Continuation outcome: the refined contract is resolved at `171f9a18789fe874dd19b1174aaa2c86131db630`. The affected JVM class passed all 21 methods; the named Android 13 method passed at density 2.625 (one executed, zero failed/skipped). New raw reports and source identities are retained under `/work/Projects/pyrycode-mobile-agents/logs/evidence/2300/continuation-20261019/`; all earlier failed evidence remains intact. The historical refinement request later in this section describes the earlier run, not a remaining blocker.
 
 ### 2026-10-19 — Snap the expected distance to the same pixel grid
 
