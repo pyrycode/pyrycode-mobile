@@ -8158,6 +8158,8 @@ class InteractiveStreamE2ETest {
     ): SessionSettings {
         val repository = hostRepository(serverId)
         return runBlocking {
+            // The negotiated thread path observes settings without issuing a read on subscription.
+            if (repository.negotiatedThread != null) repository.refreshSessionSettings(conversationId)
             withTimeout(THREAD_TIMEOUT_MS) { repository.observeSessionSettings(conversationId).filterNotNull().first { !it.held } }
         }
     }
