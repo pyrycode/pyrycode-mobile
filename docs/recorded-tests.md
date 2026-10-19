@@ -359,6 +359,83 @@ bounded model above. The shared guarantees are exact actions, request correlatio
 connection termination after required work, observation boundaries and complete consumption.
 Do not interpret copying Desktop's checkpoints as copying its entire scheduler.
 
+### Passive thread assertion evidence (#2317)
+
+Collecting a cold thread flow is an application action: `observeThreadSnapshot`
+sends `backfill_since` before emitting rows. An assertion through `withOwnedReply`,
+`currentThread` or `awaitRetainedReply` can therefore consume a recorded request
+intended for the reopened destination. Check suppressed replay mismatches before
+attributing a reopen timeout to lazy composition. Unsupported-backfill normalization
+still requires the exact captured unsupported probe; an unanswered reopen request
+cannot be treated as one.
+
+`InteractiveStreamE2ETest.interactiveTurn_peerStartedTurn_continuesOnPhone`, also
+run by `RecordedMobileSuiteTest`, opts into `PassiveThreadProbe` before creating
+its destination. The destination's `TappingConversationRepository` forwards its
+actual snapshots unchanged and taps that existing collection without adding
+upstream collections or requests. Other reply-helper consumers retain their
+existing contracts. Producer completion alone cannot establish phone delivery.
+
+Passive evidence binds host, conversation, captured connection and subscription
+identity. Reopen requires a different active subscription, even when rows are
+identical. Ending a subscription clears its snapshot; observing a replaced owner
+permanently retires it, so returning to the old connection identity cannot revive
+the evidence. Closing the observation scope clears readings and detaches the probe.
+Keep these lifetime checks alongside the no-extra-collection/request regression
+in `PassiveThreadObservationTest`.
+
+After reopen, require exactly one delivered peer user message with its original
+identity and complete content in current admitted data. Reveal and count that row
+while composed, before scrolling to each retained assistant row. Retain the same
+completed reply's admitted session/turn, row identities and complete observed
+content, then revalidate the current passive evidence. Lazy semantics establish
+display only while a row is composed; scrolling to the reply must not invalidate
+the earlier user display count. See [thread testing](knowledge/features/thread-screen-testing.md#passive-reopen-evidence-2317).
+
+**Counted Linux evidence, 2026-10-19.** The
+[accepted verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2319#issuecomment-6275645803)
+on `a320834c07f039cc40d98869f05fd0ca04f447ed` records:
+
+| Configured gate | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| `python3 scripts/jvm-test-gate.py --with-build-checks` | 6155 | 6155 | 0 | 0 |
+| `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui` | 335 | 335 | 0 | 1 |
+| `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all` | 22 | 22 | 0 | 0 |
+
+The retained full UI report contains
+`RecordedMobileSuiteTest#interactiveTurn_peerStartedTurn_continuesOnPhone` as
+**1 executed, 1 passed, 0 failed, 0 skipped**; the unrelated skip is
+`RenameDialogCaptureTest.renameAtFigmaViewport`. The JVM gate passed all seven
+passive-observer regressions, including source replacement/reuse, reopen, failure
+cleanup, scope cleanup and exact user identity/content/duplicate rejection, plus
+`OwnedReplyObservationTest.retainedReplyRebindsOnlyTheSameCompleteFamilyOnTheCurrentOwner`.
+All gates had zero errors. The accepted verifier bundle is run
+`bc00cb670de64f6e5dff8a38d9d85253254c03ecbf3fa559636b8c7c2c559902`;
+its gate-5 and gate-6 logs retain counted XML after the gate worktree is removed.
+
+Separate builder focused runs at `69be40bebe9278c5779367febf608b5854cf3b87`
+and `4a044b47a799a59f874a22f584a4974cdbd34ba1` each executed and passed the
+named recorded method once, with zero failures/errors/skips. Focused JVM/shared
+classes passed 7 passive-observer, 26 owned-reply, 3 decorator and 12 rendering
+cases: **48 executed/passed, 0 failed/errors/skipped**. These focused passes alone
+do not establish suite-order independence; the table records the later complete
+configured gates separately.
+
+Historical failures remain failures: the baseline on product source `d20e92cd4b5b`
+(plan-only revision `1b368c9f8`) and cold-read experiment `2f36172fa47944defb6344127d47f784aad26705`
+each executed one case, passed zero, failed one and skipped zero. The controlled
+source-retirement regression initially executed five, passed four and failed one,
+with zero skips. An intermediate instrumented compilation executed zero tests.
+Raw XML/logs and source metadata were retained under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2317/`, in
+`builder-20261019-peer-turn/` and `builder-20261019-passive-repair/` at review time.
+The [checked investigation summary](../app/src/androidTest/assets/peer-reopen-2317/investigation.txt)
+preserves the diagnosis and fixture hash. The repaired runs complete strict replay
+with the original recording and show the user already composed before reveal;
+they do not establish offscreen content loss as the original cause. No fresh
+Claude compatibility capture was required. Other operating systems were outside
+this Linux ticket's verification scope.
+
 ### Replay isolation
 
 `E2eTestApplication` owns one preference DataStore for the instrumentation process.
