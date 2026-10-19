@@ -1245,7 +1245,13 @@ private fun AnnotatedString.Builder.appendInline(
                     background = colors.codeSpanBackground,
                 ),
             ) {
-                append(node.getTextInNode(source).toString().trim('`'))
+                val code = node.getTextInNode(source).toString().trim('`')
+                val target = code.trim()
+                if (target.isNotEmpty() && target.none { it.isWhitespace() } && isSafeLinkScheme(target)) {
+                    appendLinkText(code, target, uriHandler, colors)
+                } else {
+                    append(code)
+                }
             }
         // Authored labels are never bare prose, even when their destination is refused or unresolved.
         in BareLinkLabelContainers -> append(textOutside(node, source, synthetic))
@@ -1265,7 +1271,7 @@ private fun AnnotatedString.Builder.appendInline(
                 append(linkText)
                 return
             }
-            appendLink(linkText, url, uriHandler, colors)
+            appendLinkText(linkText, url, uriHandler, colors)
         }
         MarkdownTokenTypes.EOL -> append(" ")
         // The total fallback, and the reason #681 could switch flavours without suppressing
@@ -1281,7 +1287,7 @@ private fun AnnotatedString.Builder.appendInline(
     }
 }
 
-private fun AnnotatedString.Builder.appendLink(
+private fun AnnotatedString.Builder.appendLinkText(
     text: String,
     target: String,
     uriHandler: UriHandler,
@@ -1290,10 +1296,23 @@ private fun AnnotatedString.Builder.appendLink(
     withLink(
         LinkAnnotation.Url(
             url = target,
-            styles = TextLinkStyles(style = SpanStyle(color = colors.link, textDecoration = TextDecoration.Underline)),
-            linkInteractionListener = LinkInteractionListener { link -> (link as? LinkAnnotation.Url)?.url?.let(uriHandler::openUri) },
+            styles =
+                TextLinkStyles(
+                    style =
+                        SpanStyle(
+                            color = colors.link,
+                            textDecoration = TextDecoration.Underline,
+                        ),
+                ),
+            linkInteractionListener =
+                LinkInteractionListener { link ->
+                    // The handler decides: a markdown path, an allowed scheme, or nothing.
+                    (link as? LinkAnnotation.Url)?.url?.let(uriHandler::openUri)
+                },
         ),
-    ) { append(text) }
+    ) {
+        append(text)
+    }
 }
 
 /** The constructs a synthetic closer can complete; each renders plain when one does. */
@@ -1413,7 +1432,7 @@ private fun AnnotatedString.Builder.appendInlineChildren(
                 ) {
                     append(textOutside(cursor, link.first, source, synthetic))
                     val target = source.substring(link)
-                    appendLink(target, target, uriHandler, colors)
+                    appendLinkText(target, target, uriHandler, colors)
                     cursor = link.last + 1
                     index = last
                     if (cursor == children[index].endOffset) {

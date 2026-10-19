@@ -398,6 +398,39 @@ class StreamingMarkdownTextTest {
     }
 
     @Test
+    fun codeSpanUrl_waitsForItsRealCloser_andSettlesUnchanged() {
+        renderBoth()
+        val targets = listOf("http://example.com", "HTTPS://example.com/A%2fb", "mailto:a@example.com", "ObSiDiAn://open?file=A%2fPlan.MD")
+        for (target in targets) {
+            for (delimiter in listOf("`", "``")) {
+                val pending = "Before $delimiter $target "
+                val plain = streamedText(pending)
+                assertEquals("Before  $target ", plain.text)
+                assertTrue(plain.hasNoFormatting())
+
+                val complete = pending + delimiter
+                for (blink in listOf(true, false, true)) {
+                    composeTestRule.runOnIdle { caret.value = blink }
+                    val linked = streamedText(complete)
+                    assertEquals("Before  $target " + if (blink) STREAMING_CARET_GLYPH else "", linked.text)
+                    val range = linked.getLinkAnnotations(0, linked.length).single()
+                    assertEquals(7, range.start)
+                    assertEquals(9 + target.length, range.end)
+                    assertEquals(target, (range.item as LinkAnnotation.Url).url)
+                    assertTrue(linked.spanStyles.any { it.item.fontFamily == FontFamily.Monospace })
+                }
+                composeTestRule.runOnIdle {
+                    streamed.value = "$complete\n\nNext block\n\nGrowing"
+                    settled.value = streamed.value
+                }
+                composeTestRule.waitForIdle()
+                assertSameBody(target, drawn(SETTLED_TAG), drawn(STREAMING_TAG))
+                composeTestRule.runOnIdle { caret.value = false }
+            }
+        }
+    }
+
+    @Test
     fun allHeadingLevels_keepPendingInlineContentAndTheCaret_thenSettleExactly() {
         renderBoth()
         composeTestRule.runOnIdle { caret.value = true }

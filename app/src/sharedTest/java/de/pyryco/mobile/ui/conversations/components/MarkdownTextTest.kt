@@ -33,6 +33,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
@@ -79,6 +80,8 @@ class MarkdownTextTest {
 
     /** Colours the assertions compare against, captured from the same theme the content renders in. */
     private var onSurfaceVariant: Color = Color.Unspecified
+    private var codeBackground: Color = Color.Unspecified
+    private var linkColor: Color = Color.Unspecified
 
     /** Stands in for the system clipboard, which an instrumented app cannot reliably read back. */
     private val clipboard = RecordingClipboard()
@@ -114,6 +117,8 @@ class MarkdownTextTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
                 onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
+                codeBackground = MaterialTheme.colorScheme.surfaceContainer
+                linkColor = MaterialTheme.colorScheme.primary
                 CompositionLocalProvider(LocalClipboardManager provides clipboard) {
                     Box(
                         modifier =
@@ -308,6 +313,84 @@ class MarkdownTextTest {
 
         val annotated = annotatedTextOf("Visit the site now")
         assertEquals(1, annotated.getLinkAnnotations(0, annotated.text.length).size)
+    }
+
+    @Test
+    fun completed_code_span_urls_keep_their_text_styles_and_exact_annotation() {
+        val codes =
+            listOf(
+                "http://example.com/a",
+                "HTTPS://example.com/A%2fb?q=One%20Two#Top",
+                "mailto:Name@example.com?subject=Hello%20World",
+                "ObSiDiAn://open?vault=Second%20brain&file=A%2fPlan.MD&paneType=tab",
+                "  https://example.com/padded  ",
+                "\tmailto:Name@example.com\t",
+                "\u00a0https://example.com/unicode\u2003",
+            )
+        render(codes.mapIndexed { index, code -> "Before$index ``$code`` after" }.joinToString("\n\n"))
+
+        codes.forEachIndexed { index, code ->
+            val prefix = "Before$index "
+            val annotated = annotatedTextOf("$prefix$code after")
+            val range = annotated.getLinkAnnotations(0, annotated.length).single()
+            assertEquals(prefix.length, range.start)
+            assertEquals(prefix.length + code.length, range.end)
+            val link = range.item as LinkAnnotation.Url
+            assertEquals(code.trim(), link.url)
+            assertEquals(linkColor, link.styles?.style?.color)
+            assertEquals(TextDecoration.Underline, link.styles?.style?.textDecoration)
+            assertEquals(
+                listOf(code),
+                annotated.substringsStyled { it.fontFamily == FontFamily.Monospace && it.background == codeBackground },
+            )
+        }
+    }
+
+    @Test
+    fun other_code_spans_keep_their_text_and_code_style_without_links() {
+        val codes =
+            listOf(
+                "ordinary code",
+                "   ",
+                "https://example.com other words",
+                "https://one.example https://two.example",
+                "https://example.com/a\tb",
+                "https://example.com/a\nb",
+                "https://example.com/a\u00a0b",
+                "javascript:alert(1)",
+                "data:text/html,x",
+                "file:///tmp/Plan.md",
+                "content://notes/Plan.md",
+                "notes/Plan.md",
+                "obsidian://new?file=Plan.md",
+                "obsidian://open?append=text",
+                "obsidian://open?file=x.hta/",
+                "obsidian://open?file=%ED%A0%80",
+                "obsidian://open?file=a%26append=text",
+                "obsidian://open?file=Plan.md#",
+                "obsidian://open?%66ile=Plan.md",
+            )
+        render(codes.mapIndexed { index, code -> "Before$index `$code` after" }.joinToString("\n\n"))
+
+        codes.forEachIndexed { index, code ->
+            val annotated = annotatedTextOf("Before$index $code after")
+            assertTrue(code, annotated.getLinkAnnotations(0, annotated.length).isEmpty())
+            assertEquals(
+                listOf(code),
+                annotated.substringsStyled { it.fontFamily == FontFamily.Monospace && it.background == codeBackground },
+            )
+            assertTrue(annotated.spanStyles.none { it.item.color == linkColor || it.item.textDecoration == TextDecoration.Underline })
+        }
+    }
+
+    @Test
+    fun a_url_only_fenced_block_keeps_its_plain_code_rendering() {
+        render("```\nhttps://example.com\n```")
+
+        val annotated = annotatedTextOf("https://example.com")
+        assertTrue(annotated.getLinkAnnotations(0, annotated.length).isEmpty())
+        assertTrue(annotated.spanStyles.isEmpty())
+        composeTestRule.onNodeWithContentDescription(copyCode).assertIsDisplayed()
     }
 
     @Test
