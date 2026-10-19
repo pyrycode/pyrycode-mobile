@@ -26,3 +26,57 @@ Run lint, APK assembly, instrumented Kotlin compilation, Spotless apply/check, a
 The proposed current-data read was tested at `2f36172fa47944defb6344127d47f784aad26705`; it immediately exposed another strict backfill mismatch (one executed, one failed, zero skipped). That experiment was reverted without changing the fixture, timeouts or original assertions. The initial plan's assumption that `currentThread`/`awaitRetainedReply` were passive reads was wrong: they collect cold flows and can issue more requests. Both runs and the inherited evidence are retained with verified hashes under `/work/Projects/pyrycode-mobile-agents/logs/evidence/2317/builder-20261019-peer-turn/`; the checked summary is `app/src/androidTest/assets/peer-reopen-2317/investigation.txt`.
 
 Return for refinement of the same single deliverable. Permit a source-owned passive observation of the application's existing subscription for this scenario, covering initial completion and reopened retention without issuing additional reads. Preserve strict replay, exact identity/content and duplicate checks, and the original peer/send/navigation path. Include controlled tests for no extra requests and wrong-source rejection, then the named Linux recorded method. This crosses the ticket's explicit exclusion of reply-observation contract changes, so no implementation or successful acceptance is claimed. No split, live capture, product scrolling change or relaxed normalization is proposed. Lint and final handoff checks remain unrun because there is no completed repair or PR.
+
+2026-10-19, refined repair: the current issue explicitly admits test-only passive observation and wiring. Continue the same behaviour on the preserved branch; historical failures above remain failures. The design below supersedes the cold-read proposal.
+
+## Context
+
+The extra observer changes strict replay request consumption. Observe the application's existing collection instead. No production behaviour, recording, request admission or timeout changes are needed. No decision record or documentation handoff is required.
+
+## Additional files read
+
+- `E2eTestApplication.kt`, `tappedRelayRepositoryModule`: destination decoration already receives application snapshots.
+- `UnrecognizedRowSentinel.kt`, `TappingConversationRepository`: preserve the exact snapshot and existing recorder taps.
+- `AppModule.kt`, `ThreadDestinationFactory.repository`: decoration wraps the host-bound cache/facade for each destination.
+- `StableConversationRepository.kt`, `runConfigurationReadings.currentConnection`: exposes the live underlying repository identity without collecting.
+- `OwnedReplyObservation.kt`, `admitted` and `checkCurrent`: retain producer completion and exact delivered-family admission.
+- `RetainedReplyEvidence.kt`, `retainedReply`: retain session/turn, identity and complete-content comparison.
+- `DurableHistoryProbeTest.kt`: mirror pass-through subscription-count coverage.
+
+## Design
+
+Add a scoped passive thread probe in shared test sources. A lease observes only subscriptions created during its lifetime, stores their latest exact snapshots, and removes them when the collection ends. A snapshot reading carries an opaque subscription identity plus source-bound legacy `ThreadEvidence`. Test-application wiring resolves host ownership by matching the decorated repository's actual current connection to the registry, then captures that identity at subscription start. Later checks revalidate both captured ownership and current registry ownership; never relabel an old snapshot with a new connection.
+
+Only the destination decorator enables this probe. Existing compatibility/global repository decoration and other helper consumers retain their contracts. An optional tap argument preserves existing decorator callers. The peer scenario arms the lease before creating its destination, uses the passive evidence for the existing `OwnedReplyObservation` admission loop, then requires a different active subscription after leave/reopen. Do not alter other `withOwnedReply` callers: provide optional passive input for this scenario while retaining the existing cold observation default.
+
+After reopen, establish the exact original user identity/content and uniqueness in current data. Reveal and count that user row before scrolling to each retained assistant record. Revalidate current passive evidence after rendering; use `retainedReply` for the same completed family. Log only counts/booleans and lifecycle codes, never text or identities.
+
+## State and concurrency model
+
+The probe opens no coroutine, repository collection or request. Synchronize its lease and subscription map because the application collects on worker dispatchers while instrumentation reads. Each existing application collection owns its token and removes it in `finally`. Closing the lease clears all references and detaches the process-level probe. Existing producer observation remains scoped through `OwnedReplyProbe.observingSessions` and the peer's `finally` cleanup.
+
+## State transitions and identity reuse
+
+| Event | Required proof |
+| --- | --- |
+| Application collection starts and emits | `PassiveThreadObservationTest` proves exact pass-through and one upstream collection/request. |
+| Probe sampled repeatedly | Same test proves sampling adds no collections/requests. |
+| Leave/reopen, even with equal rows | Subscription-lifetime regression rejects old token and requires a new active collection; named recorded scenario proves navigation. |
+| Subscription ends or is replaced | Focused regression rejects ended/replaced readings, including equal identifiers. |
+| Connection, host or conversation changes | Focused regression rejects mismatched ownership and captured connection replacement. |
+| Lease closes, including failure | Cleanup regression proves no retained readings and a later lease starts empty. |
+| Retained row disappears, duplicates or changes | Existing owned/retained reply regressions plus exact user retention regression reject them. |
+
+## Error handling
+
+Missing or stale passive readings cannot admit a reply. Existing bounded waits fail with structural diagnostics. Source changes fail currentness checks. Exceptions/cancellation propagate and collection/lease cleanup runs in `finally`; no fallback cold read is allowed for this scenario.
+
+## Testing strategy for refined repair
+
+Write focused shared helper regressions first and observe a red compile/missing implementation, then implement passivity/ownership. Run `PassiveThreadObservationTest`, `OwnedReplyObservationTest`, `RetainedReplyEvidenceTest` and `DurableHistoryProbeTest`, plus any affected shared rendering assertion class. Run the named recorded Linux method with existing capture bytes and native assertions. Retain raw counted XML/logs and revision privately, and append a content-free evidence summary. This existing device test exercises asynchronous real repository delivery and native lazy-list composition. Dispatcher owns full configured gates and suite-order acceptance.
+
+Forecast: approximately 650-800 written lines including tests, wiring and this revision; at most three new internal test types, one scenario consumer, four acceptance criteria, fewer than ten rejection branches. Current overlap scan matches the earlier list; changes stay local and additive. No real dependency was found.
+
+## Open Questions
+
+None. The refiner resolved the observer-contract scope; implementation must preserve source ownership and strict replay.
