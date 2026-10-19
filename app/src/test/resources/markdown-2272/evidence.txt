@@ -21,7 +21,7 @@ StreamingMarkdownTest: executed=15 passed=15 failed=0 errors=0 skipped=0
 StreamingMarkdownTextTest: executed=15 passed=15 failed=0 errors=0 skipped=0
 Total: executed=125 passed=125 failed=0 errors=0 skipped=0.
 
-Raw reports: one <Class>.xml per class in this directory.
+Initial raw reports are preserved in commit ea1061b4e43fc74f476f18df2f3323b7a7e51a46; current <Class>.xml files contain the rework results below.
 The unchanged a_bare_url_renders_as_text_and_is_not_a_link executed and passed in MarkdownTextTest.
 The rejection matrix covers finished and streaming renderers, including embedded GFM web targets and authored angle autolink labels.
 Exact native ranges cover paragraphs, lists and table cells; activation intercepts Android ACTION_VIEW with unchanged targets.
@@ -34,3 +34,25 @@ angle-web-red.xml: production bfbda744ff94a2ac4f9823e985460923fff1c079 plus the 
 parser-boundary-red.xml: production 82132eee28f6a127af64cc51c8a52adea6bda26d; 29 executed, 1 failed because the new probe assumed URL-aligned tokens. The exact-range correction passed 29/29.
 
 Complete acceptance gates remain dispatcher/verifier-owned. No live test obligation was introduced.
+
+Rework results — 2026-10-19
+
+Renderer revision: 0760fb4db8c23a4a19a6e69fec1fb6b3b288d604, unchanged through fixture follow-up e3df241191f6d0f3dfd1c8ed2f1cddc30a552a0c.
+All seven classes were rerun individually with the focused command above on Linux 7.0.0-38-generic x86_64; host 723893f7154c.
+Screen execution uses AndroidJUnit4/Robolectric and native graphics for the new interaction/streaming probes; Android manifest minSdk 33, targetSdk 36. No emulator run is claimed.
+The corrected parser assertion ran before its formatting-only follow-up in e3df241191f6d0f3dfd1c8ed2f1cddc30a552a0c; all other executed test sources match 0760fb4db8c23a4a19a6e69fec1fb6b3b288d604.
+
+MarkdownTextParsingTest: executed=31 passed=31 failed=0 errors=0 skipped=0
+MarkdownLinkTapTest: executed=26 passed=26 failed=0 errors=0 skipped=0
+StreamingMarkdownTextTest: executed=16 passed=16 failed=0 errors=0 skipped=0
+MarkdownTextTest: executed=30 passed=30 failed=0 errors=0 skipped=0
+MarkdownLinkRoutingTest: executed=7 passed=7 failed=0 errors=0 skipped=0
+BareObsidianLinksTest: executed=6 passed=6 failed=0 errors=0 skipped=0
+StreamingMarkdownTest: executed=15 passed=15 failed=0 errors=0 skipped=0
+Total: executed=131 passed=131 failed=0 errors=0 skipped=0. The unchanged bare HTTPS exclusion executed and passed.
+
+verifier-rework-red.xml: reviewed renderer ea1061b4e43fc74f476f18df2f3323b7a7e51a46 plus new regressions; 26 executed, 3 failed (composite endpoint and finished/streaming reference labels).
+Intermediate test-fixture failures remain in /tmp/builder-2272/reference-selector-red.xml (26 executed, 2 failed: duplicate matching definition text) and reference-parser-red.xml (31 executed, 1 failed: collapsed-reference AST assumption).
+Final native cases cover exact ranges and Android ACTION_VIEW targets in paragraphs/lists/tables, sibling emphasis/strong/strike endpoints, all reference-label forms without activation, and streaming real completion/settlement without premature links.
+Standalone lint and compileDebugAndroidTestKotlin passed. Full JVM/device/scripted acceptance remains pending with the dispatcher; the earlier heap failures and concurrency assertion are not cleared by focused passes.
+Original verifier bundle: run d69c1ee239efc24422a08fe97e635ec8f6ed269cf301a4a20fe56453617176dc, digest 8005ea264bc3c98c2693b17dea0f08b0e47dd62681cabaf7b11e89c4d648cc15; retained log logs/verifier-gate__2272_4.stderr.log. Wider assessment was requested, executed=0.

@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-10-19T06:44:24.373Z" hostname="723893f7154c" time="3.188">
+<testsuite name="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-10-19T07:48:52.440Z" hostname="723893f7154c" time="3.141">
   <properties/>
-  <testcase name="pendingInline_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.131"/>
-  <testcase name="fences_closingFenceThatGrowsStaysCode_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.021"/>
-  <testcase name="pendingHeaders_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.056"/>
-  <testcase name="lists_continuingItemsAndRuleLikeLines_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.028"/>
-  <testcase name="lazyAndSetext_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.012"/>
+  <testcase name="pendingInline_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.129"/>
+  <testcase name="fences_closingFenceThatGrowsStaysCode_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.02"/>
+  <testcase name="pendingHeaders_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.054"/>
+  <testcase name="lists_continuingItemsAndRuleLikeLines_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.025"/>
+  <testcase name="lazyAndSetext_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.011"/>
   <testcase name="probe_isAbsentWhenNothingNewPairs" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.0"/>
   <testcase name="pendingHeader_needsAPipeLineAndAtMostAPartialDelimiterRow" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.002"/>
-  <testcase name="endOfInputInterrupters_afterParagraphListOrQuote_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.211"/>
-  <testcase name="tableDirectlyAfterParagraphListItemOrQuote_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.018"/>
-  <testcase name="seededFuzz_blockStarterLines_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="2.672"/>
+  <testcase name="endOfInputInterrupters_afterParagraphListOrQuote_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.201"/>
+  <testcase name="tableDirectlyAfterParagraphListItemOrQuote_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.017"/>
+  <testcase name="seededFuzz_blockStarterLines_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="2.647"/>
   <testcase name="realisticReply_freezesCompletedBlocksAndParsesOnlyTheTail" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.012"/>
-  <testcase name="trailingLeaf_followsTheLastInlineText_andNotCode" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.0"/>
+  <testcase name="trailingLeaf_followsTheLastInlineText_andNotCode" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.001"/>
   <testcase name="probe_closesInnermostFirst_andCountsItsParses" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.0"/>
-  <testcase name="definitions_swallowLaterBlocks_andStayMutableUntilDecided" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.005"/>
+  <testcase name="definitions_swallowLaterBlocks_andStayMutableUntilDecided" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.004"/>
   <testcase name="probe_isBoundedOnAPathologicalLeaf" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.004"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>

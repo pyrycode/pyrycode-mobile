@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-19T06:39:37.613Z" hostname="723893f7154c" time="0.065">
+<testsuite name="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-19T07:46:48.493Z" hostname="723893f7154c" time="0.06">
   <properties/>
-  <testcase name="refusedTokens_neverExposeAnAdmittedPrefixOrEmbeddedTarget" classname="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" time="0.047"/>
+  <testcase name="refusedTokens_neverExposeAnAdmittedPrefixOrEmbeddedTarget" classname="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" time="0.04"/>
   <testcase name="onlyRealStartsAdmitCandidates" classname="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" time="0.001"/>
-  <testcase name="punctuation_validatesWholeThenTrimsTheMaximalRunOnce" classname="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" time="0.001"/>
+  <testcase name="punctuation_validatesWholeThenTrimsTheMaximalRunOnce" classname="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" time="0.002"/>
   <testcase name="arrivingSourceEnd_blocksEvenIndependentlyValidPrefixesAndPunctuation" classname="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" time="0.001"/>
-  <testcase name="syntheticClosers_doNotEstablishCompletionButRealClosersDo" classname="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" time="0.001"/>
+  <testcase name="syntheticClosers_doNotEstablishCompletionButRealClosersDo" classname="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" time="0.0"/>
   <testcase name="candidates_keepExactCaseEscapesAndSourceRanges" classname="de.pyryco.mobile.ui.conversations.components.BareObsidianLinksTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
