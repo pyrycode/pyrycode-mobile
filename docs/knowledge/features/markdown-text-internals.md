@@ -81,7 +81,7 @@ A heading's own children are just the marker and one content node — `# Heading
 | `CODE_SPAN` | Keep the displayed text with backticks removed inside monospace / `surfaceContainer` styling. An explicitly closed span containing one admitted external target adds the shared authored-link annotation over all displayed content; other code stays inert. |
 | `INLINE_LINK` | Check admission before `withLink`: admitted targets get one `LinkAnnotation.Url` over the label with the unchanged target and primary/underline styling; rejected targets use `append(linkText)` without link styling or annotation. |
 | `EOL` | `append(" ")` — collapses CommonMark soft-breaks to a single space |
-| _leaf token, no children_ | `append(node.getTextInNode(source).toString())` — this is the arm `GFM_AUTOLINK` hits (a childless leaf), so a bare URL renders as its own text and never as a link |
+| _leaf token, no children_ | `append(node.getTextInNode(source).toString())` — this is the arm `GFM_AUTOLINK` hits (a childless leaf), so a bare web URL renders as its own text without a link; the sibling walker separately overlays admitted Obsidian prose ranges |
 | _element with children_ | recurse into each child — this is the arm `INLINE_MATH` hits, so `$20 and $30` rebuilds verbatim from its `DOLLAR` / `TEXT` / `WHITE_SPACE` leaves |
 
 Link text is built from the `LINK_TEXT` child's children, filtering `LBRACKET` / `RBRACKET` tokens. URL is the `LINK_DESTINATION` child's text, trimmed and stripped of surrounding `<` / `>` (for angle-bracket destinations) — read from the node's own source span rather than from its children, so it stays byte-identical to the CommonMark case even though GFM nests a `GFM_AUTOLINK` child inside `LINK_DESTINATION` where CommonMark held `TEXT`/`:`/`TEXT`. Code-span text is the node's raw text trimmed of backticks.
@@ -91,8 +91,8 @@ with `isSafeLinkScheme(target)` as the fallback for a plain `UriHandler`, includ
 the non-routing `inlineText` conversion. Finished replies, streaming replies and reader
 content share this arm. Rejected labels inherit surrounding text treatment. A streaming
 destination closed only by synthetic punctuation remains plain; completing a rejected
-destination and settling the same message never adds a link. Bare prose retains its
-literal behavior.
+destination and settling the same message never adds a link. Bare web/email prose retains its
+literal behavior; #2272 adds the narrow Obsidian prose exception below.
 
 Since #2270, completed code spans use a separate `code.trim()` candidate: it must
 be nonempty, contain no `isWhitespace()` characters and pass unchanged
@@ -114,10 +114,34 @@ The synthetic-overlap guard precedes inline dispatch. `appendSyntheticallyClosed
 therefore keeps URL-only code plain and inert until the real closing backticks
 arrive; probing must never supply eligibility. The caret is appended outside the
 annotation, and completed-block reuse and settlement retain the same link. Bare
-prose URLs and URL-only fenced blocks remain unchanged. See
+web/email prose and URL-only fenced blocks remain unchanged. See
 [streaming and regression coverage](markdown-text.md#testing).
 
-**Every sibling-list walk goes through `appendInlineChildren(children, source, uriHandler, colors)`, not a per-child loop.** `appendInline`'s own `else` arm, its `EMPH` / `STRONG` / `STRIKETHROUGH` arms, and `HeadingBlock` all pass their (already-filtered) child list through it. The seam exists for one reason: pairing bare `~single~` tildes needs to see siblings together, which a node walked one at a time cannot do — see [Strikethrough](#strikethrough).
+**Every sibling-list walk goes through `appendInlineChildren(children, source, uriHandler, colors)`, not a per-child loop.** `appendInline`'s own `else` arm, its `EMPH` / `STRONG` / `STRIKETHROUGH` arms, and `HeadingBlock` all pass their (already-filtered) child list through it. The walk pairs bare `~single~` tildes (see [Strikethrough](#strikethrough)) and overlays admitted bare Obsidian source ranges across siblings.
+
+Since #2272, `bareObsidianRanges` scans ordinary inline content in paragraphs,
+list items and table cells without changing the GFM parser. Candidates start at
+content start, after whitespace, or after `(` or an opening ASCII/curly quote;
+they end at whitespace or the containing content's real boundary. Lexer tokens
+are not boundaries. The overlay preserves the exact source across punctuation,
+interior nodes and fully consumed emphasis/strong/strike endpoints, including
+Markdown delimiters that belong to the admitted URL. Requiring a childless final
+node loses targets such as `obsidian://open?file=A*B*`; the earlier interior-node
+case `A*B*C` cannot catch that defect. Partial composite boundaries recurse through
+the ordinary walker, retaining surrounding Markdown styling and single-tilde handling.
+
+Both overlay selection (`protectsBareLink`) and recursive dispatch must exclude
+code and authored-label subtrees. `BareLinkLabelContainers` includes autolinks,
+full/collapsed/shortcut references, `LINK_TEXT` and `LINK_LABEL`; reference forms
+keep their existing inert literal presentation. Inline-link labels keep only the
+authored target's annotation, or none if refused. Images cannot lend label text
+to a bare candidate. Starts inside `GFM_AUTOLINK` are excluded too: a parenthesis
+inside `https://example.com/(obsidian://open?file=Note)` or its `www` equivalent
+must not expose an actionable substring. Protecting only inline links misses
+reference labels with a refused destination, so finished and streaming tests
+inspect every matching text node, including separately rendered definition labels.
+The independent whole-code-span rule above still applies; embedded URLs mixed
+with other code words and all fenced/indented code remain inert.
 
 **`internal fun inlineText(nodes, source): String`, since #1067,** runs this same `appendInlineChildren` walk into a throwaway `AnnotatedString` with an inert `UriHandler` and unspecified `InlineColors`, then returns `.text`. It lives here rather than in `MarkdownConversions.kt` because it has to be *this* walk, not a second hand-written one — [the reader's plain-text copy](markdown-reader-screen.md#copy-and-refresh-menu-since-1067) drops exactly the delimiters and link targets this renderer hides by construction, and a parser or dispatch change here can't silently desync the two.
 
@@ -280,7 +304,26 @@ target. Activation rechecks admission through `routeMarkdownLink`. Rejected link
 retain only their visible labels, with no link styling, annotation or action.
 Completed URL-only code spans use the same external check and activation route,
 with the stricter whole-content rule described in [Inline dispatch](#inline-dispatch).
-Bare prose URLs and fenced code keep their literal behavior.
+Bare web/email prose and fenced code keep their literal behavior.
+
+Bare prose has one exception: admitted `obsidian://open` candidates use the
+unchanged shared admission check, authored-link primary colour/underline and
+`appendLinkText`. Each gets exactly one `LinkAnnotation.Url` over its exact URL
+text; activation follows `routeMarkdownLink` and the existing Android opener,
+never the workspace-note callback. Scheme case follows shared admission; `open`
+remains lowercase. No target decoding, normalization or rewriting is introduced.
+Bare http/https/www, email and other schemes remain plain.
+
+Validate the entire candidate first. If admitted, retain even trailing admitted
+punctuation (`file=Note!` keeps `!`). Only after rejection, strip the maximal
+trailing run of `. , ; ) ! ?`, ASCII single/double quotes and closing curly quotes,
+then validate that entire remainder once. Thus `file=Note.md.` links through
+`.md`, with the period visible outside the annotation, while `file=x.hta.` stays
+inert. Never search within a refused token or activate another admitted prefix.
+Unknown/write keys, malformed escapes and encoded separators/fragments retain
+the same rejection as authored links. Completion is checked before this fallback:
+trailing punctuation cannot make an arriving prefix tappable. See
+[streaming completion and counted coverage](markdown-text.md#streaming-since-1766).
 
 `AllowlistedLinkProvider.renderLink` and `AutolinkProvider` in
 `MarkdownConversions.kt` share external admission. For Obsidian, inline and
@@ -298,7 +341,7 @@ Rejected explicit links emit only their labels; workspace paths get no HTML href
 - **Image sources — corrected claim, measured during #681.** `![alt](url)` does **not** fall through to the raw-text fallback on either flavour: `IMAGE` has children under both CommonMark and GFM, so the inline walker recurses and renders `!` followed by the alt text as a tappable, scheme-gated link — this predates #681 and the flavour switch leaves it unchanged. The AC4 property that actually matters — no image is ever fetched, on either flavour — still holds and is pinned by test; there is no image loader anywhere in this renderer, so an `IMAGE` node's `INLINE_LINK` child routes through the same `isSafeLinkScheme` gate as any other link. No SSRF surface, but this file previously stated the wrong reason.
 - Code-block content — plain monospace `Text`; strings are not executed or interpreted.
 - Long-content DoS — Phase 0 messages are bounded; Phase 4 inherits Claude API response-size limits. #681 adds its own bound for tables specifically — see [Tables](#tables)'s `MAX_TABLE_COLUMNS` / `MAX_TABLE_ROWS`.
-- **New in #681 — `GFM_AUTOLINK` and `INLINE_MATH` add no new link-like surface.** `GFM_AUTOLINK` is a childless leaf with no dispatcher arm, so a daemon cannot manufacture a tappable link out of prose that never contained link markup. `INLINE_MATH` has children but no arm either; its leaves re-append their own source text. Table cells and task-list items route through the same `appendInline` / `appendInlineChildren` as every other inline site, so they inherit this gate rather than opening a second one.
+- **`GFM_AUTOLINK` and `INLINE_MATH` retain literal presentation.** `GFM_AUTOLINK` stays a childless web-URL leaf without an annotation; #2272 recognizes only admitted Obsidian candidates outside protected web/autolink labels. `INLINE_MATH` has children but no arm either; its leaves re-append their own source text. Table cells and task-list items route through the same `appendInline` / `appendInlineChildren` as every other inline site, so they inherit this gate rather than opening a second one.
 
 ## Markdown-path links (since #1050)
 

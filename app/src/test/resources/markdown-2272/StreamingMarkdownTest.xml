@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-10-19T09:02:38.892Z" hostname="723893f7154c" time="3.373">
+  <properties/>
+  <testcase name="pendingInline_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.133"/>
+  <testcase name="fences_closingFenceThatGrowsStaysCode_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.019"/>
+  <testcase name="pendingHeaders_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.056"/>
+  <testcase name="lists_continuingItemsAndRuleLikeLines_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.04"/>
+  <testcase name="lazyAndSetext_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.013"/>
+  <testcase name="probe_isAbsentWhenNothingNewPairs" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.001"/>
+  <testcase name="pendingHeader_needsAPipeLineAndAtMostAPartialDelimiterRow" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.002"/>
+  <testcase name="endOfInputInterrupters_afterParagraphListOrQuote_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.224"/>
+  <testcase name="tableDirectlyAfterParagraphListItemOrQuote_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.013"/>
+  <testcase name="seededFuzz_blockStarterLines_replayEveryPrefix" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="2.827"/>
+  <testcase name="realisticReply_freezesCompletedBlocksAndParsesOnlyTheTail" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.012"/>
+  <testcase name="trailingLeaf_followsTheLastInlineText_andNotCode" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.0"/>
+  <testcase name="probe_closesInnermostFirst_andCountsItsParses" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.001"/>
+  <testcase name="definitions_swallowLaterBlocks_andStayMutableUntilDecided" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.009"/>
+  <testcase name="probe_isBoundedOnAPathologicalLeaf" classname="de.pyryco.mobile.ui.conversations.components.StreamingMarkdownTest" time="0.007"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

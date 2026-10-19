@@ -71,9 +71,14 @@ The display keeps edge whitespace, monospace font and code background, adding th
 authored-link colour and underline. One annotation covers the entire displayed
 code content and opens the exact trimmed target, including its case and escapes,
 through the existing routing and failure handling. Workspace paths inside code,
-ordinary code, mixed text, refused targets, bare prose URLs and fenced blocks keep
+ordinary code, mixed text, refused targets, bare web/email prose and fenced blocks keep
 their existing behavior. See [inline dispatch](markdown-text-internals.md#inline-dispatch)
 for the admission boundary.
+
+Since #2272, admitted bare Obsidian open URLs in ordinary prose also use authored-link
+styling and Android routing. Bare web/email URLs remain plain. Exact source ranges,
+punctuation fallback and protected code/label containers are described in
+[inline dispatch and link safety](markdown-text-internals.md#inline-dispatch).
 
 ## Configuration
 
@@ -98,9 +103,19 @@ for the admission boundary.
   leaves it plain and inert. Its real single- or multiple-backtick closer enables
   the same eligibility rule as settled rendering. Caret blinks stay outside its
   annotation; freezing the block and settling the reply preserve its link and styles.
+- **Bare Obsidian prose waits for the real source end (#2272).** `appendLeaf`
+  carries the arriving source-end offset into inline rendering, including probes.
+  A candidate touching that end stays plain even when successive prefixes such as
+  `file=No` and `file=Note` independently pass admission. A later unsafe suffix
+  must never inherit an earlier link. Real whitespace or a containing Markdown
+  closer/table-cell separator establishes completion; lexer-token boundaries,
+  sentence punctuation, synthetic closers and caret blinks do not. Punctuation
+  fallback runs only after this completion check. This applies to paragraph, list
+  and table tails; settling removes the pending-end guard and admits only the
+  complete final target. Existing probe presentation and caret placement remain.
 - **Pending table header.** A trailing paragraph whose first line has an unescaped pipe, followed by nothing or a partial delimiter row, is probed with a delimiter row sized by `GitHubTableMarkerBlock.splitByPipes`. If that parses as a table, its header cells show as plain text with spaces between them. `| A | B |` over a growing `---` reads as a setext heading until the row gains its pipes, so it is probed the same way. The probe row is never drawn.
 - **Caret.** Appended to the trailing leaf's built text, never to the parsed source, so it cannot become code content or part of a link target. It is drawn only while the blink is on, as before #1766, so a blink-off frame shows exactly the arrived text. When the reply ends in something else, such as an open fence, it takes its own line and blinks by alpha.
-- **Settlement.** For complete markdown the probe pairs nothing, so `MarkdownText` draws the same text, spans, link targets and line breaks at the same width, apart from the caret. One ambiguity is inherent and pinned by a test: a final `see ~/path` looks like an open strikethrough while streaming, so it shows `see /path` until the reply ends.
+- **Settlement.** For complete markdown the probe pairs nothing, so `MarkdownText` draws the same text and line breaks at the same width, apart from the caret. A bare Obsidian candidate at the arriving source end becomes eligible on settlement; other completed spans and links stay the same. One ambiguity is inherent and pinned by a test: a final `see ~/path` looks like an open strikethrough while streaming, so it shows `see /path` until the reply ends.
 - **Test seam.** An optional `StreamingMarkdownObserver` parameter reports each parsed tail and each composed block. Production passes none.
 
 ## Testing
@@ -114,11 +129,57 @@ Obsidian failure notices. Native-graphics
 `StreamingMarkdownTextTest.codeSpanUrl_waitsForItsRealCloser_andSettlesUnchanged`
 checks single/multiple backticks, synthetic-to-real completion, caret exclusion,
 frozen-block reuse and settlement. The unchanged
-`a_bare_url_renders_as_text_and_is_not_a_link` remains the bare-prose regression.
+`a_bare_url_renders_as_text_and_is_not_a_link` remains the bare-web regression.
 All four named methods are present and passed in retained full-gate XML and in
 the fresh focused Linux reports at `2dca08a77de10a46ac078b1000ad87d2df0978ee`.
 See [accepted #2270 counts and evidence](development-verification-gates.md#managed-build-heap-and-linux-acceptance-2270)
 for the cached full-suite result, 124 freshly executed focused checks and device gates.
+
+Bare-Obsidian coverage combines `BareObsidianLinksTest`, `MarkdownTextParsingTest`,
+`MarkdownLinkRoutingTest`, `StreamingMarkdownTest` and native-graphics shared
+`MarkdownTextTest`, `MarkdownLinkTapTest`, `StreamingMarkdownTextTest`, alongside
+`MarkdownConversionsTest`. Tests pin exact ranges/targets, mixed scheme case,
+escapes, punctuation fallback, refused tokens, protected containers and Android
+ACTION_VIEW interception with workspace routing enabled. The composite-endpoint
+regressions are `admitted bare targets can end in composite inline nodes`,
+`bareRanges_endingInCompositeNodes_preserveExactTextAndAndroidTargets` and
+`bareCompositeEndpoints_waitForCompletion_andSettleToExactTargets`.
+`finishedReferenceLabels_neverActivateEmbeddedBareCandidates` and
+`streamingReferenceLabels_neverActivateEmbeddedBareCandidates` cover all reference
+forms. The three streaming methods `bareObsidianPrefixes_waitForRealCompletion`,
+`bareObsidianBoundaries_completeParagraphListAndTableTails` and
+`bareObsidianSettlement_linksTheCompleteTarget` replace source on one composition
+and check complete targets through real termination and settlement.
+
+Accepted Linux #2272 verification at `07566472b2eac2574ae4f0e68eed6ddaa5724d67`
+(verifier run `00956605aa3ca954c0dbf35d91096e280ec73f9f84a2d7c6bf0b01fc49931603`,
+[PR #2304](https://github.com/pyrycode/pyrycode-mobile/pull/2304)) records:
+
+| Configured dispatcher gate | Executed / passed | Failed / errors / skipped |
+| --- | ---: | ---: |
+| `python3 -m unittest discover -s scripts` | 183 / 183 | 0 / 0 / 0 |
+| `python3 scripts/jvm-test-gate.py --with-build-checks` | 6086 / 6086 | 0 / 0 / 0 |
+| `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui` | 335 / 335 | 0 / 0 / 1 |
+| `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all` | 22 / 22 | 0 / 0 / 0 |
+
+All named regressions above and the unchanged bare-web test executed and passed
+in the complete JVM gate; these are full-suite results, not separate focused runs.
+Lint, Spotless, assembly, instrumented Kotlin compilation, pre-verification and
+the docs guard also passed. UI used Linux managed Android 13 `pixel2Api33Atd`;
+`RenameDialogCaptureTest.renameAtFigmaViewport` was skipped and supplies no visual
+pass. Native Compose interception proves exact Android targets; installed Obsidian
+delivery was not exercised or required. macOS was outside verification scope.
+
+The accepted verifier bundle retains the verdict and gate logs via
+`fleet-task.py evidence 2272 --run <run-id>` (the run above); removed gate-worktree
+build paths are not durable artifacts. Supplementary focused Linux reports and
+identity (Ubuntu 24.04.5 x86_64, JDK 21, Robolectric API 33) remain in
+[recovery-evidence.txt and sibling XML](../../../app/src/test/resources/markdown-2272/recovery-evidence.txt):
+150 markdown executions passed at source-equivalent `86dc2f098698297ef9672630bdc73b6b4ec331d2`,
+with zero failures/errors/skips. Earlier failing parser/web-container probes remain
+separate red XML; subsequent passes do not erase them. See the
+[cache timer recovery](conversation-cache-testing.md#owned-coverage-snapshot-acceptance-2291)
+for the independently diagnosed row-failure probe.
 
 [Shared reader code coverage and counted Linux evidence](markdown-reader-screen-testing.md#shared-code-panel-coverage-2284)
 cover every code form, original-source bounded copying, stationary copy rails,
@@ -207,7 +268,7 @@ macOS is outside this Linux ticket’s verification scope; no real-Claude accept
 - **`MarkdownText` itself treats `markdown` as final.** Partial markdown still parses, since the JetBrains parser is total, and a construct never closed renders literally. Streaming replies go through `StreamingMarkdownText` instead; see [Streaming](#streaming-since-1766). Streaming uses the default body style.
 - **Renderer is total.** The JetBrains parser produces an AST for any input string — there is no exception path. Unsupported element kinds hit the `else` fallback (raw text using the selected body style), so the message is never blank. #681 leaned on exactly this property to switch parser flavours without suppressing anything — see the next two points.
 - **Parser flavour is GFM since #681, and that changes more than the three constructs it was switched on for.** `org.jetbrains:markdown` has no per-construct registration — `GFMFlavourDescriptor` is the only off-the-shelf way to reach tables, task lists and strikethrough, and it necessarily also brings bare-URL autolinks (`GFM_AUTOLINK`) and `$…$` inline maths (`INLINE_MATH`) into every message this renderer sees, whether or not that message uses any of the three wanted constructs.
-- **Bare URLs and `$…$` render as their own literal characters — deliberately, by omission rather than suppression.** `GFM_AUTOLINK` is a childless leaf with no dispatcher arm, so `appendInline`'s `else` appends its raw text; there is no link annotation to tap. `INLINE_MATH` has children with no arm either, so the `else` recurses and its `DOLLAR` / `TEXT` / `WHITE_SPACE` leaves rebuild the `$…$` span verbatim. Block `$$…$$` reaches `MarkdownBlock`'s own `else` and renders as raw text the same way. `MarkdownTextParsingTest` pins the AST shape each depends on, because the property here rests on an *absent* branch, and an absent branch reddens nothing on its own if the library ever adds one.
+- **Bare web/email URLs and `$…$` render as their own literal characters.** Admitted bare Obsidian open prose is the narrow #2272 exception described in [inline dispatch](markdown-text-internals.md#inline-dispatch). `GFM_AUTOLINK` is a childless leaf with no dispatcher arm, so `appendInline`'s `else` appends its raw text; there is no link annotation to tap. `INLINE_MATH` has children with no arm either, so the `else` recurses and its `DOLLAR` / `TEXT` / `WHITE_SPACE` leaves rebuild the `$…$` span verbatim. Block `$$…$$` reaches `MarkdownBlock`'s own `else` and renders as raw text the same way. `MarkdownTextParsingTest` pins the AST shape each depends on, because the property here rests on an *absent* branch, and an absent branch reddens nothing on its own if the library ever adds one.
 - **Task marks are inert by construction.** See [Task lists](markdown-text-internals.md#task-lists) — no `clickable`, `toggleable`, `ToggleableState` or `focusable`, on purpose; a bare `contentDescription` is announced but offers nothing to activate.
 - **Table cells never wrap, and a too-wide table scrolls rather than reflows.** See [Tables](markdown-text-internals.md#tables). A short row pads with empty cells; a long row's overflow is dropped with nothing addressable left to recover; `MAX_TABLE_COLUMNS` (32) / `MAX_TABLE_ROWS` (256) truncate a pathologically large table with no visible signal that truncation happened.
 - **Table layout is column-major** (a `Row` of per-column `Column`s), where an HTML table is naturally row-major. No problem has been observed from this — Compose's accessibility node sort bands by vertical overlap, which recovers row-major reading order for a TalkBack pass without any code here arranging for it — but it's a consequence of a deliberate layout choice (see [Tables](markdown-text-internals.md#tables)'s column-width rationale) rather than an oversight, and worth knowing before "make the table row-major" is proposed as a simplification.

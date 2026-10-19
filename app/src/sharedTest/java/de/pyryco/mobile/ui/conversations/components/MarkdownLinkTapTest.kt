@@ -122,6 +122,210 @@ class MarkdownLinkTapTest {
     fun finishedExplicitLinks_agreeWithRoutingAndHtml() = assertExplicitLinks(isStreaming = false)
 
     @Test
+    fun bareObsidianLinks_preserveTargetsStylesAndAndroidRouting() {
+        val targets =
+            listOf(
+                "obsidian://open?vault=V&file=Note.md",
+                "ObSiDiAn://open?vault=Second%20brain&file=A%2fPlan.MD&paneType=tab",
+                "obsidian://open?vault=www.example.com&file=Note",
+            )
+        val text = "Open ${targets.joinToString(" and ")} now"
+        show { MarkdownText(text, onOpenMarkdownPath = { paths += it }) }
+        val rendered = annotated(text)
+        val ranges = rendered.getLinkAnnotations(0, rendered.length)
+        assertEquals(targets.size, ranges.size)
+        ranges.zip(targets).forEach { (range, target) ->
+            assertEquals(text.indexOf(target), range.start)
+            assertEquals(text.indexOf(target) + target.length, range.end)
+            val link = range.item as LinkAnnotation.Url
+            assertEquals(target, link.url)
+            assertEquals(linkColor, link.styles?.style?.color)
+            assertEquals(TextDecoration.Underline, link.styles?.style?.textDecoration)
+            composeTestRule.onNodeWithText(text).performFirstLinkClick { (it.item as? LinkAnnotation.Url)?.url == target }
+        }
+        assertEquals(targets, opened)
+        assertEquals(emptyList<String>(), paths)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun refusedBareCandidates_haveNoStylesAnnotationsOrActions() {
+        val source = mutableStateOf("")
+        val streaming = mutableStateOf(false)
+        show {
+            if (streaming.value) {
+                StreamingMarkdownText(source.value, caretVisible = false, onOpenMarkdownPath = { paths += it })
+            } else {
+                MarkdownText(source.value, onOpenMarkdownPath = { paths += it })
+            }
+        }
+        val targets =
+            listOf(
+                "obsidian://new?vault=V&file=Note",
+                "obsidian://open?file=Note&append=x",
+                "obsidian://open?file=Note&unknown=x",
+                "obsidian://open?file=x.hta.",
+                "obsidian://open?file=%GG",
+                "obsidian://open?file=%ED%A0%80",
+                "obsidian://open?file=Note%26append=x",
+                "obsidian://open?file=Note%23fragment",
+                "obsidian://open?file=Note#fragment",
+                "obsidian://open?file=Note&unknown=*value*",
+                "javascript:alert(1)",
+                "file:///tmp/a.md",
+                "http://example.com",
+                "https://example.com",
+                "www.example.com",
+                "a@example.com",
+                "https://example.com/(obsidian://open?file=Note)",
+                "www.example.com/(obsidian://open?file=Note)",
+                "<https://example.com/(obsidian://open?file=Note)>",
+            )
+        listOf(false, true).forEach { isStreaming ->
+            targets.forEach { target ->
+                val text = "Before $target after"
+                composeTestRule.runOnIdle {
+                    streaming.value = isStreaming
+                    source.value = text
+                }
+                assertInert(text.replace("*value*", "value"), beforeTapMillis = 1_000)
+            }
+        }
+        assertEquals(emptyList<String>(), opened)
+        assertEquals(emptyList<String>(), paths)
+    }
+
+    @Test
+    fun bareRecognition_excludesCodeAndAuthoredLabels() {
+        val url = "obsidian://open?vault=V&file=Note"
+        val code = "code $url words"
+        show {
+            MarkdownText(
+                "`$code`\n\n```\nfenced $url\n```\n\n    indented $url\n\n[See $url now](https://example.com)\n\n[See $url now](javascript:bad)",
+            )
+        }
+        listOf(code, "fenced $url", "indented $url").forEach { text ->
+            val rendered = annotated(text)
+            assertTrue(rendered.getLinkAnnotations(0, rendered.length).isEmpty())
+        }
+        val labels =
+            composeTestRule
+                .onAllNodesWithText(
+                    "See $url now",
+                ).fetchSemanticsNodes()
+                .map { it.config[SemanticsProperties.Text].single() }
+        assertEquals(2, labels.size)
+        assertEquals(
+            listOf("https://example.com"),
+            labels
+                .flatMap {
+                    it.getLinkAnnotations(0, it.length)
+                }.map { (it.item as LinkAnnotation.Url).url },
+        )
+        assertEquals(emptyList<String>(), opened)
+    }
+
+    @Test
+    fun barePunctuation_preservesAdmittedCharactersAndExactRanges() {
+        val source = mutableStateOf("")
+        show { MarkdownText(source.value) }
+        val url = "obsidian://open?file=Note.md"
+        val cases = listOf("See $url." to url, "See (\"$url).\"" to url, "See obsidian://open?file=Note!" to "obsidian://open?file=Note!")
+        cases.forEach { (text, target) ->
+            composeTestRule.runOnIdle { source.value = text }
+            val rendered = annotated(text)
+            val range = rendered.getLinkAnnotations(0, rendered.length).single()
+            assertEquals(text.indexOf(target), range.start)
+            assertEquals(text.indexOf(target) + target.length, range.end)
+            assertEquals(target, (range.item as LinkAnnotation.Url).url)
+        }
+    }
+
+    @Test
+    fun bareRanges_crossParserTokensAndRetainSurroundingMarkdown() {
+        val source = mutableStateOf("")
+        show { MarkdownText(source.value) }
+        listOf("obsidian://open?file=A_name.MD", "obsidian://open?file=A*B*C").forEach { url ->
+            listOf("~See $url now~", "**See $url now**").forEach { markdown ->
+                composeTestRule.runOnIdle { source.value = markdown }
+                val rendered = annotated("See $url now")
+                val range = rendered.getLinkAnnotations(0, rendered.length).single()
+                assertEquals(url, (range.item as LinkAnnotation.Url).url)
+                assertEquals(url, rendered.text.substring(range.start, range.end))
+                if (markdown.startsWith('~')) {
+                    assertTrue(rendered.spanStyles.any { it.item.textDecoration == TextDecoration.LineThrough })
+                } else {
+                    assertTrue(rendered.spanStyles.any { it.item.fontWeight == androidx.compose.ui.text.font.FontWeight.Bold })
+                }
+            }
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun bareRanges_endingInCompositeNodes_preserveExactTextAndAndroidTargets() {
+        val source = mutableStateOf("")
+        show { MarkdownText(source.value, onOpenMarkdownPath = { paths += it }) }
+        val expected = mutableListOf<String>()
+        listOf("A*B*", "A**B**", "A~~B~~", "A~B~", "A*B***C**").forEach { file ->
+            val url = "obsidian://open?file=$file"
+            val text = "See $url now"
+            listOf(text, "- $text", "| Header |\n| --- |\n| $text |").forEach { markdown ->
+                composeTestRule.runOnIdle { source.value = markdown }
+                val rendered = annotated(text)
+                val range = rendered.getLinkAnnotations(0, rendered.length).single()
+                assertEquals(4, range.start)
+                assertEquals(4 + url.length, range.end)
+                assertEquals(url, rendered.text.substring(range.start, range.end))
+                val link = range.item as LinkAnnotation.Url
+                assertEquals(url, link.url)
+                assertEquals(linkColor, link.styles?.style?.color)
+                assertEquals(TextDecoration.Underline, link.styles?.style?.textDecoration)
+                composeTestRule.onNodeWithText(text).performFirstLinkClick()
+                expected += url
+                assertEquals(expected, opened)
+                assertTrue(paths.isEmpty())
+            }
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun finishedReferenceLabels_neverActivateEmbeddedBareCandidates() = assertReferenceLabels(streaming = false)
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun streamingReferenceLabels_neverActivateEmbeddedBareCandidates() = assertReferenceLabels(streaming = true)
+
+    private fun assertReferenceLabels(streaming: Boolean) {
+        val source = mutableStateOf("")
+        show {
+            if (streaming) {
+                StreamingMarkdownText(source.value, caretVisible = false, onOpenMarkdownPath = { paths += it })
+            } else {
+                MarkdownText(source.value, onOpenMarkdownPath = { paths += it })
+            }
+        }
+        val label = "See obsidian://open?file=Note now"
+        listOf(
+            "[$label][ref]\n\n[ref]: javascript:bad",
+            "[$label][]\n\n[$label]: javascript:bad",
+            "[$label]\n\n[$label]: javascript:bad",
+        ).forEach { markdown ->
+            composeTestRule.runOnIdle { source.value = markdown }
+            val texts =
+                composeTestRule
+                    .onAllNodesWithText(label, substring = true)
+                    .fetchSemanticsNodes()
+                    .map { it.config[SemanticsProperties.Text].single().text }
+            assertTrue(texts.isNotEmpty())
+            texts.forEach { assertInert(it, beforeTapMillis = 1_000) }
+            assertTrue(opened.isEmpty())
+            assertTrue(paths.isEmpty())
+        }
+    }
+
+    @Test
     fun streamingExplicitLinks_agreeWithRoutingAndHtml() = assertExplicitLinks(isStreaming = true)
 
     @Test
