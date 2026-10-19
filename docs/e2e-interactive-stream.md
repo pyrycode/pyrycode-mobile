@@ -827,7 +827,12 @@ Edit channel rather than the rename dialog; see [Follow-ups to ticket](#follow-u
 `SecondClientPeer` sends the ping prompt into a chat the phone has renamed and has open, asserting
 claude's reply renders exactly once while the thread stays open, then that the peer's message and the
 reply each render exactly once after the phone leaves and reopens the thread — proving a turn started
-from another client continues on the phone; **one** claude turn — the peer's ping); and a
+from another client continues on the phone; **one** claude turn — the peer's ping).
+Since #2317, `InteractiveStreamE2ETest` uses passive evidence from the existing
+destination subscription, including a new active subscription after reopen; its
+`RecordedMobileSuiteTest` replay passed in the complete Linux UI gate. See
+[assertion ownership and counted evidence](recorded-tests.md#passive-thread-assertion-evidence-2317).
+The suite also includes a
 **status-sheet-running-model** scenario (#891 — `interactiveTurn_pingPrompt_statusSheetShowsRunningModel`:
 after the ping turn, open the Status sheet from the footer's status icon and assert the running-model row
 shows a non-empty value that is not the unavailable note, with no model name hard-coded — proving the #890
@@ -7045,6 +7050,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Passive peer-turn evidence (#2317):**
+  `InteractiveStreamE2ETest.interactiveTurn_peerStartedTurn_continuesOnPhone`
+  preserves the peer send and leave/reopen path. Cold assertion subscriptions had
+  consumed the recorded reopen backfill early; passive destination-owned evidence
+  repairs that without changing recording bytes, strict replay or timeouts. The
+  [retained failures, focused passes and full UI gate result](recorded-tests.md#passive-thread-assertion-evidence-2317)
+  distinguish replay acceptance from fresh Claude compatibility. No scenario or
+  `DeterministicInteractiveStreamE2ETest` twin was added. The pre-ship command
+  remains `python3 scripts/android-test-gate.py live`.
 
 - **Correlated settings helper (#2305):** The shared wait now matches its current-owner
   request receipt, including normal same-owner rereads. Both required rung-3

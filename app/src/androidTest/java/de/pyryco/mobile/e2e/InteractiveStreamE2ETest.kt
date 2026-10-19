@@ -3053,41 +3053,80 @@ class InteractiveStreamE2ETest {
                 ),
             )
         try {
-            // 1. The phone creates a chat and is in its thread; the new id is the one it did not hold before.
-            awaitChannelList()
-            awaitConnected()
-            val before = hostConversationIds(serverId)
-            createChat()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
-            }
-            val conversationId = newHostConversationId(serverId, before)
-            val chatName = PEER_CHAT_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
-            renameOpenThread(chatName)
-
-            // 2. AC-1: the peer, as its own device, sends into that conversation and observes its frames.
-            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
-            val receivedReply =
-                withOwnedReply(serverId, conversationId, peer = peer) { await ->
-                    peerStep(peer, "send the ping and await its ack") { peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS) }
-                    peerStep(peer, "await the ping turn's turn_end") { peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS) }
-                    await()
+            PassiveThreadProbe.open().use { passive ->
+                // 1. The phone creates a chat and is in its thread; the new id is the one it did not hold before.
+                awaitChannelList()
+                awaitConnected()
+                val before = hostConversationIds(serverId)
+                createChat()
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
                 }
+                val conversationId = newHostConversationId(serverId, before)
+                val chatName = PEER_CHAT_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
+                renameOpenThread(chatName)
 
-            // 4. AC-3: leave, reopen, and read the message and the reply once each.
-            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-            awaitChannelList()
-            val chatRow = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(chatName, substring = true)
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(chatRow) }.isSuccess }
-            composeTestRule.onAllNodes(chatRow).onFirst().performClick()
-            val peerMessage = hasText(PING_PROMPT) and hasAnyAncestor(hasScrollToNodeAction())
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(peerMessage, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                // 2. AC-1: the peer, as its own device, sends into that conversation and observes its frames.
+                peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
+                val receivedReply =
+                    withOwnedReply(serverId, conversationId, peer = peer, passive = passive) { await ->
+                        peerStep(peer, "send the ping and await its ack") {
+                            peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS)
+                        }
+                        peerStep(peer, "await the ping turn's turn_end") {
+                            peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS)
+                        }
+                        await()
+                    }
+                val initial = checkNotNull(passive.reading(serverId, conversationId))
+                val peerUser =
+                    receivedReply.thread.records.single {
+                        it.message.role == Role.User && it.fullText == PING_PROMPT
+                    }
+                check(receivedReply.thread.userEchoCount(PING_PROMPT) == 1) { "initial peer delivery is not unique" }
+
+                // 4. AC-3: leave, reopen, and read the message and the reply once each.
+                composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+                awaitChannelList()
+                val chatRow = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(chatName, substring = true)
+                composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(chatRow) }.isSuccess }
+                composeTestRule.onAllNodes(chatRow).onFirst().performClick()
+                val peerMessage = hasText(PING_PROMPT) and hasAnyAncestor(hasScrollToNodeAction())
+                var reopened: PassiveThreadReading? = null
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    reopened = passive.reading(serverId, conversationId, after = initial.subscription)
+                    val reading = reopened
+                    val evidence = reading?.let(passive::evidence)
+                    evidence != null &&
+                        evidence.retainedPeerUser(peerUser, reading.owner, receivedReply.session) != null &&
+                        evidence.retainedReply(receivedReply, serverId) != null
+                }
+                val reading = checkNotNull(reopened)
+                val composedBeforeReveal =
+                    composeTestRule.onAllNodes(peerMessage, useUnmergedTree = true).fetchSemanticsNodes().size
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { runCatching { scrollListTo(peerMessage) }.isSuccess }
+                composeTestRule.onAllNodes(peerMessage, useUnmergedTree = true).assertCountEquals(1)
+                composeTestRule.onNode(peerMessage, useUnmergedTree = true).assertIsDisplayed()
+                Log.i("E2E", "event=peer_reopen_user_displayed retained=1 composed_before_reveal=$composedBeforeReveal")
+                val held = checkNotNull(passive.evidence(reading)?.retainedReply(receivedReply, serverId))
+                held.records.forEach { record ->
+                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                        runCatching { scrollListTo(ownedReplyMatcher(record)) }.isSuccess
+                    }
+                    composeTestRule
+                        .onAllNodes(hasTestTag("assistant-reply:${record.message.id}"), useUnmergedTree = true)
+                        .assertCountEquals(1)
+                    composeTestRule.onNode(ownedReplyMatcher(record), useUnmergedTree = true).assertIsDisplayed()
+                }
+                val final = checkNotNull(passive.evidence(reading)) { "reopened thread source ended during rendering" }
+                check(
+                    final.retainedPeerUser(peerUser, reading.owner, receivedReply.session) != null &&
+                        final.retainedReply(receivedReply, serverId) != null,
+                ) {
+                    "reopened peer turn changed during rendering"
+                }
+                Log.i("E2E", "event=peer_reopen_reply_displayed fragments=${held.records.size} current_subscription=true")
             }
-            awaitRetainedReply(receivedReply)
-            composeTestRule.waitForIdle()
-            composeTestRule.onAllNodes(peerMessage, useUnmergedTree = true).assertCountEquals(1)
-            awaitRetainedReply(receivedReply)
         } finally {
             peer.close()
         }
@@ -8771,6 +8810,7 @@ class InteractiveStreamE2ETest {
         producerFrames: (() -> List<Envelope>)? = null,
         peer: SecondClientPeer? = null,
         knownSession: String? = null,
+        passive: PassiveThreadObservation? = null,
         block: (await: () -> CompletedReplyObservation) -> T,
     ): T {
         val repositories =
@@ -8780,18 +8820,36 @@ class InteractiveStreamE2ETest {
         val scope = CoroutineScope(Dispatchers.Default)
         val observed = MutableStateFlow<ThreadEvidence?>(null)
         val collector =
-            scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                repositories.collectLatest { repository ->
-                    observed.value = null
-                    if (repository != null) {
-                        harnessThreadEvidence(repository).observe(conversationId).collect {
-                            if (repositories.value === repository) observed.value = it
+            if (passive == null) {
+                scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    repositories.collectLatest { repository ->
+                        observed.value = null
+                        if (repository != null) {
+                            harnessThreadEvidence(repository).observe(conversationId).collect {
+                                if (repositories.value === repository) observed.value = it
+                            }
                         }
                     }
                 }
+            } else {
+                null
             }
         try {
-            val before = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { observed.filterNotNull().first { it.admitted } } }
+            var reading: PassiveThreadReading? = null
+            if (passive != null) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    reading = passive.reading(serverId, conversationId)
+                    reading != null
+                }
+            }
+
+            fun currentEvidence(): ThreadEvidence? = if (passive == null) observed.value else reading?.let(passive::evidence)
+            val before =
+                if (passive == null) {
+                    runBlocking { withTimeout(THREAD_TIMEOUT_MS) { observed.filterNotNull().first { it.admitted } } }
+                } else {
+                    checkNotNull(currentEvidence())
+                }
             val observation = OwnedReplyObservation(serverId, before, legacyProducer = peer != null, knownSession = knownSession)
 
             fun await(): CompletedReplyObservation {
@@ -8801,7 +8859,6 @@ class InteractiveStreamE2ETest {
                 var displayed = false
                 var contentMatches = false
 
-                fun currentEvidence(): ThreadEvidence? = observed.value
                 Log.i("OwnedReply", "event=reply_observation_started route=${before.owner.kind}")
                 try {
                     composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
@@ -8848,7 +8905,7 @@ class InteractiveStreamE2ETest {
             }
         } finally {
             scope.cancel()
-            runBlocking { collector.join() }
+            runBlocking { collector?.join() }
         }
     }
 
