@@ -225,8 +225,10 @@ internal class OwnedReplyObservation(
         "failed=$failed, closed=$closed, accepted=$accepted, current=${pumpCurrent()}, " +
             "echo=${echo != null}, turn=${turn != null}, deltas=${deltas.size}, " +
             "ordered=${deltas.map { it.first } == deltas.indices.toList()}, " +
-            "terminal=${end?.field("stop_reason")}/${end?.field("outcome")}/" +
-            "${end?.field("is_error")}/${end?.field("terminal_reason")}, sessions=${rawSessions.size}"
+            "terminal=${end != null}, endTurn=${end?.field("stop_reason") == "end_turn"}, " +
+            "success=${end?.field("outcome") == "success"}, noError=${end?.field("is_error") == "false"}, " +
+            "reasonEmpty=${end?.field("terminal_reason").isNullOrEmpty()}, " +
+            "reasonCompleted=${end?.field("terminal_reason") == "completed"}, sessions=${rawSessions.size}"
 
     /** Freeze producer evidence before a deliberate disconnect; this alone proves no phone delivery. */
     @Synchronized fun produced(): ProducedReplyEvidence? {
