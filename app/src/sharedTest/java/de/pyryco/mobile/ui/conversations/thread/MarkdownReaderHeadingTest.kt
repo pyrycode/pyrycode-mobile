@@ -158,17 +158,18 @@ class MarkdownReaderHeadingTest {
         assertFalse("H$level visual overflow", layout.hasVisualOverflow)
         if (wrapped) assertTrue("H$level must wrap", layout.lineCount > 1) else assertEquals("H$level single line", 1, layout.lineCount)
         assertEquals(text.length, layout.getLineEnd(layout.lineCount - 1, visibleEnd = true))
+        val lineHeight = with(layout.layoutInput.density) { height.sp.toDp() }
         for (line in 0 until layout.lineCount) {
             assertFalse("H$level ellipsized line $line", layout.isLineEllipsized(line))
             assertDpEquals(
-                (height * fontScale).dp,
+                lineHeight,
                 with(rule.density) { (layout.getLineBottom(line) - layout.getLineTop(line)).toDp() },
                 "H$level measured line $line",
             )
         }
         // Each line box rounds independently; constituent checks above retain the one-pixel bound.
         assertDpEquals(
-            (height * fontScale * layout.lineCount).dp,
+            lineHeight * layout.lineCount,
             node.getUnclippedBoundsInRoot().height,
             "H$level total line boxes",
             pixels = layout.lineCount,
