@@ -53,24 +53,35 @@ internal class OwnedReplyObservation(
     private var readSession: String? = null
     private val passiveSessionReads = mutableMapOf<Pair<Any, Long>, Unit>()
 
-    @Synchronized fun sessionSending(connection: Any, request: Envelope) {
+    @Synchronized fun sessionSending(
+        connection: Any,
+        request: Envelope,
+    ) {
         if (request.type == "request_session_settings" && request.field("conversation_id") == before.owner.conversation) {
             passiveSessionReads[connection to request.id] = Unit
         }
     }
 
-    @Synchronized fun sessionReceived(connection: Any, frame: Envelope) {
+    @Synchronized fun sessionReceived(
+        connection: Any,
+        frame: Envelope,
+    ) {
         val replyId = frame.inReplyTo ?: return
         if (frame.type != "session_settings" || passiveSessionReads.remove(connection to replyId) == null) return
         val id = (frame.payload as? JsonObject)?.get("session_id") as? JsonPrimitive ?: return
-        if (!id.isString || id.content.isBlank() || frame.sessionStateCleared != JsonPrimitive(false) ||
+        if (!id.isString ||
+            id.content.isBlank() ||
+            frame.sessionStateCleared != JsonPrimitive(false) ||
             frame.conversationId?.let { it != JsonPrimitive(before.owner.conversation) } == true ||
             frame.sessionProvenance.raw?.let { it != id } == true ||
             readSession?.let { it != id.content } == true
         ) {
             failed = true
-        } else readSession = id.content
+        } else {
+            readSession = id.content
+        }
     }
+
     private val producerStore =
         if (before.owner.kind == ThreadEvidenceKind.Authoritative && !legacyProducer) {
             AuthoritativeThreadStore().also { store ->
@@ -219,7 +230,10 @@ internal class OwnedReplyObservation(
         val tagged = (rawSessions.singleOrNull() as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
         if (rawSessions.size > 1) return null
         return ProducedReplyEvidence(
-            host, before.owner.conversation, checkNotNull(messageId), checkNotNull(turn),
+            host,
+            before.owner.conversation,
+            checkNotNull(messageId),
+            checkNotNull(turn),
             session ?: readSession ?: tagged ?: knownSession,
             produced?.second?.joinToString("") { it.field("text").orEmpty() } ?: deltas.joinToString("") { it.second },
         )
@@ -356,9 +370,16 @@ internal object OwnedReplyProbe {
     @Volatile private var active: OwnedReplyObservation? = null
     private val sessionObservers = java.util.concurrent.CopyOnWriteArrayList<OwnedReplyObservation>()
 
-    fun <T> observingSessions(observation: OwnedReplyObservation, block: () -> T): T {
+    fun <T> observingSessions(
+        observation: OwnedReplyObservation,
+        block: () -> T,
+    ): T {
         sessionObservers += observation
-        return try { block() } finally { sessionObservers -= observation }
+        return try {
+            block()
+        } finally {
+            sessionObservers -= observation
+        }
     }
 
     @Synchronized fun transport(

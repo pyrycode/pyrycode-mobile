@@ -1,16 +1,15 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
-import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.ComposeTestRule
-import androidx.compose.ui.semantics.SemanticsNode
-import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.semantics.getOrNull
 import de.pyryco.mobile.e2e.CompletedReplyObservation
 import de.pyryco.mobile.e2e.ThreadEvidenceRecord
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
@@ -43,13 +42,18 @@ internal fun ComposeTestRule.ownedReplyNodeCounts(reply: CompletedReplyObservati
     reply.records.map { onAllNodes(hasTestTag("assistant-reply:${it.message.id}"), useUnmergedTree = true).fetchSemanticsNodes().size }
 
 internal fun ownedReplyMatcher(record: ThreadEvidenceRecord): SemanticsMatcher =
-    hasTestTag("assistant-reply:${record.message.id}") and SemanticsMatcher("renders the admitted reply content") { root ->
-        fun texts(node: SemanticsNode): List<String> =
-            node.config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text } + node.children.flatMap(::texts)
-        fun normal(text: String): String = text.replace(Regex("\\s+"), " ").trim()
-        val rendered = normal(texts(root).joinToString(" "))
-        markdownPlainText(record.message.content).lines().filter { it.isNotBlank() }.all { normal(it) in rendered }
-    }
+    hasTestTag("assistant-reply:${record.message.id}") and
+        SemanticsMatcher("renders the admitted reply content") { root ->
+            fun texts(node: SemanticsNode): List<String> =
+                node.config
+                    .getOrNull(SemanticsProperties.Text)
+                    .orEmpty()
+                    .map { it.text } + node.children.flatMap(::texts)
+
+            fun normal(text: String): String = text.replace(Regex("\\s+"), " ").trim()
+            val rendered = normal(texts(root).joinToString(" "))
+            markdownPlainText(record.message.content).lines().filter { it.isNotBlank() }.all { normal(it) in rendered }
+        }
 
 internal fun ComposeTestRule.ownedReplyDisplayed(reply: CompletedReplyObservation): Boolean =
     ownedReplyNodeCounts(reply).all { it == 1 } &&

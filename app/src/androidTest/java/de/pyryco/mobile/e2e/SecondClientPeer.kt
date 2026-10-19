@@ -81,6 +81,7 @@ class SecondClientPeer(
 ) : AutoCloseable {
     internal val keyStore: DeviceStaticKeyStore = PeerDeviceKeyStore(pairing)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     @Volatile internal var replyObservation: OwnedReplyObservation? = null
     private val received = MutableStateFlow<List<Envelope>>(emptyList())
     private val requestId = AtomicLong()

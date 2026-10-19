@@ -3294,7 +3294,8 @@ class InteractiveStreamE2ETest {
             // 6b. #1558: the drained ping sits where claude received it — below the wait turn's last row, its
             //     reply, and above the ping's own reply — not at the slot it was typed into mid-turn.
             val tops =
-                (waitReplyObservation.records.map(::ownedReplyMatcher) + listOf(inThreadList(PING_PROMPT)) + queuedReplyObservation.records.map(::ownedReplyMatcher)).map {
+                (waitReplyObservation.records.map(::ownedReplyMatcher) +
+                    listOf(inThreadList(PING_PROMPT)) + queuedReplyObservation.records.map(::ownedReplyMatcher)).map {
                     composeTestRule.onNode(it, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.top
                 }
             assertTrue("expected wait reply, ping prompt, ping reply top to bottom; tops $tops", tops == tops.sorted())
@@ -3498,7 +3499,9 @@ class InteractiveStreamE2ETest {
             assertDrawnOnce(inThreadList(PING_PROMPT), *firstReply.records.map(::ownedReplyMatcher).toTypedArray())
 
             // 5. AC-2: while the phone is offline the peer's turn runs to its end; the phone draws none of it.
-            val offlineObservation = OwnedReplyObservation(serverId, firstReply.thread, legacyProducer = true, knownSession = firstReply.session)
+            val offlineObservation = OwnedReplyObservation(
+                serverId, firstReply.thread, legacyProducer = true, knownSession = firstReply.session,
+            )
             var missedReply: ProducedReplyEvidence? = null
             peer.replyObservation = offlineObservation
             try {
@@ -3617,7 +3620,9 @@ class InteractiveStreamE2ETest {
                     }
                 peerStep(peer, "allow A's prompt") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
                 val turnEnd =
-                    peerStep(peer, "await A's held turn_end") { peer.awaitFrame(chatA, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2) }
+                    peerStep(peer, "await A's held turn_end") {
+                        peer.awaitFrame(chatA, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
+                    }
                 val turnId = checkNotNull(peer.field(turnEnd, "turn_id")) { "A's turn_end has no turn_id" }
                 assertTrue("the phone counted a different off-screen completion", completed.await().key == turnId)
                 val entryId = checkNotNull(turnEnd.historyEntryId) { "A's turn_end has no durable identity" }

@@ -6,7 +6,9 @@ import org.junit.Test
 
 class MarkdownReplyRequirementsTest {
     private val requirements = MarkdownReplyRequirements("bold-marker", "inline-marker", "code-marker", "cell-marker", "end-marker")
-    private val body = "**bold-marker** `inline-marker`\n\n```text\ncode-marker\n```\n\n| Key | Value |\n| --- | --- |\n| cell-marker | present |\n\nend-marker"
+    private val body =
+        "**bold-marker** `inline-marker`\n\n```text\ncode-marker\n```\n\n" +
+            "| Key | Value |\n| --- | --- |\n| cell-marker | present |\n\nend-marker"
 
     @Test fun acceptsActualProseAndEquivalentMarkdownLayouts() {
         assertTrue(requirements.satisfiedBy(body))

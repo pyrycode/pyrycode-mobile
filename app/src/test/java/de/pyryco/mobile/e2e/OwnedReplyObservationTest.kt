@@ -657,6 +657,7 @@ class OwnedReplyObservationTest {
         assertTrue(ownedReplyFailure(true, true, listOf(1), false, contentMatches = false).message.orEmpty().contains("mismatched content"))
         assertFalse(ownedReplyFailure(true, false, emptyList(), false).message.orEmpty().contains("normal reply"))
     }
+
     @Test fun retainedReplyRebindsOnlyTheSameCompleteFamilyOnTheCurrentOwner() {
         for (kind in ThreadEvidenceKind.entries) {
             val target = observation(kind)
@@ -670,9 +671,22 @@ class OwnedReplyObservationTest {
             assertNull(ThreadEvidence(current.owner.copy(epoch = "other"), current.records).retainedReply(captured, "host"))
             assertNull(ThreadEvidence(current.owner, current.records, admitted = false).retainedReply(captured, "host"))
             for (replacement in listOf(
-                current.records.dropLast(1), current.records + current.records.last(), current.records.reversed(),
-                current.records.dropLast(1) + ThreadEvidenceRecord(current.records.last().message, "truncated", "session", "turn", null, null, current.records.last().fact),
-            )) assertNull(ThreadEvidence(current.owner, replacement).retainedReply(captured, "host"))
+                current.records.dropLast(1),
+                current.records + current.records.last(),
+                current.records.reversed(),
+                current.records.dropLast(1) +
+                    ThreadEvidenceRecord(
+                        current.records.last().message,
+                        "truncated",
+                        "session",
+                        "turn",
+                        null,
+                        null,
+                        current.records.last().fact,
+                    ),
+            )) {
+                assertNull(ThreadEvidence(current.owner, replacement).retainedReply(captured, "host"))
+            }
         }
     }
 
@@ -726,5 +740,4 @@ class OwnedReplyObservationTest {
         target.sessionReceived(phone, response)
         assertNotNull(target.admitted(held, repository))
     }
-
 }

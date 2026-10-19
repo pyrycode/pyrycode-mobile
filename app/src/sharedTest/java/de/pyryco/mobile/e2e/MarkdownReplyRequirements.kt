@@ -19,17 +19,25 @@ internal class MarkdownReplyRequirements(
 ) {
     fun satisfiedBy(source: String): Boolean {
         val tree = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(source)
+
         fun descendants(node: ASTNode): List<ASTNode> = listOf(node) + node.children.flatMap(::descendants)
         val nodes = descendants(tree)
-        fun contains(type: org.intellij.markdown.IElementType, text: String) = nodes.any {
+
+        fun contains(
+            type: org.intellij.markdown.IElementType,
+            text: String,
+        ) = nodes.any {
             it.type == type && markdownPlainText(it.getTextInNode(source).toString()) == text
         }
         return contains(MarkdownElementTypes.STRONG, bold) &&
             contains(MarkdownElementTypes.CODE_SPAN, inline) &&
             nodes.any { it.type == MarkdownElementTypes.CODE_FENCE && fencedCodeText(it, source).trimEnd('\n') == code } &&
-            nodes.any { it.type == GFMElementTypes.TABLE && markdownPlainText(it.getTextInNode(source).toString()).lines().any { row ->
-                row.split('\t').map(String::trim) == listOf(cell, "present")
-            } } &&
+            nodes.any {
+                it.type == GFMElementTypes.TABLE &&
+                    markdownPlainText(it.getTextInNode(source).toString()).lines().any { row ->
+                        row.split('\t').map(String::trim) == listOf(cell, "present")
+                    }
+            } &&
             contains(MarkdownElementTypes.PARAGRAPH, end)
     }
 }
