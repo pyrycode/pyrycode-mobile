@@ -49,6 +49,13 @@ class PingReplyTest {
         assertFalse(composeTestRule.ownedReplyDisplayed(expected("**Done.**\n\nHere is `different prose`.")))
     }
 
+    @Test fun ownedReplyAcceptsTableCellsRegardlessOfSemanticsTraversalOrder() {
+        val source = "**Done.**\n\n| Key | Value |\n| --- | --- |\n| marker | present |"
+        showBoundaryFixture(Role.Assistant, source)
+        assertTrue(composeTestRule.ownedReplyDisplayed(expected(source)))
+        assertFalse(composeTestRule.ownedReplyDisplayed(expected(source.replace("marker", "missing"))))
+    }
+
     @Test
     fun ownedReplyRejectsUserEcho() {
         showBoundaryFixture(Role.User, "ping")
