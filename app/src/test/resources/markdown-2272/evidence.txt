@@ -1,0 +1,36 @@
+Ticket #2272 focused Linux evidence — 2026-10-19
+
+OS: Linux 7.0.0-38-generic x86_64.
+Screen checks: Robolectric; native graphics for MarkdownTextTest, StreamingMarkdownTextTest and annotated MarkdownLinkTapTest methods.
+Android application manifest: minSdk 33, targetSdk 36. No emulator or installed Obsidian run is claimed.
+macOS is outside this Linux ticket's verification scope.
+
+Production revision: 82132eee28f6a127af64cc51c8a52adea6bda26d.
+MarkdownLinkTapTest, MarkdownTextTest and BareObsidianLinksTest ran at that revision.
+Remaining classes ran at 7e0ed960128a44f0b03e27c9d00dc977da47212b, whose only source change was the corrected parser test; production sources are identical.
+
+Each class ran separately with:
+python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.components.<Class>' --console=plain
+
+MarkdownLinkTapTest: executed=23 passed=23 failed=0 errors=0 skipped=0
+MarkdownTextTest: executed=30 passed=30 failed=0 errors=0 skipped=0
+BareObsidianLinksTest: executed=6 passed=6 failed=0 errors=0 skipped=0
+MarkdownTextParsingTest: executed=29 passed=29 failed=0 errors=0 skipped=0
+MarkdownLinkRoutingTest: executed=7 passed=7 failed=0 errors=0 skipped=0
+StreamingMarkdownTest: executed=15 passed=15 failed=0 errors=0 skipped=0
+StreamingMarkdownTextTest: executed=15 passed=15 failed=0 errors=0 skipped=0
+Total: executed=125 passed=125 failed=0 errors=0 skipped=0.
+
+Raw reports: one <Class>.xml per class in this directory.
+The unchanged a_bare_url_renders_as_text_and_is_not_a_link executed and passed in MarkdownTextTest.
+The rejection matrix covers finished and streaming renderers, including embedded GFM web targets and authored angle autolink labels.
+Exact native ranges cover paragraphs, lists and table cells; activation intercepts Android ACTION_VIEW with unchanged targets.
+Streaming probes cover independently valid prefixes, unsafe suffixes, real boundaries, synthetic closers, caret presentation and settlement.
+
+Preserved failed runs:
+red.xml: baseline e4ff0c5bc17729f296c01d316416d67843617ec8 (same renderer as main bcf59edb437b7afa90574060748e1530f8ba9001), new annotation regression; 1 executed, 1 failed due to the missing annotation.
+embedded-web-red.xml: production 99671845ce4db50796157ef3d321ed71f4528b98 plus the expanded rejection fixture; 1 executed, 1 failed on an embedded HTTPS target.
+angle-web-red.xml: production bfbda744ff94a2ac4f9823e985460923fff1c079 plus the angle fixture; 1 executed, 1 failed on an authored autolink label.
+parser-boundary-red.xml: production 82132eee28f6a127af64cc51c8a52adea6bda26d; 29 executed, 1 failed because the new probe assumed URL-aligned tokens. The exact-range correction passed 29/29.
+
+Complete acceptance gates remain dispatcher/verifier-owned. No live test obligation was introduced.

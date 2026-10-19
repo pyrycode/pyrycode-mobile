@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" tests="29" skipped="0" failures="0" errors="0" timestamp="2026-10-19T06:44:02.155Z" hostname="723893f7154c" time="0.116">
+  <properties/>
+  <testcase name="an indented block accepts a tab as its marker" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.06"/>
+  <testcase name="interior whitespace inside ATX_CONTENT is the spacing between words" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.011"/>
+  <testcase name="delimiter row shorter than the header yields only what it declares" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.001"/>
+  <testcase name="an empty fence has empty code" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.002"/>
+  <testcase name="a pipe table parses into header, delimiter row and body rows" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.002"/>
+  <testcase name="obsidian query punctuation spans adjacent tokens within each prose leaf" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.007"/>
+  <testcase name="check box token text distinguishes checked from unchecked" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.001"/>
+  <testcase name="a fence's info string is not part of its code" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.0"/>
+  <testcase name="a fence inside a list item drops the item indent and keeps its own" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.002"/>
+  <testcase name="two home-relative paths on one line pair with nothing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.002"/>
+  <testcase name="delimiter row without outer pipes reads the same columns" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.0"/>
+  <testcase name="a fence keeps a trailing blank line before its closing fence" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.0"/>
+  <testcase name="delimiter row tolerates padding around each spec" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.001"/>
+  <testcase name="a single-tilde pair opens and closes" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.001"/>
+  <testcase name="a marker-only heading has no ATX_CONTENT child" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.001"/>
+  <testcase name="a fence inside a blockquote drops the quote markers" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.001"/>
+  <testcase name="a bare URL parses as a childless autolink token" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.001"/>
+  <testcase name="a fence keeps its interior blank lines and its indentation" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.001"/>
+  <testcase name="an indented block drops its marker and keeps deeper indentation and blank lines" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.001"/>
+  <testcase name="a task list item carries a check box token beside its bullet" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.001"/>
+  <testcase name="an inline math span rebuilds verbatim from its leaf tokens" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.001"/>
+  <testcase name="an unterminated fence yields what has arrived so far" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.001"/>
+  <testcase name="an atx heading nests its content one level inside ATX_CONTENT" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.001"/>
+  <testcase name="a single tilde span parses into bare tilde tokens, not a strikethrough node" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.0"/>
+  <testcase name="an unclosed double tilde pairs with nothing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.0"/>
+  <testcase name="a double tilde span parses into a strikethrough node" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.001"/>
+  <testcase name="raw html stays a plain tag token under the GFM flavour" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.0"/>
+  <testcase name="delimiter row reads each column's declared alignment" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.0"/>
+  <testcase name="a closed atx heading keeps its trailing space inside ATX_CONTENT" classname="de.pyryco.mobile.ui.conversations.components.MarkdownTextParsingTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

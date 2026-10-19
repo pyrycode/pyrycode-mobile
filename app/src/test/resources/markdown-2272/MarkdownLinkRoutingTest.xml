@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-19T06:44:13.606Z" hostname="723893f7154c" time="0.059">
+  <properties/>
+  <testcase name="aMarkdownPath_goesToTheCallback_andNeverToAnotherApp" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest" time="0.036"/>
+  <testcase name="bareObsidianTargets_useExactExternalTargetsWithWorkspaceOptIn" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest" time="0.003"/>
+  <testcase name="withoutACallback_aMarkdownPathStaysInert" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest" time="0.0"/>
+  <testcase name="malformedNoteUris_neverFallThroughToTheWorkspaceReader" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest" time="0.005"/>
+  <testcase name="otherLinks_keepTodaysSchemeAllowlist_withOrWithoutACallback" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest" time="0.0"/>
+  <testcase name="schemesOtherFilesAndNonDigitSuffixes_areNotMarkdownPaths" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest" time="0.0"/>
+  <testcase name="markdownPaths_areSentAsWritten_withoutFragmentOrLineSuffix" classname="de.pyryco.mobile.ui.conversations.components.MarkdownLinkRoutingTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
