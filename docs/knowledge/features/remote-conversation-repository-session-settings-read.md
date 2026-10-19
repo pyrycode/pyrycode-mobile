@@ -7,12 +7,18 @@ Split out of [Remote repository — session settings and conversation writes](re
 The **read** half `setSessionSettings` never had: a conversation-scoped `request_session_settings` →
 `session_settings` round trip, exposed as a cold per-conversation reading rather than a one-shot return —
 a **new consumer shape**, not another mutation. `#590` is a net-new read path, not a replacement: mobile
-never shipped the bootstrap-scoped read desktop had to retire. `settingsRevision` and this whole read —
+never shipped the bootstrap-scoped read desktop had to retire. On the legacy route,
+`settingsRevision` and this whole read —
 `observeSessionSettings`, `sessionSettingsRead`, `readSessionSettings`, `refreshSessionSettings` and
 `bumpSettingsRevision` — now live on `SessionSettingsCommands` (#916,
 `data/repository/SessionSettingsCommands.kt`); the repository's `override fun observeSessionSettings` /
 `refreshSessionSettings` are one-line hand-offs, and its `session_transition` arm calls
 `sessionSettingsCommands.bumpSettingsRevision(conversationId)` at the position this used to occupy inline.
+
+The cold-flow implementation and revision-trigger details below describe the **legacy route**.
+On the authoritative route, observation projects repository state without sending a read;
+`refreshSessionSettings` explicitly requests one, and current-session admission governs its projection.
+The native helper handles both routes as described in [Native test reads](#native-test-reads-2305).
 
 ```kotlin
 // SessionSettingsCommands
@@ -122,3 +128,52 @@ fun bumpSettingsRevision(conversationId: String) { /* … */ }
 - **No composable or screen change** — data layer only. #649 wires the composer controls to `effort`, #650
   projects `permissionMode`/`yolo` into confirmed permissions, and #651 projects `effectiveEffort`; all
   three name this reading as their source. No live rung: nothing operator-facing changes until #649.
+
+## Native test reads (#2305)
+
+`InteractiveStreamE2ETest.freshSettings` delegates to the shared-test `SettingsReadProbe`.
+Every call establishes a new `request_session_settings` and accepts only its matching
+`in_reply_to`, on the current host bundle, repository, pump and session. Skipping held
+values, clearing an observation, or refreshing then taking the first non-held snapshot
+cannot establish freshness: an earlier minimal snapshot can still arrive first.
+
+The helper subscribes before triggering the read. Legacy subscription sends the read
+through its cold request waiter; authoritative subscription only observes, so the helper
+explicitly refreshes after subscribing. The test-only pump wrapper registers the outgoing
+ID before `send`, retaining even an immediate reply. It forwards the existing single
+inbound stream to the repository before inspecting the reply and preserves the delegate's
+send result. There is no second inbound collector or log-based synchronization.
+
+Production admission remains authoritative. On the authoritative route the helper checks
+the admitted projection synchronously in the inbound turn, before another frame can replace
+it. On legacy it also awaits the correlated reading in the existing repository collector.
+Equality is this cross-check, never the freshness signal: a fresh equal-valued reply completes.
+Held, cleared, unrelated or superseded observations cannot supply the result. Legacy metadata
+may be omitted, but present envelope conversation/session identities must agree with the
+request and decoded reading; explicit clears or conflicts fail the helper even when the
+request ID matches. The legacy waiter has already consumed such a reply, so waiting for
+another observation would conceal the conflict.
+
+A revision can legitimately cause another legacy read under the same helper context.
+That same-owner reread retires the previous receipt, resets its repository observation and
+cancels its superseded wait; completion checks that the receipt is still current. Ownership
+and pump-termination observation stay registered across the swap. The original deadline
+still applies. A changed host/repository/pump or session abandons the call explicitly;
+authoritative ownership uses reconciled session provenance, while legacy list rows have
+placeholder session IDs and a matching `session_transition` abandons the read. Refused sends
+and pump termination also fail explicitly. Cancellation removes the receipt so a later call
+cannot inherit it.
+
+Preparation, post-mutation checks and reconnect callers share this contract without changing
+`freshSettings`'s interface. `withFreshSettings` keeps writes and restoration on the repository
+that supplied the session, avoiding a retired session paired with a replacement connection.
+Freshness is independent of contents: an actual correlated reply omitting `effective_effort`
+is returned unchanged for `appliedEffortFooter` to reject. Saved `effort` never substitutes
+for applied `effectiveEffort`; response-wording assertions remain unchanged.
+
+`SettingsReadProbeTest` uses controlled request IDs and delivery with the real repository,
+covering immediate/equal replies, earlier snapshots, conflicting legacy metadata, missing
+applied fields, replacement, cancellation, termination and same-owner rereads. See
+[Linux evidence and six pending live callers](../../e2e-interactive-stream.md#correlated-native-settings-reads-2305)
+for counted results and their limits. The recorded operator-bypass pass does not establish
+its pending real-Claude result. Main-based legacy-route passes do not certify #2245 activation.
