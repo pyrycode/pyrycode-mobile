@@ -34,6 +34,7 @@ internal class RecordedSuiteTape(
     recordedSettingsReads: Boolean = false,
     refusedBackfillProbes: Boolean = false,
     private val requireRecordedReadProgress: Boolean = true,
+    cancelledClearedSettingsReads: Boolean = false,
 ) {
     private var optionalModelReplies = emptyMap<Int, Int>()
     private val redundantModels = mutableSetOf<Pair<String, String>>()
@@ -152,7 +153,16 @@ internal class RecordedSuiteTape(
             steps = readReceipts!!.steps
         }
         if (recordedSettingsReads || refusedBackfillProbes) {
-            polledReads = SuitePolledReads(steps, ::mapped, ::nextDaemonId, recordedSettingsReads, refusedBackfillProbes)
+            polledReads =
+                SuitePolledReads(
+                    steps,
+                    ::mapped,
+                    ::nextDaemonId,
+                    recordedSettingsReads,
+                    refusedBackfillProbes,
+                    cancelledClearedSettingsReads,
+                    queryTypes,
+                )
             steps = polledReads!!.steps
         }
         if (redundantModelQueries) {
@@ -531,7 +541,10 @@ internal class RecordedSuiteTape(
                 )
         check(direction in setOf("connect", "close")) { "Invalid lifecycle request" }
         consumed += candidate
-        if (direction == "close") cancelUnsentReadNotifications(candidate, owner)
+        if (direction == "close") {
+            cancelUnsentReadNotifications(candidate, owner)
+            polledReads?.connectionEnded(owner)
+        }
         matched++
         return drain()
     }
@@ -608,6 +621,11 @@ internal class RecordedSuiteTape(
         frame: Envelope,
     ) {
         readReceipts?.delivered(owner, frame)
+        polledReads?.observeCleared(owner, frame)
+    }
+
+    @Synchronized fun connectionEnded(owner: String) {
+        polledReads?.connectionEnded(owner)
     }
 
     @Synchronized fun progress(): String {

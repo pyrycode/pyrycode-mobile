@@ -76,10 +76,11 @@ def counted(receipt, checksum):
 
 def audit(manifest, actual, selected, directory):
     policy = manifest.get('queryPolicy')
-    if policy is not None and (policy != {
-            'version': 1, 'modelQueryNormalization': 'reconnect-catalog-race-v1',
-            'settingsReadNormalization': 'recorded-snapshots-v1',
-            'backfillProbeNormalization': 'unsupported-legacy-probe-v1'} or type(policy.get('version')) is not int):
+    v1 = {'version': 1, 'modelQueryNormalization': 'reconnect-catalog-race-v1',
+          'settingsReadNormalization': 'recorded-snapshots-v1',
+          'backfillProbeNormalization': 'unsupported-legacy-probe-v1'}
+    v2 = {**v1, 'version': 2, 'settingsReadNormalization': 'recorded-snapshots-v2'}
+    if policy is not None and (policy not in (v1, v2) or type(policy.get('version')) is not int):
         raise ValueError('Unsupported suite query policy')
     if manifest.get('readReceiptPolicy') not in {None, 'presented-visible-history-v4'}:
         raise ValueError('Unsupported suite read policy')

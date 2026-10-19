@@ -48,13 +48,16 @@ internal class RecordedSuiteDocument private constructor(
 
     /** A reviewed suite can declare the existing query models for historical raw captures. */
     fun withQueryPolicy(policy: JsonObject): RecordedSuiteDocument {
+        val version = policy["version"]
+        require(version in setOf(JsonPrimitive(1), JsonPrimitive(2))) { "Unsupported suite query policy" }
         val fields =
             mapOf(
                 "modelQueryNormalization" to JsonPrimitive("reconnect-catalog-race-v1"),
-                "settingsReadNormalization" to JsonPrimitive("recorded-snapshots-v1"),
+                "settingsReadNormalization" to
+                    JsonPrimitive(if (version == JsonPrimitive(2)) "recorded-snapshots-v2" else "recorded-snapshots-v1"),
                 "backfillProbeNormalization" to JsonPrimitive("unsupported-legacy-probe-v1"),
             )
-        require(policy == JsonObject(fields + ("version" to JsonPrimitive(1)))) { "Unsupported suite query policy" }
+        require(policy == JsonObject(fields + ("version" to checkNotNull(version)))) { "Unsupported suite query policy" }
         return RecordedSuiteDocument(JsonObject(document + fields), steps)
     }
 
@@ -81,7 +84,10 @@ internal class RecordedSuiteDocument private constructor(
             requireRecordedReadProgress = document["readReceiptNormalization"] != JsonPrimitive("presented-visible-history-v4"),
             literalProducerIdentities = document["producerIdentityMode"] == JsonPrimitive("literal"),
             redundantModelQueries = document["modelQueryNormalization"] == JsonPrimitive("reconnect-catalog-race-v1"),
-            recordedSettingsReads = document["settingsReadNormalization"] == JsonPrimitive("recorded-snapshots-v1"),
+            recordedSettingsReads =
+                document["settingsReadNormalization"] in
+                    setOf(JsonPrimitive("recorded-snapshots-v1"), JsonPrimitive("recorded-snapshots-v2")),
+            cancelledClearedSettingsReads = document["settingsReadNormalization"] == JsonPrimitive("recorded-snapshots-v2"),
             refusedBackfillProbes = document["backfillProbeNormalization"] == JsonPrimitive("unsupported-legacy-probe-v1"),
         )
 
@@ -113,7 +119,7 @@ internal class RecordedSuiteDocument private constructor(
                 }
                 put("readReceiptNormalization", "presented-visible-history-v4")
                 put("modelQueryNormalization", "reconnect-catalog-race-v1")
-                put("settingsReadNormalization", "recorded-snapshots-v1")
+                put("settingsReadNormalization", "recorded-snapshots-v2")
                 put("backfillProbeNormalization", "unsupported-legacy-probe-v1")
                 put("producerIdentityMode", if (steps.any { it.message?.type == "debug_bundle_chunk" }) "literal" else "rebind")
                 put("scenario", scenario)
@@ -140,7 +146,10 @@ internal class RecordedSuiteDocument private constructor(
                         ),
                 )
                 require(document["modelQueryNormalization"] in setOf(null, JsonPrimitive("reconnect-catalog-race-v1")))
-                require(document["settingsReadNormalization"] in setOf(null, JsonPrimitive("recorded-snapshots-v1")))
+                require(
+                    document["settingsReadNormalization"] in
+                        setOf(null, JsonPrimitive("recorded-snapshots-v1"), JsonPrimitive("recorded-snapshots-v2")),
+                )
                 require(document["backfillProbeNormalization"] in setOf(null, JsonPrimitive("unsupported-legacy-probe-v1")))
                 require(document["producerIdentityMode"] in setOf(null, JsonPrimitive("literal"), JsonPrimitive("rebind")))
                 require(

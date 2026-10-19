@@ -5,9 +5,9 @@
   "gateTicket": 2190,
   "readReceiptPolicy": "presented-visible-history-v4",
   "queryPolicy": {
-    "version": 1,
+    "version": 2,
     "modelQueryNormalization": "reconnect-catalog-race-v1",
-    "settingsReadNormalization": "recorded-snapshots-v1",
+    "settingsReadNormalization": "recorded-snapshots-v2",
     "backfillProbeNormalization": "unsupported-legacy-probe-v1"
   },
   "liveSelection": [

@@ -152,6 +152,7 @@ internal class SuiteConnections private constructor(
         if (step.direction == "transport_down") {
             val code = step.detail["code"]?.jsonPrimitive?.intOrNull
             val reason = step.detail["reason"]?.jsonPrimitive?.contentOrNull
+            tape?.connectionEnded(step.owner)
             checkNotNull(transports[step.owner]).remoteDown(code, reason)
             pending.decrementAndGet()
             return
@@ -469,7 +470,10 @@ internal class SuiteConnections private constructor(
                     tape!!.delivered(connection.owner, frame)
                     check(frames.trySend(frame).isSuccess)
                 }
-                "inbound_end" -> frames.close()
+                "inbound_end" -> {
+                    tape!!.connectionEnded(connection.owner)
+                    frames.close()
+                }
                 else -> error("Unsupported recorded suite delivery")
             }
         }

@@ -52,7 +52,7 @@ def validate(document):
         require(document.get('readReceiptNormalization') in {None, 'coalesced-visible-history-v2', 'coalesced-visible-history-v3', 'presented-visible-history-v4'}, 'Unsupported receipt normalization')
         require(document.get('producerIdentityMode') in {None, 'literal', 'rebind'}, 'Unsupported producer identity mode')
         require(document.get('modelQueryNormalization') in {None, 'reconnect-catalog-race-v1'}, 'Unsupported model lookup normalization')
-        require(document.get('settingsReadNormalization') in {None, 'recorded-snapshots-v1'}, 'Unsupported settings read normalization')
+        require(document.get('settingsReadNormalization') in {None, 'recorded-snapshots-v1', 'recorded-snapshots-v2'}, 'Unsupported settings read normalization')
         require(document.get('backfillProbeNormalization') in {None, 'unsupported-legacy-probe-v1'}, 'Unsupported backfill probe normalization')
         source = document['source']
         for key in ['mobileRevision', 'daemonRevision']:
@@ -315,6 +315,34 @@ def redundant_catalog_query(document, index):
                for row in document['steps'][start:end])
 
 
+def cleared_cancelled_queries(document):
+    if document.get('settingsReadNormalization') != 'recorded-snapshots-v2': return set()
+    source = document['steps']
+    replies = {(row['owner'], row['message']['in_reply_to']) for row in source
+               if row['direction'] == 'daemon' and row.get('message', {}).get('in_reply_to') is not None}
+    removed = set()
+    for index, step in enumerate(source):
+        frame = step.get('message') or {}
+        conversation = frame.get('conversation_id')
+        if (step['direction'] != 'daemon' or not step['owner'].startswith('phone/') or
+                frame.get('type') != 'session_settings' or frame.get('session_state_cleared') is not True or
+                not isinstance(conversation, str) or not conversation.strip() or frame.get('in_reply_to') is not None or
+                frame.get('payload') != {}): continue
+        end = next((i for i in range(index + 1, len(source)) if source[i]['owner'] == step['owner'] and
+                    source[i]['direction'] in {'close', 'down', 'inbound_end', 'transport_down'}), None)
+        if end is None: continue
+        later = [row for row in source[index + 1:end] if row['owner'] == step['owner']]
+        if any(row['direction'] == 'client' and row['message']['type'] not in QUERIES for row in later): continue
+        if any(row['direction'] == 'daemon' and row.get('message', {}).get('type') == 'session_settings' and
+               row['message'].get('session_state_cleared') is not True for row in later): continue
+        requests = [row for row in later if row['direction'] == 'client' and
+                    row['message']['type'] == 'request_session_settings' and
+                    row['message'].get('payload') == {'conversation_id': conversation}]
+        if any(row.get('accepted') is not True or (row['owner'], row['message']['id']) in replies for row in requests): continue
+        removed.update((row['owner'], row['message']['id']) for row in requests)
+    return removed
+
+
 def polling_groups(document):
     groups, replies = {}, {}
     for step in document['steps']:
@@ -322,7 +350,7 @@ def polling_groups(document):
         if step['direction'] == 'daemon' and frame.get('in_reply_to') is not None:
             replies.setdefault((step['owner'], frame['in_reply_to']), []).append(frame)
         if step['direction'] == 'client' and step['owner'].startswith('phone/'):
-            enabled = (frame['type'] == 'request_session_settings' and document.get('settingsReadNormalization') == 'recorded-snapshots-v1' or
+            enabled = (frame['type'] == 'request_session_settings' and document.get('settingsReadNormalization') in {'recorded-snapshots-v1', 'recorded-snapshots-v2'} or
                        frame['type'] == 'backfill_since' and document.get('backfillProbeNormalization') == 'unsupported-legacy-probe-v1')
             if enabled:
                 key = (step['owner'], frame['type'], json.dumps(frame.get('payload'), sort_keys=True))
@@ -345,6 +373,7 @@ def polling_groups(document):
         if any(responses) and all(step['accepted'] for step in requests) and all(
                 qualifies(rows) or cancelled(step, rows) for step, rows in zip(requests, responses)):
             for step in requests: normalized[key[0], step['message']['id']] = key[1]
+    for key in cleared_cancelled_queries(document): normalized[key] = 'cleared-cancelled-settings'
     return normalized
 
 
@@ -455,7 +484,7 @@ def contract(document):
             value = {'owner': step['owner'], 'type': frame['type'], 'accepted': step['accepted'],
                      'payload': normalized(payload, attachment=frame['type'] == 'attachment_chunk')}
             poll = polling.get((step['owner'], frame['id']))
-            if poll == 'backfill_since': continue
+            if poll in {'backfill_since', 'cleared-cancelled-settings'}: continue
             if poll:
                 key = json.dumps(value, sort_keys=True)
                 if key in modeled: continue
@@ -474,21 +503,23 @@ def contract(document):
     return result
 
 
-QUERY_POLICY = {'version': 1, 'modelQueryNormalization': 'reconnect-catalog-race-v1',
-                'settingsReadNormalization': 'recorded-snapshots-v1',
-                'backfillProbeNormalization': 'unsupported-legacy-probe-v1'}
+QUERY_POLICY_V1 = {'version': 1, 'modelQueryNormalization': 'reconnect-catalog-race-v1',
+                   'settingsReadNormalization': 'recorded-snapshots-v1',
+                   'backfillProbeNormalization': 'unsupported-legacy-probe-v1'}
+QUERY_POLICY = {**QUERY_POLICY_V1, 'version': 2, 'settingsReadNormalization': 'recorded-snapshots-v2'}
+QUERY_POLICIES = (QUERY_POLICY_V1, QUERY_POLICY)
 
 
 def suite_query_policy():
     policy = json.loads(MANIFEST.read_text()).get('queryPolicy')
     if policy is not None:
-        require(policy == QUERY_POLICY and type(policy.get('version')) is int, 'Unsupported suite query policy')
+        require(policy in QUERY_POLICIES and type(policy.get('version')) is int, 'Unsupported suite query policy')
     return policy
 
 
 def comparison_contracts(reviewed, fresh, suite_policy=None):
     if suite_policy is not None:
-        require(suite_policy == QUERY_POLICY and type(suite_policy.get('version')) is int, 'Unsupported suite query policy')
+        require(suite_policy in QUERY_POLICIES and type(suite_policy.get('version')) is int, 'Unsupported suite query policy')
         fields = {key: value for key, value in suite_policy.items() if key != 'version'}
         reviewed, fresh = {**reviewed, **fields}, {**fresh, **fields}
     # Standalone assets keep strict counts unless both declare the same model.
