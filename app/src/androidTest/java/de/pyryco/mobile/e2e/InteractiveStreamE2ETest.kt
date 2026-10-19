@@ -113,6 +113,7 @@ import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.HistoryEntry
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
+import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -8112,20 +8113,41 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * A new `request_session_settings` for [conversationId] and its reply: each collection sends its own read.
-     * The subscription starts with the host's held reading (#1320), which is skipped, so only the live
-     * connection's reply is returned. [serverId] is the host that holds the conversation, by default the
-     * harness's first host.
+     * A new read and its correlated, current-owner reply, independent of earlier settings snapshots.
      */
     private fun freshSettings(
         conversationId: String,
         serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),
-    ): SessionSettings {
-        val repository = hostRepository(serverId)
-        return runBlocking {
-            withTimeout(THREAD_TIMEOUT_MS) { repository.observeSessionSettings(conversationId).filterNotNull().first { !it.held } }
+    ): SessionSettings = withFreshSettings(conversationId, serverId) { _, reading -> reading }
+
+    /** Keep a settings mutation on the same owner that supplied its fresh session identity. */
+    private fun <T> withFreshSettings(
+        conversationId: String,
+        serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),
+        block: suspend (ConversationRepository, SessionSettings) -> T,
+    ): T =
+        runBlocking {
+            withTimeout(THREAD_TIMEOUT_MS) {
+                val graph = GlobalContext.get()
+                val registry = graph.get<RelayConnectionRegistry>()
+                val bundle = checkNotNull(registry.connectionFor(serverId)) { "settings host not registered" }
+                val repositories = bundle.coordinator.currentRepository
+                val repository = repositories.first { it != null && it === repositories.value } as RemoteConversationRepository
+                val transport = bundle.supervisor.currentConnection.value
+                val isCurrent = {
+                    GlobalContext.getOrNull() === graph &&
+                        registry.connectionFor(serverId) === bundle &&
+                        repositories.value === repository &&
+                        bundle.supervisor.currentConnection.value === transport
+                }
+                val reading =
+                    SettingsReadProbe.read(repository, conversationId, isCurrent) {
+                        bundle.coordinator.hostReadings.liveSessionBindings[conversationId]
+                    }
+                check(isCurrent()) { "settings read owner changed before use" }
+                block(repository, reading)
+            }
         }
-    }
 
     /** The model menu the host publishes for [conversationId]; the first collection asks for it. */
     private fun publishedMenu(conversationId: String): ModelMenu {
@@ -8282,10 +8304,10 @@ class InteractiveStreamE2ETest {
         model: String? = null,
         effort: String? = null,
     ) {
-        val sessionId = freshSettings(conversationId).sessionId
-        check(sessionId.isNotEmpty()) { "the conversation has no session to write to" }
-        val repository = hostRepository()
-        runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.setSessionSettings(sessionId, model = model, effort = effort) } }
+        withFreshSettings(conversationId) { repository, reading ->
+            check(reading.sessionId.isNotEmpty()) { "the conversation has no session to write to" }
+            repository.setSessionSettings(reading.sessionId, model = model, effort = effort)
+        }
     }
 
     /** A fresh reply for [conversationId] carries exactly [model] and [effort] as the saved choices. */
@@ -8307,15 +8329,11 @@ class InteractiveStreamE2ETest {
     private fun restoreSettings(originals: Map<String, SessionSettings>) {
         originals.forEach { (conversationId, original) ->
             runCatching {
-                val now = freshSettings(conversationId)
-                val model = original.model.takeIf { it != now.model }
-                val effort = original.effort.takeIf { it != now.effort }
-                if (model != null || effort != null) {
-                    val repository = hostRepository()
-                    runBlocking {
-                        withTimeout(
-                            THREAD_TIMEOUT_MS,
-                        ) { repository.setSessionSettings(now.sessionId, model = model, effort = effort) }
+                withFreshSettings(conversationId) { repository, now ->
+                    val model = original.model.takeIf { it != now.model }
+                    val effort = original.effort.takeIf { it != now.effort }
+                    if (model != null || effort != null) {
+                        repository.setSessionSettings(now.sessionId, model = model, effort = effort)
                     }
                 }
             }.onSuccess { Log.i("RememberedEffort", "event=remembered_effort_cleanup operation=settings outcome=complete") }
