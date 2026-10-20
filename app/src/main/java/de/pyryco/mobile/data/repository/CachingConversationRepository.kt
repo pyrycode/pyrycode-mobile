@@ -171,13 +171,18 @@ class CachingConversationRepository(
     private val localWindows = ConcurrentHashMap<String, LegacyLocalWindow>()
     private val legacyEpochs = ConcurrentHashMap<String, Pair<Long, Long>>()
 
+    private fun legacyEpoch(conversationId: String): Pair<Long, Long>? =
+        (cache as? MigratingConversationCache)?.let { disk ->
+            legacyEpochs.computeIfAbsent(conversationId) { disk.legacyEpoch(serverId, it) }
+        }
+
     private fun legacyCurrent(conversationId: String): Boolean =
         legacyEpochs[conversationId]?.let { (cache as? MigratingConversationCache)?.legacyEpoch(serverId, conversationId) == it } != false
 
     private fun localWindow(conversationId: String): LegacyLocalWindow? {
         val disk = cache as? MigratingConversationCache ?: return null
         if (hostThread != null || conversationId in deleted || !legacyCurrent(conversationId)) return null
-        val epoch = legacyEpochs.computeIfAbsent(conversationId) { disk.legacyEpoch(serverId, it) }
+        val epoch = legacyEpoch(conversationId) ?: return null
         return localWindows.computeIfAbsent(conversationId) { LegacyLocalWindow(disk, serverId, it, epoch) }
     }
 
@@ -246,6 +251,7 @@ class CachingConversationRepository(
         private val initialAuthoritative: SavedAuthoritativeThread? = null,
         private val localWindow: LegacyLocalWindow? = null,
     ) {
+        private val epoch = legacyEpoch(conversationId)
         private val latest = AtomicReference<CacheCandidate?>()
         private val retry = AtomicBoolean()
         private val signals = Channel<Unit>(Channel.CONFLATED)
@@ -277,7 +283,10 @@ class CachingConversationRepository(
         }
 
         // Called sequentially on the processing dispatcher; disk work never holds this path.
-        fun accept(drawn: DrawnThread) {
+        fun accept(
+            drawn: DrawnThread,
+            suppressed: Set<String> = emptySet(),
+        ) {
             val cacheable = cacheableThreadRows(drawn.rows)
             if (cache is OwnedLegacyCache) {
                 val present = drawn.rows.mapTo(HashSet()) { it.legacyRowKey() }
@@ -296,6 +305,13 @@ class CachingConversationRepository(
                     if (seen[key] != row) rowGenerations[key] = drawn.generation
                     seen[key] = row
                     removedGenerations.remove(key)
+                }
+                // Explicit suppression owns its deletion even when the row was never loaded.
+                suppressed.forEach { id ->
+                    val key = "message:$id"
+                    owned += key
+                    removedGenerations.putIfAbsent(key, drawn.generation)
+                    seen.remove(key)
                 }
             }
             val previous = latest.get()
@@ -441,6 +457,8 @@ class CachingConversationRepository(
                             }
                         val result =
                             when {
+                                cache is MigratingConversationCache && epoch != null && (changes.isNotEmpty() || removed.isNotEmpty()) ->
+                                    cache.mutateLegacyRows(serverId, conversationId, changes, removed, epoch)
                                 ownedCache != null && (changes.isNotEmpty() || removed.isNotEmpty()) ->
                                     ownedCache.mutateLegacyRows(serverId, conversationId, changes, removed)
                                 ownedCache != null || candidate.cacheable == baseline -> Result.success(Unit)
@@ -823,7 +841,7 @@ class CachingConversationRepository(
                             val published = DrawnThread(drawn, generation)
                             drawnThreads[conversationId] = published
                             emit(snapshot.copy(rows = drawn))
-                            withContext(processingDispatcher) { writer.accept(published) }
+                            withContext(processingDispatcher) { writer.accept(published, snapshot.suppressedUserMessageIds) }
                         }
                     } finally {
                         writer.finish()
@@ -910,6 +928,9 @@ class CachingConversationRepository(
                                     first = false
                                     lastDrawn = rows
                                     lastOrder = order
+                                    if (snapshot.suppressedUserMessageIds.isNotEmpty()) {
+                                        writer.accept(DrawnThread(rows, generation), snapshot.suppressedUserMessageIds)
+                                    }
                                     rows
                                 }
                             if (!window.current || conversationId in deleted) return@collect
@@ -922,7 +943,7 @@ class CachingConversationRepository(
                             if (!window.current || conversationId in deleted) return@collect
                             emit(snapshot.copy(rows = drawn, savedLegacyHistory = history))
                             window.published.complete(true)
-                            withContext(processingDispatcher) { writer.accept(published) }
+                            withContext(processingDispatcher) { writer.accept(published, snapshot.suppressedUserMessageIds) }
                         }
                 } finally {
                     localWindows.remove(conversationId, window)
@@ -964,7 +985,7 @@ class CachingConversationRepository(
         position: HistoryPosition?,
     ) {
         val disk = cache as? MigratingConversationCache
-        val epoch = disk?.legacyEpoch(serverId, conversationId)
+        val epoch = legacyEpoch(conversationId)
         if (!legacyCurrent(conversationId)) return
         if (position?.coverage == null) {
             historyWrites.withLock {
@@ -974,8 +995,13 @@ class CachingConversationRepository(
                     disk?.legacyEpoch(serverId, conversationId) == epoch
                 ) {
                     withContext(NonCancellable) {
-                        cache
-                            .writeHistoryPosition(serverId, conversationId, position)
+                        (
+                            if (disk != null && epoch != null) {
+                                disk.writeHistoryPosition(serverId, conversationId, position, epoch)
+                            } else {
+                                cache.writeHistoryPosition(serverId, conversationId, position)
+                            }
+                        )
                             // Keep a sentinel so a delayed metadata read cannot reseed the cleared baseline.
                             .onSuccess { observedPositions[conversationId] = HistoryPosition("", false) }
                             .onFailure { RelayLog.d { "event=history_position_write_failed" } }
@@ -1051,7 +1077,7 @@ class CachingConversationRepository(
                 if (owned == null) {
                     emptySet()
                 } else {
-                    (baseline.keys + snapshot.suppressedUserMessageIds.map { "message:$it" }) -
+                    (baseline.keys + pendingRemoved + snapshot.suppressedUserMessageIds.map { "message:$it" }) -
                         rows.mapTo(HashSet()) { it.legacyRowKey() }
                 }
             val keys = if (owned == null) emptyList() else cacheable.map { it.legacyRowKey() }
@@ -1080,7 +1106,9 @@ class CachingConversationRepository(
             val result =
                 withContext(NonCancellable) {
                     val result =
-                        if (owned == null) {
+                        if (disk != null && epoch != null) {
+                            disk.mutateLegacyRows(serverId, conversationId, changes, removed, epoch)
+                        } else if (owned == null) {
                             cache.writeThread(serverId, conversationId, rows)
                         } else {
                             owned.mutateLegacyRows(serverId, conversationId, changes, removed)
@@ -1102,14 +1130,25 @@ class CachingConversationRepository(
             }
             if (conversationId in deleted) return@withLock
             if (owned != null) {
-                owned
-                    .writeOwnedLegacyCoverage(serverId, conversationId, position, observedPositions[conversationId], cacheable)
-                    .onSuccess {
-                        observedPositions[conversationId] =
-                            withContext(processingDispatcher) {
-                                rememberObservedCoverage(position, observedPositions[conversationId], cacheable)
-                            }
-                    }.onFailure { RelayLog.d { "event=history_position_write_failed" } }
+                (
+                    if (disk != null && epoch != null) {
+                        disk.writeOwnedLegacyCoverage(
+                            serverId,
+                            conversationId,
+                            position,
+                            observedPositions[conversationId],
+                            cacheable,
+                            epoch,
+                        )
+                    } else {
+                        owned.writeOwnedLegacyCoverage(serverId, conversationId, position, observedPositions[conversationId], cacheable)
+                    }
+                ).onSuccess {
+                    observedPositions[conversationId] =
+                        withContext(processingDispatcher) {
+                            rememberObservedCoverage(position, observedPositions[conversationId], cacheable)
+                        }
+                }.onFailure { RelayLog.d { "event=history_position_write_failed" } }
                 return@withLock
             }
             val trimmed = threadRowsWereTrimmed(rows)

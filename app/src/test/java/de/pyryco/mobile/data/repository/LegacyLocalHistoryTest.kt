@@ -496,6 +496,103 @@ class LegacyLocalHistoryTest {
             assertEquals(emptyList<ThreadItem>(), open().readThread("host", "c"))
         }
 
+    @Test fun retirementInvariant_dispatchAfterValidationCannotReviveReadmittedHost() =
+        runTest {
+            val rows = rows(401)
+            val cache = seed(rows)
+            val hold = PausedRead()
+            val live = Live()
+            val repository = CachingConversationRepository(live, cache, "host", processingDispatcher = hold)
+            val (readings, job) = watch(repository)
+            readings.receive()
+            job.cancelAndJoin()
+            val changed = rows.last().copy(message = rows.last().message.copy(content = "late changed row"))
+            live.snapshots.value = ThreadSnapshot(listOf(changed))
+            val key = changed.historyKeys().first()
+            val coverage =
+                HistoryCoverage(
+                    unsignedSpans = listOf(UnsignedHistorySpan(1u, 1u)),
+                    unsignedRowOrder = mapOf(key to 1uL),
+                    unsignedRowEntries = mapOf(key to setOf(1uL)),
+                    proofs = historyRowProofs(listOf(changed)),
+                )
+            hold.pauseNext.set(true)
+            val save = async { repository.writeHistoryPosition("c", HistoryPosition("late", false, coverage)) }
+            hold.entered.await()
+            cache.removeHost("host").getOrThrow()
+            cache.admitHost("host")
+            hold.release()
+            save.await()
+            val fresh = open()
+            assertEquals(emptyList<ThreadItem>(), fresh.readThread("host", "c"))
+            assertEquals(null, fresh.readHistoryPosition("host", "c"))
+        }
+
+    @Test fun suppressionInvariant_unloadedUserRemovalPersistsWithoutDaemonReplyOrPaging() =
+        runTest {
+            val rows = rows(401)
+            val cache = seed(rows)
+            val live = Live()
+            val repository = CachingConversationRepository(live, cache, "host")
+            val (readings, job) = watch(repository)
+            assertEquals(rows.takeLast(200), readings.receive().rows)
+            val newest = backgroundScope.launch { repository.requestHistory("c", "", 200) }
+            assertEquals("", live.requested.receive())
+            live.snapshots.value = ThreadSnapshot(emptyList(), setOf(rows.first().message.id))
+            assertEquals(rows.takeLast(200), readings.receive().rows)
+            // Accept the identical visible list, then flush on exit without a newest reply.
+            runCurrent()
+            job.cancelAndJoin()
+            assertFalse(live.reply.isCompleted)
+            newest.cancelAndJoin()
+            val fresh = open()
+            assertEquals(rows.drop(1), fresh.readThread("host", "c"))
+        }
+
+    @Test fun retirementInvariant_allMutationKindsRejectCapturedConversationAndHostEpochs() =
+        runTest {
+            for (host in listOf(false, true)) {
+                val rows = rows(2)
+                val cache = seed(rows)
+                val epoch = cache.legacyEpoch("host", "c")
+                if (host) {
+                    cache.removeHost("host").getOrThrow()
+                    cache.admitHost("host")
+                } else {
+                    cache.removeConversation("host", "c").getOrThrow()
+                }
+                val current = HistoryPosition("new-owner", false, HistoryCoverage(unknown = true))
+                cache.writeThread("host", "c", rows.takeLast(1)).getOrThrow()
+                cache.writeHistoryPosition("host", "c", current).getOrThrow()
+                val retiredRows = cache.mutateLegacyRows("host", "c", listOf(OwnedLegacyRow(rows.first(), null, null)), emptySet(), epoch)
+                assertTrue(retiredRows.isFailure)
+                assertTrue(cache.writeOwnedLegacyCoverage("host", "c", current.copy(cursor = "old-owner"), null, rows, epoch).isFailure)
+                assertTrue(cache.writeHistoryPosition("host", "c", null, epoch).isFailure)
+                val fresh = open()
+                assertEquals(rows.takeLast(1), fresh.readThread("host", "c"))
+                assertEquals("new-owner", fresh.readHistoryPosition("host", "c")?.cursor)
+            }
+        }
+
+    @Test fun suppressionInvariant_coverageMustCommitUnloadedDeletionBeforeSatisfyingItsCapture() =
+        runTest {
+            val rows = rows(401)
+            val cache = seed(rows)
+            val live = Live()
+            val repository = CachingConversationRepository(
+                live, cache, "host", processingDispatcher = StandardTestDispatcher(testScheduler),
+            )
+            val (readings, job) = watch(repository)
+            readings.receive()
+            live.snapshots.value = ThreadSnapshot(emptyList(), setOf(rows.first().message.id))
+            readings.receive()
+            // A later capture no longer carries the connection-local suppression.
+            live.snapshots.value = ThreadSnapshot(emptyList())
+            repository.writeHistoryPosition("c", HistoryPosition("newest", false, HistoryCoverage(unknown = true)))
+            job.cancelAndJoin()
+            assertEquals(rows.drop(1), open().readThread("host", "c"))
+        }
+
     @Test fun retirementInvariant_initialReadCannotPublishAfterConfirmedRemoval() =
         runTest {
             for (hostRemoval in listOf(false, true)) {

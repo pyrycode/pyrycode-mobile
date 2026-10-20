@@ -69,7 +69,15 @@ internal class MigratingConversationCache(
         conversation: String,
         upserts: List<OwnedLegacyRow>,
         removed: Set<String>,
-    ): Result<Unit> = write(host, conversation, LEGACY, "mutate_rows") { legacy.mutateRows(host, conversation, upserts, removed) }
+    ): Result<Unit> = mutateLegacyRows(host, conversation, upserts, removed, legacyEpoch(host, conversation))
+
+    internal suspend fun mutateLegacyRows(
+        host: String,
+        conversation: String,
+        upserts: List<OwnedLegacyRow>,
+        removed: Set<String>,
+        epoch: Pair<Long, Long>,
+    ): Result<Unit> = write(host, conversation, LEGACY, "mutate_rows", epoch) { legacy.mutateRows(host, conversation, upserts, removed) }
 
     override suspend fun writeOwnedLegacyCoverage(
         host: String,
@@ -77,8 +85,17 @@ internal class MigratingConversationCache(
         position: HistoryPosition,
         previous: HistoryPosition?,
         observed: List<ThreadItem>,
+    ): Result<Unit> = writeOwnedLegacyCoverage(host, conversation, position, previous, observed, legacyEpoch(host, conversation))
+
+    internal suspend fun writeOwnedLegacyCoverage(
+        host: String,
+        conversation: String,
+        position: HistoryPosition,
+        previous: HistoryPosition?,
+        observed: List<ThreadItem>,
+        epoch: Pair<Long, Long>,
     ): Result<Unit> =
-        write(host, conversation, LEGACY, "owned_history") {
+        write(host, conversation, LEGACY, "owned_history", epoch) {
             legacy.writeOwnedCoverage(host, conversation, position, previous, observed)
         }
 
@@ -116,8 +133,15 @@ internal class MigratingConversationCache(
         serverId: String,
         conversationId: String,
         position: HistoryPosition?,
+    ): Result<Unit> = writeHistoryPosition(serverId, conversationId, position, legacyEpoch(serverId, conversationId))
+
+    internal suspend fun writeHistoryPosition(
+        serverId: String,
+        conversationId: String,
+        position: HistoryPosition?,
+        epoch: Pair<Long, Long>,
     ): Result<Unit> =
-        write(serverId, conversationId, LEGACY, "write_history") { legacy.writeHistoryPosition(serverId, conversationId, position) }
+        write(serverId, conversationId, LEGACY, "write_history", epoch) { legacy.writeHistoryPosition(serverId, conversationId, position) }
 
     override suspend fun readAuthoritativeThread(
         serverId: String,
@@ -252,6 +276,7 @@ internal class MigratingConversationCache(
         conversationId: String,
         family: String,
         operation: String,
+        epoch: Pair<Long, Long>? = if (family == LEGACY) legacyEpoch(serverId, conversationId) else null,
         block: suspend () -> Result<Unit>,
     ): Result<Unit> =
         mutex.withLock {
@@ -267,7 +292,12 @@ internal class MigratingConversationCache(
                     unobserved += key
                     failure(operation, "import_unobserved")
                 }
-                Import.Ready -> if (key in unobserved) failure(operation, "import_unobserved") else block()
+                Import.Ready ->
+                    when {
+                        epoch != null && legacyEpoch(serverId, conversationId) != epoch -> failure(operation, "owner_retired")
+                        key in unobserved -> failure(operation, "import_unobserved")
+                        else -> block()
+                    }
             }
         }
 
