@@ -515,6 +515,9 @@ class SecondClientPeer(
                 .filter { it.isFor(conversationId, type) }[occurrence - 1]
         }
 
+    /** One immutable peer snapshot, including dismissals that carry no conversation ID. */
+    internal fun recorded(): List<Envelope> = received.value
+
     /**
      * The frames recorded so far that name [conversationId], in arrival order (#977). A snapshot: frames
      * that arrive later are not in it. Callers report counts and booleans from it, never payload text.

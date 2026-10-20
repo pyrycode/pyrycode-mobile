@@ -178,6 +178,7 @@ import de.pyryco.mobile.ui.onboarding.ScannerUiState
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
@@ -5722,6 +5723,7 @@ class InteractiveStreamE2ETest {
         val preferences = GlobalContext.get().get<AppPreferences>()
         val previousCollapse = runBlocking { preferences.collapseToolUses.first() }
         val allowed = mutableSetOf<String>()
+        var failure: Throwable? = null
         try {
             runBlocking { preferences.setCollapseToolUses(true) }
             awaitChannelList()
@@ -5919,9 +5921,49 @@ class InteractiveStreamE2ETest {
                         !peer.field(it, "status").isNullOrEmpty()
                 },
             )
-            sendFromPhone(
-                "Run exactly this Bash command in the foreground: curl --silent --show-error $fixture/release . Then briefly confirm completion.",
-            )
+            runBlocking {
+                coroutineScope {
+                    var approvals: Deferred<Unit>? = null
+                    sendFromPhone(
+                        "Run exactly this Bash command in the foreground: " +
+                            "curl --silent --show-error $fixture/release . Then briefly confirm completion.",
+                    ) {
+                        val frames = peer.recorded()
+                        val dismissed =
+                            frames
+                                .filter { it.type == "modal_dismissed" }
+                                .mapNotNull { peer.field(it, "modal_id") }
+                                .toSet()
+                        val pending =
+                            frames
+                                .filter {
+                                    it.type == "modal_shown" && peer.field(it, "conversation_id") == chat
+                                }.mapNotNull {
+                                    runCatching {
+                                        MobileJson.decodeFromJsonElement(
+                                            ModalShownPayloadDto.serializer(),
+                                            it.payload,
+                                        )
+                                    }.getOrNull()
+                                }.distinctBy { it.modalId }
+                                .filter { shown ->
+                                    shown.modalClass == PERMISSION_CLASS &&
+                                        shown.modalId !in allowed &&
+                                        shown.modalId !in dismissed &&
+                                        shown.options.any { it.id == ALLOW_ONCE }
+                                }
+                        // Start real pending approvals before Send; await their dismissals after Send.
+                        approvals =
+                            async(start = CoroutineStart.UNDISPATCHED) {
+                                pending.forEach { shown ->
+                                    allowed += shown.modalId
+                                    peer.allowOnce(shown.modalId, THREAD_TIMEOUT_MS)
+                                }
+                            }
+                    }
+                    approvals?.await()
+                }
+            }
             allowPromptsUntil(
                 peer,
                 chat,
@@ -6055,14 +6097,31 @@ class InteractiveStreamE2ETest {
             val laterIndex = indexForKey("msg:$laterId")
             assertTrue("settled Agent ($agentIndex) and later message ($laterIndex) must be listed", agentIndex >= 0 && laterIndex >= 0)
             assertTrue("later phone message must render below the settled Agent", laterIndex < agentIndex)
+        } catch (error: Throwable) {
+            failure = error
+            throw error
         } finally {
-            try {
-                stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release-tools")
-                stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release")
-            } finally {
-                runBlocking { preferences.setCollapseToolUses(previousCollapse) }
-                peer.close()
+            val original = failure
+            val cleanups =
+                listOf<() -> Unit>(
+                    { stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release-tools") },
+                    { stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release") },
+                    { runBlocking { preferences.setCollapseToolUses(previousCollapse) } },
+                    { peer.close() },
+                )
+            for (cleanup in cleanups) {
+                try {
+                    cleanup()
+                } catch (error: Throwable) {
+                    val previous = failure
+                    if (previous == null) {
+                        failure = error
+                    } else if (previous !== error) {
+                        previous.addSuppressed(error)
+                    }
+                }
             }
+            if (original == null) failure?.let { throw it }
         }
     }
 
@@ -8857,12 +8916,16 @@ class InteractiveStreamE2ETest {
      * Type [text] and send it from the open thread. While a turn runs the button is Stop until the composer
      * holds text, so the tap waits for Send rather than interrupting the turn.
      */
-    private fun sendFromPhone(text: String) {
+    private fun sendFromPhone(
+        text: String,
+        beforeSend: () -> Unit = {},
+    ) {
         RecordedSuiteNative.checkpoint("phone-send")
         composeTestRule.onNode(hasSetTextAction()).performTextInput(text)
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
+        beforeSend()
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
     }
 
