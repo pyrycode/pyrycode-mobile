@@ -57,6 +57,8 @@ StateFlow provides fan-out and equality conflation. No new long-lived scope, dis
 | Old handler pauses after its final ownership operands pass while a new connection attempts to publish None | `ClaudeUsageOwnershipTest.replacementCannotOvertakeAnInFlightAllowanceCommit` |
 | Pairing disposal, same host re-paired and old frames | `ClaudeUsageRepositoryTest.pairingDisposalClearsAndRePairStartsEmpty` |
 | History, replay and rate-limited independence | `ClaudeUsageRepositoryTest.allowanceNeverChangesRowsReplayOrRateLimitedState` |
+| Replay connection reads race, replies stay behind actions/checkpoints | `RecordedExchangeTest.allowanceCanRaceConnectionReadsWithExactPayloadCountsAndCorrelation`, `RecordedExchangeTest.allowanceCannotBorrowAReplyAcrossAnAction`, `RecordedSuiteTapeTest.allowanceReadRacesOtherReadsWithoutReleasingAFutureActionsReply`, `RecordedSuiteTapeTest.allowanceCannotCrossAnObservationCheckpoint` |
+| Replay reconnect reuses IDs; foreign owners, malformed/extra/missing requests and persistent failures | `RecordedSuiteTapeTest.allowanceRequestsKeepExactHostConnectionAndFailureOwnership` and both Python allowance contract tests |
 
 ## Error handling
 
@@ -99,6 +101,7 @@ Pending for documentation stage: `docs/knowledge/features/remote-conversation-re
 - Errors/logging: static accepted/malformed/refused/unavailable categories only. Unknown string states never become log labels; caught exceptions are discarded.
 - Concurrency: MUST FIX from verifier finding 1 addressed in the revised design: the coordinator monitor covers final ownership validation and replacement as one critical section shared with retirement, new ownership publication and pairing close. A paused old handler cannot resume its write after a new connection commits. Decoding outside the monitor rechecks ownership inside it; cancellation is only cleanup. Sends use the same monitor and retain the existing coordinator-to-pump lock order. Pairing close makes held observations null. All new coroutines use the cancelled child scope. `ClaudeUsageOwnershipTest.replacementCannotOvertakeAnInFlightAllowanceCommit` probes the actual concurrent boundary.
 - Threat model: hostile authenticated frames are type-checked and retain at most one bounded-envelope reading; duplicates cannot grow state. Relay confidentiality/misrouting remains protected by existing Noise authentication. Disk token theft and UI screenshot/keyboard leakage introduce no new surface in this data-only change.
+- Replay repair: test-only query classification adds no production trust boundary, credentials, storage, Android surface, cryptography, I/O or coroutine. Exact payload and per-connection request/correlation checks remain mandatory. Unit-test frames are synthetic regression inputs only; shipped provider content must come from the genuine capture path, with existing secret scanning, bounds, producer metadata and counted receipts. Unexpected sends remain sticky failures. No payload/exception logging is added.
 
 **Reviewer:** builder self-review per `builder/security-review.md`
 **Date:** 2026-10-20

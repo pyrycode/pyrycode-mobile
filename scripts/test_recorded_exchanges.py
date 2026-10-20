@@ -17,6 +17,18 @@ def exchange(*requests):
 
 
 class RecordingContractTest(unittest.TestCase):
+    def test_allowance_is_a_strict_host_query_within_one_action(self):
+        baseline = exchange(('list_conversations', {}), ('request_claude_usage', {}), ('send_message', {}))
+        reordered = exchange(('request_claude_usage', {}), ('list_conversations', {}), ('send_message', {}))
+        self.assertEqual(recorded.normalized_contract(baseline), recorded.normalized_contract(reordered))
+        for requests in [
+            [('list_conversations', {}), ('send_message', {})],
+            [('list_conversations', {}), ('request_claude_usage', {}), ('request_claude_usage', {}), ('send_message', {})],
+            [('list_conversations', {}), ('request_claude_usage', {'conversation_id': 'chat'}), ('send_message', {})],
+            [('list_conversations', {}), ('send_message', {}), ('request_claude_usage', {})],
+        ]:
+            self.assertNotEqual(recorded.normalized_contract(baseline), recorded.normalized_contract(exchange(*requests)))
+
     def test_fresh_identities_and_query_order_preserve_contract(self):
         first = exchange(('request_context_usage', {'conversation_id': 'old'}), ('request_model_list', {}), ('send_message', {'conversation_id': 'old', 'message_id': 'm', 'text': 'controlled'}))
         second = exchange(('request_model_list', {}), ('request_context_usage', {'conversation_id': 'fresh'}), ('send_message', {'conversation_id': 'fresh', 'message_id': 'n', 'text': 'controlled'}))
