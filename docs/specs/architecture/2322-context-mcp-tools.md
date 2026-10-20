@@ -49,10 +49,10 @@ No new jobs, dispatcher or flow. Repository synchronized admission and StateFlow
 | Same scalar reading, new inventory | Structural inequality emits replacement; `mcpInventoryPreservesOrderCountsAndReplacement`, `mcpInventorySurvivesViewModelUpdates` |
 | Fresh to remembered/pending/Codex/empty | Hide group and discard local expansion; `mcpUnavailableStatesAndDroppedOnly` |
 | Dismiss and reopen | Start collapsed; `mcpFooterExpansionGroupsAndReplaces` |
-| Recollection or reconnect | Latest held inventory remains complete; `mcpInventorySurvivesViewModelUpdates` plus existing repository reconnect coverage |
+| Recollection or reconnect | Recollection exposes the complete latest reading, with existing reconnect scope retained; `contextSheetSurvivesRecollectionAndUsesLatestReading` and `reconnect_throughTheFacade_dropsTheOldReading_andAsksNothing` |
 | Malformed or missing inventory | Preserve prior reading; cannot certify history; `malformedMcpInventoryCannotReplaceOrCertify` |
 | Duplicate or hostile names | Independent positional rows, grouping only; `mcpFooterExpansionGroupsAndReplaces`, `mcpLongNamesEllipsizeAndScroll` |
-| Process/configuration recreation | No persisted inventory expansion; repository/VM source behavior is unchanged |
+| Process/configuration recreation | No persisted expansion; `mcpFooterExpansionGroupsAndReplaces` proves group disposal/recreation starts collapsed. Repository/VM source restoration is unchanged. |
 
 ## Error handling
 
@@ -91,3 +91,4 @@ None.
 ## Revisions
 
 - 2026-10-20: Figma's downloaded chevron has a different path from the existing footer icon. Add a vector converted from that supplied SVG, tinted with the primary theme role. Fixture completion spans seven existing test files; no production constructor consumer needs migration. Raw evidence will also be copied to the persistent agents evidence directory before handoff.
+- 2026-10-20: Final transition audit names the existing recollection/reconnect tests explicitly and ties composition-local expansion reset to the footer dismissal/reopening test. This clarifies coverage without changing the state design.
