@@ -68,15 +68,16 @@ ViewModel starts closed.
 | Reading | Body |
 |---|---|
 | Claude, no held reading | Only “A context reading arrives after the next turn.”, even if settings supply a footer percentage. |
-| Claude, fresh reading | Model, “X of Y tokens”, computed footer percentage or “Not reported yet”, then Categories and MCP tools, each shown when its own list has rows or its own dropped count is positive. |
-| Claude, remembered reading (`asOf` present) | Held scalar header only. Categories and MCP tools stay hidden even if the received reading contains them; missing stored detail is not a fresh empty breakdown. |
-| Codex, eligible token source with a positive maximum | Totals and the same computed percentage as the footer. Model, categories and MCP tools are hidden. |
+| Claude, fresh reading | Model, “X of Y tokens”, computed footer percentage or “Not reported yet”, then Categories, MCP tools and Memory files, each shown when its own list has rows or its own dropped count is positive. |
+| Claude, remembered reading (`asOf` present) | Held scalar header only. Categories, MCP tools and Memory files stay hidden even if the received reading contains them; missing stored detail is not a fresh empty breakdown. |
+| Codex, eligible token source with a positive maximum | Totals and the same computed percentage as the footer. Model, categories, MCP tools and Memory files are hidden. |
 | Codex, no usable source | The pending line. |
 
 Fresh category rows retain received order and show a name, token figure and 4 dp bar scaled to
 `maxTokens`. A positive dropped count adds “+N more”, including when the list is empty; an empty list
 with no positive dropped count hides Categories. Model and category names ellipsize to one line.
-Token figures follow desktop's one-decimal thousands formatting (`12.4k`, `12k`, without `.0`).
+Token figures follow desktop's one-decimal thousands formatting (`12.4k`, `12k`, without `.0`);
+values below 1000 stay plain (`400`), even where the Figma sample uses `0.4k`.
 `contextBarPercent` converts to Double before arithmetic, clamps to 0–100 and returns zero for a
 nonpositive maximum. Counts never control allocations.
 
@@ -94,22 +95,40 @@ counts are independent; neither is inferred from the other or used to allocate o
 Negative counts remain held verbatim but contribute no displayed truncation. A fresh empty inventory
 without a positive dropped count, pending readings, Codex and remembered readings omit the group.
 
+Since #2323, Memory files starts collapsed after MCP tools when present, otherwise after Categories.
+Its chevron header has an accessible expand/collapse action and a minimum 48 dp height. Expansion is
+independent of MCP. The group appears only for fresh Claude readings with received files or a positive
+`droppedMemoryFiles`; pending, remembered, Codex and fresh empty/zero-drop readings omit it.
+The header count adds received file length to the nonnegative part of its own dropped count using
+unsigned arithmetic. Category, MCP and memory truncation counts remain independent. One “+N more”
+follows the expanded file list for positive memory drops, including a dropped-only inventory. Negative
+drops remain held but add nothing to the displayed count; drops never allocate or iterate rows.
+
+Files retain received order, including duplicate paths. `shortenContextMemoryPath` splits only on `/`
+and ignores empty segments when counting. At most four nonempty segments returns the original string
+unchanged, including its repeated or leading slashes; otherwise display `.../` followed by the last four
+nonempty segments joined with `/`. Backslashes and dot segments are ordinary text, never normalized.
+Each path ellipsizes to one line while reserving the trailing desktop-compatible token figure. The modal
+body scrolls through all rows. Types are retained as descriptive data without rendering or behavior.
+
 Updates replace inventory rows while preserving expansion when the eligible group stays mounted,
 including updates with unchanged scalar totals. Inventory participates in structural equality so those
 updates reach StateFlow consumers. Hiding the group or dismissing the sheet discards local expansion;
 showing it again starts collapsed.
 
 The [design inventory](../../../app/src/androidTest/assets/design-1220/README.md#context)
-links the loaded, expanded MCP, waiting and Codex frames from #2224. The 2026-10-19 decision allows
-Codex to open this sheet with totals only. Memory-file inventories (#2323) and allowance (#2226)
-have their own scope; this summary has no placeholder rows for them.
+links the loaded, expanded MCP/memory, waiting and Codex frames from #2224. The 2026-10-19 decision allows
+Codex to open this sheet with totals only. Allowance remains with #2226; there is no placeholder row.
 
 ### Decode boundary and coverage
 
 The authoritative wire contract remains pyrycode's `docs/protocol-mobile.md`, section `context_usage`.
-The shared decoder retains model, ordered categories, ordered MCP tools and independent dropped counts.
+The shared decoder retains model, ordered categories, ordered MCP tools, ordered memory files and
+independent dropped counts.
 `mcp_tools` and `dropped_mcp_tools` are required; each tool requires string `name` and `server_name`
-and an integer `tokens`. Required summary fields must have their correct primitive kinds.
+and an integer `tokens`. `memory_files` and `dropped_memory_files` are also required; each file
+requires string `path`, string `type` and integer `tokens`, without coercion. Required summary fields
+must have their correct primitive kinds.
 Missing, null or wrong-typed lists, malformed entries, invalid dropped primitives and stringified token
 counts reject the entire frame before it can replace the held reading or certify read evidence.
 Empty lists, an empty model and unknown
@@ -118,6 +137,11 @@ Model/category/tool/server text is bounded to 512 characters and rendered only a
 exception output, paths, URLs, actions or identity keys. DTO/domain string representations redact it.
 Server names group descriptive display rows only; they never resolve an actionable MCP server.
 Names such as `__proto__` are ordinary text. Compose identity and tags use row positions.
+Memory paths are bounded to 2048 characters and types to 512 at this same boundary. Shortened paths
+reach inert Text only; neither path nor type reaches logs, exception output, identity keys, URL handling,
+filesystem operations or actuation. Decoding exceptions are discarded. DTO, entry and held-reading
+string representations redact these fields. Expansion logs only the static event and boolean.
+The inventory uses the existing reading without fetching files or sending another request.
 Defaulted domain fields preserve in-process scalar-only constructors; wire fixtures must still be complete.
 
 `ThreadReadEvidence` uses the same decoder. When required wire fields change, complete intended-valid
@@ -133,6 +157,30 @@ MCP ordering coverage must bind the expected server label and every tool name/to
 position. Checking vertical tag order or finding token figures anywhere can pass after a server sort
 or tool reversal. `mcpFooterExpansionGroupsAndReplaces` uses interleaved, nonalphabetical server
 appearances and distinct figures for duplicate names to detect both regressions.
+
+`ContextMemoryFilesTest` covers footer expansion, ordered inert rows, long-path ellipsis with visible
+tokens and scrolling, dropped-only/huge counts, replacement and hidden states, and independent MCP/memory
+expansion. `ContextSummaryFormatTest` locks the slash-only shortening boundary. Projection tests retain
+types, independent drops and redaction, reject malformed inventories without certifying history, and the
+ViewModel test proves inventory-only replacement with unchanged scalar totals.
+
+Linux #2323 acceptance at `4bb378fbfc6d37ea97e2b798ee595f616ec63bf9` on 2026-10-20:
+JVM/shared **6,238 executed / 6,238 passed / 0 failed / 0 skipped**; device **335 executed / 335 passed /
+0 failed / 1 skipped**; scripted **22 executed / 22 passed / 0 failed / 0 skipped**. The fresh full-suite
+XML confirms all five `ContextMemoryFilesTest` methods passed, including
+`memoryAndMcpExpandIndependentlyInSheetOrder`, together with
+`malformedMemoryCannotReplaceHeldReadingOrCertifyHistory`, `memoryInventoryReplacesWithoutChangingScalars`
+and `contextSheetSurvivesRecollectionAndUsesLatestReading`. All 10 projection, 13 context ViewModel
+and 11 existing sheet methods passed. The device skip was `renameAtFigmaViewport`.
+The [accepted post-merge review](https://github.com/pyrycode/pyrycode-mobile/pull/2329#issuecomment-6293773842)
+records these counts. Raw reports, counted totals and hashes were retained at
+`/tmp/verifier-2329/current-merge/`, in `jvm-6ega1ae6/`, `ui-6t7i1p33/` and
+`scripted-all-_nsety6a/`. Separate builder-focused reports record **124 executed / 124 passed / 0 failed /
+0 skipped**, retained in `builder-focused/` there and `/tmp/builder-2323/merge-20261020/`.
+Earlier cache-lock failure and the failed incomplete-fixture baseline remain separate failed evidence.
+No fresh runtime raster comparison or real-Claude producer run was made; supplied-frame native tests
+prove this display slice. macOS was outside this Linux ticket's scope. Raw paths identify retention
+locations at review time.
 
 Linux #2322 evidence at reviewed commit `302fdfdab09cdf4de584197da72d7526075b939d`:
 the fresh shared native-graphics class XML records **11 executed / 11 passed / 0 failed / 0 skipped**,

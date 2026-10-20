@@ -338,12 +338,16 @@ available. It uses the shared Modal appearance: Context title, close X, separato
 | Loaded | [Context — loaded `919:8976`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=919-8976) | Claude model, totals, computed percent and ordered category breakdown | #2321 |
 | MCP tools collapsed | [Context — loaded `919:8976`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=919-8976) | Fresh Claude inventory: collapsed MCP tools row after Categories, total tool count and accessible expansion | #2322 |
 | MCP tools expanded and long names | [Context — expanded `919:9341`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=919-9341) | Servers in first-appearance order, ordered tools with fixed token figures, one-line ellipsis, scrolling and independent “+N more” | #2322 |
+| Memory files collapsed | [Context — loaded `919:8976`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=919-8976) | Fresh Claude inventory after MCP tools when present, otherwise after Categories; count and independent accessible expansion | #2323 |
+| Memory files expanded and long paths | [Context — expanded `919:9341`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=919-9341) | Received order, slash-only last-four-segment shortening, one-line ellipsis with visible token figures, scrolling and independent “+N more” | #2323 |
 | Waiting | [Context — waiting `919:9792`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=919-9792) | “A context reading arrives after the next turn.” | #2321 |
 | Codex without breakdown | [Context — Codex `919:10063`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=919-10063) | Totals and computed percent only, or the pending line without a usable source | #2321 |
 
 The 2026-10-19 #2224 decision supersedes desktop #1655: Codex opens this sheet too. MCP frames were
 inspected for #2322 on 2026-10-20; remembered, pending and Codex readings omit that inventory.
-Memory files and allowance remain with #2323 and #2226; there are no placeholder rows.
+Memory frames were inspected for #2323 on 2026-10-20; remembered, pending and Codex readings omit
+that inventory too. Token figures below 1000 follow the existing desktop formatter (`400`), despite
+Figma's `0.4k` sample. Allowance remains with #2226; there is no placeholder row.
 This is a frame inventory, not a new raster audit or parity claim. See the
 [context-usage topic](../../../../../docs/knowledge/features/thread-composer-footer-context-usage.md#context-sheet-2321)
 for fresh, remembered and updating states.
