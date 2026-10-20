@@ -1343,26 +1343,30 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText("after1783").fetchSemanticsNodes().isNotEmpty()
         }
+        val settled =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    evidence.observe(conversationId).first {
+                        it.settledAgentAfterRecovery(launched, family, "after1783") != null
+                    }
+                }
+            }
+        val owned = requireNotNull(settled.settledAgentAfterRecovery(launched, family, "after1783"))
+        val settledHeader = hasTestTag("background-agent:${owned.agentId}")
+        val settledChild = hasTestTag("background-agent-child:${owned.agentId}")
         composeTestRule.questionAnswerTap(
             marker and hasText(finished),
-            lazyKey = "agent-start:${family.agentId}",
+            lazyKey = "agent-start:${owned.agentId}",
             evidence = { android.util.Log.d("ScriptedAgentProof", it) },
         )
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(settledHeader).fetchSemanticsNodes().isNotEmpty() }
         composeTestRule.onAllNodes(isDialog()).assertCountEquals(0)
         composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("after1783"))
-        val agent = composeTestRule.onNode(header).fetchSemanticsNode().boundsInRoot
+        val agent = composeTestRule.onNode(settledHeader).fetchSemanticsNode().boundsInRoot
         val after = composeTestRule.onNodeWithText("after1783", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertTrue("terminal block must settle before the following reply", agent.bottom <= after.top)
         // Navigation preserves collapse state; explicitly open the owned run to inspect its reply.
         composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(0)
-        val settled =
-            runBlocking {
-                withTimeout(THREAD_TIMEOUT_MS) {
-                    evidence.observe(conversationId).first { it.settledAgentPrecedes(launched.owner, family, "after1783") }
-                }
-            }
-        val owned = requireNotNull(settled.agentFamily(launched.owner))
         assertEquals("every late received tool must be retained in the owned run", 1 + lateTools.size, owned.tools.size)
         assertTrue("owned prose must belong once to the Agent", owned.ownsSingleProse("child1827-after"))
         if (settled.owner.kind == ThreadEvidenceKind.Authoritative) {
@@ -1375,7 +1379,7 @@ class DeterministicInteractiveStreamE2ETest {
             agentId = owned.agentId,
             runId = requireNotNull(owned.runId),
             childIds = owned.childIds,
-            ownedChild = hasText("child1827-after") and hasAnyAncestor(child),
+            ownedChild = hasText("child1827-after") and hasAnyAncestor(settledChild),
             goLabel = go,
             expandLabel = expandLabel,
             collapseLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_collapse),
