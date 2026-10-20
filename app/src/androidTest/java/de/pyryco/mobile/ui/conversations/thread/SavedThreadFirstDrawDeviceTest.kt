@@ -287,15 +287,18 @@ class SavedThreadFirstDrawDeviceTest {
             }
         val expected = facts.takeLast(200)
         try {
-            database().use { db ->
+            val seedDatabase = database()
+            try {
                 runBlocking {
-                    MigratingConversationCache(File(root, "files"), db)
+                    MigratingConversationCache(File(root, "files"), seedDatabase)
                         .writeAuthoritativeThread(
                             "host",
                             "c",
                             SavedAuthoritativeThread("e", facts, 20_000, 19_000, SavedThreadCoverage(1, 18_000, 1, true)),
                         ).getOrThrow()
                 }
+            } finally {
+                seedDatabase.close()
             }
             for (online in listOf(false, true)) {
                 repeat(2) { opening ->
