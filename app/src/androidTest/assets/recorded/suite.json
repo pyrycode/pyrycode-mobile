@@ -18,6 +18,7 @@
     "interactiveTurn_backgroundAgentProgress_showsOnRunningCard",
     "interactiveTurn_backgroundAgent_followsBottomUntilFinished",
     "interactiveTurn_backgroundAgent_replyStaysUnderAgent",
+    "interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect",
     "interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect",
     "interactiveTurn_backgroundTask_countsInActionsMenuAndPanel",
     "interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread",
@@ -78,6 +79,10 @@
     "interactiveTurn_twoHostsCollidingConversationId_stayPerHost"
   ],
   "scenarios": [
+    {
+      "method": "interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect",
+      "live": true
+    },
     {
       "method": "interactiveTurn_archiveRestore_roundTripsListMembership",
       "ticket": 2185,

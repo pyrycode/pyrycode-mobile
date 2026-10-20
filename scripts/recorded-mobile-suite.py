@@ -642,15 +642,24 @@ def verify_all(args):
     return summary
 
 
-def managed_verify(args, gate):
-    """One reviewed scenario, using normal host admission and managed device custody."""
-    document = json.loads(args.fixture.read_text())
-    validate(document)
-    rows = all_ready_rows()
-    require(any(row['method'] == document['scenario'] and
-                args.fixture.resolve() == (MANIFEST.parent / row['fixture']).resolve() for row in rows),
-            'Managed verification requires an active reviewed manifest fixture')
-    gate.check_selection(ROOT, 'android', ['live', '--tests', gate.LIVE_CLASS + '#' + document['scenario']])
+def managed_verify(args, gate, capturing=False):
+    """Focused named captures or one reviewed verification, under managed device custody."""
+    if capturing:
+        methods = json.loads(args.methods_file.read_text()) if getattr(args, 'methods_file', None) else [args.method]
+        require(isinstance(methods, list) and 1 <= len(methods) <= 7 and all(isinstance(name, str) for name in methods),
+                'Managed capture requires one to seven named methods')
+        require(len(methods) == len(set(methods)) and set(methods) <= set(json.loads(MANIFEST.read_text())['liveSelection']),
+                'Capture requires inventoried live methods')
+    else:
+        document = json.loads(args.fixture.read_text())
+        validate(document)
+        rows = all_ready_rows()
+        require(any(row['method'] == document['scenario'] and
+                    args.fixture.resolve() == (MANIFEST.parent / row['fixture']).resolve() for row in rows),
+                'Managed verification requires an active reviewed manifest fixture')
+        method = document['scenario']
+        methods = [method]
+    gate.check_selection(ROOT, 'android', ['live', '--tests', ','.join(gate.LIVE_CLASS + '#' + name for name in methods)])
     require(not legacy.run(['git', 'status', '--porcelain']).strip(), 'Commit source before verification')
     env = gate.live_claude_environment(dict(os.environ))
     require(gate.claude_authenticated(env), 'Configured Claude authentication required')
@@ -670,9 +679,15 @@ def managed_verify(args, gate):
                 serial, process = gate.boot_emulator(env, *avd, cold=True, log=log)
             require(serial is not None, 'Cold emulator boot failed; no capture started')
             require(gate.install_once(env, serial) is not None, 'APK installation failed; no capture started')
-            command = [sys.executable, str(ROOT / 'scripts/recorded-mobile-suite.py'), 'verify',
-                       '--serial', serial, '--fixture', str(args.fixture), '--output', str(args.output / 'verification'),
+            command = [sys.executable, str(ROOT / 'scripts/recorded-mobile-suite.py'), 'capture-all' if capturing else 'verify',
+                       '--serial', serial, '--output', str(args.output / 'capture' if capturing else args.output / 'verification'),
                        '--pyry', str(args.pyry), '--daemon-source', str(args.daemon_source)]
+            if capturing:
+                selected = args.output / 'methods.json'
+                legacy.private_write(selected, json.dumps(methods).encode())
+                command += ['--methods-file', str(selected)]
+            else:
+                command += ['--fixture', str(args.fixture)]
             return gate.run_device_command(command, cwd=ROOT, env=env).returncode
         finally:
             try:
@@ -685,15 +700,19 @@ def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='mode', required=True)
-    for name in ['capture', 'replay', 'verify', 'managed-verify', 'capture-all', 'replay-all', 'verify-all']:
+    for name in ['capture', 'replay', 'verify', 'managed-verify', 'managed-capture', 'capture-all', 'replay-all', 'verify-all']:
         command = sub.add_parser(name)
-        if name != 'managed-verify': command.add_argument('--serial', required=True)
+        if name not in {'managed-verify', 'managed-capture'}: command.add_argument('--serial', required=True)
         if name not in {'replay', 'replay-all'}:
             command.add_argument('--pyry', type=Path, required=True)
             command.add_argument('--daemon-source', type=Path, required=True)
             command.add_argument('--output', type=Path, required=True)
         if name in {'replay', 'verify', 'managed-verify'}: command.add_argument('--fixture', type=Path, required=True)
         if name == 'capture': command.add_argument('--method', required=True)
+        if name == 'managed-capture':
+            selection = command.add_mutually_exclusive_group(required=True)
+            selection.add_argument('--method')
+            selection.add_argument('--methods-file', type=Path)
         if name == 'capture-all':
             command.add_argument('--stop-file', type=Path)
             command.add_argument('--methods-file', type=Path)
@@ -701,11 +720,11 @@ def main():
             command.add_argument('--methods-file', type=Path)
             command.add_argument('--stop-file', type=Path)
     args = parser.parse_args()
-    if args.mode == 'managed-verify':
+    if args.mode in {'managed-verify', 'managed-capture'}:
         spec = importlib.util.spec_from_file_location('managed_android_gate', ROOT / 'scripts/android-test-gate.py')
         gate = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(gate)
-        raise SystemExit(managed_verify(args, gate))
+        raise SystemExit(managed_verify(args, gate, capturing=args.mode == 'managed-capture'))
     if args.mode in {'capture', 'capture-all', 'verify', 'verify-all'}:
         require(os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') or os.environ.get('ANTHROPIC_API_KEY'), 'Configured Claude login required')
     if args.mode == 'replay-all': result = replay_all(args)

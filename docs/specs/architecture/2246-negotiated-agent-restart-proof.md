@@ -18,7 +18,7 @@
 
 Prove one behaviour: a finished earlier-session Agent family survives native graph/cache reconstruction and transport replacement during a new-session send. The genuine scenario, deterministic twin and recording are proof of that same contract. Mobile #2245 and Core #3589 are merged. No production or visual change is planned; no decision record is needed.
 
-Forecast: approximately 750 written lines including tests, plan and evidence; no exported production type, no signature migrations, four acceptance criteria and fewer than ten reject branches. The depth limit forbids further children. Main is current at `1a845e57d`; remote overlap includes historical #2112/#2121 and salvage #2175, plus #2311's separate reply helpers. Keep shared-file edits local and additive; none supplies a required dependency.
+Forecast: approximately 1,000 written lines including tests, plan and evidence; no exported production type, no signature migrations, four acceptance criteria and fewer than ten reject branches. The depth limit forbids further children. Main is current at `1a845e57d`; remote overlap includes historical #2112/#2121 and salvage #2175, plus #2311's separate reply helpers. Keep shared-file edits local and additive; none supplies a required dependency.
 
 ## Design
 
@@ -54,6 +54,12 @@ Write and observe failing held-evidence probes before the helper implementation.
 ## Open Questions
 
 None in the product contract. Fresh live/capture results remain pending until executed; documentation cannot create them.
+
+## Revisions
+
+2026-10-20: Add `managed-capture` to the existing recording driver because its managed verification path requires an already-reviewed fixture and cannot create this new scenario's first capture. It uses the same live selection policy, credential loading, device hold, build/install, owned command and emulator cleanup as `managed-verify`; existing strict comparisons are unchanged. It selects one method or an explicit file of at most seven named methods, passing that exact subset to admission and the existing capture/replay driver. It cannot select the full live inventory implicitly. Host regressions cover selection, skips, report survival and custody on failure. The local launcher enforces one Mobile test class per focused invocation, so run the affected classes separately.
+
+2026-10-20: The scripted fixture has a single-use release fence, so selecting both methods against one daemon would contaminate the second outcome. `scripts/e2e-background-agent-scenarios.py` runs two ordinary harness invocations under the existing managed admission, each with a fresh isolated daemon and phone state, preserving both original XML reports. The normal background-agent gate therefore counts both methods. The restart callback now exposes the existing pre-launch seam so saved checkpoint/coverage and exact family identity are checked while support is still Unverified, before Activity launch; saved content cannot masquerade as a fresh negotiation.
 
 ## Documentation handoff
 

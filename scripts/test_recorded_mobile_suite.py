@@ -13,6 +13,55 @@ spec.loader.exec_module(suite)
 
 
 class SuiteDriverTest(unittest.TestCase):
+    def test_managed_capture_keeps_a_named_subset_at_the_selection_boundary(self):
+        methods = ['interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect',
+                   'interactiveTurn_permissionPrompts_heldPerConversation']
+        with tempfile.TemporaryDirectory() as directory:
+            selected = Path(directory) / 'methods.json'
+            selected.write_text(json.dumps(methods))
+            gate = mock.MagicMock()
+            gate.LIVE_CLASS = 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest'
+            gate.check_selection.side_effect = RuntimeError('selection stopped')
+            with self.assertRaisesRegex(RuntimeError, 'selection stopped'):
+                suite.managed_verify(argparse.Namespace(methods_file=selected), gate, capturing=True)
+            gate.check_selection.assert_called_once_with(suite.ROOT, 'android', [
+                'live', '--tests', ','.join(gate.LIVE_CLASS + '#' + name for name in methods)])
+            gate.live_claude_environment.assert_not_called()
+            selected.write_text(json.dumps(json.loads(suite.MANIFEST.read_text())['liveSelection']))
+            with self.assertRaises(ValueError):
+                suite.managed_verify(argparse.Namespace(methods_file=selected), gate, capturing=True)
+            gate.live_claude_environment.assert_not_called()
+
+    def test_managed_capture_rejects_uninventoried_method_before_credentials_or_device(self):
+        gate = mock.MagicMock()
+        with self.assertRaises(ValueError):
+            suite.managed_verify(argparse.Namespace(method='unknown'), gate, capturing=True)
+        gate.live_claude_environment.assert_not_called()
+        gate.device_hold.assert_not_called()
+
+    def test_managed_capture_uses_live_selection_and_releases_custody_on_failure(self):
+        method = 'interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect'
+        with tempfile.TemporaryDirectory() as directory:
+            args = argparse.Namespace(mode='managed-capture', method=method, output=Path(directory),
+                                      pyry=Path('/test/pyry'), daemon_source=Path('/test/daemon'))
+            gate = mock.MagicMock()
+            gate.LIVE_CLASS = 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest'
+            gate.live_claude_environment.return_value = {'ANDROID_HOME': '/sdk'}
+            gate.build_apks.return_value = 0
+            gate.managed_avd.return_value = (Path('/avds'), 'managed')
+            gate.boot_emulator.return_value = ('emulator-owned', 'owned-process')
+            gate.install_once.return_value = []
+            gate.run_device_command.return_value.returncode = 1
+            with mock.patch.object(suite.legacy, 'run', return_value=b''):
+                self.assertEqual(1, suite.managed_verify(args, gate, capturing=True))
+            gate.check_selection.assert_called_once_with(suite.ROOT, 'android', ['live', '--tests', gate.LIVE_CLASS + '#' + method])
+            command = gate.run_device_command.call_args.args[0]
+            self.assertIn('capture-all', command)
+            self.assertEqual([method], json.loads(Path(command[command.index('--methods-file') + 1]).read_text()))
+            self.assertEqual(str(args.output / 'capture'), command[command.index('--output') + 1])
+            gate.stop_emulator.assert_called_once_with(mock.ANY, 'emulator-owned', 'owned-process')
+            gate.device_hold.return_value.__exit__.assert_called_once()
+
     def test_managed_verification_rejects_unreviewed_input_before_credentials_or_device(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory) / 'unreviewed.json'

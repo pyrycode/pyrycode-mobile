@@ -48,6 +48,9 @@ class RecordedMobileSuiteTest {
     @Test
     fun interactiveTurn_backgroundAgent_replyStaysUnderAgent() = original.interactiveTurn_backgroundAgent_replyStaysUnderAgent()
 
+    @Test fun interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect() =
+        original.interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect()
+
     @Test fun interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect() =
         original.interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect()
 

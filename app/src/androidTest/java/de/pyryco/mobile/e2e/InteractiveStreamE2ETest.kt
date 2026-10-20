@@ -116,12 +116,14 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.data.repository.reduceHistoryPage
 import de.pyryco.mobile.di.AttentionAlert
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.RelayConnectionBundle
 import de.pyryco.mobile.di.RelayConnectionRegistry
+import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
@@ -5370,6 +5372,16 @@ class InteractiveStreamE2ETest {
     /** #1827: attributed prose belongs only to the real background Agent's collapsible block. */
     @Test
     fun interactiveTurn_backgroundAgent_replyStaysUnderAgent() {
+        backgroundAgentReplyProof(restart = false)
+    }
+
+    /** #2246: historical Agent, native graph/cache restart and settlement on a replacement connection. */
+    @Test
+    fun interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect() {
+        backgroundAgentReplyProof(restart = true)
+    }
+
+    private fun backgroundAgentReplyProof(restart: Boolean) {
         val fixture = twoHostArg("backgroundAgentFixtureUrl")
         require(fixture.matches(Regex("http://127\\.0\\.0\\.1:[0-9]+"))) { "invalid background Agent fixture" }
         val peer = runningToolPeer()
@@ -5382,10 +5394,7 @@ class InteractiveStreamE2ETest {
             awaitConnected()
             val serverId = twoHostArg(ARG_SERVER_ID)
             val (chat, name) = answerChat(serverId, "e2e1827-agent-")
-            val liveRepositories =
-                checkNotNull(
-                    GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId),
-                ).coordinator.currentRepository
+            val phoneRepository = GlobalContext.get().get<ThreadDestinationFactory>().repository(serverId)
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             openChatRow(name)
             sendFromPhone(
@@ -5464,10 +5473,13 @@ class InteractiveStreamE2ETest {
                 val current =
                     runBlocking {
                         withTimeoutOrNull(1000) {
-                            liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { true }
+                            harnessThreadEvidence(phoneRepository).observe(chat).first { reading ->
+                                val support = phoneRepository.negotiatedThread?.support?.value
+                                reading.admitted && support is ThreadSupport.Supported && reading.owner.connection === support.connection
+                            }
                         }
                     }
-                val candidate = current?.agentReplyEvidence(current.owner, task.taskId, agentId, childTurn, mainTurn)
+                val candidate = current?.heldAgentReplyEvidence(current.owner, task.taskId, agentId, childTurn, mainTurn)
                 val index =
                     candidate?.let {
                         list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:${it.runId}")
@@ -5503,6 +5515,9 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
             // ScrollTo uses the drawing viewport; reveal the actual tap center between the chrome bars.
             composeTestRule.questionAnswerTarget(closedRun).performTouchInput { click(center) }
+            val ownedTool = hasTestTag(de.pyryco.mobile.ui.conversations.components.TOOL_ROW_TAG) and hasAnyAncestor(child)
+            list.performScrollToNode(ownedTool)
+            composeTestRule.onAllNodes(ownedTool, useUnmergedTree = true).onFirst().assertIsDisplayed()
             // Expansion can put this early paragraph outside composition as later tool rows arrive.
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 runCatching { list.performScrollToNode(reply) }.isSuccess &&
@@ -5541,6 +5556,15 @@ class InteractiveStreamE2ETest {
                 it.type == "background_task_updated" &&
                     peer.field(it, "task_id") == task.taskId &&
                     !peer.field(it, "status").isNullOrEmpty()
+            }
+            if (restart) {
+                composeTestRule.proveNegotiatedAgentRestart(serverId, chat, agentId, task.taskId, restart = { beforeLaunch ->
+                    restartApp(beforeLaunch)
+                }, openThread = {
+                    awaitChannelList()
+                    awaitConnected()
+                    openChatRow(name)
+                }, send = { sendFromPhone("Reply briefly to this new-session settlement check.") })
             }
         } finally {
             try {
