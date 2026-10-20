@@ -44,7 +44,6 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
-import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.isOff
@@ -2925,7 +2924,12 @@ class InteractiveStreamE2ETest {
             }
             composeTestRule.onNode(emptyBox).performScrollTo()
             composeTestRule.onNode(hasText("0 / 8192 bytes") and hasAnyAncestor(isDialog())).performScrollTo()
-            composeTestRule.onNode(hasContentDescription("Close") and hasAnyAncestor(isDialog())).performClick()
+            composeTestRule
+                .onNode(
+                    hasContentDescription("Close") and hasAnyAncestor(isDialog()),
+                ).performScrollTo()
+                .assertIsDisplayed()
+                .performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasTestTag(CHANNEL_INFO_PROMPT_FIELD_TAG)).fetchSemanticsNodes().isEmpty()
             }
@@ -5623,30 +5627,19 @@ class InteractiveStreamE2ETest {
                     .filter { it.type == "turn_end" }
                     .map { peer.field(it, "turn_id") }
                     .toSet()
-            sendFromPhone("Briefly acknowledge this message. Do not use tools.")
-            val ended =
-                allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "the post-Stop turn did not finish", allowed) {
-                    it.type == "turn_end" && peer.field(it, "turn_id") !in priorTurns
-                }
-            val turnId = requireNotNull(peer.field(ended, "turn_id"))
-            val liveRepositories =
-                checkNotNull(
-                    GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId),
-                ).coordinator.currentRepository
-            val reply =
-                runBlocking {
-                    withTimeout(THREAD_TIMEOUT_MS) {
-                        liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) {
-                            it.settledMainReply(it.owner, turnId) != null
-                        }
+            withOwnedReply(serverId, chat, peer = peer) { awaitReply ->
+                sendFromPhone("Briefly acknowledge this message. Do not use tools.")
+                val ended =
+                    allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "the post-Stop turn did not finish", allowed) {
+                        it.type == "turn_end" && peer.field(it, "turn_id") !in priorTurns
                     }
-                }.let { checkNotNull(it.settledMainReply(it.owner, turnId)) }
-            val body = hasTestTag("assistant-reply:${reply.message.id}")
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                composeTestRule.onNode(body, useUnmergedTree = true).isDisplayed()
+                val turnId = requireNotNull(peer.field(ended, "turn_id"))
+                assertEquals(
+                    "the rendered post-Stop reply must belong to the independently completed fresh turn",
+                    turnId,
+                    awaitReply().turn,
+                )
             }
-            composeTestRule.onNode(body, useUnmergedTree = true).assertIsDisplayed()
-            composeTestRule.onAllNodes(body, useUnmergedTree = true).assertCountEquals(1)
         } finally {
             try {
                 assertEquals("scenario teardown must release the hold", "released", stopTaskFixtureGet(deviceFixture + "/release"))
