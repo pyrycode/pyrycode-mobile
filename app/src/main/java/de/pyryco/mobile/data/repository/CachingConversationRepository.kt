@@ -170,13 +170,14 @@ class CachingConversationRepository(
         val reader = authoritativeReaders[conversationId]?.takeIf { it.isActive } ?: return false
         authoritativeHydrations.compute(reader) { _, held ->
             held?.takeIf { it.isActive } ?: reader.launch {
-                val restored = try {
-                    restoreAuthoritative(conversationId, full = true)
-                } catch (_: java.io.IOException) {
-                    null
-                } catch (_: SecurityException) {
-                    null
-                }
+                val restored =
+                    try {
+                        restoreAuthoritative(conversationId, full = true)
+                    } catch (_: java.io.IOException) {
+                        null
+                    } catch (_: SecurityException) {
+                        null
+                    }
                 if (restored != null) {
                     authoritativeHydrated += conversationId
                     RelayLog.d { "event=authoritative_restore code=reader_hydrated" }
@@ -653,61 +654,79 @@ class CachingConversationRepository(
         val indexed = (cache as? AuthoritativeWindowCache)?.takeIf { hostThread != null }
         var applied = false
         do {
-        val resolved = resolveAuthoritativeRestore(conversationId, saved, generation, indexed) ?: return null
-        saved = resolved.first
-        val captured = resolved.second
-        withContext(processingDispatcher) {
-            historyWrites.withLock {
-                val outcome = if (conversationId in deleted || !authoritativeCurrent(conversationId)) {
-                    null
-                } else {
-                    authoritativeThreads.restore(
-                        serverId, conversationId, saved.toSnapshot(), generation,
-                        captured.takeIf { indexed != null }, windowRows(),
-                    )
-                }
-                if (outcome == AuthoritativeThreadOutcome.Applied) {
-                    applied = true
-                    // The committed restore is a baseline, never a successful live capture or merged live state.
-                    persistedAuthoritative.compute(conversationId) { _, previous ->
-                        if (previous == null) {
-                            CacheCandidate(DrawnThread(emptyList(), 0), emptyList(), authoritative = saved, storeGeneration = generation)
+            val resolved = resolveAuthoritativeRestore(conversationId, saved, generation, indexed) ?: return null
+            saved = resolved.first
+            val captured = resolved.second
+            withContext(processingDispatcher) {
+                historyWrites.withLock {
+                    val outcome =
+                        if (conversationId in deleted || !authoritativeCurrent(conversationId)) {
+                            null
                         } else {
-                            val baseline = previous.authoritative
-                            if (extendBaseline &&
-                                previous.storeGeneration == generation &&
-                                baseline?.epoch == saved.epoch &&
-                                baseline.incarnation == saved.incarnation
-                            ) {
-                                val facts = baseline.items.associateByTo(LinkedHashMap()) { it.getValue("id") }
-                                saved.items.forEach { raw ->
-                                    val id = raw.getValue("id")
-                                    val held = facts[id]
-                                    val revision = raw.getValue("rev").toString().toLong()
-                                    val heldRevision = held?.getValue("rev")?.toString()?.toLong() ?: -1L
-                                    if (id.toString().toLong() !in baseline.retirements &&
-                                        revision > heldRevision
-                                    ) {
-                                        facts[id] = raw
-                                    }
-                                }
-                                val ordered =
-                                    facts.values.filterNot { it.getValue("id").toString().toLong() in saved.retirements }.sortedBy { raw ->
-                                        raw["order"]?.toString()?.toLongOrNull()?.takeIf { it > 0 } ?: Long.MAX_VALUE
-                                    }
-                                previous.copy(authoritative = baseline.copy(items = ordered,
-                                    retirements = baseline.retirements + saved.retirements,
-                                    appliedVersion = maxOf(baseline.appliedVersion, saved.appliedVersion)))
+                            authoritativeThreads.restore(
+                                serverId,
+                                conversationId,
+                                saved.toSnapshot(),
+                                generation,
+                                captured.takeIf { indexed != null },
+                                windowRows(),
+                            )
+                        }
+                    if (outcome == AuthoritativeThreadOutcome.Applied) {
+                        applied = true
+                        // The committed restore is a baseline, never a successful live capture or merged live state.
+                        persistedAuthoritative.compute(conversationId) { _, previous ->
+                            if (previous == null) {
+                                CacheCandidate(
+                                    DrawnThread(emptyList(), 0),
+                                    emptyList(),
+                                    authoritative = saved,
+                                    storeGeneration = generation,
+                                )
                             } else {
-                                previous
+                                val baseline = previous.authoritative
+                                if (extendBaseline &&
+                                    previous.storeGeneration == generation &&
+                                    baseline?.epoch == saved.epoch &&
+                                    baseline.incarnation == saved.incarnation
+                                ) {
+                                    val facts = baseline.items.associateByTo(LinkedHashMap()) { it.getValue("id") }
+                                    saved.items.forEach { raw ->
+                                        val id = raw.getValue("id")
+                                        val held = facts[id]
+                                        val revision = raw.getValue("rev").toString().toLong()
+                                        val heldRevision = held?.getValue("rev")?.toString()?.toLong() ?: -1L
+                                        if (id.toString().toLong() !in baseline.retirements &&
+                                            revision > heldRevision
+                                        ) {
+                                            facts[id] = raw
+                                        }
+                                    }
+                                    val ordered =
+                                        facts.values
+                                            .filterNot { it.getValue("id").toString().toLong() in saved.retirements }
+                                            .sortedBy { raw ->
+                                                raw["order"]?.toString()?.toLongOrNull()?.takeIf { it > 0 } ?: Long.MAX_VALUE
+                                            }
+                                    previous.copy(
+                                        authoritative =
+                                            baseline.copy(
+                                                items = ordered,
+                                                retirements = baseline.retirements + saved.retirements,
+                                                appliedVersion = maxOf(baseline.appliedVersion, saved.appliedVersion),
+                                            ),
+                                    )
+                                } else {
+                                    previous
+                                }
                             }
                         }
                     }
                 }
             }
-        }
         } while (!applied && indexed != null && conversationId !in deleted && authoritativeCurrent(conversationId) &&
-            authoritativeThreads.current(serverId, conversationId).let { it.generation == generation && it != captured })
+            authoritativeThreads.current(serverId, conversationId).let { it.generation == generation && it != captured }
+        )
         return saved.takeIf { applied }
     }
 
@@ -723,7 +742,9 @@ class CachingConversationRepository(
             if (indexed == null) return saved to captured
             if (conversationId in deleted || !authoritativeCurrent(conversationId) ||
                 captured.generation != generation || generation != 0L
-            ) return null
+            ) {
+                return null
+            }
             val winners = saved.toSnapshot().items.associateByTo(mutableMapOf()) { it.id }
             captured.items.forEach { item -> if ((winners[item.id]?.rev ?: -1) <= item.rev) winners[item.id] = item }
             val parents = winners.values.mapNotNull { it.parent?.takeIf { id -> id > 0 && id !in winners } }.toSet()
@@ -732,16 +753,25 @@ class CachingConversationRepository(
                 val closure = indexed.authoritativeParentClosure(serverId, conversationId, saved.epoch, parents, evidence) ?: return null
                 if (closure.epoch != saved.epoch || closure.incarnation != saved.incarnation ||
                     !authoritativeCurrent(conversationId)
-                ) return null
+                ) {
+                    return null
+                }
                 val facts = saved.toSnapshot().items.associateByTo(LinkedHashMap()) { it.id }
                 closure.toSnapshot().items.forEach { item -> if ((facts[item.id]?.rev ?: -1) < item.rev) facts[item.id] = item }
                 val fences = saved.retirements + closure.retirements
-                val ordered = facts.values.filterNot { it.id in fences }
-                    .sortedBy { it.order?.takeIf { order -> order > 0 } ?: Long.MAX_VALUE }.map { it.raw }
-                saved = saved.copy(items = ordered, retirements = fences,
-                    appliedVersion = maxOf(saved.appliedVersion, closure.appliedVersion),
-                    checkpoint = if (fences.isEmpty()) saved.checkpoint else 0,
-                    coverage = saved.coverage.takeIf { fences.isEmpty() })
+                val ordered =
+                    facts.values
+                        .filterNot { it.id in fences }
+                        .sortedBy { it.order?.takeIf { order -> order > 0 } ?: Long.MAX_VALUE }
+                        .map { it.raw }
+                saved =
+                    saved.copy(
+                        items = ordered,
+                        retirements = fences,
+                        appliedVersion = maxOf(saved.appliedVersion, closure.appliedVersion),
+                        checkpoint = if (fences.isEmpty()) saved.checkpoint else 0,
+                        coverage = saved.coverage.takeIf { fences.isEmpty() },
+                    )
             }
             if (authoritativeThreads.current(serverId, conversationId) == captured) return saved to captured
         }
@@ -764,12 +794,16 @@ class CachingConversationRepository(
                         if (snapshot.openingRows != null && snapshot.generation == 0L && baseline != null) {
                             val committedIds = baseline.toSnapshot().items.mapTo(mutableSetOf()) { it.id }
                             val heldIds = snapshot.items.mapTo(mutableSetOf()) { it.id }
-                            val needsClosure = snapshot.items.any { item ->
-                                item.id !in committedIds || item.parent?.let { it > 0 && it !in heldIds } == true
-                            }
+                            val needsClosure =
+                                snapshot.items.any { item ->
+                                    item.id !in committedIds || item.parent?.let { it > 0 && it !in heldIds } == true
+                                }
                             if (needsClosure) {
-                                applyAuthoritativeRestore(conversationId, extendBaseline = true,
-                                    windowRows = { observed.openingRows }) { baseline }
+                                applyAuthoritativeRestore(
+                                    conversationId,
+                                    extendBaseline = true,
+                                    windowRows = { observed.openingRows },
+                                ) { baseline }
                                 snapshot = authoritativeThreads.current(serverId, conversationId)
                                 if (snapshot.generation != observed.generation || !authoritativeCurrent(conversationId)) return@collect
                             }
