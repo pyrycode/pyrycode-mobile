@@ -14,13 +14,14 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.model.Role
-import de.pyryco.mobile.data.repository.ConversationFilter
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.data.repository.matchesPending
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.ui.conversations.components.TOOL_ROW_TAG
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
+import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -142,17 +143,11 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
     onNode(hasContentDescription("More actions")).performClick()
     onAllNodesWithText("Reset session").onFirst().performClick()
     awaitDisplayedSessionBoundary(120_000)
-    val nextSession =
-        runBlocking {
-            withTimeout(120_000) {
-                source()
-                    .observeConversations(ConversationFilter.All)
-                    .first { rows ->
-                        rows.singleOrNull { it.id == conversation }?.currentSessionId?.let { it.isNotBlank() && it != session } == true
-                    }.single { it.id == conversation }
-                    .currentSessionId
-            }
-        }
+    fun boundaries(reading: ThreadEvidence) =
+        projectAuthoritativeThread(host, conversation, requireNotNull(reading.sourceSnapshot)).items.filterIsInstance<ThreadItem.SessionBoundary>()
+    val rotated = evidence { reading -> boundaries(reading).any { it.previousSessionId == session && it.newSessionId != session } }
+    val nextSession = boundaries(rotated).single { it.previousSessionId == session }.newSessionId
+    receipt("rotated_session_b", rotated)
     val oldGraph = GlobalContext.get()
     val oldCache = oldGraph.get<ConversationCache>()
     val oldRegistry = oldGraph.get<RelayConnectionRegistry>()
@@ -166,7 +161,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                         coverage != null &&
                         baseline.all { row ->
                             val fact = requireNotNull(row.fact)
-                            snapshot.items.any { it == fact }
+                            snapshot.items.any { it.id == fact.id && it.rev >= fact.rev }
                         }
                     ) {
                         return@withTimeout snapshot
@@ -176,6 +171,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                 error("unreachable")
             }
         }
+    Log.i("NegotiatedAgentRestart", "event=saved_family_ready checkpoint=${saved.checkpoint}")
     restart {
         assertTrue("application graph replaced", GlobalContext.get() !== oldGraph)
         assertTrue("registry replaced", GlobalContext.get().get<RelayConnectionRegistry>() !== oldRegistry)
