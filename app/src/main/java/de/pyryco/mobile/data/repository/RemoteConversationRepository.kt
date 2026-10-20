@@ -39,6 +39,7 @@ import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
 import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_ADDED
 import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_CHANGED
 import de.pyryco.mobile.data.network.TYPE_THREAD_TEXT_APPEND
+import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.network.ThreadQueryReply
 import de.pyryco.mobile.data.network.ToolProgressPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
@@ -75,6 +76,7 @@ import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 
@@ -198,6 +200,7 @@ class RemoteConversationRepository internal constructor(
             authoritativeHostId,
             authoritativeThreads,
             onRepair = { authoritativeQueries.repair(it) },
+            onFreshAdded = ::publishFreshAuthoritativeEffect,
             onApplied = { conversation, id, generation ->
                 val snapshot = authoritativeThreads.current(authoritativeHostId, conversation)
                 val item = snapshot.items.firstOrNull { it.id == id }
@@ -215,6 +218,66 @@ class RemoteConversationRepository internal constructor(
                 }
             },
         )
+
+    /** Dedicated effects of a first live addition. Queries, resets and cache restoration never enter here. */
+    private fun publishFreshAuthoritativeEffect(
+        conversation: String,
+        epoch: String,
+        generation: Long,
+        item: ThreadItemDto,
+    ) {
+        val session = item.session?.takeIf { it.isNotBlank() } ?: return
+        if (epoch.isBlank() || item.active || (item.order ?: 0) <= 0) return
+        val currentSource = {
+            val snapshot = authoritativeThreads.current(authoritativeHostId, conversation)
+            authoritativeLiveEnabled() &&
+                snapshot.epoch == epoch &&
+                snapshot.generation == generation &&
+                !snapshot.resetNeeded &&
+                sessionLiveAdmission.currentBinding(conversation) == session &&
+                snapshot.items.firstOrNull { it.id == item.id }?.raw == item.raw
+        }
+        if (!currentSource()) return
+        val fields = item.content as? JsonObject ?: return
+
+        fun text(key: String): String? = (fields[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        when {
+            item.kind == "notice" &&
+                item.shown &&
+                item.status in setOf("done", "finished") &&
+                item.subtype in setOf("model_refusal_fallback", "model_refusal_no_fallback") -> {
+                val banner = text("banner") ?: return
+                val original = text("original_model").orEmpty()
+                val fallback = if (item.subtype == "model_refusal_fallback") text("fallback_model").orEmpty() else null
+                // Canonical notices have no occurrence timestamp. Only the durable identity arms a row;
+                // this existing display placeholder is never used as their occurrence identity.
+                val refusal =
+                    ThreadItem.ModelRefusal(
+                        original,
+                        fallback,
+                        banner,
+                        false,
+                        Instant.fromEpochMilliseconds(0),
+                        CanonicalRefusalIdentity(authoritativeHostId, conversation, epoch, item.id),
+                    )
+                liveRefusalEvents.tryEmit(conversation to LiveRefusalEvent.Refused(refusal, text("scope"), currentSource, this))
+            }
+            item.isCompletion() && !item.turn.isNullOrBlank() -> {
+                val isError = fields["is_error"]?.let { (it as? JsonPrimitive)?.booleanOrNull ?: return } ?: false
+                val event =
+                    LiveRootTurnEnd(
+                        isError,
+                        text("outcome").orEmpty(),
+                        text("stop_reason"),
+                        text("terminal_reason"),
+                        text("error_category"),
+                        currentSource,
+                        this,
+                    )
+                liveRootTurnEnds.tryEmit(conversation to event)
+            }
+        }
+    }
 
     private val completionFacts = MutableStateFlow<List<AuthoritativeCompletion>>(emptyList())
     internal val authoritativeCompletions: StateFlow<List<AuthoritativeCompletion>> = completionFacts
@@ -563,6 +626,13 @@ class RemoteConversationRepository internal constructor(
      * inbound collector. A dropped event can only leave a switch-back offer unarmed or stale; a write still
      * needs the user's tap.
      */
+    private val liveRootTurnEnds =
+        MutableSharedFlow<Pair<String, LiveRootTurnEnd>>(
+            replay = 0,
+            extraBufferCapacity = 16,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+
     private val liveRefusalEvents =
         MutableSharedFlow<Pair<String, LiveRefusalEvent>>(
             replay = 0,
@@ -706,6 +776,7 @@ class RemoteConversationRepository internal constructor(
     ) {
         sessionLiveAdmission.currentBinding(conversation)?.let { conversationListProjection.updateCurrentSessionId(conversation, it) }
         if (family == null) {
+            liveRefusalEvents.tryEmit(conversation to LiveRefusalEvent.SessionReplaced)
             SessionLiveAdmission.families
                 .filterNot {
                     it == TYPE_RATE_LIMITED || it == TYPE_MODEL_LIST
@@ -1753,6 +1824,9 @@ class RemoteConversationRepository internal constructor(
 
     override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> =
         liveRefusalEvents.filter { it.first == conversationId }.map { it.second }
+
+    override fun observeLiveRootTurnEnds(conversationId: String): Flow<LiveRootTurnEnd> =
+        liveRootTurnEnds.filter { it.first == conversationId }.map { it.second }
 
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFactsProjection.observe(conversationId)
 

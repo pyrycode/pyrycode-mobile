@@ -180,6 +180,9 @@ interface ConversationRepository {
      */
     fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> = emptyFlow()
 
+    /** Fresh owned root completions only. History and restored rows never emit recovery effects. */
+    fun observeLiveRootTurnEnds(conversationId: String): Flow<LiveRootTurnEnd> = emptyFlow()
+
     /**
      * Emits the facts claude last reported about its own run for [conversationId] (#890): its build and the
      * permission posture it claims, or **`null` until a report arrives**. Cold flow; re-emits on every
@@ -1151,6 +1154,7 @@ sealed interface ThreadItem {
         val banner: String,
         val bannerTruncated: Boolean,
         val occurredAt: Instant,
+        val canonicalIdentity: CanonicalRefusalIdentity? = null,
     ) : ThreadItem
 
     /**
@@ -1708,6 +1712,29 @@ data class AnnouncedModel(
     val truncated: Boolean,
 )
 
+/** Durable occurrence identity. Runtime reconnect generations do not rename an existing refusal row. */
+data class CanonicalRefusalIdentity internal constructor(
+    val host: String,
+    val conversation: String,
+    val epoch: String,
+    val item: Long,
+) {
+    override fun toString(): String = "CanonicalRefusalIdentity(redacted)"
+}
+
+/** A dedicated live effect, never a legacy event or a durable-history replay. */
+class LiveRootTurnEnd internal constructor(
+    val isError: Boolean,
+    val outcome: String,
+    val stopReason: String?,
+    val terminalReason: String?,
+    val errorCategory: String?,
+    internal val currentSource: () -> Boolean,
+    internal val sourceOwner: Any,
+) {
+    override fun toString(): String = "LiveRootTurnEnd(redacted)"
+}
+
 /**
  * One live event of [ConversationRepository.observeLiveRefusalEvents] (#1360): what arms or clears a thread's
  * switch-back offer. Wire SSOT: pyrycode `docs/protocol-mobile.md` § `model_refusal_fallback`.
@@ -1721,6 +1748,8 @@ sealed interface LiveRefusalEvent {
     data class Refused(
         val refusal: ThreadItem.ModelRefusal,
         val scope: String?,
+        internal val currentSource: (() -> Boolean)? = null,
+        internal val sourceOwner: Any? = null,
     ) : LiveRefusalEvent
 
     /** The conversation's session was replaced (`session_transition`), which ends a Reset too. */

@@ -162,6 +162,10 @@ class StableConversationRepository(
     override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> =
         currentRepository.flatMapLatest { repo -> repo?.observeLiveRefusalEvents(conversationId) ?: emptyFlow() }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override fun observeLiveRootTurnEnds(conversationId: String): Flow<LiveRootTurnEnd> =
+        currentRepository.flatMapLatest { repo -> repo?.observeLiveRootTurnEnds(conversationId) ?: emptyFlow() }
+
     /** The session-facts reading for [conversationId] (#890), held or switched as [observeAnnouncedModel] is. */
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> =
         heldReadings?.observeSessionFacts(conversationId) ?: switchToLive<SessionFacts?>(null) { it.observeSessionFacts(conversationId) }

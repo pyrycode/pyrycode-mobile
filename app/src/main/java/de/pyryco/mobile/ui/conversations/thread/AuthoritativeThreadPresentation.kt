@@ -17,6 +17,7 @@ import de.pyryco.mobile.data.repository.AuthoritativeLiveProgress
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.CanonicalRefusalIdentity
 import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
@@ -161,6 +162,8 @@ internal fun projectAuthoritativeThread(
                     identity(item.id),
                     block,
                     item.parent?.let(::identity).orEmpty(),
+                    de.pyryco.mobile.data.repository
+                        .CanonicalRefusalIdentity(host, conversation, snapshot.epoch.orEmpty(), item.id),
                     if (item.active && item.session == progress.sessionId) {
                         (item.content as? JsonObject)?.text("tool_use_id")?.let { progress.tools[it] }
                     } else {
@@ -382,6 +385,7 @@ private fun ThreadItemDto.displayRow(
     id: String,
     block: String?,
     parentId: String,
+    refusalIdentity: CanonicalRefusalIdentity,
     elapsedSeconds: Int?,
 ): ThreadRow.Delivered {
     val fields = content as? JsonObject
@@ -558,6 +562,7 @@ private fun ThreadItemDto.displayRow(
                                         it.displayText(),
                                         false,
                                         timestamp,
+                                        refusalIdentity,
                                     )
                                 }
                             "unrecognized_message" ->

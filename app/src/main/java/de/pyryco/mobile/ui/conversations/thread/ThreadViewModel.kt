@@ -24,6 +24,7 @@ import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
 import de.pyryco.mobile.data.repository.AuthoritativeLiveProgress
+import de.pyryco.mobile.data.repository.CanonicalRefusalIdentity
 import de.pyryco.mobile.data.repository.ConnectionReading
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ContextUsage
@@ -1271,7 +1272,13 @@ class ThreadViewModel(
                 }.distinctUntilChanged(),
         ) { offer, pending, addressable ->
             offer?.takeIf { addressable }?.let {
-                SwitchBackOffer(it.occurredAt, it.originalModel, pending = pending != null, failed = it.failed)
+                SwitchBackOffer(
+                    it.occurredAt,
+                    it.originalModel,
+                    pending = pending != null,
+                    failed = it.failed,
+                    canonicalIdentity = it.canonicalIdentity,
+                )
             }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
@@ -1280,6 +1287,13 @@ class ThreadViewModel(
         // the offer. The announced model is a held reading; `distinctUntilChanged` keeps the same model handed
         // over again on a reconnect from counting as a new announcement.
         viewModelScope.launch { repository.observeLiveRefusalEvents(conversationId).collect(::onLiveRefusalEvent) }
+        viewModelScope.launch {
+            repository.observeLiveRootTurnEnds(conversationId).collect { event ->
+                if (isCurrentCanonicalEffect(event.sourceOwner, event.currentSource)) {
+                    setTurnOutcome(turnRecoveryNotice(event), "canonical_turn_end")
+                }
+            }
+        }
         viewModelScope.launch {
             repository
                 .observeAnnouncedModel(conversationId)
@@ -3334,12 +3348,12 @@ class ThreadViewModel(
             reportFailure = false,
             onAcked = {
                 RelayLog.d { "event=refusal_switch_back outcome=acked" }
-                refusalOffer.update { if (it?.occurredAt == offer.occurredAt) null else it }
+                refusalOffer.update { if (it?.sameOccurrence(offer) == true) null else it }
             },
         ) {
             RelayLog.d { "event=refusal_switch_back outcome=failed" }
             pendingModel.compareAndSet(pending, null)
-            refusalOffer.update { if (it?.occurredAt == offer.occurredAt) it.copy(failed = true) else it }
+            refusalOffer.update { if (it?.sameOccurrence(offer) == true) it.copy(failed = true) else it }
         }
     }
 
@@ -3349,13 +3363,25 @@ class ThreadViewModel(
      * clears; a no-fallback refusal changes nothing; a session transition clears. `scope` is claude's open
      * string, compared and never shown: a value this client does not know can only withhold the offer.
      */
+    private fun isCurrentCanonicalEffect(
+        owner: Any?,
+        current: () -> Boolean,
+    ): Boolean = current() && (negotiated == null || (negotiated.support.value as? ThreadSupport.Supported)?.connection === owner)
+
     private fun onLiveRefusalEvent(event: LiveRefusalEvent) {
         when (event) {
             is LiveRefusalEvent.Refused -> {
+                if (event.currentSource?.let { !isCurrentCanonicalEffect(event.sourceOwner, it) } == true) return
                 val refusal = event.refusal
                 val fallbackModel = refusal.fallbackModel ?: return
                 if (event.scope == SESSION_SCOPE && refusal.originalModel.isNotEmpty() && fallbackModel.isNotEmpty()) {
-                    refusalOffer.value = RefusalOffer(refusal.originalModel, fallbackModel, refusal.occurredAt)
+                    refusalOffer.value =
+                        RefusalOffer(
+                            refusal.originalModel,
+                            fallbackModel,
+                            refusal.occurredAt,
+                            canonicalIdentity = refusal.canonicalIdentity,
+                        )
                     RelayLog.d { "event=refusal_offer outcome=armed" }
                     // The refusal means a session is running, but a reading taken before it spawned names none.
                     repository.refreshSessionSettings(conversationId)
@@ -3363,7 +3389,10 @@ class ThreadViewModel(
                     clearRefusalOffer("unqualified")
                 }
             }
-            LiveRefusalEvent.SessionReplaced -> clearRefusalOffer("session")
+            LiveRefusalEvent.SessionReplaced -> {
+                clearRefusalOffer("session")
+                clearTurnOutcome("session")
+            }
         }
     }
 
@@ -4092,7 +4121,15 @@ private data class RefusalOffer(
     val fallbackModel: String,
     val occurredAt: Instant,
     val failed: Boolean = false,
-)
+    val canonicalIdentity: CanonicalRefusalIdentity? = null,
+) {
+    fun sameOccurrence(other: RefusalOffer): Boolean =
+        if (canonicalIdentity != null || other.canonicalIdentity != null) {
+            canonicalIdentity != null && canonicalIdentity == other.canonicalIdentity
+        } else {
+            occurredAt == other.occurredAt
+        }
+}
 
 /** The one `model_refusal_fallback.scope` that arms a switch-back offer (#1360, desktop's rule). */
 private const val SESSION_SCOPE = "session"
