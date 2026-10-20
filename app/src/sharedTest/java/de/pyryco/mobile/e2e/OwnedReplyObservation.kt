@@ -405,9 +405,11 @@ internal object OwnedReplyProbe {
                 flow {
                     try {
                         delegate.inbound.collect { frame ->
+                            ContextResetProbe.before(host, connection, frame)
                             sessionObservers.filter { it.host == host }.forEach { it.sessionReceived(connection, frame) }
                             active?.takeIf { it.host == host }?.received(connection, frame)
                             emit(frame)
+                            ContextResetProbe.delivered(host, connection, frame)
                         }
                     } finally {
                         active?.takeIf { it.host == host }?.ended(connection)
@@ -415,10 +417,12 @@ internal object OwnedReplyProbe {
                 }
 
             override fun send(envelope: Envelope): Boolean {
+                val contextReceipt = ContextResetProbe.sending(host, connection, envelope)
                 sessionObservers.filter { it.host == host }.forEach { it.sessionSending(connection, envelope) }
                 val observation = active?.takeIf { it.host == host }
                 val targeted = observation?.sending(connection, envelope) { delegate.state.value is PumpState.Open } == true
                 return delegate.send(envelope).also {
+                    contextReceipt?.complete(it)
                     if (targeted) observation?.sent(connection, it)
                 }
             }
@@ -453,6 +457,8 @@ private fun ThreadItemDto.field(name: String): String? = ((content as? JsonObjec
 private fun JsonObject?.isSuccessfulReplyEnd(): Boolean {
     fun field(name: String) = (this?.get(name) as? JsonPrimitive)?.content
     val reason = this?.get("terminal_reason")
-    return field("stop_reason") == "end_turn" && field("outcome") == "success" && field("is_error") == "false" &&
+    return field("stop_reason") == "end_turn" &&
+        field("outcome") == "success" &&
+        field("is_error") == "false" &&
         (reason == null || reason is JsonPrimitive && reason.isString && reason.content in setOf("", "completed"))
 }
