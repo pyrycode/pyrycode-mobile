@@ -11,11 +11,13 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onChildAt
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -53,9 +55,10 @@ class ContextSummarySheetTest {
     fun mcpFooterExpansionGroupsAndReplaces() {
         val reading =
             mcpReading(
-                """[{"name":"first","server_name":"__proto__","tokens":1900},
-                {"name":"other","server_name":"github","tokens":1400},
-                {"name":"first","server_name":"__proto__","tokens":1200}]""",
+                """[{"name":"zeta","server_name":"github","tokens":1900},
+                {"name":"other","server_name":"__proto__","tokens":1400},
+                {"name":"alpha","server_name":"github","tokens":1200},
+                {"name":"zeta","server_name":"github","tokens":1100}]""",
                 8,
             )
         screen = screen.copy(runConfig = config(reading))
@@ -65,17 +68,37 @@ class ContextSummarySheetTest {
         header.assertHeightIsEqualTo(48.dp).assert(
             SemanticsMatcher("expand action") { it.config[SemanticsActions.OnClick].label == "Expand MCP tools" },
         )
-        rule.onNodeWithText("11 tools").assertIsDisplayed()
+        rule.onNodeWithText("12 tools").assertIsDisplayed()
         rule.onNodeWithText("__proto__").assertDoesNotExist()
         header.performTouchInput { click() }
         header.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Expanded"))
+        rule.onNodeWithTag("context_mcp_server_0").assertTextEquals("github")
+        rule.onNodeWithTag("context_mcp_server_1").assertTextEquals("__proto__")
+        for ((tag, name, tokens) in listOf(
+            Triple("context_mcp_tool_0_0", "zeta", "1.9k"),
+            Triple("context_mcp_tool_0_1", "alpha", "1.2k"),
+            Triple("context_mcp_tool_0_2", "zeta", "1.1k"),
+            Triple("context_mcp_tool_1_0", "other", "1.4k"),
+        )) {
+            val row = rule.onNodeWithTag(tag)
+            row.onChildAt(0).assertTextEquals(name)
+            row.onChildAt(1).assertTextEquals(tokens)
+        }
         val ordered =
-            listOf("context_mcp_server_0", "context_mcp_tool_0_0", "context_mcp_tool_0_1", "context_mcp_server_1", "context_mcp_tool_1_0")
+            listOf(
+                "context_mcp_server_0",
+                "context_mcp_tool_0_0",
+                "context_mcp_tool_0_1",
+                "context_mcp_tool_0_2",
+                "context_mcp_server_1",
+                "context_mcp_tool_1_0",
+            )
         val tops = ordered.map { rule.onNodeWithTag(it).getUnclippedBoundsInRoot().top }
         assertTrue(tops.zipWithNext().all { (a, b) -> a < b })
         rule.onNodeWithText("1.9k").assertIsDisplayed()
         rule.onNodeWithText("1.2k").assertIsDisplayed()
-        rule.onNodeWithText("+8 more").assertIsDisplayed()
+        rule.onNodeWithText("+8 more").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("Messages").performScrollTo()
         rule.onNodeWithText("Messages").assertIsDisplayed()
         header.performClick()
         rule.onNodeWithText("__proto__").assertDoesNotExist()
