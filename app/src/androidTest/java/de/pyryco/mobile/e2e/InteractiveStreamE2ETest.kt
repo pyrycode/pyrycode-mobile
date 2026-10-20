@@ -1381,6 +1381,7 @@ class InteractiveStreamE2ETest {
                     }
                 val boundary = boundaryItems.filterIsInstance<ThreadItem.SessionBoundary>().single()
                 assertTrue("reset must replace the conversation's session", boundary.newSessionId != boundary.previousSessionId)
+                resetContext.replaced(boundary)
                 invalidation.await()
                 val usage = withTimeout(REPLY_TIMEOUT_MS) { resetContext.reply.await() }
                 assertEquals(
@@ -5822,7 +5823,7 @@ class InteractiveStreamE2ETest {
             OwnedReplyProbe.observing(newerSend) {
                 sendFromPhone(newer)
                 composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                    newerSend.acceptedSendCurrent(hostRepository(serverId))
+                    newerSend.acceptedSendCurrent(liveRepositories.value)
                 }
             }
             val newerEnd =
