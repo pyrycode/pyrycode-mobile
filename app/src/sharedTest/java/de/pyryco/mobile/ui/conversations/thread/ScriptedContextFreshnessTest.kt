@@ -180,7 +180,7 @@ class ScriptedContextFreshnessTest {
         replyTo: Long? = null,
     ) = push(
         "context_usage",
-        """{"conversation_id":"c1","total_tokens":$used,"max_tokens":200000,"percentage":99,"categories":[],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0,"memory_files":[],"dropped_memory_files":0}""",
+        """{"conversation_id":"c1","model":"","total_tokens":$used,"max_tokens":200000,"percentage":99,"categories":[],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0,"memory_files":[],"dropped_memory_files":0}""",
         replyTo,
     )
 

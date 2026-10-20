@@ -102,7 +102,7 @@ class ThreadViewModelContextUsageTest {
     fun codexUsesEligibleScalarSource() =
         runTest {
             val repo = ScriptedRepo()
-            repo.settings.value = settings(usedTokens = 84_200, windowTokens = 272_000)
+            repo.settings.value = repo.currentSessionSettings(usedTokens = 84_200, windowTokens = 272_000)
             val vm = collectedVm(repo)
             assertEquals(84_200L, vm.state.value.runConfig.contextUsedTokens)
             assertEquals(272_000L, vm.state.value.runConfig.contextMaxTokens)

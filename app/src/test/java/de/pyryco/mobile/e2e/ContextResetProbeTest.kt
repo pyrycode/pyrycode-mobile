@@ -95,7 +95,7 @@ class ContextResetProbeTest {
         ) = frame(
             "context_usage",
             30,
-            """{"conversation_id":"c","total_tokens":$used,"max_tokens":1000000,"percentage":3}""",
+            """{"conversation_id":"c","model":"","total_tokens":$used,"max_tokens":1000000,"percentage":3,"categories":[],"dropped_categories":0}""",
             replyTo,
         )
     }
