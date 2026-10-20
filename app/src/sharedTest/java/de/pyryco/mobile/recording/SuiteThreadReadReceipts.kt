@@ -163,14 +163,17 @@ internal class SuiteThreadReadReceipts(
         val snapshot = store.current(family(owner), conversation)
         val certificate =
             certified.any { (key, value) ->
-                key.second == conversation && (key.first == owner || retained && family(key.first) == family(owner)) &&
-                    value.first == snapshot.generation && value.second.toULong() >= target
+                key.second == conversation &&
+                    (key.first == owner || retained && family(key.first) == family(owner)) &&
+                    value.first == snapshot.generation &&
+                    value.second.toULong() >= target
             }
         if (!certificate) return false
         val presentation = projectAuthoritativeThread(family(owner), conversation, snapshot)
         val checkpoint = presentation.certifiedCheckpoint ?: return false
         // Supplied content and its terminal marker prove delivery. The real UI must still qualify sight.
-        return checkpoint.toULong() >= target && presentation.shownRowRevisions.values.any { it.toULong() >= target } &&
+        return checkpoint.toULong() >= target &&
+            presentation.shownRowRevisions.values.any { it.toULong() >= target } &&
             presentation.shownRowRevisions.values.all { it <= checkpoint }
     }
 }
