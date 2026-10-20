@@ -15,6 +15,51 @@ action, wait for a positive effect of that action, then assert the resulting
 absence or replacement. Use `useUnmergedTree = true` when a merged semantics
 container hides per-row text or controls.
 
+For history proofs requiring exactly one request, control the pointer movement as
+well as the response. A `swipeDown` contains repeated movements and can leave a
+fling running after a fast page completes; either can legitimately demand another
+page under the [reader-movement prefetch contract](thread-screen-oldest-end-history-demand.md).
+In [#2331](https://github.com/pyrycode/pyrycode-mobile/issues/2331), that input
+confounded the reconnect proof's assertion that idle page arrival initiates nothing
+(seven requests expected, eight observed). The immediate-completion control with
+the original swipe produced thirteen requests instead of one.
+
+Use the shared internal `TouchInjectionScope.pullHistoryPage` from
+`app/src/sharedTest/java/de/pyryco/mobile/e2e/HistoryProofPull.kt`: touch down at
+30% of the region height, move downward once by 40% over 100 ms, advance pointer
+event time by 250 ms without movement, then release. The resting release removes
+the continuing fling. `ThreadScreenHistoryTest.proofPullRequestsOnceEvenWhenThePageCompletesImmediately`
+checks one demand with immediate completion;
+`proofPullStopsBeforeTheDelayedPageArrives` positively checks
+`!list.isScrollInProgress` before appending rows and freeing the request slot,
+then requires the count to remain one. Keep the exact request-count, continuation,
+coverage, source-identity, content, ordering and duplicate assertions in
+`DurableGapProof`; this technique isolates arrival without changing production
+gesture behavior or recorded fixtures.
+
+The [accepted Linux verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/2336#issuecomment-6303902077)
+at `7b493a4d571ba199eeb475e9216d02a374b0a271` records 6,357 freshly executed/passed
+JVM tests, zero failures/skips. The history class's counted XML has 28 passed,
+zero failures/skips, including both methods above. The configured UI gate has
+335 executed/passed, zero failures and one additional skipped;
+`RecordedMobileSuiteTest#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`
+is present and passed. It omits the original sweep's `UI_GATE_FULL=1 UI_DEVICE_ALL=1`
+flags; these counts prove the named scenario, not a repeated in-depth sweep.
+The earlier 6,355-method cached JVM report executed zero tests freshly in that
+invocation and is distinct from this fresh result.
+
+Preserve the accompanying gate disposition: scripted-all initially executed 21
+tests (20 passed, one failed, one additional skipped). Reply-suggestion passed;
+`interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog` failed, then
+passed its exact same-tree rerun (one executed/passed, zero failures/skips),
+accepted under the dispatcher policy and tracked in #2353. The initial run remains
+failed; its earlier inherited-failure disposition also remains recorded.
+`renameAtFigmaViewport` and scripted `interactiveTurn_seededChannel_durableGapCatchUp`
+were skipped. The retained verifier bundle
+`fa76fd281cf788d24bb5b6db7b77e851a92b98c7c9e709af3bf36a78102f3434`
+contains counted XML in the gate logs and the accepted verdict. macOS was outside
+this Linux ticket's verification scope; the full in-depth sweep was not repeated.
+
 For overlapping chrome, semantic display and full list containment do not establish
 readability. Measure the clear area between the header and composer and assert
 focused fields, tested button edges and swipe coordinates against those bounds.
