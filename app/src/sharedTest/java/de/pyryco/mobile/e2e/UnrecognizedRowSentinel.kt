@@ -231,9 +231,13 @@ private fun UnrecognizedSite.wireToken(): String =
  */
 internal class TappingConversationRepository(
     private val delegate: ConversationRepository,
+    private val tapNegotiated: Boolean = false,
     private val observeThread: ((String, Flow<ThreadSnapshot>) -> Flow<ThreadSnapshot>)? = null,
 ) : ConversationRepository by delegate,
     ThreadSnapshotSource {
+    private val tappedNegotiated = if (tapNegotiated) delegate.negotiatedThread?.let(PassiveThreadProbe::negotiated) else null
+    override val negotiatedThread get() = if (tapNegotiated) tappedNegotiated else delegate.negotiatedThread
+
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = observeThreadSnapshot(conversationId).map { it.rows }
 
     override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> {

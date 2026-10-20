@@ -1,13 +1,17 @@
 package de.pyryco.mobile.data.repository
 
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModelStore
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.PERMISSION_SETTLE_INTERVAL_MS
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.authoritativeAnsweredPrompt
+import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -23,6 +27,8 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -121,7 +127,6 @@ class AuthoritativeSessionLiveTest {
                     "session_settings" to settings("s"),
                     "mcp_status" to "\"servers\":[],\"dropped_servers\":0",
                     "slash_command_list" to "\"commands\":[],\"dropped_commands\":0",
-                    "model_list" to "\"models\":[],\"dropped_models\":0",
                     "tool_progress" to "\"turn_id\":\"turn\",\"tool_use_id\":\"tool\",\"elapsed_seconds\":7",
                     "session_error" to "\"code\":\"failed\",\"message\":\"sensitive\"",
                 )
@@ -147,6 +152,30 @@ class AuthoritativeSessionLiveTest {
                 runCurrent()
                 assertEquals("retired $type", baseline, status(repo, type))
             }
+        }
+
+    @Test fun catalogVocabularySurvivesSessionReplacementWithoutGrantingSessionAuthority() =
+        runTest {
+            val (pump, repo) = repository()
+            pump.push(summary("current"))
+            pump.push(frame("model_list", "borrowed", clear = true))
+            pump.push(frame("model_list", "borrowed", payload = payload("\"models\":[],\"dropped_models\":0")))
+            runCurrent()
+            val catalog = repo.observeModelMenu("c").first()
+            assertNotNull(catalog)
+            pump.push(frame("stall", "next", clear = true))
+            runCurrent()
+            assertEquals(catalog, repo.observeModelMenu("c").first())
+            pump.push(frame("stall", "borrowed", payload = payload("")))
+            runCurrent()
+            assertFalse(repo.observeStall("c").first())
+            pump.push(frame("model_list", clear = true))
+            runCurrent()
+            assertNull(repo.observeModelMenu("c").first())
+            pump.push(frame("model_list", payload = payload("\"models\":[],\"dropped_models\":0")))
+            runCurrent()
+            assertNotNull(repo.observeModelMenu("c").first())
+            assertFalse(repo.observeStall("c").first())
         }
 
     @Test fun summariesEstablishIdentityWithoutInventingActivityAndOldTagsCannotReturn() =
@@ -294,7 +323,7 @@ class AuthoritativeSessionLiveTest {
 
     private fun permissionPolling(pushBeforeAck: Boolean) =
         runTest {
-            val store = androidx.lifecycle.ViewModelStore()
+            val store = ViewModelStore()
             try {
                 val (pump, repo) = repository()
                 val vm =
@@ -395,13 +424,13 @@ class AuthoritativeSessionLiveTest {
     @Test fun metadataRoundTripsOmittedNullAndStringWithoutChangingLegacyBytes() {
         for (tag in listOf(null, "null", "\"s\"")) {
             val decoded = frame("stall", tag = tag)
-            val encoded = MobileJson.parseToJsonElement(MobileJson.encodeToString(decoded)) as kotlinx.serialization.json.JsonObject
+            val encoded = MobileJson.parseToJsonElement(MobileJson.encodeToString(decoded)) as JsonObject
             assertEquals(tag != null, "session_id" in encoded)
             if (tag != null) assertEquals(MobileJson.parseToJsonElement(tag), encoded["session_id"])
             assertEquals(decoded, MobileJson.decodeFromString<Envelope>(encoded.toString()))
         }
         val old = Envelope(1, "ping", "2026-10-12T00:00:00Z")
-        val encoded = MobileJson.parseToJsonElement(MobileJson.encodeToString(old)) as kotlinx.serialization.json.JsonObject
+        val encoded = MobileJson.parseToJsonElement(MobileJson.encodeToString(old)) as JsonObject
         assertFalse("conversation_id" in encoded)
         assertFalse("session_id" in encoded)
         assertFalse("session_state_cleared" in encoded)
@@ -693,6 +722,215 @@ class AuthoritativeSessionLiveTest {
             runCurrent()
             assertTrue(repo.observeStall("c").first())
         }
+
+    @Test fun freshCanonicalRefusalArmsExistingSwitchBackAction() =
+        runTest {
+            val (pump, repo) = repository()
+            val holder = ViewModelStore()
+            try {
+                val vm =
+                    ThreadViewModel(
+                        SavedStateHandle(mapOf("serverId" to "host", "conversationId" to "c")),
+                        repo,
+                        FakeConnectionStateSource(),
+                        ComposerDraftStore(),
+                    )
+                holder.put("thread", vm)
+                backgroundScope.launch { vm.state.collect {} }
+                pump.push(summary("s"))
+                pump.push(frame("session_settings", "s", payload = payload(settings("s"))))
+                runCurrent()
+                pump.push(canonicalEffect(1, "notice", "model_refusal_fallback", refusalContent("old-model", "refused")))
+                runCurrent()
+                assertEquals("old-model", vm.switchBackOffer.value?.originalModel)
+                val first = canonicalRefusalRow(repo, 1)
+                val originalOffer = requireNotNull(vm.switchBackOffer.value)
+                assertTrue(originalOffer.armedBy(first))
+                pump.push(canonicalEffect(2, "notice", "model_refusal_fallback", refusalContent("next-model", "again")))
+                runCurrent()
+                val offer = requireNotNull(vm.switchBackOffer.value)
+                assertEquals("next-model", offer.originalModel)
+                assertFalse(offer.armedBy(first))
+                assertTrue(offer.armedBy(canonicalRefusalRow(repo, 2)))
+                val resetGenerationRow = projectRefusal(repo.authoritativeThreads.current("host", "c").copy(generation = 12), 2)
+                assertTrue("same durable row survives runtime generations", offer.armedBy(resetGenerationRow))
+                val incomplete =
+                    JsonObject(
+                        (MobileJson.parseToJsonElement(refusalContent("missing", "unqualified")) as JsonObject) - "original_model",
+                    )
+                pump.push(canonicalEffect(3, "notice", "model_refusal_fallback", incomplete.toString()))
+                runCurrent()
+                assertNull("an unqualified canonical fallback clears the previous offer", vm.switchBackOffer.value)
+                pump.push(canonicalEffect(4, "notice", "model_refusal_fallback", refusalContent("next-model", "again")))
+                runCurrent()
+                assertNotNull(vm.switchBackOffer.value)
+                pump.push(summary("replacement"))
+                runCurrent()
+                assertNull(vm.switchBackOffer.value)
+            } finally {
+                holder.clear()
+            }
+        }
+
+    @Test fun freshCanonicalRootFailureRaisesExistingCompactRecoveryAction() =
+        runTest {
+            val (pump, repo) = repository()
+            val holder = ViewModelStore()
+            try {
+                val vm =
+                    ThreadViewModel(
+                        SavedStateHandle(mapOf("serverId" to "host", "conversationId" to "c")),
+                        repo,
+                        FakeConnectionStateSource(),
+                        ComposerDraftStore(),
+                    )
+                holder.put("thread", vm)
+                backgroundScope.launch { vm.state.collect {} }
+                pump.push(summary("s"))
+                runCurrent()
+                pump.push(canonicalEffect(1, "turn_end", null, contextFailure, status = "failed"))
+                runCurrent()
+                assertEquals(TurnRecoveryNotice.ContextTooLong, vm.turnOutcome.value)
+                pump.push(canonicalEffect(2, "turn_end", null, """{"outcome":"success"}""", parent = 9))
+                pump.push(canonicalEffect(3, "turn_end", null, """{"outcome":"success"}""", session = "retired"))
+                runCurrent()
+                assertEquals(TurnRecoveryNotice.ContextTooLong, vm.turnOutcome.value)
+                pump.push(canonicalEffect(4, "turn_end", null, """{"outcome":"success"}""", shown = false))
+                runCurrent()
+                assertNull(vm.turnOutcome.value)
+                pump.push(
+                    canonicalEffect(
+                        5,
+                        "turn_end",
+                        null,
+                        contextFailure,
+                        status = "failed",
+                    ),
+                )
+                runCurrent()
+                assertNotNull(vm.turnOutcome.value)
+                pump.push(summary("replacement"))
+                runCurrent()
+                assertNull(vm.turnOutcome.value)
+            } finally {
+                holder.clear()
+            }
+        }
+
+    @Test fun historicalCanonicalEffectsAndRepeatedLiveAdditionsNeverRearm() =
+        runTest {
+            val (pump, repo) = repository()
+            val refusals = mutableListOf<LiveRefusalEvent>()
+            val completions = mutableListOf<LiveRootTurnEnd>()
+            backgroundScope.launch { repo.observeLiveRefusalEvents("c").collect { refusals += it } }
+            backgroundScope.launch { repo.observeLiveRootTurnEnds("c").collect { completions += it } }
+            pump.push(summary("s"))
+            runCurrent()
+            val history =
+                listOf(
+                    canonicalEffect(1, "notice", "model_refusal_fallback", refusalContent("old", "refused")),
+                    canonicalEffect(2, "turn_end", null, contextFailure),
+                )
+            val items = history.map { ThreadItemDto.decode((it.payload as JsonObject)["item"] as JsonObject) }
+            assertEquals(AuthoritativeThreadOutcome.Applied, repo.authoritativeRoute.establishComplete("c", "e", 2, items, 0))
+            history.forEach(pump::push)
+            runCurrent()
+            assertTrue(refusals.none { it is LiveRefusalEvent.Refused })
+            assertTrue(completions.isEmpty())
+            // A live modification of an already restored occurrence is not a new refusal.
+            pump.push(
+                canonicalEffect(1, "notice", "model_refusal_fallback", refusalContent("old", "changed")).let { frame ->
+                    val raw = frame.payload as JsonObject
+                    val item = raw.getValue("item") as JsonObject
+                    frame.copy(
+                        payload =
+                            JsonObject(
+                                raw + ("version" to JsonPrimitive(3)) +
+                                    ("item" to JsonObject(item + ("rev" to JsonPrimitive(3)))),
+                            ),
+                    )
+                },
+            )
+            runCurrent()
+            assertTrue(refusals.none { it is LiveRefusalEvent.Refused })
+        }
+
+    @Test fun canonicalEffectReceiptsRejectReplacedSessionAndClosedConnection() =
+        runTest {
+            val (pump, repo) = repository()
+            val refusals = mutableListOf<LiveRefusalEvent.Refused>()
+            val completions = mutableListOf<LiveRootTurnEnd>()
+            backgroundScope.launch { repo.observeLiveRefusalEvents("c").collect { if (it is LiveRefusalEvent.Refused) refusals += it } }
+            backgroundScope.launch { repo.observeLiveRootTurnEnds("c").collect { completions += it } }
+            pump.push(summary("s"))
+            runCurrent()
+            pump.push(canonicalEffect(1, "notice", "model_refusal_fallback", refusalContent("old", "refused")))
+            pump.push(canonicalEffect(2, "turn_end", null, """{"outcome":"success"}"""))
+            runCurrent()
+            assertTrue(requireNotNull(refusals.single().currentSource).invoke())
+            assertTrue(completions.single().currentSource())
+            pump.push(canonicalEffect(1, "notice", "model_refusal_fallback", refusalContent("old", "refused")))
+            pump.push(canonicalEffect(2, "turn_end", null, """{"outcome":"success"}"""))
+            pump.push(canonicalEffect(3, "notice", "model_refusal_fallback", refusalContent("old", "foreign"), session = "foreign"))
+            runCurrent()
+            assertEquals("duplicate or foreign refusal cannot emit", 1, refusals.size)
+            assertEquals("duplicate root terminal cannot emit", 1, completions.size)
+            pump.push(summary("replacement"))
+            runCurrent()
+            assertFalse(requireNotNull(refusals.single().currentSource).invoke())
+            assertFalse(completions.single().currentSource())
+            pump.push(canonicalEffect(4, "turn_end", null, """{"outcome":"success"}""", session = "replacement"))
+            runCurrent()
+            assertTrue(completions.last().currentSource())
+            pump.close()
+            runCurrent()
+            assertFalse(completions.last().currentSource())
+        }
+
+    private fun canonicalRefusalRow(
+        repo: RemoteConversationRepository,
+        id: Long,
+    ) = projectRefusal(repo.authoritativeThreads.current("host", "c"), id)
+
+    private fun projectRefusal(
+        snapshot: AuthoritativeThreadSnapshot,
+        id: Long,
+    ): ThreadItem.ModelRefusal =
+        projectAuthoritativeThread("host", "c", snapshot)
+            .items
+            .filterIsInstance<ThreadItem.ModelRefusal>()
+            .single { it.canonicalIdentity?.item == id }
+
+    private val contextFailure = """{"is_error":true,"outcome":"error","terminal_reason":"prompt_too_long"}"""
+
+    private fun refusalContent(
+        original: String,
+        banner: String,
+    ) = kotlinx.serialization.json
+        .buildJsonObject {
+            put("original_model", JsonPrimitive(original))
+            put("fallback_model", JsonPrimitive("model"))
+            put("banner", JsonPrimitive(banner))
+            put("scope", JsonPrimitive("session"))
+        }.toString()
+
+    private fun canonicalEffect(
+        id: Long,
+        kind: String,
+        subtype: String?,
+        content: String,
+        session: String = "s",
+        parent: Long = 0,
+        shown: Boolean = true,
+        status: String = "done",
+    ): Envelope {
+        val item = """{"id":$id,"rev":$id,"order":$id,"kind":"$kind",
+            "status":"$status","active":false,"shown":$shown,"agent":"claude",
+            "session":"$session","summary":"",
+            ${if (kind == "turn_end") "\"turn\":\"turn-$id\",\"parent\":$parent," else ""}
+            ${subtype?.let { "\"subtype\":\"$it\"," }.orEmpty()}"content":$content}"""
+        return frame("thread_item_added", payload = """{"conversation_id":"c","epoch":"e","version":$id,"item":$item}""")
+    }
 
     private fun modal(
         id: String,

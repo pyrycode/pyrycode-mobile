@@ -181,3 +181,92 @@ internal fun ThreadEvidence.settledAgentPrecedes(
         settled.tools.all { it.isComplete && it.toolRunId == settled.runId && it.turn == settled.root.turn } &&
         owned.all { it in 0 until reply }
 }
+
+/** Rejoin the captured launch after a certified generation reset, retaining source and fact ownership. */
+internal fun ThreadEvidence.settledAgentAfterRecovery(
+    launched: ThreadEvidence,
+    captured: AgentFamilyEvidence,
+    followingText: String,
+): AgentFamilyEvidence? {
+    if (!admitted || !launched.admitted) return null
+    if (owner.kind == ThreadEvidenceKind.Legacy) {
+        return agentFamily(launched.owner)?.takeIf { settledAgentPrecedes(launched.owner, captured, followingText) }
+    }
+    val before = launched.owner
+    val oldGeneration = before.generation ?: return null
+    val currentGeneration = owner.generation ?: return null
+    if (before.kind != owner.kind ||
+        before.connection !== owner.connection ||
+        before.host != owner.host ||
+        owner.host.isNullOrBlank() ||
+        before.conversation != owner.conversation ||
+        before.epoch != owner.epoch ||
+        owner.epoch.isNullOrBlank() ||
+        currentGeneration < oldGeneration
+    ) {
+        return null
+    }
+    val family = agentFamily(owner) ?: return null
+    val capturedTool = captured.root.rawToolUseId()?.takeIf { it.isNotBlank() } ?: return null
+    if (family.root.rawToolUseId() != capturedTool) return null
+
+    fun retains(
+        previous: ThreadEvidenceRecord,
+        current: ThreadEvidenceRecord,
+    ): Boolean {
+        val old = previous.fact ?: return false
+        val now = current.fact ?: return false
+        if (old.id != now.id ||
+            old.kind != now.kind ||
+            old.session.isNullOrBlank() ||
+            old.turn.isNullOrBlank() ||
+            old.session != now.session ||
+            old.turn != now.turn ||
+            old.parent != now.parent ||
+            old.order != now.order ||
+            old.agent != now.agent ||
+            now.rev < old.rev
+        ) {
+            return false
+        }
+        if (previous.message.role == Role.Assistant) {
+            if (previous.fullText == current.fullText) return true
+            return old.active && !now.active && now.rev > old.rev && current.fullText.startsWith(previous.fullText)
+        }
+        val oldInput = old.content as? kotlinx.serialization.json.JsonObject ?: return false
+        val input = now.content as? kotlinx.serialization.json.JsonObject ?: return false
+        return listOf("tool_use_id", "name", "input").all { oldInput[it] == input[it] }
+    }
+    if (!retains(captured.root, family.root)) return null
+    if (captured.children.any { old ->
+            val current = family.children.singleOrNull { it.fact?.id == old.fact?.id } ?: return@any true
+            !retains(old, current)
+        }
+    ) {
+        return null
+    }
+    if (!settledAgentPrecedes(owner, family, followingText)) return null
+    val reply =
+        records.singleOrNull {
+            it.message.role == Role.Assistant && it.agentId == null && it.fullText == followingText
+        } ?: return null
+    val snapshot = sourceSnapshot ?: return null
+    val coverage = snapshot.coverage ?: return null
+    val proven = listOf(family.root, reply) + family.children
+    if (proven.any {
+            val fact = it.fact ?: return@any true
+            val order = fact.order?.takeIf { value -> value > 0 }?.toULong() ?: return@any true
+            fact.rev > snapshot.checkpoint || order !in coverage.lowerOrder..coverage.upperOrder
+        }
+    ) {
+        return null
+    }
+    return family
+}
+
+/** A controlled fragment must occur exactly once in this Agent's attributed assistant text. */
+internal fun AgentFamilyEvidence.ownsSingleProseFragment(text: String): Boolean {
+    if (text.isEmpty()) return false
+    val fragment = Regex(Regex.escape(text))
+    return children.filter { it.message.role == Role.Assistant }.sumOf { fragment.findAll(it.fullText).count() } == 1
+}

@@ -59,6 +59,8 @@ class StableConversationRepository(
     private val currentRepository: StateFlow<ConversationRepository?>,
     private val heldReadings: HostReadings? = null,
     private val readRetries: ReadCheckpointRetries? = null,
+    /** The host coordinator's negotiated thread route (#2175); it outlives connection churn like this facade. */
+    override val negotiatedThread: NegotiatedThread? = null,
 ) : ConversationRepository,
     ThreadSnapshotSource {
     override val runConfigurationReadings: RunConfigurationReadings =
@@ -159,6 +161,10 @@ class StableConversationRepository(
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> =
         currentRepository.flatMapLatest { repo -> repo?.observeLiveRefusalEvents(conversationId) ?: emptyFlow() }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override fun observeLiveRootTurnEnds(conversationId: String): Flow<LiveRootTurnEnd> =
+        currentRepository.flatMapLatest { repo -> repo?.observeLiveRootTurnEnds(conversationId) ?: emptyFlow() }
 
     /** The session-facts reading for [conversationId] (#890), held or switched as [observeAnnouncedModel] is. */
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> =
@@ -361,6 +367,7 @@ class StableConversationRepository(
         conversationId: String,
         checkpoint: ULong,
     ) {
+        if (negotiatedThread != null) return
         if (readRetries != null) {
             readRetries.qualify(currentRepository, conversationId, checkpoint)
         } else {
@@ -369,6 +376,26 @@ class StableConversationRepository(
     }
 
     override suspend fun delete(conversationId: String): Unit = live.delete(conversationId)
+
+    override suspend fun acknowledgeAuthoritativeReadCheckpoint(
+        conversationId: String,
+        checkpoint: ULong,
+        connection: Any?,
+        isQualified: () -> Boolean,
+    ) {
+        val owner = currentRepository.value?.takeIf { it === connection } ?: return
+        val qualified = {
+            currentRepository.value === owner &&
+                (negotiatedThread == null || (negotiatedThread.support.value as? ThreadSupport.Supported)?.connection === owner) &&
+                isQualified()
+        }
+        if (!qualified()) return
+        if (readRetries != null) {
+            readRetries.qualify(currentRepository, conversationId, checkpoint, owner, qualified)
+        } else if (qualified()) {
+            owner.markConversationRead(conversationId, checkpoint)
+        }
+    }
 
     override suspend fun rename(
         conversationId: String,

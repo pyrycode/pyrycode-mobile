@@ -1059,6 +1059,9 @@ if [ -n "${DETERMINISTIC}" ]; then
   if [ "${SCENARIO}" = "stop-background-task" ]; then
     # Existing canned roster rider owns retained task state and the stop_task control response.
     REPLAY_ENV=(PYRY_FAKE_CLAUDE_STREAM_JSON=1 PYRY_FAKE_CLAUDE_MCP_STATUS=1 PYRY_FAKE_CLAUDE_STREAM_ROSTER=1)
+    # The legacy roster has no creating tool. Supply explicit synthetic linked work for canonical history.
+    REPLAY_ENV+=("E2E_ROSTER_TASK_CHILD=${FAKE_BIN}")
+    FAKE_BIN="${REPO_ROOT}/scripts/e2e-roster-task.py"
   fi
   if [ -n "${FIXTURE_FILE_2}" ]; then
     REPLAY_ENV+=("PYRY_FAKE_CLAUDE_STREAM_REPLAY_SECOND=${FIXTURE_FILE_2}"

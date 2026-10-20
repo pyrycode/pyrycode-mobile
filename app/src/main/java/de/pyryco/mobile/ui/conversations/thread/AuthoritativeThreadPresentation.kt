@@ -11,10 +11,13 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.network.attachmentDisplayName
+import de.pyryco.mobile.data.network.isAttachmentIdShape
 import de.pyryco.mobile.data.repository.AuthoritativeLiveProgress
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.CanonicalRefusalIdentity
 import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
@@ -23,6 +26,7 @@ import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 
 /** Supplied-input presentation seam for #1988. No legacy roster or live-session attribution enters it. */
@@ -38,7 +42,33 @@ class AuthoritativeThreadPresentation internal constructor(
     internal val foregroundTool: ToolCall?,
     internal val certifiedCheckpoint: Long?,
     internal val shownRowRevisions: Map<String, Long>,
+    internal val sourceSnapshot: AuthoritativeThreadSnapshot,
 ) {
+    /** Latest certified estimate from this session's root terminals. Outcomes do not change cost ownership. */
+    internal fun reportedSessionCost(session: String): Double? {
+        val snapshot = sourceSnapshot
+        if (session.isEmpty() || snapshot.epoch.isNullOrEmpty() || snapshot.repairNeeded || snapshot.resetNeeded) return null
+        return snapshot.items
+            .asSequence()
+            .filter { item ->
+                item.kind == "turn_end" &&
+                    !item.active &&
+                    item.status in setOf("done", "finished", "failed") &&
+                    item.session == session &&
+                    !item.turn.isNullOrEmpty() &&
+                    (item.parent ?: 0) == 0L &&
+                    item.order != null &&
+                    item.order > 0 &&
+                    item.rev <= snapshot.checkpoint
+            }.sortedByDescending { it.order }
+            .mapNotNull { item ->
+                ((item.content as? JsonObject)?.get("cost_usd_total") as? JsonPrimitive)
+                    ?.takeUnless { it.isString }
+                    ?.doubleOrNull
+                    ?.takeIf { it.isFinite() && it > 0 }
+            }.firstOrNull()
+    }
+
     /** Waiting feedback carries no ordered read revision; anchor sight to admitted history. */
     internal val newestReadKey = rows.lastOrNull { it is ThreadRow.Delivered && it.listKey(0) in shownRowRevisions }?.listKey(0)
 
@@ -132,6 +162,8 @@ internal fun projectAuthoritativeThread(
                     identity(item.id),
                     block,
                     item.parent?.let(::identity).orEmpty(),
+                    de.pyryco.mobile.data.repository
+                        .CanonicalRefusalIdentity(host, conversation, snapshot.epoch.orEmpty(), item.id),
                     if (item.active && item.session == progress.sessionId) {
                         (item.content as? JsonObject)?.text("tool_use_id")?.let { progress.tools[it] }
                     } else {
@@ -274,11 +306,17 @@ internal fun projectAuthoritativeThread(
             )
         },
         ordered.asReversed().firstNotNullOfOrNull { item ->
-            if (!item.active || item.parent != null && item.parent > 0 || item.recordedTask() != null) return@firstNotNullOfOrNull null
+            // A tracked foreground shell also has a task link. Only its actual tool result proves
+            // that the invocation returned while the linked task can continue independently.
+            val returnedTask =
+                item.recordedTask() != null &&
+                    (item.kind != "tool_call" || (item.content as? JsonObject)?.obj("result") != null)
+            if (!item.active || item.parent != null && item.parent > 0 || returnedTask) return@firstNotNullOfOrNull null
             ((adapted[item.id]?.item as? ThreadItem.MessageItem)?.message?.toolCall)?.takeIf { it.status == ToolCallStatus.Running }
         },
         snapshot.checkpoint.takeIf { snapshot.epoch != null && !snapshot.repairNeeded && !snapshot.resetNeeded && it >= 0 },
         visible.mapNotNull { item -> adapted[item.id]?.let { it.listKey(0) to item.rev } }.toMap(),
+        snapshot,
     )
 }
 
@@ -347,6 +385,7 @@ private fun ThreadItemDto.displayRow(
     id: String,
     block: String?,
     parentId: String,
+    refusalIdentity: CanonicalRefusalIdentity,
     elapsedSeconds: Int?,
 ): ThreadRow.Delivered {
     val fields = content as? JsonObject
@@ -490,6 +529,16 @@ private fun ThreadItemDto.displayRow(
                         null
                     } else {
                         when (subtype) {
+                            "attachment_offered" ->
+                                fields.text("attachment_id")?.takeIf(::isAttachmentIdShape)?.let { attachmentId ->
+                                    fields.text("filename")?.let { filename ->
+                                        message(
+                                            Role.Assistant,
+                                            "",
+                                            attachments = listOf(MessageAttachment(attachmentId, attachmentDisplayName(filename))),
+                                        )
+                                    }
+                                }
                             "banner" ->
                                 fields.text("text")?.takeUnless { fields.text("level") == "info" }?.let {
                                     ThreadItem.Banner(
@@ -513,6 +562,7 @@ private fun ThreadItemDto.displayRow(
                                         it.displayText(),
                                         false,
                                         timestamp,
+                                        refusalIdentity,
                                     )
                                 }
                             "unrecognized_message" ->

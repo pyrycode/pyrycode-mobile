@@ -36,6 +36,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.repository.CanonicalRefusalIdentity
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.modalControl
@@ -64,9 +65,16 @@ data class SwitchBackOffer(
     val originalModel: String,
     val pending: Boolean,
     val failed: Boolean,
+    val canonicalIdentity: CanonicalRefusalIdentity? = null,
 ) {
-    /** Whether [item] is the fallback refusal row that armed this offer: the row's own `(type, ts)` identity. */
-    fun armedBy(item: ThreadItem.ModelRefusal): Boolean = item.fallbackModel != null && item.occurredAt == occurredAt
+    /** Match the actual occurrence. Canonical notices have no source timestamp. */
+    fun armedBy(item: ThreadItem.ModelRefusal): Boolean =
+        item.fallbackModel != null &&
+            if (canonicalIdentity != null || item.canonicalIdentity != null) {
+                canonicalIdentity != null && canonicalIdentity == item.canonicalIdentity
+            } else {
+                item.occurredAt == occurredAt
+            }
 }
 
 /**

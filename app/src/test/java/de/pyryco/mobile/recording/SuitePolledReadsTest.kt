@@ -3,8 +3,11 @@ package de.pyryco.mobile.recording
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -29,6 +32,150 @@ class SuitePolledReadsTest {
         SuiteStep("client", owner, frame(4, type)),
         SuiteStep("daemon", owner, frame(5, response, MobileJson.parseToJsonElement("""{"mode":"after"}"""), 4)),
     )
+
+    private fun cleared(id: Long = 10) =
+        frame(id, "session_settings", JsonObject(emptyMap())).copy(
+            conversationId = JsonPrimitive("chat"),
+            sessionStateCleared = JsonPrimitive(true),
+        )
+
+    private fun clearedModel(
+        source: List<SuiteStep>,
+        enabled: Boolean = true,
+    ) = SuitePolledReads(
+        source,
+        { it },
+        { 100 },
+        settings = true,
+        refusedBackfill = false,
+        cancelClearedSettings = enabled,
+        queryTypes = setOf("request_session_settings", "thread_catch_up"),
+    )
+
+    @Test fun clearedSettingsReadsWaitWithoutAnswersUntilTheRecordedConnectionEnds() {
+        val clear = cleared()
+        val model = clearedModel(listOf(SuiteStep("daemon", owner, clear), SuiteStep("close", owner)))
+        val ask = frame(80, "request_session_settings")
+        assertFalse(model.accepts(owner, ask))
+        model.observeCleared(owner, clear)
+        assertTrue(model.accepts(owner, ask))
+        assertTrue(model.send(owner, ask).isEmpty())
+        assertThrows(IllegalStateException::class.java) { model.assertComplete() }
+        model.connectionEnded("phone/other/0")
+        assertThrows(IllegalStateException::class.java) { model.assertComplete() }
+        model.connectionEnded(owner)
+        model.assertComplete()
+        assertFalse(model.accepts(owner, ask.copy(id = 81)))
+    }
+
+    @Test fun clearedSettingsReadsNeverUseTheReplacementConnectionsSnapshot() {
+        val clear = cleared()
+        val next = "phone/host-0/1"
+        val replacement = rows().take(2).map { it.copy(owner = next) }
+        val model = clearedModel(listOf(SuiteStep("daemon", owner, clear), SuiteStep("close", owner)) + replacement)
+        model.observeCleared(owner, clear)
+        val ask = frame(80, "request_session_settings")
+        assertTrue(model.accepts(owner, ask))
+        assertTrue(model.send(owner, ask).isEmpty())
+        model.steps.filter { it.direction == "settings_snapshot" }.forEach { assertTrue(model.delivered(it).isEmpty()) }
+        assertThrows(IllegalStateException::class.java) { model.assertComplete() }
+        model.connectionEnded(owner)
+        model.assertComplete()
+        assertEquals(
+            "before",
+            model.send(next, ask.copy(id = 81)).single().message!!.payload.let {
+                (it as JsonObject).getValue("mode").toString().trim('"')
+            },
+        )
+    }
+
+    @Test fun clearedSettingsReadStillRequiresItsRecordedOwnerAndCompleteConversationPayload() {
+        val clear = cleared()
+        val model = clearedModel(listOf(SuiteStep("daemon", owner, clear), SuiteStep("close", owner)))
+        model.observeCleared(owner, clear)
+        val ask = frame(80, "request_session_settings")
+        assertTrue(model.accepts(owner, ask))
+        assertFalse(model.accepts("phone/host-0/1", ask))
+        assertFalse(model.accepts("peer/host-0/0", ask))
+        for (body in listOf("""{"conversation_id":"other"}""", """{"conversation_id":"chat","extra":true}""")) {
+            assertFalse(model.accepts(owner, ask.copy(payload = MobileJson.parseToJsonElement(body))))
+        }
+    }
+
+    @Test fun missingEndFreshStateWritesErrorsAndRefusalsKeepClearedSettingsReadsStrict() {
+        val clear = cleared()
+        val begin = SuiteStep("daemon", owner, clear)
+        val ask = SuiteStep("client", owner, frame(20, "request_session_settings"))
+        val close = SuiteStep("close", owner)
+        val sources =
+            listOf(
+                listOf(begin),
+                listOf(begin, SuiteStep("daemon", owner, frame(21, "session_settings")), close),
+                listOf(begin, SuiteStep("client", owner, frame(21, "set_session_settings")), close),
+                listOf(begin, ask, SuiteStep("daemon", owner, frame(21, "error", reply = 20)), close),
+                listOf(begin, ask.copy(accepted = false), close),
+            )
+        for (source in sources) {
+            val model = clearedModel(source)
+            model.observeCleared(owner, clear)
+            assertFalse(model.accepts(owner, frame(80, "request_session_settings")))
+        }
+    }
+
+    @Test fun olderSettingsPolicyCannotCancelReadsWithoutAnEarlierSuccessfulSnapshot() {
+        val clear = cleared()
+        val model = clearedModel(listOf(SuiteStep("daemon", owner, clear), SuiteStep("close", owner)), enabled = false)
+        model.observeCleared(owner, clear)
+        assertFalse(model.accepts(owner, frame(80, "request_session_settings")))
+    }
+
+    @Test fun aDeliveredClearInvalidatesTheEarlierSnapshotBeforeItsConnectionEnds() {
+        val clear = cleared()
+        val model = clearedModel(rows().take(2) + listOf(SuiteStep("daemon", owner, clear), SuiteStep("close", owner)))
+        model.steps.filter { it.direction == "settings_snapshot" }.forEach { model.delivered(it) }
+        model.observeCleared(owner, clear)
+        assertTrue(model.send(owner, frame(80, "request_session_settings")).isEmpty())
+        model.connectionEnded(owner)
+        model.assertComplete()
+    }
+
+    @Test fun aCapturedUnansweredReadAfterClearMayBeOmittedWithoutRemovingItsClearOrEnd() {
+        val clear = cleared()
+        val source =
+            listOf(
+                SuiteStep("daemon", owner, clear),
+                SuiteStep("client", owner, frame(20, "request_session_settings")),
+                SuiteStep("close", owner),
+            )
+        val model = clearedModel(source)
+        assertEquals(listOf(source.first(), source.last()), model.steps)
+        model.observeCleared(owner, clear)
+        model.connectionEnded(owner)
+        model.assertComplete()
+    }
+
+    @Test fun theVersionTwoTapeActivatesTheClearOnlyOnDeliveryAndCancelsAtItsRecordedClose() {
+        val clear = cleared()
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    SuiteStep("connect", owner),
+                    SuiteStep("open", owner),
+                    SuiteStep("daemon", owner, clear),
+                    SuiteStep("close", owner),
+                    SuiteStep("inbound_end", owner),
+                ),
+                literalProducerIdentities = true,
+                recordedSettingsReads = true,
+                cancelledClearedSettingsReads = true,
+            )
+        val deliveries = tape.lifecycle("connect", owner)
+        val delivered = deliveries.single { it.direction == "daemon" }.message!!
+        tape.delivered(owner, delivered)
+        assertTrue(tape.send(owner, frame(80, "request_session_settings")).deliveries.isEmpty())
+        tape.lifecycle("close", owner)
+        tape.assertComplete()
+    }
 
     @Test fun settingsReadsUseOnlyTheLatestDeliveredSnapshotAndKeepExactPayloadAndOwner() {
         var next = 100L

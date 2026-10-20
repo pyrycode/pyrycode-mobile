@@ -26,6 +26,11 @@ import de.pyryco.mobile.data.network.RenameWorkspacePayloadDto
 import de.pyryco.mobile.data.network.RequestAttachmentPayloadDto
 import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
+import de.pyryco.mobile.data.network.ThreadDecodeOutcome
+import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.network.ThreadQueryDecoder
+import de.pyryco.mobile.data.network.ThreadQueryReply
+import de.pyryco.mobile.data.network.ThreadQueryRequest
 import de.pyryco.mobile.data.network.TransportEvent
 import de.pyryco.mobile.data.repository.ManagedSessionPump
 import de.pyryco.mobile.recording.RecordedSuiteNative
@@ -78,7 +83,9 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class SecondClientPeer(
     private val pairing: PairedServer,
+    private val threadEnabled: Boolean = false,
 ) : AutoCloseable {
+    private val clientInfo = if (threadEnabled) CLIENT_INFO.copy(capabilities = CLIENT_INFO.capabilities + "thread") else CLIENT_INFO
     internal val keyStore: DeviceStaticKeyStore = PeerDeviceKeyStore(pairing)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -193,10 +200,56 @@ class SecondClientPeer(
             )
         val row = rows.conversations.first { it.id == conversationId }
         return de.pyryco.mobile.data.repository
-            .ConversationReadMarks(row.readUpTo, row.latestEntryId)
+            .ConversationReadMarks(row.readUpTo, row.latestEntryId, row.lastShownVersion, threadEnabled)
     }
 
-    /** Confirm only a checkpoint obtained from this peer's received durable history. */
+    /** One certified newest window, with a fresh decoder and batches for each exact peer connection. */
+    internal suspend fun threadWindow(
+        conversationId: String,
+        timeoutMs: Long,
+    ): List<ThreadItemDto> {
+        check(threadEnabled) { "peer thread was not negotiated" }
+        val query = ThreadQueryRequest.CatchUp(conversationId, "", 0uL)
+        return awaiting("peer thread window", timeoutMs) {
+            link.request("peer thread window", resend = true) { live ->
+                var decoder: ThreadQueryDecoder? = null
+                val seen = mutableSetOf<Envelope>()
+                val items = mutableMapOf<Long, ThreadItemDto>()
+                try {
+                    val outcome =
+                        attempt(live, query.type, query.payload()) { id ->
+                            if (inReplyTo != id || !seen.add(this)) return@attempt false
+                            val current =
+                                decoder ?: ThreadQueryDecoder(pairing.serverId, System.identityHashCode(live).toString(), id, query)
+                                    .also { decoder = it }
+                            var complete = false
+                            current.decode(this).forEach { decoded ->
+                                when (decoded) {
+                                    is ThreadDecodeOutcome.Pending -> Unit
+                                    is ThreadDecodeOutcome.Repair -> error("peer thread rejected: ${decoded.code}")
+                                    is ThreadDecodeOutcome.Complete ->
+                                        when (val reply = decoded.value) {
+                                            is ThreadQueryReply.Batch -> reply.items.forEach { items[it.id] = it }
+                                            is ThreadQueryReply.Success -> complete = true
+                                            else -> error("peer thread query did not complete")
+                                        }
+                                }
+                            }
+                            complete
+                        }
+                    when (outcome) {
+                        is RedialingLink.Attempt.Answered -> RedialingLink.Attempt.Answered(items.values.toList())
+                        RedialingLink.Attempt.Ended -> RedialingLink.Attempt.Ended
+                        RedialingLink.Attempt.NotSent -> RedialingLink.Attempt.NotSent
+                    }
+                } finally {
+                    decoder?.abandon()
+                }
+            }
+        }
+    }
+
+    /** Confirm only a checkpoint obtained from this peer's received history or certified thread facts. */
     internal suspend fun markRead(
         conversationId: String,
         checkpoint: ULong,
@@ -462,6 +515,9 @@ class SecondClientPeer(
                 .filter { it.isFor(conversationId, type) }[occurrence - 1]
         }
 
+    /** One immutable peer snapshot, including dismissals that carry no conversation ID. */
+    internal fun recorded(): List<Envelope> = received.value
+
     /**
      * The frames recorded so far that name [conversationId], in arrival order (#977). A snapshot: frames
      * that arrive later are not in it. Callers report counts and booleans from it, never payload text.
@@ -559,11 +615,11 @@ class SecondClientPeer(
      */
     private suspend fun dialLink(): Link? {
         val transport =
-            RecordedSuiteNative.peerTransport(pairing, CLIENT_INFO)
-                ?: OkHttpRelayTransport(pairing, CLIENT_INFO, OkHttpRelayTransport.defaultClient())
+            RecordedSuiteNative.peerTransport(pairing, clientInfo)
+                ?: OkHttpRelayTransport(pairing, clientInfo, OkHttpRelayTransport.defaultClient())
         val pump =
             RecordedSuiteNative.pump(transport) {
-                NoiseSessionPump(transport, NoiseSessionFactory(keyStore, SinglePairingStore(pairing), CLIENT_INFO))
+                NoiseSessionPump(transport, NoiseSessionFactory(keyStore, SinglePairingStore(pairing), clientInfo))
             }
         var settled: Link? = null
         try {
@@ -574,7 +630,8 @@ class SecondClientPeer(
                     transport.connect()
                     if (transport.events.first() !is TransportEvent.Up) return@withTimeoutOrNull null
                     pump.start()
-                    if (pump.state.first { it !is PumpState.Handshaking } !is PumpState.Open) return@withTimeoutOrNull null
+                    val opened = pump.state.first { it !is PumpState.Handshaking } as? PumpState.Open ?: return@withTimeoutOrNull null
+                    if (threadEnabled && !setOf("thread", "interactive").all { it in opened.capabilities }) return@withTimeoutOrNull null
                     val dialed = Link(pump, scope.launch { pump.inbound.collect(::record) })
                     val probe = attempt(dialed, "list_conversations", JsonObject(emptyMap())) { id -> inReplyTo == id }
                     dialed.takeIf { probe is RedialingLink.Attempt.Answered }
@@ -685,7 +742,15 @@ class SecondClientPeer(
 
         /** The id field of each prompt the daemon re-sends to a new connection. */
         val PROMPT_ID_FIELDS = mapOf("modal_shown" to "modal_id", "question_shown" to "question_batch_id")
-        val CLIENT_INFO = NoiseClientInfo(deviceName = "e2e-peer", clientVersion = "e2e-peer")
+
+        // Raw producer diagnostics require the legacy stream. This independent device never supplies
+        // the phone's rendered evidence, which remains bound to its negotiated authoritative route.
+        val CLIENT_INFO =
+            NoiseClientInfo(
+                deviceName = "e2e-peer",
+                clientVersion = "e2e-peer",
+                capabilities = listOf("interactive", "multi_agent", "stop_background_task"),
+            )
         const val PERMISSION_CLASS = "permission"
         const val ALLOW_ONCE = "allow_once"
         const val REMOTE_SOURCE = "remote"

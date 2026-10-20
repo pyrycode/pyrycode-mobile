@@ -175,14 +175,15 @@ mutation-consuming affordance needs its own reachability check before the flag c
 gating consumer reads it (through the [facade](stable-conversation-repository.md)) to hide these actions
 until that milestone lands. See [`../codebase/507.md`](../codebase/507.md).
 
-## Opt-in thread negotiation (#2244)
+<a id="opt-in-thread-negotiation-2244"></a>
 
-A non-empty `authoritativeHostId` opts the coordinator and repository into the required-thread contract.
-Split A remains opt-in: production hello capabilities, replay cursor and
-`RelayConnectionFactory.create`'s empty authoritative host configuration are unchanged. #2245 owns
-production activation together with negotiated provider/screen binding and suppression of cached content
-for Missing hosts. Advertising `thread` before that screen binding would suppress the raw frames the
-current production thread still needs. #2246 owns the genuine restart scenario and captures.
+## Required thread negotiation
+
+Production supplies the saved host identity to the coordinator, repository and thread provider.
+Hello requests `thread` and `interactive` without a legacy content replay cursor.
+The screen binds to that exact provider and suppresses cached content for Missing hosts.
+There is no legacy content fallback. Explicit legacy fixtures retain their own capability list.
+Ticket #2246 owns the separate genuine restart scenario and named captures.
 
 `ThreadSupport` starts Unverified. Only the current authenticated `PumpState.Open` acknowledgement
 grants Supported, and it must grant both `thread` and `interactive`; every other granted set is Missing.
@@ -199,7 +200,7 @@ ownership as well. A retired pump's late Open cannot restore support or reopen q
 stores retain separate items across reconnects even when hosts reuse conversation and item IDs;
 negotiation changes no ordering, deduplication, paging, settlement or read semantics.
 
-For an opted-in host, collecting `observeThreadSnapshot` emits the existing legacy projection without
+For a required-thread host, collecting `observeThreadSnapshot` emits the existing legacy projection without
 sending backfill. `requestHistory` and `requestAttentionHistory` throw
 `IllegalStateException("legacy_content_request_refused")` without sending, before and after negotiation.
 Authoritative open/page requests refuse before acknowledgement, for Missing, and after retirement;
@@ -262,8 +263,19 @@ revision and `completedVersion` cannot certify catch-up. The newest row must cur
 be visible with reveal complete, and intermediate unread appends need their own sight.
 Retired composition, host, epoch, generation and captured connection bindings reject
 new qualification. See [foreground checkpoints](thread-screen.md#what-it-does).
-The seam remains dormant; #1988 owns activation and combined daemon/live acceptance,
-with #1984 owning sync/cache and #1986 queue settlement.
+Production binds this seam to its exact current connection. Sync/cache and queue
+settlement retain their existing daemon-owned facts.
+
+An admitted root turn ending requests attention recovery and conversation-summary
+metadata. A child ending refreshes only an already-open destination query and summary.
+Summary metadata never certifies a thread revision. Only the correlated terminal marker
+does. Query leases are counted on the producing repository and released idempotently.
+Model-catalog clear/fresh ownership is separate from current-session ownership, so borrowed
+or unresolved vocabulary cannot grant prompt, status or settings authority.
+
+Applying a remembered model to a new chat explicitly requests a fresh session
+reading. Observation alone sends no request. The subsequent write stays on the exact
+host repository that supplied that reading, before navigation into the new chat.
 
 **Legacy receipt evidence (#1912).** `ThreadSnapshot.readEvidence` binds durable
 `history_entry_id` claims to the exact row version they produced, across history pages,
@@ -524,3 +536,7 @@ unconditional legacy refusal and synchronous ownership checks above; they are no
   selector that picks the Fake or the facade is **[#350](../codebase/350.md)**; since #631 it defaults
   to the facade, with the fake selected explicitly for demo builds and ordinary instrumentation.
 </content>
+
+## Fresh required-thread effects
+
+Fresh accepted `thread_item_added` facts can emit dedicated refusal and root-completion effects for the required daemon thread route. Query results, cache restoration, duplicate additions and changes to an existing item cannot arm recovery actions. Delivery requires the current connection lifetime, epoch, generation, stored fact and session. The view model also checks the current negotiated connection identity. No synthetic legacy event or timestamp is introduced. See [the activation plan](../../specs/architecture/2245-production-daemon-thread.md).

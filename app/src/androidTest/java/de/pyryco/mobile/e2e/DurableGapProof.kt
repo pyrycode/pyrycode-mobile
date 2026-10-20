@@ -19,6 +19,10 @@ import androidx.test.ext.junit.rules.ActivityScenarioRule
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.ThreadQueryReply
+import de.pyryco.mobile.data.network.ThreadQueryRequest
+import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
+import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.data.repository.projectDisplay
@@ -29,8 +33,11 @@ import de.pyryco.mobile.ui.conversations.thread.ThreadRow
 import de.pyryco.mobile.ui.conversations.thread.foldQueuedRows
 import de.pyryco.mobile.ui.conversations.thread.ownedReplyMatcher
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.koin.core.context.GlobalContext
@@ -45,6 +52,8 @@ internal class DurableGapProof(
     private val cache get() = GlobalContext.get().get<ConversationCache>()
     private val fault = DaemonFaultControl()
     private var finalRows: List<ThreadItem>? = null
+    private var authoritativeBaseline: AuthoritativeThreadSnapshot? = null
+    private var finalAuthoritative: ThreadEvidence? = null
     val prefix = "e2e1833-" + RecordedSuiteNative.uniqueStamp()
     val olderPost = "$prefix-a-000"
     private val batchSize = 120
@@ -52,6 +61,32 @@ internal class DurableGapProof(
     val newestPost = "$prefix-b-${(batchSize - 1).toString().padStart(3, '0')}"
 
     fun cacheBaseline() {
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId))
+        val repository = runBlocking { withTimeout(30_000) { bundle.coordinator.currentRepository.first { it != null } } }
+        if (harnessThreadEvidence(checkNotNull(repository)).kind == ThreadEvidenceKind.Authoritative) {
+            DurableHistoryProbe.end()
+            runBlocking {
+                withTimeout(30_000) {
+                    while (true) {
+                        val saved = cache.readAuthoritativeThread(serverId, conversationId)?.toSnapshot()
+                        if (saved != null &&
+                            saved.checkpoint > 0 &&
+                            saved.checkpoint >= saved.completedVersion &&
+                            saved.coverage != null &&
+                            !saved.repairNeeded &&
+                            !saved.resetNeeded &&
+                            saved.items.any { it.kind == "assistant_message" && !it.active && it.status == "done" }
+                        ) {
+                            check(bundle.coordinator.currentRepository.value === repository) { "durable baseline source changed" }
+                            authoritativeBaseline = saved
+                            return@withTimeout
+                        }
+                        delay(50)
+                    }
+                }
+            }
+            return
+        }
         DurableHistoryProbe.begin(conversationId)
         runBlocking {
             withTimeout(30_000) {
@@ -83,7 +118,12 @@ internal class DurableGapProof(
         // The same durable home survives, but a fresh process cannot replay the missing ring.
         fault.stop()
         fault.start()
-        DurableHistoryProbe.begin(conversationId)
+        val baseline = authoritativeBaseline
+        if (baseline != null) {
+            AuthoritativeHistoryProbe.begin(serverId, conversationId, baseline)
+        } else {
+            DurableHistoryProbe.begin(conversationId)
+        }
     }
 
     fun catchUp(
@@ -92,6 +132,10 @@ internal class DurableGapProof(
         reply: ProducedReplyEvidence,
         cachedRows: List<SemanticsMatcher>,
     ) {
+        if (authoritativeBaseline != null) {
+            catchUpAuthoritative(reconnect, promptText, reply)
+            return
+        }
         try {
             reconnect()
             try {
@@ -215,9 +259,261 @@ internal class DurableGapProof(
         }
     }
 
+    /** Recover an accepted saved tail, or walk real older pages after an independently observed reset. */
+    private fun catchUpAuthoritative(
+        reconnect: () -> Unit,
+        promptText: String,
+        reply: ProducedReplyEvidence,
+    ) {
+        val baseline = checkNotNull(authoritativeBaseline)
+        val expected =
+            (0 until batchSize).map { "$prefix-a-${it.toString().padStart(3, '0')}" } +
+                (0 until batchSize).map { "$prefix-b-${it.toString().padStart(3, '0')}" }
+        try {
+            reconnect()
+            rule.waitUntil(30_000) {
+                AuthoritativeHistoryProbe.current() &&
+                    AuthoritativeHistoryProbe.certificates().isNotEmpty() &&
+                    AuthoritativeHistoryProbe.requests().size ==
+                    AuthoritativeHistoryProbe.certificates().size + AuthoritativeHistoryProbe.resets().size &&
+                    authoritativeEvidence()?.admitted == true
+            }
+            rule.waitForIdle()
+            val initialRequests = AuthoritativeHistoryProbe.requests()
+            val savedRequest =
+                initialRequests.first() as? ThreadQueryRequest.CatchUp
+                    ?: throw AssertionError("saved-checkpoint recovery did not start with catch-up")
+            assertEquals("saved source epoch", baseline.epoch, savedRequest.epoch)
+            assertEquals("saved source checkpoint", baseline.checkpoint.toULong(), savedRequest.version)
+            assertTrue("no page demand before the older gesture", initialRequests.none { it is ThreadQueryRequest.Page })
+            val resets = AuthoritativeHistoryProbe.resets()
+            val recoveryEpoch =
+                resets
+                    .singleOrNull()
+                    ?.reply
+                    ?.checkpoint
+                    ?.epoch ?: baseline.epoch
+            if (resets.isEmpty()) {
+                val certificate = AuthoritativeHistoryProbe.certificates().single()
+                assertTrue("the exact saved request was certified", certificate.request === savedRequest)
+                val coverage =
+                    certificate.reply.coverage as? ThreadQueryReply.Coverage.CatchUp
+                        ?: throw AssertionError("saved tail was not certified")
+                assertEquals("complete captured source interval", savedRequest.version, coverage.fromVersion)
+                assertTrue("bounded changed tail", certificate.reply.checkpoint.version - savedRequest.version <= 1024uL)
+                assertEquals("one accepted saved-tail request", 1, initialRequests.size)
+            } else {
+                val reset = resets.single()
+                assertTrue("reset belongs to the exact accepted saved request", reset.request === savedRequest)
+                assertTrue(
+                    "reset names its actual current source",
+                    reset.reply.checkpoint.epoch
+                        .isNotBlank(),
+                )
+                val certificates = AuthoritativeHistoryProbe.certificates()
+                val newest = certificates.first()
+                val opening =
+                    newest.request as? ThreadQueryRequest.CatchUp
+                        ?: throw AssertionError("reset did not request a fresh window")
+                assertEquals("reset is followed by its exact zero request", initialRequests[1], opening)
+                assertEquals("fresh window names the actual reset source", recoveryEpoch, opening.epoch)
+                assertEquals("fresh window begins without a borrowed checkpoint", 0uL, opening.version)
+                val window =
+                    newest.reply.coverage as? ThreadQueryReply.Coverage.Window
+                        ?: throw AssertionError("reset did not receive a certified newest window")
+                assertTrue("fresh window starts a real older gap", window.olderExists)
+                assertTrue("fresh window is from the observed reset generation", newest.snapshot.generation > 0)
+                for (extra in certificates.drop(1)) {
+                    val request =
+                        extra.request as? ThreadQueryRequest.CatchUp
+                            ?: throw AssertionError("page arrived without a gesture")
+                    val coverage =
+                        extra.reply.coverage as? ThreadQueryReply.Coverage.CatchUp
+                            ?: throw AssertionError("unexpected replacement window")
+                    assertEquals("same source follow-up epoch", recoveryEpoch, request.epoch)
+                    assertEquals("follow-up begins at the freshly certified checkpoint", newest.reply.checkpoint.version, request.version)
+                    assertEquals("follow-up certifies its actual requested interval", request.version, coverage.fromVersion)
+                }
+                assertTrue("at most one actual post-reset follow-up", certificates.size <= 2)
+                val first = checkNotNull(authoritativeEvidence())
+                val source = first.owner
+                assertTrue("newest post was actually recovered", first.records.any { it.fullText == newestPost })
+                assertTrue("older post is genuinely absent", first.records.none { it.fullText == olderPost })
+                assertTrue("the missed reply is genuinely absent", reply.admitted(first, serverId) == null)
+                var pulls = 0
+                while (checkNotNull(authoritativeEvidence()).sourceSnapshot?.coverage?.olderExists == true) {
+                    check(pulls < 16) { "older page walk exceeded the bounded fixture" }
+                    val before = checkNotNull(authoritativeEvidence())
+                    check(source.matches(before.owner)) { "older walk source changed" }
+                    val previous = checkNotNull(before.sourceSnapshot?.coverage)
+                    val oldest = before.records.first { it.message.toolCall == null && it.fullText.isNotBlank() }
+                    val requests = AuthoritativeHistoryProbe.requests()
+                    val proofs = AuthoritativeHistoryProbe.certificates()
+                    val bubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+                    rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(oldest.fullText) and bubble)
+                    rule.onNode(hasText(oldest.fullText) and bubble, useUnmergedTree = true).assertIsDisplayed()
+                    assertEquals("revealing the supplied oldest row is inert", requests, AuthoritativeHistoryProbe.requests())
+                    pull()
+                    rule.waitUntil(30_000) {
+                        AuthoritativeHistoryProbe.current() &&
+                            AuthoritativeHistoryProbe.requests().size == requests.size + 1 &&
+                            AuthoritativeHistoryProbe.certificates().size == proofs.size + 1 &&
+                            authoritativeEvidence()?.let {
+                                source.matches(it.owner) &&
+                                    it.sourceSnapshot
+                                        ?.coverage
+                                        ?.lowerOrder
+                                        ?.let { lower -> lower < previous.lowerOrder } == true
+                            } == true
+                    }
+                    val proof = AuthoritativeHistoryProbe.certificates().last()
+                    val request =
+                        proof.request as? ThreadQueryRequest.Page
+                            ?: throw AssertionError("older gesture did not request a page")
+                    assertTrue("page is the actual newly accepted request", AuthoritativeHistoryProbe.requests().last() === request)
+                    assertEquals("page begins at the previous actual continuation", previous.continuation, request.beforeOrder)
+                    val coverage =
+                        proof.reply.coverage as? ThreadQueryReply.Coverage.Window
+                            ?: throw AssertionError("older gesture did not certify a window")
+                    assertEquals("page's exclusive upper boundary", request.beforeOrder, coverage.upperOrder)
+                    assertEquals("actual continuation matches lower boundary", coverage.lowerOrder, coverage.continuation)
+                    assertEquals("page source epoch", recoveryEpoch, proof.reply.checkpoint.epoch)
+                    val accumulated = checkNotNull(checkNotNull(authoritativeEvidence()).sourceSnapshot?.coverage)
+                    assertEquals("accumulated coverage is continuous", coverage.lowerOrder, accumulated.lowerOrder)
+                    assertEquals("accumulated coverage retains its newest boundary", previous.upperOrder, accumulated.upperOrder)
+                    rule.waitForIdle()
+                    assertEquals(
+                        "page arrival does not initiate another demand",
+                        requests.size + 1,
+                        AuthoritativeHistoryProbe.requests().size,
+                    )
+                    pulls++
+                }
+                assertTrue("this fixture crossed multiple real older pages", pulls >= 2)
+                assertEquals(
+                    "older walk reached its certified beginning",
+                    false,
+                    checkNotNull(authoritativeEvidence()).sourceSnapshot?.coverage?.olderExists,
+                )
+            }
+            rule.waitUntil(30_000) {
+                AuthoritativeHistoryProbe.current() &&
+                    authoritativeEvidence()?.let { evidence ->
+                        val texts = evidence.records.map { it.fullText }
+                        evidence.admitted && expected.all { it in texts } && reply.admitted(evidence, serverId) != null
+                    } == true
+            }
+            val evidence = checkNotNull(authoritativeEvidence())
+            val snapshot = checkNotNull(evidence.sourceSnapshot)
+            val certificates = AuthoritativeHistoryProbe.certificates()
+            val version = certificates.maxOf { it.reply.checkpoint.version }
+            assertEquals("recovered source epoch", recoveryEpoch, snapshot.epoch)
+            assertTrue("current source certifies every actual recovery", snapshot.checkpoint.toULong() >= version)
+            assertTrue("current source is completely certified", snapshot.checkpoint >= snapshot.completedVersion)
+            assertEquals(
+                "every accepted request has an exact terminal receipt",
+                AuthoritativeHistoryProbe.requests().size,
+                certificates.size + AuthoritativeHistoryProbe.resets().size,
+            )
+            assertEquals("no legacy content request", 0, AuthoritativeHistoryProbe.legacyRequests())
+            val recovered = checkNotNull(reply.admitted(evidence, serverId))
+            assertEquals("complete independently produced reply", reply.text, recovered.records.joinToString("") { it.fullText })
+            val terminal =
+                snapshot.items.single {
+                    it.kind == "turn_end" &&
+                        (it.parent ?: 0) == 0L &&
+                        it.session == recovered.session &&
+                        it.turn == recovered.turn
+                }
+            assertTrue(
+                "completed root turn is certified",
+                !terminal.active && terminal.status == "done" && terminal.rev.toULong() <= version,
+            )
+            val end = terminal.content as JsonObject
+            assertEquals("successful source completion", JsonPrimitive("success"), end["outcome"])
+            assertEquals("source completion is not an error", JsonPrimitive(false), end["is_error"])
+            assertEquals("source completed its turn", JsonPrimitive("end_turn"), end["stop_reason"])
+
+            val baselineRows = authoritativeThreadEvidence(serverId, conversationId, Any(), baseline).records
+            val retained =
+                baselineRows.map { old ->
+                    val held =
+                        evidence.records.single { now ->
+                            if (recoveryEpoch == baseline.epoch) {
+                                now.fact?.id == checkNotNull(old.fact).id
+                            } else {
+                                now.session == old.session &&
+                                    now.turn == old.turn &&
+                                    now.message.role == old.message.role &&
+                                    now.fullText == old.fullText &&
+                                    (now.fact?.parent ?: 0) == (old.fact?.parent ?: 0) &&
+                                    (
+                                        old.message.role != Role.User ||
+                                            (
+                                                (old.fact?.content as? JsonObject)?.get("message_id")?.let { id ->
+                                                    (now.fact?.content as? JsonObject)?.get("message_id") == id
+                                                } == true
+                                            )
+                                    )
+                            }
+                        }
+                    assertEquals("saved source session", old.session, held.session)
+                    assertEquals("saved source turn", old.turn, held.turn)
+                    assertEquals("saved source role", old.message.role, held.message.role)
+                    assertEquals("saved source text", old.fullText, held.fullText)
+                    held
+                }
+            val texts = evidence.records.map { it.fullText }
+            assertEquals("chronological durable posts, each once", expected, texts.filter { it.startsWith(prefix) })
+            val indices = recovered.records.map { record -> evidence.records.indexOfFirst { it.fact?.id == record.fact?.id } }
+            assertTrue("recovered reply fragments are chronological", indices == indices.sorted())
+            assertTrue(
+                "recovered reply lies between both durable post batches",
+                indices.all { it > texts.indexOf(lastOlderPost) && it < texts.indexOf("$prefix-b-000") },
+            )
+            val newest = evidence.records.single { it.fullText == newestPost }
+            assertTrue("the recovery certificate covers the latest synthetic fact", checkNotNull(newest.fact).rev.toULong() <= version)
+            rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(newestPost))
+            rule.onNodeWithText(newestPost, useUnmergedTree = true).assertIsDisplayed()
+            val bubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+            val baselineMatchers =
+                retained.filter { it.message.role in setOf(Role.User, Role.Assistant) }.map {
+                    if (it.message.role == Role.Assistant) ownedReplyMatcher(it) else hasText(it.fullText) and bubble
+                }
+            val requests = AuthoritativeHistoryProbe.requests()
+            assertRenderedOrder(
+                baselineMatchers +
+                    listOf(hasText(lastOlderPost) and bubble, hasText(promptText) and bubble) +
+                    recovered.records.map(::ownedReplyMatcher) + listOf(hasText("$prefix-b-000") and bubble),
+            )
+            assertEquals("rendered reveals issue no history demand", requests, AuthoritativeHistoryProbe.requests())
+            assertTrue("the accepted source remains current through rendering", AuthoritativeHistoryProbe.current())
+            finalAuthoritative = evidence
+        } finally {
+            AuthoritativeHistoryProbe.end()
+        }
+    }
+
+    private fun authoritativeEvidence(): ThreadEvidence? =
+        runBlocking {
+            val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+            val bundle = registry.connectionFor(serverId) ?: return@runBlocking null
+            val repository = bundle.coordinator.currentRepository.value as? RemoteConversationRepository ?: return@runBlocking null
+            val evidence = harnessThreadEvidence(repository).observe(conversationId).first()
+            evidence.takeIf {
+                registry.connectionFor(serverId) === bundle &&
+                    bundle.coordinator.currentRepository.value === repository &&
+                    it.owner.connection === repository
+            }
+        }
+
     fun messages(): List<String> =
-        (finalRows ?: DurableHistoryProbe.rows()).filterIsInstance<ThreadItem.MessageItem>().map {
-            it.message.content
+        if (authoritativeBaseline != null) {
+            (finalAuthoritative ?: authoritativeEvidence())?.records.orEmpty().map { it.fullText }
+        } else {
+            (finalRows ?: DurableHistoryProbe.rows()).filterIsInstance<ThreadItem.MessageItem>().map {
+                it.message.content
+            }
         }
 
     /** Compare rendered positions across lazy viewports, rather than repository row indices. */

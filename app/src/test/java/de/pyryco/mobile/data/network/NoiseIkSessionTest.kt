@@ -88,7 +88,7 @@ class NoiseIkSessionTest {
                 assertEquals(listOf("v2"), hello.protocolVersions)
                 assertEquals("secret-tok", hello.token)
                 assertFalse(hello.toString().contains("secret-tok"))
-                assertEquals(listOf("interactive", "multi_agent", "stop_background_task"), hello.capabilities)
+                assertEquals(listOf("interactive", "multi_agent", "stop_background_task", "thread"), hello.capabilities)
             } finally {
                 session.close()
             }
@@ -238,7 +238,29 @@ class NoiseIkSessionTest {
         val envelope = MobileJson.decodeFromString<Envelope>(helloJson)
         val hello = MobileJson.decodeFromJsonElement<HelloClientPayload>(envelope.payload)
         // #1119: multi_agent rides after interactive, so the daemon shows this phone Codex conversations.
-        assertEquals(listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT, CAPABILITY_STOP_BACKGROUND_TASK), hello.capabilities)
+        assertEquals(
+            listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT, CAPABILITY_STOP_BACKGROUND_TASK, CAPABILITY_THREAD),
+            hello.capabilities,
+        )
+    }
+
+    @Test
+    fun handshake_usesDiagnosticPeersExplicitCapabilities() {
+        val responder = TestResponder()
+        val diagnosticCapabilities = listOf("interactive", "multi_agent", "stop_background_task")
+        val session =
+            NoiseIkSession(
+                newPrivateKey(),
+                responder.staticPublicKey,
+                "tok",
+                clientInfo.copy(capabilities = diagnosticCapabilities),
+            )
+        val hello =
+            MobileJson.decodeFromJsonElement<HelloClientPayload>(
+                MobileJson.decodeFromString<Envelope>(responder.readInit(session.writeInit())).payload,
+            )
+        assertEquals(diagnosticCapabilities, hello.capabilities)
+        session.close()
     }
 
     @Test

@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.e2e.InteractiveStreamE2ETest
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
 
 /** Every method delegates to the original scenario, including its original native assertions. */
@@ -17,7 +18,7 @@ class RecordedMobileSuiteTest {
     @get:Rule(order = Int.MIN_VALUE + 1)
     val cleanup = original.sessionCleanup
 
-    @get:Rule val compose = original.composeTestRule
+    @get:Rule val compose: TestRule = RecordedActivityRule(original.composeTestRule, RecordedSuiteNative::beforePhoneTeardown)
 
     @get:Rule val ime = original.testIme
 

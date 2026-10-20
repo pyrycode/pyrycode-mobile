@@ -39,6 +39,7 @@ import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
 import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_ADDED
 import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_CHANGED
 import de.pyryco.mobile.data.network.TYPE_THREAD_TEXT_APPEND
+import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.network.ThreadQueryReply
 import de.pyryco.mobile.data.network.ToolProgressPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
@@ -76,6 +77,7 @@ import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 
@@ -103,7 +105,7 @@ import kotlinx.serialization.json.encodeToJsonElement
  */
 class RemoteConversationRepository internal constructor(
     private val pump: SessionPump,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     /**
      * The connection-level device name sent as `register_push_token`'s `device_name` (#359) — the
      * same value [de.pyryco.mobile.data.network.NoiseClientInfo.deviceName] puts in the `hello`
@@ -203,17 +205,84 @@ class RemoteConversationRepository internal constructor(
             authoritativeHostId,
             authoritativeThreads,
             onRepair = { authoritativeQueries.repair(it) },
+            onFreshAdded = ::publishFreshAuthoritativeEffect,
             onApplied = { conversation, id, generation ->
                 val snapshot = authoritativeThreads.current(authoritativeHostId, conversation)
+                val item = snapshot.items.firstOrNull { it.id == id }
                 if (authoritativeLiveEnabled() &&
                     snapshot.generation == generation &&
-                    snapshot.items.any { it.id == id && it.isCompletion() }
+                    item?.kind == "turn_end"
                 ) {
-                    authoritativeQueries.refreshAttention(conversation)
-                    RelayLog.d { "event=attention_completion source=live outcome=recovery_requested" }
+                    if (item.isCompletion()) {
+                        authoritativeQueries.refreshAttention(conversation)
+                        RelayLog.d { "event=attention_completion source=live outcome=recovery_requested" }
+                    } else {
+                        authoritativeQueries.refresh(conversation, generation)
+                    }
+                    refreshAuthoritativeReadFacts(conversation, generation)
                 }
             },
         )
+
+    /** Dedicated effects of a first live addition. Queries, resets and cache restoration never enter here. */
+    private fun publishFreshAuthoritativeEffect(
+        conversation: String,
+        epoch: String,
+        generation: Long,
+        item: ThreadItemDto,
+    ) {
+        val session = item.session?.takeIf { it.isNotBlank() } ?: return
+        if (epoch.isBlank() || item.active || (item.order ?: 0) <= 0) return
+        val currentSource = {
+            val snapshot = authoritativeThreads.current(authoritativeHostId, conversation)
+            authoritativeLiveEnabled() &&
+                snapshot.epoch == epoch &&
+                snapshot.generation == generation &&
+                !snapshot.resetNeeded &&
+                sessionLiveAdmission.currentBinding(conversation) == session &&
+                snapshot.items.firstOrNull { it.id == item.id }?.raw == item.raw
+        }
+        if (!currentSource()) return
+        val fields = item.content as? JsonObject ?: return
+
+        fun text(key: String): String? = (fields[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        when {
+            item.kind == "notice" &&
+                item.shown &&
+                item.status in setOf("done", "finished") &&
+                item.subtype in setOf("model_refusal_fallback", "model_refusal_no_fallback") -> {
+                val banner = text("banner") ?: return
+                val original = text("original_model").orEmpty()
+                val fallback = if (item.subtype == "model_refusal_fallback") text("fallback_model").orEmpty() else null
+                // Canonical notices have no occurrence timestamp. Only the durable identity arms a row;
+                // this existing display placeholder is never used as their occurrence identity.
+                val refusal =
+                    ThreadItem.ModelRefusal(
+                        original,
+                        fallback,
+                        banner,
+                        false,
+                        Instant.fromEpochMilliseconds(0),
+                        CanonicalRefusalIdentity(authoritativeHostId, conversation, epoch, item.id),
+                    )
+                liveRefusalEvents.tryEmit(conversation to LiveRefusalEvent.Refused(refusal, text("scope"), currentSource, this))
+            }
+            item.isCompletion() && !item.turn.isNullOrBlank() -> {
+                val isError = fields["is_error"]?.let { (it as? JsonPrimitive)?.booleanOrNull ?: return } ?: false
+                val event =
+                    LiveRootTurnEnd(
+                        isError,
+                        text("outcome").orEmpty(),
+                        text("stop_reason"),
+                        text("terminal_reason"),
+                        text("error_category"),
+                        currentSource,
+                        this,
+                    )
+                liveRootTurnEnds.tryEmit(conversation to event)
+            }
+        }
+    }
 
     private val completionFacts = MutableStateFlow<List<AuthoritativeCompletion>>(emptyList())
     internal val authoritativeCompletions: StateFlow<List<AuthoritativeCompletion>> = completionFacts
@@ -333,6 +402,9 @@ class RemoteConversationRepository internal constructor(
             },
         )
 
+    /** The exact host this connection's thread route serves, or empty on the legacy test entry (#2175). */
+    internal val authoritativeHost: String get() = authoritativeHostId
+
     internal fun recoverAuthoritativeAttention(conversation: String): Boolean = authoritativeQueries.refreshAttention(conversation)
 
     private fun publishAuthoritativeCompletions(
@@ -393,6 +465,8 @@ class RemoteConversationRepository internal constructor(
         authoritativeThreads.takeIf { host == authoritativeHostId }
 
     internal fun openAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.open(conversationId)
+
+    internal fun acquireAuthoritativeThread(conversationId: String): java.io.Closeable? = authoritativeQueries.acquire(conversationId)
 
     internal fun requestOlderAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.older(conversationId)
 
@@ -557,6 +631,13 @@ class RemoteConversationRepository internal constructor(
      * inbound collector. A dropped event can only leave a switch-back offer unarmed or stale; a write still
      * needs the user's tap.
      */
+    private val liveRootTurnEnds =
+        MutableSharedFlow<Pair<String, LiveRootTurnEnd>>(
+            replay = 0,
+            extraBufferCapacity = 16,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+
     private val liveRefusalEvents =
         MutableSharedFlow<Pair<String, LiveRefusalEvent>>(
             replay = 0,
@@ -670,6 +751,22 @@ class RemoteConversationRepository internal constructor(
             authoritativeHostId.isNotEmpty() &&
             setOf(CAPABILITY_THREAD, CAPABILITY_INTERACTIVE).all { it in negotiatedCapabilities() }
 
+    private fun refreshAuthoritativeReadFacts(
+        conversationId: String,
+        generation: Long,
+    ) {
+        scope.launch {
+            if (authoritativeCommandsEnded ||
+                !authoritativeLiveEnabled() ||
+                authoritativeThreads.current(authoritativeHostId, conversationId).generation != generation
+            ) {
+                return@launch
+            }
+            val sent = pump.send(listConversationsRequest())
+            RelayLog.i { "event=thread_summary_refresh code=${if (sent) "requested" else "refused"}" }
+        }
+    }
+
     /** Supplied transient progress, never a durable item or read checkpoint. */
     fun observeAuthoritativeToolProgress(conversationId: String): Flow<Map<String, Int>> =
         observeAuthoritativeProgress(conversationId).map { it.tools }.distinctUntilChanged()
@@ -684,7 +781,11 @@ class RemoteConversationRepository internal constructor(
     ) {
         sessionLiveAdmission.currentBinding(conversation)?.let { conversationListProjection.updateCurrentSessionId(conversation, it) }
         if (family == null) {
-            SessionLiveAdmission.families.filterNot { it == TYPE_RATE_LIMITED }.forEach { clearAuthoritativeLive(conversation, it) }
+            liveRefusalEvents.tryEmit(conversation to LiveRefusalEvent.SessionReplaced)
+            SessionLiveAdmission.families
+                .filterNot {
+                    it == TYPE_RATE_LIMITED || it == TYPE_MODEL_LIST
+                }.forEach { clearAuthoritativeLive(conversation, it) }
             return
         }
         when (family) {
@@ -1769,6 +1870,9 @@ class RemoteConversationRepository internal constructor(
     override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> =
         liveRefusalEvents.filter { it.first == conversationId }.map { it.second }
 
+    override fun observeLiveRootTurnEnds(conversationId: String): Flow<LiveRootTurnEnd> =
+        liveRootTurnEnds.filter { it.first == conversationId }.map { it.second }
+
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFactsProjection.observe(conversationId)
 
     override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = contextUsageProjection.observe(conversationId)
@@ -2016,7 +2120,13 @@ class RemoteConversationRepository internal constructor(
     override suspend fun markConversationRead(
         conversationId: String,
         upTo: ULong,
-    ): Result<ULong> = conversationCommands.markConversationRead(conversationId, upTo)
+    ): Result<ULong> {
+        if (authoritativeHostId.isNotEmpty() && !usesAuthoritativeLiveState) {
+            RelayLog.d { "event=read_checkpoint code=unavailable" }
+            return Result.failure(IllegalStateException("Authoritative read connection is unavailable"))
+        }
+        return conversationCommands.markConversationRead(conversationId, upTo)
+    }
 
     /** Permanently delete a conversation (#532); see [ConversationCommands.delete]. */
     override suspend fun delete(conversationId: String): Unit = conversationCommands.delete(conversationId)

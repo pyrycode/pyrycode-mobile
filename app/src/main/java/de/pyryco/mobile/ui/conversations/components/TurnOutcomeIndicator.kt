@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.repository.LiveRootTurnEnd
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 private const val CANCELLED_STOP_REASON = "cancelled"
@@ -46,14 +47,26 @@ enum class TurnRecoveryNotice { ContextTooLong, BillingError, AuthenticationFail
  * `prompt_too_long`, else the billing or sign-in notice for its `error_category`. Every other turn gets
  * `null`. The daemon's tokens are only compared, never shown, so nothing here needs sanitizing.
  */
-internal fun turnRecoveryNotice(event: LiveSessionEvent.TurnEnd): TurnRecoveryNotice? {
-    if (event.stopReason == CANCELLED_STOP_REASON) return null
-    val stopped = event.isError || (event.outcome.isNotEmpty() && event.outcome != SUCCESS_OUTCOME)
+internal fun turnRecoveryNotice(event: LiveSessionEvent.TurnEnd): TurnRecoveryNotice? =
+    turnRecoveryNotice(event.isError, event.outcome, event.stopReason, event.terminalReason, event.errorCategory)
+
+internal fun turnRecoveryNotice(event: LiveRootTurnEnd): TurnRecoveryNotice? =
+    turnRecoveryNotice(event.isError, event.outcome, event.stopReason, event.terminalReason, event.errorCategory)
+
+private fun turnRecoveryNotice(
+    isError: Boolean,
+    outcome: String,
+    stopReason: String?,
+    terminalReason: String?,
+    errorCategory: String?,
+): TurnRecoveryNotice? {
+    if (stopReason == CANCELLED_STOP_REASON) return null
+    val stopped = isError || (outcome.isNotEmpty() && outcome != SUCCESS_OUTCOME)
     if (!stopped) return null
     return when {
-        event.terminalReason == PROMPT_TOO_LONG -> TurnRecoveryNotice.ContextTooLong
-        event.errorCategory == BILLING_ERROR -> TurnRecoveryNotice.BillingError
-        event.errorCategory == AUTHENTICATION_FAILED -> TurnRecoveryNotice.AuthenticationFailed
+        terminalReason == PROMPT_TOO_LONG -> TurnRecoveryNotice.ContextTooLong
+        errorCategory == BILLING_ERROR -> TurnRecoveryNotice.BillingError
+        errorCategory == AUTHENTICATION_FAILED -> TurnRecoveryNotice.AuthenticationFailed
         else -> null
     }
 }

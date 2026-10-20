@@ -66,10 +66,51 @@ retain their action order. Only named read-only queries may reorder within one a
 Daemon frames keep their recorded order and wait for their causal requests. Missing,
 extra, duplicate or changed requests fail, including requests after the last UI assertion.
 
-The recording identifies the current production presentation. Mobile has not yet activated
-required daemon-built threads in ticket 2175. This test does not turn on a test-only
-production route or synthesize thread items. The migration must pass live verification
-and refresh the recording when its actual requests change.
+The standalone permission fixture deliberately requests legacy capabilities. It proves
+that explicit diagnostic route and supplies no required-thread activation evidence.
+The full recorded Mobile suite uses the actual production selection. Changed production
+requests require genuine native capture, fresh replay, preserved strict comparisons and
+explicit review of every difference. Neither route synthesizes daemon-built thread items.
+
+The independent reply witness observes actual accepted phone history requests and
+their separately received completion markers. It checks the producing connection,
+conversation, epoch and request identity. Rejected sends and invalid batches cannot
+qualify a later completion. Same-epoch resets require a fresh certified query.
+
+The peer-reopen observer taps the destination's existing negotiated thread collection.
+It adds no query or collection. Ownership updates retain the same subscription token;
+only ending that collection and opening another can establish a reopen. Canonical
+fact identity survives changes to rendered row identities.
+
+Saved-checkpoint recovery first proves the actual request from the saved epoch and
+checkpoint. A successful bounded tail retains every missed post and baseline fact.
+A real correlated reset instead requires its independently decoded current epoch and
+fresh certified newest window. That reset may replace the saved epoch; only the recovery
+observer follows it, while ordinary live reply ownership stays strict. Physical pulls then request exactly one contiguous older page
+at a time. Both paths retain every missed post, the exact independently produced reply,
+baseline facts and rendered order. Across an actual epoch replacement, baseline rows
+are rebound by their original session, turn, role, full producer text and user message
+identity, using only the newly received canonical rows. Same-epoch facts retain exact
+canonical identity. Neither path uses a legacy history request.
+
+The offscreen cache check proves the exact certified baseline family is saved. It does
+not require unrelated newer live facts to be certified. The same immutable saved snapshot
+is also inspected for every raw missed-turn assistant fact, including hidden or partial
+facts. This persistence check never grants live admission. Queue-consistency and Markdown
+cases reveal their exact targets through existing scroll actions. Dedicated following
+checks still require automatic visibility without a reveal.
+
+Completion certification and the shown-content watermark are separate:
+settling an existing reply may revise it without creating newly shown content.
+
+Replay failures include structural history-query diagnostics without message content.
+Those diagnostics do not change matching or request contracts. An already requested
+thread reply may pass an unrelated conversation's unrequested query on the same socket.
+Its exact owner, conversation, epoch, checkpoint and request mapping remain mandatory.
+Already matched replies for the explicitly recognised metadata requests may also be
+crossed. Their own delivery stays fenced. Earlier unreleased canonical facts for the
+same conversation, unknown attribution, lifecycle changes and Android inputs still
+fence the thread reply. The other query remains required.
 
 Replay proves the recorded permission behaviour. Current-daemon compatibility requires
 the explicit live command. Timing, encrypted transport, reconnect, other permissions,
@@ -156,7 +197,7 @@ those verified hashes. Fresh compatibility evidence lives outside Android assets
 own package hashes cannot change the test package they describe. The complete gate
 requires one common client build and producer, one successful real capture and two counted
 replays per scenario, matching contracts and no skipped methods. The suite index declares
-version 1 of its query policy for all recordings, including historical captures. It enables
+version 2 of its query policy for all recordings, including historical captures. It enables
 only the three bounded models below. Raw captured messages and their capture hashes remain
 verifiable. Standalone recordings without this suite policy retain strict query counts
 unless both recordings declare the same model. Unknown policy keys or versions fail.
@@ -208,6 +249,13 @@ The suite declares three limited scheduling models separately from Claude conten
 - A single model lookup can race an unsolicited catalogue on the same connection and
   conversation. Omitting a recorded lookup requires an identical independent catalogue in
   the same command interval. On-demand lookups without that evidence stay mandatory.
+- Suite query policy version 2 uses `recorded-snapshots-v2`. Version 1 remains supported with its original rules.
+  Version 2 also permits a settings poll after an empty, explicitly cleared session state was delivered on that
+  exact phone connection. The full request must contain only that recorded conversation ID. This exception
+  applies only when the same connection is recorded ending before any fresh settings state or intervening
+  user command. It supplies no answer. Pending reads are cancelled only when that connection actually ends.
+  A replacement connection's snapshot cannot answer them. Captured errors, refusals, changed owners and
+  changed request payloads stay strict. Raw capture bytes and producer identities are unchanged.
 - Successful settings polling reads the most recently delivered captured settings state.
   Snapshot updates remain in producer order and behind their original user commands.
   A settings write invalidates earlier snapshots for that session, including replies

@@ -108,7 +108,8 @@ class RecordedPermissionTest {
                     relayUrl = arg("relayUrl"),
                     serverStaticPublicKey = arg("serverStaticPublicKey"),
                 )
-            val info = NoiseClientInfo("mobile-recorded-tests", "1.0.999999")
+            // This standalone legacy fixture is separate from the suite's production phone graph.
+            val info = NoiseClientInfo("mobile-recorded-tests", "1.0.999999", listOf("interactive", "multi_agent", "stop_background_task"))
             transport = OkHttpRelayTransport(pairing, info, OkHttpRelayTransport.defaultClient())
             val store =
                 object : PairedServerStore {

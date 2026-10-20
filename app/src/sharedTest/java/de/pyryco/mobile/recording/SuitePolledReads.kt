@@ -12,6 +12,8 @@ internal class SuitePolledReads(
     private val nextId: (String) -> Long,
     settings: Boolean,
     refusedBackfill: Boolean,
+    private val cancelClearedSettings: Boolean = false,
+    private val queryTypes: Set<String> = emptySet(),
 ) {
     private data class Key(
         val owner: String,
@@ -26,6 +28,8 @@ internal class SuitePolledReads(
     private val current = mutableMapOf<Key, Envelope>()
     private val pending = mutableMapOf<Key, MutableList<Envelope>>()
     private val known = mutableSetOf<Key>()
+    private val clearedStates = mutableMapOf<Pair<String, Long>, Key>()
+    private val clearedPending = mutableSetOf<Key>()
     private var reads = 0
     val steps: List<SuiteStep>
 
@@ -89,6 +93,7 @@ internal class SuitePolledReads(
                     }
                 }
             }
+        if (settings && cancelClearedSettings) registerClearedEnds(source, replies, removed)
         val sourceVersions = mutableMapOf<Key, Int>()
         val requestVersions = mutableMapOf<Pair<String, Long>, Int>()
         source.forEach { step ->
@@ -190,6 +195,74 @@ internal class SuitePolledReads(
             versions[key] = (versions[key] ?: 0) + 1
             current.remove(key)
         }
+    }
+
+    private fun registerClearedEnds(
+        source: List<SuiteStep>,
+        replies: Map<Pair<String, Long>, List<SuiteStep>>,
+        removed: MutableSet<Pair<String, Long>>,
+    ) {
+        source.forEachIndexed { index, step ->
+            val frame = step.message ?: return@forEachIndexed
+            val conversation = frame.conversationId as? JsonPrimitive ?: return@forEachIndexed
+            if (!step.owner.startsWith("phone/") ||
+                step.direction != "daemon" ||
+                frame.type != "session_settings" ||
+                frame.sessionStateCleared != JsonPrimitive(true) ||
+                !conversation.isString ||
+                conversation.content.isBlank() ||
+                frame.inReplyTo != null ||
+                (frame.payload as? JsonObject)?.isEmpty() != true
+            ) {
+                return@forEachIndexed
+            }
+            val end =
+                (index + 1 until source.size).firstOrNull {
+                    source[it].owner == step.owner && source[it].direction in setOf("close", "down", "inbound_end", "transport_down")
+                } ?: return@forEachIndexed
+            val later = source.subList(index + 1, end).filter { it.owner == step.owner }
+            if (later.any { it.direction == "client" && it.message!!.type !in queryTypes } ||
+                later.any {
+                    it.direction == "daemon" &&
+                        it.message?.type == "session_settings" &&
+                        it.message.sessionStateCleared != JsonPrimitive(true)
+                }
+            ) {
+                return@forEachIndexed
+            }
+            val key = Key(step.owner, "request_session_settings", JsonObject(mapOf("conversation_id" to conversation)))
+            val requests = later.filter { it.direction == "client" && it.message?.type == key.type && it.message.payload == key.payload }
+            if (requests.any { !it.accepted || replies[it.owner to it.message!!.id].orEmpty().isNotEmpty() }) return@forEachIndexed
+            clearedStates[step.owner to frame.id] = key
+            requests.forEach { removed += it.owner to it.message!!.id }
+        }
+    }
+
+    /** A clear permits waiting, never a fabricated empty settings answer. */
+    fun observeCleared(
+        owner: String,
+        frame: Envelope,
+    ) {
+        val key = clearedStates[owner to frame.id] ?: return
+        if (frame.type != "session_settings" ||
+            frame.sessionStateCleared != JsonPrimitive(true) ||
+            frame.conversationId != (resolve(key.payload) as JsonObject)["conversation_id"]
+        ) {
+            return
+        }
+        known += key
+        current.remove(key)
+        clearedPending += key
+    }
+
+    fun connectionEnded(owner: String) {
+        val ending = clearedPending.filter { it.owner == owner }
+        ending.forEach { key ->
+            pending.remove(key)
+            current.remove(key)
+            known.remove(key)
+        }
+        clearedPending.removeAll(ending.toSet())
     }
 
     fun assertComplete() {

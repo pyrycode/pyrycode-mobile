@@ -2,6 +2,13 @@
 
 Outer shell for the `conversation_thread/{serverId}/{conversationId}` route. `ThreadScreen` owns the frame, message region and composer placement; its linked topics below cover state, rows, overlays, sheets and tests. The current [Figma thread frame](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) governs the static dark layout. See [shared typography](shared-typography.md) for text roles.
 
+
+A task-tracking link alone does not make a running shell a background-only task.
+The foreground status and elapsed reading remain eligible until the actual tool
+result arrives. A tracked task that continues after that result stays in the task
+roster without keeping the foreground tool label alive. Existing source, parent and
+live-progress checks still apply.
+
 ## Map
 
 Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guard enforces. Each section named below moved verbatim, heading and anchors intact, into its own document:
@@ -19,6 +26,29 @@ The sections that stay here: `## What it does`, `## Wiring` (minus the two subse
 above), `## Configuration`, `## Related`.
 
 ## What it does
+
+**Production thread ownership.** The screen uses daemon-built items from its saved
+host and exact negotiated connection. Production requests both thread and interactive
+support. Missing support suppresses saved content. Offline saved facts grant no live
+support, prompts or progress. Retiring a connection clears its transient state at once;
+frame-paced rendering cannot retain a retired control.
+
+Each destination holds its own query lease. Closing one destination leaves another
+destination's paging and catch-up active. Read confirmation requires current certified
+coverage and sight of the exact rendered revisions. A retry retains its producing
+connection and cannot move to a replacement. Saved file-offer notices reuse the existing
+attachment controls after identifier validation and display-name cleaning.
+
+Session cost comes from certified, settled root terminals for the session named by
+the current connection's conversation summary. The latest positive finite estimate
+replaces the previous value, including on a failed turn. Child turns, other sessions,
+quoted numbers and retired sources cannot supply it. The legacy demo retains its
+existing live-event reading.
+
+Phone-uploaded originals retain their acknowledged file name and media type under
+the exact host, conversation and attachment identity. Reopening the original uses
+that metadata even when the daemon supplies only the attachment identifier.
+
 
 **Supplied send reconciliation (#1986).** A send immediately adds one provisional
 **Sending** row owned by the client. Empty acknowledgement is receipt only: it
@@ -376,3 +406,7 @@ Split out on 2026-09-24 into [Thread screen — composer drafts and attachments]
 - Child components: [Thread input bar](thread-input-bar.md) (the composer in `bottomBar`, landed in #188), [Slash-command type-ahead](slash-command-type-ahead.md) (composer suggestions anchored above the input bar, via [Options overlay](options-overlay.md); landed in [#885](https://github.com/pyrycode/pyrycode-mobile/issues/885) — see [overlays and app bar § Slash-command type-ahead placement](thread-screen-how-it-works-overlays-and-app-bar.md#slash-command-type-ahead-placement-post-885)), [Thread composer footer](thread-composer-footer.md) (the model/effort buttons and Status-sheet opener below the input bar in `bottomBar`; landed as the `ThreadStatusRow` single status line in #145, tap-to-open the Status Sheet wired in #254, replaced by the two-button footer plus [Options overlay](options-overlay.md) in [#808](../codebase/808.md)), [Connection status indicator](connection-banner.md) (Connecting/Reconnecting in the composer; Offline Retry in the overlay), [WorkspaceChip](workspace-chip.md) (the empty-discussion chip between banner and list, wired in #137), [WorkspacePicker](workspace-picker.md) (rendered as Scaffold sibling, wired in #137), [StatusSheet](status-sheet.md) (rendered as Scaffold sibling gated on screen-hoisted `sheetVisible`, wired in #254 — Model section only; #229/#230 append sibling sections), [RenameDialog](rename-dialog.md) (rendered as Scaffold sibling gated on `state.showRenameDialog`, wired in [#141](../codebase/141.md); seeded with `state.displayName` as `initialName`, emits `ThreadEvent.RenameSubmit(name)` / `RenameDismiss` through `onOverflowEvent`), [ChannelInfoSheet](channel-info-sheet.md) (rendered as Scaffold sibling gated on `state.channelInfoOpen`, wired in [#226](../codebase/226.md); fed a `ChannelInfoUiModel` via the pure `state.toChannelInfoUiModel(now)` mapper, Rename / Change workspace emit-then-dismiss through `onOverflowEvent`; Archive / Delete wired in [#227](../codebase/227.md) — Archive closes-and-pops, Delete opens the `DeleteConfirmationDialog`), [DeleteConfirmationDialog](thread-screen-how-it-works-sheets.md#channelinfosheet-archivedelete--pop-back-nav-post-227) (private confirm dialog rendered as the sixth Scaffold sibling gated on `state.deleteConfirmVisible`, wired in [#227](../codebase/227.md)), [Permission-modal overlay](permission-modal-overlay.md) (the `PermissionModalOverlay` `BasicAlertDialog` rendered as the seventh Scaffold sibling when `modalState is ModalUiState.Open`, wired in [#446](../codebase/446.md); collects the hoisted app-level [`currentModal`](current-modal-state.md) from #445, dialog-window `FLAG_SECURE`, `Dismissed` → mapped-reason Default top-overlay pill; answering is #444), [EmptyThreadState](empty-thread-state.md) (the centered empty-thread prompt that occupies the `weight(1f)` slot when `!hasMessages`, wired in #138), [MessageBubble](message-bubble.md) (`MessageItem` row dispatch since #246), [SessionBoundaryDelimiter](session-boundary-delimiter.md) (`SessionBoundary` row dispatch since #246), [Model refusal row](model-refusal-row.md) (`ThreadItem.ModelRefusal` row dispatch, `listKey()` and `timestamp()` arms, wired in [#875](../codebase/875.md)), [Stopped-turn row](stopped-turn-row.md) (`ThreadItem.StoppedTurn` row dispatch, `listKey()` and `timestamp()` arms, wired in [#1356](https://github.com/pyrycode/pyrycode-mobile/issues/1356)), [ThreadOverflowMenu](thread-overflow-menu.md) (client-owned Actions overlay consuming `ThreadEvent`, hosted directly by the screen since #1666 — the screen owns `overflowExpanded` via `rememberSaveable`)
 - Downstream remaining (each layers on top of the post-#246 render loop, not the chrome): [#141](../codebase/141.md) ✅ rename dialog wired (via `ThreadEvent.Rename` from the overflow menu — `onTitleClick` stays a `{}` no-op, a future ticket may bind it as a second entry point), [#229](https://github.com/pyrycode/pyrycode-mobile/issues/229) Effort + YOLO sections append into the existing `StatusSheetContent` `Column` (may revisit the [#254](../codebase/254.md) auto-close-on-select decision for the multi-toggle UX), [#230](https://github.com/pyrycode/pyrycode-mobile/issues/230) Context window section appends as the third section (if a `Section` shape genuinely emerges, factor then), [#208](https://github.com/pyrycode/pyrycode-mobile/issues/208) overflow "Change workspace…" (reuses `workspacePickerVisible` + the two picker handlers introduced by #137; fills the `ThreadEvent.ChangeWorkspace` branch of `onOverflowEvent`), and generic scroll-to-bottom on every new newest row — shipped by [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981), distinct from [`#185`](../codebase/185.md)'s streaming-only auto-anchor: #185 re-pins only while `isStreaming = true` and only against item 0's measured-size growth, while #981 added a second, identity-keyed pin beside it that also follows a row that arrives already finalized (see [Thread screen — list and status row](thread-screen-how-it-works-list-and-status-row.md)). [#136](../codebase/136.md) above-delimiter opacity landed `0.55f` alpha over rows above the most-recent `SessionBoundary`; [#138](../codebase/138.md) landed the centered empty-thread prompt that replaces the `LazyColumn` whenever `!state.hasMessages`; [#145](../codebase/145.md) landed the `Model · effort · NN% used ▴` status row above the input bar; [`#251`](../codebase/251.md) landed the sealed `ThreadEvent` + `ThreadViewModel.onOverflowEvent` dispatcher + stateless [`ThreadOverflowMenu`](thread-overflow-menu.md) composable (exported but not mounted; `Archive` is the only branch wired today); [`#252`](../codebase/252.md) mounted the overflow menu inside `ThreadTopAppBar`'s `actions` slot (the screen owns `overflowExpanded` via `rememberSaveable`, the renamed `onOverflowEvent` parameter binds `vm::onOverflowEvent` at the destination); [`#254`](../codebase/254.md) landed the [`StatusSheet`](status-sheet.md) shell with the Model section (the row's `onExpandClick` is wired internally, the screen owns `sheetVisible` via `rememberSaveable`, and `MainActivity` binds `onModelSelected = vm::onModelSelected`).
 - Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) (the populated Conversation Thread Screen canvas; this slice ships the outer shell + the TopAppBar chrome + the composer in `bottomBar` + the connection status band and top overlay + the empty-discussion workspace chip between banner and list + the picker host at screen root + the populated message list with bubble/delimiter dispatch from #246 + the above-delimiter dim from #136 + the centered empty-thread prompt from #138 in the no-`MessageItem` branch + the status row above the input bar from #145 + the Status Sheet host at screen root from #254), subframe [`16:58`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-58) (the status row specifically), subframe [`20:100`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=20-100) (the Status Sheet; this slice ships the Model section region only)
+
+## Fresh production recovery actions
+
+The required daemon thread route raises Switch back and Compact recovery from fresh accepted additions. Restored history cannot arm either action. The current connection and session must still own each receipt. Refusal actions target a durable notice identity, so a late acknowledgement cannot clear a newer offer. See [the activation plan](../../specs/architecture/2245-production-daemon-thread.md).

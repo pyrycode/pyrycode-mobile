@@ -12,6 +12,16 @@ spec.loader.exec_module(inventory)
 
 
 class SuiteInventoryTest(unittest.TestCase):
+    def test_only_the_two_reviewed_query_policy_versions_are_accepted(self):
+        v1={'version':1,'modelQueryNormalization':'reconnect-catalog-race-v1','settingsReadNormalization':'recorded-snapshots-v1','backfillProbeNormalization':'unsupported-legacy-probe-v1'}
+        v2={**v1,'version':2,'settingsReadNormalization':'recorded-snapshots-v2'}
+        base={'scenarios':[{'method':'a','fixture':None}],'liveSelection':['a']}
+        for policy in [v1,v2]:
+            report=inventory.audit({**base,'queryPolicy':policy},{'a'},{'a'},Path('/unused'))
+            self.assertEqual(['a'],report['pending'])
+        for policy in [{**v1,'version':2},{**v2,'version':1},{**v2,'version':True},{**v2,'ignoreCommands':True}]:
+            with self.assertRaises(ValueError): inventory.audit({**base,'queryPolicy':policy},{'a'},{'a'},Path('/unused'))
+
     def test_current_inventory_accounts_for_67_recordings_three_scripted_owners_and_two_obsolete_methods(self):
         manifest = json.loads(inventory.MANIFEST.read_text())
         actual = inventory.methods(inventory.SOURCE.read_text())
