@@ -63,6 +63,10 @@ Run focused JVM classes, lint, assembleDebug and forced Spotless on Linux; retai
 
 None.
 
+## Revisions
+
+- 2026-10-20: `malformedKnownFieldsRejectWithoutCoercion` demonstrated that `JsonPrimitive.longOrNull` coerces exponent notation into an integer. Parse reset token content with `String.toLongOrNull` instead, retaining the existing strict integer contract and regression assertion.
+
 ## Documentation handoff
 
 Pending for documentation stage: `docs/knowledge/features/remote-conversation-repository.md`, allowance reading section: document host-wide observation/refresh, full replacement, field absence and reconnect/pairing lifetime, linking Core's protocol instead of copying it. Keep `rate_limited` documented as a separate warning signal.

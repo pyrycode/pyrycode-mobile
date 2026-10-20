@@ -172,6 +172,13 @@ class StableConversationRepository(
     override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> =
         heldReadings?.observeContextUsage(conversationId) ?: switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }
 
+    override fun observeClaudeUsage(): Flow<ClaudeUsageReading?> =
+        heldReadings?.observeClaudeUsage() ?: switchToLive<ClaudeUsageReading?>(null) { it.observeClaudeUsage() }
+
+    override fun requestClaudeUsage() {
+        currentRepository.value?.requestClaudeUsage()
+    }
+
     /** Suggestion state is live-only, including when other readings are host-held (#1865). */
     override fun observeReplySuggestion(
         conversationId: String,
