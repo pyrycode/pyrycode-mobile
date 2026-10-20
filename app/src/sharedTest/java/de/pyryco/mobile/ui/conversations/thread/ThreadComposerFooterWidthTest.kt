@@ -112,7 +112,7 @@ class ThreadComposerFooterWidthTest {
         assertEquals(12.dp, b.left - a.right)
         assertEquals(60.dp, b.right - a.left)
         assertEquals(16.dp, footer.right - b.right)
-        assertEquals(4.dp, a.top - footer.top)
+        assertEquals("48dp Context target reserves its space above the 16dp icon band", 36.dp, a.top - footer.top)
         assertEquals(a.top, b.top)
         assertEquals(footer.bottom, b.bottom)
         val actions = composeTestRule.onNodeWithText("Actions", useUnmergedTree = true).getUnclippedBoundsInRoot()
@@ -198,7 +198,7 @@ class ThreadComposerFooterWidthTest {
                 }
             }
         }
-        val circle = composeTestRule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG)
+        val circle = composeTestRule.onNodeWithTag(CONTEXT_RING_TEST_TAG, useUnmergedTree = true)
         circle
             .assertIsDisplayed()
             .assertWidthIsEqualTo(15.dp)
@@ -212,8 +212,8 @@ class ThreadComposerFooterWidthTest {
         val text = actionsText.getUnclippedBoundsInRoot()
         assertEquals("4dp group inset after footer padding", footer.left + 16.dp, c.left)
         assertEquals("16dp visual gap", 16.dp, text.left - c.right)
-        val slotTop = actionBounds.top + (actionBounds.bottom - actionBounds.top - 12.dp - 16.dp) / 2
-        assertEquals("Context slot centred in left group", slotTop.value, c.top.value, 0.5f)
+        val slotTop = composeTestRule.onNodeWithTag("footer_attach_visual", useUnmergedTree = true).getUnclippedBoundsInRoot().top
+        assertEquals("Context aligns with the footer icon band", slotTop.value, c.top.value, 0.5f)
         assertEquals("circle top aligned in 16dp slot", slotTop.value + 15f, c.bottom.value, 0.5f)
         val layouts = mutableListOf<TextLayoutResult>()
         actionsText.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }

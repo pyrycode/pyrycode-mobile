@@ -338,6 +338,8 @@ class ThreadViewModel(
 
     private val pendingChannelInfo = MutableStateFlow(false)
 
+    private val contextSheetOpen = MutableStateFlow(false)
+
     /**
      * The Channel info sheet's System prompt editor (#1342), present only while the sheet is open, so every
      * open starts from a fresh read. Bound to [repository], the reconnect-surviving facade.
@@ -691,7 +693,12 @@ class ThreadViewModel(
         }.combine(runningModel) { (config, settings), (running, announced) ->
             config.copy(running = running, announcedModel = announced) to settings
         }.combine(repository.observeContextUsage(conversationId)) { (config, settings), usage ->
-            config.copy(contextPercent = contextPercent(usage, settings))
+            config.copy(
+                contextPercent = contextPercent(usage, settings),
+                contextUsage = usage,
+                contextUsedTokens = usage?.totalTokens ?: settings?.usedTokens,
+                contextMaxTokens = usage?.maxTokens ?: settings?.windowTokens,
+            )
         }
 
     /**
@@ -1231,6 +1238,8 @@ class ThreadViewModel(
                     }
                 uiState.copy(authoritativeThread = presentation, sessionCostUsd = current?.reportedSessionCost(session))
             }
+        }.combine(contextSheetOpen) { uiState, open ->
+            uiState.copy(contextSheetOpen = open)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(),
@@ -3725,6 +3734,8 @@ class ThreadViewModel(
                     }
                 }
             ThreadEvent.ChannelInfoDismiss -> closeChannelInfo()
+            ThreadEvent.ContextOpen -> contextSheetOpen.value = true
+            ThreadEvent.ContextDismiss -> contextSheetOpen.value = false
             is ThreadEvent.SystemPromptEdit -> promptEditor.value?.edit(event.text)
             ThreadEvent.SystemPromptSave -> promptEditor.value?.save()
             ThreadEvent.SystemPromptClear -> promptEditor.value?.clear()

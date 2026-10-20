@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.lifecycle.SavedStateHandle
+import de.pyryco.mobile.data.repository.ContextCategory
 import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -25,7 +26,9 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -52,6 +55,91 @@ class ThreadViewModelContextUsageTest {
             val vm = collectedVm(ScriptedRepo())
 
             assertNull(vm.state.value.runConfig.contextPercent)
+        }
+
+    @Test
+    fun contextSheetVisibilityAndReadingStayLive() =
+        runTest {
+            val repo = ScriptedRepo()
+            val vm = collectedVm(repo)
+            assertFalse(vm.state.value.contextSheetOpen)
+            vm.onOverflowEvent(ThreadEvent.ContextOpen)
+            vm.onOverflowEvent(ThreadEvent.ContextOpen)
+            assertTrue(vm.state.value.contextSheetOpen)
+            assertNull(vm.state.value.runConfig.contextUsage)
+            val reading =
+                usage(
+                    total = 50_000,
+                ).copy(model = "model", categories = listOf(ContextCategory("Messages", 50_000)), droppedCategories = 4)
+            repo.report(CONV, reading)
+            assertEquals(reading, vm.state.value.runConfig.contextUsage)
+            assertEquals(50_000L, vm.state.value.runConfig.contextUsedTokens)
+            assertEquals(200_000L, vm.state.value.runConfig.contextMaxTokens)
+            repo.report(CONV, reading.copy(categories = listOf(ContextCategory("Tools", 50_000))))
+            assertEquals(
+                "Tools",
+                vm.state.value.runConfig.contextUsage
+                    ?.categories
+                    ?.single()
+                    ?.name,
+            )
+            repo.report(CONV, reading.copy(asOf = kotlinx.datetime.Instant.parse("2026-10-19T00:00:00Z")))
+            assertEquals(
+                kotlinx.datetime.Instant.parse("2026-10-19T00:00:00Z"),
+                vm.state.value.runConfig.contextUsage
+                    ?.asOf,
+            )
+            repo.readings.value = emptyMap()
+            assertNull(vm.state.value.runConfig.contextUsage)
+            assertTrue(vm.state.value.contextSheetOpen)
+            vm.onOverflowEvent(ThreadEvent.ContextDismiss)
+            vm.onOverflowEvent(ThreadEvent.ContextDismiss)
+            assertFalse(vm.state.value.contextSheetOpen)
+            assertFalse(collectedVm(repo).state.value.contextSheetOpen)
+        }
+
+    @Test
+    fun codexUsesEligibleScalarSource() =
+        runTest {
+            val repo = ScriptedRepo()
+            repo.settings.value = repo.currentSessionSettings(usedTokens = 84_200, windowTokens = 272_000)
+            val vm = collectedVm(repo)
+            assertEquals(84_200L, vm.state.value.runConfig.contextUsedTokens)
+            assertEquals(272_000L, vm.state.value.runConfig.contextMaxTokens)
+            assertEquals(31, vm.state.value.runConfig.contextPercent)
+            repo.report(CONV, usage(total = 7, max = 0))
+            assertEquals(7L, vm.state.value.runConfig.contextUsedTokens)
+            assertEquals(0L, vm.state.value.runConfig.contextMaxTokens)
+            assertNull(vm.state.value.runConfig.contextPercent)
+            repo.readings.value = emptyMap()
+            assertEquals(84_200L, vm.state.value.runConfig.contextUsedTokens)
+            repo.settings.value = null
+            assertNull(vm.state.value.runConfig.contextUsedTokens)
+            assertNull(vm.state.value.runConfig.contextMaxTokens)
+        }
+
+    @Test
+    fun contextSheetSurvivesRecollectionAndUsesLatestReading() =
+        runTest {
+            val repo = ScriptedRepo()
+            val vm =
+                ThreadViewModel(
+                    SavedStateHandle(mapOf("serverId" to "host-a", "conversationId" to CONV)),
+                    repo,
+                    FakeConnectionStateSource(),
+                    ComposerDraftStore(),
+                )
+            val subscription = backgroundScope.launch { vm.state.collect {} }
+            runCurrent()
+            vm.onOverflowEvent(ThreadEvent.ContextOpen)
+            repo.report(CONV, usage(total = 10))
+            subscription.cancel()
+            runCurrent()
+            repo.report(CONV, usage(total = 20))
+            backgroundScope.launch { vm.state.collect {} }
+            runCurrent()
+            assertTrue(vm.state.value.contextSheetOpen)
+            assertEquals(20L, vm.state.value.runConfig.contextUsedTokens)
         }
 
     @Test

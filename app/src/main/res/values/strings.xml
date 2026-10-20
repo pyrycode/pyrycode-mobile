@@ -1,4 +1,13 @@
 <resources>
+    <string name="thread_open_context">Open context</string>
+    <string name="thread_context_title">Context</string>
+    <string name="thread_context_pending">A context reading arrives after the next turn.</string>
+    <string name="thread_context_total">%1$s of %2$s tokens</string>
+    <string name="thread_context_percent">%1$d%%</string>
+    <string name="thread_context_unavailable">Not reported yet</string>
+    <string name="thread_context_categories">Categories</string>
+    <string name="thread_context_more">+%1$d more</string>
+    <string name="thread_context_done">Done</string>
     <string name="thread_send_lost">Lost</string>
     <string name="thread_send_sending">Sending</string>
     <string name="thread_history_gap_label">Load earlier messages</string>

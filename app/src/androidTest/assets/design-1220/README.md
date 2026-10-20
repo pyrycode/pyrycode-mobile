@@ -327,6 +327,24 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Save as channel inline failures (`save_as_channel_failed`) | Modal `489:1942`, end-of-content error as Pairing — Verification failed, retry `654:4932` (decision on #1592) | no separate frame | Reference reuse; no new comparison | #957 | #1592 |
 | Save as channel / Prompt failed | `784:7134` | audited, mismatch | [List states › Prompt-failed frames](list/index.md#prompt-failed-frames--1737) (#1737) | #957 | #1737, #1957, #1958 |
 
+### Context
+
+Frame references handed over from #2224 to #2321, inspected on 2026-10-19. The footer circle opens
+the standalone read-only Context sheet for both Claude and Codex, including when no percentage is
+available. It uses the shared Modal appearance: Context title, close X, separator and Done.
+
+| Surface or state | Frame | Implemented scope | Owner |
+|---|---|---|---|
+| Loaded | [Context — loaded `919:8976`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=919-8976) | Claude model, totals, computed percent and ordered category breakdown | #2321 |
+| Waiting | [Context — waiting `919:9792`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=919-9792) | “A context reading arrives after the next turn.” | #2321 |
+| Codex without breakdown | [Context — Codex `919:10063`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=919-10063) | Totals and computed percent only, or the pending line without a usable source | #2321 |
+
+The 2026-10-19 #2224 decision supersedes desktop #1655: Codex opens this sheet too. Inventories and
+allowance visible in the reference frames are omitted until #2322, #2323 and #2226; there are no
+placeholder rows. This is a frame inventory, not a new raster audit or parity claim. See the
+[context-usage topic](../../../../../docs/knowledge/features/thread-composer-footer-context-usage.md#context-sheet-2321)
+for fresh, remembered and updating states.
+
 ### Run configuration
 
 | Surface or state | Node | Status | Audit row | Owner | Linked issues |

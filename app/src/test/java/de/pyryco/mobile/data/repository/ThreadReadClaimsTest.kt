@@ -57,7 +57,12 @@ class ThreadReadClaimsTest {
                 entry(3u, "mcp_status", """{"conversation_id":"c","servers":[],"dropped_servers":0}"""),
             )
         val reply = entry(4u, "message", """{"conversation_id":"c","message_id":"m","role":"assistant","text":"seen"}""")
-        val tail = entry(5u, "context_usage", """{"conversation_id":"c","total_tokens":1,"max_tokens":10,"percentage":10}""")
+        val tail =
+            entry(
+                5u,
+                "context_usage",
+                """{"conversation_id":"c","model":"","total_tokens":1,"max_tokens":10,"percentage":10,"categories":[],"dropped_categories":0}""",
+            )
         val entries = metadata + reply + tail
         val reduced = reduceOrderedHistoryPage(entries, true)
         assertEquals(5uL, ThreadReadEvidence().received(entries, reduced, reduced.rows).checkpoint(reduced.rows.single(), 0u))

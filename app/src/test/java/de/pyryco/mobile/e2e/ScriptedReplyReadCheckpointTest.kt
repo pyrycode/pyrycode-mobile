@@ -32,7 +32,11 @@ class ScriptedReplyReadCheckpointTest {
                 entry(9uL, "assistant_delta", """{"conversation_id":"c","turn_id":"t","seq":0,"text":"ping"}""") +
                 entry(10uL, "turn_end", """{"conversation_id":"c","turn_id":"t","stop_reason":"end_turn"}""") +
                 entry(11uL, "turn_state", """{"conversation_id":"c","state":"idle"}""") +
-                entry(12uL, "context_usage", """{"conversation_id":"c","total_tokens":1,"max_tokens":10,"percentage":10}""")
+                entry(
+                    12uL,
+                    "context_usage",
+                    """{"conversation_id":"c","model":"","total_tokens":1,"max_tokens":10,"percentage":10,"categories":[],"dropped_categories":0}""",
+                )
         ).reversed()
     private val reduced = reduceOrderedHistoryPage(entries, true)
     private val reply = reduced.rows.filterIsInstance<ThreadItem.MessageItem>().last()
