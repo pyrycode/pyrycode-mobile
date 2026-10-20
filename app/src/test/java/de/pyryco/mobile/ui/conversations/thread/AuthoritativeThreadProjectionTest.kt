@@ -18,6 +18,30 @@ class AuthoritativeThreadProjectionTest {
 
     private fun ids(rows: List<ThreadRow>) = rows.map { it.listKey(0) }
 
+    @Test fun authoritativeOfferedFileUsesItsSavedAttachmentIdentityAndName() {
+        val attachment = "55555555-5555-4555-8555-555555555555"
+        val source =
+            authoritativeItem(
+                1,
+                "notice",
+                subtype = "attachment_offered",
+                content =
+                    """
+                    {
+                        "conversation_id":"44444444-4444-4444-8444-444444444444",
+                        "attachment_id":"$attachment",
+                        "filename":"offered.txt"
+                    }
+                    """.trimIndent(),
+            )
+        val row = message(project(source).rows.single())
+        assertEquals("", row.content)
+        assertEquals(attachment, row.attachments.single().attachmentId)
+        assertEquals("offered.txt", row.attachments.single().displayName)
+        assertFalse(row.isStreaming)
+        assertEquals(ids(project(source).rows), ids(project(source, source).rows))
+    }
+
     @Test fun allEightKindsUseExistingPresentations() {
         val p =
             project(

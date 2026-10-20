@@ -20,6 +20,19 @@ above), `## Configuration`, `## Related`.
 
 ## What it does
 
+**Production thread ownership.** The screen uses daemon-built items from its saved
+host and exact negotiated connection. Production requests both thread and interactive
+support. Missing support suppresses saved content. Offline saved facts grant no live
+support, prompts or progress. Retiring a connection clears its transient state at once;
+frame-paced rendering cannot retain a retired control.
+
+Each destination holds its own query lease. Closing one destination leaves another
+destination's paging and catch-up active. Read confirmation requires current certified
+coverage and sight of the exact rendered revisions. A retry retains its producing
+connection and cannot move to a replacement. Saved file-offer notices reuse the existing
+attachment controls after identifier validation and display-name cleaning.
+
+
 **Supplied send reconciliation (#1986).** A send immediately adds one provisional
 **Sending** row owned by the client. Empty acknowledgement is receipt only: it
 neither delivers nor removes feedback. An admitted daemon `user_message` with the

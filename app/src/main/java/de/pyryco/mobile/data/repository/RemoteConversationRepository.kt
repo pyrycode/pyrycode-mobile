@@ -200,13 +200,18 @@ class RemoteConversationRepository internal constructor(
             onRepair = { authoritativeQueries.repair(it) },
             onApplied = { conversation, id, generation ->
                 val snapshot = authoritativeThreads.current(authoritativeHostId, conversation)
+                val item = snapshot.items.firstOrNull { it.id == id }
                 if (authoritativeLiveEnabled() &&
                     snapshot.generation == generation &&
-                    snapshot.items.any { it.id == id && it.isCompletion() }
+                    item?.kind == "turn_end"
                 ) {
-                    authoritativeQueries.refreshAttention(conversation)
+                    if (item.isCompletion()) {
+                        authoritativeQueries.refreshAttention(conversation)
+                        RelayLog.d { "event=attention_completion source=live outcome=recovery_requested" }
+                    } else {
+                        authoritativeQueries.refresh(conversation, generation)
+                    }
                     refreshAuthoritativeReadFacts(conversation, generation)
-                    RelayLog.d { "event=attention_completion source=live outcome=recovery_requested" }
                 }
             },
         )
@@ -699,7 +704,10 @@ class RemoteConversationRepository internal constructor(
     ) {
         sessionLiveAdmission.currentBinding(conversation)?.let { conversationListProjection.updateCurrentSessionId(conversation, it) }
         if (family == null) {
-            SessionLiveAdmission.families.filterNot { it == TYPE_RATE_LIMITED }.forEach { clearAuthoritativeLive(conversation, it) }
+            SessionLiveAdmission.families
+                .filterNot {
+                    it == TYPE_RATE_LIMITED || it == TYPE_MODEL_LIST
+                }.forEach { clearAuthoritativeLive(conversation, it) }
             return
         }
         when (family) {

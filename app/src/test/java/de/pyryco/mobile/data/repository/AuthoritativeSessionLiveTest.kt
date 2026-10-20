@@ -120,7 +120,6 @@ class AuthoritativeSessionLiveTest {
                     "session_settings" to settings("s"),
                     "mcp_status" to "\"servers\":[],\"dropped_servers\":0",
                     "slash_command_list" to "\"commands\":[],\"dropped_commands\":0",
-                    "model_list" to "\"models\":[],\"dropped_models\":0",
                     "tool_progress" to "\"turn_id\":\"turn\",\"tool_use_id\":\"tool\",\"elapsed_seconds\":7",
                     "session_error" to "\"code\":\"failed\",\"message\":\"sensitive\"",
                 )
@@ -146,6 +145,30 @@ class AuthoritativeSessionLiveTest {
                 runCurrent()
                 assertEquals("retired $type", baseline, status(repo, type))
             }
+        }
+
+    @Test fun catalogVocabularySurvivesSessionReplacementWithoutGrantingSessionAuthority() =
+        runTest {
+            val (pump, repo) = repository()
+            pump.push(summary("current"))
+            pump.push(frame("model_list", "borrowed", clear = true))
+            pump.push(frame("model_list", "borrowed", payload = payload("\"models\":[],\"dropped_models\":0")))
+            runCurrent()
+            val catalog = repo.observeModelMenu("c").first()
+            assertNotNull(catalog)
+            pump.push(frame("stall", "next", clear = true))
+            runCurrent()
+            assertEquals(catalog, repo.observeModelMenu("c").first())
+            pump.push(frame("stall", "borrowed", payload = payload("")))
+            runCurrent()
+            assertFalse(repo.observeStall("c").first())
+            pump.push(frame("model_list", clear = true))
+            runCurrent()
+            assertNull(repo.observeModelMenu("c").first())
+            pump.push(frame("model_list", payload = payload("\"models\":[],\"dropped_models\":0")))
+            runCurrent()
+            assertNotNull(repo.observeModelMenu("c").first())
+            assertFalse(repo.observeStall("c").first())
         }
 
     @Test fun summariesEstablishIdentityWithoutInventingActivityAndOldTagsCannotReturn() =

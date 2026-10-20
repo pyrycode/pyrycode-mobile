@@ -91,6 +91,8 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
@@ -1980,7 +1982,7 @@ class RelayConnectionFactoryTest {
                     survivor.second.state.value.authoritativeThread
                         ?.certifiedCheckpoint,
                 )
-                val terminal = item(2, 20, 6, kind = "turn_end").raw
+                val terminal = JsonObject(item(2, 20, 6, kind = "turn_end", status = "done").raw + ("active" to JsonPrimitive(false)))
                 transport.emit(envelope("thread_item_added", """{"conversation_id":"c","epoch":"e","version":20,"item":$terminal}"""))
                 runCurrent()
                 val refresh = transport.outbound.last { it.type == "thread_catch_up" }

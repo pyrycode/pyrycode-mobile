@@ -66,10 +66,11 @@ retain their action order. Only named read-only queries may reorder within one a
 Daemon frames keep their recorded order and wait for their causal requests. Missing,
 extra, duplicate or changed requests fail, including requests after the last UI assertion.
 
-The recording identifies the current production presentation. Mobile has not yet activated
-required daemon-built threads in ticket 2175. This test does not turn on a test-only
-production route or synthesize thread items. The migration must pass live verification
-and refresh the recording when its actual requests change.
+The standalone permission fixture deliberately requests legacy capabilities. It proves
+that explicit diagnostic route and supplies no required-thread activation evidence.
+The full recorded Mobile suite uses the actual production selection. Changed production
+requests require genuine native capture, fresh replay, preserved strict comparisons and
+explicit review of every difference. Neither route synthesizes daemon-built thread items.
 
 Replay proves the recorded permission behaviour. Current-daemon compatibility requires
 the explicit live command. Timing, encrypted transport, reconnect, other permissions,

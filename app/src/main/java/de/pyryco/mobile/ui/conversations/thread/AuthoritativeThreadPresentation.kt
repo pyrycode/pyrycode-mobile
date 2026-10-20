@@ -11,6 +11,8 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.network.attachmentDisplayName
+import de.pyryco.mobile.data.network.isAttachmentIdShape
 import de.pyryco.mobile.data.repository.AuthoritativeLiveProgress
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.BannerLevel
@@ -492,6 +494,16 @@ private fun ThreadItemDto.displayRow(
                         null
                     } else {
                         when (subtype) {
+                            "attachment_offered" ->
+                                fields.text("attachment_id")?.takeIf(::isAttachmentIdShape)?.let { attachmentId ->
+                                    fields.text("filename")?.let { filename ->
+                                        message(
+                                            Role.Assistant,
+                                            "",
+                                            attachments = listOf(MessageAttachment(attachmentId, attachmentDisplayName(filename))),
+                                        )
+                                    }
+                                }
                             "banner" ->
                                 fields.text("text")?.takeUnless { fields.text("level") == "info" }?.let {
                                     ThreadItem.Banner(
