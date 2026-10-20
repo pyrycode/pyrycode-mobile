@@ -84,6 +84,14 @@ adjacency, a matching tool count or a turn id. Correctly attributed post-turn fr
 pass the unchanged Mobile production path; [daemon #2960](https://github.com/pyrycode/pyrycode/issues/2960)
 supplies the attribution fix. The wire contract remains in the daemon's `docs/protocol-mobile.md`.
 
+Outlined child tools also expose that exact ownership in semantics (#2340). The existing
+`ThreadRowContent` ancestor carries `background-agent-child:<agentBlockId>` from the projected
+row, excluding the Agent root itself; the outlined surface retains `TOOL_ROW_TAG`. Putting both
+tags on the surface cannot satisfy `hasAnyAncestor`. Direct and indirect descendants keep the
+same exact Agent message id while running, after settlement and after reopening. This semantic
+identity is independent of indentation and does not alter parent chains, keys or expansion.
+See [the authoritative ownership regression and native evidence](thread-screen-testing-background-agent-viewport.md#exact-agent-ownership-on-outlined-tools-2340).
+
 `ScriptedBackgroundAgentToolsTest.lateToolsRemainOwnedAcrossMainCompletion` drives received
 frames through the repository, ViewModel and rendered thread: one child starts before main
 completion and finishes afterward, and two more arrive later, including during a later main
@@ -218,8 +226,9 @@ Opening a long run can dispose its header after all child keys have entered the 
 for an on-screen expansion label can therefore report a failed toggle that actually succeeded.
 Wait for child-key membership first, then reveal the existing header once and check its expansion
 action. Bring the owned paragraph into composition before positive visibility checks; after closing,
-require every loaded owned child key absent through `IndexForKey`, since absence from semantics alone
-can mean lazy disposal. The scripted proof reads child message ids from the repository snapshot,
+require owned prose and sibling tool keys absent through `IndexForKey`, since absence from semantics
+alone can mean lazy disposal. The first tool key remains as the collapsed header; require owned
+outlined tool rows absent as well. The scripted proof reads child message ids from the repository snapshot,
 not fixture paragraph text. See [counted navigation/open/close evidence](../../e2e-interactive-stream.md#verification-status).
 See [cache-only limitations](thread-screen-previews-and-edge-cases.md#edge-cases--limitations)
 and [the live ladder](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
@@ -402,6 +411,9 @@ when closed: it belongs to the header. All other child keys are absent, and open
 restores every child's individual key. Keep pointer taps, expansion semantics and owned
 prose visibility assertions alongside membership; membership alone cannot distinguish the
 closed representative from its first child.
+`AuthoritativeAgentOwnershipTest` additionally requires no outlined `TOOL_ROW_TAG` beneath
+the exact Agent ancestor while collapsed, then every individual tool key and exact owner after
+expansion. Requiring the representative key to disappear rejects valid collapse (#2340).
 
 **A screen test that calls `verifyAgentRunNavigation` must mount with collapse on, explicitly.**
 `AuthoritativeScenarioScreenTest`'s `mount` helper defaults `collapseToolUses` to `false`, matching

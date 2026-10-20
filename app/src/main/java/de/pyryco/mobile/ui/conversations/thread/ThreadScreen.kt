@@ -996,6 +996,8 @@ fun ThreadScreen(
                                         it.role ==
                                             Role.Tool
                                     }?.id
+                            val toolOwner =
+                                (row as? ThreadRow.Delivered)?.agentBlockId?.takeIf { toolId != null && it != toolId }
                             val toolExpansion =
                                 toolId?.let { id ->
                                     ToolCallExpansion(id in expandedTools) {
@@ -1008,6 +1010,8 @@ fun ThreadScreen(
                                 toolExpansion = toolExpansion,
                                 modifier =
                                     Modifier
+                                        // Keep ownership above the outlined surface's own tool-row tag.
+                                        .then(toolOwner?.let { Modifier.testTag("background-agent-child:$it") } ?: Modifier)
                                         .layout { measurable, constraints ->
                                             val placeable = measurable.measure(constraints)
                                             if (!measuring) {
