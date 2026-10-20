@@ -1,7 +1,14 @@
 package de.pyryco.mobile.recording
 
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
+import kotlinx.datetime.Instant
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -10,6 +17,154 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RecordedSuiteTapeTest {
+    @Test fun replayCanonicalPhoneEchoRetiresPendingButTheSameMessageFromAPeerDoesNot() {
+        val oldSink = de.pyryco.mobile.data.network.RelayLog.sink
+        de.pyryco.mobile.data.network.RelayLog.sink = { _, _, _ -> }
+        try {
+            val owner = "phone/host/0"
+            val send = frame(1, "send_message", """{"conversation_id":"chat","message_id":"captured-message","text":"hello"}""")
+            val echo =
+                frame(
+                    2,
+                    "thread_item_added",
+                    """
+{"conversation_id":"chat",
+"item":{"id":2,
+"order":2,
+"rev":2,
+"kind":"user_message",
+"status":"delivered",
+"active":false,
+"shown":true,
+"summary":"hello",
+"content":{"message_id":"captured-message",
+"device_id":"captured-phone",
+"text":"hello"}}}
+""",
+                )
+            val tape = RecordedSuiteTape(listOf(client(owner, send), daemon(owner, echo)), literalProducerIdentities = true)
+            tape.bindPhoneDevice(owner, "runtime-phone")
+            val actualSend = frame(90, "send_message", """{"conversation_id":"chat","message_id":"runtime-message","text":"hello"}""")
+            val delivered =
+                tape
+                    .request(owner, actualSend)
+                    .single()
+                    .message!!
+                    .payload.jsonObject
+                    .getValue("item")
+                    .jsonObject
+            val own = ThreadItemDto.decodeReplacement(delivered)
+            val peer =
+                ThreadItemDto.decodeReplacement(
+                    JsonObject(
+                        delivered + mapOf("id" to JsonPrimitive(1), "order" to JsonPrimitive(1), "rev" to JsonPrimitive(1)) +
+                            (
+                                "content" to
+                                    JsonObject(
+                                        delivered.getValue("content").jsonObject + ("device_id" to JsonPrimitive("foreign-device")),
+                                    )
+                            ),
+                    ),
+                )
+            val store = AuthoritativeThreadStore()
+            val message = Message("runtime-message", "", Role.User, "hello", Instant.fromEpochMilliseconds(0), isStreaming = false)
+            store.registerPending("host", "chat", "runtime-phone", message)
+            store.applyBatch("host", "chat", "epoch", 1, listOf(peer), 0)
+            assertEquals(1, store.current("host", "chat").pendingSends.size)
+            store.applyBatch("host", "chat", "epoch", 2, listOf(own), 0)
+            assertTrue(store.current("host", "chat").pendingSends.isEmpty())
+            tape.assertComplete()
+        } finally {
+            de.pyryco.mobile.data.network.RelayLog.sink = oldSink
+        }
+    }
+
+    @Test fun replayBindsOnlyThePhoneDeviceProvenByItsOwnCanonicalSend() {
+        val owner = "phone/host/0"
+        val send = frame(1, "send_message", """{"conversation_id":"chat","message_id":"captured-message","text":"hello"}""")
+
+        fun item(
+            device: String,
+            conversation: String = "chat",
+        ) = frame(
+            2,
+            "thread_item_added",
+            """
+{"conversation_id":"$conversation",
+"item":{"kind":"user_message",
+"content":{"message_id":"captured-message",
+"device_id":"$device"}}}
+""",
+        )
+        val own = item("captured-phone")
+        val otherConversation = item("other-phone", "other-chat").copy(id = 3)
+        val otherHost = item("other-host-device")
+        val tape =
+            RecordedSuiteTape(
+                listOf(client(owner, send), daemon(owner, own), daemon(owner, otherConversation), daemon("phone/other-host/0", otherHost)),
+                literalProducerIdentities = true,
+            )
+        tape.bindPhoneDevice(owner, "runtime-phone")
+        val delivered = tape.request(owner, send.copy(id = 90))
+        val devices =
+            delivered.map {
+                it.message!!
+                    .payload.jsonObject
+                    .getValue("item")
+                    .jsonObject
+                    .getValue("content")
+                    .jsonObject
+                    .getValue("device_id")
+            }
+        assertEquals(listOf("\"runtime-phone\"", "\"other-phone\"", "\"other-host-device\""), devices.map { it.toString() })
+        assertEquals(
+            "captured-phone",
+            own.payload.jsonObject
+                .getValue("item")
+                .jsonObject
+                .getValue("content")
+                .jsonObject
+                .getValue("device_id")
+                .toString()
+                .trim('"'),
+        )
+        tape.assertComplete()
+    }
+
+    @Test fun replayPhoneDeviceBindingCannotChangeOnReconnect() {
+        val owner = "phone/host/0"
+        val tape = phoneDeviceTape(owner, listOf("captured-phone"))
+        tape.bindPhoneDevice(owner, "runtime-phone")
+        tape.bindPhoneDevice("phone/host/1", "runtime-phone")
+        assertThrows(IllegalStateException::class.java) { tape.bindPhoneDevice("phone/host/2", "different-phone") }
+    }
+
+    @Test fun conflictingCanonicalPhoneIdentitiesCannotBeGuessed() {
+        val owner = "phone/host/0"
+        assertThrows(IllegalStateException::class.java) {
+            phoneDeviceTape(owner, listOf("first-device", "second-device")).bindPhoneDevice(owner, "runtime-phone")
+        }
+    }
+
+    private fun phoneDeviceTape(
+        owner: String,
+        devices: List<String>,
+    ): RecordedSuiteTape =
+        RecordedSuiteTape(
+            listOf(client(owner, frame(1, "send_message", """{"conversation_id":"chat","message_id":"message"}"""))) +
+                devices.mapIndexed { index, device ->
+                    daemon(
+                        owner,
+                        frame(
+                            index + 2L,
+                            "thread_items",
+                            """{"conversation_id":"chat","items":[{"kind":"user_message","content":{"message_id":"message","device_id":"$device"}}]}""",
+                        ),
+                    )
+                },
+            literalProducerIdentities = true,
+        )
+
     @Test fun aProducerCannotDeliverLiveUpdatesAheadOfItsEarlierUnrequestedQueryReply() {
         val owner = "phone/host/0"
         val tape =

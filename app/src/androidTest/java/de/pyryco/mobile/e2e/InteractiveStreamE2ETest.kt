@@ -3681,14 +3681,14 @@ class InteractiveStreamE2ETest {
             )
             val recovered = currentThread(serverId, conversationId) { produced.admitted(it, serverId) != null }
             awaitRetainedReply(checkNotNull(produced.admitted(recovered, serverId)))
-            awaitRetainedReply(firstReply)
+            val retainedFirst = awaitRetainedReply(firstReply)
             // Recovered cached baseline and missed user row remain unique in the merged chronology.
             val texts = gap.messages()
             assertEquals(1, texts.count { it == PING_PROMPT })
             assertEquals(1, texts.count { it == OFFLINE_PROMPT })
             assertTrue(texts.indexOf(PING_PROMPT) < texts.indexOf(OFFLINE_PROMPT))
             composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(inThreadList(PING_PROMPT))
-            assertDrawnOnce(inThreadList(PING_PROMPT), *firstReply.records.map(::ownedReplyMatcher).toTypedArray())
+            assertDrawnOnce(inThreadList(PING_PROMPT), *retainedFirst.records.map(::ownedReplyMatcher).toTypedArray())
         } finally {
             peer.close()
             DurableHistoryProbe.end()
@@ -3856,11 +3856,11 @@ class InteractiveStreamE2ETest {
                 openChatRow(nameA)
                 val recovered = currentThread(serverId, chatA) { produced.admitted(it, serverId) != null }
                 val actualReply = checkNotNull(produced.admitted(recovered, serverId))
-                awaitRetainedReply(firstReply)
-                awaitRetainedReply(actualReply)
+                val retainedFirst = awaitRetainedReply(firstReply)
+                val retainedActual = awaitRetainedReply(actualReply)
                 val rows =
-                    listOf(inThreadList(PING_PROMPT)) + firstReply.records.map(::ownedReplyMatcher) +
-                        listOf(inThreadList(WAIT_PROMPT)) + actualReply.records.map(::ownedReplyMatcher)
+                    listOf(inThreadList(PING_PROMPT)) + retainedFirst.records.map(::ownedReplyMatcher) +
+                        listOf(inThreadList(WAIT_PROMPT)) + retainedActual.records.map(::ownedReplyMatcher)
                 assertDrawnOnce(*rows.toTypedArray())
                 val tops =
                     rows.map {

@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.MobileJson
@@ -177,13 +178,22 @@ internal object RecordedSuiteNative {
             single<RelayConnectionFactory> {
                 val original = get<RelayTransportFactory>()
                 val clientInfo = get<NoiseClientInfo>()
+                val deviceKeys = get<DeviceStaticKeyStore>()
                 RelayConnectionFactory(
-                    get(),
+                    deviceKeys,
                     RelayTransportFactory { pairing ->
                         session.remember(pairing)
+                        val owner = session.owner("phone", pairing.serverId)
+                        if (session.document != null) {
+                            // Replay bypasses Noise, so create the real runner key before provisional sends use it.
+                            val identity =
+                                runBlocking { deviceKeys.loadOrCreate(pairing.serverId).publicKey }
+                                    .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                            checkNotNull(session.tape).bindPhoneDevice(owner, identity)
+                        }
                         OwnedReplyProbe.transport(
                             pairing.serverId,
-                            session.hub.transport(session.owner("phone", pairing.serverId)) { original.create(pairing) },
+                            session.hub.transport(owner) { original.create(pairing) },
                         )
                     },
                     session.document?.replayClientInfo(clientInfo) ?: clientInfo,

@@ -501,6 +501,53 @@ internal class RecordedSuiteTape(
 
     @Synchronized fun arguments(values: JsonObject): JsonObject = mapped(values).jsonObject
 
+    private val phoneDeviceBindings = mutableMapOf<String, String>()
+
+    /** Bind only a captured phone send's own canonical echo to this replay's real phone key. */
+    @Synchronized fun bindPhoneDevice(
+        owner: String,
+        actualDeviceId: String,
+    ) {
+        check(owner == "phone" || owner.startsWith("phone/")) { "Expected a phone connection" }
+        check(actualDeviceId.isNotBlank()) { "Missing replay phone identity" }
+
+        fun JsonObject.string(key: String) = (get(key) as? JsonPrimitive)?.contentOrNull
+        val sends =
+            steps
+                .filter {
+                    family(it.owner) == family(owner) && it.direction == "client" && it.accepted && it.message?.type == "send_message"
+                }.mapNotNull {
+                    val payload = it.message!!.payload as? JsonObject ?: return@mapNotNull null
+                    val conversation = payload.string("conversation_id") ?: return@mapNotNull null
+                    val message = payload.string("message_id") ?: return@mapNotNull null
+                    conversation to message
+                }.toSet()
+        val devices =
+            steps
+                .filter {
+                    family(it.owner) == family(owner) &&
+                        it.direction == "daemon" &&
+                        it.message?.type in setOf("thread_items", "thread_item_added")
+                }.flatMap { step ->
+                    val payload = step.message!!.payload as? JsonObject ?: return@flatMap emptyList()
+                    val conversation = payload.string("conversation_id") ?: return@flatMap emptyList()
+                    val items = (payload["items"] as? JsonArray)?.toList() ?: listOfNotNull(payload["item"])
+                    items.mapNotNull { value ->
+                        val item = value as? JsonObject ?: return@mapNotNull null
+                        if (item.string("kind") != "user_message") return@mapNotNull null
+                        val content = item["content"] as? JsonObject ?: return@mapNotNull null
+                        if (conversation to content.string("message_id") !in sends) return@mapNotNull null
+                        content.string("device_id")?.takeIf { it.isNotBlank() }
+                    }
+                }.toSet()
+        check(devices.size <= 1) { "Ambiguous recorded phone identity" }
+        val captured = devices.singleOrNull() ?: return
+        val previous = phoneDeviceBindings[captured]
+        check(previous == null || previous == actualDeviceId) { "Replay phone identity changed" }
+        phoneDeviceBindings[captured] = actualDeviceId
+        identities[captured] = actualDeviceId
+    }
+
     private val uploadBindings = mutableSetOf<String>()
 
     /** The production model projection permits one ask racing an unsolicited reconnect catalog. */
