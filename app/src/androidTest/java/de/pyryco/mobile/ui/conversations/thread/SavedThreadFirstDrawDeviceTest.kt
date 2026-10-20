@@ -588,7 +588,7 @@ class SavedThreadFirstDrawDeviceTest {
                                         "placed=${newest?.layoutInfo?.isPlaced} nodes=${nodes.size}",
                                 )
                             }
-                            if (viewport != null &&
+                            if (probe.drawn.get() == 0L && viewport != null &&
                                 newest != null &&
                                 newest.layoutInfo.isPlaced &&
                                 newest.boundsInRoot.width > 0 &&
@@ -604,6 +604,9 @@ class SavedThreadFirstDrawDeviceTest {
                                         SystemClock.elapsedRealtimeNanos(),
                                     )
                                 }
+                                // OnDraw can run after this traversal captured commit callbacks.
+                                // Require a subsequent frame, still containing the exact visible text.
+                                view.postInvalidateOnAnimation()
                             }
                         }
                     observer.addOnDrawListener(listener)
