@@ -464,7 +464,7 @@ class ThreadDesignCaptureTest {
         val a = attach.getUnclippedBoundsInRoot()
         val b = tune.getUnclippedBoundsInRoot()
         val actions = rule.onNodeWithText("Actions", useUnmergedTree = true).getUnclippedBoundsInRoot()
-        val context = rule.onNodeWithTag("thread_footer_context_usage", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val context = rule.onNodeWithTag("thread_footer_context_ring", useUnmergedTree = true).getUnclippedBoundsInRoot()
         assertEquals(24f, a.right.value - a.left.value, 0.5f)
         assertEquals(16f, a.bottom.value - a.top.value, 0.5f)
         assertEquals(12f, b.left.value - a.right.value, 0.5f)
@@ -473,12 +473,10 @@ class ThreadDesignCaptureTest {
         assertEquals("circle width", 15f, context.right.value - context.left.value, 0.5f)
         assertEquals("circle height", 15f, context.bottom.value - context.top.value, 0.5f)
         assertEquals("circle before Actions with visual gap", 16f, actions.left.value - context.right.value, 0.5f)
-        val actionTarget = rule.onNode(hasText("Actions") and hasClickAction()).getUnclippedBoundsInRoot()
-        val slotTop = actionTarget.top.value + (actionTarget.bottom.value - actionTarget.top.value - 12f - 16f) / 2f
-        assertEquals("Context slot centred in left group", slotTop, context.top.value, 0.5f)
+        assertEquals("Context aligns with the footer icon band", a.top.value, context.top.value, 0.5f)
         val density = design.view.resources.displayMetrics.density
         rule
-            .onNodeWithTag("thread_footer_context_usage", useUnmergedTree = true)
+            .onNodeWithTag("thread_footer_context_ring", useUnmergedTree = true)
             .assertContentDescriptionEquals("Context usage warning, 84%")
         if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
             // Hardware drawing can trail semantics; a warning description alone cannot fence a snapshot.

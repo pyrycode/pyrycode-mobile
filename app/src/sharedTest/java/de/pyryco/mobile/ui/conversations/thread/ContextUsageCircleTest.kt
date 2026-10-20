@@ -80,7 +80,7 @@ class ContextUsageCircleTest {
                     85, 100 -> "Context usage high, $reading%"
                     else -> "Context usage $reading%"
                 }
-            val node = composeRule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG)
+            val node = composeRule.onNodeWithTag(CONTEXT_RING_TEST_TAG, useUnmergedTree = true)
             node.assertContentDescriptionEquals(description)
             val semantics = node.fetchSemanticsNode()
             assertTrue("the circle has no visible percentage text", semantics.config.getOrNull(SemanticsProperties.Text) == null)

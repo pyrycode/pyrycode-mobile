@@ -1,15 +1,14 @@
 # Thread composer footer — context usage segment
 
 Split out of [Thread composer footer](thread-composer-footer.md) on 2026-09-25 to keep that document
-under the 50000-byte size cap the docs guard enforces. The computed-source section retains its heading and anchor; rendering now follows the #1660 circle.
+under the 50000-byte size cap the docs guard enforces. The computed-source section retains its heading and anchor.
 
 ## Context usage segment (#946, computed since #1411)
 
-`ThreadRunConfig.contextPercent: Int?` is a third independent reading, joined the same way [§ Running
-model](thread-composer-footer.md#running-model-891) is: `runConfigFlow` folds it in with one more
-`.combine(repository.observeContextUsage(conversationId)) { config, usage -> config.copy(contextPercent =
-contextPercent(usage, settings)) }` after the `runningModel` combine — a third link, not a sixth arm of the
-five-arm `combine` (already at Kotlin's typed ceiling). Since [#1411](https://github.com/pyrycode/pyrycode-mobile/issues/1411)
+`ThreadRunConfig.contextPercent: Int?` is an independent reading folded into `runConfigFlow` from
+`repository.observeContextUsage(conversationId)` and eligible session settings. The same configuration
+carries the held reading and selected used/maximum token pair for the Context sheet.
+Since [#1411](https://github.com/pyrycode/pyrycode-mobile/issues/1411)
 the shown percentage is **computed, not Claude's verbatim `percentage`**, reversing #946's original rule: the
 top-level `contextPercent(usage, settings)` function (bottom of `ThreadViewModel.kt`) takes `usage.totalTokens`
 / `.maxTokens` while a reading exists — whatever it holds, even a zero `maxTokens`, which still yields `null`
@@ -39,14 +38,85 @@ coalesce while that request is pending. Its successful reply updates the reading
 rejected old remembered reply releases that request so a later turn can refresh again. Sending happens outside
 the reading monitor. Other conversations keep their own readings.
 
-A private `ContextSegment(percent: Int?)` renders an inert context circle before Actions
-since [#1660](https://github.com/pyrycode/pyrycode-mobile/issues/1660). It has no click action or overlay.
+Since [#2321](https://github.com/pyrycode/pyrycode-mobile/issues/2321), tapping the context circle before
+Actions opens the standalone read-only Context sheet, even when its percentage is unavailable.
+The client-owned accessible action label is “Open context”. Its physical target is at least 48 × 48 dp,
+using leading blank space and the gap before Actions without overlapping that action.
 The 15 × 15 dp circle is top-aligned inside a 15 × 16 dp slot, with a 2 dp stroke. The
 `primaryContainer` track is drawn first and stays dark at every reading. The used arc starts at the top
 (-90 degrees) and grows counterclockwise with a negative sweep proportional to the computed percentage.
 Zero and unavailable readings draw no used arc; 100% draws a complete used ring. See
 [footer geometry](thread-composer-footer.md#trailing-icons-stay-outside-the-weighted-text-region-1032-wrap-shape-1549)
 for the fixed slot and reserved trailing controls.
+
+Reserving the full touch height adds 20 dp to the measured composer above the visible icon band.
+Automatic expansion of the old 28 dp box extended below the window and made bottom-edge taps miss.
+Keep the ring aligned with the footer icons while reserving the target inside the window. This height
+also affects the task pill, editor, empty-state center and newest-message/status gap. At fractional
+density, subtract separately rounded pixel values for `ComposerTopGap` and
+`ordinaryMessageRestAdjustment` from the measured composer height; rounding the combined dp
+subtraction fails to match Compose's actual padding.
+
+### Context sheet (#2321)
+
+`ContextSummarySheet` uses [the shared dismiss modal](mobile-modal.md): Context title, close X,
+separator, scrolling body and pinned Done action. Close, Done and Android Back dismiss it.
+`ThreadViewModel` owns visibility in `ThreadUiState`; an open sheet updates with the current reading,
+survives recollection of that ViewModel and obstructs thread read-sight qualification. A new destination
+ViewModel starts closed.
+
+| Reading | Body |
+|---|---|
+| Claude, no held reading | Only “A context reading arrives after the next turn.”, even if settings supply a footer percentage. |
+| Claude, fresh reading | Model, “X of Y tokens”, computed footer percentage or “Not reported yet”, then Categories when there are rows or a positive dropped count. |
+| Claude, remembered reading (`asOf` present) | Held scalar header only. Categories stay hidden even if the received reading contains them; missing stored detail is not a fresh empty breakdown. |
+| Codex, eligible token source with a positive maximum | Totals and the same computed percentage as the footer. Model and categories are hidden. |
+| Codex, no usable source | The pending line. |
+
+Fresh category rows retain received order and show a name, token figure and 4 dp bar scaled to
+`maxTokens`. A positive dropped count adds “+N more”, including when the list is empty; an empty list
+with no positive dropped count hides Categories. Model and category names ellipsize to one line.
+Token figures follow desktop's one-decimal thousands formatting (`12.4k`, `12k`, without `.0`).
+`contextBarPercent` converts to Double before arithmetic, clamps to 0–100 and returns zero for a
+nonpositive maximum. Counts never control allocations.
+
+The [design inventory](../../../app/src/androidTest/assets/design-1220/README.md#context)
+links the loaded, waiting and Codex frames from #2224. The 2026-10-19 decision allows Codex to open
+this sheet with totals only. MCP-tool inventories (#2322), memory-file inventories (#2323) and allowance
+(#2226) have their own scope; this summary has no placeholder rows for them.
+
+### Decode boundary and coverage
+
+The authoritative wire contract remains pyrycode's `docs/protocol-mobile.md`, section `context_usage`.
+The shared decoder retains model, ordered categories and dropped count. Required summary fields
+must be present with their correct primitive kinds; missing/null lists or fields and stringified token
+counts reject the frame while preserving the held reading. Empty lists, an empty model and unknown
+extra keys remain valid. Existing scalar validation, timestamp parsing and conversation routing apply.
+Model/category text is bounded to 512 characters and rendered only as inert Text, never as logs,
+exception output, paths, actions or identity keys. DTO/domain string representations redact it.
+Defaulted domain fields preserve in-process scalar-only constructors; wire fixtures must still be complete.
+
+`ThreadReadEvidence` uses the same decoder. When required wire fields change, complete intended-valid
+fixtures imported by main merges too: otherwise a rejection test can pass at shape validation without
+ever exercising freshness or ownership. `RemoteConversationRepositoryContextUsageTest` and
+`ContextUsageProjectionTest` cover decoding/retention; `ThreadViewModelContextUsageTest` covers visibility,
+source selection, updates and clearing. `ContextSummarySheetTest` exercises the actual footer opener,
+all three dismissals, target edges and adjacent Actions routing, pending/loaded/updating/remembered/Codex
+states, scrolling, ellipsis and clamped bars. Keep composer geometry checks alongside these pointer tests;
+neither proves the other's contract.
+
+Linux acceptance at `c7e0aa32779930dfcd832ee806fc86df2817df1f` on 2026-10-20 passed in the complete
+dispatcher gates: JVM/shared **6,221 executed / 6,221 passed / 0 failed / 0 skipped**; device
+**335 executed / 335 passed / 0 failed / 1 skipped**; scripted **22 executed / 22 passed / 0 failed /
+0 skipped**. The fresh XML confirms all eight `ContextSummarySheetTest` and eleven
+`ThreadViewModelContextUsageTest` methods passed, including the opener/dismissal, updating/clamping,
+remembered and Codex scenarios above. `ThreadDesignCaptureTest#footerAt320By700` passed in the device
+gate; `RenameDialogCaptureTest#renameAtFigmaViewport` was skipped. Raw reports were retained at
+`/tmp/verifier-2324/current-green/` in `jvm-gtoqemwt/`, `ui-q_nhusa5/` and `scripted-all-9_0go5p3/`.
+The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2324#issuecomment-6286505096)
+records the counts and scope. No fresh Context-sheet raster comparison or real-Claude turn was run;
+macOS was outside this ticket's scope. The historical scripted measurement failure remains a failed
+capture with unproved cause; the later complete pass does not establish a causal repair.
 
 ### Colour steps at 70 and 85 percent (#1660)
 
@@ -119,9 +189,10 @@ current-session fallback and conversation isolation. The
 older `interactiveTurn_pingPrompt_footerShowsContextUsage` has the same blind spot and predates this fix;
 it is not itself proof that an ask was sent, only that a reading — pushed or asked for — is showing.
 
-**Same value, two surfaces.** [`StatusSheet`](status-sheet-readings.md#contextwindowsection)'s Context-window
-section reads the identical `ThreadRunConfig.contextPercent`, so the footer and the sheet cannot
-disagree — both read the one `contextPercent(usage, settings)` result computed in `runConfigFlow`, never
+**Same percentage across surfaces.** The Context summary and
+[`StatusSheet`](status-sheet-readings.md#contextwindowsection)'s Context-window section read the identical
+`ThreadRunConfig.contextPercent` as the footer. All use the one
+`contextPercent(usage, settings)` result computed in `runConfigFlow`, never
 Claude's `percentage` directly. No rung-4 twin: whether the scripted `fakeclaude` path makes the daemon publish
 `context_usage` is not established.
 

@@ -1746,8 +1746,8 @@ data class SessionFacts(
  * only on a **remembered** answer, the daemon's record of when Claude last reported it for a dormant
  * conversation; the figure is still the last one Claude gave, so it is held like any other.
  *
- * The frame's inventories and its `model` are deliberately not carried: every string on it is claude-authored,
- * and this type holds numbers only.
+ * Model/category names are bounded untrusted display text, never actions, paths, logs or identity keys.
+ * A remembered reading does not certify an empty breakdown, even when its lists are empty.
  *
  * `data` is load-bearing: structural equality is what the repository's `distinctUntilChanged` relies on.
  */
@@ -1756,7 +1756,20 @@ data class ContextUsage(
     val maxTokens: Long,
     val percentage: Int,
     val asOf: Instant?,
-)
+    val model: String = "",
+    val categories: List<ContextCategory> = emptyList(),
+    val droppedCategories: Long = 0,
+) {
+    override fun toString(): String = "ContextUsage(<redacted>)"
+}
+
+/** One ordered context contributor. The name is inert display text, never a routing or row key. */
+data class ContextCategory(
+    val name: String,
+    val tokens: Long,
+) {
+    override fun toString(): String = "ContextCategory(<redacted>)"
+}
 
 /**
  * One conversation's MCP server reading on this connection (#1343) — the element type of

@@ -16,6 +16,7 @@ import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -143,11 +144,22 @@ class TaskCountPillTest {
         // label about 2 dp narrower than Figma's. The anchored right, top and bottom edges stay at 2 dp.
         assertEquals(288f, bounds.left.value, 3f)
         assertEquals(392f, bounds.right.value, 2f)
-        assertEquals(696f, bounds.top.value, 2f)
-        assertEquals(720f, bounds.bottom.value, 2f)
+        // #2321 reserves 20dp more composer height for the Context target above the footer's icon band.
+        assertEquals(676f, bounds.top.value, 2f)
+        assertEquals(700f, bounds.bottom.value, 2f)
+        val band = composeTestRule.onNodeWithTag("thread-status-band").getUnclippedBoundsInRoot()
+        assertEquals(
+            "pill remains centered in the status band",
+            ((band.top + band.bottom) / 2).value,
+            ((bounds.top + bounds.bottom) / 2).value,
+            1f,
+        )
         val editor = composeTestRule.onNode(hasSetTextAction()).getUnclippedBoundsInRoot()
         val footerActions = composeTestRule.onNodeWithText(string(R.string.thread_footer_actions)).getUnclippedBoundsInRoot()
+        val context = composeTestRule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG).getUnclippedBoundsInRoot()
+        assertTrue("editor must clear the task pill", editor.top >= bounds.bottom)
         assertTrue("footer actions must clear the editor", editor.bottom <= footerActions.top)
+        assertTrue("Context target must clear the editor", editor.bottom <= context.top)
     }
 
     // The list is laid out from its newest end, so the newest message follows the message area's bottom,
