@@ -169,6 +169,25 @@ class RemoteConversationRepositorySessionErrorTest {
         }
 
     @Test
+    fun turnStateDiagnosticsDescribeOnlyDecodedPhases() =
+        runTest {
+            val (pump, _) = repo()
+            for (state in listOf("thinking", "responding", "idle")) pump.push(turn("private-conversation", state))
+            pump.push(turn("private-conversation", "private-unknown-state"))
+            pump.push(frame("turn_state", """{"conversation_id":"private-conversation","state":{"private":"value"}}"""))
+            runCurrent()
+            assertEquals(
+                listOf(
+                    "event=session_error_turn_state phase=thinking",
+                    "event=session_error_turn_state phase=responding",
+                    "event=session_error_turn_state phase=idle",
+                ),
+                logs.filter { it.startsWith("event=session_error_turn_state ") },
+            )
+            assertTrue(logs.none { "private" in it })
+        }
+
+    @Test
     fun idleUnknownAndMalformedTurnStatesLeaveHeldErrorIntact() =
         runTest {
             val (pump, remote) = repo()

@@ -139,89 +139,101 @@ internal class SessionErrorRecoveryScenario(
                 serverStaticPublicKey = fixture.value("serverStaticPublicKey"),
             ),
         ).use { peer ->
-            stage(arm, "observer_open")
-            runBlocking { peer.open(30_000) }
-            stage(arm, "channel_open")
-            val channel = hasText(fixture.value("channel")) and hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)
-            await(channel)
-            compose.onNode(channel).performScrollTo().performClick()
-            await(hasSetTextAction())
-            request(arm, "ready") // The child has closed stdin; its first exit remains gated.
-            stage(arm, "held_send")
-            send(heldPrompt)
-            val queued = runBlocking { peer.awaitQueue(conversation, 20_000) { it.size == 1 && it.single().text == heldPrompt } }.single()
-            assertTrue("phone send has no correlation identity", queued.messageId.isNotBlank())
-            assertEquals("the closed-stdin child must not receive a turn", 0, deliveries(peer, conversation).size)
-            assertTrue("crash signal preceded queued observation", errors(peer, conversation).isEmpty())
-            val queuedRow =
-                hasText(heldPrompt) and
-                    SemanticsMatcher.expectValue(
-                        SemanticsProperties.StateDescription,
-                        context.getString(R.string.thread_queued_state_desc),
-                    )
-            request(arm, "exit")
-            val expectedId: String
-            if (arm == "retained") {
-                stage(arm, "retained_status")
-                awaitError(peer, conversation, "session.child_crashing")
-                assertPill(CRASHING)
-                compose.onNode(queuedRow).assertIsDisplayed()
-                val stillQueued = runBlocking { peer.awaitQueue(conversation, 5_000) { it.size == 1 } }.single()
-                assertEquals(queued.messageId, stillQueued.messageId)
-                assertEquals(queued.queuedMsgId, stillQueued.queuedMsgId)
-                assertEquals(0, deliveries(peer, conversation).size)
-                assertTrue("retained backlog gave up", "session.blocked" !in errors(peer, conversation))
-                expectedId = queued.messageId
-                request(arm, "release")
-            } else {
-                stage(arm, "dropped_status")
-                awaitError(peer, conversation, "session.blocked")
-                runBlocking { peer.awaitQueue(conversation, 10_000) { it.isEmpty() } }
-                assertPill(BLOCKED)
-                compose.waitUntil(10_000) { nodes(queuedRow).isEmpty() }
-                compose.onAllNodes(queuedRow).assertCountEquals(0)
-                assertEquals("dropped turn was delivered", 0, deliveries(peer, conversation).size)
-                // The 3s give-up can precede the crash notice; observe its pill as it arrives.
-                awaitError(peer, conversation, "session.child_crashing")
-                request(arm, "release")
-                request(arm, "recovered") // Automatic respawn, before a fresh phone send.
-                stage(arm, "fresh_send")
-                send(freshPrompt)
+            try {
+                stage(arm, "observer_open")
+                runBlocking { peer.open(30_000) }
+                stage(arm, "channel_open")
+                val channel = hasText(fixture.value("channel")) and hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)
+                await(channel)
+                compose.onNode(channel).performScrollTo().performClick()
+                await(hasSetTextAction())
+                request(arm, "ready") // The child has closed stdin; its first exit remains gated.
+                stage(arm, "held_send")
+                send(heldPrompt)
+                val queued =
+                    runBlocking {
+                        peer.awaitQueue(conversation, 20_000) { it.size == 1 && it.single().text == heldPrompt }
+                    }.single()
+                assertTrue("phone send has no correlation identity", queued.messageId.isNotBlank())
+                assertEquals("the closed-stdin child must not receive a turn", 0, deliveries(peer, conversation).size)
+                assertTrue("crash signal preceded queued observation", errors(peer, conversation).isEmpty())
+                val queuedRow =
+                    hasText(heldPrompt) and
+                        SemanticsMatcher.expectValue(
+                            SemanticsProperties.StateDescription,
+                            context.getString(R.string.thread_queued_state_desc),
+                        )
+                request(arm, "exit")
+                val expectedId: String
+                if (arm == "retained") {
+                    stage(arm, "retained_status")
+                    awaitError(peer, conversation, "session.child_crashing")
+                    assertPill(CRASHING)
+                    compose.onNode(queuedRow).assertIsDisplayed()
+                    val stillQueued = runBlocking { peer.awaitQueue(conversation, 5_000) { it.size == 1 } }.single()
+                    assertEquals(queued.messageId, stillQueued.messageId)
+                    assertEquals(queued.queuedMsgId, stillQueued.queuedMsgId)
+                    assertEquals(0, deliveries(peer, conversation).size)
+                    assertTrue("retained backlog gave up", "session.blocked" !in errors(peer, conversation))
+                    expectedId = queued.messageId
+                    request(arm, "release")
+                } else {
+                    stage(arm, "dropped_status")
+                    awaitError(peer, conversation, "session.blocked")
+                    runBlocking { peer.awaitQueue(conversation, 10_000) { it.isEmpty() } }
+                    assertPill(BLOCKED)
+                    compose.waitUntil(10_000) { nodes(queuedRow).isEmpty() }
+                    compose.onAllNodes(queuedRow).assertCountEquals(0)
+                    assertEquals("dropped turn was delivered", 0, deliveries(peer, conversation).size)
+                    // The 3s give-up can precede the crash notice; observe its pill as it arrives.
+                    awaitError(peer, conversation, "session.child_crashing")
+                    request(arm, "release")
+                    request(arm, "recovered") // Automatic respawn, before a fresh phone send.
+                    stage(arm, "fresh_send")
+                    send(freshPrompt)
+                    runBlocking {
+                        peer.awaiting("fresh phone delivery", 120_000) {
+                            while (deliveries(peer, conversation).isEmpty()) delay(25)
+                        }
+                    }
+                    val freshDelivery = deliveries(peer, conversation).single()
+                    assertEquals(freshPrompt, freshDelivery.text)
+                    assertTrue("dropped identity silently replayed", freshDelivery.messageId != queued.messageId)
+                    expectedId = freshDelivery.messageId
+                }
+
+                stage(arm, "reply_complete")
                 runBlocking {
-                    peer.awaiting("fresh phone delivery", 120_000) {
-                        while (deliveries(peer, conversation).isEmpty()) delay(25)
+                    peer.awaiting("assistant reply followed by idle", 120_000) {
+                        while (!completed(peer, conversation)) delay(25)
+                    }
+                    peer.awaitQueue(conversation, 10_000) { it.isEmpty() }
+                }
+                stage(arm, "reply_render")
+                val reply = sessionErrorReplyMatcher()
+                await(reply, unmerged = true)
+                compose.onAllNodes(reply, useUnmergedTree = true).onFirst().assertIsDisplayed()
+                compose.waitUntil(20_000) { nodes(hasText(CRASHING)).isEmpty() && nodes(hasText(BLOCKED)).isEmpty() }
+                request(arm, "complete") // Independently counts actual prompts read by the completed child.
+                stage(arm, "recovery_assertions")
+                val delivered = deliveries(peer, conversation)
+                assertEquals("one recovery must deliver exactly one user message", 1, delivered.size)
+                assertEquals(expectedId, delivered.single().messageId)
+                if (arm == "retained") {
+                    assertEquals(heldPrompt, delivered.single().text)
+                    assertTrue("retained message reached give-up", "session.blocked" !in errors(peer, conversation))
+                } else {
+                    assertTrue("dropped prompt replayed", delivered.none { it.messageId == queued.messageId || it.text == heldPrompt })
+                }
+                assertLocalStatusAbsent()
+            } finally {
+                // Observe before peer disposal, on success and failure, without replacing either result.
+                runCatching {
+                    sessionErrorPeerTrace(peer.recorded(conversation)).forEach { record ->
+                        Log.i("SessionErrorRecovery", "arm=$arm observer=legacy $record")
                     }
                 }
-                val freshDelivery = deliveries(peer, conversation).single()
-                assertEquals(freshPrompt, freshDelivery.text)
-                assertTrue("dropped identity silently replayed", freshDelivery.messageId != queued.messageId)
-                expectedId = freshDelivery.messageId
             }
-
-            stage(arm, "reply_complete")
-            runBlocking {
-                peer.awaiting("assistant reply followed by idle", 120_000) {
-                    while (!completed(peer, conversation)) delay(25)
-                }
-                peer.awaitQueue(conversation, 10_000) { it.isEmpty() }
-            }
-            stage(arm, "reply_render")
-            val reply = sessionErrorReplyMatcher()
-            await(reply, unmerged = true)
-            compose.onAllNodes(reply, useUnmergedTree = true).onFirst().assertIsDisplayed()
-            compose.waitUntil(20_000) { nodes(hasText(CRASHING)).isEmpty() && nodes(hasText(BLOCKED)).isEmpty() }
-            request(arm, "complete") // Independently counts actual prompts read by the completed child.
-            stage(arm, "recovery_assertions")
-            val delivered = deliveries(peer, conversation)
-            assertEquals("one recovery must deliver exactly one user message", 1, delivered.size)
-            assertEquals(expectedId, delivered.single().messageId)
-            if (arm == "retained") {
-                assertEquals(heldPrompt, delivered.single().text)
-                assertTrue("retained message reached give-up", "session.blocked" !in errors(peer, conversation))
-            } else {
-                assertTrue("dropped prompt replayed", delivered.none { it.messageId == queued.messageId || it.text == heldPrompt })
-            }
-            assertLocalStatusAbsent()
         }
         stage(arm, "list_return")
         Espresso.pressBack()
