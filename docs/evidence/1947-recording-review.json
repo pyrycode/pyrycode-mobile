@@ -1,0 +1,70 @@
+{
+  "ticket": 1947,
+  "scenario": "interactiveTurn_createEditArchiveChannel_readsPromptBack",
+  "oldFixtureSha256": "fa3323a3e64d86f04e2f952a84339ac5801b69fbc9a6786c0770c813dd52e033",
+  "promotedFixtureSha256": "448d9eaaa8a5f67ce3155c6769b27dc16ec1c311e06106e9e40656c5d0134f50",
+  "capture": {
+    "executed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 52.999,
+    "nativeSeconds": 42.502,
+    "fixtureSha256": "448d9eaaa8a5f67ce3155c6769b27dc16ec1c311e06106e9e40656c5d0134f50",
+    "source": {
+      "mobileRevision": "e57e977bfe1bf7d5729770215295415cbc05490f",
+      "daemonRevision": "f0ef329f276ad3537678e04ea2775f4f1ff44871",
+      "daemonBinarySha256": "3c74889dc2b05a681b70aae97ad40b77b5228a535e8e5e1933c7d8cf4595f7bd",
+      "appApkSha256": "20b8455836d39618cd1f1609e1afbd32dce2cd580b2069449ddb7851636c5591",
+      "testApkSha256": "2d0bd5719fbb98daa2735ae10f8dea6e26422a0012b5ea00497730465e08f266",
+      "claudeVersion": "2.1.280 (Claude Code)",
+      "capturedAt": "2026-10-20T04:26:08Z",
+      "presentation": "current-production",
+      "androidApi": "33"
+    }
+  },
+  "freshReplay": {
+    "executed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 16.753,
+    "nativeSeconds": 15.302,
+    "fixtureSha256": "448d9eaaa8a5f67ce3155c6769b27dc16ec1c311e06106e9e40656c5d0134f50",
+    "appApkSha256": "20b8455836d39618cd1f1609e1afbd32dce2cd580b2069449ddb7851636c5591",
+    "testApkSha256": "2d0bd5719fbb98daa2735ae10f8dea6e26422a0012b5ea00497730465e08f266"
+  },
+  "historicalVerification": {
+    "exitCode": 1,
+    "verified": false,
+    "failureStages": [
+      "reviewedReplay",
+      "comparison"
+    ],
+    "contractMatched": false
+  },
+  "manualDifferenceReview": {
+    "decision": "accepted replacement recording",
+    "unchanged": [
+      "all 22 normalized user commands",
+      "normalized lifecycle",
+      "query policy and strict replay matching",
+      "original native assertions"
+    ],
+    "reviewedDifferences": [
+      "one additional current-session context request after a legacy context push",
+      "FCM synthetic token registration moved to the first send checkpoint",
+      "emulator device label changed from arm64 ATD to x86_64 ATD"
+    ],
+    "causalExchange": {
+      "sessionTransitionStep": 146,
+      "resetRequestId": 53,
+      "resetReplyStep": 161,
+      "resetReplyTokens": 26194,
+      "legacyPushStep": 172,
+      "verificationRequestId": 57,
+      "verificationReplyStep": 175,
+      "verificationReplyTokens": 26194
+    }
+  },
+  "retainedPrivateEvidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/1947/operator-manual-20261020",
+  "completeVerification": "pending"
+}

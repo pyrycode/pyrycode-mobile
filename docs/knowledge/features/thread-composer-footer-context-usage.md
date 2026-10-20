@@ -21,17 +21,23 @@ unavailable state: neither source, or a window `<= 0` in the one source used. `r
 § `observeContextUsage`](conversation-repository-shape.md#shape) for the reading's own contract, now preferred over
 the settings pair rather than mutually exclusive with it.
 
-**Known gap: a stale figure survives a session transition.** The repository clears the `context_usage`
-reading on a `session_transition`, but the replaced session's `SessionSettings` stays current until the
-re-requested reply lands, so `contextPercent` falls back to the *old* session's token pair for that gap —
-after `/clear` the footer and Status sheet can briefly show a available percentage for a session that no
-longer exists, where before #1411 they showed unavailable. `ThreadRunConfig.forLiveSession` exists to hide exactly
-this kind of stale-settings window for session-scoped facets (it already blanks `permissionMode`,
-`appliedEffort` and `memorySearch`), but `contextPercent` was not added to it — desktop's own
-`runConfigStore.clearSnapshot` only fires on a conversation switch, delete or archive, never on a transition,
-so this matches desktop but diverges from mobile's own stricter rule. Unresolved as of #1411; a future ticket
-should either null the settings fallback when `settings.sessionId` differs from the live `currentSessionId`,
-or record a deliberate decision to accept the gap.
+**Session freshness, #1947.** Replacing a session clears the previous context reading and its pending requests
+before reset completion can send the replacement request. Settings token counts are a fallback only when their
+nonempty session identity matches the conversation's current session. Both the footer and Context window
+remain unavailable while no eligible reading or matching settings exist. A valid context reply can render
+before the replacement settings arrive.
+
+Context supplied by admitted authoritative live-session state retains that source proof. Other readings after
+a replacement need the current producer identity or a reply to this connection's post-replacement request. A
+conflicting producer is rejected even when the request identity matches. Remembered readings measured before
+the latest replacement remain rejected across reconnects. Request identities belong to their connection, so a
+reused number cannot validate another connection's reply.
+
+Legacy post-turn pushes have no producer identity. After a replacement-session turn starts, an unowned push
+signals one correlated current-session request. The push itself never supplies the displayed value. Signals
+coalesce while that request is pending. Its successful reply updates the reading. A matching terminal error or
+rejected old remembered reply releases that request so a later turn can refresh again. Sending happens outside
+the reading monitor. Other conversations keep their own readings.
 
 A private `ContextSegment(percent: Int?)` renders an inert context circle before Actions
 since [#1660](https://github.com/pyrycode/pyrycode-mobile/issues/1660). It has no click action or overlay.
@@ -81,13 +87,13 @@ must send the first ask. Since [#1761](https://github.com/pyrycode/pyrycode-mobi
 the existing settings-reread collector also asks once on each `reset_end` for this conversation: an active
 reset becoming idle. Initial idle, reset-start phases, repeated idle and host turn endings add no context
 ask; host turn endings still reread settings alone. This refreshes the reply-backed footer after reset
-without another message, while the brief settings-fallback gap described above remains possible.
+without another message. The current-session settings filter prevents the stale fallback described by the earlier implementation.
 Reconnect and reset-ended asks log static reasons (`event=context_usage_ask reason=reconnect` or
 `reason=reset_end`, never the id); logging the opening ask too broke screen tests that construct `ThreadViewModel` without
 stubbing `RelayLog.sink`. A refusal (`conversation.not_found` or `context_usage.unavailable`) is an
-`error` whose `in_reply_to` matches no waiter, so it is a no-op in the existing arm — the reading stays as
-it was and nothing surfaces. The successful answer is just another `context_usage` frame, routed and
-applied the same way the post-turn push always was; asking adds no new decode path. A conversation still
+`error` that retires only the matching context request. The held reading stays as it was and nothing surfaces.
+A successful answer uses the existing context decoder, then passes the freshness checks described above. A
+conversation still
 announces unavailable only until the open thread's first ask or the next turn end resolves it, whichever comes
 first — no longer only the latter. See [Relay repository coordinator § `HostReadings`](relay-repository-coordinator.md)
 and [Remote conversation repository — live stream, modal seams and the replay cursor §
@@ -103,12 +109,13 @@ proof,
 `InteractiveStreamE2ETest#interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn`
 (see [e2e coverage](../../e2e-interactive-stream.md)), asserts the host's held reading is `null` before
 the open and then waits on `observeContextUsage(...).filterNotNull()` itself, not only the footer. The
-reset proof added in #1761,
-`InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter`, starts observing
-before the reset tap, requires the old reading to clear and then a new non-null reading, and checks the
-footer description computed from that reply’s token totals without another message. Its watcher starts
-undispatched on `Dispatchers.Default`: blocking UI test waits must not prevent observing the clear before
-the reply. A changed percentage is not required; a fresh reply can contain the same value. The
+reset proof added in #1761 and strengthened in #1947,
+`InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter`, observes invalidation
+before the reset tap. Its passive witness binds the additional request to the same connection and replacement,
+rejects old producers and old remembered values, and checks the exact admitted repository reading. The footer
+and Context window must show that reading without another phone message. Equal rounded percentages cannot
+establish freshness. Deterministic coverage also checks later legacy turns, unavailable reset replies,
+current-session fallback and conversation isolation. The
 older `interactiveTurn_pingPrompt_footerShowsContextUsage` has the same blind spot and predates this fix;
 it is not itself proof that an ask was sent, only that a reading — pushed or asked for — is showing.
 
