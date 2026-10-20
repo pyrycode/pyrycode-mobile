@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.AuthoritativeRemovalRejected
 import de.pyryco.mobile.data.cache.AuthoritativeUpsertCache
+import de.pyryco.mobile.data.cache.AuthoritativeWindowCache
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.OwnedLegacyCache
 import de.pyryco.mobile.data.cache.OwnedLegacyCoverageCache
@@ -33,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -137,12 +139,44 @@ class CachingConversationRepository(
                     return route.acquire(conversationId, connection)
                 }
 
-                override fun older(conversationId: String): Boolean = conversationId !in deleted && route.older(conversationId)
+                override fun older(conversationId: String): Boolean =
+                    conversationId !in deleted && (hydrateOlderAuthoritative(conversationId) || route.older(conversationId))
 
                 override fun cancel(conversationId: String) = route.cancel(conversationId)
             }
         }
     private val persistedAuthoritative = ConcurrentHashMap<String, CacheCandidate>()
+    private val authoritativeOpeningLocks = ConcurrentHashMap<String, Mutex>()
+    private val authoritativeOpenings = ConcurrentHashMap<String, SavedAuthoritativeThread>()
+    private val authoritativeLifetimes = ConcurrentHashMap<String, Pair<Long, Long>>()
+    private val authoritativeReaders = ConcurrentHashMap<String, CoroutineScope>()
+    private val authoritativeHydrations = ConcurrentHashMap<CoroutineScope, Job>()
+    private val authoritativeHydrated = ConcurrentHashMap.newKeySet<String>()
+
+    private fun authoritativeCurrent(conversationId: String): Boolean =
+        authoritativeLifetimes[conversationId]?.let {
+            (cache as? AuthoritativeWindowCache)?.authoritativeLifetime(serverId, conversationId) == it
+        } != false
+
+    /** The compatibility read belongs to this observation and is triggered only by reader demand. */
+    private fun hydrateOlderAuthoritative(conversationId: String): Boolean {
+        if (cache !is AuthoritativeWindowCache ||
+            conversationId in authoritativeHydrated ||
+            !authoritativeCurrent(conversationId)
+        ) {
+            return false
+        }
+        val reader = authoritativeReaders[conversationId]?.takeIf { it.isActive } ?: return false
+        authoritativeHydrations.compute(reader) { _, held ->
+            held?.takeIf { it.isActive } ?: reader.launch {
+                if (restoreAuthoritative(conversationId, full = true) != null) {
+                    authoritativeHydrated += conversationId
+                    RelayLog.d { "event=authoritative_restore code=reader_hydrated" }
+                }
+            }
+        }
+        return true
+    }
 
     private data class DrawnThread(
         val rows: List<ThreadItem>,
@@ -476,6 +510,7 @@ class CachingConversationRepository(
             val saved = selected.authoritative ?: return null
             val persisted = persistedAuthoritative[conversationId]
             if (conversationId in deleted ||
+                !authoritativeCurrent(conversationId) ||
                 selected.storeGeneration != current.generation ||
                 selected.drawn.generation <= (persisted?.drawn?.generation ?: 0)
             ) {
@@ -566,30 +601,84 @@ class CachingConversationRepository(
         }
     }
 
-    private suspend fun restoreAuthoritative(conversationId: String): SavedAuthoritativeThread? {
+    private suspend fun restoreAuthoritative(
+        conversationId: String,
+        full: Boolean = false,
+    ): SavedAuthoritativeThread? {
+        val indexed = (cache as? AuthoritativeWindowCache)?.takeIf { hostThread != null }
+        if (indexed == null) return applyAuthoritativeRestore(conversationId) { cache.readAuthoritativeThread(serverId, conversationId) }
+        return authoritativeOpeningLocks.computeIfAbsent(conversationId) { Mutex() }.withLock {
+            if (!authoritativeCurrent(conversationId)) return@withLock null
+            if (!full) authoritativeOpenings[conversationId]?.let { return@withLock it }
+            authoritativeLifetimes.putIfAbsent(conversationId, indexed.authoritativeLifetime(serverId, conversationId))
+            val restored =
+                applyAuthoritativeRestore(conversationId, extendBaseline = full) {
+                    if (full) {
+                        cache.readAuthoritativeThread(serverId, conversationId)
+                    } else {
+                        indexed
+                            .newestAuthoritativeWindow(serverId, conversationId, 200)
+                            ?.takeIf { it.serverId == serverId && it.conversationId == conversationId }
+                            ?.saved
+                    }
+                }
+            if (restored != null && !full) authoritativeOpenings[conversationId] = restored
+            restored
+        }
+    }
+
+    private suspend fun applyAuthoritativeRestore(
+        conversationId: String,
+        extendBaseline: Boolean = false,
+        read: suspend () -> SavedAuthoritativeThread?,
+    ): SavedAuthoritativeThread? {
         if (conversationId in deleted) return null
         val generation = authoritativeThreads.current(serverId, conversationId).generation
-        val saved = cache.readAuthoritativeThread(serverId, conversationId) ?: return null
+        val saved = read() ?: return null
+        var applied = false
         withContext(processingDispatcher) {
             historyWrites.withLock {
                 if (conversationId !in deleted &&
+                    authoritativeCurrent(conversationId) &&
                     authoritativeThreads.restore(serverId, conversationId, saved.toSnapshot(), generation) ==
                     AuthoritativeThreadOutcome.Applied
                 ) {
+                    applied = true
                     // The committed restore is a baseline, never a successful live capture or merged live state.
-                    persistedAuthoritative.putIfAbsent(
-                        conversationId,
-                        CacheCandidate(
-                            DrawnThread(emptyList(), 0),
-                            emptyList(),
-                            authoritative = saved,
-                            storeGeneration = generation,
-                        ),
-                    )
+                    persistedAuthoritative.compute(conversationId) { _, previous ->
+                        if (previous == null) {
+                            CacheCandidate(DrawnThread(emptyList(), 0), emptyList(), authoritative = saved, storeGeneration = generation)
+                        } else {
+                            val baseline = previous.authoritative
+                            if (extendBaseline &&
+                                previous.storeGeneration == generation &&
+                                baseline?.epoch == saved.epoch &&
+                                baseline.incarnation == saved.incarnation
+                            ) {
+                                val facts = baseline.items.associateByTo(LinkedHashMap()) { it.getValue("id") }
+                                saved.items.forEach { raw ->
+                                    val id = raw.getValue("id")
+                                    val held = facts[id]
+                                    if (id.toString().toLong() !in baseline.retirements &&
+                                        (held == null || raw.getValue("rev").toString().toLong() > held.getValue("rev").toString().toLong())
+                                    ) {
+                                        facts[id] = raw
+                                    }
+                                }
+                                val ordered =
+                                    facts.values.sortedBy { raw ->
+                                        raw["order"]?.toString()?.toLongOrNull()?.takeIf { it > 0 } ?: Long.MAX_VALUE
+                                    }
+                                previous.copy(authoritative = baseline.copy(items = ordered))
+                            } else {
+                                previous
+                            }
+                        }
+                    }
                 }
             }
         }
-        return saved
+        return saved.takeIf { applied }
     }
 
     /** Supplied cache seam; #1988 selects the production route using current negotiation. */
@@ -597,6 +686,8 @@ class CachingConversationRepository(
         flow {
             val restored = restoreAuthoritative(conversationId)
             coroutineScope {
+                val reader = this
+                authoritativeReaders[conversationId] = reader
                 val writer = ThreadWriter(conversationId, this, emptyList(), 0, restored)
                 var observedGeneration = 0L
                 var observedRetirements: Map<Long, Long> = restored?.retirements.orEmpty()
@@ -614,6 +705,8 @@ class CachingConversationRepository(
                         if (!reset) withContext(processingDispatcher) { writer.accept(snapshot, capture) }
                     }
                 } finally {
+                    authoritativeReaders.remove(conversationId, reader)
+                    authoritativeHydrations.remove(reader)?.cancel()
                     writer.finish(authoritative = true)
                 }
             }

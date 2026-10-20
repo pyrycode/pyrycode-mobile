@@ -7,6 +7,29 @@ internal class AuthoritativeRemovalRejected(
     val held: ThreadItemDto,
 ) : Exception("authoritative removal superseded")
 
+/** A partial opening has no paging exhaustion or daemon-continuation meaning. */
+internal class AuthoritativeThreadWindow(
+    val serverId: String,
+    val conversationId: String,
+    val saved: SavedAuthoritativeThread,
+) {
+    override fun toString(): String = "AuthoritativeThreadWindow(redacted)"
+}
+
+/** Opening projections remain distinct from full compatibility reads and daemon continuations. */
+internal interface AuthoritativeWindowCache {
+    fun authoritativeLifetime(
+        host: String,
+        conversation: String,
+    ): Pair<Long, Long>
+
+    suspend fun newestAuthoritativeWindow(
+        serverId: String,
+        conversationId: String,
+        size: Int,
+    ): AuthoritativeThreadWindow?
+}
+
 /** Optional owned-write capability; full-file compatibility continues using the replacement API. */
 internal interface AuthoritativeUpsertCache {
     /**

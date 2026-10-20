@@ -61,6 +61,7 @@ class AuthoritativeRoomStorage internal constructor(
         val ordinalReads: Int = 0,
         val evidenceReads: Int = 0,
         val evidenceDecodes: Int = 0,
+        val queries: Int = 0,
     )
 
     internal var lastReadCounts = ReadCounts()
@@ -233,7 +234,19 @@ class AuthoritativeRoomStorage internal constructor(
             for ((item, record) in changes) {
                 val ordinal = assigned[item.id] ?: requireNotNull(record).ordinal
                 if (record == null) added++
-                dao.upsertItem(AuthoritativeItem(host, conversation, saved.epoch, item.id, ordinal, orderKey(item), item.raw.toString()))
+                dao.upsertItem(
+                    AuthoritativeItem(
+                        host,
+                        conversation,
+                        saved.epoch,
+                        item.id,
+                        ordinal,
+                        orderKey(item),
+                        item.raw.toString(),
+                        item.savedDisplayRow(),
+                        item.savedRendererExtra(),
+                    ),
+                )
                 lastWriteCounts =
                     lastWriteCounts.copy(
                         itemSerializations = lastWriteCounts.itemSerializations + 1,
@@ -335,7 +348,17 @@ class AuthoritativeRoomStorage internal constructor(
                 ).retained()
         val records =
             kept.toSnapshot().items.mapIndexed { ordinal, item ->
-                AuthoritativeItem(serverId, conversationId, kept.epoch, item.id, ordinal, orderKey(item), item.raw.toString())
+                AuthoritativeItem(
+                    serverId,
+                    conversationId,
+                    kept.epoch,
+                    item.id,
+                    ordinal,
+                    orderKey(item),
+                    item.raw.toString(),
+                    item.savedDisplayRow(),
+                    item.savedRendererExtra(),
+                )
             }
         dao.deleteItems(serverId, conversationId)
         dao.deleteHeaders(serverId, conversationId)
@@ -362,6 +385,49 @@ class AuthoritativeRoomStorage internal constructor(
         conversationId: String,
         size: Int,
     ): AuthoritativeThreadPage? = page(serverId, conversationId, null, size)
+
+    /** Visible authored rows plus indexed active inputs and identity-resolved parent closure. */
+    internal suspend fun newestDisplayWindow(
+        host: String,
+        conversation: String,
+        size: Int,
+    ): AuthoritativeThreadWindow? =
+        read("read_display_window") {
+            require(size > 0)
+            val header = header(host, conversation) ?: return@read null
+            val saved = metadata(header)
+            val selected = dao.displayWindow(host, conversation, header.epoch, size).asReversed()
+            val extras = dao.rendererExtras(host, conversation, header.epoch)
+            lastReadCounts = lastReadCounts.copy(queries = 4)
+            val records = LinkedHashMap<Long, AuthoritativeItem>()
+            (selected + extras).forEach { records[it.id] = it }
+            val decoded = LinkedHashMap<Long, JsonObject>()
+            val pending = ArrayDeque(records.values)
+            val lookedUp = HashSet(records.keys)
+            var sqlRows = selected.size + extras.size
+            while (pending.isNotEmpty()) {
+                val record = pending.removeFirst()
+                val raw = decode(listOf(record), saved).single()
+                val item = ThreadItemDto.decodeReplacement(raw)
+                require(record.display == item.savedDisplayRow() && record.extra == item.savedRendererExtra())
+                decoded[item.id] = raw
+                val parent = item.parent?.takeIf { it > 0 }
+                if (parent != null && lookedUp.add(parent)) {
+                    lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
+                    dao.item(host, conversation, header.epoch, parent)?.let {
+                        sqlRows++
+                        records[it.id] = it
+                        pending.addLast(it)
+                    }
+                }
+            }
+            val ordered = records.values.sortedWith(compareBy<AuthoritativeItem> { it.orderKey }.thenBy { it.ordinal })
+            lastReadCounts = lastReadCounts.copy(itemReads = sqlRows)
+            RelayLog.d {
+                "event=authoritative_window rows=${selected.size} extras=${records.size - selected.size} queries=${lastReadCounts.queries} decodes=${lastReadCounts.itemDecodes}"
+            }
+            AuthoritativeThreadWindow(host, conversation, saved.copy(items = ordered.map { decoded.getValue(it.id) }))
+        }
 
     suspend fun beforePage(
         serverId: String,
@@ -464,7 +530,7 @@ class AuthoritativeRoomStorage internal constructor(
         records: List<AuthoritativeItem>,
         saved: SavedAuthoritativeThread,
     ): List<JsonObject> {
-        lastReadCounts = lastReadCounts.copy(itemReads = records.size)
+        lastReadCounts = lastReadCounts.copy(itemReads = lastReadCounts.itemReads + records.size)
         val raw =
             records.map { record ->
                 lastReadCounts = lastReadCounts.copy(itemDecodes = lastReadCounts.itemDecodes + 1)
@@ -521,3 +587,8 @@ class AuthoritativeRoomStorage internal constructor(
         code: String,
     ) = RelayLog.d { "authoritative_room_cache operation=$operation code=$code" }
 }
+
+internal fun ThreadItemDto.savedDisplayRow(): Boolean = shown && (order ?: 0) > 0
+
+internal fun ThreadItemDto.savedRendererExtra(): Boolean =
+    active || (shown && kind == "user_message" && (order ?: 0) <= 0 && status in setOf("queued", "lost"))

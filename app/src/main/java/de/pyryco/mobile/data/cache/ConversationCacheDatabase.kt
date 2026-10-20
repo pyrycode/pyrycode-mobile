@@ -25,16 +25,53 @@ import java.io.IOException
         ConversationCacheDatabase.FileImport::class,
         ConversationCacheDatabase.AuthoritativeRetirement::class,
     ],
-    version = 5,
+    version = 6,
     autoMigrations = [
         AutoMigration(
             from = 1,
             to = 2,
         ), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4, spec = ConversationCacheDatabase.OwnedRowsMigration::class),
         AutoMigration(from = 4, to = 5),
+        AutoMigration(from = 5, to = 6, spec = ConversationCacheDatabase.DisplayWindowMigration::class),
     ],
 )
 abstract class ConversationCacheDatabase : RoomDatabase() {
+    class DisplayWindowMigration : AutoMigrationSpec {
+        override fun onPostMigrate(db: SupportSQLiteDatabase) {
+            // Backfill once during upgrade; ordinary opening never scans payloads.
+            db.query("SELECT host,conversation,epoch,id,payload FROM authoritative_items").use { cursor ->
+                val update =
+                    db.compileStatement(
+                        "UPDATE authoritative_items SET display=?,extra=? WHERE host=? AND conversation=? AND epoch=? AND id=?",
+                    )
+                try {
+                    while (cursor.moveToNext()) {
+                        val item =
+                            try {
+                                de.pyryco.mobile.data.network.ThreadItemDto.decodeReplacement(
+                                    de.pyryco.mobile.data.network.MobileJson.parseToJsonElement(
+                                        cursor.getString(4),
+                                    ) as? kotlinx.serialization.json.JsonObject
+                                        ?: continue,
+                                )
+                            } catch (_: IllegalArgumentException) {
+                                continue // Preserve invalid bytes; validated readers still reject them.
+                            }
+                        update.bindLong(1, if (item.savedDisplayRow()) 1 else 0)
+                        update.bindLong(2, if (item.savedRendererExtra()) 1 else 0)
+                        update.bindString(3, cursor.getString(0))
+                        update.bindString(4, cursor.getString(1))
+                        update.bindString(5, cursor.getString(2))
+                        update.bindLong(6, cursor.getLong(3))
+                        update.executeUpdateDelete()
+                    }
+                } finally {
+                    update.close()
+                }
+            }
+        }
+    }
+
     class OwnedRowsMigration : AutoMigrationSpec {
         override fun onPostMigrate(db: SupportSQLiteDatabase) {
             // Migration is the only backfill. Ordinary mutations never scan the saved thread.
@@ -140,7 +177,11 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
     @Entity(
         tableName = "authoritative_items",
         primaryKeys = ["host", "conversation", "epoch", "id"],
-        indices = [Index(value = ["host", "conversation", "epoch", "ordinal"], unique = true)],
+        indices = [
+            Index(value = ["host", "conversation", "epoch", "ordinal"], unique = true),
+            Index(value = ["host", "conversation", "epoch", "display", "orderKey", "ordinal"]),
+            Index(value = ["host", "conversation", "epoch", "extra"]),
+        ],
     )
     internal data class AuthoritativeItem(
         val host: String,
@@ -150,6 +191,8 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         val ordinal: Int,
         val orderKey: Long,
         val payload: String,
+        @ColumnInfo(defaultValue = "0") val display: Boolean = false,
+        @ColumnInfo(defaultValue = "0") val extra: Boolean = false,
     ) {
         override fun toString(): String = "AuthoritativeItem(redacted)"
     }
@@ -164,6 +207,23 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
 
     @Dao
     internal interface AuthoritativeDao {
+        @Query(
+            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND display=1 ORDER BY orderKey DESC,ordinal DESC LIMIT :limit",
+        )
+        suspend fun displayWindow(
+            host: String,
+            conversation: String,
+            epoch: String,
+            limit: Int,
+        ): List<AuthoritativeItem>
+
+        @Query("SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND extra=1")
+        suspend fun rendererExtras(
+            host: String,
+            conversation: String,
+            epoch: String,
+        ): List<AuthoritativeItem>
+
         @Query("SELECT * FROM authoritative_retirements WHERE host=:host AND conversation=:conversation")
         suspend fun retirements(
             host: String,

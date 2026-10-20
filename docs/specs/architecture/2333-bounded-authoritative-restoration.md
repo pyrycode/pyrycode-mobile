@@ -98,3 +98,19 @@ None concerning product scope. Validate display-contributor indexing against the
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-20
+
+## Revisions
+
+### 2026-10-20: opening capability and observation custody
+
+`AuthoritativeWindowCache` is the small optional opening/lifetime capability, implemented by `MigratingConversationCache`. Keeping it distinct from full reads lets native instrumentation retain the production path while timing the completed disk read. `AuthoritativeItem` gains indexed display/extra flags through the additive version 5→6 migration; ordinary accepted upserts update those flags with their raw payload. The display predicate mirrors the presentation's shown ordered facts; active and unordered queued/lost inputs are selected separately, followed by indexed recursive parent lookup. SQL result counts include duplicate rows returned by the extra query even when identity decoding is reused.
+
+Concurrent production open/acquire/observe callers share the same initial projection. Reader hydration uses the observation's child scope, with hydration jobs keyed by that scope so an older collector cannot cancel a newer collector's work. Cancellation never suspends cleanup before the existing writer's final flush. Hydration extends only the committed raw-fact baseline, excludes already retired identities and preserves the successful metadata baseline; it never records merged unsaved live facts as committed.
+
+The initial missing-API red was followed by a concrete route red: `demandInvariant_onlyReaderHydratesOlderSavedFacts` restored 18000 rather than 200 items. The three initial probes then passed after route integration. Additional production factory, lifecycle and migration probes are in the same class. `SavedAuthoritativeDestination` shares the actual registry, coordinator, negotiated cache binding and destination factory across deterministic and native checks; only transport replies and frame scheduling in deterministic tests are controlled.
+
+`identityInvariant_overlapKeepsNewestRawFactsAndOrder` also covers reconnect while restoration is held. Loaded removal and conservative certification are combined in `certificationInvariant_hydrationNeverChangesCommittedCertificate`; unchanged certification without removal is checked by the opening and demand probes. The native method is `SavedThreadFirstDrawDeviceTest.databaseSavedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_coldOpenAndReopen`. The existing compatibility fixture, optional-projection twin and slow negative control remain unchanged.
+
+The opening returns its own `AuthoritativeThreadWindow`, carrying exact owner and committed partial facts. Reusing `AuthoritativeThreadPage` with a null continuation would incorrectly imply local exhaustion despite omitted older facts. Raw-fact paging and its continuation contract therefore remain unchanged.
+
+The first expanded factory probes timed out because they awaited the legacy `ThreadUiState.items` arm. Production publishes its content in `authoritativeThread`; the probes and native content-phase measurement now use that arm. The retained failed XML records ten executed cases with five failures; it is not passing evidence. The frame listener also checks horizontal containment alongside its existing vertical containment and frame-commit requirements. No timing threshold or readiness requirement changes.
