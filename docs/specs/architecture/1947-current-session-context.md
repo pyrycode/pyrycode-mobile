@@ -36,7 +36,7 @@ Shared-file overlaps: #1682, #1689, #1690, #1691, #1693, #1695, #1766, #1869, #1
 
 Legacy post-turn pushes remain useful after replacement: an untagged, uncorrelated fresh push is a refresh signal, not proof of session ownership. Refresh signals are enabled by a post-boundary non-idle turn state; a delayed predecessor push alone must not add an ask during reset completion. A new turn also enables refresh after an idle eviction with no reset edge. When enabled and no context request is pending, `apply` returns its conversation for `routeInbound` to request a correlated current reading outside the projection monitor. A pending reset or refresh request coalesces further signals. Correlated errors retire only that connection's matching request; a rejected remembered reply also retires its matching request, allowing the next post-turn signal to refresh. Neither errors nor rejected pushes replace the held value. Current producer-tagged and supplied-state pushes continue to apply directly. This preserves ongoing updates without inventing provenance for the unchanged legacy bytes. There are no timed retries or new collectors.
 
-Sizing: one session-freshness deliverable, four acceptance criteria, approximately 500 written lines including tests/plan, zero new exported types or simultaneous consumer updates, one fallback rejection branch. All limits hold.
+Final sizing: one session-freshness deliverable with four acceptance criteria. The complete reviewed diff contains approximately 1850 written lines across 21 files, including production regressions, the passive native witness, genuine recordings, the maintained capture entry and verification receipts. There are no new exported production types. Two production consumers change and at most seven admission branches are added. The recording tool and evidence support the same acceptance criteria; they introduce no separate product behaviour.
 
 ## State and concurrency model
 
@@ -77,9 +77,8 @@ None.
 
 ## Documentation handoff
 
-- Pending documentation stage: `docs/knowledge/features/thread-composer-footer-context-usage.md`, **Context usage segment (#946, computed since #1411)**: replace the known-gap paragraph with the resolved session-freshness rule.
-  Also update the later #1761 sentence that still says the stale settings-fallback gap remains possible.
-- Pending documentation stage: `docs/knowledge/features/status-sheet-readings.md`, **ContextWindowSection**: describe current-session-only settings fallback.
+- Completed: `docs/knowledge/features/thread-composer-footer-context-usage.md` describes the final session-source rule, ongoing legacy refresh, request retirement and exact native proof. The earlier stale-fallback gap is resolved.
+- Completed: `docs/knowledge/features/status-sheet-readings.md` describes current-session-only fallback and the unavailable state.
 
 ## Security review
 
@@ -128,3 +127,9 @@ None.
 The operator took over after five reworks and kept the ticket under a manual hold. The maintained managed-verify command captured the unchanged channel create/edit/archive scenario on e57e977bf with the clean f0ef329f daemon. The genuine capture and fresh replay each passed one executed scenario with zero failures or skips. The original recording replay failed, and strict compatibility comparison remained false. Those results remain preserved.
 
 Review found all 22 normalized user commands and the lifecycle unchanged. The replacement adds one correlated context request after a legacy push. The remaining normalized differences are the synthetic FCM registration moving between send checkpoints and the Linux emulator label. No comparison policy, strict replay matcher or native assertion changed. The exact genuine recording was promoted with its capture and replay receipts. The review receipt is in docs/evidence/1947-recording-review.json. Final manual verification passed on candidate dc18d9b3a. The complete HP native suite passed 335 executed cases with one optional skip. The complete Fractal scripted suite passed 22 executed cases with zero failures or skips. All 185 script checks passed. The full unit/build gate verified 6203 cached test results and executed zero unit tests in this invocation. Recording inventory, documentation and PR submission checks passed. The earlier Fractal native run and unchanged-main readiness comparison remain failed in the retained evidence. No assertion, timing limit or readiness threshold changed. All 55 retained reset-proof checksums matched, and its production source differs only in formatting. The final receipt contains exact counts and evidence locations. The ticket remains held for manual completion; no merge has been performed.
+
+## Final manual review, 2026-10-20
+
+The final review builds on the verifier's completed production review at 62c42c9e. Its sole remaining recording finding is resolved by the genuine channel capture and passing strict fresh replay. The promoted fixture hash matches the committed asset. All 965 Fractal evidence files and 342 HP evidence files matched their checksum manifests. Full HP native and Fractal scripted reports confirm the committed counts. The source, test assertions and replay policies are unchanged after the completely tested dc18d9b3a candidate.
+
+The maintained capture entry rejects unselected fixtures before authentication, uses the existing credential mechanism and host/device holds, pins the reviewed relay destination, and retains cleanup and the failed comparison exit status. It adds no production credential handling or Android attack surface. The feature documents match the final implementation. No open correctness or security finding remains. Historical failed reports remain failed. This is the interactive maintainer's review; it does not claim a new independent verifier run.
