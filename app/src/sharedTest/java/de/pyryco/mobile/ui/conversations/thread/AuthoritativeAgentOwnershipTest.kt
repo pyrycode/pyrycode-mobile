@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
@@ -21,6 +22,7 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.TOOL_ROW_TAG
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -62,6 +64,7 @@ class AuthoritativeAgentOwnershipTest {
 
         fun assertOwnedTools() {
             for (id in listOf(10, 11)) {
+                assertTrue(list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:${messageId(id)}") >= 0)
                 list().performScrollToNode(hasText("file-$id", substring = true))
                 compose.onNode(tool(id) and ownedBy(owner), useUnmergedTree = true).assertIsDisplayed()
                 compose.onAllNodes(tool(id) and ownedBy(otherOwner), useUnmergedTree = true).assertCountEquals(0)
@@ -83,6 +86,9 @@ class AuthoritativeAgentOwnershipTest {
             if (collapse) {
                 toggleRun()
                 compose.onAllNodes(hasTestTag(TOOL_ROW_TAG) and ownedBy(owner), useUnmergedTree = true).assertCountEquals(0)
+                // The collapsed header reuses the first tool's key; its sibling must leave the list.
+                assertTrue(list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:${messageId(10)}") >= 0)
+                assertTrue(list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:${messageId(11)}") < 0)
                 toggleRun()
                 assertOwnedTools()
             }
@@ -105,7 +111,11 @@ class AuthoritativeAgentOwnershipTest {
     private fun presentation() = projectAuthoritativeThread("host", "conversation", snapshot)
 
     private fun messageId(id: Int) =
-        presentation().items.filterIsInstance<ThreadItem.MessageItem>().single { it.message.id.endsWith(":$id") }.message.id
+        presentation()
+            .items
+            .filterIsInstance<ThreadItem.MessageItem>()
+            .single { it.message.id.endsWith(":$id") }
+            .message.id
 
     private fun family(active: Boolean) =
         authoritativeSnapshot(
@@ -113,7 +123,7 @@ class AuthoritativeAgentOwnershipTest {
             authoritativeAgent(2),
             child(5),
             child(10, parent = 1, active = active),
-            child(11, parent = 1),
+            child(11, parent = 10),
             child(20, parent = 2),
         )
 
