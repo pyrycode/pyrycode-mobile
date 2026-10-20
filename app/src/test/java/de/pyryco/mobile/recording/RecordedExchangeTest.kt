@@ -10,13 +10,14 @@ import org.junit.Test
 
 class RecordedExchangeTest {
     @Test fun allowanceCanRaceConnectionReadsWithExactPayloadCountsAndCorrelation() {
-        val entries = arrayOf(
-            "client" to frame(1, "list_conversations"),
-            "daemon" to frame(2, "conversations", reply = 1),
-            "client" to frame(3, "request_claude_usage"),
-            "daemon" to frame(4, "claude_usage", """{"state":"none"}""", reply = 3),
-            "client" to frame(5, "send_message"),
-        )
+        val entries =
+            arrayOf(
+                "client" to frame(1, "list_conversations"),
+                "daemon" to frame(2, "conversations", reply = 1),
+                "client" to frame(3, "request_claude_usage"),
+                "daemon" to frame(4, "claude_usage", """{"state":"none"}""", reply = 3),
+                "client" to frame(5, "send_message"),
+            )
         for (order in listOf(listOf("request_claude_usage", "list_conversations"), listOf("list_conversations", "request_claude_usage"))) {
             val replay = RecordedExchange(recording(*entries))
             val replies = order.flatMapIndexed { index, type -> replay.reply(frame(90L + index, type)) }

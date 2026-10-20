@@ -10,19 +10,29 @@ import org.junit.Test
 class RecordedSuiteTapeTest {
     @Test fun allowanceReadRacesOtherReadsWithoutReleasingAFutureActionsReply() {
         val owner = "phone/host/0"
-        val tape = RecordedSuiteTape(listOf(
-            client("control", frame(1, "test-control:action")),
-            client(owner, frame(1, "list_conversations")),
-            daemon(owner, frame(2, "conversations", reply = 1)),
-            client(owner, frame(3, "request_claude_usage")),
-            daemon(owner, frame(4, "claude_usage", """{"state":"none"}""", reply = 3)),
-        ))
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client("control", frame(1, "test-control:action")),
+                    client(owner, frame(1, "list_conversations")),
+                    daemon(owner, frame(2, "conversations", reply = 1)),
+                    client(owner, frame(3, "request_claude_usage")),
+                    daemon(owner, frame(4, "claude_usage", """{"state":"none"}""", reply = 3)),
+                ),
+            )
         assertEquals(emptyList<SuiteStep>(), tape.request(owner, frame(90, "request_claude_usage")))
         assertEquals(emptyList<SuiteStep>(), tape.request(owner, frame(91, "list_conversations")))
         val released = tape.request("control", frame(90, "test-control:action"))
         assertEquals(listOf("conversations", "claude_usage"), released.map { it.message!!.type })
         assertEquals(listOf(91L, 90L), released.map { it.message!!.inReplyTo })
-        assertEquals("""{"state":"none"}""", released.last().message!!.payload.toString())
+        assertEquals(
+            """{"state":"none"}""",
+            released
+                .last()
+                .message!!
+                .payload
+                .toString(),
+        )
         tape.assertComplete()
     }
 
@@ -30,26 +40,44 @@ class RecordedSuiteTapeTest {
         val old = "phone/host-a/0"
         val next = "phone/host-a/1"
         val other = "phone/host-b/0"
-        val rows = listOf(
-            SuiteStep("connect", old), SuiteStep("open", old),
-            client(old, frame(1, "request_claude_usage")),
-            daemon(old, frame(2, "claude_usage", """{"state":"none"}""", reply = 1)),
-            SuiteStep("close", old),
-            SuiteStep("connect", next), SuiteStep("open", next),
-            client(next, frame(1, "request_claude_usage")),
-            daemon(next, frame(2, "claude_usage", """{"state":"none"}""", reply = 1)),
-        )
+        val rows =
+            listOf(
+                SuiteStep("connect", old),
+                SuiteStep("open", old),
+                client(old, frame(1, "request_claude_usage")),
+                daemon(old, frame(2, "claude_usage", """{"state":"none"}""", reply = 1)),
+                SuiteStep("close", old),
+                SuiteStep("connect", next),
+                SuiteStep("open", next),
+                client(next, frame(1, "request_claude_usage")),
+                daemon(next, frame(2, "claude_usage", """{"state":"none"}""", reply = 1)),
+            )
         val replay = RecordedSuiteTape(rows)
         replay.lifecycle("connect", old)
-        assertEquals(90L, replay.request(old, frame(90, "request_claude_usage")).single().message!!.inReplyTo)
+        assertEquals(
+            90L,
+            replay
+                .request(old, frame(90, "request_claude_usage"))
+                .single()
+                .message!!
+                .inReplyTo,
+        )
         replay.lifecycle("close", old)
         replay.lifecycle("connect", next)
-        assertEquals(90L, replay.request(next, frame(90, "request_claude_usage")).single().message!!.inReplyTo)
+        assertEquals(
+            90L,
+            replay
+                .request(next, frame(90, "request_claude_usage"))
+                .single()
+                .message!!
+                .inReplyTo,
+        )
         replay.assertComplete()
         for ((owner, payload) in listOf(old to "null", old to "[]", old to """{"conversation_id":"chat"}""", next to "{}", other to "{}")) {
             val invalid = RecordedSuiteTape(rows)
             invalid.lifecycle("connect", old)
-            val failure = assertThrows(IllegalStateException::class.java) { invalid.send(owner, frame(90, "request_claude_usage", payload)) }
+            val failure =
+                assertThrows(IllegalStateException::class.java) { invalid.send(owner, frame(90, "request_claude_usage", payload)) }
             val later = assertThrows(IllegalStateException::class.java) { invalid.send(old, frame(91, "request_claude_usage")) }
             assertEquals(failure.message, later.message)
         }
@@ -63,10 +91,13 @@ class RecordedSuiteTapeTest {
     }
 
     @Test fun allowanceCannotCrossAnObservationCheckpoint() {
-        val tape = RecordedSuiteTape(listOf(
-            client("control", frame(1, "test-control:checkpoint", """{"body":"before-reconnect"}""")),
-            client("phone", frame(1, "request_claude_usage")),
-        ))
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client("control", frame(1, "test-control:checkpoint", """{"body":"before-reconnect"}""")),
+                    client("phone", frame(1, "request_claude_usage")),
+                ),
+            )
         assertThrows(IllegalStateException::class.java) { tape.send("phone", frame(90, "request_claude_usage")) }
     }
 

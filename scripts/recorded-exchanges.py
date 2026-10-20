@@ -20,7 +20,7 @@ CLASS = 'de.pyryco.mobile.recording.RecordedPermissionTest'
 PACKAGE = 'de.pyryco.mobile'
 ASSET = ROOT / 'app/src/androidTest/assets/recorded/permission-allow.json'
 QUERIES = {'list_conversations', 'request_history', 'thread_catch_up', 'thread_page', 'request_session_settings',
-           'request_context_usage', 'request_model_list', 'request_system_prompt', 'mcp_status_request'}
+           'request_context_usage', 'request_claude_usage', 'request_model_list', 'request_system_prompt', 'mcp_status_request'}
 IDENTITIES = {'conversation_id', 'current_session_id', 'session_id', 'modal_id', 'message_id', 'device_id',
               'tool_use_id', 'parent_tool_use_id', 'turn_id', 'task_id', 'parent', 'epoch', 'answer_token'}
 
