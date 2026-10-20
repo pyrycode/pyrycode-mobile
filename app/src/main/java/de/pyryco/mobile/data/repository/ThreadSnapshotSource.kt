@@ -12,6 +12,8 @@ data class ThreadSnapshot(
     /** Authoritative unsigned positions, scoped by the source host and observed conversation. */
     val unsignedHistoryOrder: Map<Any, ULong> = historyOrder.filterValues { it > 0 }.mapValues { it.value.toULong() },
     val readEvidence: ThreadReadEvidence = ThreadReadEvidence(),
+    /** Window evidence is display-only; it never certifies the omitted cache or seeds a daemon walk. */
+    val savedLegacyHistory: SavedLegacyHistory? = null,
 )
 
 /**
@@ -21,6 +23,14 @@ data class ThreadSnapshot(
  */
 interface ThreadSnapshotSource {
     fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot>
+}
+
+/** The one legacy destination may reveal saved rows independently of its daemon request slot. */
+internal interface SavedLegacyHistorySource {
+    suspend fun openingHistoryPosition(conversationId: String): HistoryPosition?
+
+    /** True consumes this movement locally, including a busy or retired local read. */
+    suspend fun revealOlderSavedHistory(conversationId: String): Boolean
 }
 
 /** Repositories without queued-echo suppression retain their existing list-only read behavior. */

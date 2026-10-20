@@ -11,7 +11,7 @@
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt`: `historySeed`, `receivedThread`, `threadContent`, demand/retry/gap handlers and newest-arrival handoff.
 - `app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt`: committed-frame measurement, renderer bound and retained file controls.
 - `docs/knowledge/features/caching-conversation-repository.md`, `thread-screen-oldest-end-history-demand.md`, `thread-screen-testing-saved-first-draw.md`: preserve movement-only demand, delayed readiness schedules and optional projection independence.
-- `docs/knowledge/decisions/0009-sqlite-room-conversation-storage.md` and `docs/specs/architecture/2161-import-saved-threads-room.md`: Room, migration and retirement contracts.
+- `docs/knowledge/decisions/0009-room-for-indexed-conversation-cache.md` and `docs/specs/architecture/2161-import-saved-threads-room.md`: Room, migration and retirement contracts.
 - `OwnedLegacyCoverageTest`, `ThreadNewestPageHandoffTest`, `ThreadScreenHistoryTest`: production-backed test patterns.
 
 Overlaps: #1947 changes unrelated settings projection; #2009 changes retained first-draw readiness; #2175's route wiring is already incorporated by merged #2245. Keep changes local and additive.
@@ -93,3 +93,13 @@ Pending for documentation stage:
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-20
+
+## Revisions
+
+### 2026-10-20: partial receipts and retirement after collection exit
+
+- Joining a network receipt inside a saved gap must split the real gap, preserving its original anchor, rather than discard it when its endpoints are no longer adjacent. `coverageInvariant_partialReceiptsSplitRealGapsButNeverInventOmittedOnes` checks this and a disjoint omitted-window control. Shared producing-entry claims are unioned.
+- Retirement custody must outlive the observing collection. The repository retains each opened owner's captured epoch after window disposal, so a late network save cannot revive it after same-host re-admission. `retirementInvariant_lateSaveAfterReAdmissionCannotReviveAClosedWindow` checks fresh storage after that sequence.
+- Pending-read probes pause the injected I/O dispatcher; the cache's existing `beforeCommit` hook applies only to writes. No production test hook was added.
+- Four companion declarations including the window's nested reading, with defaulted snapshot/projection additions requiring only their actual consumers to change. No existing signature requires a simultaneous consumer migration.
+- Re-anchoring also checks held identity membership in bounded SQL parameter batches, without payload reads, so a row deliberately removed from current storage is not retained by an older window. Identity reads are counted separately. The stale-token probe removes a loaded middle row and checks exact remaining content; a global unknown marker uses its saved edge cursor rather than the selected window's minimum span.

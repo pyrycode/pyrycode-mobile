@@ -35,6 +35,7 @@ class LegacyThreadPage internal constructor(
     val savedCursor: String?,
     val savedAtStart: Boolean,
     val continuation: Continuation?,
+    internal val missingHeld: Set<String> = emptySet(),
 ) {
     override fun toString(): String = "LegacyThreadPage(rows=${rows.size}, redacted)"
 
@@ -53,7 +54,7 @@ class LegacyThreadPage internal constructor(
 class LegacyPageEvidence internal constructor(
     internal val encoded: JsonObject,
 ) {
-    private val projected = MobileJson.decodeFromJsonElement<HistoryCoverage>(encoded)
+    internal val projected = MobileJson.decodeFromJsonElement<HistoryCoverage>(encoded)
     val unsignedSpans get() = projected.unsignedSpans
     val unsignedGaps get() = projected.unsignedGaps
     val unsignedRowOrder get() = projected.unsignedRowOrder
@@ -126,6 +127,7 @@ class LegacyRoomStorage internal constructor(
         val ordinalReads: Int = 0,
         val evidenceReads: Int = 0,
         val evidenceDecodes: Int = 0,
+        val identityReads: Int = 0,
     )
 
     internal var lastReadCounts = ReadCounts()
@@ -914,11 +916,20 @@ class LegacyRoomStorage internal constructor(
         size: Int,
     ): LegacyThreadPage? = page(serverId, conversationId, token, size)
 
+    /** Re-anchor a rejected snapshot token using held identities, never a whole-thread read. */
+    internal suspend fun beforeHeldPage(
+        host: String,
+        conversation: String,
+        held: List<String>,
+        size: Int,
+    ): LegacyThreadPage? = page(host, conversation, null, size, held)
+
     private suspend fun page(
         host: String,
         conversation: String,
         token: LegacyThreadPage.Continuation?,
         size: Int,
+        held: List<String>? = null,
     ): LegacyThreadPage? =
         read("read_page", null) {
             require(size > 0)
@@ -928,11 +939,19 @@ class LegacyRoomStorage internal constructor(
             ) {
                 return@read null
             }
-            val records = dao.rows(host, conversation, token?.before ?: Long.MAX_VALUE, minOf(size, MAX_CACHED_THREAD_ROWS)).asReversed()
+            val membership =
+                held
+                    ?.chunked(800)
+                    ?.flatMap { dao.ownedIdentities(host, conversation, it) }
+                    ?.toSet()
+                    .orEmpty()
+            val anchor = held?.firstOrNull { it in membership }?.let { dao.ownedOrdinal(host, conversation, it) }
+            val before = anchor ?: token?.before ?: Long.MAX_VALUE
+            val records = dao.rows(host, conversation, before, minOf(size, MAX_CACHED_THREAD_ROWS)).asReversed()
             val rows = decodeRows(records)
             val first = records.firstOrNull()?.ordinal ?: 0L
             val probe = dao.probe(host, conversation, first)
-            lastReadCounts = lastReadCounts.copy(ordinalReads = probe.size)
+            lastReadCounts = lastReadCounts.copy(ordinalReads = probe.size + if (anchor == null) 0 else 1, identityReads = membership.size)
             val evidence =
                 if (header?.coverageHeader == null) {
                     null
@@ -999,6 +1018,7 @@ class LegacyRoomStorage internal constructor(
                 header?.cursor?.takeIf { validHistory },
                 validHistory && header?.atStart == true,
                 continuation,
+                held.orEmpty().filterNotTo(HashSet()) { it in membership },
             )
         }
 

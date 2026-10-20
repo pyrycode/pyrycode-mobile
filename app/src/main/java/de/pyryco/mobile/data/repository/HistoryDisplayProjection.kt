@@ -24,6 +24,7 @@ internal fun HistoryCoverage.projectDisplay(
     positionFor: (String) -> ULong? = unsignedPositions()::get,
     checkActive: () -> Unit = {},
     isDisplayed: (ThreadItem) -> Boolean = { it !is ThreadItem.BackgroundTaskLifecycle },
+    unknownEdge: ULong? = unsignedUnknownEdge,
 ): HistoryDisplayProjection {
     if (rows.isEmpty()) return HistoryDisplayProjection(rows, emptyList())
     val prepared = prepareDisplayRows(rows, keysFor, positionFor, checkActive, isDisplayed)
@@ -44,7 +45,7 @@ internal fun HistoryCoverage.projectDisplay(
         }
     }
     val markers = ArrayList<Pair<ULong, HistoryDisplayMarker>>()
-    var oldestEdge: ULong? = unsignedUnknownEdge?.takeIf { it <= (oldestPosition ?: 0u) }
+    var oldestEdge: ULong? = unknownEdge?.takeIf { it <= (oldestPosition ?: 0u) }
     var oldestAnchor = 0uL
     for (gap in unsignedGaps) {
         checkActive()

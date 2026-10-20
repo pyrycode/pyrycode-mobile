@@ -26,11 +26,14 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
+import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.cache.ConversationCache
+import de.pyryco.mobile.data.cache.ConversationCacheDatabase
 import de.pyryco.mobile.data.cache.FileConversationCache
+import de.pyryco.mobile.data.cache.MigratingConversationCache
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
@@ -43,8 +46,10 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.HistoryCoverage
 import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.HistoryPosition
+import de.pyryco.mobile.data.repository.SavedLegacyHistorySource
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSnapshotSource
+import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.e2e.awaitEmulatorCpuIdle
 import de.pyryco.mobile.e2e.readEmulatorCpuTicks
 import de.pyryco.mobile.e2e.withEmulatorCpuSample
@@ -249,6 +254,153 @@ class SavedThreadFirstDrawDeviceTest {
 
     @Test fun savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen() {
         measureSavedThreads()
+    }
+
+    @Test fun databaseThreads_firstNewestDrawWithinBound_offlineAndHeldNewest_firstOpenAndReopen() {
+        installHost()
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val probes = mutableListOf<Probe>()
+        for (name in listOf("ordinary", "fragmented")) {
+            val (coverage, rows) =
+                if (name == "ordinary") {
+                    null to
+                        (0 until 20).map {
+                            ThreadItem.MessageItem(
+                                Message("ordinary-$it", "s", Role.User, "Saved $it.", Instant.fromEpochSeconds(it.toLong()), false),
+                            )
+                        }
+                } else {
+                    fragmentedHistoryFixture((0 until 18000).toList())
+                }
+            for (online in listOf(false, true)) {
+                val root = File(context.noBackupFilesDir, "database-first-draw-$name-$online-${SystemClock.elapsedRealtimeNanos()}")
+
+                fun database() =
+                    Room.databaseBuilder(context, ConversationCacheDatabase::class.java, File(root, "history.db").absolutePath).build()
+                root.mkdirs()
+                try {
+                    // Only fixture seeding is outside timing. Every measured opening is cold through all layers.
+                    database().use { db ->
+                        runBlocking {
+                            val seed = MigratingConversationCache(File(root, "files"), db)
+                            seed.readThread("host", "c")
+                            seed.writeThread("host", "c", rows).getOrThrow()
+                            if (coverage !=
+                                null
+                            ) {
+                                seed.writeHistoryPosition("host", "c", HistoryPosition("saved", false, coverage)).getOrThrow()
+                            }
+                        }
+                    }
+                    repeat(2) { opening ->
+                        awaitDeviceReadiness("database $name online=$online opening=$opening")
+                        val probe =
+                            Probe("database $name online=$online opening=$opening", (rows.last() as ThreadItem.MessageItem).message.content)
+                        probes += probe
+                        activeProbe = probe
+                        database().use { db ->
+                            Log.i(
+                                "SavedThreadDatabaseDraw",
+                                "case=${probe.name} database_constructed_ms=${probe.elapsed(SystemClock.elapsedRealtimeNanos())}",
+                            )
+                            val cache = MigratingConversationCache(File(root, "files"), db)
+                            val delegate = HeldNewest()
+                            val repo = CachingConversationRepository(delegate, cache, "host")
+                            val measured =
+                                object : ConversationRepository by repo, ThreadSnapshotSource, SavedLegacyHistorySource by repo {
+                                    override fun observeThreadSnapshot(conversationId: String) =
+                                        repo.observeThreadSnapshot(conversationId).onEach {
+                                            if (it.rows.isNotEmpty()) probe.snapshot.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
+                                        }
+
+                                    override suspend fun openingHistoryPosition(conversationId: String): HistoryPosition? =
+                                        repo
+                                            .openingHistoryPosition(
+                                                conversationId,
+                                            ).also { probe.restored.compareAndSet(0, SystemClock.elapsedRealtimeNanos()) }
+                                }
+                            val store = ViewModelStore()
+                            composeRule.runOnUiThread {
+                                val vm =
+                                    ThreadViewModel(
+                                        SavedStateHandle(mapOf("serverId" to "host", "conversationId" to "c")),
+                                        measured,
+                                        FakeConnectionStateSource(),
+                                        ComposerDraftStore(),
+                                        repositoryAvailable = flowOf(online),
+                                        contentScheduling = ThreadContentScheduling(),
+                                        projectionDispatcher = Dispatchers.Default,
+                                    )
+                                store.put("thread", vm)
+                                selected.value = Opening(vm, probe, online)
+                                Log.i(
+                                    "SavedThreadDatabaseDraw",
+                                    "case=${probe.name} construction_ms=${probe.elapsed(SystemClock.elapsedRealtimeNanos())}",
+                                )
+                            }
+                            try {
+                                composeRule.waitUntil(15000) {
+                                    probe.drawn.get() > 0 &&
+                                        probe.restored.get() > 0 &&
+                                        delegate.asks.size == if (online) 1 else 0
+                                }
+                                val expected = rows.takeLast(200)
+                                val firstPosition = coverage?.unsignedRowOrder?.get(expected.first().historyKeys().first())
+                                val anchors =
+                                    coverage
+                                        ?.unsignedGaps
+                                        ?.filter { it.edge >= (firstPosition ?: 0u) }
+                                        ?.map { it.anchor }
+                                        .orEmpty()
+                                composeRule.waitUntil(15000) {
+                                    selected.value
+                                        ?.vm
+                                        ?.state
+                                        ?.value
+                                        ?.historyMarkers
+                                        ?.map { it.unsignedAnchor } ==
+                                        anchors
+                                }
+                                composeRule.runOnIdle {
+                                    assertEquals(
+                                        expected,
+                                        requireNotNull(selected.value)
+                                            .vm.state.value.items,
+                                    )
+                                    assertFalse(delegate.response.isCompleted)
+                                    assertTrue(delegate.asks.all { it.first.isEmpty() && it.second == 200 })
+                                }
+                                val counts = cache.legacyReadCounts
+                                assertEquals(expected.size, counts.rowReads)
+                                assertEquals(expected.size, counts.rowDecodes)
+                                assertTrue(counts.ordinalReads <= 1 && counts.evidenceReads <= 1002 && counts.evidenceDecodes <= 1002)
+                                val restoredMs = probe.elapsed(probe.restored.get())
+                                val snapshotMs = probe.elapsed(probe.snapshot.get())
+                                val contentMs = probe.elapsed(probe.complete.get())
+                                val drawnMs = probe.elapsed(probe.drawn.get())
+                                Log.i(
+                                    "SavedThreadDatabaseDraw",
+                                    "case=${probe.name} fixture_rows=${rows.size} rows=${expected.size} reads=$counts " +
+                                        "restored_ms=$restoredMs snapshot_ms=$snapshotMs complete_ms=$contentMs drawn_ms=$drawnMs " +
+                                        "bound_ms=$firstDrawBoundMs renderer=$firstDrawRenderer",
+                                )
+                                probe.assertBound()
+                            } finally {
+                                composeRule.runOnUiThread {
+                                    selected.value = null
+                                    store.clear()
+                                }
+                                composeRule.waitForIdle()
+                            }
+                        }
+                    }
+                } finally {
+                    root.deleteRecursively()
+                }
+            }
+        }
+        assertEquals(8, probes.size)
+        assertTrue(probes.all(Probe::metBound))
     }
 
     @Test fun delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen() {

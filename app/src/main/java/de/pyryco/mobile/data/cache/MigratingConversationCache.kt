@@ -12,6 +12,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The app's [ConversationCache] (#2161): conversation lists and read positions stay in [FileConversationCache]
@@ -51,6 +53,12 @@ internal class MigratingConversationCache(
     // Owners whose file content arrived after such a view. No later write can show it saw that content.
     private val unobserved = HashSet<Triple<String, String, String>>()
     private val retiredHosts = HashSet<String>()
+    private val retirementEpochs = ConcurrentHashMap<Pair<String, String?>, AtomicLong>()
+
+    internal fun legacyEpoch(
+        host: String,
+        conversation: String,
+    ): Pair<Long, Long> = (retirementEpochs[host to null]?.get() ?: 0L) to (retirementEpochs[host to conversation]?.get() ?: 0L)
 
     /** The legacy storage's counts for the last page or thread read, for bounded-decoding probes. */
     internal val legacyReadCounts get() = legacy.lastReadCounts
@@ -165,6 +173,13 @@ internal class MigratingConversationCache(
         size: Int,
     ): LegacyThreadPage? = read(serverId, conversationId, LEGACY) { legacy.beforePage(serverId, conversationId, token, size) }
 
+    internal suspend fun beforeHeldLegacyPage(
+        host: String,
+        conversation: String,
+        held: List<String>,
+        size: Int,
+    ): LegacyThreadPage? = read(host, conversation, LEGACY) { legacy.beforeHeldPage(host, conversation, held, size) }
+
     internal suspend fun newestAuthoritativePage(
         serverId: String,
         conversationId: String,
@@ -182,8 +197,9 @@ internal class MigratingConversationCache(
     override suspend fun removeConversation(
         serverId: String,
         conversationId: String,
-    ): Result<Unit> =
-        mutex.withLock {
+    ): Result<Unit> {
+        retirementEpochs.computeIfAbsent(serverId to conversationId) { AtomicLong() }.incrementAndGet()
+        return mutex.withLock {
             val stored =
                 commit {
                     database.removeScope(serverId, conversationId)
@@ -194,9 +210,11 @@ internal class MigratingConversationCache(
             val sources = files.removeConversation(serverId, conversationId)
             if (stored.isFailure) stored else sources
         }
+    }
 
-    override suspend fun removeHost(serverId: String): Result<Unit> =
-        mutex.withLock {
+    override suspend fun removeHost(serverId: String): Result<Unit> {
+        retirementEpochs.computeIfAbsent(serverId to null) { AtomicLong() }.incrementAndGet()
+        return mutex.withLock {
             retiredHosts += serverId
             val stored =
                 commit {
@@ -207,6 +225,7 @@ internal class MigratingConversationCache(
             val sources = files.removeHost(serverId)
             if (stored.isFailure) stored else sources
         }
+    }
 
     override suspend fun admitHost(serverId: String) {
         mutex.withLock { retiredHosts -= serverId }

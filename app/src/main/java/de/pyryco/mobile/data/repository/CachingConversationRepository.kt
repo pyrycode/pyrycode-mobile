@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.AuthoritativeRemovalRejected
 import de.pyryco.mobile.data.cache.AuthoritativeUpsertCache
 import de.pyryco.mobile.data.cache.ConversationCache
+import de.pyryco.mobile.data.cache.MigratingConversationCache
 import de.pyryco.mobile.data.cache.OwnedLegacyCache
 import de.pyryco.mobile.data.cache.OwnedLegacyCoverageCache
 import de.pyryco.mobile.data.cache.OwnedLegacyRow
@@ -30,6 +31,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -99,7 +102,8 @@ class CachingConversationRepository(
     private val attachments: AttachmentStore? = null,
     private val processingDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : ConversationRepository by delegate,
-    ThreadSnapshotSource {
+    ThreadSnapshotSource,
+    SavedLegacyHistorySource {
     // Ids this destination deleted. The thread that issued the delete keeps collecting until its PopBack,
     // and a write from that collector after the removal would put the rows straight back.
     private val deleted = ConcurrentHashMap.newKeySet<String>()
@@ -162,6 +166,38 @@ class CachingConversationRepository(
 
     private val persistedThreads = ConcurrentHashMap<String, PersistedThread>()
     private val observedPositions = ConcurrentHashMap<String, HistoryPosition>()
+    private val localWindows = ConcurrentHashMap<String, LegacyLocalWindow>()
+    private val legacyEpochs = ConcurrentHashMap<String, Pair<Long, Long>>()
+
+    private fun legacyCurrent(conversationId: String): Boolean =
+        legacyEpochs[conversationId]?.let { (cache as? MigratingConversationCache)?.legacyEpoch(serverId, conversationId) == it } != false
+
+    private fun localWindow(conversationId: String): LegacyLocalWindow? {
+        val disk = cache as? MigratingConversationCache ?: return null
+        if (hostThread != null || conversationId in deleted || !legacyCurrent(conversationId)) return null
+        legacyEpochs.putIfAbsent(conversationId, disk.legacyEpoch(serverId, conversationId))
+        return localWindows.computeIfAbsent(conversationId) { LegacyLocalWindow(disk, serverId, it) }
+    }
+
+    override suspend fun openingHistoryPosition(conversationId: String): HistoryPosition? {
+        if (hostThread != null || conversationId in deleted || !legacyCurrent(conversationId)) return null
+        val window = localWindow(conversationId) ?: return readHistoryPosition(conversationId)
+        val initial = window.initial()
+        // A fast newest response must not overtake the first readable saved snapshot.
+        if (initial.rows.isNotEmpty() && window.current) window.published.await()
+        return initial.position.takeIf { window.current && conversationId !in deleted }
+    }
+
+    override suspend fun revealOlderSavedHistory(conversationId: String): Boolean {
+        if (hostThread != null) return false
+        if (conversationId in deleted || !legacyCurrent(conversationId)) return true
+        val window = localWindows[conversationId] ?: return false
+        return window.older(
+            drawnThreads[conversationId]?.rows ?: window.readings.value
+                ?.rows
+                .orEmpty(),
+        )
+    }
 
     private data class AcceptedLegacyRow(
         val capture: Long,
@@ -202,6 +238,7 @@ class CachingConversationRepository(
         restored: List<ThreadItem>,
         private val collectionCoverageRevision: Long,
         private val initialAuthoritative: SavedAuthoritativeThread? = null,
+        private val localWindow: LegacyLocalWindow? = null,
     ) {
         private val latest = AtomicReference<CacheCandidate?>()
         private val retry = AtomicBoolean()
@@ -221,6 +258,17 @@ class CachingConversationRepository(
                     if (candidate.ready.isCompleted) persist(candidate)
                 }
             }
+
+        /** Disk arrivals extend observed custody without minting a live write intent. */
+        fun restored(rows: List<ThreadItem>) {
+            val added = rows.filter { it.legacyRowKey() !in owned }
+            added.forEach { row ->
+                val key = row.legacyRowKey()
+                owned += key
+                seen.putIfAbsent(key, row)
+            }
+            previousRows = added + previousRows
+        }
 
         // Called sequentially on the processing dispatcher; disk work never holds this path.
         fun accept(drawn: DrawnThread) {
@@ -351,6 +399,7 @@ class CachingConversationRepository(
                     if (candidate.authoritative != null) return@withLock persistAuthoritative(conversationId, candidate, refreshReset)
                     val persisted = persistedThreads[conversationId]
                     if (conversationId in deleted ||
+                        localWindow?.current == false ||
                         candidate.drawn.generation <= (persisted?.generation ?: 0)
                     ) {
                         return@withLock null
@@ -700,73 +749,159 @@ class CachingConversationRepository(
         }
 
     override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
-        flow {
-            // A save captured before entry can still complete while restoration suspends.
-            val collectionCoverageRevision = persistedThreads[conversationId]?.coverageRevision ?: 0
-            var base = cache.readThread(serverId, conversationId)
-            if (cache is OwnedLegacyCoverageCache) persistedThreads.putIfAbsent(conversationId, PersistedThread(0, 0, base))
-            var baseOrder = emptyMap<Any, ULong>()
-            var restoredOrder = false
-            var lastOrder = emptyMap<Any, ULong>()
-            var lastDrawn = base
-            var firstSnapshot = true
-            coroutineScope {
-                val writer = ThreadWriter(conversationId, this, base, collectionCoverageRevision)
-                try {
-                    delegate.threadSnapshots(conversationId).collect { snapshot ->
-                        val generation = generations.incrementAndGet()
-                        if (!restoredOrder && snapshot.rows.isNotEmpty()) {
-                            val savedPosition = cache.readHistoryPosition(serverId, conversationId)
-                            savedPosition?.let { observedPositions.putIfAbsent(conversationId, it) }
-                            baseOrder =
-                                withContext(processingDispatcher) {
-                                    base.receivedUnsignedHistoryOrder(savedPosition?.coverage?.unsignedPositions().orEmpty())
-                                }
-                            restoredOrder = true
-                        }
-                        val drawn =
-                            withContext(processingDispatcher) {
-                                val live = snapshot.rows
-                                if (firstSnapshot) {
-                                    firstSnapshot = false
-                                    if (live.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
-                                        // Cache reads already guarantee settled rows and unique renderer keys.
-                                        lastOrder = snapshot.unsignedHistoryOrder
-                                        RelayLog.d { "event=thread_cache_initial_rows_published rows=${base.size}" }
-                                        return@withContext base
+        if (cache is MigratingConversationCache && hostThread == null) {
+            observeLocalThreadSnapshot(conversationId)
+        } else {
+            flow {
+                if (hostThread != null) return@flow
+                // A save captured before entry can still complete while restoration suspends.
+                val collectionCoverageRevision = persistedThreads[conversationId]?.coverageRevision ?: 0
+                var base = cache.readThread(serverId, conversationId)
+                if (cache is OwnedLegacyCoverageCache) persistedThreads.putIfAbsent(conversationId, PersistedThread(0, 0, base))
+                var baseOrder = emptyMap<Any, ULong>()
+                var restoredOrder = false
+                var lastOrder = emptyMap<Any, ULong>()
+                var lastDrawn = base
+                var firstSnapshot = true
+                coroutineScope {
+                    val writer = ThreadWriter(conversationId, this, base, collectionCoverageRevision)
+                    try {
+                        delegate.threadSnapshots(conversationId).collect { snapshot ->
+                            val generation = generations.incrementAndGet()
+                            if (!restoredOrder && snapshot.rows.isNotEmpty()) {
+                                val savedPosition = cache.readHistoryPosition(serverId, conversationId)
+                                savedPosition?.let { observedPositions.putIfAbsent(conversationId, it) }
+                                baseOrder =
+                                    withContext(processingDispatcher) {
+                                        base.receivedUnsignedHistoryOrder(savedPosition?.coverage?.unsignedPositions().orEmpty())
                                     }
-                                }
-                                // Awaiting delivery can hide the only live row; that is not a connection boundary.
-                                if (live.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
-                                    base = settledThreadRows(lastDrawn)
-                                    baseOrder = baseOrder + lastOrder
-                                }
-                                val restored =
-                                    if (snapshot.suppressedUserMessageIds.isEmpty()) {
-                                        base
-                                    } else {
-                                        base.filterNot {
-                                            it is ThreadItem.MessageItem &&
-                                                it.message.role == Role.User &&
-                                                it.message.ordinaryId in snapshot.suppressedUserMessageIds
+                                restoredOrder = true
+                            }
+                            val drawn =
+                                withContext(processingDispatcher) {
+                                    val live = snapshot.rows
+                                    if (firstSnapshot) {
+                                        firstSnapshot = false
+                                        if (live.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
+                                            // Cache reads already guarantee settled rows and unique renderer keys.
+                                            lastOrder = snapshot.unsignedHistoryOrder
+                                            RelayLog.d { "event=thread_cache_initial_rows_published rows=${base.size}" }
+                                            return@withContext base
                                         }
                                     }
-                                val drawn =
-                                    live.mergeUnsignedCachedRows(
-                                        restored,
-                                        baseOrder + snapshot.unsignedHistoryOrder,
-                                        rendererOwners = lastDrawn,
-                                    )
-                                lastDrawn = drawn
-                                lastOrder = snapshot.unsignedHistoryOrder
-                                drawn
-                            }
-                        val published = DrawnThread(drawn, generation)
-                        drawnThreads[conversationId] = published
-                        emit(snapshot.copy(rows = drawn))
-                        withContext(processingDispatcher) { writer.accept(published) }
+                                    // Awaiting delivery can hide the only live row; that is not a connection boundary.
+                                    if (live.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
+                                        base = settledThreadRows(lastDrawn)
+                                        baseOrder = baseOrder + lastOrder
+                                    }
+                                    val restored =
+                                        if (snapshot.suppressedUserMessageIds.isEmpty()) {
+                                            base
+                                        } else {
+                                            base.filterNot {
+                                                it is ThreadItem.MessageItem &&
+                                                    it.message.role == Role.User &&
+                                                    it.message.ordinaryId in snapshot.suppressedUserMessageIds
+                                            }
+                                        }
+                                    val drawn =
+                                        live.mergeUnsignedCachedRows(
+                                            restored,
+                                            baseOrder + snapshot.unsignedHistoryOrder,
+                                            rendererOwners = lastDrawn,
+                                        )
+                                    lastDrawn = drawn
+                                    lastOrder = snapshot.unsignedHistoryOrder
+                                    drawn
+                                }
+                            val published = DrawnThread(drawn, generation)
+                            drawnThreads[conversationId] = published
+                            emit(snapshot.copy(rows = drawn))
+                            withContext(processingDispatcher) { writer.accept(published) }
+                        }
+                    } finally {
+                        writer.finish()
                     }
+                }
+            }
+        }
+
+    private fun observeLocalThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
+        flow {
+            val window = localWindow(conversationId) ?: return@flow
+            val revision = persistedThreads[conversationId]?.coverageRevision ?: 0
+            val initial = window.initial()
+            if (!window.current || conversationId in deleted) return@flow
+            persistedThreads.putIfAbsent(conversationId, PersistedThread(0, 0, initial.rows))
+            var lastDrawn = initial.rows
+            var lastOrder = emptyMap<Any, ULong>()
+            var previousLive = emptySet<String>()
+            val removed = HashSet<String>()
+            val observedLocalRemovals = HashSet<String>()
+            var first = true
+            coroutineScope {
+                val writer = ThreadWriter(conversationId, this, initial.rows, revision, localWindow = window)
+                try {
+                    combine(delegate.threadSnapshots(conversationId), window.readings.filterNotNull()) { live, local -> live to local }
+                        .collect { (snapshot, local) ->
+                            if (!window.current || conversationId in deleted) return@collect
+                            val generation = generations.incrementAndGet()
+                            val drawn =
+                                withContext(processingDispatcher) {
+                                    writer.restored(local.rows)
+                                    removed += local.removed - observedLocalRemovals
+                                    observedLocalRemovals += local.removed
+                                    val keys = snapshot.rows.mapTo(HashSet()) { it.legacyRowKey() }
+                                    if (snapshot.rows.isNotEmpty()) {
+                                        removed += previousLive - keys
+                                        removed -= keys
+                                        previousLive = keys
+                                    } else if (snapshot.suppressedUserMessageIds.isEmpty()) {
+                                        previousLive = emptySet()
+                                    }
+                                    val order =
+                                        local.rows.receivedUnsignedHistoryOrder(local.history.coverage.unsignedPositions()) +
+                                            lastOrder + snapshot.unsignedHistoryOrder
+                                    val restored =
+                                        if (first && snapshot.rows.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
+                                            local.rows
+                                        } else {
+                                            settledThreadRows(lastDrawn).mergeUnsignedCachedRows(
+                                                local.rows,
+                                                order,
+                                                rendererOwners = lastDrawn,
+                                            )
+                                        }.filterNot { row ->
+                                            row.legacyRowKey() in removed ||
+                                                row is ThreadItem.MessageItem &&
+                                                row.message.role == Role.User &&
+                                                row.message.ordinaryId in snapshot.suppressedUserMessageIds
+                                        }
+                                    val rows =
+                                        if (first && snapshot.rows.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
+                                            restored
+                                        } else {
+                                            snapshot.rows.mergeUnsignedCachedRows(restored, order, rendererOwners = lastDrawn)
+                                        }
+                                    first = false
+                                    lastDrawn = rows
+                                    lastOrder = order
+                                    rows
+                                }
+                            if (!window.current || conversationId in deleted) return@collect
+                            val published = DrawnThread(drawn, generation)
+                            drawnThreads[conversationId] = published
+                            val history =
+                                withContext(processingDispatcher) {
+                                    if (drawn == local.rows) local.history else local.history.retainedBy(drawn)
+                                }
+                            if (!window.current || conversationId in deleted) return@collect
+                            emit(snapshot.copy(rows = drawn, savedLegacyHistory = history))
+                            window.published.complete(Unit)
+                            withContext(processingDispatcher) { writer.accept(published) }
+                        }
                 } finally {
+                    localWindows.remove(conversationId, window)
                     writer.finish()
                 }
             }
@@ -803,9 +938,16 @@ class CachingConversationRepository(
         conversationId: String,
         position: HistoryPosition?,
     ) {
+        val disk = cache as? MigratingConversationCache
+        val epoch = disk?.legacyEpoch(serverId, conversationId)
+        if (!legacyCurrent(conversationId)) return
         if (position?.coverage == null) {
             historyWrites.withLock {
-                if (conversationId !in deleted) {
+                if (conversationId !in deleted &&
+                    legacyCurrent(conversationId) &&
+                    localWindows[conversationId]?.current != false &&
+                    disk?.legacyEpoch(serverId, conversationId) == epoch
+                ) {
                     withContext(NonCancellable) {
                         cache
                             .writeHistoryPosition(serverId, conversationId, position)
@@ -823,7 +965,13 @@ class CachingConversationRepository(
                 .map { it to generations.incrementAndGet() }
                 .first()
         historyWrites.withLock {
-            if (conversationId in deleted) return@withLock
+            if (conversationId in deleted ||
+                !legacyCurrent(conversationId) ||
+                localWindows[conversationId]?.current == false ||
+                disk?.legacyEpoch(serverId, conversationId) != epoch
+            ) {
+                return@withLock
+            }
             val drawn = drawnThreads[conversationId]
             val persisted = persistedThreads[conversationId]
             val owned = cache as? OwnedLegacyCoverageCache

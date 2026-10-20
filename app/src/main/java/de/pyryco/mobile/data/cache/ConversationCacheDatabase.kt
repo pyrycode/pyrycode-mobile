@@ -403,6 +403,13 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
             identity: String,
         ): Long?
 
+        @Query("SELECT identity FROM legacy_rows WHERE host=:host AND conversation=:conversation AND identity IN (:identities)")
+        suspend fun ownedIdentities(
+            host: String,
+            conversation: String,
+            identities: List<String>,
+        ): List<String>
+
         @Query(
             "SELECT ordinal FROM legacy_rows WHERE host=:host AND conversation=:conversation AND ordinal>:after ORDER BY ordinal LIMIT 1",
         )

@@ -42,6 +42,8 @@ import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ReplySuggestion
 import de.pyryco.mobile.data.repository.ResetStatus
+import de.pyryco.mobile.data.repository.SavedLegacyHistory
+import de.pyryco.mobile.data.repository.SavedLegacyHistorySource
 import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.SlashCommandMenu
@@ -53,6 +55,7 @@ import de.pyryco.mobile.data.repository.ThreadReadEvidence
 import de.pyryco.mobile.data.repository.ThreadSnapshot
 import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.data.repository.projectDisplay
 import de.pyryco.mobile.data.repository.threadSnapshots
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
@@ -913,6 +916,8 @@ class ThreadViewModel(
      */
     private val historyDemand = MutableStateFlow(ThreadHistoryDemand())
     private val historyCoverage = MutableStateFlow(HistoryCoverage())
+    private val savedLegacyHistory = MutableStateFlow<SavedLegacyHistory?>(null)
+    private var localHistoryJob: Job? = null
     private var pendingNewest = 0
 
     /**
@@ -923,7 +928,13 @@ class ThreadViewModel(
      */
     private val historySeed: Job =
         viewModelScope.launch {
-            val saved = repository.readHistoryPosition(conversationId) ?: return@launch
+            if (negotiated != null) return@launch
+            val saved =
+                if (repository is SavedLegacyHistorySource) {
+                    repository.openingHistoryPosition(conversationId)
+                } else {
+                    repository.readHistoryPosition(conversationId)
+                } ?: return@launch
             historyDemand.update {
                 it.restored(
                     cursor = saved.cursor,
@@ -951,7 +962,13 @@ class ThreadViewModel(
     // One receipt subscription feeds both the rows and their read evidence, so opening a thread backfills once.
     private val receivedThread =
         (if (negotiated == null) repository.threadSnapshots(conversationId) else emptyFlow())
-            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(replayExpirationMillis = 0), replay = 1)
+            .onEach {
+                val previous = savedLegacyHistory.value
+                savedLegacyHistory.value = it.savedLegacyHistory
+                if (previous != null && !previous.coverage.unsignedUnknown && it.savedLegacyHistory?.coverage?.unsignedUnknown == true) {
+                    historyCoverage.update { coverage -> coverage.copy(unsignedUnknown = true) }
+                }
+            }.shareIn(viewModelScope, SharingStarted.WhileSubscribed(replayExpirationMillis = 0), replay = 1)
 
     /**
      * The thread rows (#337): the #313 finished-message projection from [ConversationRepository.observeMessages]
@@ -1026,15 +1043,22 @@ class ThreadViewModel(
                     if (negotiated == null) repository.observeQueue(conversationId) else flowOf(emptyList()),
                     historyDemand,
                     hostAvailable,
-                    flow<HistoryCoverage?> {
-                        emit(null)
-                        historySeed.join()
-                        historyCoverage.collect { emit(it) }
+                    combine(
+                        flow<HistoryCoverage?> {
+                            emit(null)
+                            historySeed.join()
+                            historyCoverage.collect { emit(it) }
+                        },
+                        savedLegacyHistory,
+                    ) { network, saved ->
+                        (network?.let { saved?.withNetwork(it) ?: it }) to
+                            (if (network?.unsignedUnknown == true) saved?.unknownEdge ?: network.unsignedUnknownEdge else null)
                     },
-                ) { reading, queued, demand, connected, coverage ->
+                ) { reading, queued, demand, connected, projection ->
+                    val (coverage, unknownEdge) = projection
                     Triple(
                         reading.items,
-                        coverage ?: HistoryCoverage(),
+                        (coverage ?: HistoryCoverage()) to unknownEdge,
                         ThreadContent(
                             reading.items,
                             queued,
@@ -1043,7 +1067,8 @@ class ThreadViewModel(
                             coverage?.let { reading.evidence.copy(gaps = it.unsignedGaps) },
                         ),
                     )
-                }.transformLatest { (items, coverage, content) ->
+                }.transformLatest { (items, projection, content) ->
+                    val (coverage, unknownEdge) = projection
                     val needsProjection = items.isNotEmpty() && (coverage.unsignedGaps.isNotEmpty() || coverage.unsignedUnknown)
                     if (needsProjection && !hasPublishedRows) {
                         // Optional markers must not hold the initial readable rows; qualification awaits preparation.
@@ -1068,6 +1093,7 @@ class ThreadViewModel(
                                         items,
                                         checkActive = { context.ensureActive() },
                                         isDisplayed = { it in delivered },
+                                        unknownEdge = unknownEdge,
                                     )
                                 RelayLog.d { "event=history_display_projected rows=${display.rows.size} markers=${display.markers.size}" }
                                 content.copy(
@@ -2231,6 +2257,11 @@ class ThreadViewModel(
             negotiated.older(conversationId)
             return
         }
+        if (revealSavedBeforeNetwork { demandOlderNetwork(retry = false) }) return
+        demandOlderNetwork(retry = false)
+    }
+
+    private fun demandOlderNetwork(retry: Boolean) {
         if (!historySeed.isCompleted) {
             // Prefetch is movement-gated: completing the seed cannot replay an earlier movement.
             RelayLog.d { "event=history_ask_skipped reason=seeding" }
@@ -2240,8 +2271,19 @@ class ThreadViewModel(
             RelayLog.d { "event=history_ask_skipped reason=offline" }
             return
         }
-        val claimed = claimHistorySlot { if (it.canAsk) it.asking() else null } ?: return
+        val claimed = claimHistorySlot { if (if (retry) it.canRetry else it.canAsk) it.asking() else null } ?: return
         launchHistoryAsk(claimed)
+    }
+
+    /** A local read has its own slot; settling either slot never creates reader demand. */
+    private fun revealSavedBeforeNetwork(fallback: () -> Unit): Boolean {
+        val source = repository as? SavedLegacyHistorySource ?: return false
+        if (!historySeed.isCompleted || localHistoryJob?.isActive == true) return true
+        localHistoryJob =
+            viewModelScope.launch {
+                if (!source.revealOlderSavedHistory(conversationId)) fallback()
+            }
+        return true
     }
 
     /**
@@ -2256,9 +2298,8 @@ class ThreadViewModel(
             negotiated.older(conversationId)
             return
         }
-        if (!hostAvailable.value) return
-        val claimed = claimHistorySlot { if (it.canRetry) it.asking() else null } ?: return
-        launchHistoryAsk(claimed)
+        if (revealSavedBeforeNetwork { demandOlderNetwork(retry = true) }) return
+        demandOlderNetwork(retry = true)
     }
 
     /**
@@ -2391,8 +2432,21 @@ class ThreadViewModel(
     }
 
     fun onDemandUnsignedHistoryGap(anchor: ULong) {
+        if (negotiated != null || !historySeed.isCompleted) return
+        val oldest = state.value.items.firstOrNull { it !is ThreadItem.BackgroundTaskLifecycle }
+        val marker = state.value.historyMarkers.firstOrNull { it.unsignedAnchor == anchor }
+        if (marker != null &&
+            (marker.displayRow === oldest || marker.beforeRow in oldest?.historyKeys().orEmpty()) &&
+            revealSavedBeforeNetwork { demandUnsignedHistoryGapNetwork(anchor) }
+        ) {
+            return
+        }
+        demandUnsignedHistoryGapNetwork(anchor)
+    }
+
+    private fun demandUnsignedHistoryGapNetwork(anchor: ULong) {
         if (negotiated != null || !historySeed.isCompleted || !hostAvailable.value) return
-        val coverage = historyCoverage.value
+        val coverage = savedLegacyHistory.value?.withNetwork(historyCoverage.value) ?: historyCoverage.value
         if (anchor == 0uL &&
             coverage.unsignedUnknownEdge == null ||
             anchor != 0uL &&
@@ -2401,7 +2455,7 @@ class ThreadViewModel(
             return
         }
         claimHistorySlot { if (!it.inFlight) it.askingNewest() else null } ?: return
-        val cursor = coverage.cursorForUnsigned(anchor)
+        val cursor = savedLegacyHistory.value?.cursorFor(anchor, historyCoverage.value) ?: coverage.cursorForUnsigned(anchor)
         viewModelScope.launch {
             try {
                 recordCoverage(
