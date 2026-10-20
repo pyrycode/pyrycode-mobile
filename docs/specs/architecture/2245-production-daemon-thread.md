@@ -208,3 +208,10 @@ The required route now restores the existing model switch-back and Compact recov
 Two new regressions failed with their intended assertions before the repair. The final focused run executed 107 tests with no failures, errors or skips. Formatting and both APK builds passed. All 67 recordings and all 73 recording, index and review files remain byte-identical to the reviewed replacement.
 
 Three scripted observers now read the current contract. The ping scenario waits for the exact optional shown watermark. Stop permits a retained completed task while requiring no live task or Stop control. The agent scenario reads the owned canonical family and retains its exact child, parent, ordering and navigation checks. Blocked status, model switch-back and Compact behaviour remain required. Full final validation is still pending.
+
+
+## Final scripted setup correction, 2026-10-20
+
+The suggestion helper waits for an actual nonblank session before selecting its offer. Exact placeholder, long-press send, single user echo and newer clear remain required. Canonical unknown-parent prose stays private. The agent scenario requires its absence while retaining the legacy outside-Agent oracle and all known-parent ownership checks.
+
+Stop retains the existing fake provider and its actual stop_task handler. Its old roster-only rider has no creating tool for canonical history. A scenario-local stdout adapter supplies one explicitly synthetic Bash creation, task link and foreground result before the first canned roster. It forwards every original line unchanged and never invents Stop success or a task terminal. The stopped notification still comes from the fake handling the phone action. The adapter controls prove single insertion, matching identity, unchanged raw output and no insertion for an empty or foreign roster. The 67 genuine recordings remain unchanged.

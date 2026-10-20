@@ -1,0 +1,3 @@
+{"type":"assistant","message":{"id":"synthetic-roster-shell","content":[{"type":"tool_use","id":"synthetic-roster-tool","name":"Bash","input":{"command":"cat $FIFO","run_in_background":true}}]}}
+{"type":"system","subtype":"task_started","task_id":"bybi8g8i8","tool_use_id":"synthetic-roster-tool","description":"cat $FIFO","task_type":"local_bash"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"synthetic-roster-tool","content":"Synthetic shell returned while the recorded task stays in the background","is_error":false}]}}

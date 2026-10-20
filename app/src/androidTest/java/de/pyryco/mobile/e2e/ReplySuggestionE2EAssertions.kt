@@ -29,7 +29,7 @@ internal fun ComposeContentTestRule.assertReplySuggestionLongPress(
                     repository
                         .observeSessionSettings(conversationId)
                         .filterNotNull()
-                        .first { !it.held }
+                        .first { !it.held && it.sessionId.isNotBlank() }
                         .sessionId
                 repository.observeReplySuggestion(conversationId, session).filterNotNull().first { !it.suggestedReply.isNullOrBlank() }
             }

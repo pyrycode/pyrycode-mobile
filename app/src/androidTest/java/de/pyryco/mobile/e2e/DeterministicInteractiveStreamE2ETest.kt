@@ -1247,7 +1247,12 @@ class DeterministicInteractiveStreamE2ETest {
             1,
             requireNotNull(launched.sourceSnapshot).items.count { it.kind == "turn_end" && (it.parent ?: 0) == 0L },
         )
-        assertTrue("unmatched prose must stay outside the Agent", launched.holdsOutsideAgent("unmatched1827", family))
+        if (launched.owner.kind == ThreadEvidenceKind.Authoritative) {
+            // Unknown parents stay private in canonical history, rather than becoming main-thread prose.
+            assertTrue("unknown-parent prose must stay private", launched.records.none { it.fullText == "unmatched1827" })
+        } else {
+            assertTrue("unmatched prose must stay outside the Agent", launched.holdsOutsideAgent("unmatched1827", family))
+        }
         assertTrue("owned prose must belong once to the Agent", family.ownsSingleProse("child1827-before"))
         val header = hasTestTag("background-agent:${family.agentId}")
         val child = hasTestTag("background-agent-child:${family.agentId}")
@@ -1303,7 +1308,12 @@ class DeterministicInteractiveStreamE2ETest {
         val owned = requireNotNull(settled.agentFamily(launched.owner))
         assertEquals("every late received tool must be retained in the owned run", 1 + lateTools.size, owned.tools.size)
         assertTrue("owned prose must belong once to the Agent", owned.ownsSingleProse("child1827-after"))
-        assertTrue("unmatched prose must stay outside the Agent", settled.holdsOutsideAgent("unmatched1827", owned))
+        if (settled.owner.kind == ThreadEvidenceKind.Authoritative) {
+            // Unknown parents stay private in canonical history, rather than becoming main-thread prose.
+            assertTrue("unknown-parent prose must stay private", settled.records.none { it.fullText == "unmatched1827" })
+        } else {
+            assertTrue("unmatched prose must stay outside the Agent", settled.holdsOutsideAgent("unmatched1827", owned))
+        }
         composeTestRule.verifyAgentRunNavigation(
             agentId = owned.agentId,
             runId = requireNotNull(owned.runId),
