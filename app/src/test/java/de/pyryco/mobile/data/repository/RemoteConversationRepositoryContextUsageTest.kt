@@ -29,6 +29,29 @@ import org.junit.Test
 class RemoteConversationRepositoryContextUsageTest {
     // ---- push and reply ---------------------------------------------------------------------------
 
+    @Test
+    fun mcpInventoryReachesRepositoryAndMalformedUpdateRetainsIt() =
+        runTest {
+            val (pump, repo) = repo()
+            val readings = collect(repo.observeContextUsage("c1"))
+            runCurrent()
+            val base = contextUsage("c1", total = 10, max = 100, percentage = 10, id = 1L)
+            val tools = MobileJson.parseToJsonElement("""[{"name":"tool","server_name":"__proto__","tokens":7}]""")
+            val payload = JsonObject((base.payload as JsonObject) + mapOf("mcp_tools" to tools, "dropped_mcp_tools" to JsonPrimitive(8)))
+            pump.push(base.copy(payload = payload))
+            runCurrent()
+            val held = checkNotNull(readings.last())
+            assertEquals(listOf(ContextMcpTool("tool", "__proto__", 7)), held.mcpTools)
+            assertEquals(8L, held.droppedMcpTools)
+            pump.push(base.copy(id = 2L, payload = JsonObject(payload - "mcp_tools")))
+            runCurrent()
+            assertEquals(held, readings.last())
+            pump.push(base.copy(id = 3L))
+            runCurrent()
+            assertEquals(emptyList<ContextMcpTool>(), readings.last()?.mcpTools)
+            assertEquals(0L, readings.last()?.droppedMcpTools)
+        }
+
     // `percentage` is Claude's own number: 50000 / 200000 would be 25, and the reading still says 31.
     @Test
     fun turnEndFrame_nullUntilAFrame_thenVerbatim_latestWins() =
@@ -377,7 +400,7 @@ class RemoteConversationRepositoryContextUsageTest {
     }
 
     /**
-     * A `context_usage` envelope with the four scalars, an optional `as_of`, and the inventories the phone ignores
+     * A `context_usage` envelope with the four scalars, an optional `as_of`, and the required inventories
      * (each always on the wire as an array, with its dropped count).
      */
     private fun contextUsage(
@@ -434,7 +457,13 @@ class RemoteConversationRepositoryContextUsageTest {
         val complete =
             if (type == "context_usage" && parsed is JsonObject) {
                 JsonObject(
-                    mapOf("model" to JsonPrimitive(""), "categories" to JsonArray(emptyList()), "dropped_categories" to JsonPrimitive(0)) +
+                    mapOf(
+                        "model" to JsonPrimitive(""),
+                        "categories" to JsonArray(emptyList()),
+                        "dropped_categories" to JsonPrimitive(0),
+                        "mcp_tools" to JsonArray(emptyList()),
+                        "dropped_mcp_tools" to JsonPrimitive(0),
+                    ) +
                         parsed,
                 )
             } else {
