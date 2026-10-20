@@ -308,14 +308,14 @@ class ThreadViewModelContextFreshnessTest {
                 )
             reconnectedPump.push(
                 "context_usage",
-                """{"conversation_id":"c1","model":"","total_tokens":150000,"max_tokens":200000,"percentage":75,"categories":[],"dropped_categories":0,"as_of":"$TS"}""",
+                """{"conversation_id":"c1","model":"","total_tokens":150000,"max_tokens":200000,"percentage":75,"categories":[],"dropped_categories":0,"memory_files":[],"dropped_memory_files":0,"as_of":"$TS"}""",
             )
             runCurrent()
             assertNull("reconnect must not forget the source boundary", reconnectedRepo.observeContextUsage("c1").first())
             // An id reused on a new connection cannot satisfy the old connection's request ledger.
             reconnectedPump.push(
                 "context_usage",
-                """{"conversation_id":"c1","model":"","total_tokens":2000,"max_tokens":200000,"percentage":1,"categories":[],"dropped_categories":0}""",
+                """{"conversation_id":"c1","model":"","total_tokens":2000,"max_tokens":200000,"percentage":1,"categories":[],"dropped_categories":0,"memory_files":[],"dropped_memory_files":0}""",
                 rig.pump.sent
                     .last { it.type == "request_context_usage" }
                     .id,
@@ -325,7 +325,7 @@ class ThreadViewModelContextFreshnessTest {
             reconnectedRepo.requestContextUsage("c1")
             reconnectedPump.push(
                 "context_usage",
-                """{"conversation_id":"c1","model":"","total_tokens":150000,"max_tokens":200000,"percentage":75,"categories":[],"dropped_categories":0,"as_of":"$TS"}""",
+                """{"conversation_id":"c1","model":"","total_tokens":150000,"max_tokens":200000,"percentage":75,"categories":[],"dropped_categories":0,"memory_files":[],"dropped_memory_files":0,"as_of":"$TS"}""",
                 reconnectedPump.sent.last().id,
             )
             runCurrent()
@@ -334,7 +334,7 @@ class ThreadViewModelContextFreshnessTest {
             reconnectedRepo.requestContextUsage("c1")
             reconnectedPump.push(
                 "context_usage",
-                """{"conversation_id":"c1","model":"","total_tokens":2000,"max_tokens":200000,"percentage":1,"categories":[],"dropped_categories":0}""",
+                """{"conversation_id":"c1","model":"","total_tokens":2000,"max_tokens":200000,"percentage":1,"categories":[],"dropped_categories":0,"memory_files":[],"dropped_memory_files":0}""",
                 reconnectedPump.sent.last().id,
             )
             runCurrent()

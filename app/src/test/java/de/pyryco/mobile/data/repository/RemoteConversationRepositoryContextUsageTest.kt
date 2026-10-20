@@ -434,7 +434,13 @@ class RemoteConversationRepositoryContextUsageTest {
         val complete =
             if (type == "context_usage" && parsed is JsonObject) {
                 JsonObject(
-                    mapOf("model" to JsonPrimitive(""), "categories" to JsonArray(emptyList()), "dropped_categories" to JsonPrimitive(0)) +
+                    mapOf(
+                        "model" to JsonPrimitive(""),
+                        "categories" to JsonArray(emptyList()),
+                        "dropped_categories" to JsonPrimitive(0),
+                        "memory_files" to JsonArray(emptyList()),
+                        "dropped_memory_files" to JsonPrimitive(0),
+                    ) +
                         parsed,
                 )
             } else {

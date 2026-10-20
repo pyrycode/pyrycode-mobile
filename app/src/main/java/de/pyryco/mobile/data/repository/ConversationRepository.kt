@@ -1746,7 +1746,7 @@ data class SessionFacts(
  * only on a **remembered** answer, the daemon's record of when Claude last reported it for a dormant
  * conversation; the figure is still the last one Claude gave, so it is held like any other.
  *
- * Model/category names are bounded untrusted display text, never actions, paths, logs or identity keys.
+ * Model/category names and memory paths/types are bounded untrusted display text, never actions, logs or identity keys.
  * A remembered reading does not certify an empty breakdown, even when its lists are empty.
  *
  * `data` is load-bearing: structural equality is what the repository's `distinctUntilChanged` relies on.
@@ -1759,6 +1759,8 @@ data class ContextUsage(
     val model: String = "",
     val categories: List<ContextCategory> = emptyList(),
     val droppedCategories: Long = 0,
+    val memoryFiles: List<ContextMemoryFile> = emptyList(),
+    val droppedMemoryFiles: Long = 0,
 ) {
     override fun toString(): String = "ContextUsage(<redacted>)"
 }
@@ -1769,6 +1771,15 @@ data class ContextCategory(
     val tokens: Long,
 ) {
     override fun toString(): String = "ContextCategory(<redacted>)"
+}
+
+/** Descriptive memory inventory only: neither path nor type is an identity or actuation input. */
+data class ContextMemoryFile(
+    val path: String,
+    val type: String,
+    val tokens: Long,
+) {
+    override fun toString(): String = "ContextMemoryFile(<redacted>)"
 }
 
 /**

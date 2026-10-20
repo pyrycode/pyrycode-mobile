@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import android.content.res.Configuration
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,22 +10,39 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.collapse
+import androidx.compose.ui.semantics.expand
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ContextCategory
 import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.ui.components.MobileDismissModal
@@ -139,9 +157,113 @@ internal fun ContextSummarySheet(
                         }
                     }
                 }
+                if (claude && reading != null && reading.asOf == null &&
+                    (reading.memoryFiles.isNotEmpty() || reading.droppedMemoryFiles > 0)
+                ) {
+                    ContextMemoryFiles(reading)
+                }
             }
         }
     }
+}
+
+@Composable
+private fun ContextMemoryFiles(reading: ContextUsage) {
+    var expanded by remember { mutableStateOf(false) }
+    val updateExpanded =
+        remember {
+            { value: Boolean ->
+                expanded = value
+                RelayLog.d { "event=context_memory_expansion expanded=$value" }
+            }
+        }
+    val expandLabel = stringResource(R.string.thread_context_memory_expand)
+    val collapseLabel = stringResource(R.string.thread_context_memory_collapse)
+    val description = stringResource(if (expanded) R.string.thread_context_memory_expanded else R.string.thread_context_memory_collapsed)
+    // Counts are display-only. Even Long.MAX_VALUE plus received rows remains exact.
+    val count = reading.memoryFiles.size.toULong() + reading.droppedMemoryFiles.coerceAtLeast(0).toULong()
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .testTag("context_memory_toggle")
+                .clickable(role = Role.Button, onClickLabel = if (expanded) collapseLabel else expandLabel) { updateExpanded(!expanded) }
+                .semantics {
+                    stateDescription = description
+                    if (expanded) {
+                        collapse(collapseLabel) {
+                            updateExpanded(false)
+                            true
+                        }
+                    } else {
+                        expand(expandLabel) {
+                            updateExpanded(true)
+                            true
+                        }
+                    }
+                },
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.thread_context_memory_files),
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                pluralStringResource(R.plurals.thread_context_memory_file_count, if (count == 1uL) 1 else 2, count.toString()),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+            Icon(
+                painterResource(R.drawable.ic_context_memory_chevron_up),
+                contentDescription = null,
+                modifier = Modifier.size(20.dp).rotate(if (expanded) 0f else 180f),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+        if (expanded) {
+            Column(Modifier.fillMaxWidth().padding(start = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Position alone identifies a row; duplicate paths remain separate inert Text.
+                reading.memoryFiles.forEachIndexed { index, file ->
+                    Row(Modifier.fillMaxWidth().testTag("context_memory_file_$index"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            shortenContextMemoryPath(file.path),
+                            Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            formatContextTokens(file.tokens),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                }
+                if (reading.droppedMemoryFiles > 0) {
+                    Text(
+                        stringResource(R.string.thread_context_more, reading.droppedMemoryFiles),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Display-only slash segmentation; never resolve, normalize or open this text. */
+internal fun shortenContextMemoryPath(path: String): String {
+    val segments = path.split('/').filter { it.isNotEmpty() }
+    return if (segments.size <= 4) path else ".../" + segments.takeLast(4).joinToString("/")
 }
 
 internal fun formatContextTokens(tokens: Long): String {

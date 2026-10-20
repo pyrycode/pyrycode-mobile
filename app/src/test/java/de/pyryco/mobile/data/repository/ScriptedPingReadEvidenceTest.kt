@@ -125,7 +125,7 @@ class ScriptedPingReadEvidenceTest {
             entry(
                 12u,
                 "context_usage",
-                """{"conversation_id":"c","model":"","total_tokens":1,"max_tokens":10,"percentage":10,"categories":[],"dropped_categories":0}""",
+                """{"conversation_id":"c","model":"","total_tokens":1,"max_tokens":10,"percentage":10,"categories":[],"dropped_categories":0,"memory_files":[],"dropped_memory_files":0}""",
             ),
             entry(11u, "turn_state", """{"conversation_id":"c","state":"idle"}"""),
             entry(10u, "turn_end", """{"conversation_id":"c","turn_id":"t","stop_reason":"end_turn"}"""),

@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.network
 
 import de.pyryco.mobile.data.repository.ContextCategory
+import de.pyryco.mobile.data.repository.ContextMemoryFile
 import de.pyryco.mobile.data.repository.ContextUsage
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
@@ -18,7 +19,7 @@ import kotlinx.serialization.json.longOrNull
  * Wire SSOT: pyrycode `docs/protocol-mobile.md` § `context_usage`. Summary fields are strict-required;
  * only [asOf] is optional, present on remembered answers. Raw primitives prevent string/number coercion.
  *
- * **SECURITY.** Model/category strings become bounded inert Text only. Other inventories remain ignored.
+ * **SECURITY.** Model/category/path strings become bounded inert Text only. Memory types remain descriptive.
  * `conversation_id` alone is the daemon-authored routing key. Never emit caught decode exceptions.
  */
 @Serializable
@@ -31,6 +32,8 @@ internal data class ContextUsagePayloadDto(
     val model: JsonElement,
     val categories: List<ContextCategoryPayloadDto>,
     @SerialName("dropped_categories") val droppedCategories: JsonElement,
+    @SerialName("memory_files") val memoryFiles: List<ContextMemoryFilePayloadDto>,
+    @SerialName("dropped_memory_files") val droppedMemoryFiles: JsonElement,
 ) {
     override fun toString(): String = "ContextUsagePayloadDto(<redacted>)"
 }
@@ -41,6 +44,15 @@ internal data class ContextCategoryPayloadDto(
     val tokens: JsonElement,
 ) {
     override fun toString(): String = "ContextCategoryPayloadDto(<redacted>)"
+}
+
+@Serializable
+internal data class ContextMemoryFilePayloadDto(
+    val path: JsonElement,
+    val type: JsonElement,
+    val tokens: JsonElement,
+) {
+    override fun toString(): String = "ContextMemoryFilePayloadDto(<redacted>)"
 }
 
 /**
@@ -59,7 +71,25 @@ internal fun ContextUsagePayloadDto.toReading(): ContextUsage? {
             val tokens = (category.tokens as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull ?: return null
             ContextCategory(name.take(512), tokens)
         }
-    return ContextUsage(totalTokens, maxTokens, percentage, asOf?.let(Instant::parse), modelText.take(512), rows, dropped)
+    val droppedFiles = (droppedMemoryFiles as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull ?: return null
+    val files =
+        memoryFiles.map { file ->
+            val path = (file.path as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+            val type = (file.type as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+            val tokens = (file.tokens as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull ?: return null
+            ContextMemoryFile(path.take(2048), type.take(512), tokens)
+        }
+    return ContextUsage(
+        totalTokens,
+        maxTokens,
+        percentage,
+        asOf?.let(Instant::parse),
+        modelText.take(512),
+        rows,
+        dropped,
+        memoryFiles = files,
+        droppedMemoryFiles = droppedFiles,
+    )
 }
 
 /**

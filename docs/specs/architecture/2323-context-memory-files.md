@@ -82,3 +82,7 @@ None. Defaulted domain fields preserve scalar-only in-process callers. MCP is ab
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-20
+
+## Revisions
+
+- 2026-10-20: Put the four supplied-frame native memory scenarios in `ContextMemoryFilesTest` beside the existing sheet class, keeping its header/footer coverage intact. Complete existing context fixtures in read-evidence, reset-probe and freshness tests so their original assertions still reach the intended admission path. No production flow or request changes are needed.
