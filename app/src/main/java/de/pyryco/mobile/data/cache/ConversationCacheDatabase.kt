@@ -281,7 +281,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
     @Dao
     internal interface AuthoritativeDao {
         @Query(
-            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND displayKey!='' ORDER BY displayKey DESC LIMIT :limit",
+            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND displayKey>'' ORDER BY displayKey DESC LIMIT :limit",
         )
         suspend fun displayWindow(
             host: String,
@@ -291,7 +291,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         ): List<AuthoritativeItem>
 
         @Query(
-            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND launchKey!='' ORDER BY launchKey DESC LIMIT :limit",
+            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND launchKey>'' ORDER BY launchKey DESC LIMIT :limit",
         )
         suspend fun launchWindow(
             host: String,

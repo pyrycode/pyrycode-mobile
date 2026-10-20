@@ -206,6 +206,17 @@ class AuthoritativeWindowRestoreTest {
 
     @Test fun placementInvariant_launchAndContentEachConsumeOneRow() =
         runTest {
+            val coincident = SavedAuthoritativeThread("e", (1..300).map { agent(it, it, it, shown = true) }, 1000, 1000, null)
+            open().writeAuthoritativeThread("host", "coincident", coincident).getOrThrow()
+            val coincidentDisk = open()
+            val coincidentWindow = requireNotNull(coincidentDisk.newestDisplayWindow("host", "coincident", 200))
+            val coincidentSnapshot = coincidentWindow.saved.toSnapshot().copy(openingRows = coincidentWindow.rows)
+            val coincidentRows = projectAuthoritativeThread("host", "coincident", coincidentSnapshot).rows.map { it.listKey(0) }
+            val allCoincidentRows = projectAuthoritativeThread("host", "coincident", coincident.toSnapshot()).rows.map { it.listKey(0) }
+            assertEquals(allCoincidentRows.takeLast(200), coincidentRows)
+            assertEquals(100, coincidentWindow.saved.items.size)
+            assertEquals(400, coincidentDisk.lastReadCounts.itemReads)
+            assertEquals(100, coincidentDisk.lastReadCounts.itemDecodes)
             val original = SavedAuthoritativeThread("e", (1..300).map { agent(it, it, 1000 + it, shown = true) }, 5000, 5000, null)
             open().writeAuthoritativeThread("host", "c", original).getOrThrow()
             val cold = open()
@@ -810,15 +821,17 @@ class AuthoritativeWindowRestoreTest {
                 fixtures,
                 cold.newestDisplayWindow("host", "c", 200)?.saved?.items,
             )
-            val plans =
-                requireNotNull(database).openHelper.readableDatabase.query(
-                    "EXPLAIN QUERY PLAN SELECT * FROM authoritative_items " +
-                        "WHERE host='host' AND conversation='c' AND epoch='e' AND displayKey!='' " +
-                        "ORDER BY displayKey DESC LIMIT 200",
-                )
-            plans.use { cursor ->
-                assertTrue(cursor.moveToFirst())
-                assertTrue(cursor.getString(3).contains("displayKey"))
+            for (column in listOf("displayKey", "launchKey")) {
+                val plans =
+                    requireNotNull(database).openHelper.readableDatabase.query(
+                        "EXPLAIN QUERY PLAN SELECT * FROM authoritative_items " +
+                            "WHERE host='host' AND conversation='c' AND epoch='e' AND $column>'' " +
+                            "ORDER BY $column DESC LIMIT 200",
+                    )
+                plans.use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertTrue(cursor.getString(3).contains("$column>?"))
+                }
             }
         }
 }
