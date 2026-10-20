@@ -1073,6 +1073,7 @@ class CachingConversationRepository(
                 }
             val cacheable = withContext(processingDispatcher) { cacheableThreadRows(rows) }
             val baseline = if (owned == null) emptyMap() else baselineRows.associateBy { it.legacyRowKey() }
+            // Accepted deletions outside this loaded baseline must commit before their captures are satisfied.
             val removed =
                 if (owned == null) {
                     emptySet()

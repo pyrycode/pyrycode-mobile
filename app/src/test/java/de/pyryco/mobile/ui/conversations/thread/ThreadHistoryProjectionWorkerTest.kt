@@ -2,8 +2,8 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
-import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
@@ -70,100 +70,144 @@ class ThreadHistoryProjectionWorkerTest {
         }
     }
 
-    @Test fun savedEvidenceInvariant_joinWaitsForWorkerAndReusesUnchangedInputs() = runTest {
-        val (base, rows) = fragmentedHistoryFixture(listOf(9000, 9001, 17000, 17999))
-        var traversals = 0
-        val tracked = object : Map<String, ULong> by base.unsignedRowOrder {
-            override val entries: Set<Map.Entry<String, ULong>> get() {
-                traversals++
-                return base.unsignedRowOrder.entries
-            }
-        }
-        val saved = SavedLegacyHistory(base.copy(unsignedRowOrder = tracked), null, false)
-        val snapshots = MutableStateFlow(ThreadSnapshot(rows, savedLegacyHistory = saved))
-        val queue = MutableStateFlow(emptyList<QueuedMessage>())
-        val repo = object : ConversationRepository by FakeConversationRepository(), ThreadSnapshotSource {
-            override fun observeThreadSnapshot(conversationId: String) = snapshots
-            override fun observeQueue(conversationId: String) = queue
-            override suspend fun readHistoryPosition(conversationId: String) = HistoryPosition("", false, HistoryCoverage())
-        }
-        val worker = HeldWorker()
-        val vm = ThreadViewModel(
-            SavedStateHandle(mapOf("conversationId" to "c")), repo, FakeConnectionStateSource(), ComposerDraftStore(),
-            repositoryAvailable = flowOf(false), projectionDispatcher = worker,
-        )
-        val store = ViewModelStore().apply { put("vm", vm) }
-        val reader = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
-        traversals = 0
-        runCurrent()
-        assertEquals("joining saved claims must wait for the worker", 0, traversals)
-        while (worker.pending.isNotEmpty()) { worker.drain(); runCurrent() }
-        assertEquals(rows, vm.state.value.items)
-        assertTrue(traversals > 0)
-        val joinedTraversals = traversals
-        queue.value = listOf(queuedEcho(rows.first(), 0))
-        runCurrent()
-        while (worker.pending.isNotEmpty()) { worker.drain(); runCurrent() }
-        assertEquals("queue changes must reuse unchanged evidence", joinedTraversals, traversals)
-        snapshots.value = ThreadSnapshot(rows, savedLegacyHistory = SavedLegacyHistory(saved.coverage, null, false))
-        runCurrent()
-        while (worker.pending.isNotEmpty()) { worker.drain(); runCurrent() }
-        assertEquals("a new saved reading with unchanged evidence must reuse the join", joinedTraversals, traversals)
-        store.clear()
-        runCurrent()
-        worker.drain()
-        reader.cancel()
-    }
+    @Test fun savedEvidenceInvariant_joinWaitsForWorkerAndReusesUnchangedInputs() =
+        runTest {
+            val (base, rows) = fragmentedHistoryFixture(listOf(9000, 9001, 17000, 17999))
+            var traversals = 0
+            val tracked =
+                object : Map<String, ULong> by base.unsignedRowOrder {
+                    override val entries: Set<Map.Entry<String, ULong>> get() {
+                        traversals++
+                        return base.unsignedRowOrder.entries
+                    }
+                }
+            val saved = SavedLegacyHistory(base.copy(unsignedRowOrder = tracked), null, false)
+            val snapshots = MutableStateFlow(ThreadSnapshot(rows, savedLegacyHistory = saved))
+            val queue = MutableStateFlow(emptyList<QueuedMessage>())
+            val repo =
+                object : ConversationRepository by FakeConversationRepository(), ThreadSnapshotSource {
+                    override fun observeThreadSnapshot(conversationId: String) = snapshots
 
-    @Test fun savedCursorInvariant_refusesTheRequestedKnownAndUnknownAnchor() = runTest {
-        for (anchor in listOf(0uL, 35998uL)) {
-            val (coverage, rows) = fragmentedHistoryFixture(listOf(9000, 9001, 17000, 17999))
-            val saved = SavedLegacyHistory(
-                coverage.copy(unsignedCursors = mapOf(1uL to "rejected", 36001uL to "rejected"), unsignedWalks = emptyMap()),
-                coverage.unsignedSpans.first().first,
-                false,
-            )
-            val asks = mutableListOf<String>()
-            val positions = mutableListOf<HistoryPosition?>()
-            val delegate = FakeConversationRepository()
-            val repo = object :
-                ConversationRepository by delegate,
-                ThreadSnapshotSource,
-                SavedLegacyHistorySource {
-                override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> {
-                    return flowOf(ThreadSnapshot(rows, savedLegacyHistory = saved))
+                    override fun observeQueue(conversationId: String) = queue
+
+                    override suspend fun readHistoryPosition(conversationId: String) = HistoryPosition("", false, HistoryCoverage())
                 }
-                override suspend fun openingHistoryPosition(conversationId: String) =
-                    HistoryPosition("walk", true, HistoryCoverage(unknown = true, newestCursor = "rejected"))
-                override suspend fun revealOlderSavedHistory(conversationId: String) = false
-                override suspend fun writeHistoryPosition(conversationId: String, position: HistoryPosition?) {
-                    positions += position
-                }
-                override suspend fun requestHistory(conversationId: String, cursor: String, limit: Int): HistoryPage {
-                    asks += cursor
-                    if (cursor.isNotEmpty()) throw RelayErrorException("history.invalid_cursor", false, "refused")
-                    return HistoryPage(emptyList(), "rejected", false)
-                }
-            }
-            val vm = ThreadViewModel(
-                SavedStateHandle(mapOf("conversationId" to "c")), repo, FakeConnectionStateSource(), ComposerDraftStore(),
-                projectionDispatcher = StandardTestDispatcher(testScheduler),
-            )
+            val worker = HeldWorker()
+            val vm =
+                ThreadViewModel(
+                    SavedStateHandle(mapOf("conversationId" to "c")),
+                    repo,
+                    FakeConnectionStateSource(),
+                    ComposerDraftStore(),
+                    repositoryAvailable = flowOf(false),
+                    projectionDispatcher = worker,
+                )
             val store = ViewModelStore().apply { put("vm", vm) }
             val reader = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            traversals = 0
             runCurrent()
-            assertEquals(listOf(""), asks)
-            vm.onDemandUnsignedHistoryGap(anchor)
+            assertEquals("joining saved claims must wait for the worker", 0, traversals)
+            while (worker.pending.isNotEmpty()) {
+                worker.drain()
+                runCurrent()
+            }
+            assertEquals(rows, vm.state.value.items)
+            assertTrue(traversals > 0)
+            val joinedTraversals = traversals
+            queue.value = listOf(queuedEcho(rows.first(), 0))
             runCurrent()
-            assertEquals(listOf("", "rejected"), asks)
-            assertTrue("saved spans stay display-only", positions.last()?.coverage?.unsignedSpans.orEmpty().isEmpty())
-            vm.onDemandUnsignedHistoryGap(anchor)
+            while (worker.pending.isNotEmpty()) {
+                worker.drain()
+                runCurrent()
+            }
+            assertEquals("queue changes must reuse unchanged evidence", joinedTraversals, traversals)
+            snapshots.value = ThreadSnapshot(rows, savedLegacyHistory = SavedLegacyHistory(saved.coverage, null, false))
             runCurrent()
-            assertEquals(listOf("", "rejected", ""), asks)
+            while (worker.pending.isNotEmpty()) {
+                worker.drain()
+                runCurrent()
+            }
+            assertEquals("a new saved reading with unchanged evidence must reuse the join", joinedTraversals, traversals)
             store.clear()
+            runCurrent()
+            worker.drain()
             reader.cancel()
         }
-    }
+
+    @Test fun savedCursorInvariant_refusesTheRequestedKnownAndUnknownAnchor() =
+        runTest {
+            for (anchor in listOf(0uL, 35998uL)) {
+                val (coverage, rows) = fragmentedHistoryFixture(listOf(9000, 9001, 17000, 17999))
+                val saved =
+                    SavedLegacyHistory(
+                        coverage.copy(unsignedCursors = mapOf(1uL to "rejected", 36001uL to "rejected"), unsignedWalks = emptyMap()),
+                        coverage.unsignedSpans.first().first,
+                        false,
+                    )
+                val asks = mutableListOf<String>()
+                val positions = mutableListOf<HistoryPosition?>()
+                val delegate = FakeConversationRepository()
+                val repo =
+                    object :
+                        ConversationRepository by delegate,
+                        ThreadSnapshotSource,
+                        SavedLegacyHistorySource {
+                        override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
+                            flowOf(ThreadSnapshot(rows, savedLegacyHistory = saved))
+
+                        override suspend fun openingHistoryPosition(conversationId: String) =
+                            HistoryPosition("walk", true, HistoryCoverage(unknown = true, newestCursor = "rejected"))
+
+                        override suspend fun revealOlderSavedHistory(conversationId: String) = false
+
+                        override suspend fun writeHistoryPosition(
+                            conversationId: String,
+                            position: HistoryPosition?,
+                        ) {
+                            positions += position
+                        }
+
+                        override suspend fun requestHistory(
+                            conversationId: String,
+                            cursor: String,
+                            limit: Int,
+                        ): HistoryPage {
+                            asks += cursor
+                            if (cursor.isNotEmpty()) throw RelayErrorException("history.invalid_cursor", false, "refused")
+                            return HistoryPage(emptyList(), "rejected", false)
+                        }
+                    }
+                val vm =
+                    ThreadViewModel(
+                        SavedStateHandle(mapOf("conversationId" to "c")),
+                        repo,
+                        FakeConnectionStateSource(),
+                        ComposerDraftStore(),
+                        projectionDispatcher = StandardTestDispatcher(testScheduler),
+                    )
+                val store = ViewModelStore().apply { put("vm", vm) }
+                val reader = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+                runCurrent()
+                assertEquals(listOf(""), asks)
+                vm.onDemandUnsignedHistoryGap(anchor)
+                runCurrent()
+                assertEquals(listOf("", "rejected"), asks)
+                assertTrue(
+                    "saved spans stay display-only",
+                    positions
+                        .last()
+                        ?.coverage
+                        ?.unsignedSpans
+                        .orEmpty()
+                        .isEmpty(),
+                )
+                vm.onDemandUnsignedHistoryGap(anchor)
+                runCurrent()
+                assertEquals(listOf("", "rejected", ""), asks)
+                store.clear()
+                reader.cancel()
+            }
+        }
 
     @Test fun leadingLifecycleInvariant_oldestAndInternalMarkersReachRenderedDeliveredRows() =
         runTest {

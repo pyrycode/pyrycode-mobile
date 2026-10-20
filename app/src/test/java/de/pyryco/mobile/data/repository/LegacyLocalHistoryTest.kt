@@ -579,9 +579,13 @@ class LegacyLocalHistoryTest {
             val rows = rows(401)
             val cache = seed(rows)
             val live = Live()
-            val repository = CachingConversationRepository(
-                live, cache, "host", processingDispatcher = StandardTestDispatcher(testScheduler),
-            )
+            val repository =
+                CachingConversationRepository(
+                    live,
+                    cache,
+                    "host",
+                    processingDispatcher = StandardTestDispatcher(testScheduler),
+                )
             val (readings, job) = watch(repository)
             readings.receive()
             live.snapshots.value = ThreadSnapshot(emptyList(), setOf(rows.first().message.id))
