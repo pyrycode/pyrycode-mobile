@@ -124,3 +124,53 @@ gate. These supplied-screen probes are JVM evidence; the full UI gate's
 viewport coverage above remains intact. [#1988](https://github.com/pyrycode/pyrycode-mobile/issues/1988)
 retains production activation and the two named real-Claude background-agent
 methods plus prior-session terminal integration proof; see [the renderer coverage](thread-screen-testing.md#supplied-authoritative-renderer-1985).
+
+## Exact Agent ownership on outlined tools (#2340)
+
+`AuthoritativeAgentOwnershipTest` mounts `ThreadScreen` with real
+`projectAuthoritativeThread` output. `exactToolOwnerSurvivesCompletionAndThreadReopen`
+uses collapse off; `exactToolOwnerSurvivesCollapseReopenAndThreadReopen` uses collapse on.
+Both retain the positive unmerged matcher
+`hasTestTag(TOOL_ROW_TAG) and hasAnyAncestor(hasTestTag("background-agent-child:<exact Agent message ID>"))`,
+further selecting each tool by content. They cover direct and indirectly parented children
+while running and completed, full composition removal/reopen, and exclusion of foreground
+tools and another Agent's tools from the selected owner. The collapse probe also closes and
+reopens the run in each lifecycle state. It requires the first tool key present as the closed
+header, sibling keys absent and all outlined tools under that owner absent; expansion restores
+individual keys and exact owners. Key membership alone cannot establish outlined-row ownership.
+See [ownership and run identity](thread-screen-subagent-tool-rows.md#collapsing-runs-of-consecutive-tool-rows-1635).
+
+**Retained native evidence, macOS, 2026-10-20.** Documentation inspected `revision.json`
+and `dispatcher.xml` for all three focused runs under
+`$AGENTS_REPO_PATH/logs/evidence/2340/builder-20261020-macos/`, the raw location at review
+time. The command was
+`python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.ui.conversations.thread.AuthoritativeAgentOwnershipTest`.
+
+| Run | Executed | Passed | Failed | Errors | Skipped |
+| --- | --- | --- | --- | --- | --- |
+| Native red, `8030c6d5751298a7bf4fcb96294ce198438a23fa` | 2 | 0 | 2 | 0 | 0 |
+| Intermediate repair, incorrect collapsed-key expectation | 2 | 1 | 1 | 0 | 0 |
+| Native green, `9fdaf07bf3e4757693ad297744f4caa5afdd4db6` | 2 | 2 | 0 | 0 | 0 |
+
+The red used unchanged production at `1a845e57d9483e42d2b9a71c7196135e49c506eb`;
+both methods failed at the exact owner matcher. The intermediate failure concerned only
+the new test's expectation that the collapsed representative key disappear. Both named
+methods are present and passed in green XML. The
+[verifier's accepted PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2342#issuecomment-6301421930)
+also confirms their phone-log completion and matching native hash manifests. Focused bundles
+omit wrapper process exit codes and the builder command output is truncated, so these are
+counted XML results, not independently verified wrapper exit statuses.
+
+The dispatcher JVM/build report records **6,355 executed/passed, 0 failed, 0 skipped**,
+including both ownership methods. Initial full UI results were **335 executed, 331 passed,
+4 failed, 1 additional skipped**; scripted results were **21 executed, 19 passed, 2 failed,
+1 additional skipped**. The verifier accepted inherited failures tracked in #2343/#2344
+and dispatcher-confirmed passing reruns for the two intermittent failures; these initial
+runs were not all-pass runs. No tests were executed during documentation.
+
+This ticket's evidence is macOS-scoped. The isolated PR #2337 Linux combination and its
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+and `interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+pair were not run here and remain outside this ticket's OS verification scope. The supplied
+scripted gate reports the first method passed; it does not prove the isolated combination
+or the second method. Genuine capture acceptance remains with #2246.
