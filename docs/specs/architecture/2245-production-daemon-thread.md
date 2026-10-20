@@ -190,3 +190,13 @@ Markdown checks reveal exact targets; following checks retain their no-reveal re
 The post-Stop phone send uses the phone observer and separately checks the peer's actual
 successful fresh terminal. None of these repairs replaces genuine counted native and
 replay evidence.
+
+## Reviewed recording replacement, 2026-10-20
+
+All 67 existing recorded native methods have genuine successful captures and counted successful fresh replays. Each fixture keeps its exact captured bytes and original committed producer source. The index records both capture provenance and actual replay package provenance. No fixture is synthesized or rewritten to add a capability or identity. Strict comparisons are changed, not passed by normalization. Independent reports in [the recording review folder](2245-recording-reviews/) accept the explicit changes for all 67 cases. Their hashes and decisions are recorded beside each fixture.
+
+The reports cover the required phone thread negotiation, correlated canonical synchronization, exact producer ownership and content, and actual lifecycle changes. The offline recovery report proves all 240 posts, retained baseline, actual reset, newest certificate and nine physical older-page queries. The native setup no longer adds an unrelated intermediate reconnect before its required offline interval. The original failed captures, comparisons and replays remain in private operator evidence.
+
+Replay creates its real per-host phone key before opening. Only an accepted phone send and its exact same-host canonical conversation/message echo bind the recorded phone device to that key. Ambiguity or a changed binding fails. Production device-plus-message reconciliation and post-Stop automatic visibility remain unchanged. Retained-reply assertions use the validated current rendered identities after recovery.
+
+Post-replacement configured JVM/build, phone UI and all scripted scenarios are still required before merge. The normal phone UI gate includes every enabled recorded method, so its exact 67-method report supplies final replay acceptance without a second duplicate replay run.
