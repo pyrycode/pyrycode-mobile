@@ -22,6 +22,7 @@ internal class OwnedThreadQueryObservation(
     private val route: AuthoritativeThreadRoute,
     private val onAccepted: (ThreadQueryRequest) -> Unit = {},
     private val onCertified: (ThreadQueryRequest, ThreadQueryReply.Success, AuthoritativeThreadSnapshot) -> Unit = { _, _, _ -> },
+    private val onReset: (ThreadQueryRequest, ThreadQueryReply.Reset) -> Unit = { _, _ -> },
 ) {
     private class Query(
         val decoder: ThreadQueryDecoder,
@@ -177,6 +178,7 @@ internal class OwnedThreadQueryObservation(
                                         checkNotNull(before.generation) + store.current(host, before.conversation).generation,
                                 )
                             awaitingCertification = true
+                            onReset(query.decoder.request, reply)
                         }
                         is ThreadQueryReply.Failure -> {
                             reject(query)

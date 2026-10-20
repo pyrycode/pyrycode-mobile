@@ -303,7 +303,12 @@ internal fun projectAuthoritativeThread(
             )
         },
         ordered.asReversed().firstNotNullOfOrNull { item ->
-            if (!item.active || item.parent != null && item.parent > 0 || item.recordedTask() != null) return@firstNotNullOfOrNull null
+            // A tracked foreground shell also has a task link. Only its actual tool result proves
+            // that the invocation returned while the linked task can continue independently.
+            val returnedTask =
+                item.recordedTask() != null &&
+                    (item.kind != "tool_call" || (item.content as? JsonObject)?.obj("result") != null)
+            if (!item.active || item.parent != null && item.parent > 0 || returnedTask) return@firstNotNullOfOrNull null
             ((adapted[item.id]?.item as? ThreadItem.MessageItem)?.message?.toolCall)?.takeIf { it.status == ToolCallStatus.Running }
         },
         snapshot.checkpoint.takeIf { snapshot.epoch != null && !snapshot.repairNeeded && !snapshot.resetNeeded && it >= 0 },

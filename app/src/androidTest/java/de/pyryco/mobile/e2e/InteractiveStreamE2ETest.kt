@@ -579,6 +579,7 @@ class InteractiveStreamE2ETest {
             assertTrue("bold marker must render bold", styled(bold) { it.fontWeight == FontWeight.Bold })
             assertTrue("inline marker must render monospace", styled(inline) { it.fontFamily == FontFamily.Monospace })
             listOf(code, "Key", "Value", cell, "present", end).forEach {
+                composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(it) and inReply)
                 composeTestRule.onNode(hasText(it) and inReply, useUnmergedTree = true).performScrollTo().assertIsDisplayed()
             }
             // The whole reply survives the streaming-to-history boundary with no lost source text.
@@ -8799,7 +8800,16 @@ class InteractiveStreamE2ETest {
         baseline: CompletedReplyObservation,
         missed: ProducedReplyEvidence,
     ) {
-        assertTrue("cache must retain the exact baseline reply", cacheRetains(baseline))
+        val saved = cachedThreadEvidence(baseline)
+        val snapshot = saved?.sourceSnapshot
+        assertTrue(
+            "cache must retain the exact baseline reply: present=${saved != null} admitted=${saved?.admitted} " +
+                "epochMatches=${saved?.owner?.epoch == baseline.owner.epoch} generation=${snapshot?.generation} " +
+                "checkpoint=${snapshot?.checkpoint} completed=${snapshot?.completedVersion} " +
+                "repair=${snapshot?.repairNeeded} reset=${snapshot?.resetNeeded} records=${saved?.records?.size} " +
+                "baselineFacts=${saved?.records?.count { now -> baseline.records.any { old -> now.fact?.id == old.fact?.id } }}",
+            saved?.retainedReply(baseline, baseline.host) != null,
+        )
         assertTrue(
             "cache must not already hold the missed turn",
             cachedRecords(baseline).none {
@@ -8959,6 +8969,65 @@ class InteractiveStreamE2ETest {
             await()
         }
 
+    /** Failure-only counts. No reply text, host, conversation, epoch or fact identifier is logged. */
+    private fun logOwnedReplyRendering(
+        reply: CompletedReplyObservation,
+        current: ThreadEvidence?,
+        repository: ConversationRepository?,
+    ) {
+        val snapshot = current?.sourceSnapshot
+
+        fun identity(tag: String): List<String>? {
+            if (!tag.startsWith("assistant-reply:")) return null
+            var rest = tag.removePrefix("assistant-reply:")
+            val fields = mutableListOf<String>()
+            repeat(4) {
+                val split = rest.indexOf(':')
+                if (split < 0) return null
+                val size = rest.take(split).toIntOrNull() ?: return null
+                rest = rest.drop(split + 1)
+                if (size < 0 || size > rest.length) return null
+                fields += rest.take(size)
+                rest = rest.drop(size)
+            }
+            if (!rest.startsWith(":")) return null
+            return fields + rest.drop(1)
+        }
+        val expected = reply.records.mapNotNull { identity("assistant-reply:${it.message.id}") }
+        val tags =
+            composeTestRule
+                .onAllNodes(
+                    SemanticsMatcher("assistant reply diagnostic") {
+                        it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("assistant-reply:") == true
+                    },
+                    useUnmergedTree = true,
+                ).fetchSemanticsNodes()
+        val parsed =
+            tags.mapNotNull { node ->
+                identity(node.config.getOrNull(SemanticsProperties.TestTag).orEmpty())?.let { it to node.boundsInRoot }
+            }
+        val family = parsed.filter { (fields, _) -> expected.any { fields.take(3) == it.take(3) && fields.last() == it.last() } }
+        val sameGeneration = family.count { (fields, _) -> fields[3] == reply.owner.generation.toString() }
+        val viewport =
+            composeTestRule
+                .onAllNodes(
+                    hasTestTag(THREAD_MESSAGE_REGION_TEST_TAG),
+                ).fetchSemanticsNodes()
+                .singleOrNull()
+                ?.boundsInRoot
+        val intersecting = family.count { (_, bounds) -> viewport != null && bounds.overlaps(viewport) }
+        Log.i(
+            "OwnedReply",
+            "event=rendering_failure generation=${reply.owner.generation} " +
+                "currentGeneration=${current?.owner?.generation} checkpoint=${snapshot?.checkpoint} " +
+                "completed=${snapshot?.completedVersion} repair=${snapshot?.repairNeeded} reset=${snapshot?.resetNeeded} " +
+                "sourceCurrent=${current?.owner?.connection === repository} " +
+                "sourceSnapshotCurrent=${reply.thread.sourceSnapshot === snapshot} " +
+                "expected=${reply.records.size} composed=${tags.size} family=${family.size} " +
+                "sameGeneration=$sameGeneration otherGeneration=${family.size - sameGeneration} intersecting=$intersecting",
+        )
+    }
+
     private fun <T> withOwnedReply(
         serverId: String,
         conversationId: String,
@@ -9034,6 +9103,8 @@ class InteractiveStreamE2ETest {
                     }
                 } catch (failure: ComposeTimeoutException) {
                     Log.i("OwnedReply", observation.producerState())
+                    runCatching { admitted?.let { logOwnedReplyRendering(it, currentEvidence(), repositories.value) } }
+                        .onFailure { Log.i("OwnedReply", "event=rendering_diagnostic_unavailable kind=${it::class.simpleName}") }
                     throw ownedReplyFailure(
                         producerFrames?.let { observation.completedBy(it()) } ?: observation.producerCompleted(),
                         if (readable) admitted != null else null,

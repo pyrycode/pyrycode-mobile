@@ -2,6 +2,13 @@
 
 Outer shell for the `conversation_thread/{serverId}/{conversationId}` route. `ThreadScreen` owns the frame, message region and composer placement; its linked topics below cover state, rows, overlays, sheets and tests. The current [Figma thread frame](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) governs the static dark layout. See [shared typography](shared-typography.md) for text roles.
 
+
+A task-tracking link alone does not make a running shell a background-only task.
+The foreground status and elapsed reading remain eligible until the actual tool
+result arrives. A tracked task that continues after that result stays in the task
+roster without keeping the foreground tool label alive. Existing source, parent and
+live-progress checks still apply.
+
 ## Map
 
 Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guard enforces. Each section named below moved verbatim, heading and anchors intact, into its own document:

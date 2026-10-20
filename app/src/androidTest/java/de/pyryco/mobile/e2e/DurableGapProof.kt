@@ -259,7 +259,7 @@ internal class DurableGapProof(
         }
     }
 
-    /** A valid saved checkpoint recovers its full changed tail; it does not create an artificial paging gap. */
+    /** Recover an accepted saved tail, or walk real older pages after an independently observed reset. */
     private fun catchUpAuthoritative(
         reconnect: () -> Unit,
         promptText: String,
@@ -274,6 +274,120 @@ internal class DurableGapProof(
             rule.waitUntil(30_000) {
                 AuthoritativeHistoryProbe.current() &&
                     AuthoritativeHistoryProbe.certificates().isNotEmpty() &&
+                    AuthoritativeHistoryProbe.requests().size ==
+                    AuthoritativeHistoryProbe.certificates().size + AuthoritativeHistoryProbe.resets().size &&
+                    authoritativeEvidence()?.admitted == true
+            }
+            rule.waitForIdle()
+            val initialRequests = AuthoritativeHistoryProbe.requests()
+            val savedRequest =
+                initialRequests.first() as? ThreadQueryRequest.CatchUp
+                    ?: throw AssertionError("saved-checkpoint recovery did not start with catch-up")
+            assertEquals("saved source epoch", baseline.epoch, savedRequest.epoch)
+            assertEquals("saved source checkpoint", baseline.checkpoint.toULong(), savedRequest.version)
+            assertTrue("no page demand before the older gesture", initialRequests.none { it is ThreadQueryRequest.Page })
+            val resets = AuthoritativeHistoryProbe.resets()
+            if (resets.isEmpty()) {
+                val certificate = AuthoritativeHistoryProbe.certificates().single()
+                assertTrue("the exact saved request was certified", certificate.request === savedRequest)
+                val coverage =
+                    certificate.reply.coverage as? ThreadQueryReply.Coverage.CatchUp
+                        ?: throw AssertionError("saved tail was not certified")
+                assertEquals("complete captured source interval", savedRequest.version, coverage.fromVersion)
+                assertTrue("bounded changed tail", certificate.reply.checkpoint.version - savedRequest.version <= 1024uL)
+                assertEquals("one accepted saved-tail request", 1, initialRequests.size)
+            } else {
+                val reset = resets.single()
+                assertTrue("reset belongs to the exact accepted saved request", reset.request === savedRequest)
+                assertEquals("reset retains the durable source epoch", baseline.epoch, reset.reply.checkpoint.epoch)
+                val certificates = AuthoritativeHistoryProbe.certificates()
+                val newest = certificates.first()
+                val opening =
+                    newest.request as? ThreadQueryRequest.CatchUp
+                        ?: throw AssertionError("reset did not request a fresh window")
+                assertEquals("reset is followed by its exact zero request", initialRequests[1], opening)
+                assertEquals("fresh window retains source epoch", baseline.epoch, opening.epoch)
+                assertEquals("fresh window begins without a borrowed checkpoint", 0uL, opening.version)
+                val window =
+                    newest.reply.coverage as? ThreadQueryReply.Coverage.Window
+                        ?: throw AssertionError("reset did not receive a certified newest window")
+                assertTrue("fresh window starts a real older gap", window.olderExists)
+                assertTrue("fresh window is from the observed reset generation", newest.snapshot.generation > 0)
+                for (extra in certificates.drop(1)) {
+                    val request =
+                        extra.request as? ThreadQueryRequest.CatchUp
+                            ?: throw AssertionError("page arrived without a gesture")
+                    val coverage =
+                        extra.reply.coverage as? ThreadQueryReply.Coverage.CatchUp
+                            ?: throw AssertionError("unexpected replacement window")
+                    assertEquals("same source follow-up epoch", baseline.epoch, request.epoch)
+                    assertEquals("follow-up begins at the freshly certified checkpoint", newest.reply.checkpoint.version, request.version)
+                    assertEquals("follow-up certifies its actual requested interval", request.version, coverage.fromVersion)
+                }
+                assertTrue("at most one actual post-reset follow-up", certificates.size <= 2)
+                val first = checkNotNull(authoritativeEvidence())
+                val source = first.owner
+                assertTrue("newest post was actually recovered", first.records.any { it.fullText == newestPost })
+                assertTrue("older post is genuinely absent", first.records.none { it.fullText == olderPost })
+                assertTrue("the missed reply is genuinely absent", reply.admitted(first, serverId) == null)
+                var pulls = 0
+                while (checkNotNull(authoritativeEvidence()).sourceSnapshot?.coverage?.olderExists == true) {
+                    check(pulls < 16) { "older page walk exceeded the bounded fixture" }
+                    val before = checkNotNull(authoritativeEvidence())
+                    check(source.matches(before.owner)) { "older walk source changed" }
+                    val previous = checkNotNull(before.sourceSnapshot?.coverage)
+                    val oldest = before.records.first { it.message.toolCall == null && it.fullText.isNotBlank() }
+                    val requests = AuthoritativeHistoryProbe.requests()
+                    val proofs = AuthoritativeHistoryProbe.certificates()
+                    val bubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+                    rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(oldest.fullText) and bubble)
+                    rule.onNode(hasText(oldest.fullText) and bubble, useUnmergedTree = true).assertIsDisplayed()
+                    assertEquals("revealing the supplied oldest row is inert", requests, AuthoritativeHistoryProbe.requests())
+                    pull()
+                    rule.waitUntil(30_000) {
+                        AuthoritativeHistoryProbe.current() &&
+                            AuthoritativeHistoryProbe.requests().size == requests.size + 1 &&
+                            AuthoritativeHistoryProbe.certificates().size == proofs.size + 1 &&
+                            authoritativeEvidence()?.let {
+                                source.matches(it.owner) &&
+                                    it.sourceSnapshot
+                                        ?.coverage
+                                        ?.lowerOrder
+                                        ?.let { lower -> lower < previous.lowerOrder } == true
+                            } == true
+                    }
+                    val proof = AuthoritativeHistoryProbe.certificates().last()
+                    val request =
+                        proof.request as? ThreadQueryRequest.Page
+                            ?: throw AssertionError("older gesture did not request a page")
+                    assertTrue("page is the actual newly accepted request", AuthoritativeHistoryProbe.requests().last() === request)
+                    assertEquals("page begins at the previous actual continuation", previous.continuation, request.beforeOrder)
+                    val coverage =
+                        proof.reply.coverage as? ThreadQueryReply.Coverage.Window
+                            ?: throw AssertionError("older gesture did not certify a window")
+                    assertEquals("page's exclusive upper boundary", request.beforeOrder, coverage.upperOrder)
+                    assertEquals("actual continuation matches lower boundary", coverage.lowerOrder, coverage.continuation)
+                    assertEquals("page source epoch", baseline.epoch, proof.reply.checkpoint.epoch)
+                    val accumulated = checkNotNull(checkNotNull(authoritativeEvidence()).sourceSnapshot?.coverage)
+                    assertEquals("accumulated coverage is continuous", coverage.lowerOrder, accumulated.lowerOrder)
+                    assertEquals("accumulated coverage retains its newest boundary", previous.upperOrder, accumulated.upperOrder)
+                    rule.waitForIdle()
+                    assertEquals(
+                        "page arrival does not initiate another demand",
+                        requests.size + 1,
+                        AuthoritativeHistoryProbe.requests().size,
+                    )
+                    pulls++
+                }
+                assertTrue("this fixture crossed multiple real older pages", pulls >= 2)
+                assertEquals(
+                    "older walk reached its certified beginning",
+                    false,
+                    checkNotNull(authoritativeEvidence()).sourceSnapshot?.coverage?.olderExists,
+                )
+            }
+            rule.waitUntil(30_000) {
+                AuthoritativeHistoryProbe.current() &&
                     authoritativeEvidence()?.let { evidence ->
                         val texts = evidence.records.map { it.fullText }
                         evidence.admitted && expected.all { it in texts } && reply.admitted(evidence, serverId) != null
@@ -282,25 +396,16 @@ internal class DurableGapProof(
             val evidence = checkNotNull(authoritativeEvidence())
             val snapshot = checkNotNull(evidence.sourceSnapshot)
             val certificates = AuthoritativeHistoryProbe.certificates()
-            assertEquals("one saved-checkpoint recovery query", 1, certificates.size)
-            val certificate = certificates.single()
-            val request =
-                certificate.request as? ThreadQueryRequest.CatchUp
-                    ?: throw AssertionError("saved-checkpoint recovery used a page request")
-            assertEquals("saved source epoch", baseline.epoch, request.epoch)
-            assertEquals("saved source checkpoint", baseline.checkpoint.toULong(), request.version)
-            val coverage =
-                certificate.reply.coverage as? ThreadQueryReply.Coverage.CatchUp
-                    ?: throw AssertionError("saved-checkpoint recovery did not certify its changed tail")
-            assertEquals("complete captured source interval", request.version, coverage.fromVersion)
+            val version = certificates.maxOf { it.reply.checkpoint.version }
             assertEquals("recovered source epoch", baseline.epoch, snapshot.epoch)
-            val version = certificate.reply.checkpoint.version
-            assertTrue("this fixture must remain inside the daemon's catch-up interval bound", version - request.version <= 1024uL)
-            assertTrue("current source certifies the received recovery", snapshot.checkpoint.toULong() >= version)
+            assertTrue("current source certifies every actual recovery", snapshot.checkpoint.toULong() >= version)
             assertTrue("current source is completely certified", snapshot.checkpoint >= snapshot.completedVersion)
-            assertEquals("one accepted actual recovery request", 1, AuthoritativeHistoryProbe.requests().size)
+            assertEquals(
+                "every accepted request has an exact terminal receipt",
+                AuthoritativeHistoryProbe.requests().size,
+                certificates.size + AuthoritativeHistoryProbe.resets().size,
+            )
             assertEquals("no legacy content request", 0, AuthoritativeHistoryProbe.legacyRequests())
-
             val recovered = checkNotNull(reply.admitted(evidence, serverId))
             assertEquals("complete independently produced reply", reply.text, recovered.records.joinToString("") { it.fullText })
             val terminal =

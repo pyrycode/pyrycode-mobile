@@ -289,6 +289,60 @@ class OwnedReplyObservationTest {
         }
     }
 
+    @Test fun savedCheckpointResetReceiptNeedsAcceptedExactSourceAndFreshCertification() {
+        val saved =
+            AuthoritativeThreadSnapshot(
+                epoch = "epoch",
+                checkpoint = 1,
+                completedVersion = 1,
+                items = listOf(ThreadItemDto.decode(queryFacts().first())),
+            )
+        for (case in listOf("rejected", "other-source", "other-request", "other-epoch", "valid")) {
+            AuthoritativeHistoryProbe.begin("host", "chat", saved)
+            try {
+                val request = query(epoch = "epoch", version = 1)
+                AuthoritativeHistoryProbe.sending("host", pump, request) { true }
+                AuthoritativeHistoryProbe.sent("host", pump, request, case != "rejected")
+                val reset =
+                    Envelope(
+                        502,
+                        "thread_reset",
+                        "",
+                        buildJsonObject {
+                            put("conversation_id", "chat")
+                            put("epoch", if (case == "other-epoch") "other" else "epoch")
+                            put("version", 3)
+                        },
+                        inReplyTo = if (case == "other-request") 999 else request.id,
+                    )
+                AuthoritativeHistoryProbe.received("host", if (case == "other-source") Any() else pump, reset)
+                assertEquals(case, if (case == "valid") 1 else 0, AuthoritativeHistoryProbe.resets().size)
+                assertTrue(AuthoritativeHistoryProbe.certificates().isEmpty())
+                if (case == "valid") {
+                    assertFalse(AuthoritativeHistoryProbe.current())
+                    assertTrue(AuthoritativeHistoryProbe.resets().single().request === AuthoritativeHistoryProbe.requests().single())
+                    val fresh = query(401, epoch = "epoch")
+                    AuthoritativeHistoryProbe.sending("host", pump, fresh) { true }
+                    AuthoritativeHistoryProbe.sent("host", pump, fresh, true)
+                    AuthoritativeHistoryProbe.received("host", pump, queryBatch(fresh, queryFacts()))
+                    assertFalse(AuthoritativeHistoryProbe.current())
+                    AuthoritativeHistoryProbe.received("host", pump, queryFinal(fresh))
+                    assertTrue(AuthoritativeHistoryProbe.current())
+                    assertEquals(1, AuthoritativeHistoryProbe.certificates().size)
+                    assertEquals(
+                        1L,
+                        AuthoritativeHistoryProbe
+                            .certificates()
+                            .single()
+                            .snapshot.generation,
+                    )
+                }
+            } finally {
+                AuthoritativeHistoryProbe.end()
+            }
+        }
+    }
+
     @Test fun queryDeliveredUserAndLiveReplyNeedTheOwnedQueryCertificate() {
         val target = observation(ThreadEvidenceKind.Authoritative)
         target.bindPhoneConnection(pump) { true }

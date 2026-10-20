@@ -168,12 +168,19 @@ Reproduce old failing native and replay scenarios on this combined candidate and
 
 Model catalogs use separate conversation-scoped source ownership. Their clear and fresh pair can name borrowed, predecessor or unresolved catalog sources without changing current-session bindings. Generic session clears do not erase the catalog; only its own admitted source transition does. Existing envelope, conversation and provenance guards remain. Saved attachment-offered notices project through the existing attachment presentation after canonical identifier validation and display-name cleaning. Core #3660 supplies their durable history. Raw live offers remain excluded as authoritative content.
 
-The complete native sweep exposed three product omissions: applying a remembered model
+The complete native sweep exposed four product omissions: applying a remembered model
 without requesting its session reading, losing names for locally retained uploaded
-originals, and reading session cost only from replaced legacy events. Their focused
-regressions precede the repairs. Test migration uses actual accepted thread queries,
-canonical identities and the destination's own subscription. Saved-checkpoint recovery
-checks the bounded complete tail rather than requiring legacy pages. Offscreen unread
-proof separates completion certification from shown content. Replay ordering remains
-strict while structural diagnostics identify outstanding query mismatches. None of
-these source repairs is a replacement for genuine counted native and replay evidence.
+originals, reading session cost only from replaced legacy events, and suppressing a
+foreground shell timer merely because the daemon tracks that task. Their controlled
+regressions precede the repairs. A linked active root tool remains foreground until
+its actual result arrives. A linked task that continues after that return remains
+background-only. Parent, source and progress admission remain unchanged.
+
+Test migration uses actual accepted thread queries, canonical identities and the
+destination's own subscription. Saved-checkpoint recovery proves either the complete
+bounded tail or an actual same-epoch reset, fresh newest window and physical older
+page walk. Both paths retain every missed post, exact independent reply, baseline
+facts and rendered order. Offscreen unread proof separates completion certification
+from shown content. Exact matched replies for independent conversations can progress
+without borrowing an unrequested query. Same-conversation causal fences remain.
+None of these repairs replaces genuine counted native and replay evidence.

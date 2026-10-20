@@ -19,12 +19,20 @@ internal object AuthoritativeHistoryProbe {
         override fun toString(): String = "AuthoritativeHistoryCertificate(redacted)"
     }
 
+    internal class Reset(
+        val request: ThreadQueryRequest,
+        val reply: ThreadQueryReply.Reset,
+    ) {
+        override fun toString(): String = "AuthoritativeHistoryReset(redacted)"
+    }
+
     private var host: String? = null
     private var conversation: String? = null
     private var baseline: AuthoritativeThreadSnapshot? = null
     private var witness: OwnedThreadQueryObservation? = null
     private val accepted = mutableListOf<ThreadQueryRequest>()
     private val certified = mutableListOf<Certificate>()
+    private val resets = mutableListOf<Reset>()
     private var legacy = 0
 
     @Synchronized fun begin(
@@ -46,6 +54,7 @@ internal object AuthoritativeHistoryProbe {
         witness = null
         accepted.clear()
         certified.clear()
+        resets.clear()
         legacy = 0
     }
 
@@ -68,6 +77,7 @@ internal object AuthoritativeHistoryProbe {
                     AuthoritativeThreadRoute(host, store),
                     onAccepted = { accepted += it },
                     onCertified = { request, reply, snapshot -> certified += Certificate(request, reply, snapshot) },
+                    onReset = { request, reply -> resets += Reset(request, reply) },
                 ).also { it.bind(connection, current) }
         }
         witness?.sending(connection, envelope)
@@ -102,6 +112,8 @@ internal object AuthoritativeHistoryProbe {
     @Synchronized fun requests(): List<ThreadQueryRequest> = accepted.toList()
 
     @Synchronized fun certificates(): List<Certificate> = certified.toList()
+
+    @Synchronized fun resets(): List<Reset> = resets.toList()
 
     @Synchronized fun legacyRequests(): Int = legacy
 

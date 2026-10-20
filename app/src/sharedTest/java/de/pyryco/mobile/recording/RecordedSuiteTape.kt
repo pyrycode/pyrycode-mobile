@@ -566,6 +566,77 @@ internal class RecordedSuiteTape(
         }
     }
 
+    /** Metadata remains fenced itself; only a separately requested thread reply may cross it. */
+    private fun matchedIndependentMetadata(step: SuiteStep): Boolean {
+        val response = step.message ?: return false
+        val reply = response.inReplyTo ?: return false
+        if (step.owner to reply !in requests) return false
+        val request =
+            steps
+                .firstOrNull {
+                    it.owner == step.owner && it.direction == "client" && it.accepted && it.message?.id == reply
+                }?.message ?: return false
+        return when (request.type) {
+            "register_push_token" -> response.type == "ack"
+            "mcp_status_request", "request_context_usage" -> response.type == "error"
+            "request_model_list" -> response.type == "model_list"
+            "list_conversations" -> response.type == "conversations"
+            else -> false
+        }
+    }
+
+    /** Only an actually requested independent reply may pass a different conversation's query fence. */
+    private fun independentThreadReply(index: Int): Boolean {
+        val step = steps[index]
+        val frame = step.message ?: return false
+        if (step.direction != "daemon") return false
+        val reply = frame.inReplyTo ?: return false
+        val key = step.owner to reply
+        if (key !in threadQueryRequests || key !in requests) return false
+
+        fun requestConversation(
+            owner: String,
+            id: Long,
+        ): String? =
+            steps
+                .firstOrNull {
+                    it.owner == owner && it.direction == "client" && it.message?.id == id
+                }?.message
+                ?.payload
+                ?.let { (it as? JsonObject)?.get("conversation_id") as? JsonPrimitive }
+                ?.takeIf { it.isString }
+                ?.content
+                ?.takeIf { it.isNotEmpty() }
+        val conversation = requestConversation(step.owner, reply) ?: return false
+        return (0 until index).all { before ->
+            if (before in released) return@all true
+            val earlier = steps[before]
+            if (earlier.direction == "external") return@all false
+            if (earlier.owner != step.owner) return@all true
+            val message = earlier.message
+            when (earlier.direction) {
+                "client" ->
+                    before in consumed ||
+                        message?.let {
+                            earlier.owner to it.id in threadQueryRequests &&
+                                requestConversation(earlier.owner, it.id)?.let { other -> other != conversation } == true
+                        } == true
+                "daemon" -> {
+                    // Summary metadata does not establish a canonical thread base. Its own delivery stays fenced.
+                    if (message?.type == "conversations" || matchedIndependentMetadata(earlier)) return@all true
+                    val correlated = message?.inReplyTo?.let { requestConversation(earlier.owner, it) }
+                    val supplied =
+                        ((message?.payload as? JsonObject)?.get("conversation_id") as? JsonPrimitive)
+                            ?.takeIf { it.isString }
+                            ?.content ?: (message?.conversationId as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    if (correlated != null && supplied != null && correlated != supplied) return@all false
+                    (correlated ?: supplied)?.let { it.isNotEmpty() && it != conversation } == true
+                }
+                else -> false
+            }
+        }
+    }
+
     private fun drain(): List<SuiteStep> {
         val result = mutableListOf<SuiteStep>()
         val blockedOwners = mutableSetOf<String>()
@@ -583,7 +654,7 @@ internal class RecordedSuiteTape(
                 continue
             }
             if (lifecycleBefore[index]?.let { it !in consumed } == true) continue
-            if (step.owner in blockedReplies) continue
+            if (step.owner in blockedReplies && !independentThreadReply(index)) continue
             // Android inputs affect the whole graph. They cannot cross a captured restart or unfinished request.
             if (step.direction == "external" && !precedingWorkReleased(index, allowDeferredReads = true)) continue
             if (step.direction in setOf("inbound_end", "down", "transport_down") && !precedingRequestsComplete(index, step.owner)) continue

@@ -82,14 +82,22 @@ It adds no query or collection. Ownership updates retain the same subscription t
 only ending that collection and opening another can establish a reopen. Canonical
 fact identity survives changes to rendered row identities.
 
-Saved-checkpoint recovery checks the actual bounded catch-up tail, including every
-missed post, the independently produced reply, retained baseline facts and rendered
-order. It requires the original saved epoch and checkpoint without a legacy history
-request. Completion certification and the shown-content watermark are separate:
+Saved-checkpoint recovery first proves the actual request from the saved epoch and
+checkpoint. A successful bounded tail retains every missed post and baseline fact.
+A real same-epoch reset instead requires its independently decoded receipt and a fresh
+certified newest window. Physical pulls then request exactly one contiguous older page
+at a time. Both paths retain every missed post, the exact independently produced reply,
+baseline facts and rendered order. Neither path uses a legacy history request. Completion certification and the shown-content watermark are separate:
 settling an existing reply may revise it without creating newly shown content.
 
 Replay failures include structural history-query diagnostics without message content.
-Those diagnostics do not change matching, request contracts or frame delivery order.
+Those diagnostics do not change matching or request contracts. An already requested
+thread reply may pass an unrelated conversation's unrequested query on the same socket.
+Its exact owner, conversation, epoch, checkpoint and request mapping remain mandatory.
+Already matched replies for the explicitly recognised metadata requests may also be
+crossed. Their own delivery stays fenced. Earlier unreleased canonical facts for the
+same conversation, unknown attribution, lifecycle changes and Android inputs still
+fence the thread reply. The other query remains required.
 
 Replay proves the recorded permission behaviour. Current-daemon compatibility requires
 the explicit live command. Timing, encrypted transport, reconnect, other permissions,

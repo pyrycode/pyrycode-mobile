@@ -30,6 +30,107 @@ class RecordedSuiteTapeTest {
         tape.assertComplete()
     }
 
+    @Test fun independentlyRequestedConversationCanFinishBeforeAnUnrequestedSiblingQuery() {
+        val owner = "phone/host/0"
+        val a = """{"conversation_id":"a","epoch":"ea","version":4}"""
+        val b = """{"conversation_id":"b","epoch":"eb","version":14}"""
+        val replyA = """{"conversation_id":"a","epoch":"ea","version":4,"final":true}"""
+        val replyB = """{"conversation_id":"b","epoch":"eb","version":14,"final":true}"""
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client(owner, frame(1, "thread_catch_up", a)),
+                    daemon(owner, frame(2, "thread_items", replyA, reply = 1)),
+                    daemon(owner, frame(3, "conversations", """{"conversations":[]}""")),
+                    client(owner, frame(4, "thread_catch_up", b)),
+                    daemon(owner, frame(5, "thread_items", replyB, reply = 4)),
+                    daemon(owner, frame(6, "thread_item_changed", """{"conversation_id":"a"}""")),
+                ),
+                literalProducerIdentities = true,
+            )
+        tape.initial()
+        val independent = tape.request(owner, frame(90, "thread_catch_up", b))
+        assertEquals(listOf(90L), independent.map { it.message!!.inReplyTo })
+        assertEquals(
+            listOf("b"),
+            independent.map {
+                it.message!!
+                    .payload.jsonObject["conversation_id"]
+                    .toString()
+                    .trim('"')
+            },
+        )
+        val sibling = tape.request(owner, frame(91, "thread_catch_up", a))
+        assertEquals(listOf("thread_items", "conversations", "thread_item_changed"), sibling.map { it.message!!.type })
+        assertEquals(listOf(91L, null, null), sibling.map { it.message!!.inReplyTo })
+        tape.assertComplete()
+    }
+
+    @Test fun independentThreadReplyCrossesOnlyAlreadyRequestedRecognisedMetadata() {
+        val owner = "phone/host/0"
+        val a = """{"conversation_id":"a","epoch":"ea","version":4}"""
+        val b = """{"conversation_id":"b","epoch":"eb","version":0}"""
+        val replyA = """{"conversation_id":"a","final":true}"""
+        val replyB = """{"conversation_id":"b","final":true}"""
+        for (metadataRequested in listOf(false, true)) {
+            val rows =
+                listOf(
+                    client(owner, frame(1, "register_push_token", """{"token":"recorded-push-device-address"}""")),
+                    client(owner, frame(2, "mcp_status_request", """{"conversation_id":"b"}""")),
+                    client(owner, frame(3, "request_context_usage", """{"conversation_id":"b"}""")),
+                    client(owner, frame(4, "request_model_list", """{"conversation_id":"b"}""")),
+                    client(owner, frame(5, "thread_catch_up", a)),
+                    daemon(owner, frame(6, "ack", "{}", reply = 1)),
+                    daemon(owner, frame(7, "error", "{}", reply = 2)),
+                    daemon(owner, frame(8, "error", "{}", reply = 3)),
+                    daemon(owner, frame(9, "model_list", """{"conversation_id":"b","models":[]}""", reply = 4)),
+                    daemon(owner, frame(10, "thread_items", replyA, reply = 5)),
+                    client(owner, frame(11, "thread_catch_up", b)),
+                    daemon(owner, frame(12, "thread_items", replyB, reply = 11)),
+                )
+            val tape = RecordedSuiteTape(rows, literalProducerIdentities = true)
+            assertTrue(tape.initial().isEmpty())
+            if (metadataRequested) {
+                for (step in rows.take(4)) assertTrue(tape.request(owner, step.message!!.copy(id = step.message.id + 100)).isEmpty())
+            }
+            val independent = tape.request(owner, frame(90, "thread_catch_up", b))
+            if (metadataRequested) {
+                assertEquals(listOf(90L), independent.map { it.message!!.inReplyTo })
+                val remaining = tape.request(owner, frame(91, "thread_catch_up", a))
+                assertEquals(listOf("ack", "error", "error", "model_list", "thread_items"), remaining.map { it.message!!.type })
+                assertEquals(listOf(101L, 102L, 103L, 104L, 91L), remaining.map { it.message!!.inReplyTo })
+                tape.assertComplete()
+            } else {
+                assertTrue("unrequested metadata cannot be borrowed", independent.isEmpty())
+            }
+        }
+    }
+
+    @Test fun independentQueryReplyCannotOvertakeItsOwnHeldLiveFactOrUnknownAttribution() {
+        val owner = "phone/host/0"
+        val a = """{"conversation_id":"a","epoch":"ea","version":4}"""
+        val b = """{"conversation_id":"b","epoch":"eb","version":14}"""
+        for (fact in listOf("""{"conversation_id":"b"}""", "{}")) {
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        client(owner, frame(1, "thread_catch_up", a)),
+                        daemon(owner, frame(2, "thread_items", """{"conversation_id":"a","final":true}""", reply = 1)),
+                        daemon(owner, frame(3, "thread_item_changed", fact)),
+                        client(owner, frame(4, "thread_catch_up", b)),
+                        daemon(owner, frame(5, "thread_items", """{"conversation_id":"b","final":true}""", reply = 4)),
+                    ),
+                    literalProducerIdentities = true,
+                )
+            assertTrue(tape.initial().isEmpty())
+            assertTrue(tape.request(owner, frame(90, "thread_catch_up", b)).isEmpty())
+            val released = tape.request(owner, frame(91, "thread_catch_up", a))
+            assertEquals(listOf("thread_items", "thread_item_changed", "thread_items"), released.map { it.message!!.type })
+            assertEquals(listOf(91L, null, 90L), released.map { it.message!!.inReplyTo })
+            tape.assertComplete()
+        }
+    }
+
     @Test fun stalledQueryDiagnosticsExposeOnlyStructureAndFieldEquality() {
         val owner = "phone/host/0"
         val payload = """{"conversation_id":"private-conversation","epoch":"private-epoch","version":12}"""
