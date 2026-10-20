@@ -693,11 +693,12 @@ class CachingConversationRepository(
         preserveOpeningRows: Boolean = false,
         windowRows: () -> Set<Pair<Long, Boolean>>? = { null },
         read: suspend () -> SavedAuthoritativeThread?,
-    ): AuthoritativeRestore =
-        withContext(processingDispatcher) {
-            if (conversationId in deleted) return@withContext AuthoritativeRestore.Stale
-            val generation = authoritativeThreads.current(serverId, conversationId).generation
-            var saved = read() ?: return@withContext AuthoritativeRestore.Unavailable
+    ): AuthoritativeRestore {
+        if (conversationId in deleted) return AuthoritativeRestore.Stale
+        val generation = authoritativeThreads.current(serverId, conversationId).generation
+        val initial = read() ?: return AuthoritativeRestore.Unavailable
+        return withContext(processingDispatcher) {
+            var saved = initial
             val indexed = (cache as? AuthoritativeWindowCache)?.takeIf { hostThread != null }
             var applied: AuthoritativeThreadSnapshot? = null
             do {
@@ -785,6 +786,7 @@ class CachingConversationRepository(
             )
             applied?.let { AuthoritativeRestore.Validated(saved, it) } ?: AuthoritativeRestore.Stale
         }
+    }
 
     private suspend fun resolveAuthoritativeRestore(
         conversationId: String,
