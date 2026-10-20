@@ -57,6 +57,7 @@ import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
@@ -1343,13 +1344,56 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText("after1783").fetchSemanticsNodes().isNotEmpty()
         }
+        var pendingSettlement: ThreadEvidence? = null
         val settled =
-            runBlocking {
-                withTimeout(THREAD_TIMEOUT_MS) {
-                    evidence.observe(conversationId).first {
-                        it.settledAgentAfterRecovery(launched, family, "after1783") != null
+            try {
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        evidence.observe(conversationId).onEach { pendingSettlement = it }.first {
+                            it.settledAgentAfterRecovery(launched, family, "after1783") != null
+                        }
                     }
                 }
+            } catch (failure: Throwable) {
+                pendingSettlement?.let { current ->
+                    val before = launched.owner
+                    val after = current.owner
+                    val currentFamily = current.agentFamily(after)
+                    val currentSettlement = currentFamily?.let { current.settledAgentPrecedes(after, it, "after1783") }
+                    val familyOrder = currentFamily?.let { (listOf(it.root) + it.children).map { row -> row.fact?.order } }
+                    val followingOrder = current.records.filter { it.agentId == null && it.fullText == "after1783" }.map { it.fact?.order }
+                    android.util.Log.d(
+                        "ScriptedAgentRecovery",
+                        "admitted=${current.admitted} host=${before.host == after.host} " +
+                            "conversation=${before.conversation == after.conversation} " +
+                            "connection=${before.connection === after.connection} kind=${before.kind == after.kind} " +
+                            "epoch=${before.epoch == after.epoch} generation=${before.generation}->${after.generation} " +
+                            "family=${currentFamily != null} settled=$currentSettlement checkpoint=${current.sourceSnapshot?.checkpoint} " +
+                            "coverage=${current.sourceSnapshot?.coverage}",
+                    )
+                    val candidates = current.records.filter { it.rawToolUseId() == family.root.rawToolUseId() }
+                    android.util.Log.d(
+                        "ScriptedAgentRecovery",
+                        "rootCandidates=${candidates.size} familyOrder=$familyOrder followingOrder=$followingOrder",
+                    )
+                    (listOf(family.root) + family.children).forEach { previous ->
+                        val old = previous.fact ?: return@forEach
+                        val row = current.records.singleOrNull { it.fact?.id == old.id }
+                        val now = row?.fact
+                        val oldInput = old.content as? JsonObject
+                        val input = now?.content as? JsonObject
+                        val sameInput = listOf("tool_use_id", "name", "input").all { oldInput?.get(it) == input?.get(it) }
+                        android.util.Log.d(
+                            "ScriptedAgentRecovery",
+                            "id=${old.id} present=${row != null} kind=${old.kind == now?.kind} " +
+                                "session=${old.session == now?.session} turn=${old.turn == now?.turn} " +
+                                "parent=${old.parent == now?.parent} order=${old.order}->${now?.order} " +
+                                "revision=${old.rev}->${now?.rev} state=${old.status}/${old.active}->${now?.status}/${now?.active} " +
+                                "input=$sameInput text=${previous.fullText == row?.fullText}",
+                        )
+                    }
+                }
+                throw failure
             }
         val owned = requireNotNull(settled.settledAgentAfterRecovery(launched, family, "after1783"))
         val settledHeader = hasTestTag("background-agent:${owned.agentId}")
