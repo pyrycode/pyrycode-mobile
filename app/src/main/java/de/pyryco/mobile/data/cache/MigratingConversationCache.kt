@@ -192,6 +192,17 @@ internal class MigratingConversationCache(
             authoritative.newestDisplayWindow(serverId, conversationId, size)
         }
 
+    override suspend fun authoritativeParentClosure(
+        serverId: String,
+        conversationId: String,
+        epoch: String,
+        parents: Set<Long>,
+        evidence: Set<Long>,
+    ): SavedAuthoritativeThread? =
+        read(serverId, conversationId, AUTHORITATIVE) {
+            authoritative.parentClosure(serverId, conversationId, epoch, parents, evidence)
+        }
+
     internal suspend fun beforeAuthoritativePage(
         serverId: String,
         conversationId: String,

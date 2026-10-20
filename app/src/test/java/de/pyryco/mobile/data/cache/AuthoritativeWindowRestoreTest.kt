@@ -14,6 +14,8 @@ import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.di.SavedAuthoritativeDestination
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
+import de.pyryco.mobile.ui.conversations.thread.listKey
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -119,6 +121,178 @@ class AuthoritativeWindowRestoreTest {
     }
 
     private fun migrating() = MigratingConversationCache(File(temporary.root, "files"), requireNotNull(database))
+
+    private fun finishNewest(fixture: SavedAuthoritativeDestination, version: Int = 1000) {
+        val request = fixture.requests.last { it.type in setOf("thread_page", "thread_catch_up") }
+        val versionField = request.payload.jsonObject["version"]
+        val coverage = if (versionField != null && versionField != JsonPrimitive(0)) {
+            "\"from_version\":$versionField"
+        } else {
+            "\"lower_order\":250,\"upper_order\":301,\"continuation\":250,\"older_exists\":true"
+        }
+        fixture.reply(request, """{"conversation_id":"c","epoch":"e","version":$version,"items":[],"final":true,
+            $coverage}""")
+    }
+
+    private fun agent(id: Int, order: Int, ended: Int, parent: Int? = null, shown: Boolean = false): JsonObject =
+        MobileJson.parseToJsonElement("""{"id":$id,"rev":$id,"order":$order,"ended_order":$ended,
+            "kind":"agent","status":"done","active":false,"shown":$shown,"parent":$parent,
+            "summary":"agent","content":{"name":"Agent","task_id":"task-$id","task_link":{}}}""").jsonObject
+
+    @Test fun placementInvariant_settledNestedAgentsAndLaunchesUseRenderedRows() = runTest {
+        val ordinary = (10..18_009).map { fact(it) }
+        val facts = listOf(agent(1, 1, 20_000), agent(2, 2, 19_000, 1, true), fact(3, parent = 2),
+            fact(4, parent = 1), agent(5, 5, 21_000, shown = true), fact(6, parent = 5)) + ordinary
+        val original = SavedAuthoritativeThread("e", facts, 30_000, 30_000, null).retained()
+        open().writeAuthoritativeThread("host", "c", original).getOrThrow()
+        val cold = open()
+        val window = requireNotNull(cold.newestDisplayWindow("host", "c", 200))
+        val saved = window.saved
+        fun rows(thread: SavedAuthoritativeThread, selected: Set<Pair<Long, Boolean>>? = null): List<String> {
+            val snapshot = thread.toSnapshot().copy(openingRows = selected)
+            return projectAuthoritativeThread("host", "c", snapshot).rows.map { it.listKey(0) }
+        }
+        assertEquals(rows(original).takeLast(200), rows(saved, window.rows))
+        assertTrue(saved.items.any { it["id"] == JsonPrimitive(4) })
+        assertTrue(cold.lastReadCounts.itemDecodes <= 206)
+        assertEquals(0, cold.fullReads)
+        val moved = JsonObject(agent(1, 1, 22_000) + ("rev" to JsonPrimitive(30_001)))
+        cold.upsertAuthoritativeThread("host", "c", original.copy(items = listOf(moved), appliedVersion = 30_001, checkpoint = 30_001),
+            false, original, emptyMap()).getOrThrow()
+        val updated = original.copy(items = original.items.map { if (it["id"] == JsonPrimitive(1)) moved else it },
+            appliedVersion = 30_001, checkpoint = 30_001)
+        val reopened = requireNotNull(open().newestDisplayWindow("host", "c", 200))
+        assertEquals(rows(updated).takeLast(200), rows(reopened.saved, reopened.rows))
+    }
+
+    @Test fun placementInvariant_launchAndContentEachConsumeOneRow() = runTest {
+        val original = SavedAuthoritativeThread("e", (1..300).map { agent(it, it, 1000 + it, shown = true) }, 5000, 5000, null)
+        open().writeAuthoritativeThread("host", "c", original).getOrThrow()
+        val cold = open()
+        val window = requireNotNull(cold.newestDisplayWindow("host", "c", 200))
+        val saved = window.saved
+        val expected = projectAuthoritativeThread("host", "c", original.toSnapshot()).rows.takeLast(200).map { it.listKey(0) }
+        val snapshot = saved.toSnapshot().copy(openingRows = window.rows)
+        val rows = projectAuthoritativeThread("host", "c", snapshot).rows.map { it.listKey(0) }
+        assertEquals(expected, rows)
+        assertEquals(200, saved.items.size)
+        assertEquals(400, cold.lastReadCounts.itemReads)
+        assertEquals(200, cold.lastReadCounts.itemDecodes)
+        destination(migrating()) { _, vm, repo ->
+            val opened = vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+            val presentation = requireNotNull(opened.authoritativeThread)
+            assertEquals(expected, presentation.rows.map { it.listKey(0) })
+            assertEquals(200, presentation.shownRowRevisions.size)
+            val revised = JsonObject(agent(300, 300, 1300, shown = true) + ("rev" to JsonPrimitive(6000)))
+            repo.authoritativeThreads.applyBatch("host", "c", "e", 6000, listOf(ThreadItemDto.decodeReplacement(revised)), 0)
+            vm.state.first { it.authoritativeThread?.rows?.size == 201 }
+            requireNotNull(repo.negotiatedThread).older("c")
+            val hydrated = vm.state.first { it.authoritativeThread?.rows?.size == 600 }
+            assertNull(requireNotNull(hydrated.authoritativeThread).sourceSnapshot.openingRows)
+        }
+    }
+
+    @Test fun placementInvariant_unorderedParentsKeepHeldChildTies() = runTest {
+        val original = SavedAuthoritativeThread("e", listOf(agent(1, 0, 0), agent(2, 0, 0),
+            JsonObject(fact(4, parent = 2) + ("order" to JsonPrimitive(10))),
+            JsonObject(fact(3, parent = 1) + ("order" to JsonPrimitive(10))), fact(10)), 1000, 1000, null).retained()
+        open().writeAuthoritativeThread("host", "c", original).getOrThrow()
+        val expected = projectAuthoritativeThread("host", "c", original.toSnapshot()).rows.map { it.listKey(0) }
+        for (size in 1..3) {
+            val selected = requireNotNull(open().newestDisplayWindow("host", "c", size))
+            val snapshot = selected.saved.toSnapshot().copy(openingRows = selected.rows)
+            val rows = projectAuthoritativeThread("host", "c", snapshot).rows.map { it.listKey(0) }
+            assertEquals(expected.takeLast(size), rows)
+        }
+    }
+
+    @Test fun retirementInvariant_openingReadsOnlyRelevantEvidence() = runTest {
+        val original = SavedAuthoritativeThread("e", (1..18_000).map { fact(it) }, 50_000, 0, null,
+            retirements = (20_000L..39_999L).associateWith { it })
+        open().writeAuthoritativeThread("host", "c", original).getOrThrow()
+        val cold = open()
+        val saved = requireNotNull(cold.newestDisplayWindow("host", "c", 200)).saved
+        assertEquals(original.items.takeLast(200), saved.items)
+        assertTrue(saved.retirements.isEmpty())
+        assertEquals(1, cold.lastReadCounts.evidenceReads)
+        assertEquals(200, cold.lastReadCounts.itemDecodes)
+        assertEquals(original, open().readAuthoritativeThread("host", "c"))
+    }
+
+    @Test fun retirementInvariant_liveOverlapLoadsItsFenceWithoutHistoricalEvidence() = runTest {
+        val original = SavedAuthoritativeThread("e", (1..18_000).map { fact(it) }, 50_000, 0, null,
+            retirements = (20_000L..39_999L).associateWith { it })
+        open().writeAuthoritativeThread("host", "c", original).getOrThrow()
+        open()
+        val disk = migrating()
+        val captured = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val held = object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
+            override suspend fun newestAuthoritativeWindow(serverId: String, conversationId: String, size: Int) =
+                disk.newestAuthoritativeWindow(serverId, conversationId, size).also { captured.complete(Unit); release.await() }
+        }
+        destination(held) { fixture, vm, repo ->
+            captured.await()
+            fixture.coordinator.authoritativeThreads.applyBatch("host", "c", "e", 50_000,
+                listOf(ThreadItemDto.decodeReplacement(fact(20_000))), 0)
+            release.complete(Unit)
+            vm.state.first { it.authoritativeThread?.items?.size == 200 }
+            val snapshot = repo.authoritativeThreads.current("host", "c")
+            assertEquals(original.items.takeLast(200), snapshot.items.map { it.raw })
+            assertEquals(mapOf(20_000L to 20_000L), snapshot.retirements)
+            assertEquals(3, disk.authoritativeReadCounts.evidenceReads)
+            assertEquals(200, disk.authoritativeReadCounts.itemDecodes)
+            repo.authoritativeThreads.applyBatch("host", "c", "e", 50_000,
+                listOf(ThreadItemDto.decodeReplacement(fact(20_001))), 0)
+            vm.state.first { it.authoritativeThread?.sourceSnapshot?.retirements?.containsKey(20_001L) == true }
+            assertEquals(original.items.takeLast(200), repo.authoritativeThreads.current("host", "c").items.map { it.raw })
+            assertEquals(mapOf(20_000L to 20_000L, 20_001L to 20_001L), repo.authoritativeThreads.current("host", "c").retirements)
+            assertEquals(0, disk.authoritativeFullReads)
+        }
+        assertEquals(original, open().readAuthoritativeThread("host", "c"))
+    }
+
+    @Test fun demandInvariant_failedOrNullHydrationForwardsToDaemon() = runTest {
+        for (failed in listOf(false, true)) {
+            open().writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", (1..300).map { fact(it) }, 1000, 900,
+                SavedThreadCoverage(250, 300, 250, true))).getOrThrow()
+            open()
+            val disk = migrating()
+            val unavailable = object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
+                override suspend fun readAuthoritativeThread(serverId: String, conversationId: String): SavedAuthoritativeThread? {
+                    if (failed) throw java.io.IOException("unavailable")
+                    return null
+                }
+            }
+            destination(unavailable, online = true) { fixture, vm, repo ->
+                vm.state.first { it.authoritativeThread?.items?.size == 200 }
+                finishNewest(fixture)
+                runCurrent()
+                val before = fixture.requests.size
+                requireNotNull(repo.negotiatedThread).older("c")
+                runCurrent()
+                assertTrue(fixture.requests.drop(before).any { it.type in setOf("thread_page", "thread_catch_up") })
+            }
+        }
+    }
+
+    @Test fun demandInvariant_resetThenOlderForwardsToDaemon() = runTest {
+        open().writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", (1..300).map { fact(it) }, 1000, 900, null)).getOrThrow()
+        open()
+        destination(migrating(), online = true) { fixture, vm, repo ->
+            vm.state.first { it.authoritativeThread?.items?.size == 200 }
+            fixture.resetNewest()
+            runCurrent()
+            assertTrue(repo.authoritativeThreads.current("host", "c").generation > 0)
+            assertNull(repo.authoritativeThreads.current("host", "c").openingRows)
+            finishNewest(fixture)
+            runCurrent()
+            val before = fixture.requests.size
+            requireNotNull(repo.negotiatedThread).older("c")
+            runCurrent()
+            assertTrue(fixture.requests.drop(before).any { it.type in setOf("thread_page", "thread_catch_up") })
+        }
+    }
 
     @Test fun openingInvariant_coldWindowIsBoundedAndExact() =
         runTest {
@@ -247,11 +421,11 @@ class AuthoritativeWindowRestoreTest {
                             expected,
                             requireNotNull(shown.authoritativeThread).sourceSnapshot.items.map { it.raw },
                         )
-                        assertEquals(202, shown.authoritativeThread?.items?.size)
+                        assertEquals(200, shown.authoritativeThread?.items?.size)
                         assertEquals(0, disk.authoritativeFullReads)
                         assertEquals(203, disk.authoritativeReadCounts.itemReads)
                         assertEquals(203, disk.authoritativeReadCounts.itemDecodes)
-                        assertEquals(6, disk.authoritativeReadCounts.queries)
+                        assertEquals(7, disk.authoritativeReadCounts.queries)
                         assertEquals(if (online) 1 else 0, fixture.requests.count { it.type in setOf("thread_catch_up", "thread_page") })
                     }
                     assertEquals(original, disk.readAuthoritativeThread("host", "c"))
@@ -261,7 +435,9 @@ class AuthoritativeWindowRestoreTest {
 
     @Test fun identityInvariant_overlapKeepsNewestRawFactsAndOrder() =
         runTest {
-            val original = SavedAuthoritativeThread("e", (1..18_000).map { fact(it) }, 20_000, 19_000, null)
+            val parent = agent(1, 1, 1)
+            val outside = agent(2, 2, 2)
+            val original = SavedAuthoritativeThread("e", listOf(parent, outside) + (3..18_000).map { fact(it) }, 20_000, 19_000, null)
             open().writeAuthoritativeThread("host", "c", original).getOrThrow()
             open()
             val disk = migrating()
@@ -279,7 +455,9 @@ class AuthoritativeWindowRestoreTest {
                             release.await()
                         }
                 }
-            val revised = JsonObject(fact(18_000) + mapOf("rev" to JsonPrimitive(30_000), "parent" to JsonNull, "future" to JsonNull))
+            val revised = JsonObject(fact(18_000) + mapOf(
+                "rev" to JsonPrimitive(30_000), "parent" to JsonPrimitive(1), "future" to JsonNull,
+            ))
             destination(held) { fixture, vm, repo ->
                 captured.await()
                 fixture.connect()
@@ -293,7 +471,8 @@ class AuthoritativeWindowRestoreTest {
                 release.complete(Unit)
                 vm.state.first { it.authoritativeThread?.items?.size == 200 }
                 val snapshot = repo.authoritativeThreads.current("host", "c")
-                assertEquals(original.items.takeLast(200).dropLast(1) + revised, snapshot.items.map { it.raw })
+                assertEquals(listOf(parent) + original.items.takeLast(200).dropLast(1) + revised, snapshot.items.map { it.raw })
+                assertEquals(listOf(1), projectAuthoritativeThread("host", "c", snapshot).depths.values.toList())
                 store.applyBatch("host", "c", "e", 30_000, listOf(ThreadItemDto.decodeReplacement(fact(18_000))), 0)
                 assertEquals(
                     revised,
@@ -303,9 +482,15 @@ class AuthoritativeWindowRestoreTest {
                         .last()
                         .raw,
                 )
+                val reparented = JsonObject(revised + mapOf("rev" to JsonPrimitive(40_000), "parent" to JsonPrimitive(2)))
+                store.applyBatch("host", "c", "e", 40_000, listOf(ThreadItemDto.decodeReplacement(reparented)), 0)
+                vm.state.first { it.authoritativeThread?.sourceSnapshot?.items?.any { item -> item.id == 2L } == true }
+                assertEquals(reparented, store.current("host", "c").items.last().raw)
+                assertEquals(listOf(1), projectAuthoritativeThread("host", "c", store.current("host", "c")).depths.values.toList())
             }
+            val finalRevision = JsonObject(revised + mapOf("rev" to JsonPrimitive(40_000), "parent" to JsonPrimitive(2)))
             assertEquals(
-                original.copy(items = original.items.dropLast(1) + revised, appliedVersion = 30_000),
+                original.copy(items = original.items.dropLast(1) + finalRevision, appliedVersion = 40_000),
                 open().readAuthoritativeThread("host", "c"),
             )
         }
@@ -448,6 +633,7 @@ class AuthoritativeWindowRestoreTest {
 
     @Test fun migrationInvariant_existingFactsAndIndexesSurviveUpgrade() =
         runTest {
+            val fixtures = listOf(agent(1, 1, 10), fact(2, active = true, parent = 1))
             val schema =
                 MobileJson
                     .parseToJsonElement(
@@ -476,7 +662,7 @@ class AuthoritativeWindowRestoreTest {
                 }
                 schema.getValue("setupQueries").jsonArray.forEach { db.execSQL(it.jsonPrimitive.content) }
                 db.execSQL("INSERT INTO authoritative_headers VALUES ('host','c','e','g',10,10,NULL,2,'')")
-                for ((index, item) in listOf(fact(1), fact(2, shown = false, active = true, parent = 1)).withIndex()) {
+                for ((index, item) in fixtures.withIndex()) {
                     db.execSQL(
                         "INSERT INTO authoritative_items VALUES ('host','c','e',?,?,?,?)",
                         arrayOf(index + 1, index, index + 1, item.toString()),
@@ -486,18 +672,18 @@ class AuthoritativeWindowRestoreTest {
             }
             val cold = open()
             assertEquals(
-                listOf(fact(1), fact(2, shown = false, active = true, parent = 1)),
+                fixtures,
                 cold.newestDisplayWindow("host", "c", 200)?.saved?.items,
             )
             val plans =
                 requireNotNull(database).openHelper.readableDatabase.query(
                     "EXPLAIN QUERY PLAN SELECT * FROM authoritative_items " +
-                        "WHERE host='host' AND conversation='c' AND epoch='e' AND display=1 " +
-                        "ORDER BY orderKey DESC,ordinal DESC LIMIT 200",
+                    "WHERE host='host' AND conversation='c' AND epoch='e' AND displayKey!='' " +
+                        "ORDER BY displayKey DESC LIMIT 200",
                 )
             plans.use { cursor ->
                 assertTrue(cursor.moveToFirst())
-                assertTrue(cursor.getString(3).contains("display_orderKey_ordinal"))
+                assertTrue(cursor.getString(3).contains("displayKey"))
             }
         }
 }

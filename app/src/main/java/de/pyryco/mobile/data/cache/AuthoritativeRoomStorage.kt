@@ -96,6 +96,7 @@ class AuthoritativeRoomStorage internal constructor(
             val header = header(serverId, conversationId) ?: return@read null
             val saved = metadata(header)
             val records = dao.items(serverId, conversationId, header.epoch, Int.MAX_VALUE, MAX_CACHED_THREAD_ROWS + 1).asReversed()
+            lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
             require(records.size == header.itemCount)
             saved.copy(items = decode(records, saved))
         }
@@ -131,10 +132,12 @@ class AuthoritativeRoomStorage internal constructor(
             }
             val header = previousHeader?.takeUnless { retire }
             val previous = header?.let { metadata(it, includeRetirements = false) }
+            val formerParents = mutableSetOf<Long>()
             var removed = 0
             for ((id, revision) in saved.retirements) {
                 if (dao.retirement(host, conversation, id) != null) continue
                 dao.item(host, conversation, saved.epoch, id)?.let { record ->
+                    record.parentId.takeIf { it > 0 }?.let(formerParents::add)
                     val held =
                         requireNotNull(previous)
                             .copy(items = listOf(MobileJson.parseToJsonElement(record.payload).jsonObject))
@@ -231,10 +234,11 @@ class AuthoritativeRoomStorage internal constructor(
                 if (before) minimum = first.toInt() else maximum = (first + entries.size - 1).toInt()
             }
             var added = 0
+            val placementChanged = mutableSetOf<Long>()
             for ((item, record) in changes) {
                 val ordinal = assigned[item.id] ?: requireNotNull(record).ordinal
                 if (record == null) added++
-                dao.upsertItem(
+                val replacement =
                     AuthoritativeItem(
                         host,
                         conversation,
@@ -245,8 +249,21 @@ class AuthoritativeRoomStorage internal constructor(
                         item.raw.toString(),
                         item.savedDisplayRow(),
                         item.savedRendererExtra(),
-                    ),
-                )
+                        parentId = item.parent ?: 0,
+                        agent = item.kind == "agent",
+                        background = item.savedBackgroundAgent(),
+                        active = item.active,
+                        endedOrder = item.endedOrder ?: 0,
+                        displayKey = record?.displayKey.orEmpty(),
+                        launchKey = record?.launchKey.orEmpty(),
+                    )
+                val newPlacement = replacement.copy(payload = "", displayKey = "", launchKey = "")
+                val oldPlacement = record?.copy(payload = "", displayKey = "", launchKey = "")
+                if (newPlacement != oldPlacement) {
+                    placementChanged += item.id
+                    record?.parentId?.takeIf { it > 0 }?.let(formerParents::add)
+                }
+                dao.upsertItem(replacement)
                 lastWriteCounts =
                     lastWriteCounts.copy(
                         itemSerializations = lastWriteCounts.itemSerializations + 1,
@@ -260,10 +277,14 @@ class AuthoritativeRoomStorage internal constructor(
             }
             val count = (header?.itemCount ?: 0) + added - removed
             val trimmed = (count - MAX_CACHED_THREAD_ROWS).coerceAtLeast(0)
+            val trimmedRecords = if (trimmed > 0) dao.oldestIndexItems(host, conversation, saved.epoch, trimmed) else emptyList()
+            formerParents += trimmedRecords.map { it.parentId }.filter { it > 0 }
             if (trimmed > 0) {
                 dao.trimItems(host, conversation, saved.epoch, trimmed)
                 lastWriteCounts = lastWriteCounts.copy(itemDeletes = lastWriteCounts.itemDeletes + trimmed)
             }
+            val affectedIds = placementChanged + assigned.keys + saved.retirements.keys + trimmedRecords.map { it.id }
+            updatePlacements(host, conversation, saved.epoch, affectedIds, formerParents)
             val applied = maxOf(saved.appliedVersion, previous?.appliedVersion ?: 0)
             // Completion can inherit a certificate whose required facts retention already removed.
             // Advancing metadata alone never restores those prerequisites.
@@ -358,13 +379,28 @@ class AuthoritativeRoomStorage internal constructor(
                     item.raw.toString(),
                     item.savedDisplayRow(),
                     item.savedRendererExtra(),
+                    parentId = item.parent ?: 0,
+                    agent = item.kind == "agent",
+                    background = item.savedBackgroundAgent(),
+                    active = item.active,
+                    endedOrder = item.endedOrder ?: 0,
                 )
             }
         dao.deleteItems(serverId, conversationId)
         dao.deleteHeaders(serverId, conversationId)
         dao.deleteRetirements(serverId, conversationId)
         for ((id, revision) in fences) dao.retire(AuthoritativeRetirement(serverId, conversationId, id, revision))
-        dao.insertItems(records)
+        val indexed = records.associateBy { it.id }
+        val anchors = mutableMapOf<Long, Pair<Long, AuthoritativeItem>?>()
+        dao.insertItems(
+            records.map { record ->
+                val keys =
+                    record.savedPlacementKeys(indexed::get) { root ->
+                        anchors.getOrPut(root) { savedUnorderedAnchor(root, indexed.values) }
+                    }
+                record.copy(displayKey = keys.first, launchKey = keys.second)
+            },
+        )
         dao.insertHeader(
             AuthoritativeHeader(
                 serverId,
@@ -378,6 +414,65 @@ class AuthoritativeRoomStorage internal constructor(
                 kept.incarnation,
             ),
         )
+    }
+
+    /** Only affected descendants and their ancestor metadata need new placement keys. */
+    private suspend fun updatePlacements(
+        host: String,
+        conversation: String,
+        epoch: String,
+        changed: Set<Long>,
+        formerParents: Set<Long>,
+    ) {
+        val facts = linkedMapOf<Long, AuthoritativeItem>()
+        val visited = mutableSetOf<Long>()
+        val pending = ArrayDeque(changed)
+        while (pending.isNotEmpty()) {
+            val id = pending.removeFirst()
+            if (!visited.add(id)) continue
+            dao.indexItem(host, conversation, epoch, id)?.let { facts[id] = it }
+            dao.indexChildren(host, conversation, epoch, id).forEach { child ->
+                facts[child.id] = child
+                pending.add(child.id)
+            }
+        }
+        val affected = facts.keys.toMutableSet()
+        for (id in formerParents) {
+            var parent = id
+            val seen = mutableSetOf<Long>()
+            while (parent > 0 && seen.add(parent)) {
+                val fact = facts[parent] ?: dao.indexItem(host, conversation, epoch, parent)?.also { facts[parent] = it } ?: break
+                parent = fact.parentId
+            }
+        }
+        for (record in facts.values.toList()) {
+            var parent = record.parentId
+            val seen = mutableSetOf(record.id)
+            while (parent > 0 && seen.add(parent)) {
+                val fact = facts[parent] ?: dao.indexItem(host, conversation, epoch, parent)?.also { facts[parent] = it } ?: break
+                parent = fact.parentId
+            }
+        }
+        // An unordered foreground root anchors at its earliest shown descendant, including siblings.
+        for (root in facts.values.filter { it.agent && it.orderKey == Long.MAX_VALUE }) {
+            val scan = ArrayDeque<Long>().also { it.add(root.id) }
+            val seen = mutableSetOf<Long>()
+            while (scan.isNotEmpty()) {
+                val id = scan.removeFirst()
+                if (!seen.add(id)) continue
+                dao.indexChildren(host, conversation, epoch, id).forEach { child ->
+                    facts[child.id] = child
+                    affected.add(child.id)
+                    scan.add(child.id)
+                }
+            }
+        }
+        val anchors = mutableMapOf<Long, Pair<Long, AuthoritativeItem>?>()
+        for (id in affected) {
+            val record = facts.getValue(id)
+            val keys = record.savedPlacementKeys(facts::get) { root -> anchors.getOrPut(root) { savedUnorderedAnchor(root, facts.values) } }
+            dao.placement(host, conversation, epoch, id, keys.first, keys.second)
+        }
     }
 
     suspend fun newestPage(
@@ -395,8 +490,14 @@ class AuthoritativeRoomStorage internal constructor(
         read("read_display_window") {
             require(size > 0)
             val header = header(host, conversation) ?: return@read null
-            val saved = metadata(header)
-            val selected = dao.displayWindow(host, conversation, header.epoch, size).asReversed()
+            val saved = metadata(header, includeRetirements = false)
+            val content = dao.displayWindow(host, conversation, header.epoch, size)
+            val launches = dao.launchWindow(host, conversation, header.epoch, size)
+            val contributions =
+                (content.map { it.displayKey to it } + launches.map { it.launchKey to it })
+                    .sortedBy { it.first }
+                    .takeLast(size)
+            val selected = contributions.map { it.second }.distinctBy { it.id }
             val extras = dao.rendererExtras(host, conversation, header.epoch)
             lastReadCounts = lastReadCounts.copy(queries = 4)
             val records = LinkedHashMap<Long, AuthoritativeItem>()
@@ -404,12 +505,19 @@ class AuthoritativeRoomStorage internal constructor(
             val decoded = LinkedHashMap<Long, JsonObject>()
             val pending = ArrayDeque(records.values)
             val lookedUp = HashSet(records.keys)
-            var sqlRows = selected.size + extras.size
+            var sqlRows = content.size + launches.size + extras.size
             while (pending.isNotEmpty()) {
                 val record = pending.removeFirst()
                 val raw = decode(listOf(record), saved).single()
                 val item = ThreadItemDto.decodeReplacement(raw)
                 require(record.display == item.savedDisplayRow() && record.extra == item.savedRendererExtra())
+                require(
+                    record.parentId == (item.parent ?: 0L) &&
+                        record.agent == (item.kind == "agent") &&
+                        record.background == item.savedBackgroundAgent() &&
+                        record.active == item.active &&
+                        record.endedOrder == (item.endedOrder ?: 0L),
+                )
                 decoded[item.id] = raw
                 val parent = item.parent?.takeIf { it > 0 }
                 if (parent != null && lookedUp.add(parent)) {
@@ -422,12 +530,72 @@ class AuthoritativeRoomStorage internal constructor(
                 }
             }
             val ordered = records.values.sortedWith(compareBy<AuthoritativeItem> { it.orderKey }.thenBy { it.ordinal })
+            val fences = relevantRetirements(host, conversation, records.keys)
             lastReadCounts = lastReadCounts.copy(itemReads = sqlRows)
             RelayLog.d {
-                "event=authoritative_window rows=${selected.size} extras=${records.size - selected.size} queries=${lastReadCounts.queries} decodes=${lastReadCounts.itemDecodes}"
+                "event=authoritative_window rows=${selected.size} extras=${records.size - selected.size} " +
+                    "queries=${lastReadCounts.queries} decodes=${lastReadCounts.itemDecodes}"
             }
-            AuthoritativeThreadWindow(host, conversation, saved.copy(items = ordered.map { decoded.getValue(it.id) }))
+            val window = saved.copy(items = ordered.map { decoded.getValue(it.id) }, retirements = fences).also { it.toSnapshot() }
+            val rows = contributions.mapTo(mutableSetOf()) { (key, record) -> record.id to (key == record.launchKey) }
+            extras.filter { it.active }.forEach { record ->
+                if (record.displayKey.isNotEmpty()) rows += record.id to false
+                if (record.launchKey.isNotEmpty()) rows += record.id to true
+            }
+            AuthoritativeThreadWindow(host, conversation, window, rows)
         }
+
+    /** Required winning-live parents and overlapping retirement evidence, under the same disk owner. */
+    internal suspend fun parentClosure(
+        host: String,
+        conversation: String,
+        epoch: String,
+        ids: Set<Long>,
+        evidence: Set<Long>,
+    ): SavedAuthoritativeThread? =
+        read("read_parent_closure", accumulate = true) {
+            val header = header(host, conversation)?.takeIf { it.epoch == epoch } ?: return@read null
+            val saved = metadata(header, includeRetirements = false)
+            val records = linkedMapOf<Long, AuthoritativeItem>()
+            val decoded = linkedMapOf<Long, JsonObject>()
+            val pending = ArrayDeque(ids)
+            val seen = mutableSetOf<Long>()
+            while (pending.isNotEmpty()) {
+                val id = pending.removeFirst()
+                if (!seen.add(id)) continue
+                lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
+                val record = dao.item(host, conversation, epoch, id) ?: continue
+                val raw = decode(listOf(record), saved).single()
+                records[id] = record
+                decoded[id] = raw
+                ThreadItemDto
+                    .decodeReplacement(raw)
+                    .parent
+                    ?.takeIf { it > 0 }
+                    ?.let(pending::addLast)
+            }
+            val fences = relevantRetirements(host, conversation, evidence + seen)
+            val ordered = records.values.sortedWith(compareBy<AuthoritativeItem> { it.orderKey }.thenBy { it.ordinal })
+            saved.copy(items = ordered.map { decoded.getValue(it.id) }, retirements = fences).also { it.toSnapshot() }
+        }
+
+    private suspend fun relevantRetirements(
+        host: String,
+        conversation: String,
+        ids: Set<Long>,
+    ): Map<Long, Long> {
+        val fences = linkedMapOf<Long, Long>()
+        for (batch in ids.toList().chunked(800)) {
+            val rows = dao.relevantRetirements(host, conversation, batch)
+            lastReadCounts =
+                lastReadCounts.copy(
+                    queries = lastReadCounts.queries + 1,
+                    evidenceReads = lastReadCounts.evidenceReads + rows.size,
+                )
+            rows.forEach { fences[it.id] = it.revision }
+        }
+        return fences
+    }
 
     suspend fun beforePage(
         serverId: String,
@@ -471,7 +639,7 @@ class AuthoritativeRoomStorage internal constructor(
             val first = before - count
             val items = decode(records, saved)
             val probe = dao.probe(host, conversation, header.epoch, first)
-            lastReadCounts = lastReadCounts.copy(ordinalReads = probe.size)
+            lastReadCounts = lastReadCounts.copy(ordinalReads = probe.size, queries = lastReadCounts.queries + 2)
             require(probe.size == if (first > 0) 1 else 0)
             val continuation =
                 if (probe.isEmpty()) {
@@ -503,7 +671,13 @@ class AuthoritativeRoomStorage internal constructor(
         host: String,
         conversation: String,
     ): AuthoritativeHeader? =
-        dao.header(host, conversation).also { lastReadCounts = lastReadCounts.copy(evidenceReads = if (it == null) 0 else 1) }
+        dao.header(host, conversation).also {
+            lastReadCounts =
+                lastReadCounts.copy(
+                    queries = lastReadCounts.queries + 1,
+                    evidenceReads = lastReadCounts.evidenceReads + if (it == null) 0 else 1,
+                )
+        }
 
     private suspend fun metadata(
         header: AuthoritativeHeader,
@@ -522,7 +696,19 @@ class AuthoritativeRoomStorage internal constructor(
             header.checkpoint,
             coverage,
             header.incarnation,
-            if (includeRetirements) dao.retirements(header.host, header.conversation).associate { it.id to it.revision } else emptyMap(),
+            if (includeRetirements) {
+                dao
+                    .retirements(header.host, header.conversation)
+                    .also { rows ->
+                        lastReadCounts =
+                            lastReadCounts.copy(
+                                queries = lastReadCounts.queries + 1,
+                                evidenceReads = lastReadCounts.evidenceReads + rows.size,
+                            )
+                    }.associate { it.id to it.revision }
+            } else {
+                emptyMap()
+            },
         ).also { it.toSnapshot() }
     }
 
@@ -549,11 +735,12 @@ class AuthoritativeRoomStorage internal constructor(
 
     private suspend fun <T> read(
         operation: String,
+        accumulate: Boolean = false,
         block: suspend () -> T?,
     ): T? =
         withContext(ioDispatcher) {
             mutex.withLock {
-                lastReadCounts = ReadCounts()
+                if (!accumulate) lastReadCounts = ReadCounts()
                 when (val read = database.classifiedTransaction(block = block)) {
                     is CacheTransaction.Committed -> read.value.also { log(operation, "ok") }
                     is CacheTransaction.Failed -> null.also { log(operation, read.code) }

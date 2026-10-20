@@ -12,6 +12,7 @@ internal class AuthoritativeThreadWindow(
     val serverId: String,
     val conversationId: String,
     val saved: SavedAuthoritativeThread,
+    val rows: Set<Pair<Long, Boolean>> = emptySet(),
 ) {
     override fun toString(): String = "AuthoritativeThreadWindow(redacted)"
 }
@@ -28,6 +29,14 @@ internal interface AuthoritativeWindowCache {
         conversationId: String,
         size: Int,
     ): AuthoritativeThreadWindow?
+
+    suspend fun authoritativeParentClosure(
+        serverId: String,
+        conversationId: String,
+        epoch: String,
+        parents: Set<Long>,
+        evidence: Set<Long>,
+    ): SavedAuthoritativeThread?
 }
 
 /** Optional owned-write capability; full-file compatibility continues using the replacement API. */

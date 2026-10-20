@@ -121,6 +121,18 @@ internal class SavedAuthoritativeDestination(
 
     val requests get() = pumps.flatMap { it.sent }
 
+    fun reply(
+        request: Envelope,
+        payload: String,
+    ) {
+        pumps.last().reply(request, payload)
+    }
+
+    fun resetNewest() {
+        val request = requests.last { it.type in setOf("thread_catch_up", "thread_page") }
+        pumps.last().reset(request)
+    }
+
     fun connect() {
         relay.value = RelayLinkStatus.Connected
         connections.value = Transport()
@@ -148,6 +160,35 @@ internal class SavedAuthoritativeDestination(
         override val inbound = frames.receiveAsFlow()
         override val state = MutableStateFlow<PumpState>(PumpState.Handshaking)
         val sent = CopyOnWriteArrayList<Envelope>()
+
+        fun reset(request: Envelope) {
+            frames
+                .trySend(
+                    Envelope(
+                        request.id + 1000,
+                        "thread_reset",
+                        "2026-10-20T00:00:00Z",
+                        MobileJson.parseToJsonElement("""{"conversation_id":"c","epoch":"e","version":1000}""").jsonObject,
+                        inReplyTo = request.id,
+                    ),
+                ).getOrThrow()
+        }
+
+        fun reply(
+            request: Envelope,
+            payload: String,
+        ) {
+            frames
+                .trySend(
+                    Envelope(
+                        request.id + 1000,
+                        "thread_items",
+                        "2026-10-20T00:00:00Z",
+                        MobileJson.parseToJsonElement(payload).jsonObject,
+                        inReplyTo = request.id,
+                    ),
+                ).getOrThrow()
+        }
 
         override fun start() = Unit
 
