@@ -250,6 +250,7 @@ class SavedThreadFirstDrawDeviceTest {
         val snapshot = AtomicLong()
         val complete = AtomicLong()
         val drawn = AtomicLong()
+        val observed = AtomicLong()
 
         fun elapsed(nanos: Long) = (nanos - start) / 1_000_000
 
@@ -580,6 +581,13 @@ class SavedThreadFirstDrawDeviceTest {
                                     } ==
                                         true
                                 }
+                            if (probe.complete.get() > 0 && probe.observed.compareAndSet(0, 1)) {
+                                Log.i(
+                                    "SavedThreadFirstDraw",
+                                    "event=frame_observed case=${probe.name} viewport=$viewport newest=${newest?.boundsInRoot} " +
+                                        "placed=${newest?.layoutInfo?.isPlaced} nodes=${nodes.size}",
+                                )
+                            }
                             if (viewport != null &&
                                 newest != null &&
                                 newest.layoutInfo.isPlaced &&
