@@ -588,7 +588,8 @@ class SavedThreadFirstDrawDeviceTest {
                                         "placed=${newest?.layoutInfo?.isPlaced} nodes=${nodes.size}",
                                 )
                             }
-                            if (probe.drawn.get() == 0L && viewport != null &&
+                            if (probe.drawn.get() == 0L &&
+                                viewport != null &&
                                 newest != null &&
                                 newest.layoutInfo.isPlaced &&
                                 newest.boundsInRoot.width > 0 &&

@@ -218,12 +218,14 @@ class AuthoritativeWindowRestoreTest {
 
     @Test fun demandInvariant_networkCannotBlockOrExpandSavedOpening() =
         runTest {
-            val displayed = (1..18_000).map { id ->
-                JsonObject(fact(id, parent = if (id == 18_000) 2 else null) + ("order" to JsonPrimitive(id * 2)))
-            }
-            val hidden = (18_001..19_000).map { id ->
-                JsonObject(fact(id, shown = false) + ("order" to JsonPrimitive(36_000 + id - 18_000)))
-            }
+            val displayed =
+                (1..18_000).map { id ->
+                    JsonObject(fact(id, parent = if (id == 18_000) 2 else null) + ("order" to JsonPrimitive(id * 2)))
+                }
+            val hidden =
+                (18_001..19_000).map { id ->
+                    JsonObject(fact(id, shown = false) + ("order" to JsonPrimitive(36_000 + id - 18_000)))
+                }
             val active = JsonObject(fact(19_001, shown = false, active = true, parent = 1) + ("order" to JsonPrimitive(1)))
             val expected = listOf(active, displayed[0], displayed[1]) + displayed.takeLast(200)
             val original =
