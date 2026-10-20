@@ -1,0 +1,38 @@
+{
+  "mobile_head": "8195f2aa82a961b3e0bf3fab7cd2650a5c0348e7",
+  "dirty": "M app/src/androidTest/java/de/pyryco/mobile/e2e/DeterministicInteractiveStreamE2ETest.kt",
+  "source_sha256": {
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/DeterministicInteractiveStreamE2ETest.kt": "75179c64fdf5e97ad31cca7991d7a6b81071502eac760ca654b607244d7063cc",
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/DurableGapProof.kt": "9ca9d04d85cfe630bba17617b9128d270b906f73ab94e728024e58a50b529de2",
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/E2eTestApplication.kt": "f45c70f063b5f5f27c3e3b4fd7774d3ef82a3b8f6f9bc209b6a07e9ba367fe33",
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt": "688a6e23620e544092dacf3033badda16f59b72eae0f62111412fa425fff8257",
+    "app/src/androidTest/java/de/pyryco/mobile/e2e/SecondClientPeer.kt": "94e4d33299daf86993620d5482386a1c52e2e93b6d5379d8cc4c92455c88f929",
+    "app/src/androidTest/java/de/pyryco/mobile/recording/RecordedSuiteNative.kt": "84a0e58351f26218dc54ce8dce8b815cead84bd8f63bd6db74d29ca0b37b864e",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/MarkdownReplyRequirements.kt": "96e3a23fe1cafb46403f19ec6d53005be536046f69534de86dd58fd8b473cd03",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/OwnedReplyObservation.kt": "6ab1035064526dd4b5364b0cf8ddf2e3c8677483e80a92c06b4e4f1c435698e4",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/PingReplyDiagnosis.kt": "60d3ac2152cbe5f201f65b0bb5fd9777b38376f1436aa5b52bbbda304858e1f9",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/RetainedReplyEvidence.kt": "b638b4a73dfdee60920e56da70dfbeb4c9e290fce145f50bbd8e9b9c0d4d1fb9",
+    "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/PingReplyAssertions.kt": "71137abc55c63235f98f764e4c0524c23cea8b3e7b1120347b911a80ccc06df9",
+    "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/PingReplyTest.kt": "5e9cce9953833254008b7980cb3868a1eda4a49b754c04cb6c4dfa596f2f81f2",
+    "app/src/test/java/de/pyryco/mobile/e2e/MarkdownReplyRequirementsTest.kt": "b4589afc16a4ecd2aa72782285b3e7d25d32a0d3b0d9b168c3a89ffd9f034a1d",
+    "app/src/test/java/de/pyryco/mobile/e2e/OwnedReplyObservationTest.kt": "4d77611783ea63cfdc7c30ecb4f1e551e74ea36304932045b55b1223ac14a122",
+    "docs/specs/architecture/2311-owned-completed-reply.md": "6a19b5a7cd7963601a7d5a203bd7b74518dcca7a95854fdb382439e0d8a3975b",
+    "docs/specs/architecture/2312-2315-reply-observation-migration.md": "f2d729b6b6910ab756d351f9e22fc9825402aeef3fdf982dcf744b850db8179b"
+  },
+  "binary_sha256": {
+    "app/build/outputs/apk/debug/app-debug.apk": "4f37f21a43ac8295108df57bd9f34ba81a98d7ddc34a9e6519d024223bcd88c5",
+    "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk": "049560570527a2ba564599550b945e8edafba9b4e71a57a15c44f355a5369f68",
+    "build/e2e-bin/pyry": "f983a5be766bff86faa94da0f36574852376aeb9639889e45d33dff0c13d845e"
+  },
+  "daemon": "a66c9780a5a878ed1d599481a26f5c82f64d1a30",
+  "relay": "9939bc1ff8afec5021c09862e6f14dadba33ad42",
+  "claude": "2.1.280 (Claude Code)",
+  "configuration": {
+    "device": "pixel2Api33Atd",
+    "api": 33,
+    "useRelayRepository": true,
+    "route": "legacy",
+    "scenario": "scripted ping (2 tests)"
+  },
+  "matched_committed_source": "9140d7d0beb18507b5361b99468789388f9e3ee6"
+}

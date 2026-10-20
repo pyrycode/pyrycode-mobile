@@ -1,0 +1,20 @@
+{
+  "mobile": "fc510bd0e191959807960cccd397ba3af21ce27f",
+  "mobile_dirty": "",
+  "daemon": "a66c9780a5a878ed1d599481a26f5c82f64d1a30",
+  "relay": "9939bc1ff8afec5021c09862e6f14dadba33ad42",
+  "claude": "2.1.280 (Claude Code)",
+  "configuration": {
+    "device": "pixel2Api33Atd",
+    "api": 33,
+    "useRelayRepository": true,
+    "route": "legacy",
+    "liveRelay": "production TLS",
+    "scriptedRelay": "isolated loopback ws"
+  },
+  "sha256": {
+    "app/build/outputs/apk/debug/app-debug.apk": "4f37f21a43ac8295108df57bd9f34ba81a98d7ddc34a9e6519d024223bcd88c5",
+    "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk": "6273f7b15f429bb9589c3166be2741eeb223b9dc27f26483a03fd362475c4d5c",
+    "build/e2e-bin/pyry": "f983a5be766bff86faa94da0f36574852376aeb9639889e45d33dff0c13d845e"
+  }
+}

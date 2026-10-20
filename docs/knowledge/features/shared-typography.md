@@ -42,7 +42,7 @@ Native-graphics `MarkdownTypographyTest` checks both entry points and themes for
 metrics, colours, spans and measured 20sp line boxes. A size assertion alone cannot
 catch trimming. Geometry coverage keeps a deliberately wrapping list fixture at the
 smaller size and retains the continuation-at-gutter contract; see
-[counted reader evidence](markdown-reader-screen.md#reader-body-typography-coverage-2283).
+[counted reader evidence](markdown-reader-screen-testing.md#reader-body-typography-coverage-2283).
 
 ## Markdown headings
 
@@ -68,6 +68,12 @@ headings additionally use untrimmed line boxes. The native-graphics
 [`MarkdownHeadingScaleTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MarkdownHeadingScaleTest.kt)
 asserts rendered metrics and colour across both themes and presentations through streaming
 and settlement; [counted verification](markdown-text.md#testing) records the passing coverage.
+
+At enlarged text sizes, nominal line height multiplied by font scale and direct sp
+conversion both differ from Compose 1.10.4's native line box. Reader integration tests
+compare measured lines to an independent literal-based `TextMeasurer` control while
+retaining exact style/trim assertions, nominal scale-1 heights and existing pixel
+allowances. See [reader heading testing and evidence](markdown-reader-screen-testing.md#reader-heading-integration-coverage-2276).
 
 ## Verification and limits
 

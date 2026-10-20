@@ -2,6 +2,22 @@
 
 Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Thread screen](thread-screen.md); see that document for what it does, its edge cases and its links.
 
+## Passive reopen evidence (#2317)
+
+Thread retention assertions can themselves collect cold repository flows and send
+backfill. The peer-started-turn scenario uses a scoped tap of the application's
+existing destination subscription for initial completion and reopened retention.
+Require current host/conversation/connection ownership and a new active subscription
+after navigation; saved rows from the old destination cannot prove reopen delivery.
+Establish exact user uniqueness in current data, count its semantics while composed,
+then reveal each retained reply row and revalidate current evidence. Scrolling away
+can dispose the user row without removing it from the thread.
+
+See [passive assertion contracts and counted Linux evidence](../../recorded-tests.md#passive-thread-assertion-evidence-2317)
+for ownership/cleanup regressions, historical strict-replay failures, focused passes
+and the later full UI gate pass. The original failure was request admission;
+offscreen loss was not established.
+
 ## Supplied authoritative renderer (#1985)
 
 `AuthoritativeThreadProjectionTest` supplies complete held snapshots;

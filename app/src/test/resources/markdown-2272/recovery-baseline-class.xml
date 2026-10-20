@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-19T08:33:21.930Z" hostname="723893f7154c" time="6.148">
+  <properties/>
+  <testcase name="captureInvariant_delayedCoverageCannotUndoNewerRows" classname="de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest" time="4.115"/>
+  <testcase name="captureInvariant_firstSnapshotCleanupCannotRenewOldCoverage" classname="de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest" time="0.299"/>
+  <testcase name="intentInvariant_rowFailureKeepsRetryableWork" classname="de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest" time="0.142"/>
+  <testcase name="intentInvariant_successPrunesOnlySatisfiedRows" classname="de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest" time="0.158"/>
+  <testcase name="revisionInvariant_rowSuccessSurvivesEvidenceFailureAndCancellation" classname="de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest" time="0.197"/>
+  <testcase name="retirementInvariant_coverageCannotResurrectRemovedOwners" classname="de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest" time="0.183"/>
+  <testcase name="intentInvariant_concurrentAcceptanceSurvivesOlderSuccess" classname="de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest" time="0.199"/>
+  <testcase name="heldInvariant_coverageIncludesNewerAcceptedRowsBeforeSatisfyingTheirCapture" classname="de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest" time="0.082"/>
+  <testcase name="metadataInvariant_clearFencesDelayedReadWithoutDeletingRows" classname="de.pyryco.mobile.data.cache.OwnedLegacyCoverageConcurrencyTest" time="0.076"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

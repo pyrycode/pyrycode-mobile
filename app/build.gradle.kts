@@ -163,10 +163,13 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {
-            it.maxHeapSize = "2g"
+            // The full Robolectric worker exhausted 2 GiB independently of the Gradle JVM (#2272).
+            it.maxHeapSize = "4g"
             // JUnit 4 tests run on the JUnit Platform's vintage engine, which maps a @Category to a tag, so that
             // TestTimeoutWatchdog sees every test start and finish.
             it.useJUnitPlatform {
+                // The controlled launcher exercises this intentionally unfinished runner with an injected halt callback.
+                excludeTags("de.pyryco.mobile.verification.TestTimeoutWatchdogTest\$ControlledRunnerFixture")
                 if (!providers
                         .gradleProperty("fullRetentionTests")
                         .orElse("false")
@@ -175,6 +178,8 @@ android {
                 ) {
                     excludeTags("de.pyryco.mobile.verification.FullRetentionTest")
                 }
+                // The discovery regression must exercise the exclusions actually configured for this Gradle run.
+                it.systemProperty("pyry.excludedTestTags", excludeTags.joinToString(","))
             }
             // A hung test fails with a thread dump after this limit instead of blocking the gate (#2161). The slowest
             // ordinary test took 16 s on 2026-10-17. -PtestTimeoutSeconds=0 turns the limit off.

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingScaleTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-19T01:35:21.843Z" hostname="723893f7154c" time="6.145">
+  <properties/>
+  <testcase name="darkReaderHeadingsKeepTheirScaleThroughStreamingAndSettlement" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingScaleTest" time="4.878"/>
+  <testcase name="lightThreadHeadingsKeepTheirScaleThroughStreamingAndSettlement" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingScaleTest" time="0.271"/>
+  <testcase name="setextHeadingsRetainTheRawBodyFallback" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingScaleTest" time="0.094"/>
+  <testcase name="darkThreadHeadingsKeepTheirScaleThroughStreamingAndSettlement" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingScaleTest" time="0.23"/>
+  <testcase name="lightReaderHeadingsKeepTheirScaleThroughStreamingAndSettlement" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingScaleTest" time="0.216"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

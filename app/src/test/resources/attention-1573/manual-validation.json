@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "ticket": 1573,
+  "mode": "manual",
+  "testedRepairCommit": "0ac045bee9b30573a138d584d50147dcceb6f486",
+  "productionSha256": "a5318a981c7481db5f404591302cd317a7d50e1341d26e359a330bb3ab87f9d0",
+  "focusedTests": {
+    "executed": 163,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "classes": [
+      {
+        "check": "AuthoritativeCompletionNotifierTest",
+        "exitCode": 0,
+        "tests": 31,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "check": "AuthoritativeThreadQueriesTest",
+        "exitCode": 0,
+        "tests": 23,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "check": "AttentionNotifierTest",
+        "exitCode": 0,
+        "tests": 43,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "check": "AttentionNotifierSourceTest",
+        "exitCode": 0,
+        "tests": 15,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "check": "AttentionNotifierCoordinatorTest",
+        "exitCode": 0,
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "check": "AttentionPreviewSourceTest",
+        "exitCode": 0,
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "check": "HostConversationSourceAttentionTest",
+        "exitCode": 0,
+        "tests": 25,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "check": "RemoteConversationRepositoryAuthoritativeTest",
+        "exitCode": 0,
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "regressionBeforeFix": {
+    "method": "retiredEnrichmentCannotConsumeReplacementCompletion",
+    "executed": 1,
+    "failed": 1,
+    "errors": 0,
+    "skipped": 0,
+    "xmlSha256": "f629ebdf8c56fab902f62b5fa86889c65cb5b904cf72cc00b71ac4ec2311eded"
+  },
+  "buildChecks": [
+    {
+      "check": "final-format",
+      "exitCode": 0
+    },
+    {
+      "check": "pre-verification",
+      "exitCode": 0
+    },
+    {
+      "check": "lint",
+      "exitCode": 0
+    },
+    {
+      "check": "assemble",
+      "exitCode": 0
+    },
+    {
+      "check": "final-completion",
+      "exitCode": 0,
+      "tests": 31,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "check": "docs-guard",
+      "exitCode": 0
+    }
+  ],
+  "native": {
+    "source": {
+      "repair": "0ac045bee9b30573a138d584d50147dcceb6f486",
+      "composition": "c52b5c5935db6561a2a16f3b81f65e35ac597fc0",
+      "activation": "80b2efa999f2a3560048d8e13c9de9041b34c8f9",
+      "daemonCommit": "5fd0d600b629c9cc3637fc42eb353c8e965f9fde",
+      "daemonBinarySha256": "8539e88af07aa24a37f1a138486ee94354f98cfe814bb2cb9eb5661c41ffffec",
+      "unchangedMethodSha256": {
+        "interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread": "11f658a4251ba226749b4a64a61ca48942ec5a0360b9587cf473dc4715bfa1cf",
+        "interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect": "0a30ad450341fe7a0a826ed3103d5c7c0f80db6197bb73763ea2d4c8be173427"
+      }
+    },
+    "results": [
+      {
+        "method": "interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread",
+        "exitCode": 0,
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "rawXml": [
+          "live-x1nlupe4/0-TEST-dev33_google_atd_x86_64_Pixel_2(AVD) - 13-_app-.xml"
+        ],
+        "passed": 1
+      },
+      {
+        "method": "interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect",
+        "exitCode": 0,
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "rawXml": [
+          "live-_v1ym7jv/0-TEST-dev33_google_atd_x86_64_Pixel_2(AVD) - 13-_app-.xml"
+        ],
+        "passed": 1
+      }
+    ],
+    "evidenceManifestSha256": "c7b8b1171430da7fabf5ac65960b3f85301aec6c5cb92c8df9cea27871f50bfb",
+    "runtime": {
+      "installedClaudeCliVersion": "2.1.280 (Claude Code)",
+      "deviceLabels": [
+        "0-TEST-dev33_google_atd_x86_64_Pixel_2(AVD) - 13-_app-.xml"
+      ],
+      "harnessInputs": [
+        {
+          "daemon_revision": "5fd0d600b629c9cc3637fc42eb353c8e965f9fde",
+          "daemon_sha256": "8539e88af07aa24a37f1a138486ee94354f98cfe814bb2cb9eb5661c41ffffec",
+          "daemon_source_revision": "f0ef329f276ad3537678e04ea2775f4f1ff44871",
+          "mobile_revision": "c52b5c5935db6561a2a16f3b81f65e35ac597fc0",
+          "harness_exit_code": 0
+        },
+        {
+          "daemon_revision": "5fd0d600b629c9cc3637fc42eb353c8e965f9fde",
+          "daemon_sha256": "8539e88af07aa24a37f1a138486ee94354f98cfe814bb2cb9eb5661c41ffffec",
+          "daemon_source_revision": "f0ef329f276ad3537678e04ea2775f4f1ff44871",
+          "mobile_revision": "c52b5c5935db6561a2a16f3b81f65e35ac597fc0",
+          "harness_exit_code": 0
+        }
+      ],
+      "apks": {
+        "app": {
+          "sha256": "d0cb4f76e2d2f70c1a9eae73cb1e026e7c1daca37b6df4df8f483dd92a2ef8b7",
+          "signerSha256": "627d6a29584f6a9ec585557c522ac841f1bddff29f50632caf0b909f465ab067",
+          "signerSha1": "55b2c8b9a24b75b7bdd1cf5573938e75f12cde13"
+        },
+        "test": {
+          "sha256": "1cae886200beaf3c3af9e0ad7c1969a5873a236d328e6ace63f1f96d945abcc0",
+          "signerSha256": "627d6a29584f6a9ec585557c522ac841f1bddff29f50632caf0b909f465ab067",
+          "signerSha1": "55b2c8b9a24b75b7bdd1cf5573938e75f12cde13"
+        }
+      }
+    }
+  },
+  "privateEvidenceRoot": "/work/Projects/pyrycode-mobile-agents/logs/evidence/1573/operator-manual-20261019"
+}

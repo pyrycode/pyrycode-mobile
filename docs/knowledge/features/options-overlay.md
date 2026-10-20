@@ -143,7 +143,7 @@ six-row order and current-document routing, system Back and physical outside dis
 positive underlying Back/link controls. Compact enlarged-text coverage scrolls to the last row,
 checks its physical bounds and activates it: semantic visibility alone does not prove reachability.
 Same-window menu captures await column/row semantics, rather than popup-root counts.
-See [reader testing](markdown-reader-screen.md#testing) for retained captures and live evidence.
+See [reader testing](markdown-reader-screen-testing.md#testing) for retained captures and live evidence.
 
 ## Previews
 

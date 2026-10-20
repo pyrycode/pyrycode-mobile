@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -55,7 +56,9 @@ import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.ui.components.chromeBackdrop
 import de.pyryco.mobile.ui.components.defaultChromeShadow
+import de.pyryco.mobile.ui.conversations.components.LocalMarkdownLinkFailure
 import de.pyryco.mobile.ui.conversations.components.MAX_CLIPBOARD_CHARS
+import de.pyryco.mobile.ui.conversations.components.MarkdownLinkNotice
 import de.pyryco.mobile.ui.conversations.components.MarkdownPresentation
 import de.pyryco.mobile.ui.conversations.components.MarkdownText
 import de.pyryco.mobile.ui.conversations.components.MarkdownTextStyle
@@ -345,6 +348,14 @@ fun MarkdownReaderScreen(
     val clipLabel = stringResource(R.string.markdown_reader_clip_label)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val linkNotices = MarkdownLinkNotice.entries.associateWith { stringResource(it.message) }
+    val onMarkdownLinkFailure: (MarkdownLinkNotice) -> Unit =
+        remember(errorNotices, scope, linkNotices) {
+            { notice ->
+                errorNotices.enqueue(scope, linkNotices.getValue(notice))
+                Unit
+            }
+        }
     val chooserTitle = stringResource(R.string.markdown_reader_open_in_app)
     val notices = AttachmentNotice.entries.associateWith { stringResource(it.message) }
     val onCopy: (MarkdownCopyFormat) -> Unit = { format ->
@@ -395,24 +406,26 @@ fun MarkdownReaderScreen(
                         .hazeSource(chromeSource)
                         .verticalScroll(rememberScrollState()),
             ) {
-                MarkdownText(
-                    markdown = document.text,
-                    style =
-                        MarkdownTextStyle(
-                            body = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSecondaryContainer),
-                            blockSpacing = 12.dp,
-                            listItemSpacing = 6.dp,
-                            code = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 20.sp),
-                            presentation = MarkdownPresentation.Reader,
-                        ),
-                    modifier =
-                        Modifier.padding(
-                            start = BarGutter,
-                            end = BarGutter,
-                            top = barHeight + ReaderBodyTopGap,
-                            bottom = ReaderBodyBottomGap,
-                        ),
-                )
+                CompositionLocalProvider(LocalMarkdownLinkFailure provides onMarkdownLinkFailure) {
+                    MarkdownText(
+                        markdown = document.text,
+                        style =
+                            MarkdownTextStyle(
+                                body = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSecondaryContainer),
+                                blockSpacing = 16.dp,
+                                listItemSpacing = 6.dp,
+                                code = MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
+                                presentation = MarkdownPresentation.Reader,
+                            ),
+                        modifier =
+                            Modifier.padding(
+                                start = BarGutter,
+                                end = BarGutter,
+                                top = barHeight + ReaderBodyTopGap,
+                                bottom = ReaderBodyBottomGap,
+                            ),
+                    )
+                }
             }
             MarkdownReaderTopBar(
                 name = document.name,

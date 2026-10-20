@@ -27,12 +27,21 @@ The reader removes `BarBottomGap`; counting it again would enlarge that gap. Bod
 remain 20dp and bottom padding 16dp, with the final block reachable at the scroll end.
 Both attachment and linked-note readers select M3 `bodyMedium`: regular Roboto 14sp/20sp,
 0.25sp tracking and `onSecondaryContainer` for paragraphs, list items and table cells (#2283).
-They retain 12dp block gaps and 6dp sibling-list-item gaps. ATX headings share the [markdown scale](shared-typography.md#markdown-headings)
+Ordinary blocks have 16dp gaps, recursively inside lists and quotes, with 6dp
+sibling-list-item gaps (#2285). The shared heading policy supplies 20dp before a heading,
+12dp after it and one 20dp gap between consecutive headings, without an outer heading
+gap (#2278/#2276). Both destinations have [native integration coverage](markdown-reader-screen-testing.md#reader-heading-integration-coverage-2276).
+ATX headings share the [markdown scale](shared-typography.md#markdown-headings)
 with Thread: H1 20/28sp, H2 18/26sp, H3 16/24sp (all Medium), and H4–H6 14/20sp Bold.
 Tracking is 0, 0, 0.15 and 0.25sp respectively; plain heading text uses `onSecondaryContainer`.
 Reader headings and prose use untrimmed line-height boxes; Thread retains its existing trimming.
-SETEXT headings keep the raw body fallback. Unlabelled and indented code uses a plain, tappable,
-horizontally scrolling panel; labelled fences keep syntax highlighting and visible per-block copy.
+SETEXT headings keep the raw body fallback. All fenced and indented code uses the shared
+`CodeBlock` panel (#2284): 12sp/20sp monospace, Background fill, a 1dp Primary Container
+stroke, 6dp corners and a visible lower-right copy control. Only labelled fences have a
+language header and syntax highlighting. Each control copies its block's extracted original
+text through the existing 100,000-character clipboard bound. Long lines scroll horizontally
+inside the panel while the copy rail stays fixed, without widening the reader. The fixed
+header intercepts physical taps on covered copy controls as it does on covered links.
 Reader quotes use regular 14sp/20sp `onSurfaceVariant` text and a subdued 3dp
 `outlineVariant` rule; links retain their colour and underline at the same body size. See
 [MarkdownText block dispatch](markdown-text-internals.md#block-dispatch). Reader menu copies and link routing
@@ -75,7 +84,7 @@ and the [palette plan](../../specs/architecture/1162-thread-reader-canvas.md).
 
 Reader failures show as an inert Error pill from frame `696:5101` (#1747): right-aligned with 20dp
 gutters, 28dp below the measured bar through its rule, over the body without moving it. A failed
-Refresh, a failed open in another app and a failed save share one queue with the thread's rules: first in,
+Refresh, a failed open in another app, a failed Obsidian launch and a failed save share one queue with the thread's rules: first in,
 first out, the full accessibility-adjusted Short time each, cancelled when the reader closes.
 “File saved” uses an inert Default pill below errors in the same right-aligned overlay
 column, separated by 12dp (#1851). Its separate composition-owned FIFO gives repeated
@@ -89,6 +98,19 @@ matches notice placement from `696:5101` and Default treatment from `696:5065`;
 `696:5101` itself depicts an Error arm. Copy has no failure notice. The error
 capture is `reader-error.png` in the
 [design-1220 thread index](../../../app/src/androidTest/assets/design-1220/thread/index.md).
+
+Obsidian launch failures reuse that Error pill in both Thread and Reader (#2280).
+`ActivityNotFoundException` produces “Obsidian is not installed”; another launch
+exception produces “Could not open link”. `LocalMarkdownLinkFailure` carries only
+these static `MarkdownLinkNotice` values to the nearest screen's existing
+`TransientErrorNoticeState`. Equal failures remain separate FIFO occurrences with
+the full accessibility-adjusted timeout, including when queued behind attachment
+errors; disposal cancels active and queued notices. The retained URI listener uses
+`rememberUpdatedState` for the current sink. Both screens resolve resource copy
+with `stringResource` during composition and remember sinks by that copy and their
+queue/scope, avoiding stale configuration text and streaming sink churn.
+Exceptions are caught unread: neither their messages nor URL/query content enters
+notices or diagnostics; the launch log contains only static event/outcome codes.
 
 ## Routing a tap to the reader
 
@@ -229,6 +251,16 @@ decided (2026-09-24) that the reader always shows the file as it is on the host 
 attachment path above there is no local second read to reuse — the thread's one read *is* what the reader
 shows.
 
+An admitted explicit `obsidian://open?...` link instead opens Obsidian through
+Android `ACTION_VIEW`, never `readWorkspaceFile` or this note-reader route.
+`openObsidianLink` rechecks the [strict shared admission](markdown-text-internals.md#link-safety--scheme-allowlist)
+and passes the exact target, preserving case, escapes and query. It adds
+`FLAG_ACTIVITY_NEW_TASK` only when the context is not an Activity. Denied targets
+start nothing. No package lookup or production visibility declaration is needed.
+Workspace opt-in still controls only schemeless Markdown paths; whitespace-prefixed
+URI shapes are rejected before that fallback. Inside either reader, workspace
+paths stay inert while admitted external links remain usable.
+
 - `internal suspend fun readLinkedMarkdown(repository, conversationId, path): MarkdownDocument?` — one
   `repository.readWorkspaceFile(conversationId, path)` (#1049). A `Fetched` result whose `content.size` is at
   most `MAX_MARKDOWN_READER_BYTES` is copied to a `ByteArray` and decoded with the same `decodeUtf8Strictly`
@@ -293,235 +325,43 @@ The top bar's overflow menu — copy as markdown/plain text/HTML, Refresh, Open 
 
 ## Testing
 
-The [heading-scale coverage and counted #2277 acceptance](markdown-text.md#testing) exercise
-Reader rendering in light and dark themes through streaming and settlement, including
-untrimmed line boxes. `MarkdownReaderDesignTest.referencePlacesBarRuleAndBodyAtFigmaCoordinates`
-retains its gap assertions while downstream positions account for H1’s 32→28sp and H2’s
-28→26sp line heights. Smaller text boxes move later blocks without changing block spacing.
-New Reader-screen integration checks remain assigned to #2276.
+See [reader testing](markdown-reader-screen-testing.md#testing) for coordinate and
+typography checks, fractional-density bounds, retained acceptance evidence and
+reader regression coverage.
 
-### Reader body typography coverage (#2283)
+`ObsidianLinkLaunchTest` checks Activity/non-Activity flags, exact targets, denied
+no-ops and both failure outcomes with exception message accessors that throw.
+`ThreadTransientErrorTest` activates real links into both visible errors and
+checks queuing/repeated failures; screen disposal remains covered by
+`leavingTheScreen_cancelsActiveAndQueuedErrors`. Renderer and malformed-URI
+regressions are listed in [link testing](markdown-text-internals.md#obsidian-link-testing-2280).
 
-`MarkdownTypographyTest` uses native graphics to check both attachment and linked-note
-readers in light and dark themes: Roboto 14/20, 0.25sp tracking, body/quote colours,
-bold table headers, link colour/underline and untrimmed 20sp line boxes. Check measured
-height as well as the declared style: default trimming can shorten a single-line box.
-Tables need the reader body style explicitly; see [table styling](markdown-text-internals.md#tables).
+Linux focused native evidence at source
+`27d54809ecd32a05c4b1ab866dfc466f4c2e9c46` executed/passed
+`ObsidianIntentDeliveryTest.actionView_reachesControlledHandler_withUnchangedUri`:
+1 executed/passed, zero failed/errors/skipped. It proves actual `ACTION_VIEW`
+delivery to a controlled test-APK handler with the URI unchanged, without Obsidian
+installation or a Claude turn. The handler is platform-only Java: Kotlin runtime
+classes supplied by the instrumented app are unavailable in the test APK's
+separate activity process. No production manifest change was required.
 
-`MarkdownReaderDesignTest` retains chrome, gutter, scroll, pointer and quote-bar checks.
-At the reference viewport, code/quote tops are now 331/407dp (previously 379/455dp):
-smaller prose and list lines move later blocks while gaps stay fixed. The wrap fixture
-is deliberately long enough to wrap at 14sp; a formerly wrapping 16sp fixture could
-otherwise stop testing continuation at the gutter. Heading and code styles stay as documented.
+Host: Linux x86_64 `7fbbed191d61`; device: Android 13/API 33 Google ATD x86_64,
+`pixel2Api33Atd_0`, fingerprint
+`google/sdk_gslim_x86_64/emulator64_x86_64:13/TE1A.220922.033/10836537:userdebug/dev-keys`.
+Managed image identity:
+`3eb41e577fca08bb114bb2c67eb96c68f04b3c4541ea6163ef7f37a2593c5a43`.
+Raw XML, phone logs, source/configuration snapshots and `SHA256SUMS` were retained
+at `/work/Projects/pyrycode-mobile-agents/logs/evidence/2280/builder-discovery-20261019-27d54809e/`,
+with native run `ui-6n1d0a_1` under `discovery-repair/native/`.
 
-The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2287#issuecomment-6252413269)
-records Linux acceptance on `5e1c4079ac6a888578ac03d8f696d0ba6b829ce3` (2026-10-18):
-JVM gate **5,987 executed/passed, 0 failed, 0 skipped**; UI gate **334 executed/passed,
-0 failed, 1 skipped**; scripted gate **22 executed/passed, 0 failed, 0 skipped**.
-The unrelated `renameAtFigmaViewport` was skipped, not passed.
-
-Retained focused builder XML records **105 executed/passed, 0 failed, 0 skipped**,
-including `MarkdownTypographyTest` **9/9** and `MarkdownReaderDesignTest` **16/16**.
-The separate managed Android 13 capture run records **2 executed/passed, 0 failed,
-0 skipped**: `MarkdownReaderCaptureTest.referenceAndMenuAt412By892` and
-`compactLargeTextKeepsControlsAndBodyReachable`. Both also passed in the full UI gate.
-Raw reports and captures were retained at
-`/work/Projects/pyrycode-mobile-agents/logs/evidence/2283/builder-20261018-5e1c4079a/`
-(`jvm/`, `device/`, `captures/`); this is their location at review time, not permanent storage.
-macOS is outside this Linux ticket's verification scope. No live-provider scenario changed.
-
-### Native memory regression evidence (#1759)
-
-The [accepted verifier record](https://github.com/pyrycode/pyrycode-mobile/pull/1825#issuecomment-6006058557)
-on 2026-10-06 reviewed commit `1d9aff52949227e2559216e96a40218f6a32df82`
-and the preserved native XML on `pixel2Api33Atd` (Android 13 Google ATD):
-
-- Routine `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`:
-  **186 executed, 186 passed, 0 failed, 1 skipped** in
-  `build/dispatcher-tests/ui-sygy1igf/dispatcher.xml`.
-  `MarkdownReaderMemoryTest.noteAtSupportedBound_scrollsCopiesAndReturnsWithoutTermination`
-  is present and passed unskipped. The unrelated skip is
-  `RenameDialogCaptureTest.renameAtFigmaViewport`.
-- Separate full native `MarkdownReaderScreenTest` class run with
-  `./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun`
-  and instrumentation arguments `class=de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest`
-  and `notPackage=de.pyryco.mobile.e2e`: **25 executed, 25 passed, 0 failed, 0 skipped**.
-  `/tmp/builder-1759/rework-evidence/reader-screen-20261006.xml` explicitly contains
-  the enabled, passing `copiesOfANoteAtTheReadersBound_areBounded` method. Routine UI
-  selection excludes `app/src/sharedTest` classes, so its total cannot prove this method
-  ran on the native engine; retain the separate whole-class evidence.
-- Initial focused native `MarkdownReaderMemoryTest` run: **1 executed, 1 passed,
-  0 failed, 0 skipped**. The builder's temporary pre-`ef587984` renderer negative
-  control: **1 executed, 0 passed, 1 failed, 0 skipped**, exit 1 with instrumentation
-  `Process crashed`. The focused and negative XML copies are named
-  `builder-1759-focused-TEST-pixel2Api33Atd-_app-.xml` and
-  `builder-1759-negative-TEST-pixel2Api33Atd-_app-.xml` under
-  `/tmp/verifier-1825/review-1d9aff52/`. XML establishes termination; the temporary
-  renderer selection and allocation diagnosis are builder-reported. The repaired
-  renderer was restored before green runs, with no production reader diff.
-
-### Reader presentation and earlier coverage
-
-`MarkdownReaderScreenTest.leavingTheReader_cancelsItsActiveAndPendingErrorNotices`
-must establish both an active notice and a queued second occurrence before leaving
-the reader (#2042). File operations complete outside the Compose clock: observe both
-static open-operation outcomes and hold notice time while the first occurrence remains
-active. After changing visibility, deliver `Snapshot.sendApplyNotifications()` before
-driving the clock until actual composition disposal; changing the visibility flag alone
-does not prove disposal. Assert the pill is absent and notice state is null, then retain
-the original 4,100 ms advance and assert the occurrence has not changed, proving the
-queued notice never started. Restore the diagnostic logger and clock in `finally`.
-This synchronizes the fixture's asynchronous preconditions; it does not establish a
-production cause for the earlier unmatched full-suite failure or its teardown exception.
-
-The current reader-menu captures are retained under
-[`reader-actions-1667/`](../../../app/src/androidTest/assets/reader-actions-1667/):
-`reference-412x892.png`, dark `menu-412x892.png`, `menu-light-412x892.png`,
-`compact-large-text-320x700.png`, `compact-menu-320x700.png` and `compact-scrolled-320x700.png`.
-[Device XML](../../../app/src/androidTest/assets/reader-actions-1667/device-results.xml)
-records 3 executed, 0 failed/errors, 0 skipped on API 33/pixel2Api33Atd.
-These root-View draws establish menu appearance and compact presentation, not hardware
-backdrop/chrome fidelity; title-shadow artifacts also occur in the closed-menu reference.
-The menu uses the shared Below Actions presentation described in [reader menu](markdown-reader-menu.md#presentation).
-Placement and pointer tests prove live anchoring, dismissal without tap-through and compact last-row
-activation; capture helpers await same-window column semantics rather than separate popup roots.
-
-The [dispatcher’s fresh full live gate for #1667](https://github.com/pyrycode/pyrycode-mobile/issues/1667#issuecomment-5987861689)
-on 2026-10-05 ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
-against `fef53301e5` merged with main `90d395d1b1`, exit 0: **53 executed, 53 passed,
-0 failed, 0 skipped**. The retained dispatcher XML report
-`2026-10-05T03-45-19-511Z_real-claude-gate_#1667.log` explicitly contains the passing
-`InteractiveStreamE2ETest.interactiveTurn_markdownLink_opensLiveNoteInReader` testcase,
-with no failure/error/skip child. It reaches Refresh through the new menu. This is full-suite
-evidence, not a separate focused run; no new live scenario was added.
-
-
-The [reader chrome evidence](../../../app/src/androidTest/assets/reader-chrome-1647/README.txt)
-retains fresh Figma exports for `553:2574` and `731:6010`, resting and scrolled-under-bar
-hardware PNGs, [reader comparison](../../../app/src/androidTest/assets/reader-chrome-1647/reader-comparison.png),
-[bar comparison](../../../app/src/androidTest/assets/reader-chrome-1647/top-bar-comparison.png),
-overlay/difference and viewport/inset sidecars (2026-10-04). Full `pixel8Api35` with
-`requireRealSystemBars=true` produced nonblank hardware-accelerated captures with
-`syntheticBars=false`, density/font scale 1 and real 24px status/navigation bars:
-the 412 × 892 framebuffer contains a 412 × 844 app area, whereas Figma's frame is a
-412 × 892 screen area. Comparison crops remove the bars without stretching the images.
-The existing date-wrap difference preserves three-line paragraph height and subsequent
-block positions.
-
-[Final hardware XML](../../../app/src/androidTest/assets/reader-chrome-1647/hardware-results.xml)
-records 5 executed, 0 failed/errors, 0 skipped. `ThreadDesignCaptureTest.runConfigurationAndReaderAt412By892`
-passed with exact 24/69/97dp coordinates, 28dp clearance and 20dp gutters.
-The four passing `MarkdownReaderDesignTest` methods are
-`scrollViewportStartsBehindTheFixedBar` (underlap and final 16dp padding),
-`largeTextReservesMeasuredBarPlus28dp` (1.5× text and 48dp targets),
-`headerBlocksUnderlyingLinkWithPositiveClearAreaControl` and
-`headerBlocksUnderlyingCodePanelWithPositiveClearAreaControl` (physical pointer isolation
-with positive taps outside chrome). Retained focused JVM reports record 35 executed,
-0 failed/errors/skipped across reader design (10), reader screen (20) and palette (5),
-plus a separate passing link-pointer rerun (1 executed, 0 failed/errors/skipped).
-This local chrome adoption adds no real-Claude scenario.
-
-Robolectric `@Config` does not set emulator density. An earlier whole-class hardware run
-executed 11 tests, with 1 failure and 0 skipped: the existing absolute-coordinate list fixture
-accumulated pixel rounding at native density 2.625 (266.29dp versus 265dp). Keep its strict
-density-1 JVM assertions; exact hardware coordinates belong in the capture harness's
-explicit density-1 viewport. Also, `performScrollTo` makes the final block visible without
-traversing trailing content padding. A bottom-padding assertion must scroll to the actual
-end before measuring, as `scrollViewportStartsBehindTheFixedBar` does.
-
-`ThreadCanvasPaletteTest` uses native-graphics pixel checks for both screens' canvases and inset rules,
-including short and scrolled reader content. It exercises all four theme mappings with system/app modes
-opposed and switches themes after composition; its 320dp fixtures prove colour, not full 412dp layout parity.
-
-- `MarkdownReaderLoadTest` (`app/src/test/…/thread/`, 8 tests): `isMarkdownAttachmentName` across case and
-  near-miss names (`notes.txt`, `notes.md.txt`, bare `md`, `null`); `decodeUtf8Strictly` round-trips valid
-  multi-byte text and refuses a lone continuation byte, a truncated sequence and an overlong encoding;
-  `readMarkdownAttachment` against a fake repository and a temp file — success, `NotFound`/`Unavailable`,
-  invalid UTF-8, a file over the bound, a file exactly at the bound, a throwing repository, a missing file;
-  `MarkdownDocument.toString()` prints no name or text.
-- `ThreadViewModelAttachmentRetrievalTest` gained 4 tests for `onOpenMarkdownAttachment`: success emits
-  `ThreadNavigation.OpenMarkdown(id)` and no failure signal; bad UTF-8 and a retrieval failure each emit one
-  `markdownOpenFailures` and no navigation; a second tap while the first read is in flight is ignored; the log
-  line carries the id and a static outcome only.
-- `MarkdownReaderScreenTest` (`app/src/sharedTest/…/thread/`, Robolectric, 4 tests): the file name is in the
-  top bar and rendered content (a heading, a list item) is below it; the back arrow calls `onBack`; long
-  content scrolls to its last paragraph while the name and back arrow stay displayed; the tap-routing case
-  added during implementation — a markdown name from both `Kept` and `Original` sources opens the reader, a
-  non-markdown name still goes through `openAttachment`, and a non-`Ready` row does nothing. This last case
-  covers `rememberAttachmentActions`'s branch directly rather than relying on `isMarkdownAttachmentName`
-  alone, since the plan's original split put it there.
-- No rung-3 real-Claude scenario. The tap uses the same `retrieveAttachment` path the live
-  `interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart` scenario (#1016) already proves; what this
-  ticket adds — strict decoding, the byte bound, the reader UI — happens after retrieval and is entirely
-  local, covered by the Robolectric tests above. The existing live fixtures all use `.txt` names, so the new
-  markdown branch does not reroute them.
-
-\#1050's linked-note path adds its own tests, on the same shapes: `MarkdownReaderLoadTest` gained
-`readLinkedMarkdown` cases (name from the last path component, text unchanged, every failure kind collapsing
-to `null`, exactly-at-bound succeeding); `MarkdownLinkRoutingTest` (`app/src/test/…/components/`) covers
-`markdownLinkPath` and `routeMarkdownLink` classification (see
-[MarkdownText § Markdown-path links](markdown-text-internals.md#markdown-path-links-since-1050)); `ThreadViewModelMarkdownLinkTest`
-covers one read per open, the shared in-flight guard, a reopen after release re-fetching and showing new
-content, one failure signal with nothing held, and that logs carry neither path nor text;
-`MarkdownLinkTapTest` (`app/src/sharedTest/…/components/`, Robolectric) covers a tap in both a finished and a
-streaming assistant `MessageBubble`, an `https` link still reaching the platform handler, a `MarkdownText`
-with no callback leaving a markdown-path tap inert, and `LinkedMarkdownReaderDestination` with a document and
-with `null`. Rung 3: `InteractiveStreamE2ETest#interactiveTurn_markdownLink_opensLiveNoteInReader`, extended by
-\#1067 below — see [Interactive stream e2e](../../e2e-interactive-stream.md).
-
-\#1067's [copy and refresh menu](#copy-and-refresh-menu-since-1067) adds: `MarkdownConversionsTest`
-(`app/src/test/…/components/`, pure JVM, 11 tests) — `markdownPlainText` drops every syntax kind the AC lists
-and keeps code and table content verbatim; `markdownHtml` escapes a raw `<script>` block and an inline
-`onerror` attribute as text, keeps `href` for `http`/`https`/`mailto` inline and reference links, writes text
-only for `javascript:`, an entity-encoded `javascript:`, `file:`, `data:`, `intent:` and a relative path, and
-neither a quote inside an allowed href nor a hostile fence info string can open a tag; images come out as alt
-text with no `<img`; bounds hold at `MAX_MARKDOWN_READER_BYTES`, with `boundClipHtml` always ending on `>`
-inside the limit. `MarkdownReaderScreenTest` grew from 4 to 15 tests: the overflow button opens the four items
-in order; each copy puts the expected clip on the system `ClipboardManager` (the HTML clip carries both
-`htmlText` and its `text` fallback, MIME `text/html`) with no snackbar shown; a copy at
-`MAX_MARKDOWN_READER_BYTES` does not throw; `RefreshableMarkdownReader` with a controllable `reread` covers a
-successful refresh replacing the content, a second refresh while the first is still suspended calling `reread`
-once, a failed refresh keeping the old content and showing "Couldn't open file", and the retry-while-the-notice-
-shows regression test above. `ThreadViewModelMarkdownLinkTest` gained the assertion that the held note carries
-the path it was read from, alongside the existing name/text checks.
-`InteractiveStreamE2ETest#interactiveTurn_markdownLink_opensLiveNoteInReader` grew a third step: with the reader
-still open after the first tap, the peer (not the phone) has claude rewrite the note, then the test chooses
-Refresh from the reader's own overflow and asserts the new heading is shown with the old one and "Couldn't open
-file" both absent, before backing out and re-opening through the link as #1050 already did. The scenario still
-spends two real-claude turns — the rewrite prompt moved from the phone's composer to the peer's — so it adds no
-turn to the suite's running total; see [Interactive stream e2e § Follow-ups to
-ticket](../../e2e-interactive-stream.md#follow-ups-to-ticket) for the live-run evidence.
-
-\#1068's [open in another app](markdown-reader-menu.md#open-in-another-app-since-1068) adds: `SharedNoteFileTest` (`app/src/test/…/thread/`,
-pure JVM, `TemporaryFolder`, 8 tests) — `sharedNoteFileName` takes the last path component for both `/` and
-`\`, strips control characters, fits the 255-UTF-8-byte limit, and falls back to `note.md` for an empty, `.`,
-`..` or trailing-separator name; `sharedNoteDirectory`'s name is never a 64-hex-character host directory;
-`writeSharedNote` keeps the exact UTF-8 bytes under the resolved name, a second write leaves only the second
-note's file, a name that would climb out of the directory still resolves inside it, and a directory that cannot be
-created (a regular file already sitting at that path) writes nothing. `AttachmentActionsTest` gained 3 Robolectric tests:
-the shared-note file is served by the attachment provider with the note's name as its last path segment; with
-a markdown viewer registered, `openNoteInAnotherApp` starts an `ACTION_CHOOSER` whose `EXTRA_INTENT` is
-`ACTION_VIEW` + `text/markdown` + a `content` URI of the attachments authority with flags exactly the read
-grant, and whose own chooser flags carry none of the write/persistable/prefix bits; with no viewer registered,
-`NO_APP` and nothing started; with the shared-note directory blocked by a file in its place, `OPEN_FAILED` and
-nothing started. `MarkdownReaderScreenTest` grew by 2 tests and one `@Before`: the reset of `FileProvider`'s
-cached authority roots the [lesson above](markdown-reader-menu.md#open-in-another-app-since-1068) needed; the overflow's five items in
-order (was four); choosing Open in another app with no registered viewer shows "No app can open this file"
-while the rendered content stays displayed underneath. No rung-3 scenario — the hand-off ends in another app's
-chooser, which the harness cannot drive, and the daemon is not involved; the read that produces the text is
-already proven live by the scenarios above.
-
-\#1069's [Save to device](markdown-reader-menu.md#save-to-device-since-1069) adds: `AttachmentActionsTest` gained 3 pure-JVM tests for
-`saveNoteText` — the exact UTF-8 bytes of a string with multi-byte characters, with nothing discarded; a failing
-output stream returns `false` and discards; `null` text returns `false`, discards and never opens the output.
-`MarkdownReaderScreenTest` grew by 4 tests: the overflow's six items in order (was five); choosing Save to
-device launches `ACTION_CREATE_DOCUMENT` of type `text/markdown` with `EXTRA_TITLE` set to the note's last path
-component; a picked `file://` destination receives exactly the text on screen and the reader shows "File saved";
-a destination whose parent directory does not exist shows "Couldn't save file" and leaves no file behind; a
-cancelled picker shows neither notice. The lost-pending-text-after-recreation path is proven only by the
-`saveNoteText(null, …)` unit test — recreating the process mid-picker is not driven in either test tier. No
-rung-3 scenario: the save ends in the system's document picker, which the harness cannot drive, and the daemon
-is not involved, the same call #1068 made.
+The same-head [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2295)
+confirms the required native method also passed in the complete UI gate:
+335 executed/passed, zero failed/errors, one unrelated skipped
+`RenameDialogCaptureTest.renameAtFigmaViewport`. JVM/build completed with 6,056
+executed/passed and zero failed/skipped; scripted-all completed with 22
+executed/passed and zero failed/errors/skipped. These complete results supersede
+the earlier pending-gate handoff without reclassifying historical failed captures.
+macOS is outside this Linux ticket's verification scope.
 
 ## Related
 

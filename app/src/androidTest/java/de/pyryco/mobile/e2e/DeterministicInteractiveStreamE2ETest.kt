@@ -43,6 +43,8 @@ import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
+import de.pyryco.mobile.data.repository.RemoteConversationRepository
+import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.grantNotificationPermission
@@ -388,6 +390,26 @@ class DeterministicInteractiveStreamE2ETest {
             )
         try {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            // This scripted fixture has no settings subscriber. Read the physical session through
+            // the existing correlated probe; create-conversation summaries intentionally omit it.
+            val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
+            val session =
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        SettingsReadProbe
+                            .read(
+                                repo as RemoteConversationRepository,
+                                conversation.id,
+                                { coordinator.currentRepository.value === repo },
+                                { coordinator.hostReadings.liveSessionBindings[conversation.id] },
+                            ).sessionId
+                            .also { check(it.isNotBlank()) { "scripted conversation has no admitted session" } }
+                    }
+                }
+            val before = runBlocking { harnessThreadEvidence(repo).observe(conversation.id).first() }
+            val observation = OwnedReplyObservation(serverId, before, legacyProducer = true, knownSession = session)
+            peer.replyObservation = observation
+            var produced: ProducedReplyEvidence? = null
             severLink()
             composeTestRule.onNodeWithText("e2e1833-baseline-000").assertIsDisplayed()
             proof.missPages(name) {
@@ -409,9 +431,11 @@ class DeterministicInteractiveStreamE2ETest {
                             delay(50)
                         }
                     }
+                    produced = checkNotNull(observation.produced()) { observation.producerState() }
+                    assertEquals("scripted fixture keeps its exact reply contract", "ping", produced!!.text)
                 }
             }
-            proof.catchUp(::restoreLink, "e2e1833-completed-turn", "ping", listOf(hasText("e2e1833-baseline-000")))
+            proof.catchUp(::restoreLink, "e2e1833-completed-turn", checkNotNull(produced), listOf(hasText("e2e1833-baseline-000")))
             assertEquals("cached older row retained", 1, proof.messages().count { it == "e2e1833-baseline-000" })
         } finally {
             peer.close()

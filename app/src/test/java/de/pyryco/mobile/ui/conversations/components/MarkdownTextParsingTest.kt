@@ -34,6 +34,57 @@ class MarkdownTextParsingTest {
 
     private fun ASTNode.childTypes(): List<org.intellij.markdown.IElementType> = children.map { it.type }
 
+    @Test
+    fun `obsidian query punctuation spans adjacent tokens within each prose leaf`() {
+        val url = "obsidian://open?vault=V&file=A%20Note.md"
+        listOf("See $url now", "- See $url now", "| Header |\n| --- |\n| See $url now |").forEach { source ->
+            val root = parse(source)
+            val leaf = root.descendants().last { it.type == MarkdownElementTypes.PARAGRAPH || it.type == GFMTokenTypes.CELL }
+            val parts = leaf.children.filter { it.endOffset > source.indexOf(url) && it.startOffset < source.indexOf(url) + url.length }
+            assertTrue("candidate is split into tokens", parts.size > 1)
+            assertTrue(source.substring(parts.first().startOffset, parts.last().endOffset).contains(url))
+            assertEquals(
+                listOf(source.indexOf(url) until source.indexOf(url) + url.length),
+                bareObsidianRanges(source, leaf.startOffset until leaf.endOffset),
+            )
+        }
+    }
+
+    @Test
+    fun `admitted bare targets can end in composite inline nodes`() {
+        listOf(
+            "*B*" to MarkdownElementTypes.EMPH,
+            "**B**" to MarkdownElementTypes.STRONG,
+            "~~B~~" to GFMElementTypes.STRIKETHROUGH,
+        ).forEach { (suffix, type) ->
+            val url = "obsidian://open?file=A$suffix"
+            listOf("See $url now", "- See $url now", "| Header |\n| --- |\n| See $url now |").forEach { source ->
+                val leaf = parse(source).descendants().last { it.type == MarkdownElementTypes.PARAGRAPH || it.type == GFMTokenTypes.CELL }
+                val endpoint = leaf.children.single { it.endOffset == source.indexOf(url) + url.length }
+                assertEquals(type, endpoint.type)
+                assertTrue(isSafeLinkScheme(url))
+                assertEquals("See $url now", inlineText(leaf.children, source).trim())
+            }
+        }
+    }
+
+    @Test
+    fun `all reference label forms are authored containers`() {
+        val label = "See obsidian://open?file=Note now"
+        listOf(
+            "[$label][ref]\n\n[ref]: javascript:bad",
+            "[$label][]\n\n[$label]: javascript:bad",
+            "[$label]\n\n[$label]: javascript:bad",
+        ).forEach { source ->
+            val node =
+                parse(source).descendants().firstOrNull {
+                    it.type == MarkdownElementTypes.FULL_REFERENCE_LINK || it.type == MarkdownElementTypes.SHORT_REFERENCE_LINK
+                }
+            assertNotNull(source, node)
+            assertTrue(node!!.getTextInNode(source).contains(label))
+        }
+    }
+
     // ---------------------------------------------------------------- alignments
 
     @Test

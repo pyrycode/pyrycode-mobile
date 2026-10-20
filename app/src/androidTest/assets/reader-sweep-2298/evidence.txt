@@ -1,0 +1,36 @@
+Reader sweep confirmation (#2298), Linux x86_64, 2026-10-18
+
+Tested revision: 3d6999fe647f29f3b2ccd92b30456af6fb1b5919 (plan only).
+Contains merged #2297 at e02920bf71c18c9ce3ece6f11b18ee57ffaf1cbd.
+No production, test-source, nominal-geometry or tolerance changes for #2298.
+
+Cause and accepted repair:
+At density 2.625, three 20sp paragraph lines round from 52.5px to 53px
+each, accumulating 1.5px; list lines and sibling gaps accumulate 2px.
+The original 76dp interval therefore measures 76.57144dp. #2292 checks
+constituents separately and bounds just cumulative quantities to two pixels.
+The shared one-pixel default and exact density-1 assertions remain intact.
+Accepted verifier review: https://github.com/pyrycode/pyrycode-mobile/pull/2297#issuecomment-6255306502
+Accepted run: ce3dc840ffec880f05419bf51877a2764aa96eb72c59d037f90d2b9ad0876975
+Accepted candidate: f93ba5a55a9d933a3ea2d599cf504b7340d2f2a4
+Earlier red/green index: app/src/androidTest/assets/reader-rounding-2292/evidence.txt
+
+Fresh native confirmation, managed Android 13 pixel2Api33Atd:
+python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest#referencePlacesBarRuleAndBodyAtFigmaCoordinates,de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest#adjacentBlockRoundingAllowanceKeepsItsPixelBoundary'
+2 executed, 2 passed, 0 failures/errors/skips; exit 0.
+
+Fresh Robolectric and focused static/build checks:
+python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest' lint assembleDebug compileDebugAndroidTestKotlin spotlessApply --console=plain
+17 executed, 17 passed, 0 failures/errors/skips; exit 0.
+Lint, APK assembly, instrumented Kotlin compilation and formatting passed.
+
+Private raw XML, phone logs, managed-image identity, source revisions,
+command records and verified SHA256SUMS are retained beneath:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2298/builder-20261018/
+  native-3d6999fe6/
+  jvm-3d6999fe6/
+
+Original f8a397b sweep: 1726 executed, 1725 passed, 1 failed; still failed.
+Complete gates and the next in-depth main sweep remain dispatcher-owned
+and pending; these focused results do not establish a full-sweep pass.
+macOS is outside this Linux ticket's verification scope.

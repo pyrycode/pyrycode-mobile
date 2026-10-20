@@ -1,0 +1,40 @@
+Ticket #2276 — Linux native-graphics reader heading evidence, 2026-10-19
+
+The XML files are unmodified Gradle reports from Robolectric native graphics.
+The screen report is gzip-wrapped to preserve its raw warning whitespace exactly.
+Each focused class ran separately with:
+python3 scripts/gradle-gate.py testDebugUnitTest --tests '<qualified class>' --console=plain
+
+Initial green source: 1273cbe4b79e3602e07df59dcb9c7172ba109ab3
+The TEST-<qualified class>.xml[.gz] reports record:
+de.pyryco.mobile.ui.conversations.thread.MarkdownReaderHeadingTest: 8 executed/passed, 0 failed/errors/skipped
+de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest: 17 executed/passed, 0 failed/errors/skipped
+de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest: 26 executed/passed, 0 failed/errors/skipped
+de.pyryco.mobile.ui.conversations.components.MarkdownTypographyTest: 11 executed/passed, 0 failed/errors/skipped
+de.pyryco.mobile.ui.conversations.components.MarkdownHeadingScaleTest: 5 executed/passed, 0 failed/errors/skipped
+de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest: 13 executed/passed, 0 failed/errors/skipped
+Total: 80 executed/passed, 0 failed/errors/skipped across the six separate invocations.
+
+Final formatting-only source: f62364767ad4d361f3c68d728a05a25fcb2eb7dd
+formatted-heading-green.xml: 8 executed/passed, 0 failed/errors/skipped in an additional heading-class rerun.
+Production and the five existing test classes match the initial green source.
+
+Controlled red source: 7fe489f746568b251df1a7fbe938233181bad4cf plus controlled-trim.patch
+Command selects de.pyryco.mobile.ui.conversations.thread.MarkdownReaderHeadingTest.darkAttachmentHeadings.
+controlled-trim-red.xml: 1 executed, 0 passed, 1 failed, 0 errors/skipped.
+The expected failure reports Trim.Both instead of Trim.None. The mutation was restored before green runs.
+The zero-context patch can be checked with git apply --check --unidiff-zero.
+
+Incorrect linear-scaling oracle source: f9b1bc6b3f4c08073c34a5b0fef17907d5157620
+linear-scaling-assumption-red.xml: 8 executed, 4 passed, 4 failed, 0 errors/skipped.
+Incorrect direct-sp-conversion oracle source: 2a551a20111802963649b2e325835435991a3ee1
+sp-conversion-assumption-red.xml: 8 executed, 4 passed, 4 failed, 0 errors/skipped.
+Both preserve enlarged-text failures before the independent native line-box reference replaced the assumptions.
+
+Combined-build failure source: f9b1bc6b3f4c08073c34a5b0fef17907d5157620
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.thread.MarkdownReaderHeadingTest' lint assembleDebug compileDebugAndroidTestKotlin --console=plain
+Both Kotlin test compilers exhausted Java heap before test execution (0 tests executed).
+combined-compile-android-oom.log.gz and combined-compile-unit-oom.log.gz preserve the exact raw compiler logs.
+Checks were subsequently separated; no build configuration or production code was changed.
+
+Complete Linux suites remain dispatcher-owned and pending. macOS is outside this ticket's verification scope.

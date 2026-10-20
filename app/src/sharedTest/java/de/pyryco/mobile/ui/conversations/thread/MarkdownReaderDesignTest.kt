@@ -33,6 +33,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onParent
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -43,6 +44,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
@@ -55,6 +57,7 @@ import de.pyryco.mobile.ui.pixelDp
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -70,6 +73,7 @@ class MarkdownReaderDesignTest {
     @get:Rule val rule = createComposeRule()
 
     private var variant = Color.Unspecified
+    private var codeForeground = Color.Unspecified
 
     private fun show(
         name: String = "Builder Pipeline - Plan.md",
@@ -81,6 +85,7 @@ class MarkdownReaderDesignTest {
         rule.setContent {
             PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                 variant = MaterialTheme.colorScheme.onSurfaceVariant
+                codeForeground = MaterialTheme.colorScheme.onBackground
                 CompositionLocalProvider(
                     LocalDensity provides Density(LocalDensity.current.density, fontScale),
                     LocalUriHandler provides
@@ -107,11 +112,44 @@ class MarkdownReaderDesignTest {
         show()
         val title = rule.onNodeWithText("Builder Pipeline - Plan.md").getUnclippedBoundsInRoot()
         val heading = rule.onNodeWithText("Builder Pipeline Plan").getUnclippedBoundsInRoot()
-        val code = rule.onNodeWithTag("reader-code-panel").getUnclippedBoundsInRoot()
+        val code = codePanel().getUnclippedBoundsInRoot()
         val quote = rule.onNodeWithText("Tokens first, running time second.").getUnclippedBoundsInRoot()
         val paragraph = rule.onNodeWithText("The main board runs four roles", substring = true).getUnclippedBoundsInRoot()
         val subheading = rule.onNodeWithText("Next steps").getUnclippedBoundsInRoot()
         val firstItem = rule.onNodeWithText("Pin all five agents repos", substring = true).getUnclippedBoundsInRoot()
+        val paragraphLayout = layout("The main board runs four roles", substring = true)
+        val codeText = rule.onNodeWithText("pyry release --both\npyry status").getUnclippedBoundsInRoot()
+        val codeLayout = layout("pyry release --both\npyry status")
+        val items =
+            listOf(firstItem) +
+                listOf("Measure token spend per role", "Retire the old single-role runner").map {
+                    rule.onNodeWithText(it, substring = true).getUnclippedBoundsInRoot()
+                }
+
+        assertEquals(3, paragraphLayout.lineCount)
+        for (line in 0 until paragraphLayout.lineCount) {
+            val height = paragraphLayout.getLineBottom(line) - paragraphLayout.getLineTop(line)
+            assertDpEquals(20.dp, with(rule.density) { height.toDp() }, "paragraph line $line")
+        }
+        assertDpEquals(60.dp, paragraph.height, "three-line paragraph", pixels = ROUNDED_TEXT_BLOCK_PIXELS)
+        assertDpEquals(20.dp, subheading.top - paragraph.bottom, "gap after paragraph")
+        items.forEach { assertDpEquals(20.dp, it.height, "list item height") }
+        items.zipWithNext { above, below -> assertDpEquals(6.dp, below.top - above.bottom, "sibling item gap") }
+        assertDpEquals(16.dp, code.top - items.last().bottom, "gap after list")
+
+        assertEquals(12.sp, codeLayout.layoutInput.style.fontSize)
+        assertEquals(20.sp, codeLayout.layoutInput.style.lineHeight)
+        assertEquals(FontFamily.Monospace, codeLayout.layoutInput.style.fontFamily)
+        assertEquals(2, codeLayout.lineCount)
+        val baselineAdvance = codeLayout.getLineBaseline(1) - codeLayout.getLineBaseline(0)
+        assertDpEquals(20.dp, with(rule.density) { baselineAdvance.toDp() }, "code baseline advance")
+        assertDpEquals(34.dp, with(rule.density) { codeLayout.size.height.toDp() }, "two trimmed code lines")
+        assertBlockTopDistance(12.dp, code.top, codeText.top, "code top padding")
+        assertBlockTopDistance(12.dp, codeText.bottom, code.bottom, "code bottom padding")
+        val paddingPx = with(rule.density) { 12.dp.roundToPx() }
+        val panelHeight = with(rule.density) { (codeLayout.size.height + paddingPx + paddingPx).toDp() }
+        assertBlockTopDistance(panelHeight, code.top, code.bottom, "code panel from text and padding")
+        assertBlockTopDistance(16.dp, code.bottom, quote.top, "gap after code")
 
         assertEquals(56f, title.left.value, 1f)
         assertEquals(24f, title.top.value, 1f)
@@ -125,30 +163,157 @@ class MarkdownReaderDesignTest {
                 .bottom.value,
             1f,
         )
-        // Each block is checked against the one above it, so the pixel every block rounds by at the emulator's
-        // density does not add up down the body. Robolectric's density 1 rounds nothing.
+        // Adjacent tops avoid accumulating rounding from the entire body. At density 2.625, each 20sp
+        // line is 53px instead of 52.5px: the paragraph adds 1.5px; three list items plus two 6dp gaps
+        // add 2px (3 * 0.5 + 2 * 0.25). Their constituent checks above keep gaps within one pixel.
+        // Only those two intervals need two pixels; density-1 comparisons remain exact.
         val body =
             listOf(
                 "heading" to (heading.top to 97f),
-                // #2277: heading scale uses 28sp H1 and 26sp H2 line boxes; gaps stay unchanged.
+                // #2278 + #2285 + #2283: bodyMedium, 16dp ordinary gaps and 20/12dp heading gaps.
                 "paragraph" to (paragraph.top to 137f),
-                "subheading" to (subheading.top to 209f),
-                "first item" to (firstItem.top to 247f),
-                "code" to (code.top to 331f),
-                "quote" to (quote.top to 407f),
+                "subheading" to (subheading.top to 217f),
+                "first item" to (firstItem.top to 255f),
+                "code" to (code.top to 343f),
+                // Shared CodeBlock uses its natural trimmed text box, without the old reader minimum height.
+                "quote" to (quote.top to 417f),
             )
         for (index in 1 until body.size) {
             val (name, block) = body[index]
             val (above, previous) = body[index - 1]
-            assertDpEquals((block.second - previous.second).dp, block.first - previous.first, "$name below $above")
+            val pixels = if (above == "paragraph" || above == "first item") ROUNDED_TEXT_BLOCK_PIXELS else 1
+            val expected =
+                if (above == "code") {
+                    referenceCodeInterval(codeLayout.size.height, rule.density.density)
+                } else {
+                    (block.second - previous.second).dp
+                }
+            assertBlockTopDistance(expected, previous.first, block.first, "$name below $above", pixels = pixels)
         }
         assertEquals(20f, code.left.value, 1f)
         assertEquals(372f, code.width.value, 1f)
-        assertEquals(64f, code.height.value, 1f)
+        assertEquals(58f, code.height.value, 1f)
         assertEquals(35f, quote.left.value, 1f)
     }
 
+    @Test fun adjacentBlockRoundingAllowanceKeepsItsPixelBoundary() {
+        val pixel = pixelDp()
+        // A subpixel change must still fail at density 1, even with an explicit two-pixel allowance.
+        val beyond = if (pixel == 0f) 0.001f else 3 * pixel
+        val beyondDefault = if (pixel == 0f) beyond else 2 * pixel
+        for (direction in listOf(-1, 1)) {
+            assertDpEquals(0.dp, (direction * 2 * pixel).dp, pixels = ROUNDED_TEXT_BLOCK_PIXELS)
+            assertThrows(AssertionError::class.java) {
+                assertDpEquals(0.dp, (direction * beyond).dp, pixels = ROUNDED_TEXT_BLOCK_PIXELS)
+            }
+            assertThrows(AssertionError::class.java) {
+                assertDpEquals(0.dp, (direction * beyondDefault).dp)
+            }
+        }
+    }
+
+    @Test fun nonzeroAdjacentTopsKeepTheirFractionalDensityPixelBoundaries() {
+        val density = 2.625f
+        for (direction in listOf(-1, 1)) {
+            // These nonzero origins round the dp subtraction outward in both directions.
+            val previousPx = if (direction < 0) 352f else 361f
+            val previous = (previousPx / density).dp
+
+            fun current(pixels: Int) = ((previousPx + 210f + direction * pixels) / density).dp
+            assertBlockTopDistance(80.dp, previous, current(2), pixels = ROUNDED_TEXT_BLOCK_PIXELS, density = density)
+            assertBlockTopDistance(80.dp, previous, current(1), density = density)
+            assertThrows(AssertionError::class.java) {
+                assertBlockTopDistance(80.dp, previous, current(3), pixels = ROUNDED_TEXT_BLOCK_PIXELS, density = density)
+            }
+            assertThrows(AssertionError::class.java) {
+                assertBlockTopDistance(80.dp, previous, current(2), density = density)
+            }
+        }
+    }
+
+    @Test fun nonzeroAdjacentTopsRemainExactAtDensityOne() {
+        for (pixels in listOf(1, ROUNDED_TEXT_BLOCK_PIXELS)) {
+            assertBlockTopDistance(80.dp, 137.dp, 217.dp, pixels = pixels, density = 1f)
+            for (direction in listOf(-1, 1)) {
+                assertThrows(AssertionError::class.java) {
+                    assertBlockTopDistance(80.dp, 137.dp, (217f + direction * 0.001f).dp, pixels = pixels, density = 1f)
+                }
+            }
+        }
+    }
+
+    @Test fun nonintegralExpectedDistanceKeepsItsSnappedPixelBoundaries() {
+        val density = 2.625f
+        val previous = (361f / density).dp
+        // The reader's 38dp interval is 99.75px, represented by a 100px snapped distance.
+        for (direction in listOf(-1, 1)) {
+            fun current(pixels: Int) = ((461f + direction * pixels) / density).dp
+            assertBlockTopDistance(38.dp, previous, current(1), density = density)
+            assertBlockTopDistance(38.dp, previous, current(2), pixels = ROUNDED_TEXT_BLOCK_PIXELS, density = density)
+            assertThrows(AssertionError::class.java) {
+                assertBlockTopDistance(38.dp, previous, current(2), density = density)
+            }
+            assertThrows(AssertionError::class.java) {
+                assertBlockTopDistance(38.dp, previous, current(3), pixels = ROUNDED_TEXT_BLOCK_PIXELS, density = density)
+            }
+        }
+    }
+
+    @Test fun codeIntervalRoundsConstituentsAndKeepsItsOnePixelBoundary() {
+        val density = 2.625f
+        val expected = referenceCodeInterval(textHeightPx = 90, density = density)
+        // 90px trimmed text + 32px per padding edge + 42px following gap.
+        assertEquals(196f, expected.value * density, 0.0001f)
+        val previous = (901f / density).dp
+        for (direction in listOf(-1, 1)) {
+            assertBlockTopDistance(expected, previous, ((1097f + direction) / density).dp, density = density)
+            assertThrows(AssertionError::class.java) {
+                assertBlockTopDistance(expected, previous, ((1097f + direction * 2) / density).dp, density = density)
+            }
+        }
+        val exact = referenceCodeInterval(textHeightPx = 34, density = 1f)
+        assertEquals(74.dp, exact)
+        assertBlockTopDistance(exact, 343.dp, 417.dp, density = 1f)
+        for (direction in listOf(-1, 1)) {
+            assertThrows(AssertionError::class.java) {
+                assertBlockTopDistance(exact, 343.dp, (417f + direction * 0.001f).dp, density = 1f)
+            }
+        }
+    }
+
+    private fun referenceCodeInterval(
+        textHeightPx: Int,
+        density: Float,
+    ): Dp {
+        // Compose rounds each padding edge and the following gap separately, after text layout.
+        val paddingPx = (12f * density).roundToInt()
+        val gapPx = (16f * density).roundToInt()
+        return ((textHeightPx + paddingPx + paddingPx + gapPx) / density).dp
+    }
+
+    private fun assertBlockTopDistance(
+        expected: Dp,
+        previous: Dp,
+        current: Dp,
+        message: String? = null,
+        pixels: Int = 1,
+        density: Float = rule.density.density,
+    ) {
+        if (density % 1f == 0f) {
+            assertEquals(message, expected.value, (current - previous).value, 0f)
+        } else {
+            // Bounds originate at integer pixels. Recover each edge before dp subtraction can
+            // push an exact pixel boundary outside its allowance through float cancellation.
+            val actualPixels = (current.value * density).roundToInt() - (previous.value * density).roundToInt()
+            // Compare the Figma distance on the same pixel grid, retaining the pixel-count limit.
+            val expectedPixels = (expected.value * density).roundToInt()
+            assertEquals(message, expectedPixels.toFloat(), actualPixels.toFloat(), pixels.toFloat())
+        }
+    }
+
     private fun body() = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+
+    private fun codePanel() = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.HorizontalScrollAxisRange)).onParent()
 
     @Test fun scrollViewportStartsBehindTheFixedBar() {
         show(markdown = "# Underlap heading\n\n" + (1..80).joinToString("\n\n") { "Paragraph $it" })
@@ -207,8 +372,8 @@ class MarkdownReaderDesignTest {
             markdown = "```\ncopy this code\nand this line\n```\n\n" + (1..80).joinToString("\n\n") { "Paragraph $it" },
             onBack = { backs++ },
         )
-        val panel = rule.onNodeWithTag("reader-code-panel")
-        panel.performTouchInput { click(Offset(10f, 10f)) }
+        val copy = rule.onNodeWithContentDescription("Copy this code block")
+        copy.performTouchInput { click() }
         assertEquals(
             "copy this code\nand this line",
             clipboard.primaryClip
@@ -217,9 +382,21 @@ class MarkdownReaderDesignTest {
                 .toString(),
         )
         clipboard.setPrimaryClip(ClipData.newPlainText("sentinel", "unchanged"))
-        body().performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 80f * rule.density.density) }
-        val bounds = panel.getUnclippedBoundsInRoot()
+        val before = copy.fetchSemanticsNode().boundsInRoot.center
+        body().performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, before.y - 66f * rule.density.density) }
+        val bounds = codePanel().getUnclippedBoundsInRoot()
         assertTrue("panel intersects bar", bounds.top.value < 69f && bounds.bottom.value > 24f)
+        val coveredCopy = copy.fetchSemanticsNode().boundsInRoot.center
+        val bar = rule.onNodeWithTag("markdown-reader-top-bar").fetchSemanticsNode().boundsInRoot
+        assertTrue("copy target lies beneath header", bar.contains(coveredCopy))
+        rule.onRoot().performTouchInput { click(coveredCopy) }
+        assertEquals(
+            "unchanged",
+            clipboard.primaryClip
+                ?.getItemAt(0)
+                ?.text
+                .toString(),
+        )
         // The blank strip above the rule, title and both control edges belong to chrome.
         body().performTouchInput { click(Offset(200f * rule.density.density, 66f * rule.density.density)) }
         rule.onNodeWithText("Builder Pipeline - Plan.md").performTouchInput { click() }
@@ -256,10 +433,10 @@ class MarkdownReaderDesignTest {
         val code = layout("pyry release --both\npyry status").layoutInput.style
         val quote = layout("Tokens first, running time second.").layoutInput.style
 
-        assertEquals(13.sp, code.fontSize)
+        assertEquals(12.sp, code.fontSize)
         assertEquals(20.sp, code.lineHeight)
         assertEquals(FontFamily.Monospace, code.fontFamily)
-        assertEquals(variant, code.color)
+        assertEquals(codeForeground, code.color)
         assertEquals(14.sp, quote.fontSize)
         assertEquals(20.sp, quote.lineHeight)
         assertEquals(0.25.sp, quote.letterSpacing)
@@ -311,16 +488,16 @@ class MarkdownReaderDesignTest {
         show(markdown = "```\n$line\n```")
         rule.onNodeWithText(line).assertIsDisplayed()
         val scroll = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.HorizontalScrollAxisRange))
+        val copy = rule.onNodeWithContentDescription("Copy this code block").assertIsDisplayed()
+        val copyBefore = copy.getUnclippedBoundsInRoot()
         val before = scroll.fetchSemanticsNode().config[SemanticsProperties.HorizontalScrollAxisRange].value()
         scroll.performTouchInput { swipeLeft() }
         val after = scroll.fetchSemanticsNode().config[SemanticsProperties.HorizontalScrollAxisRange].value()
         assertTrue("plain code did not scroll: $before -> $after", after > before)
+        assertEquals(copyBefore, copy.getUnclippedBoundsInRoot())
         assertEquals(
             372f,
-            rule
-                .onNodeWithTag("reader-code-panel")
-                .getUnclippedBoundsInRoot()
-                .width.value,
+            codePanel().getUnclippedBoundsInRoot().width.value,
             1f,
         )
     }
@@ -501,6 +678,8 @@ class MarkdownReaderDesignTest {
     }
 
     private companion object {
+        const val ROUNDED_TEXT_BLOCK_PIXELS = 2
+
         const val REFERENCE_MARKDOWN =
             "# Builder Pipeline Plan\n\nThe main board runs four roles since 2026-09-01. Each ticket moves from " +
                 "[refiner](https://example.com) to builder, then through review and the merge gate.\n\n## Next steps\n\n" +

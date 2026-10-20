@@ -25,16 +25,20 @@ internal class AuthoritativeThreadQueries(
     private val send: (Envelope) -> Boolean,
     private val nowMillis: () -> Long,
     private val retireConnection: () -> Unit = {},
+    private val onCertified: (String, Long, ThreadQueryReply.Success) -> Unit = { _, _, _ -> },
 ) {
     private data class Intent(
         val conversation: String,
         val older: Boolean,
+        val attentionRetries: Int = 0,
+        val generation: Long? = null,
     )
 
     private class Active(
         val decoder: ThreadQueryDecoder,
         val generation: Long,
         val started: Long,
+        val attentionRetries: Int,
     ) {
         var abandonedAt: Long? = null
     }
@@ -90,6 +94,17 @@ internal class AuthoritativeThreadQueries(
         if (closed || !enabled() || conversation !in opened || store.current(host, conversation).generation != generation) return false
         val intent = Intent(conversation, false)
         // Coalesce queued refreshes, but never let the active query consume a later completion.
+        if (intent !in queued) queued.addLast(intent)
+        dispatch()
+        return true
+    }
+
+    /** Attention can discover a completion after an already-running query captured its boundary. */
+    @Synchronized
+    fun refreshAttention(conversation: String): Boolean {
+        if (closed || !enabled() || conversation.isEmpty()) return false
+        opened += conversation
+        val intent = Intent(conversation, false, attentionRetries = 2)
         if (intent !in queued) queued.addLast(intent)
         dispatch()
         return true
@@ -188,23 +203,55 @@ internal class AuthoritativeThreadQueries(
                         }
                         is ThreadQueryReply.Success -> {
                             val result = store.certifyQuery(host, request, reply, held.generation)
+                            if (result == AuthoritativeThreadOutcome.Applied && request is ThreadQueryRequest.CatchUp) {
+                                onCertified(request.conversationId, held.generation, reply)
+                            }
                             retire(
                                 if (result == AuthoritativeThreadOutcome.Applied) "complete" else "coverage",
                                 failed = result != AuthoritativeThreadOutcome.Applied,
                                 remoteComplete = true,
                             )
+                            if (result == AuthoritativeThreadOutcome.Applied &&
+                                store.current(host, request.conversationId).repairNeeded
+                            ) {
+                                retryAttention(held)
+                            }
                         }
                         is ThreadQueryReply.Reset -> {
                             retire("reset", failed = false, remoteComplete = true)
                             route.reset(request.conversationId, reply.checkpoint.epoch)
-                            enqueue(Intent(request.conversationId, false))
+                            enqueue(Intent(request.conversationId, false, held.attentionRetries))
                         }
-                        is ThreadQueryReply.Failure -> retire("failure", remoteComplete = true)
+                        is ThreadQueryReply.Failure -> {
+                            retire("failure", remoteComplete = true)
+                            if (reply.error.retryable) retryAttention(held)
+                        }
                     }
             }
         }
         dispatch()
         return true
+    }
+
+    /** A terminal response releases the remote slot; partial/rejected work never grants a retry certificate. */
+    private fun retryAttention(held: Active) {
+        val request = held.decoder.request as? ThreadQueryRequest.CatchUp ?: return
+        if (closed ||
+            !enabled() ||
+            request.conversationId !in opened ||
+            store.current(host, request.conversationId).generation != held.generation
+        ) {
+            return
+        }
+        if (held.attentionRetries == 0) return
+        val retry = Intent(request.conversationId, false, held.attentionRetries - 1, held.generation)
+        val pending = queued.indexOfFirst { it.conversation == retry.conversation && !it.older }
+        if (pending < 0) {
+            queued.addLast(retry)
+        } else if (queued[pending].attentionRetries < retry.attentionRetries) {
+            queued[pending] = retry
+        }
+        RelayLog.d { "event=attention_completion source=catch_up outcome=retry_queued" }
     }
 
     suspend fun runExpiry() {
@@ -257,6 +304,7 @@ internal class AuthoritativeThreadQueries(
             val intent = queued.removeFirst()
             if (!enabled() || intent.conversation !in opened) continue
             val snapshot = store.current(host, intent.conversation)
+            if (intent.generation != null && intent.generation != snapshot.generation) continue
             val request =
                 if (intent.older) {
                     val coverage = snapshot.coverage?.takeIf { it.olderExists } ?: continue
@@ -266,7 +314,13 @@ internal class AuthoritativeThreadQueries(
                 }
             val id = nextId()
             ownedRequests += id
-            active = Active(ThreadQueryDecoder(host, connection, id, request, nowMillis = nowMillis), snapshot.generation, nowMillis())
+            active =
+                Active(
+                    ThreadQueryDecoder(host, connection, id, request, nowMillis = nowMillis),
+                    snapshot.generation,
+                    nowMillis(),
+                    intent.attentionRetries,
+                )
             RelayLog.i { "event=thread_sync code=requested" }
             if (!send(Envelope(id, request.type, Clock.System.now().toString(), request.payload()))) {
                 retire("send_failed", remoteComplete = true)

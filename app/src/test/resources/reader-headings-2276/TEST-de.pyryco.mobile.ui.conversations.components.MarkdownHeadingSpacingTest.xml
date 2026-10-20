@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-10-19T01:35:53.431Z" hostname="723893f7154c" time="7.305">
+  <properties/>
+  <testcase name="readerSettledNestedBlocksKeepHeadingGapsAndContainerEdges" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest" time="5.006"/>
+  <testcase name="streamingRootUsesHeadingGapsForEveryLevel" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest" time="0.169"/>
+  <testcase name="settledNestedBlocksKeepHeadingGapsAndContainerEdges" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest" time="0.301"/>
+  <testcase name="readerStreamingRootKeepsItsTwelveDpOrdinaryGap" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest" time="0.114"/>
+  <testcase name="settledRootUsesHeadingGapsForEveryLevel" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest" time="0.095"/>
+  <testcase name="streamingEdgeHeadingsHaveNoOuterSpacing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest" time="0.222"/>
+  <testcase name="streamingNestedBlocksKeepHeadingGapsAndContainerEdges" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest" time="0.209"/>
+  <testcase name="readerStreamingNestedBlocksKeepHeadingGapsAndContainerEdges" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest" time="0.181"/>
+  <testcase name="fontScalingChangesTextHeightButKeepsHeadingGapsInDp" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest" time="0.056"/>
+  <testcase name="readerSettledRootKeepsItsTwelveDpOrdinaryGap" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest" time="0.069"/>
+  <testcase name="setextKeepsTheOrdinaryGapInBothRenderers" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest" time="0.054"/>
+  <testcase name="headingTailKeepsSpacingThroughCompletionAndSettlement" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest" time="0.201"/>
+  <testcase name="settledEdgeHeadingsHaveNoOuterSpacing" classname="de.pyryco.mobile.ui.conversations.components.MarkdownHeadingSpacingTest" time="0.153"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
