@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.InnerFrameV2
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.PumpState
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RelayTransport
 import de.pyryco.mobile.data.network.TransportEvent
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -22,14 +23,54 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ClaudeUsageRepositoryTest {
+    private val oldSink = RelayLog.sink
+    private val oldEnabled = RelayLog.enabled
+    private val logs = mutableListOf<String>()
+
+    @Before fun captureLogs() {
+        RelayLog.enabled = true
+        RelayLog.sink = { _, _, message -> logs += message }
+    }
+
+    @After fun restoreLogs() {
+        RelayLog.sink = oldSink
+        RelayLog.enabled = oldEnabled
+    }
+
+    @Test fun diagnosticsContainOnlyStaticOutcomes() =
+        runTest {
+            val host = host()
+            try {
+                val pump = open(host)
+                pump.push(frame("""{"state":"untrusted-secret"}"""))
+                pump.push(frame("""{"state":"observed","observed_at":"untrusted-secret"}"""))
+                runCurrent()
+                pump.throwOnSend = true
+                host.facade.requestClaudeUsage()
+                assertEquals(
+                    listOf(
+                        "event=claude_usage_request outcome=sent",
+                        "event=claude_usage outcome=accepted",
+                        "event=claude_usage outcome=malformed",
+                        "event=claude_usage_request outcome=refused",
+                    ),
+                    logs,
+                )
+            } finally {
+                host.coordinator.close()
+            }
+        }
+
     @Test
     fun arrivalOrderReplacesWholeReadingsAndDuplicatesDoNotAccumulate() =
         runTest {
@@ -199,8 +240,9 @@ class ClaudeUsageRepositoryTest {
 
                 // Direct replacement before the coordinator collector has run: old frames/sends are retired.
                 val secondRepo = host.coordinator.currentRepository.value!!
-                host.connections.value = Transport()
+                // Queue the inbound continuation first so it runs before the coordinator's teardown.
                 second.push(frame("""{"state":"none"}"""))
+                host.connections.value = Transport()
                 secondRepo.requestClaudeUsage()
                 assertEquals(1, second.asks().size)
                 runCurrent()
@@ -241,6 +283,12 @@ class ClaudeUsageRepositoryTest {
                 anotherThread.requestClaudeUsage()
                 assertEquals(2, pumpA.asks().size)
                 assertEquals(1, pumpB.asks().size)
+                val replacementB = open(b)
+                replacementB.push(frame("""{"state":"future"}"""))
+                runCurrent()
+                assertEquals(ClaudeUsageReading.Unavailable, other.last())
+                assertEquals(first.last(), second.last())
+                assertTrue(first.last() is ClaudeUsageReading.Observed)
             } finally {
                 a.coordinator.close()
                 b.coordinator.close()
@@ -375,7 +423,7 @@ class ClaudeUsageRepositoryTest {
 
         override fun send(envelope: Envelope): Boolean {
             sent += envelope
-            if (throwOnSend) error("send refused")
+            if (throwOnSend) error("untrusted-secret")
             return accept
         }
 

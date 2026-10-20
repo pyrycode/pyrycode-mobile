@@ -66,6 +66,7 @@ None.
 ## Revisions
 
 - 2026-10-20: `malformedKnownFieldsRejectWithoutCoercion` demonstrated that `JsonPrimitive.longOrNull` coerces exponent notation into an integer. Parse reset token content with `String.toLongOrNull` instead, retaining the existing strict integer contract and regression assertion.
+- 2026-10-20: Plain JVM coordinator tests previously had no connect-time diagnostics. Capture/restore `RelayLog.sink` in allowance tests (including a static-outcome privacy assertion), quiet/restore it in existing coordinator tests, and select each existing command by type when checking sends now that Open also requests allowance. Production contracts are unchanged.
 
 ## Documentation handoff
 
