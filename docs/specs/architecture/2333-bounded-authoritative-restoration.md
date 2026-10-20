@@ -1,0 +1,100 @@
+# Bounded authoritative opening (#2333)
+
+## Files read
+
+- `data/cache/ConversationCacheDatabase.kt`: `AuthoritativeItem`, `AuthoritativeDao` and the additive migration chain; authoritative selection currently counts raw facts.
+- `data/cache/AuthoritativeRoomStorage.kt`: `page`, `metadata`, `decode`, `importThread` and `upsertAuthoritativeThread`; preserve owned writes and committed certification.
+- `data/cache/MigratingConversationCache.kt`: import admission, retirement, authoritative pages and diagnostic counters.
+- `data/repository/CachingConversationRepository.kt`: `restoreAuthoritative`, `observeAuthoritativeThread`, `persistAuthoritative` and the negotiated route; disk restoration currently reads everything.
+- `data/repository/AuthoritativeThreadStore.kt`: `restore`, revision merge, runtime generations and retirement fences.
+- `data/repository/NegotiatedThread.kt`: observation and reader-demand ownership.
+- `ui/conversations/thread/AuthoritativeThreadPresentation.kt`: shown ordered facts, queued feedback, active tasks, agent placement and parent closure.
+- `ui/conversations/thread/ThreadViewModel.kt`: negotiated observation, older demand and retry.
+- `di/AppModule.kt`: `ThreadDestinationFactory.repository` and `thread`, the production destination binding.
+- `androidTest/ui/conversations/thread/SavedThreadFirstDrawDeviceTest.kt`: readiness, renderer policy and committed-frame measurement.
+- `test/data/repository/AuthoritativeOwnedUpsertTest.kt`: bounded owned writes and durable metadata baselines.
+- `test/di/RelayConnectionFactoryTest.kt`: production destination, colliding owners, held restoration and recovered identity probes.
+- `docs/knowledge/decisions/0009-room-for-indexed-conversation-cache.md`, `docs/specs/architecture/2149-authoritative-thread-cache.md`, `docs/specs/architecture/2161-import-saved-threads-room.md`: non-destructive storage and restore/retirement contracts.
+- `docs/knowledge/features/caching-conversation-repository.md`, `conversation-cache-contract.md`, `caching-conversation-repository-wiring.md`, `thread-screen-testing-saved-first-draw.md`: partial views must not become replacement writes; first-frame evidence must include cold construction.
+- Sibling `/work/Projects/pyrycode/docs/protocol-mobile.md`: thread queries and security model remain the wire authority.
+
+## Design source
+
+**Figma:** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8
+
+Read context and screenshot through Figma MCP. The screen has a title/back/overflow header, alternating message bubbles, labelled session rules and a bottom composer/status area. Preserve existing Compose components, Material typography and colour roles; this work changes saved input selection only.
+
+## Context
+
+One behaviour: a cold production authoritative destination opens its newest saved display window independently of network completion. Indexing, its sole reader and the native proof cannot ship usefully apart. The temporary reader-triggered full restore preserves older access until the paging sibling lands. No new decision record is needed.
+
+Forecast: approximately 1900 written lines including generated schema and deterministic/native proofs, four or fewer new exported declarations, five production consumer updates, four criteria and at most nine rejection branches. This exceeds the 1600-line ceiling by approximately 300 lines. The verification floor retains the index/consumer/proof together; parentage is #2068 → #2252 → #2333, so further splitting is barred. Record `needs-human:sizing` while continuing implementation.
+
+Overlaps: #2009 and #2175 retain already merged source changes; #2266 changes legacy selection and cache retirement. Keep authoritative edits local and additive. Its legacy DAO additions and observer replacement do not supply this design.
+
+## Design
+
+Add non-destructive authoritative selection indexes maintained atomically with each accepted replacement/upsert. Select visible display contributors independently of hidden/state-only facts, then include active renderer inputs and recursively resolve required parent identities by indexed lookup. Preserve held order and validate selected payloads against their indexed fields. Unknown raw fields and explicit clears remain untouched. Select only relevant first-opening evidence; active/parent extras never extend coverage.
+
+Expose an import-aware bounded authoritative-opening capability. Keep raw-fact paging and full compatibility reads available with their existing contracts. The production caching route uses a 200-display-row opening, preserving normal negotiated newest/catch-up ownership and missing-data recovery. File compatibility and unbound repository tests retain full restoration.
+
+Serialize concurrent opening callers without waiting for network replies. A successful disk window initializes the existing committed baseline with precisely its hydrated facts and saved metadata. Owned upserts retain all omitted disk facts. Durable certification is independent of hydrated display state: hydration changes neither checkpoint nor continuous coverage, and subsequent owned mutations retain the existing baseline checks.
+
+Reader movement and explicit retry may launch the compatibility full restore inside the active observation's scope. Opening, reconnect and page arrival never launch it. Merge by newest accepted revision, retaining live facts, stable identities, held ties and required parents. A reset, retirement, cancelled observation or confirmed deletion invalidates pending work; reused ids/epoch strings cannot readmit it. No local position becomes a daemon continuation.
+
+## State and concurrency model
+
+Disk selection uses the cache IO dispatcher and one Room transaction. Decode/merge stays on the injected processing dispatcher. The observation owns compatibility work and cancellation; no global scope or detached job is added. Lock order remains repository `historyWrites`, migrating-cache mutex, storage mutex/Room transaction. Capture runtime generation and exact cache retirement ownership before suspension and recheck before merge/save. Started writes and successful-baseline publication keep their existing `NonCancellable` lifetime. Connection/background teardown remains owned by the coordinator and lifecycle driver.
+
+## State transitions and identity reuse
+
+| Event | Required proof |
+| --- | --- |
+| Cold offline open and cold reopen; fewer/zero/one display row | `AuthoritativeWindowRestoreTest.openingInvariant_coldWindowIsBoundedAndExact` |
+| Held newest/catch-up; page arrival; reconnect without reader movement | `AuthoritativeWindowRestoreTest.demandInvariant_networkCannotBlockOrExpandSavedOpening` |
+| Reader movement and explicit retry; repeated collection | `AuthoritativeWindowRestoreTest.demandInvariant_onlyReaderHydratesOlderSavedFacts` |
+| Hidden facts, outside active facts and recursive parents | `AuthoritativeWindowRestoreTest.closureInvariant_hiddenFactsDoNotConsumeDisplayWindow` |
+| Live overlap, duplicates, reordered revisions, explicit clears and held ties | `AuthoritativeWindowRestoreTest.identityInvariant_overlapKeepsNewestRawFactsAndOrder` plus retained #2255 writer probes |
+| Reset/reconnect during held restore, including reused epoch | `AuthoritativeWindowRestoreTest.generationInvariant_resetFencesHeldRestoration` |
+| Exit while restoration/compatibility hydration is held | `AuthoritativeWindowRestoreTest.lifetimeInvariant_exitCancelsPendingHydration` |
+| Loaded removal; conversation/host deletion during held/final save; colliding second host | `AuthoritativeWindowRestoreTest.retirementInvariant_freshReopenCannotResurrectOrLoseOtherHost` plus retained #2256/#2149 writer probes |
+| Hydration followed by owned saves; fragmented saved certification | `AuthoritativeWindowRestoreTest.certificationInvariant_hydrationNeverChangesCommittedCertificate` |
+| Existing database upgrade | `AuthoritativeWindowRestoreTest.migrationInvariant_existingFactsAndIndexesSurviveUpgrade` |
+
+## Error handling
+
+Retain graceful null reads and reporting mutation results with static codes. Invalid selected payload/index ownership restores nothing without repairing disk. Unavailable import remains retryable and cannot admit an unobserved replacement. Cancellation propagates. Existing offline/history/retry presentation remains; no new UI error mode.
+
+## Testing strategy
+
+Write failing deterministic probes first over a real on-disk Room database, fresh cache/repository/ViewModel instances and production negotiated destination selection. Persist 18000 displayed rows with hidden facts, fragmented evidence, active extras, outside parents and a colliding second host. Assert exact raw identities/revisions/order, selected content and parent closure, numeric SQL result/query and payload-decode counts, and certification before/after hydration and owned saves. Controlled dispatchers and deferred boundaries exercise lifecycle races. Retain affected `AuthoritativeOwnedUpsertTest`, `AuthoritativeOwnedRemovalTest`, `AuthoritativeThreadCacheTest` and storage/migration regressions.
+
+Add one native database-opening method beside the unchanged file first-draw methods. Real disk and committed Android frame timing require `androidTest`; Robolectric cannot establish that latency. Reuse readiness, exact text/viewport containment, frame-commit callbacks and unchanged `firstDrawBoundMs`. Start before cold database/cache/repository/ViewModel construction; retain restore/snapshot/content/frame times and bounded read/decode counts for offline/held-newest first opening and cold reopening. No warm-up. Builder runs the new method only; dispatcher retains complete configured UI and named compatibility/negative-control acceptance, with counted XML, revisions, renderer and durable raw evidence. No new real-Claude capture.
+
+Run affected deterministic classes, lint, debug assembly, instrumented Kotlin compilation and formatting. Push before final post-main assembly and `scripts/pre-verify.py --gradle`. Full suites remain dispatcher-owned and pending until counted evidence exists.
+
+## Open Questions
+
+None concerning product scope. Validate display-contributor indexing against the existing agent/queued presentation while implementing; any necessary change to this contract must be recorded under Revisions with its proof.
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/knowledge/features/caching-conversation-repository.md` and `docs/knowledge/features/conversation-cache-contract.md`, authoritative restore contracts: bounded restoration, required extras, durable certification versus hydrated state and temporary reader-triggered compatibility hydration.
+- Pending documentation stage: `docs/knowledge/features/thread-screen-testing-saved-first-draw.md`, saved-thread first draw: measured database-path acceptance alongside file compatibility, preserving counted full-gate evidence and every timing.
+
+## Security review
+
+**Verdict:** PASS
+
+- [Trust boundaries] SHOULD FIX: selected disk payloads must pass existing full-item validation and match exact owner/epoch/index identity. Cached facts grant no negotiated support. Unknown daemon fields stay inert.
+- [Tokens] No credentials or credential storage change; selection stores existing conversation facts only.
+- [Files and storage] Keep the app-private no-backup database/sidecars and additive migration. Existing plaintext cache threat model remains; rooted-device content access is unchanged. Failed reads never rewrite or delete content.
+- [Android attack surface] No component, intent, provider or WebView change. Existing bounded text rendering remains.
+- [Cryptography] No primitive, key, nonce or Noise change.
+- [Network and I/O] SHOULD FIX: held network queries must not hold local restoration or start older hydration. Existing transport limits, deadlines and capability verdicts stay authoritative.
+- [Errors/logs] SHOULD FIX: numeric counts/timings and static lifecycle/outcome codes only; never ids, epochs, raw fields, text, credentials, cursors or exception contents.
+- [Concurrency] SHOULD FIX: capture exact runtime/cache lifetime before IO; check after every suspension before publish/save. Observation cancellation owns reader hydration; confirmed deletion fences final writes. Retain atomic mutation/baseline publication and lock ordering.
+- [Threat model] Relay delay/reorder cannot widen certification or stop saved opening. Hostile cached facts remain validated and inert. Cross-host collisions stay isolated. Token theft and UI screenshot/accessibility leakage are unchanged by this local-storage behaviour.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-10-20
