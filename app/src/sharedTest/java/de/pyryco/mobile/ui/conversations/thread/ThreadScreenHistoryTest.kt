@@ -40,6 +40,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.historyKeys
+import de.pyryco.mobile.e2e.pullHistoryPage
 import de.pyryco.mobile.ui.assertDpEquals
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
@@ -685,6 +686,36 @@ class ThreadScreenHistoryTest {
         // Hold later requests unresolved. The arrived page can still be read without waiting on them.
         repeat(7) { pullTowardOlder(fraction = 0.5f) }
         composeRule.onNodeWithText("Older 5.").assertIsDisplayed()
+    }
+
+    @Test
+    fun proofPullRequestsOnceEvenWhenThePageCompletesImmediately() {
+        var asks = 0
+        setPrefetchList(27, onDemand = { asks++ })
+        composeRule.onNodeWithTag("prefetch-list").performTouchInput { pullHistoryPage() }
+        composeRule.runOnIdle { assertEquals("one controlled movement without a continuing fling", 1, asks) }
+    }
+
+    @Test
+    fun proofPullStopsBeforeTheDelayedPageArrives() {
+        var count by mutableStateOf(30)
+        var loading = false
+        var asks = 0
+        val list =
+            setPrefetchList(27, count = { count }, onDemand = {
+                if (!loading) {
+                    asks++
+                    loading = true
+                }
+            })
+        composeRule.onNodeWithTag("prefetch-list").performTouchInput { pullHistoryPage() }
+        composeRule.runOnIdle {
+            assertEquals(1, asks)
+            assertTrue("proof input has finished scrolling", !list.isScrollInProgress)
+            count = 32
+            loading = false
+        }
+        composeRule.runOnIdle { assertEquals("page arrival without reader movement is inert", 1, asks) }
     }
 
     /** Small geometry-controlled fixture exercising the production modifier and distance predicate. */
