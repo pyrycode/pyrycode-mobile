@@ -61,7 +61,7 @@ class ThreadReadClaimsTest {
             entry(
                 5u,
                 "context_usage",
-                """{"conversation_id":"c","model":"","total_tokens":1,"max_tokens":10,"percentage":10,"categories":[],"dropped_categories":0,"memory_files":[],"dropped_memory_files":0}""",
+                """{"conversation_id":"c","model":"","total_tokens":1,"max_tokens":10,"percentage":10,"categories":[],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0,"memory_files":[],"dropped_memory_files":0}""",
             )
         val entries = metadata + reply + tail
         val reduced = reduceOrderedHistoryPage(entries, true)

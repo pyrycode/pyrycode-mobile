@@ -44,6 +44,26 @@ class ContextMemoryFilesTest {
     private var screen by mutableStateOf(ThreadUiState("c1", "Thread"))
 
     @Test
+    fun memoryAndMcpExpandIndependentlyInSheetOrder() {
+        screen = screen.copy(runConfig = config(reading("[]", 3)), contextSheetOpen = true)
+        mountThread()
+        val memory = rule.onNodeWithTag("context_memory_toggle")
+        val mcp = rule.onNodeWithTag("context_mcp_toggle")
+        assertTrue(mcp.getUnclippedBoundsInRoot().top < memory.getUnclippedBoundsInRoot().top)
+        rule.onNodeWithText("3 files").assertIsDisplayed()
+        rule.onNodeWithText("5 tools").assertIsDisplayed()
+        mcp.performSemanticsAction(SemanticsActions.Expand) { it() }
+        memory.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Collapsed"))
+        memory.performScrollTo().performSemanticsAction(SemanticsActions.Expand) { it() }
+        mcp.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Expanded"))
+        rule.onNodeWithText("+5 more").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("+3 more").performScrollTo().assertIsDisplayed()
+        mcp.performScrollTo().performSemanticsAction(SemanticsActions.Collapse) { it() }
+        memory.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Expanded"))
+        rule.onNodeWithText("+3 more").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
     fun memoryFilesExpandFromFooterWithOrderedInertRows() {
         val reading =
             reading(

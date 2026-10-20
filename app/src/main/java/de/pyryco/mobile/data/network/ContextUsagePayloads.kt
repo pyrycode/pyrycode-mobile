@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.network
 
 import de.pyryco.mobile.data.repository.ContextCategory
+import de.pyryco.mobile.data.repository.ContextMcpTool
 import de.pyryco.mobile.data.repository.ContextMemoryFile
 import de.pyryco.mobile.data.repository.ContextUsage
 import kotlinx.datetime.Instant
@@ -19,7 +20,7 @@ import kotlinx.serialization.json.longOrNull
  * Wire SSOT: pyrycode `docs/protocol-mobile.md` § `context_usage`. Summary fields are strict-required;
  * only [asOf] is optional, present on remembered answers. Raw primitives prevent string/number coercion.
  *
- * **SECURITY.** Model/category/path strings become bounded inert Text only. Memory types remain descriptive.
+ * **SECURITY.** Model/category/tool/server/path strings become bounded inert Text only. Memory types remain descriptive.
  * `conversation_id` alone is the daemon-authored routing key. Never emit caught decode exceptions.
  */
 @Serializable
@@ -32,6 +33,8 @@ internal data class ContextUsagePayloadDto(
     val model: JsonElement,
     val categories: List<ContextCategoryPayloadDto>,
     @SerialName("dropped_categories") val droppedCategories: JsonElement,
+    @SerialName("mcp_tools") val mcpTools: List<ContextMcpToolPayloadDto>,
+    @SerialName("dropped_mcp_tools") val droppedMcpTools: JsonElement,
     @SerialName("memory_files") val memoryFiles: List<ContextMemoryFilePayloadDto>,
     @SerialName("dropped_memory_files") val droppedMemoryFiles: JsonElement,
 ) {
@@ -53,6 +56,15 @@ internal data class ContextMemoryFilePayloadDto(
     val tokens: JsonElement,
 ) {
     override fun toString(): String = "ContextMemoryFilePayloadDto(<redacted>)"
+}
+
+@Serializable
+internal data class ContextMcpToolPayloadDto(
+    val name: JsonElement,
+    @SerialName("server_name") val serverName: JsonElement,
+    val tokens: JsonElement,
+) {
+    override fun toString(): String = "ContextMcpToolPayloadDto(<redacted>)"
 }
 
 /**
@@ -79,6 +91,14 @@ internal fun ContextUsagePayloadDto.toReading(): ContextUsage? {
             val tokens = (file.tokens as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull ?: return null
             ContextMemoryFile(path.take(2048), type.take(512), tokens)
         }
+    val droppedTools = (droppedMcpTools as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull ?: return null
+    val tools =
+        mcpTools.map { tool ->
+            val name = (tool.name as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+            val server = (tool.serverName as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+            val tokens = (tool.tokens as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull ?: return null
+            ContextMcpTool(name.take(512), server.take(512), tokens)
+        }
     return ContextUsage(
         totalTokens,
         maxTokens,
@@ -87,6 +107,8 @@ internal fun ContextUsagePayloadDto.toReading(): ContextUsage? {
         modelText.take(512),
         rows,
         dropped,
+        tools,
+        droppedTools,
         memoryFiles = files,
         droppedMemoryFiles = droppedFiles,
     )

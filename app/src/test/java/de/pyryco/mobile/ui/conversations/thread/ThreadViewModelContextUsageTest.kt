@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.repository.ContextCategory
+import de.pyryco.mobile.data.repository.ContextMcpTool
 import de.pyryco.mobile.data.repository.ContextMemoryFile
 import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
@@ -40,6 +41,29 @@ import org.junit.Test
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ThreadViewModelContextUsageTest {
+    @Test
+    fun mcpInventorySurvivesViewModelUpdates() =
+        runTest {
+            val repo = ScriptedRepo()
+            val vm = collectedVm(repo)
+            vm.onOverflowEvent(ThreadEvent.ContextOpen)
+            val first = usage().copy(mcpTools = listOf(ContextMcpTool("one", "s", 19)), droppedMcpTools = 8, droppedCategories = 2)
+            repo.report(CONV, first)
+            assertEquals(first, vm.state.value.runConfig.contextUsage)
+            val replacement = first.copy(mcpTools = listOf(ContextMcpTool("two", "__proto__", 12)), droppedMcpTools = 3)
+            repo.report(CONV, replacement)
+            assertEquals(replacement, vm.state.value.runConfig.contextUsage)
+            repo.report(OTHER_CONV, first)
+            assertEquals(replacement, vm.state.value.runConfig.contextUsage)
+            repo.report(CONV, replacement.copy(asOf = kotlinx.datetime.Instant.parse("2026-10-19T00:00:00Z")))
+            assertEquals(
+                replacement.mcpTools,
+                vm.state.value.runConfig.contextUsage
+                    ?.mcpTools,
+            )
+            assertTrue(vm.state.value.contextSheetOpen)
+        }
+
     @Test
     fun memoryInventoryReplacesWithoutChangingScalars() =
         runTest {
@@ -153,11 +177,13 @@ class ThreadViewModelContextUsageTest {
             repo.report(CONV, usage(total = 10))
             subscription.cancel()
             runCurrent()
-            repo.report(CONV, usage(total = 20))
+            val latest = usage(total = 20).copy(mcpTools = listOf(ContextMcpTool("latest", "s", 20)), droppedMcpTools = 4)
+            repo.report(CONV, latest)
             backgroundScope.launch { vm.state.collect {} }
             runCurrent()
             assertTrue(vm.state.value.contextSheetOpen)
             assertEquals(20L, vm.state.value.runConfig.contextUsedTokens)
+            assertEquals(latest, vm.state.value.runConfig.contextUsage)
         }
 
     @Test

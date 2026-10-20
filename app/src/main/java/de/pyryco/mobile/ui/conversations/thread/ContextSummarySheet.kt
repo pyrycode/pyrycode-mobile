@@ -157,12 +157,126 @@ internal fun ContextSummarySheet(
                         }
                     }
                 }
+                if (claude && reading != null && reading.asOf == null && (reading.mcpTools.isNotEmpty() || reading.droppedMcpTools > 0)) {
+                    ContextMcpTools(reading)
+                }
                 if (claude &&
                     reading != null &&
                     reading.asOf == null &&
                     (reading.memoryFiles.isNotEmpty() || reading.droppedMemoryFiles > 0)
                 ) {
                     ContextMemoryFiles(reading)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContextMcpTools(reading: ContextUsage) {
+    var expanded by remember { mutableStateOf(false) }
+    val updateExpanded =
+        remember {
+            { value: Boolean ->
+                expanded = value
+                RelayLog.d { "event=context_mcp_expansion expanded=$value" }
+            }
+        }
+    val expandLabel = stringResource(R.string.thread_context_mcp_expand)
+    val collapseLabel = stringResource(R.string.thread_context_mcp_collapse)
+    val description = stringResource(if (expanded) R.string.thread_context_expanded else R.string.thread_context_collapsed)
+    // Dropped figures never size a collection. ULong preserves even Long.MAX_VALUE plus received rows.
+    val count = reading.mcpTools.size.toULong() + reading.droppedMcpTools.coerceAtLeast(0).toULong()
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .testTag("context_mcp_toggle")
+                .clickable(role = Role.Button, onClickLabel = if (expanded) collapseLabel else expandLabel) { updateExpanded(!expanded) }
+                .semantics {
+                    stateDescription = description
+                    if (expanded) {
+                        collapse(collapseLabel) {
+                            updateExpanded(false)
+                            true
+                        }
+                    } else {
+                        expand(expandLabel) {
+                            updateExpanded(true)
+                            true
+                        }
+                    }
+                },
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.thread_context_mcp_tools),
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                pluralStringResource(R.plurals.thread_context_tool_count, if (count == 1uL) 1 else 2, count.toString()),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+            Icon(
+                painterResource(R.drawable.ic_context_chevron_up),
+                contentDescription = null,
+                modifier = Modifier.size(20.dp).rotate(if (expanded) 0f else 180f),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+        if (expanded) {
+            Column(
+                Modifier.fillMaxWidth().padding(start = 12.dp, bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                // Names group descriptive rows only; Compose identity and tags use positions exclusively.
+                reading.mcpTools.groupBy { it.serverName }.entries.forEachIndexed { serverIndex, (server, tools) ->
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            server,
+                            Modifier.fillMaxWidth().testTag("context_mcp_server_$serverIndex"),
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        tools.forEachIndexed { toolIndex, tool ->
+                            Row(
+                                Modifier.fillMaxWidth().testTag("context_mcp_tool_${serverIndex}_$toolIndex"),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    tool.name,
+                                    Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    formatContextTokens(tool.tokens),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    }
+                }
+                if (reading.droppedMcpTools > 0) {
+                    Text(
+                        stringResource(R.string.thread_context_more, reading.droppedMcpTools),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }

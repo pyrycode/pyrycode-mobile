@@ -11,11 +11,13 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onChildAt
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -29,10 +31,16 @@ import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.network.ContextUsagePayloadDto
+import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.toReading
 import de.pyryco.mobile.data.repository.ContextCategory
 import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -45,6 +53,146 @@ import org.robolectric.annotation.GraphicsMode
 class ContextSummarySheetTest {
     @get:Rule val rule = createComposeRule()
     private var screen by mutableStateOf(ThreadUiState("c1", "Thread"))
+
+    @Test
+    fun mcpFooterExpansionGroupsAndReplaces() {
+        val reading =
+            mcpReading(
+                """[{"name":"zeta","server_name":"github","tokens":1900},
+                {"name":"other","server_name":"__proto__","tokens":1400},
+                {"name":"alpha","server_name":"github","tokens":1200},
+                {"name":"zeta","server_name":"github","tokens":1100}]""",
+                8,
+            )
+        screen = screen.copy(runConfig = config(reading))
+        mountThread()
+        rule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG).performTouchInput { click() }
+        val header = rule.onNodeWithTag("context_mcp_toggle")
+        header.assertHeightIsEqualTo(48.dp).assert(
+            SemanticsMatcher("expand action") { it.config[SemanticsActions.OnClick].label == "Expand MCP tools" },
+        )
+        rule.onNodeWithText("12 tools").assertIsDisplayed()
+        rule.onNodeWithText("__proto__").assertDoesNotExist()
+        header.performTouchInput { click() }
+        header.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Expanded"))
+        rule.onNodeWithTag("context_mcp_server_0").assertTextEquals("github")
+        rule.onNodeWithTag("context_mcp_server_1").assertTextEquals("__proto__")
+        for ((tag, name, tokens) in listOf(
+            Triple("context_mcp_tool_0_0", "zeta", "1.9k"),
+            Triple("context_mcp_tool_0_1", "alpha", "1.2k"),
+            Triple("context_mcp_tool_0_2", "zeta", "1.1k"),
+            Triple("context_mcp_tool_1_0", "other", "1.4k"),
+        )) {
+            val row = rule.onNodeWithTag(tag)
+            row.onChildAt(0).assertTextEquals(name)
+            row.onChildAt(1).assertTextEquals(tokens)
+        }
+        val ordered =
+            listOf(
+                "context_mcp_server_0",
+                "context_mcp_tool_0_0",
+                "context_mcp_tool_0_1",
+                "context_mcp_tool_0_2",
+                "context_mcp_server_1",
+                "context_mcp_tool_1_0",
+            )
+        val tops = ordered.map { rule.onNodeWithTag(it).getUnclippedBoundsInRoot().top }
+        assertTrue(tops.zipWithNext().all { (a, b) -> a < b })
+        rule.onNodeWithText("1.9k").assertIsDisplayed()
+        rule.onNodeWithText("1.2k").assertIsDisplayed()
+        rule.onNodeWithText("+8 more").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("Messages").performScrollTo()
+        rule.onNodeWithText("Messages").assertIsDisplayed()
+        header.performClick()
+        rule.onNodeWithText("__proto__").assertDoesNotExist()
+        rule.onNodeWithText("Messages").assertIsDisplayed()
+        header.performClick()
+        rule.runOnIdle {
+            screen =
+                screen.copy(runConfig = config(mcpReading("""[{"name":"replacement","server_name":"new","tokens":1000}]""")))
+        }
+        rule.onNodeWithText("replacement").assertIsDisplayed()
+        rule.onNodeWithText("__proto__").assertDoesNotExist()
+        rule.onNodeWithText("+8 more").assertDoesNotExist()
+        rule.onNodeWithText("1 tool").assertIsDisplayed()
+        rule.onNodeWithText("Done").performClick()
+        rule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG).performTouchInput { click() }
+        rule.onNodeWithText("replacement").assertDoesNotExist()
+        rule.onNodeWithTag("context_mcp_toggle").assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Collapsed"))
+    }
+
+    @Test
+    fun mcpUnavailableStatesAndDroppedOnly() {
+        val dropped = mcpReading("[]", Long.MAX_VALUE)
+        screen = screen.copy(contextSheetOpen = true, runConfig = config(dropped))
+        mountSheet()
+        rule.onNodeWithText("9223372036854775807 tools").assertIsDisplayed()
+        rule.onNodeWithTag("context_mcp_toggle").performClick()
+        rule.onNodeWithText("+9223372036854775807 more").assertIsDisplayed()
+        for (next in listOf(
+            screen.copy(runConfig = config(mcpReading("[]"))),
+            screen.copy(runConfig = config(dropped.copy(asOf = Instant.parse("2026-10-19T00:00:00Z")))),
+            screen.copy(runConfig = ThreadRunConfig()),
+            screen.copy(agent = ConversationAgent.Codex),
+        )) {
+            rule.runOnIdle { screen = next }
+            rule.onNodeWithTag("context_mcp_toggle").assertDoesNotExist()
+            rule.onNodeWithText("+9223372036854775807 more").assertDoesNotExist()
+        }
+        val overflow = mcpReading("""[{"name":"x","server_name":"s","tokens":1}]""", Long.MAX_VALUE)
+        rule.runOnIdle { screen = screen.copy(agent = ConversationAgent.Claude, runConfig = config(overflow)) }
+        rule.onNodeWithText("9223372036854775808 tools").assertIsDisplayed()
+        rule.onNodeWithText("x").assertDoesNotExist()
+    }
+
+    @Test
+    fun mcpLongNamesEllipsizeAndScroll() {
+        val server = "<a href='file:///secret'>server</a>".repeat(8)
+        val tool = "A very long tool name ".repeat(15)
+        val rows =
+            """[{"name":${kotlinx.serialization.json.JsonPrimitive(
+                tool,
+            )},"server_name":${kotlinx.serialization.json.JsonPrimitive(server)},"tokens":12400},""" +
+                (1..35).joinToString(",") { """{"name":"Tool $it","server_name":"s$it","tokens":$it}""" } + "]"
+        screen = screen.copy(contextSheetOpen = true, runConfig = config(mcpReading(rows, 9)))
+        mountSheet()
+        rule.onNodeWithTag("context_mcp_toggle").performClick()
+        for (text in listOf(server, tool)) {
+            val layouts = mutableListOf<TextLayoutResult>()
+            rule.onNodeWithText(text).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            assertEquals(1, layouts.single().lineCount)
+            assertTrue(layouts.single().isLineEllipsized(0))
+        }
+        val nameBounds = rule.onNodeWithText(tool).getUnclippedBoundsInRoot()
+        val figureBounds = rule.onNodeWithText("12.4k").getUnclippedBoundsInRoot()
+        assertTrue(nameBounds.right <= figureBounds.left)
+        rule.onNodeWithText("12.4k").assertIsDisplayed()
+        rule.onNodeWithText("Tool 35").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("+9 more").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("Done").assertIsDisplayed()
+    }
+
+    private fun mcpReading(
+        tools: String,
+        dropped: Long = 0,
+    ): ContextUsage =
+        checkNotNull(
+            MobileJson
+                .decodeFromString<ContextUsagePayloadDto>(
+                    withEmptyMemoryInventory(
+                        """{"conversation_id":"c1","model":"claude","total_tokens":10,"max_tokens":100,"percentage":10,"categories":[{"name":"Messages","tokens":10}],"dropped_categories":0,"mcp_tools":$tools,"dropped_mcp_tools":$dropped}""",
+                    ),
+                ).toReading(),
+        )
+
+    private fun withEmptyMemoryInventory(payload: String): String =
+        JsonObject(
+            (MobileJson.parseToJsonElement(payload) as JsonObject) +
+                mapOf(
+                    "memory_files" to JsonArray(emptyList()),
+                    "dropped_memory_files" to JsonPrimitive(0),
+                ),
+        ).toString()
 
     @Test
     fun footerHasClientOwnedAccessibleOpenActionEvenWhenUnavailable() {

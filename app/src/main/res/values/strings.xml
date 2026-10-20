@@ -15,6 +15,15 @@
     <string name="thread_context_percent">%1$d%%</string>
     <string name="thread_context_unavailable">Not reported yet</string>
     <string name="thread_context_categories">Categories</string>
+    <string name="thread_context_mcp_tools">MCP tools</string>
+    <string name="thread_context_mcp_expand">Expand MCP tools</string>
+    <string name="thread_context_mcp_collapse">Collapse MCP tools</string>
+    <string name="thread_context_expanded">Expanded</string>
+    <string name="thread_context_collapsed">Collapsed</string>
+    <plurals name="thread_context_tool_count">
+        <item quantity="one">%1$s tool</item>
+        <item quantity="other">%1$s tools</item>
+    </plurals>
     <string name="thread_context_more">+%1$d more</string>
     <string name="thread_context_done">Done</string>
     <string name="thread_send_lost">Lost</string>
