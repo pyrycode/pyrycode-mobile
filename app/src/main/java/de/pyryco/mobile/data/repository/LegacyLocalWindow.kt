@@ -15,10 +15,16 @@ class SavedLegacyHistory internal constructor(
     internal val unknownEdge: ULong?,
     internal val hasOlder: Boolean,
 ) {
-    internal fun retainedBy(rows: List<ThreadItem>): SavedLegacyHistory =
-        SavedLegacyHistory(coverage.retainedBy(rows), unknownEdge, hasOlder)
+    internal fun retainedBy(rows: List<ThreadItem>): SavedLegacyHistory {
+        val retained = coverage.retainedBy(rows)
+        return if (retained === coverage) this else SavedLegacyHistory(retained, unknownEdge, hasOlder)
+    }
 
-    internal fun withNetwork(network: HistoryCoverage): HistoryCoverage = joinEvidence(coverage, network)
+    internal fun withNetwork(
+        network: HistoryCoverage,
+        checkActive: () -> Unit = {
+        },
+    ): HistoryCoverage = joinEvidence(coverage, network, checkActive)
 
     internal fun cursorFor(
         anchor: ULong,
@@ -51,9 +57,12 @@ class SavedLegacyHistory internal constructor(
 private fun joinEvidence(
     saved: HistoryCoverage,
     newer: HistoryCoverage,
+    checkActive: () -> Unit = {},
 ): HistoryCoverage {
+    checkActive()
     val spans = ArrayList<UnsignedHistorySpan>()
     for (span in (saved.unsignedSpans + newer.unsignedSpans).sortedBy { it.first }) {
+        checkActive()
         val last = spans.lastOrNull()
         if (last != null && (span.first <= last.last || span.first - 1u == last.last)) {
             spans[spans.lastIndex] = UnsignedHistorySpan(last.first, maxOf(last.last, span.last))
@@ -69,32 +78,36 @@ private fun joinEvidence(
     }
     val gaps = LinkedHashMap<ULong, UnsignedHistoryGap>()
     for (gap in newer.unsignedGaps + saved.unsignedGaps) {
+        checkActive()
         val first = containing(gap.anchor)
         val last = containing(gap.edge)
         if (first < 0 || last <= first) continue
         // A receipt inside a known hole splits it; only joining its actual endpoints closes it.
         for (index in first until last) {
+            checkActive()
             val edge = spans[index + 1].first
             gaps.putIfAbsent(edge, UnsignedHistoryGap(if (index == first) gap.anchor else spans[index].last, edge))
         }
     }
-    return newer.copy(
-        unsignedSpans = spans,
-        unsignedGaps = gaps.values.sortedBy { it.edge },
-        unsignedRowOrder = saved.unsignedRowOrder + newer.unsignedRowOrder,
-        unsignedRowEntries =
-            (saved.unsignedRowEntries.keys + newer.unsignedRowEntries.keys).associateWith {
-                saved.unsignedRowEntries[it].orEmpty() + newer.unsignedRowEntries[it].orEmpty()
-            },
-        proofs = saved.proofs + newer.proofs,
-        legacyKeys = saved.legacyKeys + newer.legacyKeys,
-        legacyOffsets = saved.legacyOffsets + newer.legacyOffsets,
-        deltaLengths = saved.deltaLengths + newer.deltaLengths,
-        deltaHashes = saved.deltaHashes + newer.deltaHashes,
-        deltaText = saved.deltaText + newer.deltaText,
-        unsignedCursors = saved.unsignedCursors + newer.unsignedCursors,
-        unsignedWalks = saved.unsignedWalks + newer.unsignedWalks,
-    )
+    return newer
+        .copy(
+            unsignedSpans = spans,
+            unsignedGaps = gaps.values.sortedBy { it.edge },
+            unsignedRowOrder = saved.unsignedRowOrder + newer.unsignedRowOrder,
+            unsignedRowEntries =
+                (saved.unsignedRowEntries.keys + newer.unsignedRowEntries.keys).associateWith {
+                    checkActive()
+                    saved.unsignedRowEntries[it].orEmpty() + newer.unsignedRowEntries[it].orEmpty()
+                },
+            proofs = saved.proofs + newer.proofs,
+            legacyKeys = saved.legacyKeys + newer.legacyKeys,
+            legacyOffsets = saved.legacyOffsets + newer.legacyOffsets,
+            deltaLengths = saved.deltaLengths + newer.deltaLengths,
+            deltaHashes = saved.deltaHashes + newer.deltaHashes,
+            deltaText = saved.deltaText + newer.deltaText,
+            unsignedCursors = saved.unsignedCursors + newer.unsignedCursors,
+            unsignedWalks = saved.unsignedWalks + newer.unsignedWalks,
+        ).also { checkActive() }
 }
 
 /** Caller-owned disk work; live collection never acquires this window's read mutex. */

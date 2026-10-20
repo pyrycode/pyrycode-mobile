@@ -1037,6 +1037,9 @@ class ThreadViewModel(
     private val threadContent: Flow<ThreadContent> =
         flow {
             var hasPublishedRows = false
+            var joinedSaved: HistoryCoverage? = null
+            var joinedNetwork: HistoryCoverage? = null
+            var joinedEvidence: HistoryCoverage? = null
             emitAll(
                 combine(
                     threadItems,
@@ -1050,42 +1053,57 @@ class ThreadViewModel(
                             historyCoverage.collect { emit(it) }
                         },
                         savedLegacyHistory,
-                    ) { network, saved ->
-                        Triple(
-                            network?.let { saved?.withNetwork(it) ?: it },
-                            if (network?.unsignedUnknown == true) saved?.unknownEdge ?: network.unsignedUnknownEdge else null,
-                            saved?.hasOlder == true,
-                        )
-                    },
+                    ) { network, saved -> network to saved },
                 ) { reading, queued, demand, connected, projection ->
-                    val (coverage, unknownEdge, hasOlderSavedHistory) = projection
+                    val (network, saved) = projection
                     Triple(
                         reading.items,
-                        (coverage ?: HistoryCoverage()) to unknownEdge,
+                        projection,
                         ThreadContent(
                             reading.items,
                             queued,
                             demand.tail(connected),
                             emptyList(),
-                            coverage?.let { reading.evidence.copy(gaps = it.unsignedGaps) },
-                            hasOlderSavedHistory,
+                            network?.let { reading.evidence },
+                            saved?.hasOlder == true,
                         ),
                     )
                 }.transformLatest { (items, projection, content) ->
-                    val (coverage, unknownEdge) = projection
-                    val needsProjection = items.isNotEmpty() && (coverage.unsignedGaps.isNotEmpty() || coverage.unsignedUnknown)
-                    if (needsProjection && !hasPublishedRows) {
+                    val (network, saved) = projection
+                    val needsPreparation =
+                        network != null &&
+                            (saved != null || items.isNotEmpty() && (network.unsignedGaps.isNotEmpty() || network.unsignedUnknown))
+                    if (needsPreparation && !hasPublishedRows && items.isNotEmpty()) {
                         // Optional markers must not hold the initial readable rows; qualification awaits preparation.
                         hasPublishedRows = true
                         emit(content.copy(evidence = null))
                         RelayLog.d { "event=history_initial_content_published rows=${items.size} projection=pending" }
                     }
                     val prepared =
-                        if (!needsProjection) {
-                            content
+                        if (!needsPreparation) {
+                            content.copy(evidence = content.evidence?.copy(gaps = network?.unsignedGaps.orEmpty()))
                         } else {
                             withContext(projectionDispatcher) {
                                 val context = currentCoroutineContext()
+                                val coverage =
+                                    when {
+                                        saved == null -> network
+                                        joinedSaved === saved.coverage && joinedNetwork === network -> requireNotNull(joinedEvidence)
+                                        else ->
+                                            saved.withNetwork(network) { context.ensureActive() }.also {
+                                                joinedSaved = saved.coverage
+                                                joinedNetwork = network
+                                                joinedEvidence = it
+                                            }
+                                    }
+                                val qualified = content.copy(evidence = content.evidence?.copy(gaps = coverage.unsignedGaps))
+                                if (coverage.unsignedGaps.isEmpty() && !coverage.unsignedUnknown) return@withContext qualified
+                                val unknownEdge =
+                                    if (network.unsignedUnknown) {
+                                        saved?.unknownEdge ?: network.unsignedUnknownEdge
+                                    } else {
+                                        null
+                                    }
                                 // Use the render fold's one-to-one queue correlation and lifecycle filtering.
                                 val delivered = IdentityHashMap<ThreadItem, Unit>()
                                 foldQueuedRows(items, content.queued).forEach { row ->
@@ -1100,7 +1118,7 @@ class ThreadViewModel(
                                         unknownEdge = unknownEdge,
                                     )
                                 RelayLog.d { "event=history_display_projected rows=${display.rows.size} markers=${display.markers.size}" }
-                                content.copy(
+                                qualified.copy(
                                     items = display.rows,
                                     historyMarkers =
                                         display.markers.map {
@@ -2473,7 +2491,7 @@ class ThreadViewModel(
                 throw error
             } catch (error: RelayErrorException) {
                 if (error.code == HISTORY_INVALID_CURSOR && cursor.isNotEmpty()) {
-                    historyCoverage.update { it.refusedUnsigned(anchor) }
+                    historyCoverage.update { it.refusedUnsigned(anchor, cursor) }
                     val walk = historyDemand.value
                     repository.writeHistoryPosition(
                         conversationId,

@@ -171,7 +171,10 @@ data class HistoryCoverage(
             ?: ""
     }
 
-    fun refusedUnsigned(anchor: ULong): HistoryCoverage = refusedCursor(anchor, cursorForUnsigned(anchor))
+    fun refusedUnsigned(
+        anchor: ULong,
+        requestedCursor: String = cursorForUnsigned(anchor),
+    ): HistoryCoverage = refusedCursor(anchor, requestedCursor)
 
     private fun refusedCursor(
         anchor: ULong,
