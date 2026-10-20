@@ -229,7 +229,10 @@ internal fun ThreadEvidence.settledAgentAfterRecovery(
         ) {
             return false
         }
-        if (previous.message.role == Role.Assistant) return previous.fullText == current.fullText
+        if (previous.message.role == Role.Assistant) {
+            if (previous.fullText == current.fullText) return true
+            return old.active && !now.active && now.rev > old.rev && current.fullText.startsWith(previous.fullText)
+        }
         val oldInput = old.content as? kotlinx.serialization.json.JsonObject ?: return false
         val input = now.content as? kotlinx.serialization.json.JsonObject ?: return false
         return listOf("tool_use_id", "name", "input").all { oldInput[it] == input[it] }
@@ -259,4 +262,11 @@ internal fun ThreadEvidence.settledAgentAfterRecovery(
         return null
     }
     return family
+}
+
+/** A controlled fragment must occur exactly once in this Agent's attributed assistant text. */
+internal fun AgentFamilyEvidence.ownsSingleProseFragment(text: String): Boolean {
+    if (text.isEmpty()) return false
+    val fragment = Regex(Regex.escape(text))
+    return children.filter { it.message.role == Role.Assistant }.sumOf { fragment.findAll(it.fullText).count() } == 1
 }

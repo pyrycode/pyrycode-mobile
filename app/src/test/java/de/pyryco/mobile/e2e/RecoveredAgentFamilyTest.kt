@@ -100,4 +100,55 @@ class RecoveredAgentFamilyTest {
             assertNull("foreign or damaged candidate $index", reading.settledAgentAfterRecovery(launched, captured, "after1783"))
         }
     }
+
+    private fun streamedSnapshot(
+        finished: Boolean,
+        text: String = if (finished) "child1827-beforechild1827-after" else "child1827-before",
+    ): AuthoritativeThreadSnapshot {
+        val base = snapshot(finished)
+        val fields = base.items.first { it.id == 3L }.content as JsonObject
+        val content = JsonObject(fields + ("text" to JsonPrimitive(text)))
+        val changed =
+            base
+                .change(3, "content", content)
+                .change(3, "active", JsonPrimitive(!finished))
+                .change(3, "status", JsonPrimitive(if (finished) "interrupted" else "running"))
+                .change(3, "rev", JsonPrimitive(if (finished) 20 else 3))
+        return changed.copy(
+            generation = if (finished) base.generation + 1 else base.generation,
+            items = changed.items.filter { it.id != 9L },
+        )
+    }
+
+    @Test fun recoveryRetainsThePrefixOfItsActuallyStreamingOwnedParagraph() {
+        val launched = evidence(streamedSnapshot(false))
+        val captured = requireNotNull(launched.agentFamily(launched.owner))
+        val current = evidence(streamedSnapshot(true))
+        assertNotNull(
+            "a newer terminal revision may append to the captured active paragraph",
+            current.settledAgentAfterRecovery(launched, captured, "after1783"),
+        )
+        for (bad in listOf(
+            evidence(streamedSnapshot(true, "different child1827-after")),
+            evidence(streamedSnapshot(true).change(3, "rev", JsonPrimitive(3))),
+            evidence(streamedSnapshot(true).change(3, "active", JsonPrimitive(true))),
+        )) {
+            assertNull(bad.settledAgentAfterRecovery(launched, captured, "after1783"))
+        }
+        val completedBefore = evidence(snapshot(false))
+        val completedFamily = requireNotNull(completedBefore.agentFamily(completedBefore.owner))
+        assertNull(current.settledAgentAfterRecovery(completedBefore, completedFamily, "after1783"))
+    }
+
+    @Test fun anOwnedFragmentCanShareAParagraphButCannotBeMissingOrDuplicated() {
+        val current = evidence(streamedSnapshot(true))
+        val family = requireNotNull(current.agentFamily(current.owner))
+        assertTrue("the owned terminal fragment may append to earlier owned prose", family.ownsSingleProseFragment("child1827-after"))
+        assertFalse(family.ownsSingleProse("child1827-after"))
+        for (text in listOf("child1827-before", "child1827-beforechild1827-afterchild1827-after")) {
+            val bad = evidence(streamedSnapshot(true, text))
+            assertFalse(requireNotNull(bad.agentFamily(bad.owner)).ownsSingleProseFragment("child1827-after"))
+        }
+        assertFalse(family.ownsSingleProseFragment(""))
+    }
 }

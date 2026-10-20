@@ -1389,7 +1389,8 @@ class DeterministicInteractiveStreamE2ETest {
                                 "session=${old.session == now?.session} turn=${old.turn == now?.turn} " +
                                 "parent=${old.parent == now?.parent} order=${old.order}->${now?.order} " +
                                 "revision=${old.rev}->${now?.rev} state=${old.status}/${old.active}->${now?.status}/${now?.active} " +
-                                "input=$sameInput text=${previous.fullText == row?.fullText}",
+                                "input=$sameInput text=${previous.fullText == row?.fullText} " +
+                                "prefix=${row?.fullText?.startsWith(previous.fullText)}",
                         )
                     }
                 }
@@ -1410,9 +1411,9 @@ class DeterministicInteractiveStreamE2ETest {
         val after = composeTestRule.onNodeWithText("after1783", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertTrue("terminal block must settle before the following reply", agent.bottom <= after.top)
         // Navigation preserves collapse state; explicitly open the owned run to inspect its reply.
-        composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(0)
+        composeTestRule.onAllNodes(hasText("child1827-after", substring = true), useUnmergedTree = true).assertCountEquals(0)
         assertEquals("every late received tool must be retained in the owned run", 1 + lateTools.size, owned.tools.size)
-        assertTrue("owned prose must belong once to the Agent", owned.ownsSingleProse("child1827-after"))
+        assertTrue("owned prose must belong once to the Agent", owned.ownsSingleProseFragment("child1827-after"))
         if (settled.owner.kind == ThreadEvidenceKind.Authoritative) {
             // Unknown parents stay private in canonical history, rather than becoming main-thread prose.
             assertTrue("unknown-parent prose must stay private", settled.records.none { it.fullText == "unmatched1827" })
@@ -1423,7 +1424,7 @@ class DeterministicInteractiveStreamE2ETest {
             agentId = owned.agentId,
             runId = requireNotNull(owned.runId),
             childIds = owned.childIds,
-            ownedChild = hasText("child1827-after") and hasAnyAncestor(settledChild),
+            ownedChild = hasText("child1827-after", substring = true) and hasAnyAncestor(settledChild),
             goLabel = go,
             expandLabel = expandLabel,
             collapseLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_collapse),
