@@ -38,6 +38,9 @@ import de.pyryco.mobile.data.repository.ContextCategory
 import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -176,9 +179,20 @@ class ContextSummarySheetTest {
         checkNotNull(
             MobileJson
                 .decodeFromString<ContextUsagePayloadDto>(
-                    """{"conversation_id":"c1","model":"claude","total_tokens":10,"max_tokens":100,"percentage":10,"categories":[{"name":"Messages","tokens":10}],"dropped_categories":0,"mcp_tools":$tools,"dropped_mcp_tools":$dropped}""",
+                    withEmptyMemoryInventory(
+                        """{"conversation_id":"c1","model":"claude","total_tokens":10,"max_tokens":100,"percentage":10,"categories":[{"name":"Messages","tokens":10}],"dropped_categories":0,"mcp_tools":$tools,"dropped_mcp_tools":$dropped}""",
+                    ),
                 ).toReading(),
         )
+
+    private fun withEmptyMemoryInventory(payload: String): String =
+        JsonObject(
+            (MobileJson.parseToJsonElement(payload) as JsonObject) +
+                mapOf(
+                    "memory_files" to JsonArray(emptyList()),
+                    "dropped_memory_files" to JsonPrimitive(0),
+                ),
+        ).toString()
 
     @Test
     fun footerHasClientOwnedAccessibleOpenActionEvenWhenUnavailable() {

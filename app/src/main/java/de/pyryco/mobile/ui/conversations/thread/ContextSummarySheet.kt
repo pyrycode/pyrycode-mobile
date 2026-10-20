@@ -160,6 +160,13 @@ internal fun ContextSummarySheet(
                 if (claude && reading != null && reading.asOf == null && (reading.mcpTools.isNotEmpty() || reading.droppedMcpTools > 0)) {
                     ContextMcpTools(reading)
                 }
+                if (claude &&
+                    reading != null &&
+                    reading.asOf == null &&
+                    (reading.memoryFiles.isNotEmpty() || reading.droppedMemoryFiles > 0)
+                ) {
+                    ContextMemoryFiles(reading)
+                }
             }
         }
     }
@@ -274,6 +281,105 @@ private fun ContextMcpTools(reading: ContextUsage) {
             }
         }
     }
+}
+
+@Composable
+private fun ContextMemoryFiles(reading: ContextUsage) {
+    var expanded by remember { mutableStateOf(false) }
+    val updateExpanded =
+        remember {
+            { value: Boolean ->
+                expanded = value
+                RelayLog.d { "event=context_memory_expansion expanded=$value" }
+            }
+        }
+    val expandLabel = stringResource(R.string.thread_context_memory_expand)
+    val collapseLabel = stringResource(R.string.thread_context_memory_collapse)
+    val description = stringResource(if (expanded) R.string.thread_context_memory_expanded else R.string.thread_context_memory_collapsed)
+    // Counts are display-only. Even Long.MAX_VALUE plus received rows remains exact.
+    val count = reading.memoryFiles.size.toULong() + reading.droppedMemoryFiles.coerceAtLeast(0).toULong()
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .testTag("context_memory_toggle")
+                .clickable(role = Role.Button, onClickLabel = if (expanded) collapseLabel else expandLabel) { updateExpanded(!expanded) }
+                .semantics {
+                    stateDescription = description
+                    if (expanded) {
+                        collapse(collapseLabel) {
+                            updateExpanded(false)
+                            true
+                        }
+                    } else {
+                        expand(expandLabel) {
+                            updateExpanded(true)
+                            true
+                        }
+                    }
+                },
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.thread_context_memory_files),
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                pluralStringResource(R.plurals.thread_context_memory_file_count, if (count == 1uL) 1 else 2, count.toString()),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+            Icon(
+                painterResource(R.drawable.ic_context_memory_chevron_up),
+                contentDescription = null,
+                modifier = Modifier.size(20.dp).rotate(if (expanded) 0f else 180f),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+        if (expanded) {
+            Column(Modifier.fillMaxWidth().padding(start = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Position alone identifies a row; duplicate paths remain separate inert Text.
+                reading.memoryFiles.forEachIndexed { index, file ->
+                    Row(Modifier.fillMaxWidth().testTag("context_memory_file_$index"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            shortenContextMemoryPath(file.path),
+                            Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            formatContextTokens(file.tokens),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                }
+                if (reading.droppedMemoryFiles > 0) {
+                    Text(
+                        stringResource(R.string.thread_context_more, reading.droppedMemoryFiles),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Display-only slash segmentation; never resolve, normalize or open this text. */
+internal fun shortenContextMemoryPath(path: String): String {
+    val segments = path.split('/').filter { it.isNotEmpty() }
+    return if (segments.size <= 4) path else ".../" + segments.takeLast(4).joinToString("/")
 }
 
 internal fun formatContextTokens(tokens: Long): String {

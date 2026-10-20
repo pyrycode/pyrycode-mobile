@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.repository.ContextCategory
 import de.pyryco.mobile.data.repository.ContextMcpTool
+import de.pyryco.mobile.data.repository.ContextMemoryFile
 import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -61,6 +62,23 @@ class ThreadViewModelContextUsageTest {
                     ?.mcpTools,
             )
             assertTrue(vm.state.value.contextSheetOpen)
+        }
+
+    @Test
+    fun memoryInventoryReplacesWithoutChangingScalars() =
+        runTest {
+            val repo = ScriptedRepo()
+            val vm = collectedVm(repo)
+            vm.onOverflowEvent(ThreadEvent.ContextOpen)
+            val first = usage().copy(memoryFiles = listOf(ContextMemoryFile("same.md", "first", 1)), droppedMemoryFiles = 7)
+            repo.report(CONV, first)
+            assertEquals(first, vm.state.value.runConfig.contextUsage)
+            val replacement = first.copy(memoryFiles = listOf(ContextMemoryFile("same.md", "other", 2)), droppedMemoryFiles = 3)
+            repo.report(CONV, replacement)
+            assertEquals(replacement, vm.state.value.runConfig.contextUsage)
+            assertTrue(vm.state.value.contextSheetOpen)
+            repo.readings.value = emptyMap()
+            assertNull(vm.state.value.runConfig.contextUsage)
         }
 
     @Before

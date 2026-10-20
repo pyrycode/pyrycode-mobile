@@ -18,6 +18,102 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class ContextUsageProjectionTest {
     @Test
+    fun orderedMemoryTypesIndependentDropsReplacementAndRedaction() =
+        runTest {
+            val projection = ContextUsageProjection()
+            val readings = mutableListOf<ContextUsage?>()
+            backgroundScope.launch { projection.observe("c1").collect { readings += it } }
+            runCurrent()
+            val files = """[{"path":"same.md","type":"second","tokens":3,"future":true},{"path":"same.md","type":"first","tokens":7}]"""
+            val payload =
+                JsonObject(
+                    valid +
+                        mapOf(
+                            "memory_files" to MobileJson.parseToJsonElement(files),
+                            "dropped_memory_files" to JsonPrimitive(8),
+                            "dropped_categories" to JsonPrimitive(2),
+                            "dropped_mcp_tools" to JsonPrimitive(5),
+                        ),
+                )
+            projection.apply(frame(payload))
+            runCurrent()
+            val held = checkNotNull(readings.last())
+            assertEquals(listOf(ContextMemoryFile("same.md", "second", 3), ContextMemoryFile("same.md", "first", 7)), held.memoryFiles)
+            assertEquals(8L, held.droppedMemoryFiles)
+            assertEquals(2L, held.droppedCategories)
+            assertEquals(
+                true,
+                understoodNonvisualEntry(
+                    HistoryEntry(1L, "context_usage", payload, kotlinx.datetime.Instant.parse("2026-10-19T00:00:00Z")),
+                    true,
+                ),
+            )
+            projection.apply(frame(valid))
+            runCurrent()
+            assertEquals(emptyList<ContextMemoryFile>(), readings.last()?.memoryFiles)
+            assertNotEquals(held, readings.last())
+            val hostile = "<a href='file:secret'>".repeat(200)
+            val hostileFiles = """[{"path":${JsonPrimitive(hostile)},"type":${JsonPrimitive(hostile)},"tokens":-1}]"""
+            projection.apply(frame(JsonObject(valid + ("memory_files" to MobileJson.parseToJsonElement(hostileFiles)))))
+            runCurrent()
+            val file = checkNotNull(readings.last()).memoryFiles.single()
+            assertEquals(hostile.take(2048), file.path)
+            assertEquals(hostile.take(512), file.type)
+            assertEquals(-1L, file.tokens)
+            assertFalse(file.toString().contains("file:"))
+        }
+
+    @Test
+    fun malformedMemoryCannotReplaceHeldReadingOrCertifyHistory() =
+        runTest {
+            val projection = ContextUsageProjection()
+            val readings = mutableListOf<ContextUsage?>()
+            backgroundScope.launch { projection.observe("c1").collect { readings += it } }
+            runCurrent()
+            projection.apply(frame(valid))
+            runCurrent()
+            val held = checkNotNull(readings.last())
+            val badLists =
+                listOf(
+                    "null",
+                    "{}",
+                    "42",
+                    "[null]",
+                    "[{}]",
+                    "[{\"path\":\"x\",\"tokens\":1}]",
+                    "[{\"path\":7,\"type\":\"memory\",\"tokens\":1}]",
+                    "[{\"path\":\"x\",\"type\":false,\"tokens\":1}]",
+                    "[{\"path\":\"x\",\"type\":\"memory\",\"tokens\":1.5}]",
+                    "[{\"path\":\"x\",\"type\":\"memory\",\"tokens\":9223372036854775808}]",
+                    "[{\"path\":\"x\",\"type\":\"memory\",\"tokens\":\"1\"}]",
+                )
+            val goodFile = MobileJson.parseToJsonElement("""{"path":"x","type":"memory","tokens":1}""") as JsonObject
+            val entryFailures =
+                listOf("path", "type", "tokens")
+                    .flatMap { key ->
+                        listOf(JsonObject(goodFile - key)) +
+                            listOf("null", "[]", "{}", "true").map { value ->
+                                JsonObject(goodFile + (key to MobileJson.parseToJsonElement(value)))
+                            }
+                    }.map { JsonObject(valid + ("memory_files" to kotlinx.serialization.json.JsonArray(listOf(it)))) }
+            val dropFailures =
+                listOf("null", "\"1\"", "1.2", "false", "[]", "9223372036854775808").map {
+                    JsonObject(valid + ("dropped_memory_files" to MobileJson.parseToJsonElement(it)))
+                }
+            val invalid =
+                badLists.map { JsonObject(valid + ("memory_files" to MobileJson.parseToJsonElement(it))) } + entryFailures + dropFailures +
+                    listOf(JsonObject(valid - "memory_files"), JsonObject(valid - "dropped_memory_files"))
+            for (bad in invalid) {
+                val payload = JsonObject(bad + ("total_tokens" to JsonPrimitive(99)))
+                projection.apply(frame(payload))
+                runCurrent()
+                assertEquals("invalid memory shape", held, readings.last())
+                val entry = HistoryEntry(1L, "context_usage", payload, kotlinx.datetime.Instant.parse("2026-10-19T00:00:00Z"))
+                assertEquals(null, understoodNonvisualEntry(entry, true))
+            }
+        }
+
+    @Test
     fun mcpInventoryPreservesOrderCountsAndReplacement() =
         runTest {
             val projection = ContextUsageProjection()
@@ -296,6 +392,6 @@ class ContextUsageProjectionTest {
     private val valid =
         MobileJson.parseToJsonElement(
             """{"conversation_id":"c1","model":"claude","total_tokens":10,"max_tokens":100,"percentage":99,""" +
-                """"categories":[{"name":"Messages","tokens":10}],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0}""",
+                """"categories":[{"name":"Messages","tokens":10}],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0,"memory_files":[],"dropped_memory_files":0}""",
         ) as JsonObject
 }
