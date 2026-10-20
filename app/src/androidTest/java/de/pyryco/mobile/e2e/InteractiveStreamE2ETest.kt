@@ -3608,8 +3608,6 @@ class InteractiveStreamE2ETest {
             val firstReply = awaitOwnedPhoneReply(serverId, conversationId) { sendFromPhone(PING_PROMPT) }
             runBlocking { peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS) }
             awaitCachedAssistantReply(firstReply)
-            setHostLink(serverId, up = false)
-            setHostLink(serverId, up = true)
             gap.cacheBaseline()
 
             // 3. AC-1: cut the phone's link. The open thread keeps what it drew.
