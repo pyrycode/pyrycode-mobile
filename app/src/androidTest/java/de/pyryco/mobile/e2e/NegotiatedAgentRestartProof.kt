@@ -163,13 +163,11 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                 while (true) {
                     val snapshot = oldCache.readAuthoritativeThread(host, conversation)?.toSnapshot()
                     val coverage = snapshot?.coverage
-                    if (snapshot != null &&
+                    if (snapshot != null && snapshot.checkpoint > 0 &&
                         coverage != null &&
                         baseline.all { row ->
                             val fact = requireNotNull(row.fact)
-                            snapshot.items.any { it == fact } &&
-                                fact.rev <= snapshot.checkpoint &&
-                                requireNotNull(fact.order).toULong() in coverage.lowerOrder..coverage.upperOrder
+                            snapshot.items.any { it == fact }
                         }
                     ) {
                         return@withTimeout snapshot

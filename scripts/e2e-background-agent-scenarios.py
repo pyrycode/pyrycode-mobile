@@ -19,6 +19,8 @@ METHODS = {
 def main():
     root = Path(__file__).resolve().parents[1]
     environment = os.environ.copy()
+    admission = environment.get('PYRY_TEST_ADMISSION_FD')
+    inherited = () if admission is None else (int(admission),)
     device = environment.get('DEVICE', 'pixel2Api33Atd')
     reports = root / 'app/build/outputs/androidTest-results'
     reports /= 'connected/debug' if device == 'connected' else 'managedDevice/debug/' + device
@@ -36,7 +38,7 @@ def main():
                         '-s', environment['ANDROID_SERIAL'], 'shell', 'pm', 'clear', 'de.pyryco.mobile',
                     ], check=True)
                 started = time.time_ns()
-                result = subprocess.run(['bash', str(root / 'scripts/e2e-emulator.sh')], cwd=root, env=child)
+                result = subprocess.run(['bash', str(root / 'scripts/e2e-emulator.sh')], cwd=root, env=child, pass_fds=inherited)
                 status = status or result.returncode
                 current = [path for path in reports.rglob('TEST-*.xml') if path.stat().st_mtime_ns >= started]
                 cases = [test for path in current for test in ET.parse(path).getroot().iter('testcase')]

@@ -1,4 +1,5 @@
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -13,7 +14,7 @@ spec.loader.exec_module(scenarios)
 
 
 class AgentScenarioReportsTest(unittest.TestCase):
-    def run_cases(self, outcomes):
+    def run_cases(self, outcomes, admission=None):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
@@ -21,7 +22,9 @@ class AgentScenarioReportsTest(unittest.TestCase):
         reports.mkdir(parents=True)
         calls = []
 
-        def launch(command, cwd, env):
+        def launch(command, cwd, env, pass_fds=()):
+            if admission is not None:
+                self.assertIn(admission, pass_fds)
             case = env['E2E_BACKGROUND_AGENT_CASE']
             calls.append(case)
             outcome = outcomes[len(calls) - 1]
@@ -34,7 +37,7 @@ class AgentScenarioReportsTest(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0 if outcome == 'skip' else outcome or 0)
 
         with patch.object(scenarios, '__file__', str(root / 'scripts/scenarios.py')), \
-                patch.dict(scenarios.os.environ, {}, clear=True), \
+                patch.dict(scenarios.os.environ, {} if admission is None else {'PYRY_TEST_ADMISSION_FD': str(admission)}, clear=True), \
                 patch.object(scenarios.subprocess, 'run', side_effect=launch):
             try:
                 status = scenarios.main()
@@ -65,6 +68,17 @@ class AgentScenarioReportsTest(unittest.TestCase):
         status, _, cases = self.run_cases([0, 'skip'])
         self.assertEqual(1, status)
         self.assertEqual(2, len(cases))
+
+    def test_nested_harness_keeps_the_original_admission_descriptor(self):
+        reader, writer = os.pipe()
+        try:
+            status, calls, cases = self.run_cases([0, 0], admission=reader)
+            self.assertEqual(0, status)
+            self.assertEqual(['retained', 'restart'], calls)
+            self.assertEqual(2, len(cases))
+        finally:
+            os.close(reader)
+            os.close(writer)
 
 
 if __name__ == '__main__':
