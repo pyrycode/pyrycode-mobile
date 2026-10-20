@@ -10,6 +10,8 @@
 - `data/repository/RelayRequests.kt`: `nextRequestId`, without adding reply waiters.
 - `data/repository/UsageLimitProjection.kt`: separate conversation warning semantics remain unchanged.
 - `data/repository/RelayRepositoryCoordinatorTest.kt`, `RemoteConversationRepositoryContextUsageTest.kt`, `HostReadingFrames.kt`: native fake-pump and held-reading test patterns.
+- `ClaudeUsageOwnershipTest.kt`: controlled in-flight ownership-check/retirement interleaving through the real coordinator and remote repository.
+- `NegotiatedThreadActivationTest.kt`, `di/RelayConnectionFactoryTest.kt`: preserve content-request prohibitions, host isolation and command correlation alongside connect-time allowance requests.
 - `docs/knowledge/features/remote-conversation-repository.md`, `stable-conversation-repository.md`, `relay-repository-coordinator.md`: pairing lifetime and connection-local request ownership.
 - Core `docs/protocol-mobile.md`, “Claude usage allowance reading” and “Security model”: wire source of truth, including landed Core #3575/#3576.
 - Analogue `f0000c142` (#1317): 526 additions, 60 deletions; reuse its pairing owner rather than add another store.
@@ -20,7 +22,11 @@ Expose one usable behaviour: observe and refresh the paired host's latest accoun
 
 Estimated total work: 850 lines including plan, tests and adjustments to existing request-count assertions; six production files, five exported model declarations, one updated production construction site, three acceptance criteria and fewer than ten decode rejection categories. No signature replacement or migration is required. Rechecked against the finished plan: within every ceiling.
 
+Rework sizing: approximately 1100 total written lines after the controlled concurrency regression and traffic-assertion repairs. These repair the same host-ownership behaviour and its required verification; no independently useful behaviour or new exported production declaration is added, and only the coordinator supplies the new optional lock argument.
+
 Overlapping branches #1947, #2175, #2245 and #2322 touch shared repository files; their context/thread changes require no allowance dependency. Keep additions local.
+
+Rework overlap check: #2089, #2091, #2100, #2118 and #2138 add readiness tests in `RelayConnectionFactoryTest`; their separate test methods require no dependency. Existing repository overlaps remain unrelated to the allowance commit boundary.
 
 ## Design
 
@@ -28,12 +34,14 @@ Overlapping branches #1947, #2175, #2245 and #2322 touch shared repository files
 - A single internal `decodeClaudeUsage` boundary in the model file validates a JSON object and a required string state. Known states validate every supplied known field's primitive/object shape; observed requires a parseable observation timestamp. Optional fields must be absent or correctly typed, never coerced strings/nulls. Finite utilization remains unclamped and reset seconds retain the full signed 64-bit range. Unknown keys are ignored. Unknown string states become Unavailable without interpreting future fields.
 - `HostReadings` holds one `MutableStateFlow<ClaudeUsageReading?>`, not a conversation-keyed map. Accepted frames replace it whole in serialized arrival order; equal values conflate naturally. Its existing `whileOpen` wrapper clears observers on pairing disposal.
 - Add default `observeClaudeUsage()` and no-op `requestClaudeUsage()` to `ConversationRepository`. Remote observation reads its holder; refresh sends one `request_claude_usage` with `{}` using the shared request-ID allocator, with no waiter, conversation lookup, capability gate or model call. Refused sends are absorbed.
-- Route `claude_usage` before conversation/session admission and all history/replay writes. Both correlated replies and pushes use the same decoder and replacement. Guard allowance reads/writes/sends with the connection owner's live-ownership supplier, wired by the coordinator to the current transport, child scope and authenticated pump state. Retired connections cannot overwrite the pairing's held reading.
+- Route `claude_usage` before conversation/session admission and all history/replay writes. Both correlated replies and pushes use the same decoder and replacement. The coordinator supplies its own monitor as `connectionOwnerLock`, alongside the live-ownership supplier checking current transport, child scope and authenticated pump state. Decode outside that monitor, then hold it across the final ownership check and whole-reading replacement. Allowance sends also hold it across validation and send. Retirement and new connection publication already hold the same monitor, so an in-flight old handler either commits before retirement or is rejected afterwards; it cannot overwrite a new connection's reading.
 - The coordinator requests once after each pump reaches authenticated Open, using its child scope. The facade reads the injected host holder directly during connection gaps and delegates refresh to the current repository. Its compatibility path without a holder uses the existing switched-null convention.
 
 ## State and concurrency model
 
-The existing connection-owned inbound coroutine serializes all replacement writes without suspension. StateFlow provides fan-out and equality conflation. No new long-lived scope, dispatcher, timer, polling loop, request ledger or persistence is added. Open requests run on the coordinator child scope and cancel with it. Background/socket closure retains the pairing holder; unpair/re-pair closes it. Process restart starts without a reading.
+Each connection's inbound coroutine serializes its own arrivals, but different connection scopes can run concurrently. The coordinator's monitor serializes the final allowance ownership check and replacement with `onConnection`, `teardownActive` and pairing `close`. No suspension occurs while holding it. Decoding occurs outside the monitor and must revalidate on entry. A synchronous transport change can invalidate an owner before teardown collection; its supplier still rejects that source, and the replacement cannot publish its own reading until the old commit releases the monitor. Cancellation alone is not the synchronization guarantee. Allowance requests use the same monitor through `pump.send`; the existing coordinator-to-pump lock order is retained, with no new reverse acquisition.
+
+StateFlow provides fan-out and equality conflation. No new long-lived scope, dispatcher, timer, polling loop, request ledger or persistence is added. Open requests run on the coordinator child scope and cancel with it. Background/socket closure retains the pairing holder; unpair/re-pair closes it. Process restart starts without a reading.
 
 ## State transitions and identity reuse
 
@@ -46,6 +54,7 @@ The existing connection-owned inbound coroutine serializes all replacement write
 | Multiple conversation consumers on one host, another host using the same IDs | `ClaudeUsageRepositoryTest.sameHostFacadesShareAndOtherHostsStayIsolated` |
 | Offline/refused refresh and repeated collection | `ClaudeUsageRepositoryTest.refreshIsUngatedAndRefusalsDoNotStopObservation` |
 | Handshaking, authenticated Open, repeated Open, direct transport replacement | `ClaudeUsageRepositoryTest.reconnectRefreshesWithoutBlankingAndRetiredSourcesCannotReplace` |
+| Old handler pauses after its final ownership operands pass while a new connection attempts to publish None | `ClaudeUsageOwnershipTest.replacementCannotOvertakeAnInFlightAllowanceCommit` |
 | Pairing disposal, same host re-paired and old frames | `ClaudeUsageRepositoryTest.pairingDisposalClearsAndRePairStartsEmpty` |
 | History, replay and rate-limited independence | `ClaudeUsageRepositoryTest.allowanceNeverChangesRowsReplayOrRateLimitedState` |
 
@@ -57,6 +66,8 @@ Malformed payloads return null from the decoder and preserve held state. Unknown
 
 Write decode and real remote/coordinator/facade tests first and observe red before implementation. Use fake managed pumps with `runTest` and injected StandardTestDispatcher; collectors run in backgroundScope. Exercise actual empty request objects and the empty-capability Open path, with no conversation list. Existing coordinator, stable-facade, context and rate-limit tests remain covered. Invariant probes vary arrival order, equal/replayed frames, empty/single windows, reused IDs and reconnect boundaries through production routing. No emulator, recorded scenario or live Claude turn is required for this data-only contract.
 
+The ownership regression uses independent `Dispatchers.Default` workers and a bounded latch in a fake pump's final state read, after capturing authenticated Open. It verifies the coordinator monitor is held and controls whether the replacement publishes before or after the old handler resumes. Without the monitor it forces the stale overwrite; with it retirement waits and the replacement remains final. It uses real coordinator and repository routing, without production test hooks or sleeps. Run both affected activation and factory classes to check sibling traffic assumptions as well as the seven named failures.
+
 Run focused JVM classes, lint, assembleDebug and forced Spotless on Linux; retain fresh XML/raw reports, counts and candidate revision outside the worktree. Complete suites remain dispatcher-owned. Merge main, push, then run assembleDebug and `scripts/pre-verify.py --gradle` before opening the PR.
 
 ## Open Questions
@@ -67,6 +78,8 @@ None.
 
 - 2026-10-20: `malformedKnownFieldsRejectWithoutCoercion` demonstrated that `JsonPrimitive.longOrNull` coerces exponent notation into an integer. Parse reset token content with `String.toLongOrNull` instead, retaining the existing strict integer contract and regression assertion.
 - 2026-10-20: Plain JVM coordinator tests previously had no connect-time diagnostics. Capture/restore `RelayLog.sink` in allowance tests (including a static-outcome privacy assertion), quiet/restore it in existing coordinator tests, and select each existing command by type when checking sends now that Open also requests allowance. Production contracts are unchanged.
+- 2026-10-20 (verifier finding 1): Per-connection serialization and two ownership reads leave an in-flight check/write race across connection scopes. Share the coordinator monitor with the remote repository and hold it across final ownership validation and allowance replacement, and across allowance validation/send. `onConnection`, `teardownActive` and pairing disposal use that same monitor. The controlled concurrency regression pauses after the final ownership operands pass and proves that retirement cannot overtake the commit. Elevated risk remains appropriate.
+- 2026-10-20 (verifier findings 2–3): Update activation and factory assertions to allow the required authenticated Open allowance request while preserving exact command payloads, request-ID correlation, host isolation and prohibitions on legacy backfill. No production request gating changes.
 
 ## Documentation handoff
 
@@ -83,7 +96,7 @@ Pending for documentation stage: `docs/knowledge/features/remote-conversation-re
 - Cryptography: existing authenticated Noise IK channel and key lifecycle remain the boundary; no new primitives or nonce handling.
 - Network/I/O: reuse bounded envelopes and existing transport timeouts/backoff. One request at Open plus explicit requests; no polling, reply waiters or model calls. A malicious relay can deny/delay delivery, leaving a held reading without inventing freshness.
 - Errors/logging: static accepted/malformed/refused/unavailable categories only. Unknown string states never become log labels; caught exceptions are discarded.
-- Concurrency: MUST FIX addressed in design: the allowance handler and sender check current connection ownership, including synchronous transport replacement before cancelled collectors catch up. Pairing close makes held observations null. All new coroutines use the cancelled child scope.
+- Concurrency: MUST FIX from verifier finding 1 addressed in the revised design: the coordinator monitor covers final ownership validation and replacement as one critical section shared with retirement, new ownership publication and pairing close. A paused old handler cannot resume its write after a new connection commits. Decoding outside the monitor rechecks ownership inside it; cancellation is only cleanup. Sends use the same monitor and retain the existing coordinator-to-pump lock order. Pairing close makes held observations null. All new coroutines use the cancelled child scope. `ClaudeUsageOwnershipTest.replacementCannotOvertakeAnInFlightAllowanceCommit` probes the actual concurrent boundary.
 - Threat model: hostile authenticated frames are type-checked and retain at most one bounded-envelope reading; duplicates cannot grow state. Relay confidentiality/misrouting remains protected by existing Noise authentication. Disk token theft and UI screenshot/keyboard leakage introduce no new surface in this data-only change.
 
 **Reviewer:** builder self-review per `builder/security-review.md`

@@ -194,6 +194,8 @@ class RemoteConversationRepository internal constructor(
     },
     /** The coordinator checks the exact authenticated transport even before teardown collectors run. */
     private val ownsConnection: () -> Boolean = { scope.isActive },
+    /** Shared with coordinator retirement so ownership validation and allowance publication are atomic. */
+    private val connectionOwnerLock: Any = Any(),
 ) : ConversationRepository,
     ThreadSnapshotSource {
     internal val authoritativeRoute: AuthoritativeThreadRoute =
@@ -810,12 +812,14 @@ class RemoteConversationRepository internal constructor(
         if (envelope.type == "claude_usage") {
             if (!ownsConnection()) return
             val reading = decodeClaudeUsage(envelope.payload)
-            if (!ownsConnection()) return
-            if (reading == null) {
-                RelayLog.d { "event=claude_usage outcome=malformed" }
-            } else {
-                hostReadings.claudeUsage.value = reading
-                RelayLog.d { "event=claude_usage outcome=accepted" }
+            synchronized(connectionOwnerLock) {
+                if (!ownsConnection()) return
+                if (reading == null) {
+                    RelayLog.d { "event=claude_usage outcome=malformed" }
+                } else {
+                    hostReadings.claudeUsage.value = reading
+                    RelayLog.d { "event=claude_usage outcome=accepted" }
+                }
             }
             return
         }
@@ -1665,24 +1669,26 @@ class RemoteConversationRepository internal constructor(
     override fun observeClaudeUsage(): Flow<ClaudeUsageReading?> = hostReadings.observeClaudeUsage()
 
     override fun requestClaudeUsage() {
-        if (!ownsConnection()) {
-            RelayLog.d { "event=claude_usage_request outcome=unavailable" }
-            return
-        }
-        val request =
-            Envelope(
-                id = relayRequests.nextRequestId(),
-                type = "request_claude_usage",
-                ts = Clock.System.now().toString(),
-                payload = JsonObject(emptyMap()),
-            )
-        val sent =
-            try {
-                pump.send(request)
-            } catch (_: Exception) {
-                false
+        synchronized(connectionOwnerLock) {
+            if (!ownsConnection()) {
+                RelayLog.d { "event=claude_usage_request outcome=unavailable" }
+                return
             }
-        RelayLog.d { "event=claude_usage_request outcome=${if (sent) "sent" else "refused"}" }
+            val request =
+                Envelope(
+                    id = relayRequests.nextRequestId(),
+                    type = "request_claude_usage",
+                    ts = Clock.System.now().toString(),
+                    payload = JsonObject(emptyMap()),
+                )
+            val sent =
+                try {
+                    pump.send(request)
+                } catch (_: Exception) {
+                    false
+                }
+            RelayLog.d { "event=claude_usage_request outcome=${if (sent) "sent" else "refused"}" }
+        }
     }
 
     /**

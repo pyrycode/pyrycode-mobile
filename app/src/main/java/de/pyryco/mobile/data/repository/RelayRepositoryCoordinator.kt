@@ -471,6 +471,7 @@ class RelayRepositoryCoordinator(
                 ownsConnection = {
                     childScope.isActive && transport === connections.value && pump.state.value is PumpState.Open
                 },
+                connectionOwnerLock = this,
             )
         // Publish the whole connection as ONE object: currentRepository now derives repo and pump-state
         // from this single switched value, closing the #493 cross-StateFlow race (see [currentRepository]).
