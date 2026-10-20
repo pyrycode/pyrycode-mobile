@@ -96,11 +96,18 @@ controlled regression. No production behavior, assertion, timeout or fixture cha
 in this rework. The existing `session-error` disposition remains accepted inherited
 evidence; it is not a new blocker or a new finding.
 
-Pending evidence:
+Follow-up evidence and acceptance:
 
 - Focused main comparison task
   `9237b07b0b9b35ddca3805d4a4ce92f125e33cf372ae46778ccea433b1088eab`,
-  using `mobile-scripted-evidence` on the pinned main revision above.
+  using `mobile-scripted-evidence` on the pinned main revision above, completed
+  with an incomplete profile: reply-suggestion passed one of one; selection-copy
+  executed zero tests because another live run held the device for its entire
+  300-second admission window (exit 75, empty report). The main pass does not
+  establish an inherited failure. Preserve the failed profile and the unverified
+  selection separately from the counted suggestion pass. Commit its returned
+  count XML and content-free source/count/hash summary under
+  `app/src/androidTest/assets/2331-scripted-main-evidence/`. No test input changes.
 - Dispatcher investigation assessment
   `d295acf20f083fbb1d39d9ecbb4c315da1fe774f350d25c52aa47fd347789c2d`,
   for the retained installed-app sequence and gap/reconnect timing. It executed
@@ -113,3 +120,10 @@ The retained verifier bundle is
 (digest `26210acb13b28d215ef1647451273b576c363d0703bd16292bb4d9e98e1405a6`);
 all 140 retained file hashes were verified. Fresh focused XML and phone logs are
 retained with the rework evidence referenced in the PR.
+
+The native main task's original six artifacts, plus its phone log, raw report
+and isolated-daemon diagnostics, were copied and hash-verified under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2331/main-comparison-9237b07b0b9b/`.
+Its passing daemon trace also has no producer gap. No additional native task is
+requested for this unchanged candidate. The existing diagnostic assessment must
+resolve the retained installed-app failures; complete dispatcher acceptance stays pending.
