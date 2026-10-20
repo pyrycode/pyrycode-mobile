@@ -182,6 +182,10 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
         assertTrue("application graph replaced", GlobalContext.get() !== oldGraph)
         assertTrue("registry replaced", GlobalContext.get().get<RelayConnectionRegistry>() !== oldRegistry)
         assertTrue("cache reopened", GlobalContext.get().get<ConversationCache>() !== oldCache)
+        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+        runBlocking {
+            withTimeout(120_000) { registry.hostConnections.first { registry.connectionFor(host) != null } }
+        }
         val route = requireNotNull(source().negotiatedThread)
         assertTrue("saved facts do not negotiate support", route.support.value is ThreadSupport.Unverified)
         val restored = runBlocking { withTimeout(120_000) { route.observe(conversation).first { it.epoch != null } } }

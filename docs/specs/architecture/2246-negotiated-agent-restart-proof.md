@@ -57,6 +57,8 @@ None in the product contract. Fresh live/capture results remain pending until ex
 
 ## Revisions
 
+2026-10-20: The fourth counted run reached real graph/cache reconstruction, then failed because the new registry had not yet reconciled its persisted host and the destination therefore had no negotiated provider (2 executed, 1 passed, 1 failed). `RelayConnectionRegistry` loads its entries asynchronously. Await that existing reconciliation before resolving the pre-launch production destination, while still requiring Unverified support and exact saved checkpoint/coverage before Activity launch. No socket is opened to obtain the saved proof.
+
 2026-10-20: The next counted attempt passed delimiter display but timed out in a later wait (2 executed, 1 passed, 1 failed). Resolve session B from the current admitted authoritative `SessionBoundary`, following the existing genuine session-reset test, instead of requiring the separate conversation-summary stream to qualify thread identity. Persisted-family readiness allows a newer revision of the same canonical ID; the subsequent exact session/turn/parent/order/content/finished-state assertions remain mandatory. Add rotation and persistence receipts to identify each remaining wait independently.
 
 2026-10-20: With valid producer roles the second scripted run reached `finished_session_a`, then failed the lazy boundary-presence wait (2 executed, 1 passed, 1 failed). Agent navigation had left the viewport away from the newest row. Reuse the existing `awaitDisplayedSessionBoundary` assertion, which scrolls the reversed lazy list to its newest edge and requires the delimiter actually displayed. This retains the boundary assertion and its no-explanation check; it does not infer rotation from cached metadata.
