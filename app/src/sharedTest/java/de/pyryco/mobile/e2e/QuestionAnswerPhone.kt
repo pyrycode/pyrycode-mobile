@@ -7,6 +7,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollToKey
@@ -24,6 +25,16 @@ internal fun ComposeTestRule.questionAnswerTarget(
     evidence: (String) -> Unit = {},
 ): SemanticsNodeInteraction {
     val list = onNode(hasScrollToNodeAction())
+
+    fun clearTop(): Float {
+        val header = onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot.bottom
+        // Notices draw over the messages below the header and can intercept a visible row's tap.
+        val overlay =
+            onAllNodes(hasTestTag("thread-top-overlay"), useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .maxOfOrNull { it.boundsInRoot.bottom } ?: header
+        return maxOf(header, overlay)
+    }
 
     fun boundsOrReveal(): Rect? {
         if (lazyKey == null) return onNode(matcher).fetchSemanticsNode().boundsInRoot
@@ -45,7 +56,7 @@ internal fun ComposeTestRule.questionAnswerTarget(
     var failure = "tap target did not remain composed after keyed reveal"
     // A live row can grow between these synchronized reads. Correct its new position, never tap again.
     repeat(3) { measurement ->
-        val headerBottom = onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot.bottom
+        val headerBottom = clearTop()
         val composerTop = onNodeWithTag("thread-composer").fetchSemanticsNode().boundsInRoot.top
         val bounds = boundsOrReveal() ?: return@repeat
         val shift =
@@ -60,7 +71,7 @@ internal fun ComposeTestRule.questionAnswerTarget(
         if (shift != 0f) {
             onNode(hasScrollToIndexAction()).performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, shift) }
         }
-        val checkedHeader = onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot.bottom
+        val checkedHeader = clearTop()
         val checkedComposer = onNodeWithTag("thread-composer").fetchSemanticsNode().boundsInRoot.top
         val visible = boundsOrReveal() ?: return@repeat
         evidence(
