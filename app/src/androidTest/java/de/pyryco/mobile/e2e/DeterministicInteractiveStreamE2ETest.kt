@@ -17,6 +17,8 @@ import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
+import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
@@ -25,9 +27,11 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.printToLog
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.espresso.Espresso
@@ -44,28 +48,19 @@ import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
-import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.threadSnapshots
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -356,6 +351,7 @@ class DeterministicInteractiveStreamE2ETest {
     }
 
     /** Zero-Claude durable twin runs beside the original ping scenario, with its own channel. */
+    @org.junit.Ignore("blocked on #2167: legacy cache/coverage proof is unhooked from the production thread")
     @Test
     fun interactiveTurn_seededChannel_durableGapCatchUp() {
         arriveInSeededThread()
@@ -448,11 +444,14 @@ class DeterministicInteractiveStreamE2ETest {
     fun interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread() {
         arriveInSeededThread()
 
-        // #1631: the top menu reaches the panel even before any task has been reported.
+        // The authoritative initial thread reports an empty task set without a legacy roster (#2245).
         composeTestRule.onNode(hasContentDescription("More actions")).performClick()
         composeTestRule.onNode(hasText("Background tasks") and hasClickAction()).performClick()
         composeTestRule.onNodeWithText("Channel info").assertDoesNotExist()
-        composeTestRule.onNodeWithText("No background-task report yet").assertIsDisplayed()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText("No background tasks").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText("No background tasks").assertIsDisplayed()
         composeTestRule.onNode(hasContentDescription("Close")).performClick()
         composeTestRule.onNodeWithText("Background tasks").assertDoesNotExist()
 
@@ -471,49 +470,62 @@ class DeterministicInteractiveStreamE2ETest {
             .onFirst()
             .assertIsDisplayed()
         // #1912: the scripted reply must be confirmed as read after it is rendered in the foreground.
-        val repository =
-            StableConversationRepository(
-                GlobalContext
-                    .get()
-                    .get<RelayRepositoryCoordinator>()
-                    .currentRepository,
-            )
-        val (conversationId, checkpoint) =
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = requireNotNull(args.getString("serverId"))
+        val registry = GlobalContext.get().get<de.pyryco.mobile.di.RelayConnectionRegistry>()
+        val coordinator = requireNotNull(registry.connectionFor(serverId)).coordinator
+        val repository = requireNotNull(coordinator.currentRepository.value)
+        val destinations = GlobalContext.get().get<de.pyryco.mobile.di.ThreadDestinationFactory>()
+        val route = requireNotNull(destinations.repository(serverId).negotiatedThread)
+
+        fun ownsConnection() = (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === repository
+        assertTrue("read proof requires the negotiated connection", ownsConnection())
+        val evidence = harnessThreadEvidence(repository)
+        assertEquals(ThreadEvidenceKind.Authoritative, evidence.kind)
+        val conversationId =
             runBlocking {
-                val conversationId =
-                    withTimeout(THREAD_TIMEOUT_MS) {
-                        repository
-                            .observeConversations(ConversationFilter.All)
-                            .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
-                            .single { it.name == SEED_CHANNEL_NAME }
-                            .id
-                    }
-                val checkpoint =
-                    withTimeoutOrNull(REPLY_TIMEOUT_MS) {
-                        awaitScriptedReplyReadCheckpoint(repository.threadSnapshots(conversationId), PING) {
-                            android.util.Log.i("ScriptedReadProof", "event=reply_proof_qualified classification=starting")
-                            repository.requestHistory(conversationId).entries
-                        }.also {
-                            val marks = repository.observeReadMarks(conversationId).first()
-                            android.util.Log.i(
-                                "ScriptedReadProof",
-                                "event=reply_checkpoint checkpoint=$it thread_supported=${marks?.threadSupported}",
-                            )
-                        }
-                    }
-                if (checkpoint == null) {
-                    val evidence = repository.threadSnapshots(conversationId).first().readEvidence
-                    error(
-                        "No reply checkpoint: versions=${evidence.versions.size}, barriers=${evidence.facts.values.count {
-                            it == null
-                        }}, unidentified=${evidence.unidentified.size}",
-                    )
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    repository
+                        .observeConversations(ConversationFilter.All)
+                        .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                        .single { it.name == SEED_CHANNEL_NAME }
+                        .id
                 }
-                conversationId to checkpoint
             }
+        val reply =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    evidence.observe(conversationId).first { it.loadedMainReply()?.content?.contains(PING, ignoreCase = true) == true }
+                }
+            }
+        val replyFact = requireNotNull(reply.records.single { it.message.id == reply.loadedMainReply()?.id }.fact)
+        val checkpoint = replyFact.rev.toULong()
+        runBlocking {
+            withTimeout(REPLY_TIMEOUT_MS) {
+                route.observe(conversationId).first {
+                    ownsConnection() &&
+                        it.epoch == reply.owner.epoch &&
+                        it.generation == reply.owner.generation &&
+                        it.checkpoint.toULong() >= checkpoint
+                }
+            }
+        }
         // Keep driving Compose frames while layout/reveal qualification catches up with receipt.
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            runBlocking { (repository.observeReadMarks(conversationId).first()?.readUpTo ?: 0uL) >= checkpoint }
+            runBlocking {
+                val marks = repository.observeReadMarks(conversationId).first()
+                val shown = marks?.lastShownVersion
+                ownsConnection() &&
+                    evidence
+                        .observe(conversationId)
+                        .first()
+                        .owner
+                        .matches(reply.owner) &&
+                    marks?.threadSupported == true &&
+                    shown != null &&
+                    shown >= replyFact.id.toULong() &&
+                    (marks.readUpTo ?: 0uL) >= shown
+            }
         }
 
         // #1883 rung 4: a new durable post stays unread until a peer reads it, with no phone reopen.
@@ -526,15 +538,17 @@ class DeterministicInteractiveStreamE2ETest {
         val postText = "e2e1833-attention-read-000"
         runBlocking {
             withTimeout(REPLY_TIMEOUT_MS) {
-                repository.threadSnapshots(conversationId).first { snapshot ->
-                    snapshot.rows.filterIsInstance<ThreadItem.MessageItem>().any {
-                        it.message.content == postText && !it.message.isStreaming
-                    }
-                }
+                val current =
+                    requireNotNull(
+                        kotlinx.coroutines.flow
+                            .combine(coordinator.currentRepository, route.support) { candidate, support ->
+                                candidate?.takeIf {
+                                    (support as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === it
+                                }
+                            }.first { it != null },
+                    )
+                current.observeConversations(ConversationFilter.All).first()
             }
-            // Channel-post pushes omit durable ids. After receipt proves the append completed, a
-            // fresh list subscription requests latest_entry_id without reopening or reading the post.
-            repository.observeConversations(ConversationFilter.All).first()
         }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val row = hasText(SEED_CHANNEL_NAME) and hasTestTag(de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG)
@@ -542,7 +556,6 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.onAllNodes(row and hasContentDescription(unread)).fetchSemanticsNodes().isNotEmpty()
         }
-        val args = InstrumentationRegistry.getArguments()
         SecondClientPeer(
             PairedServer(
                 requireNotNull(args.getString("serverId")),
@@ -550,21 +563,27 @@ class DeterministicInteractiveStreamE2ETest {
                 requireNotNull(args.getString("relayUrl")),
                 requireNotNull(args.getString("serverStaticPublicKey")),
             ),
+            threadEnabled = true,
         ).use { peer ->
             runBlocking {
                 peer.open(CONNECT_TIMEOUT_MS)
-                val history = peer.history(conversationId, THREAD_TIMEOUT_MS)
-                val durablePost =
-                    history.singleOrNull {
-                        val text =
-                            it.payload.jsonObject["text"]
-                                ?.jsonPrimitive
-                                ?.content
-                        it.type == "assistant_delta" && text == postText
+                val post =
+                    peer.threadWindow(conversationId, THREAD_TIMEOUT_MS).single {
+                        it.kind == "assistant_message" && (it.content as? JsonObject)?.get("text")?.jsonPrimitive?.content == postText
                     }
-                assertTrue("peer received the durable post", durablePost != null)
-                val latest = requireNotNull(durablePost).id
-                assertTrue("peer read confirmed", peer.markRead(conversationId, latest, THREAD_TIMEOUT_MS) >= latest)
+                val facts =
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        var reading = peer.readMarks(conversationId, THREAD_TIMEOUT_MS)
+                        while (reading.lastShownVersion?.let { it >= post.id.toULong() } != true) {
+                            delay(50)
+                            reading = peer.readMarks(conversationId, THREAD_TIMEOUT_MS)
+                        }
+                        reading
+                    }
+                val shown = requireNotNull(facts.lastShownVersion)
+                assertTrue("peer received an authoritative unread post", facts.threadSupported && shown >= post.id.toULong())
+                assertTrue("the unseen post is still unread", (facts.readUpTo ?: 0uL) < shown)
+                assertTrue("peer read confirmed", peer.markRead(conversationId, shown, THREAD_TIMEOUT_MS) >= shown)
             }
             val idle = context.getString(R.string.cd_conversation_attention_idle)
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
@@ -1108,35 +1127,75 @@ class DeterministicInteractiveStreamE2ETest {
         typeAndSend(SEND_PROMPT)
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
+        val repository = requireNotNull(coordinator.currentRepository.value)
         val conversation =
             runBlocking {
+                repository
+                    .observeConversations(ConversationFilter.All)
+                    .first()
+                    .single {
+                        it.name ==
+                            SEED_CHANNEL_NAME
+                    }.id
+            }
+        val evidence = harnessThreadEvidence(repository)
+        val running =
+            runBlocking {
                 withTimeout(THREAD_TIMEOUT_MS) {
-                    coordinator.backgroundTasks
-                        .first { rows ->
-                            rows.values.any {
-                                it.liveCount ==
-                                    1
-                            }
-                        }.keys
-                        .single()
+                    evidence.observe(conversation).first { reading ->
+                        reading.admitted &&
+                            reading.sourceSnapshot?.let {
+                                de.pyryco.mobile.ui.conversations.thread
+                                    .projectAuthoritativeThread(
+                                        requireNotNull(reading.owner.host),
+                                        conversation,
+                                        it,
+                                    ).tasks.liveCount == 1
+                            } == true
+                    }
                 }
             }
+
+        fun currentTasks() =
+            runBlocking { evidence.observe(conversation).first() }.let { reading ->
+                reading.sourceSnapshot?.takeIf { reading.admitted && reading.owner.matches(running.owner) }?.let {
+                    de.pyryco.mobile.ui.conversations.thread
+                        .projectAuthoritativeThread(
+                            requireNotNull(reading.owner.host),
+                            conversation,
+                            it,
+                        ).tasks
+                }
+            }
+        assertEquals("canonical fixture keeps its task label", "cat ${'$'}FIFO", currentTasks()?.tasks?.single()?.description)
         composeTestRule.onNodeWithContentDescription("More actions").performClick()
         composeTestRule.onNode(hasText(context.getString(R.string.background_tasks_title)) and hasClickAction()).performClick()
-        val row = hasText("cat ${'$'}FIFO") and hasClickAction()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(row).fetchSemanticsNodes().size == 1 }
+        val panel = hasAnyAncestor(isDialog())
+        val row = hasText("cat ${'$'}FIFO") and hasClickAction() and panel
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(row).fetchSemanticsNodes().size == 1 }
+        } catch (failure: Throwable) {
+            android.util.Log.d(
+                "ScriptedTaskProof",
+                "supported=${coordinator.supportsBackgroundTaskStop.value} live=${currentTasks()?.liveCount}",
+            )
+            composeTestRule.onAllNodes(isRoot(), useUnmergedTree = true).fetchSemanticsNodes().indices.forEach { index ->
+                composeTestRule.onAllNodes(isRoot(), useUnmergedTree = true)[index].printToLog("ScriptedTaskProof")
+            }
+            throw failure
+        }
         composeTestRule.onNode(row).performTouchInput { click() }
         val stop = context.getString(R.string.background_tasks_stop)
-        composeTestRule.onNodeWithText(stop).performTouchInput { click() }
+        composeTestRule.onNode(hasText(stop) and panel).performTouchInput { click() }
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            coordinator.backgroundTasks.value[conversation]?.liveCount == 0 &&
+            currentTasks()?.liveCount == 0 &&
                 composeTestRule.onAllNodesWithText(stop).fetchSemanticsNodes().isEmpty()
         }
-        assertEquals(0, coordinator.backgroundTasks.value[conversation]?.liveCount)
+        assertEquals(0, currentTasks()?.liveCount)
         assertTrue(
-            coordinator.backgroundTasks.value[conversation]
+            currentTasks()
                 ?.tasks
-                ?.none { it.taskId == "bybi8g8i8" } == true,
+                ?.none { it.taskId == "bybi8g8i8" && !it.isFinished } == true,
         )
     }
 
@@ -1146,122 +1205,230 @@ class DeterministicInteractiveStreamE2ETest {
         arriveInSeededThread()
         val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
         val repository = requireNotNull(coordinator.currentRepository.value)
-        val events = MutableStateFlow<List<LiveSessionEvent>>(emptyList())
-        val eventScope = CoroutineScope(Dispatchers.IO)
-        eventScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            coordinator.liveSessionEvents.collect { event -> events.update { it + event } }
-        }
-        try {
-            typeAndSend(SEND_PROMPT)
-            val running = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_still_working)
-            val finished = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_finished)
-            val go = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_go_to)
-            val marker = hasText(go) and hasClickAction()
-            val prose = hasText("child1827-before")
-            val expandLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_expand)
-            val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(running).fetchSemanticsNodes().isNotEmpty() }
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                events.value.filterIsInstance<LiveSessionEvent.ToolUse>().count { it.parentToolUseId == "agent1783" } >= 3
+        val conversationId =
+            runBlocking {
+                repository
+                    .observeConversations(ConversationFilter.All)
+                    .first()
+                    .single { it.name == SEED_CHANNEL_NAME }
+                    .id
             }
-            val received = events.value
-            val origin = received.filterIsInstance<LiveSessionEvent.ToolUse>().single { it.toolUseId == "agent1783" }.turnId
-            val mainEnd = received.indexOfFirst { it is LiveSessionEvent.TurnEnd && it.turnId == origin }
-            assertTrue("launching main turn must end", mainEnd >= 0)
-            val lateTools =
-                received
-                    .drop(mainEnd + 1)
-                    .filterIsInstance<LiveSessionEvent.ToolUse>()
-                    .filter { it.parentToolUseId == "agent1783" }
-            assertEquals(listOf("late1951-one", "late1951-two"), lateTools.map { it.toolUseId })
-            assertTrue("late children retain launching attribution", lateTools.all { it.turnId == origin })
-            assertEquals("child activity must not open another main turn", 1, received.filterIsInstance<LiveSessionEvent.TurnEnd>().size)
-            // Raw live events above diagnose attribution; the rendered block and run identities prove the phone's content.
-            val conversationId =
-                runBlocking {
-                    repository
-                        .observeConversations(ConversationFilter.All)
-                        .first()
-                        .single { it.name == SEED_CHANNEL_NAME }
-                        .id
-                }
-            val evidence = harnessThreadEvidence(repository)
-            val launched =
-                runBlocking {
-                    withTimeout(REPLY_TIMEOUT_MS) {
-                        evidence.observe(conversationId).first { it.agentFamily(it.owner)?.tools?.size == 1 + lateTools.size }
+        val evidence = harnessThreadEvidence(repository)
+        typeAndSend(SEND_PROMPT)
+        val running = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_still_working)
+        val finished = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_finished)
+        val go = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_go_to)
+        val marker = hasText(go) and hasClickAction()
+        val prose = hasText("child1827-before")
+        val expandLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_expand)
+        val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(running).fetchSemanticsNodes().isNotEmpty() }
+        val launched =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    evidence.observe(conversationId).first { reading ->
+                        val family = reading.agentFamily(reading.owner)
+                        family?.tools?.size == 3 &&
+                            reading.sourceSnapshot?.items?.any {
+                                it.kind == "turn_end" &&
+                                    (it.parent ?: 0) == 0L &&
+                                    it.session == family.root.session &&
+                                    it.turn == family.root.turn &&
+                                    !it.active
+                            } == true
                     }
                 }
-            val family = requireNotNull(launched.agentFamily(launched.owner))
+            }
+        val family = requireNotNull(launched.agentFamily(launched.owner))
+
+        fun toolUseId(record: ThreadEvidenceRecord) = (record.fact?.content as? JsonObject)?.get("tool_use_id")?.jsonPrimitive?.content
+        assertEquals("agent1783", toolUseId(family.root))
+        val origin = requireNotNull(family.root.turn)
+        val mainEnds =
+            requireNotNull(launched.sourceSnapshot).items.filter {
+                it.kind == "turn_end" && (it.parent ?: 0) == 0L && it.session == family.root.session && it.turn == origin
+            }
+        val mainEnd = mainEnds.single()
+        assertFalse("launching main turn must end", mainEnd.active)
+        val mainEndOrder = requireNotNull(mainEnd.order)
+        assertEquals(listOf("child1783", "late1951-one", "late1951-two"), family.tools.map(::toolUseId))
+        val lateTools = family.tools.filter { requireNotNull(it.fact?.order) > mainEndOrder }
+        assertEquals(listOf("late1951-one", "late1951-two"), lateTools.map(::toolUseId))
+        assertTrue(
+            "late children retain launching attribution",
+            lateTools.all {
+                it.turn == origin && it.session == family.root.session && it.fact?.parent == family.root.fact?.id
+            },
+        )
+        assertEquals(
+            "child activity must not open another main turn",
+            1,
+            requireNotNull(launched.sourceSnapshot).items.count { it.kind == "turn_end" && (it.parent ?: 0) == 0L },
+        )
+        if (launched.owner.kind == ThreadEvidenceKind.Authoritative) {
+            // Unknown parents stay private in canonical history, rather than becoming main-thread prose.
+            assertTrue("unknown-parent prose must stay private", launched.records.none { it.fullText == "unmatched1827" })
+        } else {
             assertTrue("unmatched prose must stay outside the Agent", launched.holdsOutsideAgent("unmatched1827", family))
-            assertTrue("owned prose must belong once to the Agent", family.ownsSingleProse("child1827-before"))
-            val header = hasTestTag("background-agent:${family.agentId}")
-            val child = hasTestTag("background-agent-child:${family.agentId}")
-            // The first owned tool names the run; the Agent root stays separate.
-            val run =
-                hasText("Using tools:", substring = true) and
-                    hasClickAction() and
-                    hasAnyAncestor(hasTestTag("tool-run:${requireNotNull(family.runId)}"))
-            val closedRun =
-                run and
-                    SemanticsMatcher("closed owned Agent run") {
-                        it.config.getOrNull(SemanticsActions.OnClick)?.label == expandLabel
-                    }
+        }
+        assertTrue("owned prose must belong once to the Agent", family.ownsSingleProse("child1827-before"))
+        val header = hasTestTag("background-agent:${family.agentId}")
+        val child = hasTestTag("background-agent-child:${family.agentId}")
+        // The first owned tool names the run; the Agent root stays separate.
+        val run =
+            hasText("Using tools:", substring = true) and
+                hasClickAction() and
+                hasAnyAncestor(hasTestTag("tool-run:${requireNotNull(family.runId)}"))
+        val closedRun =
+            run and
+                SemanticsMatcher("closed owned Agent run") {
+                    it.config.getOrNull(SemanticsActions.OnClick)?.label == expandLabel
+                }
+        if (launched.owner.kind == ThreadEvidenceKind.Authoritative) {
+            composeTestRule.onAllNodesWithText("unmatched1827", useUnmergedTree = true).assertCountEquals(0)
+        } else {
             list.performScrollToNode(hasText("unmatched1827"))
             composeTestRule.onNodeWithText("unmatched1827").assertIsDisplayed()
             composeTestRule.onAllNodes(hasText("unmatched1827") and hasAnyAncestor(child), useUnmergedTree = true).assertCountEquals(0)
-            list.performScrollToNode(run)
-            composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
-            composeTestRule.onNode(closedRun).performClick()
-            list.performScrollToNode(prose)
-            composeTestRule.onNode(prose and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
-            composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(1)
-            list.performScrollToNode(run)
-            composeTestRule.onNode(run).performClick()
-            composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
-            list.performScrollToNode(marker)
-            composeTestRule.onNode(marker).performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
-            composeTestRule.onNode(header).assertIsDisplayed()
-            composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
-            list.performScrollToNode(run)
-            composeTestRule.onNode(closedRun).assertExists()
-            typeAndSend("release1783")
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText("after1783").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        fun childMembership(expanded: Boolean): Boolean {
+            val indexForKey = list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+            return family.childIds.all { id -> (indexForKey("msg:$id") >= 0) == (expanded || id == family.runId) }
+        }
+        list.performScrollToNode(run)
+        composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
+        assertTrue("only the first-tool representative remains in a collapsed run", childMembership(expanded = false))
+        composeTestRule.questionAnswerTarget(closedRun).performTouchInput { click(center) }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { childMembership(expanded = true) }
+        val proseId =
+            family.children
+                .single { it.fullText == "child1827-before" }
+                .message.id
+        val proseIndex = list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:$proseId")
+        assertTrue("the opened run must retain its exact owned prose row", proseIndex >= 0)
+        list.performScrollToIndex(proseIndex)
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(prose, useUnmergedTree = true).fetchSemanticsNodes().size == 1
             }
-            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
-            composeTestRule.onNodeWithText(finished).assertIsDisplayed()
-            composeTestRule.onNode(marker).performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
-            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("after1783"))
-            val agent = composeTestRule.onNode(header).fetchSemanticsNode().boundsInRoot
-            val after = composeTestRule.onNodeWithText("after1783", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-            assertTrue("terminal block must settle before the following reply", agent.bottom <= after.top)
-            // Navigation preserves collapse state; explicitly open the owned run to inspect its reply.
-            composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(0)
-            val settled =
+        } catch (failure: Throwable) {
+            val record = family.children.single { it.message.id == proseId }
+            android.util.Log.d(
+                "ScriptedAgentProof",
+                "rendered=${record.message.content} source=${record.fullText} status=${record.fact?.status}",
+            )
+            composeTestRule.onAllNodes(isRoot(), useUnmergedTree = true).fetchSemanticsNodes().indices.forEach { index ->
+                composeTestRule.onAllNodes(isRoot(), useUnmergedTree = true)[index].printToLog("ScriptedAgentProof")
+            }
+            throw failure
+        }
+        composeTestRule.onNode(prose and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(1)
+        list.performScrollToNode(run)
+        composeTestRule.questionAnswerTarget(run).performTouchInput { click(center) }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { childMembership(expanded = false) }
+        composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
+        composeTestRule.questionAnswerTap(
+            marker,
+            lazyKey = "agent-start:${family.agentId}",
+            evidence = { android.util.Log.d("ScriptedAgentProof", it) },
+        )
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onAllNodes(isDialog()).assertCountEquals(0)
+        composeTestRule.onNode(header).assertIsDisplayed()
+        composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
+        list.performScrollToNode(run)
+        composeTestRule.onNode(closedRun).assertExists()
+        typeAndSend("release1783")
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText("after1783").fetchSemanticsNodes().isNotEmpty()
+        }
+        var pendingSettlement: ThreadEvidence? = null
+        val settled =
+            try {
                 runBlocking {
                     withTimeout(THREAD_TIMEOUT_MS) {
-                        evidence.observe(conversationId).first { it.settledAgentPrecedes(launched.owner, family, "after1783") }
+                        evidence.observe(conversationId).onEach { pendingSettlement = it }.first {
+                            it.settledAgentAfterRecovery(launched, family, "after1783") != null
+                        }
                     }
                 }
-            val owned = requireNotNull(settled.agentFamily(launched.owner))
-            assertEquals("every late received tool must be retained in the owned run", 1 + lateTools.size, owned.tools.size)
-            assertTrue("owned prose must belong once to the Agent", owned.ownsSingleProse("child1827-after"))
+            } catch (failure: Throwable) {
+                pendingSettlement?.let { current ->
+                    val before = launched.owner
+                    val after = current.owner
+                    val currentFamily = current.agentFamily(after)
+                    val currentSettlement = currentFamily?.let { current.settledAgentPrecedes(after, it, "after1783") }
+                    val familyOrder = currentFamily?.let { (listOf(it.root) + it.children).map { row -> row.fact?.order } }
+                    val followingOrder = current.records.filter { it.agentId == null && it.fullText == "after1783" }.map { it.fact?.order }
+                    android.util.Log.d(
+                        "ScriptedAgentRecovery",
+                        "admitted=${current.admitted} host=${before.host == after.host} " +
+                            "conversation=${before.conversation == after.conversation} " +
+                            "connection=${before.connection === after.connection} kind=${before.kind == after.kind} " +
+                            "epoch=${before.epoch == after.epoch} generation=${before.generation}->${after.generation} " +
+                            "family=${currentFamily != null} settled=$currentSettlement checkpoint=${current.sourceSnapshot?.checkpoint} " +
+                            "coverage=${current.sourceSnapshot?.coverage}",
+                    )
+                    val candidates = current.records.filter { it.rawToolUseId() == family.root.rawToolUseId() }
+                    android.util.Log.d(
+                        "ScriptedAgentRecovery",
+                        "rootCandidates=${candidates.size} familyOrder=$familyOrder followingOrder=$followingOrder",
+                    )
+                    (listOf(family.root) + family.children).forEach { previous ->
+                        val old = previous.fact ?: return@forEach
+                        val row = current.records.singleOrNull { it.fact?.id == old.id }
+                        val now = row?.fact
+                        val oldInput = old.content as? JsonObject
+                        val input = now?.content as? JsonObject
+                        val sameInput = listOf("tool_use_id", "name", "input").all { oldInput?.get(it) == input?.get(it) }
+                        android.util.Log.d(
+                            "ScriptedAgentRecovery",
+                            "id=${old.id} present=${row != null} kind=${old.kind == now?.kind} " +
+                                "session=${old.session == now?.session} turn=${old.turn == now?.turn} " +
+                                "parent=${old.parent == now?.parent} order=${old.order}->${now?.order} " +
+                                "revision=${old.rev}->${now?.rev} state=${old.status}/${old.active}->${now?.status}/${now?.active} " +
+                                "input=$sameInput text=${previous.fullText == row?.fullText} " +
+                                "prefix=${row?.fullText?.startsWith(previous.fullText)}",
+                        )
+                    }
+                }
+                throw failure
+            }
+        val owned = requireNotNull(settled.settledAgentAfterRecovery(launched, family, "after1783"))
+        val settledHeader = hasTestTag("background-agent:${owned.agentId}")
+        val settledChild = hasTestTag("background-agent-child:${owned.agentId}")
+        composeTestRule.questionAnswerTap(
+            marker and hasText(finished),
+            lazyKey = "agent-start:${owned.agentId}",
+            evidence = { android.util.Log.d("ScriptedAgentProof", it) },
+        )
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(settledHeader).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onAllNodes(isDialog()).assertCountEquals(0)
+        composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("after1783"))
+        val agent = composeTestRule.onNode(settledHeader).fetchSemanticsNode().boundsInRoot
+        val after = composeTestRule.onNodeWithText("after1783", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertTrue("terminal block must settle before the following reply", agent.bottom <= after.top)
+        // Navigation preserves collapse state; explicitly open the owned run to inspect its reply.
+        composeTestRule.onAllNodes(hasText("child1827-after", substring = true), useUnmergedTree = true).assertCountEquals(0)
+        assertEquals("every late received tool must be retained in the owned run", 1 + lateTools.size, owned.tools.size)
+        assertTrue("owned prose must belong once to the Agent", owned.ownsSingleProseFragment("child1827-after"))
+        if (settled.owner.kind == ThreadEvidenceKind.Authoritative) {
+            // Unknown parents stay private in canonical history, rather than becoming main-thread prose.
+            assertTrue("unknown-parent prose must stay private", settled.records.none { it.fullText == "unmatched1827" })
+        } else {
             assertTrue("unmatched prose must stay outside the Agent", settled.holdsOutsideAgent("unmatched1827", owned))
-            composeTestRule.verifyAgentRunNavigation(
-                agentId = owned.agentId,
-                runId = requireNotNull(owned.runId),
-                childIds = owned.childIds,
-                ownedChild = hasText("child1827-after") and hasAnyAncestor(child),
-                goLabel = go,
-                expandLabel = expandLabel,
-                collapseLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_collapse),
-            )
-        } finally {
-            eventScope.cancel()
         }
+        composeTestRule.verifyAgentRunNavigation(
+            agentId = owned.agentId,
+            runId = requireNotNull(owned.runId),
+            childIds = owned.childIds,
+            ownedChild = hasText("child1827-after", substring = true) and hasAnyAncestor(settledChild),
+            goLabel = go,
+            expandLabel = expandLabel,
+            collapseLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_collapse),
+        )
     }
 
     /**

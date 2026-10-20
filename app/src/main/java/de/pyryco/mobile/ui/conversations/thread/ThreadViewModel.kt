@@ -23,6 +23,8 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
+import de.pyryco.mobile.data.repository.AuthoritativeLiveProgress
+import de.pyryco.mobile.data.repository.CanonicalRefusalIdentity
 import de.pyryco.mobile.data.repository.ConnectionReading
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ContextUsage
@@ -49,6 +51,7 @@ import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadReadEvidence
 import de.pyryco.mobile.data.repository.ThreadSnapshot
+import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.data.repository.projectDisplay
 import de.pyryco.mobile.data.repository.threadSnapshots
@@ -72,6 +75,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -82,6 +86,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -108,6 +113,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
+import java.lang.ref.WeakReference
 import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.floor
@@ -222,6 +228,12 @@ class ThreadViewModel(
     // `HostDestination` rejects an unresolvable owner, so this is never blank in production.
     private val serverId: String =
         savedStateHandle.get<String>("serverId").orEmpty()
+
+    /**
+     * This exact host's negotiated thread route (#2175). When present it is the only content producer:
+     * legacy rows, deltas, history walks and cached legacy rows feed nothing. Null keeps the legacy demo route.
+     */
+    private val negotiated = repository.negotiatedThread?.takeIf { it.host == serverId }
 
     /**
      * This chat's unsent composer text (#789), `""` when it has none. Read from the app-scoped
@@ -736,8 +748,8 @@ class ThreadViewModel(
         }
         viewModelScope.launch {
             combine(
-                backgroundTasks(conversationId).onStart { emit(null) },
-                backgroundTaskCount(conversationId).onStart { emit(0) },
+                (if (negotiated == null) backgroundTasks(conversationId) else flowOf(null)).onStart { emit(null) },
+                (if (negotiated == null) backgroundTaskCount(conversationId) else flowOf(0)).onStart { emit(0) },
                 backgroundTaskStopSupported.onStart { emit(false) },
             ) { roster, count, supported -> Triple(roster, count, supported) }.collect { (roster, count, supported) ->
                 synchronized(taskControlLock) {
@@ -938,8 +950,7 @@ class ThreadViewModel(
 
     // One receipt subscription feeds both the rows and their read evidence, so opening a thread backfills once.
     private val receivedThread =
-        repository
-            .threadSnapshots(conversationId)
+        (if (negotiated == null) repository.threadSnapshots(conversationId) else emptyFlow())
             .shareIn(viewModelScope, SharingStarted.WhileSubscribed(replayExpirationMillis = 0), replay = 1)
 
     /**
@@ -958,6 +969,7 @@ class ThreadViewModel(
             var fold = ThreadFold(emptyList(), null)
             var evidence = ThreadReadEvidence()
             emit(FoldedThread(emptyList(), evidence))
+            if (negotiated != null) return@flow
             merge(
                 receivedThread.map {
                     // Boundary effects stay on main at receipt, before a worker backlog can delay them.
@@ -1011,7 +1023,7 @@ class ThreadViewModel(
             emitAll(
                 combine(
                     threadItems,
-                    repository.observeQueue(conversationId),
+                    if (negotiated == null) repository.observeQueue(conversationId) else flowOf(emptyList()),
                     historyDemand,
                     hostAvailable,
                     flow<HistoryCoverage?> {
@@ -1076,7 +1088,59 @@ class ThreadViewModel(
                 },
             )
         }.distinctUntilChanged()
-            .paceThreadContent(contentScheduling)
+            .paceThreadContent(if (negotiated == null) contentScheduling else null)
+
+    /**
+     * The negotiated thread's screen presentation (#2175): restored or synchronized facts for this exact host and
+     * conversation. A missing-thread verdict draws nothing, even from cache; saved facts never claim support.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val negotiatedPresentation: Flow<AuthoritativeThreadPresentation?> =
+        negotiated?.let { route ->
+            // Persistence may finish non-cancellably. Its cleanup must not own the verdict switch.
+            val snapshots = route.observe(conversationId).shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
+            route.support
+                .flatMapLatest { support ->
+                    flow<AuthoritativeThreadPresentation?> {
+                        // Clear retired progress and Missing content without waiting for a frame or disk.
+                        emit(null)
+                        if (support is ThreadSupport.Missing) return@flow
+                        val progress =
+                            if (support is ThreadSupport.Supported) {
+                                route.progress(conversationId, support.connection)
+                            } else {
+                                flowOf(AuthoritativeLiveProgress())
+                            }
+                        emitAll(
+                            combine(snapshots, progress) { snapshot, reading ->
+                                withContext(contentScheduling?.worker ?: Dispatchers.Main.immediate) {
+                                    // An empty epoch can still carry scoped local Sending feedback.
+                                    projectAuthoritativeThread(route.host, conversationId, snapshot, reading)
+                                }
+                            }.paceThreadContent(contentScheduling),
+                        )
+                    }
+                }
+        } ?: flowOf(null)
+
+    init {
+        // #2175: synchronize once per supported connection, re-evaluated on every acknowledgement.
+        negotiated?.let { route ->
+            viewModelScope.launch {
+                route.support.collectLatest { support ->
+                    if (support is ThreadSupport.Supported) {
+                        val lease = route.acquire(conversationId, support.connection) ?: return@collectLatest
+                        try {
+                            RelayLog.d { "event=thread_route_opened" }
+                            awaitCancellation()
+                        } finally {
+                            lease.close()
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     val state: StateFlow<ThreadUiState> =
         combine(
@@ -1150,6 +1214,31 @@ class ThreadViewModel(
             )
         }.combine(repository.observeReadMarks(conversationId)) { uiState, marks ->
             uiState.copy(readUpTo = marks?.readUpTo, readMarks = marks)
+        }.combine(negotiatedPresentation) { uiState, presentation ->
+            val route = negotiated
+            if (route == null) {
+                uiState
+            } else {
+                val connection = currentRunConnection
+                val supported = route.support.value as? ThreadSupport.Supported
+                val reading = conversationReadings.replayCache.lastOrNull()
+                val session =
+                    reading
+                        ?.takeIf { it.connection === connection }
+                        ?.list
+                        ?.singleOrNull { it.id == conversationId }
+                        ?.currentSessionId
+                        .orEmpty()
+                val current =
+                    presentation?.takeIf {
+                        connection != null &&
+                            supported?.connection === connection &&
+                            it.host == serverId &&
+                            it.conversation == conversationId &&
+                            route.store.current(serverId, conversationId) === it.sourceSnapshot
+                    }
+                uiState.copy(authoritativeThread = presentation, sessionCostUsd = current?.reportedSessionCost(session))
+            }
         }.combine(contextSheetOpen) { uiState, open ->
             uiState.copy(contextSheetOpen = open)
         }.stateIn(
@@ -1183,7 +1272,13 @@ class ThreadViewModel(
                 }.distinctUntilChanged(),
         ) { offer, pending, addressable ->
             offer?.takeIf { addressable }?.let {
-                SwitchBackOffer(it.occurredAt, it.originalModel, pending = pending != null, failed = it.failed)
+                SwitchBackOffer(
+                    it.occurredAt,
+                    it.originalModel,
+                    pending = pending != null,
+                    failed = it.failed,
+                    canonicalIdentity = it.canonicalIdentity,
+                )
             }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
@@ -1192,6 +1287,13 @@ class ThreadViewModel(
         // the offer. The announced model is a held reading; `distinctUntilChanged` keeps the same model handed
         // over again on a reconnect from counting as a new announcement.
         viewModelScope.launch { repository.observeLiveRefusalEvents(conversationId).collect(::onLiveRefusalEvent) }
+        viewModelScope.launch {
+            repository.observeLiveRootTurnEnds(conversationId).collect { event ->
+                if (isCurrentCanonicalEffect(event.sourceOwner, event.currentSource)) {
+                    setTurnOutcome(turnRecoveryNotice(event), "canonical_turn_end")
+                }
+            }
+        }
         viewModelScope.launch {
             repository
                 .observeAnnouncedModel(conversationId)
@@ -2125,6 +2227,10 @@ class ThreadViewModel(
      * rather than queuing it.
      */
     fun onDemandOlderHistory() {
+        if (negotiated != null) {
+            negotiated.older(conversationId)
+            return
+        }
         if (!historySeed.isCompleted) {
             // Prefetch is movement-gated: completing the seed cannot replay an earlier movement.
             RelayLog.d { "event=history_ask_skipped reason=seeding" }
@@ -2146,6 +2252,10 @@ class ThreadViewModel(
      * keeping every loaded row and the walk's position across both the failure and the retry.
      */
     fun onRetryOlderHistory() {
+        if (negotiated != null) {
+            negotiated.older(conversationId)
+            return
+        }
         if (!hostAvailable.value) return
         val claimed = claimHistorySlot { if (it.canRetry) it.asking() else null } ?: return
         launchHistoryAsk(claimed)
@@ -2161,6 +2271,8 @@ class ThreadViewModel(
      * pull's would; otherwise the walk's cursor, saved position and stop reason are left as they were.
      */
     private fun askForNewestPage(reconnect: Boolean) {
+        // #2175: a negotiated thread catches up through its own query on each supported connection.
+        if (negotiated != null) return
         if (reconnect) RelayLog.d { "event=history_newest_ask reason=reconnect" }
         pendingNewest++
         drainNewestPages()
@@ -2279,7 +2391,7 @@ class ThreadViewModel(
     }
 
     fun onDemandUnsignedHistoryGap(anchor: ULong) {
-        if (!historySeed.isCompleted || !hostAvailable.value) return
+        if (negotiated != null || !historySeed.isCompleted || !hostAvailable.value) return
         val coverage = historyCoverage.value
         if (anchor == 0uL &&
             coverage.unsignedUnknownEdge == null ||
@@ -2484,7 +2596,7 @@ class ThreadViewModel(
                 }
                 // #984: before the send, because the confirmed row can be drawn while it is suspended. A
                 // send that then fails leaves harmless entries: its retry names the same ids.
-                draftStore.recordSentOriginals(serverId, conversationId, originals)
+                draftStore.recordSentOriginals(serverId, conversationId, originals, references)
                 onUploaded()
                 draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
                 // #686: a message sent while this opening's recall write is outstanding follows it.
@@ -2630,7 +2742,12 @@ class ThreadViewModel(
                 try {
                     val original = draftStore.sentOriginal(serverId, conversationId, attachmentId)
                     if (original != null && attachmentReader.canRead(original)) {
-                        AttachmentViewState.Ready(AttachmentSource.Original(original), null, null) to "original"
+                        val reference = draftStore.sentOriginalReference(serverId, conversationId, attachmentId)
+                        AttachmentViewState.Ready(
+                            AttachmentSource.Original(original),
+                            reference?.displayName,
+                            reference?.mimeType,
+                        ) to "original"
                     } else {
                         retrieved(repository.retrieveAttachment(conversationId, attachmentId))
                     }
@@ -3231,12 +3348,12 @@ class ThreadViewModel(
             reportFailure = false,
             onAcked = {
                 RelayLog.d { "event=refusal_switch_back outcome=acked" }
-                refusalOffer.update { if (it?.occurredAt == offer.occurredAt) null else it }
+                refusalOffer.update { if (it?.sameOccurrence(offer) == true) null else it }
             },
         ) {
             RelayLog.d { "event=refusal_switch_back outcome=failed" }
             pendingModel.compareAndSet(pending, null)
-            refusalOffer.update { if (it?.occurredAt == offer.occurredAt) it.copy(failed = true) else it }
+            refusalOffer.update { if (it?.sameOccurrence(offer) == true) it.copy(failed = true) else it }
         }
     }
 
@@ -3246,13 +3363,25 @@ class ThreadViewModel(
      * clears; a no-fallback refusal changes nothing; a session transition clears. `scope` is claude's open
      * string, compared and never shown: a value this client does not know can only withhold the offer.
      */
+    private fun isCurrentCanonicalEffect(
+        owner: Any?,
+        current: () -> Boolean,
+    ): Boolean = current() && (negotiated == null || (negotiated.support.value as? ThreadSupport.Supported)?.connection === owner)
+
     private fun onLiveRefusalEvent(event: LiveRefusalEvent) {
         when (event) {
             is LiveRefusalEvent.Refused -> {
+                if (event.currentSource?.let { !isCurrentCanonicalEffect(event.sourceOwner, it) } == true) return
                 val refusal = event.refusal
                 val fallbackModel = refusal.fallbackModel ?: return
                 if (event.scope == SESSION_SCOPE && refusal.originalModel.isNotEmpty() && fallbackModel.isNotEmpty()) {
-                    refusalOffer.value = RefusalOffer(refusal.originalModel, fallbackModel, refusal.occurredAt)
+                    refusalOffer.value =
+                        RefusalOffer(
+                            refusal.originalModel,
+                            fallbackModel,
+                            refusal.occurredAt,
+                            canonicalIdentity = refusal.canonicalIdentity,
+                        )
                     RelayLog.d { "event=refusal_offer outcome=armed" }
                     // The refusal means a session is running, but a reading taken before it spawned names none.
                     repository.refreshSessionSettings(conversationId)
@@ -3260,7 +3389,10 @@ class ThreadViewModel(
                     clearRefusalOffer("unqualified")
                 }
             }
-            LiveRefusalEvent.SessionReplaced -> clearRefusalOffer("session")
+            LiveRefusalEvent.SessionReplaced -> {
+                clearRefusalOffer("session")
+                clearTurnOutcome("session")
+            }
         }
     }
 
@@ -3491,6 +3623,25 @@ class ThreadViewModel(
     }
 
     private var highestQualifiedRead = 0uL
+    private var highestQualifiedPresentation: AuthoritativeThreadPresentation? = null
+    private var highestQualifiedBinding: Any? = null
+    private var highestQualifiedReadConnection: Any? = null
+
+    private fun qualifiesAuthoritativeSight(event: ThreadEvent.NewestContentPresented): Boolean {
+        val presentation = event.presentation ?: return false
+        val authoritative = taskControls.value
+        return viewModelScope.coroutineContext[Job]?.isActive == true &&
+            authoritative.authoritative === presentation &&
+            authoritative.authoritativeBinding === event.binding &&
+            authoritative.readConnection === repository.runConfigurationReadings?.currentConnection &&
+            (negotiated == null || (negotiated.support.value as? ThreadSupport.Supported)?.connection === authoritative.readConnection) &&
+            (negotiated == null || negotiated.store.current(serverId, conversationId) === presentation.sourceSnapshot) &&
+            presentation.host == serverId &&
+            presentation.conversation == conversationId &&
+            state.value.hostAvailable &&
+            presentation.rows.any { row -> row is ThreadRow.Delivered && row.listKey(0) == event.rowKey && row.item == event.row } &&
+            presentation.readCheckpoint(event.rowKey, state.value.readMarks, event.seenRowRevisions) == event.checkpoint
+    }
 
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
@@ -3502,19 +3653,18 @@ class ThreadViewModel(
                 val authoritative = taskControls.value
                 val presentation = event.presentation
                 if (presentation != null) {
-                    if (authoritative.authoritative !== presentation ||
-                        authoritative.authoritativeBinding !== event.binding ||
-                        authoritative.readConnection !== repository.runConfigurationReadings?.currentConnection ||
-                        presentation.host != serverId ||
-                        presentation.conversation != conversationId ||
-                        !state.value.hostAvailable ||
-                        presentation.rows.none { row ->
-                            row is ThreadRow.Delivered && row.listKey(0) == event.rowKey && row.item == event.row
-                        } ||
-                        presentation.readCheckpoint(event.rowKey, state.value.readMarks, event.seenRowRevisions) != checkpoint
-                    ) {
+                    if (!qualifiesAuthoritativeSight(event)) {
                         RelayLog.d { "event=thread_read_sight code=retired_or_unqualified" }
                         return
+                    }
+                    if (highestQualifiedPresentation !== presentation ||
+                        highestQualifiedBinding !== event.binding ||
+                        highestQualifiedReadConnection !== authoritative.readConnection
+                    ) {
+                        highestQualifiedPresentation = presentation
+                        highestQualifiedBinding = event.binding
+                        highestQualifiedReadConnection = authoritative.readConnection
+                        highestQualifiedRead = 0uL
                     }
                 } else if (authoritative.authoritative != null || state.value.readMarks?.threadSupported == true) {
                     return
@@ -3522,9 +3672,19 @@ class ThreadViewModel(
                 if (checkpoint <= highestQualifiedRead) return
                 highestQualifiedRead = checkpoint
                 RelayLog.d { "event=thread_read_sight code=qualified" }
-                viewModelScope.launch(
-                    start = CoroutineStart.UNDISPATCHED,
-                ) { repository.acknowledgeReadCheckpoint(conversationId, checkpoint) }
+                if (presentation != null) {
+                    // The process retry service retains sight, without retaining a disposed ViewModel.
+                    val owner = WeakReference(this)
+                    viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        repository.acknowledgeAuthoritativeReadCheckpoint(conversationId, checkpoint, authoritative.readConnection) {
+                            owner.get()?.qualifiesAuthoritativeSight(event) == true
+                        }
+                    }
+                } else {
+                    viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        repository.acknowledgeReadCheckpoint(conversationId, checkpoint)
+                    }
+                }
             }
             is ThreadEvent.BackgroundTaskToggle -> toggleBackgroundTask(event.taskId)
             is ThreadEvent.BackgroundTaskStop -> sendBackgroundTaskStop(event)
@@ -3961,7 +4121,15 @@ private data class RefusalOffer(
     val fallbackModel: String,
     val occurredAt: Instant,
     val failed: Boolean = false,
-)
+    val canonicalIdentity: CanonicalRefusalIdentity? = null,
+) {
+    fun sameOccurrence(other: RefusalOffer): Boolean =
+        if (canonicalIdentity != null || other.canonicalIdentity != null) {
+            canonicalIdentity != null && canonicalIdentity == other.canonicalIdentity
+        } else {
+            occurredAt == other.occurredAt
+        }
+}
 
 /** The one `model_refusal_fallback.scope` that arms a switch-back offer (#1360, desktop's rule). */
 private const val SESSION_SCOPE = "session"

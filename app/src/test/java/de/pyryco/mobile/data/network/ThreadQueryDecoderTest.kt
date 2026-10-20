@@ -72,6 +72,17 @@ class ThreadQueryDecoderTest {
     }
 
     @Test
+    fun initialZeroVersionCatchUpLearnsEpochAndKeepsBatchesFenced() {
+        val initial = ThreadQueryRequest.CatchUp("conv-a", "", 0uL)
+        val d = decoder(initial)
+        assertEquals("epoch-b", batch(d.decode(frame(batchRaw()))).checkpoint.epoch)
+        assertTrue(fact(d.decode(frame(windowMarker(0uL, 809uL, false)))) is ThreadQueryReply.Success)
+        val changed = decoder(initial)
+        batch(changed.decode(frame(batchRaw())))
+        repair(changed.decode(frame(edit(windowMarker(0uL, 809uL, false), "epoch", JsonPrimitive("replacement")))))
+    }
+
+    @Test
     fun emptyAndMultibatchRepliesNeedMarker() {
         val d = decoder()
         assertTrue(batch(d.decode(frame(batchRaw(emptyList())))).items.isEmpty())

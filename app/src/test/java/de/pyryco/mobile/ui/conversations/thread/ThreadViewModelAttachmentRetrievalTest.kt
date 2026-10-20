@@ -159,6 +159,26 @@ class ThreadViewModelAttachmentRetrievalTest {
         }
 
     @Test
+    fun sentOriginalKeepsUploadedMetadataWhenCanonicalRowContainsOnlyItsId() =
+        runTest {
+            val store = ComposerDraftStore()
+            val repository = RetrievingRepository()
+            val vm = vm(repository, store, ProbingReader(setOf(ORIGINAL)))
+            vm.addAttachment(ORIGINAL, "notes.txt", "text/plain", 1)
+            vm.sendMessage("send")
+            advanceUntilIdle()
+
+            vm.onAttachmentShown(MessageAttachment("id-notes.txt"))
+            advanceUntilIdle()
+
+            assertTrue(repository.retrievals.isEmpty())
+            assertEquals(
+                AttachmentViewState.Ready(AttachmentSource.Original(ORIGINAL), "notes.txt", "text/plain"),
+                vm.attachmentStates.value["id-notes.txt"],
+            )
+        }
+
+    @Test
     fun shown_retrievesOnce_andIsReadyWithTheRetrievedHints() =
         runTest {
             val repository = RetrievingRepository(AttachmentRetrievalResult.Retrieved(kept, "photo.png", "image/png"))

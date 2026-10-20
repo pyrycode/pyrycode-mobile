@@ -6,13 +6,17 @@ import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
 import de.pyryco.mobile.data.repository.AnnouncedModel
+import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
+import de.pyryco.mobile.data.repository.CanonicalRefusalIdentity
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.LiveRefusalEvent
+import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.ui.conversations.components.SwitchBackOffer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -22,6 +26,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -316,6 +321,68 @@ class ThreadViewModelRefusalOfferTest {
             assertEquals(T2, vm.switchBackOffer.value?.occurredAt)
         }
 
+    @Test fun canonicalSameTimestampOffersKeepDistinctRowsAndOlderAckCannotClearTheNewOne() =
+        runTest {
+            val vm = collectedVm()
+            val first =
+                row(ORIGINAL, FALLBACK, T1).copy(
+                    canonicalIdentity =
+                        de.pyryco.mobile.data.repository
+                            .CanonicalRefusalIdentity(SERVER, CONV, "epoch", 1),
+                )
+            val second =
+                first.copy(
+                    canonicalIdentity =
+                        de.pyryco.mobile.data.repository
+                            .CanonicalRefusalIdentity(SERVER, CONV, "epoch", 2),
+                )
+            repo.refusals.emit(LiveRefusalEvent.Refused(first, "session"))
+            val ack = CompletableDeferred<Unit>()
+            repo.hold = ack
+            vm.onSwitchBack()
+            runCurrent()
+            repo.refusals.emit(LiveRefusalEvent.Refused(second, "session"))
+            ack.complete(Unit)
+            runCurrent()
+            assertFalse(requireNotNull(vm.switchBackOffer.value).armedBy(first))
+            assertTrue(requireNotNull(vm.switchBackOffer.value).armedBy(second))
+        }
+
+    @Test fun queuedCanonicalReceiptRequiresTheCurrentSupportedOwnerButAnArmedOfferSurvivesReconnect() =
+        runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val owner = Any()
+            val route = NegotiatedFixture(owner)
+            repo.route = route
+            val vm = collectedVm()
+            val canonical =
+                row(ORIGINAL, FALLBACK, T1).copy(
+                    canonicalIdentity =
+                        CanonicalRefusalIdentity(SERVER, CONV, "epoch", 1),
+                )
+            val receipt = LiveRefusalEvent.Refused(canonical, "session", currentSource = { true }, sourceOwner = owner)
+            // The old physical source is deliberately still open. Hold its receipt in Main's queue,
+            // then change only the authenticated route verdict before the VM consumes it.
+            for (verdict in listOf(
+                ThreadSupport.Unverified,
+                ThreadSupport.Missing(owner),
+                ThreadSupport.Supported(Any()),
+            )) {
+                route.support.value = ThreadSupport.Supported(owner)
+                backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { repo.refusals.emit(receipt) }
+                route.support.value = verdict
+                runCurrent()
+                assertNull(vm.switchBackOffer.value)
+            }
+            route.support.value = ThreadSupport.Supported(owner)
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { repo.refusals.emit(receipt) }
+            runCurrent()
+            assertTrue(requireNotNull(vm.switchBackOffer.value).armedBy(canonical))
+            route.support.value = ThreadSupport.Supported(Any())
+            runCurrent()
+            assertTrue("an already armed same-session offer is retained", requireNotNull(vm.switchBackOffer.value).armedBy(canonical))
+        }
+
     // ---- lifetime ---------------------------------------------------------------------------------
 
     @Test
@@ -427,9 +494,30 @@ class ThreadViewModelRefusalOfferTest {
         windowTokens = 0,
     )
 
+    private class NegotiatedFixture(
+        owner: Any,
+    ) : NegotiatedThread() {
+        override val host = SERVER
+        override val support =
+            MutableStateFlow<ThreadSupport>(
+                ThreadSupport.Supported(owner),
+            )
+        override val store = AuthoritativeThreadStore()
+
+        override fun observe(conversationId: String) = store.observe(host, conversationId)
+
+        override suspend fun open(conversationId: String) = true
+
+        override fun older(conversationId: String) = false
+
+        override fun cancel(conversationId: String) = Unit
+    }
+
     private inner class RecordingRepo(
         val fake: FakeConversationRepository = FakeConversationRepository(),
     ) : ConversationRepository by fake {
+        var route: NegotiatedThread? = null
+        override val negotiatedThread get() = route
         val readings = MutableStateFlow<SessionSettings?>(reading())
         val announced = MutableStateFlow<AnnouncedModel?>(null)
         val refusals = MutableSharedFlow<LiveRefusalEvent>()

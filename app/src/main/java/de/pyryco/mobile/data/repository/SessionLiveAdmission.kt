@@ -23,6 +23,9 @@ internal class SessionLiveAdmission(
 
     private val owners = mutableMapOf<String, Owner>()
 
+    // A catalog describes available vocabulary, not the target conversation’s running session.
+    private val catalogs = mutableMapOf<String, Owner>()
+
     fun summary(
         conversation: String,
         session: String,
@@ -92,6 +95,21 @@ internal class SessionLiveAdmission(
             } else if (session.raw != JsonPrimitive(target)) {
                 return rejected("settings_session")
             }
+        }
+        if (family == "model_list") {
+            val existing = catalogs[conversation]
+            val owner =
+                if (cleared) {
+                    if (existing?.session == session) existing else Owner(session).also { catalogs[conversation] = it }
+                } else {
+                    existing?.takeIf { it.session == session } ?: return rejected("catalog_source")
+                }
+            if (cleared) {
+                if (family !in owner.fresh && owner.cleared.add(family)) clear(conversation, family)
+                return null
+            }
+            owner.fresh += family
+            return envelope.copy(payload = JsonObject(payload + ("conversation_id" to JsonPrimitive(conversation))))
         }
         val existing =
             owners[conversation] ?: bindings[conversation]?.let { known ->

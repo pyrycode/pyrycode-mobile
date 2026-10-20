@@ -82,23 +82,63 @@ internal class OwnedReplyObservation(
         }
     }
 
-    private val producerStore =
-        if (before.owner.kind == ThreadEvidenceKind.Authoritative && !legacyProducer) {
+    private val threadStore =
+        if (before.owner.kind == ThreadEvidenceKind.Authoritative) {
             AuthoritativeThreadStore().also { store ->
-                val facts = before.records.mapNotNull { it.fact }
-                store.applyBatch(
-                    host,
-                    before.owner.conversation,
-                    checkNotNull(before.owner.epoch),
-                    facts.maxOfOrNull { it.rev } ?: 0,
-                    facts,
-                    0,
-                )
+                before.sourceSnapshot?.let { store.restore(host, before.owner.conversation, it, 0) }
+                if (store.current(host, before.owner.conversation).epoch == null) {
+                    val facts = before.records.mapNotNull { it.fact }
+                    store.applyBatch(
+                        host,
+                        before.owner.conversation,
+                        checkNotNull(before.owner.epoch),
+                        facts.maxOfOrNull { it.rev } ?: 0,
+                        facts,
+                        0,
+                    )
+                }
             }
         } else {
             null
         }
-    private val producerRoute = producerStore?.let { AuthoritativeThreadRoute(host, it) }
+    private val threadRoute = threadStore?.let { AuthoritativeThreadRoute(host, it) }
+    private val producerStore = threadStore.takeUnless { legacyProducer }
+    private val producerRoute = threadRoute.takeUnless { legacyProducer }
+    private val queryWitness =
+        threadStore?.let { OwnedThreadQueryObservation(host, before.owner, it, checkNotNull(threadRoute)) }
+
+    @Synchronized fun bindPhoneConnection(
+        connection: Any,
+        isCurrent: () -> Boolean,
+    ) {
+        queryWitness?.bind(connection, isCurrent)
+    }
+
+    @Synchronized fun phoneSending(
+        connection: Any,
+        request: Envelope,
+    ) {
+        queryWitness?.sending(connection, request)
+    }
+
+    @Synchronized fun phoneSent(
+        connection: Any,
+        request: Envelope,
+        accepted: Boolean,
+    ) {
+        queryWitness?.sent(connection, request, accepted)
+    }
+
+    @Synchronized fun phoneReceived(
+        connection: Any,
+        frame: Envelope,
+    ) {
+        queryWitness?.received(connection, frame)
+    }
+
+    @Synchronized fun phoneEnded(connection: Any) {
+        queryWitness?.close(connection)
+    }
 
     init {
         require(before.owner.host == null || before.owner.host == host) { "reply observation host mismatch" }
@@ -139,6 +179,12 @@ internal class OwnedReplyObservation(
     ) {
         if (pump === connection) accepted = result
     }
+
+    /** Wait for this exact current phone send before another client acts. No reply completion is required. */
+    @Synchronized fun acceptedSendCurrent(current: Any?): Boolean =
+        current === before.owner.connection && !closed && !failed && pump != null && pumpCurrent() &&
+            accepted && messageId != null && request?.field("message_id") == messageId &&
+            request?.field("conversation_id") == before.owner.conversation
 
     @Synchronized fun received(
         connection: Any,
@@ -211,7 +257,7 @@ internal class OwnedReplyObservation(
 
     @Synchronized fun producerCompleted(): Boolean {
         if (failed || closed || !accepted || !pumpCurrent()) return false
-        if (producerStore != null) return authoritativeReply() != null
+        if (producerStore != null) return queryWitness?.owner() != null && authoritativeReply() != null
         return echo != null &&
             turn != null &&
             deltas.isNotEmpty() &&
@@ -318,7 +364,8 @@ internal class OwnedReplyObservation(
         current: Any?,
     ): CompletedReplyObservation? {
         checkCurrent(current)
-        if (!producerCompleted() || !evidence.admitted || !before.owner.matches(evidence.owner)) return null
+        val expected = if (queryWitness == null) before.owner else queryWitness.owner() ?: return null
+        if (!producerCompleted() || !evidence.admitted || !expected.matches(evidence.owner)) return null
         val produced = if (producerStore != null) authoritativeReply() else null
         val user =
             evidence.records.singleOrNull {
@@ -340,7 +387,7 @@ internal class OwnedReplyObservation(
         if (rawSessions.any { it != JsonPrimitive(ownedSession) }) return null
         val ownedTurn = turn ?: return null
         if (user.turn != null && user.turn != ownedTurn) return null
-        val family = evidence.settledReply(before.owner, recordSession, ownedTurn) ?: return null
+        val family = evidence.settledReply(expected, recordSession, ownedTurn) ?: return null
         if (family.any { it.agentId != null } || family.map { it.message.id }.distinct().size != family.size) return null
         if (produced != null &&
             (
@@ -374,10 +421,23 @@ internal object OwnedReplyProbe {
     @Volatile private var active: OwnedReplyObservation? = null
     private val sessionObservers = java.util.concurrent.CopyOnWriteArrayList<OwnedReplyObservation>()
 
+    private class PhoneSource(
+        val connection: Any,
+        val open: () -> Boolean,
+    )
+
+    private val phoneSources = java.util.concurrent.ConcurrentHashMap<String, PhoneSource>()
+
+    private fun bindPhone(observation: OwnedReplyObservation) {
+        val source = phoneSources[observation.host] ?: return
+        observation.bindPhoneConnection(source.connection) { phoneSources[observation.host] === source && source.open() }
+    }
+
     fun <T> observingSessions(
         observation: OwnedReplyObservation,
         block: () -> T,
     ): T {
+        bindPhone(observation)
         sessionObservers += observation
         return try {
             block()
@@ -400,34 +460,52 @@ internal object OwnedReplyProbe {
     ): ManagedSessionPump {
         val host = checkNotNull(hosts[transport]) { "reply probe transport has no host" }
         val connection = Any()
+        val source = PhoneSource(connection) { delegate.state.value is PumpState.Open }
+        phoneSources[host] = source
+
+        fun observers(): List<OwnedReplyObservation> =
+            (sessionObservers.filter { it.host == host } + listOfNotNull(active?.takeIf { it.host == host })).distinct()
         return object : ManagedSessionPump by delegate {
             override val inbound =
                 flow {
                     try {
                         delegate.inbound.collect { frame ->
                             ContextResetProbe.before(host, connection, frame)
+                            AuthoritativeHistoryProbe.received(host, connection, frame)
+                            observers().forEach { it.phoneReceived(connection, frame) }
                             sessionObservers.filter { it.host == host }.forEach { it.sessionReceived(connection, frame) }
                             active?.takeIf { it.host == host }?.received(connection, frame)
                             emit(frame)
                             ContextResetProbe.delivered(host, connection, frame)
                         }
                     } finally {
+                        AuthoritativeHistoryProbe.ended(host, connection)
+                        observers().forEach { it.phoneEnded(connection) }
+                        phoneSources.remove(host, source)
                         active?.takeIf { it.host == host }?.ended(connection)
                     }
                 }
 
             override fun send(envelope: Envelope): Boolean {
                 val contextReceipt = ContextResetProbe.sending(host, connection, envelope)
+                val observers = observers()
+                AuthoritativeHistoryProbe.sending(host, connection, envelope) { phoneSources[host] === source && source.open() }
+                observers.forEach { it.phoneSending(connection, envelope) }
                 sessionObservers.filter { it.host == host }.forEach { it.sessionSending(connection, envelope) }
                 val observation = active?.takeIf { it.host == host }
                 val targeted = observation?.sending(connection, envelope) { delegate.state.value is PumpState.Open } == true
-                return delegate.send(envelope).also {
-                    contextReceipt?.complete(it)
-                    if (targeted) observation?.sent(connection, it)
+                return delegate.send(envelope).also { result ->
+                    contextReceipt?.complete(result)
+                    AuthoritativeHistoryProbe.sent(host, connection, envelope, result)
+                    observers.forEach { it.phoneSent(connection, envelope, result) }
+                    if (targeted) observation?.sent(connection, result)
                 }
             }
 
             override fun close() {
+                AuthoritativeHistoryProbe.ended(host, connection)
+                observers().forEach { it.phoneEnded(connection) }
+                phoneSources.remove(host, source)
                 active?.takeIf { it.host == host }?.ended(connection)
                 delegate.close()
             }
@@ -438,6 +516,7 @@ internal object OwnedReplyProbe {
         observation: OwnedReplyObservation,
         block: () -> T,
     ): T {
+        bindPhone(observation)
         check(active == null) { "reply observation already armed" }
         active = observation
         return try {
@@ -454,7 +533,7 @@ private fun ThreadItemDto.field(name: String): String? = ((content as? JsonObjec
 
 // The daemon forwards terminal_reason verbatim; older/scripted producers leave it empty.
 // The terminal boundary and all success fields are still mandatory, and explicit failure reasons fail.
-private fun JsonObject?.isSuccessfulReplyEnd(): Boolean {
+internal fun JsonObject?.isSuccessfulReplyEnd(): Boolean {
     fun field(name: String) = (this?.get(name) as? JsonPrimitive)?.content
     val reason = this?.get("terminal_reason")
     return field("stop_reason") == "end_turn" &&

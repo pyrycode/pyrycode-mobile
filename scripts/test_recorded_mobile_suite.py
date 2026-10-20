@@ -432,6 +432,55 @@ class SuiteDriverTest(unittest.TestCase):
                         {**policy,'settingsReadNormalization':'accept-anything'}]:
             with self.assertRaises(ValueError):suite.comparison_contracts(original,fresh,invalid)
 
+    def cleared_fixture(self):
+        doc = self.fixture()
+        clear = copy.deepcopy(doc['steps'][0])
+        clear.update(owner='phone/host/0', direction='daemon')
+        clear['message'].update(id=10, type='session_settings', payload={}, conversation_id='chat', session_state_cleared=True)
+        close = {'owner':clear['owner'],'direction':'close','delayMs':0,'accepted':True,'detail':{}}
+        ask = copy.deepcopy(doc['steps'][0])
+        ask.update(owner=clear['owner'],direction='client')
+        ask['message'].update(id=20,type='request_session_settings',payload={'conversation_id':'chat'})
+        doc['steps']=[clear,close]
+        return doc, ask
+
+    def version_two(self):
+        return {'version':2,'modelQueryNormalization':'reconnect-catalog-race-v1',
+                'settingsReadNormalization':'recorded-snapshots-v2','backfillProbeNormalization':'unsupported-legacy-probe-v1'}
+
+    def test_v2_cancels_only_an_unanswered_poll_after_its_own_cleared_state(self):
+        original,ask=self.cleared_fixture();fresh=copy.deepcopy(original);fresh['steps'].insert(1,ask)
+        before=copy.deepcopy(fresh)
+        self.assertEqual(*suite.comparison_contracts(original,fresh,self.version_two())[:2])
+        self.assertEqual(before,fresh)
+        v1={**self.version_two(),'version':1,'settingsReadNormalization':'recorded-snapshots-v1'}
+        self.assertNotEqual(*suite.comparison_contracts(original,fresh,v1)[:2])
+
+    def test_v2_keeps_other_owners_conversations_and_complete_payloads_strict(self):
+        original,ask=self.cleared_fixture()
+        for changed in [{**ask,'owner':'phone/other/0'},
+                        {**ask,'message':{**ask['message'],'payload':{'conversation_id':'other'}}},
+                        {**ask,'message':{**ask['message'],'payload':{'conversation_id':'chat','extra':True}}},
+                        {**ask,'accepted':False}]:
+            fresh=copy.deepcopy(original);fresh['steps'].insert(1,changed)
+            self.assertNotEqual(*suite.comparison_contracts(original,fresh,self.version_two())[:2])
+
+    def test_v2_requires_a_same_connection_end_and_no_fresh_state_or_intervening_write(self):
+        original,ask=self.cleared_fixture()
+        write=copy.deepcopy(ask);write['message'].update(id=21,type='set_session_settings')
+        snapshot=copy.deepcopy(original['steps'][0]);snapshot['message'].update(id=21,payload={'effort':'high'},session_state_cleared=False)
+        for suffix in [[],[write,original['steps'][-1]],[snapshot,original['steps'][-1]],
+                       [{**original['steps'][-1],'owner':'phone/other/0'}]]:
+            before=copy.deepcopy(original);before['steps']=[original['steps'][0]]+suffix
+            fresh=copy.deepcopy(before);fresh['steps'].insert(1,ask)
+            self.assertNotEqual(*suite.comparison_contracts(before,fresh,self.version_two())[:2])
+
+    def test_v2_cannot_move_a_cancelled_poll_before_its_clear_or_after_its_end(self):
+        original,ask=self.cleared_fixture()
+        for rows in [[ask]+original['steps'],original['steps']+[ask]]:
+            fresh=copy.deepcopy(original);fresh['steps']=rows
+            self.assertNotEqual(*suite.comparison_contracts(original,fresh,self.version_two())[:2])
+
 
 if __name__ == '__main__':
     unittest.main()

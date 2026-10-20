@@ -14,6 +14,9 @@ import com.southernstorm.noise.protocol.CipherStatePair
 import com.southernstorm.noise.protocol.HandshakeState
 import com.southernstorm.noise.protocol.Noise
 import de.pyryco.mobile.data.cache.ConversationCache
+import de.pyryco.mobile.data.cache.FileConversationCache
+import de.pyryco.mobile.data.cache.SavedAuthoritativeThread
+import de.pyryco.mobile.data.cache.toSavedAuthoritativeThread
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyPair
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.PairedServer
@@ -38,12 +41,17 @@ import de.pyryco.mobile.data.network.TransportEvent
 import de.pyryco.mobile.data.network.base64StdDecode
 import de.pyryco.mobile.data.network.base64StdEncode
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.repository.AuthoritativeThreadCoverage
+import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
+import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.item
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
+import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.DebugBundleStatus
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.HostReadingFrames
+import de.pyryco.mobile.data.repository.ReadCheckpointRetries
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -54,6 +62,7 @@ import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ThreadContentScheduling
 import de.pyryco.mobile.ui.conversations.thread.ThreadEvent
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.conversations.thread.listKey
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -82,6 +91,8 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
@@ -95,7 +106,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.koin.core.KoinApplication
 import org.koin.core.parameter.parametersOf
 import org.koin.dsl.binds
@@ -106,6 +119,7 @@ import kotlin.coroutines.CoroutineContext
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RelayConnectionFactoryTest {
+    @get:Rule val temporary = TemporaryFolder()
     private val previousSink = RelayLog.sink
     private val previousEnabled = RelayLog.enabled
     private val logs = mutableListOf<String>()
@@ -325,7 +339,8 @@ class RelayConnectionFactoryTest {
                 b.supervisor.connect()
                 runCurrent()
                 assertEquals(listOf(f.a.record, f.b.record), f.transports.takeLast(2).map { it.record })
-                assertEquals(listOf("31", "72"), f.transports.takeLast(2).map { it.cursor() })
+                // #2175: the daemon-built thread replaced replay, so no reconnect hello carries a cursor.
+                assertEquals(listOf(null, null), f.transports.takeLast(2).map { it.cursor() })
                 assertEquals(0, f.rawStore.loads)
             } finally {
                 a.close()
@@ -376,7 +391,7 @@ class RelayConnectionFactoryTest {
                 assertNotSame(firstA, secondA)
                 assertNotSame(repoA, a.coordinator.currentRepository.value)
                 assertFalse(firstA.initialFrame.contentEquals(secondA.initialFrame))
-                assertEquals("101", secondA.cursor())
+                assertNull(secondA.cursor())
                 secondA.emit(envelope("resync", "{}"))
                 runCurrent()
                 assertNull(a.coordinator.replayCursor.latest)
@@ -486,7 +501,7 @@ class RelayConnectionFactoryTest {
                 assertTrue(f.transports.single().closed)
                 driver.onStart(owner)
                 runCurrent()
-                assertEquals("42", f.transports.last().cursor())
+                assertNull(f.transports.last().cursor())
                 f.store.save(f.b.record)
                 f.transports.last().close()
                 runCurrent()
@@ -746,7 +761,7 @@ class RelayConnectionFactoryTest {
                 assertEquals(modalB, b.coordinator.hostModals.value)
                 a.supervisor.retry()
                 runCurrent()
-                assertEquals("7", f.transports.last().cursor())
+                assertNull(f.transports.last().cursor())
                 f.store.remove("A")
                 runCurrent()
                 assertSame(repoB, b.coordinator.currentRepository.value)
@@ -797,7 +812,7 @@ class RelayConnectionFactoryTest {
             registry.connect()
             runCurrent()
             assertSame(a, registry.connectionFor("A"))
-            assertEquals("41", f.transports[1].cursor())
+            assertNull(f.transports[1].cursor())
             assertFalse(f.transports[0].initialFrame.contentEquals(f.transports[1].initialFrame))
             assertEquals(3, f.transports.size)
             val pending = CompletableDeferred<Unit>()
@@ -1293,35 +1308,29 @@ class RelayConnectionFactoryTest {
                         .isEmpty(),
                 )
                 presentFrame()
-                assertEquals(
-                    "A queue",
+                assertTrue(
                     a.state.value.queuedMessages
-                        .single()
-                        .text,
+                        .isEmpty(),
                 )
-                assertEquals(
-                    "B queue",
+                assertTrue(
                     b.state.value.queuedMessages
-                        .single()
-                        .text,
+                        .isEmpty(),
                 )
                 assertEquals("A content", a.state.value.displayName)
                 assertEquals("B content", b.state.value.displayName)
-                assertEquals(
-                    "A content",
+                // #2175: production threads come only from each host's negotiated route. These peers grant no
+                // `thread`, so legacy `message` frames never become rows on either colliding destination.
+                assertTrue(
                     a.state.value.items
-                        .filterIsInstance<ThreadItem.MessageItem>()
-                        .single()
-                        .message.content,
+                        .none { it is ThreadItem.MessageItem },
                 )
-                assertEquals(
-                    "B content",
+                assertTrue(
                     b.state.value.items
-                        .filterIsInstance<ThreadItem.MessageItem>()
-                        .single()
-                        .message.content,
+                        .none { it is ThreadItem.MessageItem },
                 )
-                // #1830: colliding task/conversation ids stay on each destination's captured host.
+                assertNull(a.state.value.authoritativeThread)
+                assertNull(b.state.value.authoritativeThread)
+                // Missing-thread peers cannot supply task lifecycle through a legacy roster either.
                 val roster =
                     envelope(
                         "background_task_roster",
@@ -1337,34 +1346,16 @@ class RelayConnectionFactoryTest {
                 a.onOverflowEvent(ThreadEvent.BackgroundTaskStop("same-task"))
                 b.onOverflowEvent(ThreadEvent.BackgroundTaskStop("same-task"))
                 runCurrent()
-                val stopA = ta.outbound.single { it.type == "stop_background_task" }
-                val stopB = tb.outbound.single { it.type == "stop_background_task" }
-                for (stop in listOf(stopA, stopB)) {
-                    assertEquals(
-                        "c",
-                        stop.payload.jsonObject["conversation_id"]
-                            ?.jsonPrimitive
-                            ?.content,
-                    )
-                    assertEquals(
-                        "same-task",
-                        stop.payload.jsonObject["task_id"]
-                            ?.jsonPrimitive
-                            ?.content,
-                    )
-                }
-                ta.emit(
-                    envelope(
-                        "error",
-                        """{"code":"stop_background_task.refused","message":"inert","retryable":false}""",
-                    ).copy(inReplyTo = stopA.id),
-                )
-                runCurrent()
+                assertTrue(ta.outbound.none { it.type == "stop_background_task" })
+                assertTrue(tb.outbound.none { it.type == "stop_background_task" })
                 assertTrue(
                     a.state.value.pendingBackgroundTaskIds
                         .isEmpty(),
                 )
-                assertEquals(setOf("same-task"), b.state.value.pendingBackgroundTaskIds)
+                assertTrue(
+                    b.state.value.pendingBackgroundTaskIds
+                        .isEmpty(),
+                )
                 tb.emit(envelope("background_task_roster", """{"conversation_id":"c","tasks":[],"dropped_tasks":0}"""))
                 runCurrent()
                 assertTrue(
@@ -1687,6 +1678,594 @@ class RelayConnectionFactoryTest {
             }
         }
 
+    @Test fun capableDestinationsKeepCollisionsThroughHeldRestorePagingAndRecoveredSettlement() =
+        runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val f = Fixture(this).also { it.threadSupport = true }
+            val registry = f.registry()
+            val cache = FileConversationCache(temporary.root, dispatcher)
+            val captured = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val held =
+                object : ConversationCache by cache {
+                    override suspend fun readAuthoritativeThread(
+                        serverId: String,
+                        conversationId: String,
+                    ): SavedAuthoritativeThread? {
+                        val saved = cache.readAuthoritativeThread(serverId, conversationId)
+                        if (serverId == "A" && !release.isCompleted) {
+                            captured.complete(Unit)
+                            release.await()
+                        }
+                        return saved
+                    }
+                }
+            val owners = androidx.lifecycle.ViewModelStore()
+            try {
+                for (id in listOf("A", "B")) {
+                    cache.writeAuthoritativeThread(
+                        id,
+                        "c",
+                        AuthoritativeThreadSnapshot(
+                            "e",
+                            listOf(item(1, 5, 5, text = "$id saved")),
+                            10,
+                            10,
+                            coverage = AuthoritativeThreadCoverage(5u, 10u, 5u, true),
+                        ).toSavedAuthoritativeThread(),
+                    )
+                }
+                f.store.save(f.a.record)
+                f.store.save(f.b.record)
+                registry.connect()
+                runCurrent()
+                val destinations =
+                    ThreadDestinationFactory(
+                        true,
+                        registry,
+                        FakeConversationRepository(),
+                        f.store,
+                        {
+                            it
+                        },
+                        cache = held,
+                        attachmentReader =
+                            lazy {
+                                AttachmentReader { AttachmentRead.Unreadable }
+                            },
+                        contentScheduling = ThreadContentScheduling(dispatcher) { 1L },
+                    )
+                val prefs =
+                    AppPreferences(
+                        object : DataStore<Preferences> {
+                            override val data = flowOf(emptyPreferences())
+
+                            override suspend fun updateData(transform: suspend (Preferences) -> Preferences) = transform(emptyPreferences())
+                        },
+                    )
+
+                fun open(id: String) =
+                    destinations
+                        .thread(
+                            SavedStateHandle(mapOf("serverId" to id, "conversationId" to "c")),
+                            de.pyryco.mobile.ui.conversations.thread
+                                .ComposerDraftStore(),
+                            prefs,
+                        ).also {
+                            owners.put(id, it)
+                            backgroundScope.launch { it.state.collect {} }
+                        }
+                val a = open("A")
+                val b = open("B")
+                runCurrent()
+                assertTrue(captured.isCompleted)
+                val ta = f.transports[0]
+                val tb = f.transports[1]
+                assertTrue(ta.outbound.none { it.type.startsWith("thread_") })
+
+                fun live(
+                    t: PeerTransport,
+                    fact: de.pyryco.mobile.data.network.ThreadItemDto,
+                    version: Long,
+                ) = t.emit(envelope("thread_item_added", """{"conversation_id":"c","epoch":"e","version":$version,"item":${fact.raw}}"""))
+
+                fun finish(
+                    t: PeerTransport,
+                    request: Envelope,
+                    version: Long,
+                    facts: List<de.pyryco.mobile.data.network.ThreadItemDto> = emptyList(),
+                    lower: Int = 5,
+                ) {
+                    require(facts.all { it.id > 0 && it.rev >= it.id && it.rev <= version })
+                    val cursor =
+                        request.payload.jsonObject["version"]
+                            ?.jsonPrimitive
+                            ?.content
+                            ?.toLongOrNull() ?: 0
+                    val upper =
+                        request.payload.jsonObject["before_order"]
+                            ?.jsonPrimitive
+                            ?.content
+                            ?.toLongOrNull() ?: 10
+                    val coverage =
+                        if (request.type == "thread_catch_up" &&
+                            cursor > 0
+                        ) {
+                            "\"from_version\":$cursor"
+                        } else {
+                            "\"lower_order\":$lower,\"upper_order\":$upper,\"continuation\":$lower,\"older_exists\":true"
+                        }
+                    t.emit(
+                        envelope(
+                            "thread_items",
+                            """{"conversation_id":"c","epoch":"e","version":$version,"items":[${facts.joinToString {
+                                it.raw.toString()
+                            }}],"final":false}""",
+                        ).copy(inReplyTo = request.id),
+                    )
+                    t.emit(
+                        envelope(
+                            "thread_items",
+                            """{"conversation_id":"c","epoch":"e","version":$version,"items":[],"final":true,$coverage}""",
+                        ).copy(inReplyTo = request.id),
+                    )
+                }
+                live(ta, item(1, 20, 5, text = "A newer"), 20)
+                runCurrent()
+                release.complete(Unit)
+                runCurrent()
+                for ((transport, name) in listOf(ta to "A", tb to "B")) {
+                    transport.emit(
+                        envelope(
+                            "conversations",
+                            """{"conversations":[{"id":"c","name":"$name","is_promoted":true,"cwd":"/same","last_message_ts":"2026-09-01T00:00:00Z","last_used_at":"2026-09-01T00:00:00Z"}]}""",
+                        ),
+                    )
+                }
+                val qa = ta.outbound.single { it.type == "thread_catch_up" }
+                assertEquals(
+                    "10",
+                    qa.payload.jsonObject
+                        .getValue("version")
+                        .toString(),
+                )
+                finish(ta, qa, 20)
+                finish(tb, tb.outbound.single { it.type == "thread_catch_up" }, 10)
+                runCurrent()
+
+                fun presentation(vm: ThreadViewModel) =
+                    requireNotNull(vm.state.value.authoritativeThread) {
+                        "No production presentation; A=${bundleState(registry, "A")} B=${bundleState(registry, "B")}"
+                    }
+                assertEquals("A newer", (presentation(a).items.single() as ThreadItem.MessageItem).message.content)
+                assertEquals("B saved", (presentation(b).items.single() as ThreadItem.MessageItem).message.content)
+                assertNotEquals(presentation(a).scope, presentation(b).scope)
+                val oldSight = presentation(a).shownRowRevisions
+                f.store.save(f.a.record)
+                runCurrent()
+                a.sendMessage("settle once")
+                runCurrent()
+                val send = ta.outbound.single { it.type == "send_message" }
+                val bundle = requireNotNull(registry.connectionFor("A"))
+
+                fun reconnect(): PeerTransport {
+                    bundle.supervisor.close()
+                    runCurrent()
+                    bundle.supervisor.connect()
+                    runCurrent()
+                    return f.transports.last()
+                }
+                val second = reconnect()
+                val recovered =
+                    item(
+                        4,
+                        30,
+                        8,
+                        kind = "user_message",
+                        status = "delivered",
+                        content = """{"text":"settle once","message_id":${send.payload.jsonObject.getValue(
+                            "message_id",
+                        )},"device_id":"${f.keys.expectedPublicKey("A").joinToString("") {
+                            "%02x".format(
+                                it.toInt() and 255,
+                            )
+                        }}"}""",
+                    )
+                val queued =
+                    item(
+                        4,
+                        25,
+                        null,
+                        kind = "user_message",
+                        status = "queued",
+                        content =
+                            recovered.content.toString().dropLast(1) + ",\"queued_msg_id\":7}",
+                    )
+                val catchUp = second.outbound.single { it.type == "thread_catch_up" }
+                second.emit(
+                    envelope(
+                        "thread_items",
+                        """{"conversation_id":"c","epoch":"e","version":30,"items":[${queued.raw}],"final":false}""",
+                    ).copy(inReplyTo = catchUp.id),
+                )
+                runCurrent()
+                assertTrue(
+                    bundle.coordinator.authoritativeThreads
+                        .current("A", "c")
+                        .pendingSends
+                        .isEmpty(),
+                )
+                assertEquals(
+                    20L,
+                    bundle.coordinator.authoritativeThreads
+                        .current("A", "c")
+                        .checkpoint,
+                )
+                val third = reconnect()
+                val resumed = third.outbound.single { it.type == "thread_catch_up" }
+                assertEquals(
+                    "20",
+                    resumed.payload.jsonObject
+                        .getValue("version")
+                        .toString(),
+                )
+                val parent = item(2, 25, 1, kind = "agent", content = """{"description":"Earlier agent"}""")
+                live(third, item(1, 31, 5, text = "A latest", extra = "\"parent\":2,"), 31)
+                finish(third, resumed, 40, listOf(parent, recovered))
+                runCurrent()
+                live(third, queued, 40)
+                runCurrent()
+                a.onDemandOlderHistory()
+                runCurrent()
+                val page = third.outbound.single { it.type == "thread_page" }
+                finish(third, page, 40, listOf(item(1, 5, 5, text = "stale")), lower = 1)
+                runCurrent()
+                val final = presentation(a)
+                assertEquals(1, final.items.filterIsInstance<ThreadItem.MessageItem>().count { it.message.content == "settle once" })
+                assertEquals(
+                    31L,
+                    bundle.coordinator.authoritativeThreads
+                        .current("A", "c")
+                        .items
+                        .single { it.id == 1L }
+                        .rev,
+                )
+                assertEquals(
+                    2L,
+                    bundle.coordinator.authoritativeThreads
+                        .current("A", "c")
+                        .items
+                        .single { it.id == 1L }
+                        .parent,
+                )
+                val marks = ConversationReadMarks(0u, null, 31u, true)
+                assertNull(final.readCheckpoint(final.newestReadKey, marks, oldSight))
+                assertEquals(31uL, final.readCheckpoint(final.newestReadKey, marks, final.shownRowRevisions))
+                assertEquals("B saved", (presentation(b).items.single() as ThreadItem.MessageItem).message.content)
+            } finally {
+                release.complete(Unit)
+                owners.clear()
+                runCurrent()
+                registry.dispose()
+                runCurrent()
+                Dispatchers.resetMain()
+            }
+        }
+
+    @Test fun sameConversationDestinationsKeepPagingAndCompletionCertificationAfterOneCloses() =
+        runTest {
+            withProductionDestinations { probe ->
+                val survivor = probe.open()
+                val duplicate = probe.open()
+                runCurrent()
+                val transport = probe.transport()
+                probe.finish(transport, transport.outbound.first { it.type == "thread_catch_up" }, 10)
+                probe.marks(transport)
+                runCurrent()
+                assertEquals(
+                    "opening certification",
+                    10L,
+                    survivor.second.state.value.authoritativeThread
+                        ?.certifiedCheckpoint,
+                )
+                duplicate.first.clear()
+                runCurrent()
+                survivor.second.onDemandOlderHistory()
+                runCurrent()
+                val page = transport.outbound.single { it.type == "thread_page" }
+                probe.finish(transport, page, 10)
+                runCurrent()
+                assertEquals(
+                    "page retains certification",
+                    10L,
+                    survivor.second.state.value.authoritativeThread
+                        ?.certifiedCheckpoint,
+                )
+                val terminal = JsonObject(item(2, 20, 6, kind = "turn_end", status = "done").raw + ("active" to JsonPrimitive(false)))
+                transport.emit(envelope("thread_item_added", """{"conversation_id":"c","epoch":"e","version":20,"item":$terminal}"""))
+                runCurrent()
+                val refresh = transport.outbound.last { it.type == "thread_catch_up" }
+                assertNotEquals(page.id, refresh.id)
+                assertEquals(
+                    "10",
+                    refresh.payload.jsonObject
+                        .getValue("version")
+                        .toString(),
+                )
+                probe.finish(transport, refresh, 20)
+                runCurrent()
+                val held = requireNotNull(probe.registry.connectionFor("A")).coordinator.authoritativeThreads.current("A", "c")
+                assertEquals(
+                    "completion: checkpoint=${held.checkpoint} repair=${held.repairNeeded} " +
+                        "reset=${held.resetNeeded} support=${bundleState(probe.registry, "A")}",
+                    20L,
+                    survivor.second.state.value.authoritativeThread
+                        ?.certifiedCheckpoint,
+                )
+
+                val stale = probe.open()
+                runCurrent()
+                probe.reconnect()
+                val replacement = probe.transport()
+                probe.finish(replacement, replacement.outbound.last { it.type == "thread_catch_up" }, 20)
+                probe.marks(replacement)
+                runCurrent()
+                stale.first.clear()
+                runCurrent()
+                survivor.second.onDemandOlderHistory()
+                runCurrent()
+                assertEquals(1, replacement.outbound.count { it.type == "thread_page" })
+            }
+        }
+
+    @Test fun authoritativeReadRetriesRequireFreshSightOnCapableReplacement() =
+        runTest {
+            withProductionDestinations { probe -> probe.readReplacement(missing = false) }
+        }
+
+    @Test fun authoritativeReadRetriesNeverReachMissingReplacement() =
+        runTest {
+            withProductionDestinations { probe -> probe.readReplacement(missing = true) }
+        }
+
+    @Test fun authoritativeReadProofIsRecheckedBeforeQueuedAttempt() =
+        runTest {
+            withProductionDestinations { probe ->
+                val vm = probe.open().second
+                runCurrent()
+                val transport = probe.transport()
+                probe.finish(transport, transport.outbound.single { it.type == "thread_catch_up" }, 10)
+                probe.marks(transport)
+                runCurrent()
+                val retired = probe.sight(vm)
+                vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadRetired(retired))
+                runCurrent()
+                assertTrue(transport.outbound.none { it.type == "mark_conversation_read" })
+                probe.sight(vm)
+                runCurrent()
+                assertEquals(1, transport.outbound.count { it.type == "mark_conversation_read" })
+            }
+        }
+
+    @Test fun authoritativeReadProofCannotCrossAStoreGenerationBeforeDisplayCatchesUp() =
+        runTest {
+            withProductionDestinations { probe ->
+                val vm = probe.open().second
+                runCurrent()
+                val transport = probe.transport()
+                probe.finish(transport, transport.outbound.single { it.type == "thread_catch_up" }, 10)
+                probe.marks(transport)
+                runCurrent()
+                probe.sight(vm)
+                val store = requireNotNull(probe.registry.connectionFor("A")).coordinator.authoritativeThreads
+                store.reset("A", "c", "e")
+                store.establishComplete("A", "c", "e", 10, listOf(item(1, 5, 5)), store.current("A", "c").generation)
+                runCurrent()
+                assertTrue(
+                    "queued sight belongs to the retired generation",
+                    transport.outbound.none { it.type == "mark_conversation_read" },
+                )
+                probe.sight(vm)
+                runCurrent()
+                assertEquals(1, transport.outbound.count { it.type == "mark_conversation_read" })
+            }
+        }
+
+    private suspend fun TestScope.withProductionDestinations(test: suspend (ProductionDestinations) -> Unit) {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val probe = ProductionDestinations(this)
+        try {
+            probe.fixture.store.save(probe.fixture.a.record)
+            probe.registry.connect()
+            runCurrent()
+            test(probe)
+        } finally {
+            probe.owners.forEach { it.clear() }
+            probe.retries.dispose()
+            probe.registry.dispose()
+            runCurrent()
+            Dispatchers.resetMain()
+        }
+    }
+
+    private inner class ProductionDestinations(
+        val scope: TestScope,
+    ) {
+        val dispatcher = StandardTestDispatcher(scope.testScheduler)
+        val fixture = Fixture(scope).also { it.threadSupport = true }
+        val registry = fixture.registry()
+        val retries = ReadCheckpointRetries(dispatcher)
+        val owners = mutableListOf<androidx.lifecycle.ViewModelStore>()
+        val destinations =
+            ThreadDestinationFactory(
+                true,
+                registry,
+                FakeConversationRepository(),
+                fixture.store,
+                { it },
+                cache = FileConversationCache(temporary.root, dispatcher),
+                readRetries = retries,
+                attachmentReader = lazy { AttachmentReader { AttachmentRead.Unreadable } },
+                contentScheduling = ThreadContentScheduling(dispatcher) { 1L },
+            )
+        val preferences =
+            AppPreferences(
+                object : DataStore<Preferences> {
+                    override val data = flowOf(emptyPreferences())
+
+                    override suspend fun updateData(transform: suspend (Preferences) -> Preferences) = transform(emptyPreferences())
+                },
+            )
+
+        fun open(): Pair<androidx.lifecycle.ViewModelStore, ThreadViewModel> {
+            val owner = androidx.lifecycle.ViewModelStore().also { owners += it }
+            val vm =
+                destinations.thread(
+                    SavedStateHandle(mapOf("serverId" to "A", "conversationId" to "c")),
+                    de.pyryco.mobile.ui.conversations.thread
+                        .ComposerDraftStore(),
+                    preferences,
+                )
+            owner.put("thread", vm)
+            scope.backgroundScope.launch { vm.state.collect {} }
+            return owner to vm
+        }
+
+        fun transport() = fixture.transports.last()
+
+        fun reconnect() {
+            val previous = transport()
+            val bundle = requireNotNull(registry.connectionFor("A"))
+            bundle.supervisor.close()
+            scope.runCurrent()
+            registry.retryHost("A", bundle)
+            scope.runCurrent()
+            assertNotSame("the probe must replace its transport", previous, transport())
+        }
+
+        fun finish(
+            transport: PeerTransport,
+            request: Envelope,
+            version: Long,
+        ) {
+            val from =
+                request.payload.jsonObject["version"]
+                    ?.jsonPrimitive
+                    ?.content
+                    ?.toLongOrNull() ?: 0
+            val page = request.type == "thread_page"
+            val upper =
+                if (page) {
+                    request.payload.jsonObject
+                        .getValue("before_order")
+                        .jsonPrimitive.content
+                        .toLong()
+                } else {
+                    10
+                }
+            val lower = if (page) 1 else 5
+            val coverage =
+                if (!page && from > 0) {
+                    "\"from_version\":$from"
+                } else {
+                    "\"lower_order\":$lower,\"upper_order\":$upper,\"continuation\":$lower,\"older_exists\":true"
+                }
+            val facts =
+                when {
+                    page -> listOf(item(3, 5, 1))
+                    from == 0L -> listOf(item(1, 5, 5))
+                    version > from -> listOf(item(2, version, 6, kind = "turn_end"))
+                    else -> emptyList()
+                }
+            transport.emit(
+                envelope(
+                    "thread_items",
+                    """{"conversation_id":"c","epoch":"e","version":$version,"items":[${facts.joinToString {
+                        it.raw.toString()
+                    }}],"final":false}""",
+                ).copy(inReplyTo = request.id),
+            )
+            transport.emit(
+                envelope(
+                    "thread_items",
+                    """{"conversation_id":"c","epoch":"e","version":$version,"items":[],"final":true,$coverage}""",
+                ).copy(inReplyTo = request.id),
+            )
+        }
+
+        fun marks(transport: PeerTransport) {
+            transport.emit(
+                envelope(
+                    "conversations",
+                    """{"conversations":[{"id":"c","name":"A","is_promoted":true,"cwd":"/same","last_message_ts":"2026-09-01T00:00:00Z","last_used_at":"2026-09-01T00:00:00Z","read_up_to":0,"last_shown_version":5,"latest_entry_id":5}]}""",
+                ),
+            )
+        }
+
+        fun sight(vm: ThreadViewModel): Any {
+            val presentation = requireNotNull(vm.state.value.authoritativeThread)
+            val binding = Any()
+            vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(presentation, binding))
+            vm.onOverflowEvent(
+                ThreadEvent.NewestContentPresented(
+                    presentation.items.last(),
+                    5u,
+                    presentation,
+                    binding,
+                    presentation.rows.last().listKey(0),
+                    presentation.shownRowRevisions,
+                ),
+            )
+            return binding
+        }
+
+        suspend fun readReplacement(missing: Boolean) {
+            val vm = open().second
+            scope.runCurrent()
+            val first = transport()
+            finish(first, first.outbound.single { it.type == "thread_catch_up" }, 10)
+            marks(first)
+            scope.runCurrent()
+            sight(vm)
+            scope.runCurrent()
+            val mark = first.outbound.single { it.type == "mark_conversation_read" }
+            first.emit(envelope("error", """{"code":"internal","message":"failed"}""").copy(inReplyTo = mark.id))
+            scope.runCurrent()
+            fixture.threadSupport = !missing
+            reconnect()
+            val replacement = transport()
+            marks(replacement)
+            scope.runCurrent()
+            assertTrue("retired sight cannot mark a replacement", replacement.outbound.none { it.type == "mark_conversation_read" })
+            if (missing) {
+                assertNull(vm.state.value.authoritativeThread)
+                assertTrue(replacement.outbound.none { it.type.startsWith("thread_") })
+                assertTrue(destinations.repository("A").markConversationRead("c", 5u).isFailure)
+                assertTrue(replacement.outbound.none { it.type == "mark_conversation_read" })
+            } else {
+                finish(replacement, replacement.outbound.single { it.type == "thread_catch_up" }, 10)
+                scope.runCurrent()
+                assertTrue(replacement.outbound.none { it.type == "mark_conversation_read" })
+                sight(vm)
+                scope.runCurrent()
+                assertEquals(1, replacement.outbound.count { it.type == "mark_conversation_read" })
+            }
+        }
+    }
+
+    private fun bundleState(
+        registry: RelayConnectionRegistry,
+        host: String,
+    ): String =
+        registry
+            .connectionFor(host)
+            ?.coordinator
+            ?.negotiatedThread
+            ?.support
+            ?.value
+            .toString()
+
     private class Fixture(
         scope: TestScope,
         private val dispatcher: kotlinx.coroutines.CoroutineDispatcher = StandardTestDispatcher(scope.testScheduler),
@@ -1701,6 +2280,7 @@ class RelayConnectionFactoryTest {
         var handshaking: String? = null
         var interactive = true
         var stopTaskSupport = false
+        var threadSupport = false
         val keys = Keys()
         val transports = mutableListOf<PeerTransport>()
         val factory =
@@ -1722,6 +2302,7 @@ class RelayConnectionFactoryTest {
                         interactive,
                         record.serverId == handshaking,
                         stopTaskSupport,
+                        threadSupport,
                     ).also { transports += it }
                 },
                 NoiseClientInfo("test-device", "test-version"),
@@ -1806,6 +2387,7 @@ class RelayConnectionFactoryTest {
         private val interactive: Boolean = true,
         private var holdHandshake: Boolean = false,
         private val stopTaskSupport: Boolean = false,
+        private val threadSupport: Boolean = false,
     ) : RelayTransport {
         private val frames = Channel<InnerFrameV2>(Channel.UNLIMITED)
         private val links = Channel<TransportEvent>(Channel.UNLIMITED)
@@ -1882,7 +2464,13 @@ class RelayConnectionFactoryTest {
                             envelope(
                                 "hello_ack",
                                 """{"protocol_version":"v2","server_id":"${record.serverId}","conn_id":"connection","capabilities":${if (interactive) {
-                                    if (stopTaskSupport) "[\"interactive\",\"stop_background_task\"]" else "[\"interactive\"]"
+                                    if (threadSupport) {
+                                        "[\"interactive\",\"thread\"]"
+                                    } else if (stopTaskSupport) {
+                                        "[\"interactive\",\"stop_background_task\"]"
+                                    } else {
+                                        "[\"interactive\"]"
+                                    }
                                 } else {
                                     "[]"
                                 }}}""",

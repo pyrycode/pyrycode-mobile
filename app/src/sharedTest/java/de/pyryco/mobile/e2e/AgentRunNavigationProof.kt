@@ -111,8 +111,7 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
     }
 
     assertClosed("before-navigation")
-    val marker = questionAnswerTarget(markerMatcher, lazyKey = "agent-start:$agentId", evidence = evidence)
-    marker.performTouchInput { click(center) }
+    questionAnswerTap(markerMatcher, lazyKey = "agent-start:$agentId", evidence = evidence)
     waitUntil(10_000) { onAllNodes(root).fetchSemanticsNodes().size == 1 }
     onNode(root).assertIsDisplayed()
     assertClosed("after-navigation")

@@ -55,6 +55,43 @@ class RemoteConversationRepositoryAuthoritativeTest {
         RelayLog.enabled = previousEnabled
     }
 
+    @Test fun childCompletionRefreshesSummaryWithoutOpeningAnAttentionQuery() =
+        runTest {
+            val (pump, repo) = repository()
+            val child =
+                buildJsonObject {
+                    item(1, 1, 1, kind = "turn_end", status = "done").raw.forEach { (key, value) -> put(key, value) }
+                    put("active", false)
+                    put("parent", 4)
+                }
+            pump.push(
+                Envelope(
+                    1,
+                    "thread_item_added",
+                    "2026-10-20T00:00:00Z",
+                    buildJsonObject {
+                        put("conversation_id", "c")
+                        put("epoch", "e")
+                        put("version", 1)
+                        put("item", child)
+                    },
+                ),
+            )
+            runCurrent()
+            assertEquals(
+                "turn_end",
+                repo.authoritativeThreads
+                    .current("host", "c")
+                    .items
+                    .single()
+                    .kind,
+            )
+            assertTrue("admitted child completion must refresh summary metadata", pump.sent.any { it.type == "list_conversations" })
+            assertTrue(pump.sent.none { it.type == "thread_catch_up" })
+            assertTrue(repo.authoritativeCompletions.value.isEmpty())
+            assertEquals(0L, repo.authoritativeThreads.current("host", "c").checkpoint)
+        }
+
     @Test fun suppliedRouteRequiresBothCapabilitiesAndHost() =
         runTest {
             val capabilitySets =

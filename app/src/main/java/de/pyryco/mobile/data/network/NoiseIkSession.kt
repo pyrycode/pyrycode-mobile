@@ -17,6 +17,7 @@ import javax.crypto.ShortBufferException
 data class NoiseClientInfo(
     val deviceName: String,
     val clientVersion: String,
+    val capabilities: List<String> = MOBILE_CAPABILITIES,
 )
 
 /**
@@ -309,6 +310,7 @@ class NoiseIkSession(
                 deviceName = clientInfo.deviceName,
                 clientVersion = clientInfo.clientVersion,
                 token = token,
+                capabilities = clientInfo.capabilities,
                 clientFeatures = MOBILE_CLIENT_FEATURES,
                 lastEventId = lastEventId(), // live read at hello-build (#416); null → omitted on encode
             )

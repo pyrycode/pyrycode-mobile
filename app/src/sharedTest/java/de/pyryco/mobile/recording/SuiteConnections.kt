@@ -152,6 +152,7 @@ internal class SuiteConnections private constructor(
         if (step.direction == "transport_down") {
             val code = step.detail["code"]?.jsonPrimitive?.intOrNull
             val reason = step.detail["reason"]?.jsonPrimitive?.contentOrNull
+            tape?.connectionEnded(step.owner)
             checkNotNull(transports[step.owner]).remoteDown(code, reason)
             pending.decrementAndGet()
             return
@@ -191,6 +192,20 @@ internal class SuiteConnections private constructor(
             capture.observe(SuiteStep("client", "control", frame))
             live()
         } else {
+            if (action == "test-end") {
+                runBlocking {
+                    withTimeout(30000) {
+                        while (!synchronized(this@SuiteConnections) {
+                                enqueue(checkNotNull(tape).prepareTestEnd(frame))
+                                tape.testEndReady(frame)
+                            }
+                        ) {
+                            delay(10)
+                        }
+                        awaitIdle()
+                    }
+                }
+            }
             check(request("control", frame)) { "Recorded suite control rejected" }
         }
     }
@@ -199,8 +214,28 @@ internal class SuiteConnections private constructor(
     suspend fun beforeClose(owner: String) {
         if (tape == null || synchronized(this) { transports[owner]?.localClose?.get() == true }) return
         withTimeout(30000) {
-            while (!synchronized(this@SuiteConnections) { tape.closeReady(owner) }) delay(10)
+            while (!synchronized(this@SuiteConnections) {
+                    if (transports[owner]?.localClose?.get() == true) {
+                        true
+                    } else {
+                        enqueue(tape.prepareClose(owner))
+                        tape.closeReady(owner)
+                    }
+                }
+            ) {
+                delay(10)
+            }
             awaitIdle()
+        }
+    }
+
+    suspend fun beforePhoneTeardown() {
+        val replay = tape ?: return
+        for (owner in replay.phoneClosesBeforeTeardown()) {
+            withTimeout(30000) {
+                while (!synchronized(this@SuiteConnections) { owner in transports }) delay(10)
+            }
+            beforeClose(owner)
         }
     }
 
@@ -292,6 +327,7 @@ internal class SuiteConnections private constructor(
         val live: RelayTransport?,
     ) : RelayTransport {
         val localClose = AtomicBoolean()
+        val remoteClosed = AtomicBoolean()
         private val eventsChannel = Channel<TransportEvent>(Channel.UNLIMITED)
         var observePumpState: () -> Unit = {}
         override val inbound = live?.inbound ?: emptyFlow<InnerFrameV2>()
@@ -345,6 +381,7 @@ internal class SuiteConnections private constructor(
             code: Int?,
             reason: String?,
         ) {
+            remoteClosed.set(true)
             check(eventsChannel.trySend(TransportEvent.Down(code, reason, null)).isSuccess)
             eventsChannel.close()
         }
@@ -425,7 +462,7 @@ internal class SuiteConnections private constructor(
             synchronized(this@SuiteConnections) {
                 // NoiseSessionPump refuses locally once closed; a late upload chunk never reaches the wire.
                 // Explicitly captured refused calls still match their full payload and recorded result.
-                if ((connection.localClose.get() || state.value !is PumpState.Open) &&
+                if ((connection.localClose.get() || connection.remoteClosed.get() || state.value !is PumpState.Open) &&
                     !checkNotNull(tape).hasEligibleRefusal(connection.owner)
                 ) {
                     false
@@ -449,10 +486,13 @@ internal class SuiteConnections private constructor(
                 }
                 "daemon" -> {
                     val frame = checkNotNull(step.message)
-                    tape!!.delivered(connection.owner, frame)
                     check(frames.trySend(frame).isSuccess)
+                    tape!!.delivered(connection.owner, frame)
                 }
-                "inbound_end" -> frames.close()
+                "inbound_end" -> {
+                    tape!!.connectionEnded(connection.owner)
+                    frames.close()
+                }
                 else -> error("Unsupported recorded suite delivery")
             }
         }

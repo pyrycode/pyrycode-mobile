@@ -56,12 +56,17 @@ class RelayConnectionFactory(
 
                 override suspend fun save(record: PairedServer): Unit = error("connection pairing is read-only")
             },
+            // #2175: the exact saved host owns its negotiated thread route; content needs `thread` in its ack.
+            authoritativeHostId = record.serverId,
         )
 
     /** Temporary single-host entry: preserve unpaired startup and latest-saved selection on redial. */
     fun createCompatibility(store: PairedServerStore): RelayConnectionBundle = build(store)
 
-    private fun build(store: PairedServerStore): RelayConnectionBundle =
+    private fun build(
+        store: PairedServerStore,
+        authoritativeHostId: String = "",
+    ): RelayConnectionBundle =
         RelayConnectionBundle(
             deviceStaticKeyStore,
             transportFactory,
@@ -72,6 +77,7 @@ class RelayConnectionFactory(
             ioDispatcher,
             messageTrail,
             pumpFactory,
+            authoritativeHostId,
         )
 }
 
@@ -89,7 +95,7 @@ class RelayConnectionBundle internal constructor(
     ioDispatcher: CoroutineDispatcher,
     messageTrail: MessageTrail,
     pumpFactory: RelaySessionPumpFactory,
-    /** Internal assembly seam for opt-in coordinators; the production factory keeps its existing configuration. */
+    authoritativeHostId: String = "",
     createCoordinator: ((RelayConnectionSupervisor) -> RelayRepositoryCoordinator)? = null,
 ) {
     val supervisor = RelayConnectionSupervisor(transportFactory, pairedServerStore, dispatcher)
@@ -99,8 +105,7 @@ class RelayConnectionBundle internal constructor(
             pairedServerStore,
             clientInfo,
             ioDispatcher,
-            // Invoked at hello-build, after all members exist and the coordinator has started.
-            lastEventId = { coordinator.replayCursor.latest },
+            // #2175: the daemon-built thread replaces replay, so no hello carries `last_event_id`.
         )
     val coordinator: RelayRepositoryCoordinator =
         createCoordinator?.invoke(supervisor) ?: RelayRepositoryCoordinator(
@@ -126,6 +131,7 @@ class RelayConnectionBundle internal constructor(
                     )
                 }
             },
+            authoritativeHostId = authoritativeHostId,
         )
     private val disposed = AtomicBoolean(false)
 

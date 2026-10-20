@@ -187,6 +187,21 @@ class RecordedSuiteDocumentTest {
         }
     }
 
+    @Test fun versionTwoUsesTheBoundedClearedSettingsRuleWithoutChangingCaptureBytes() {
+        val original = candidate()
+        val parsed = RecordedSuiteDocument.parse(original.toString())
+        val policy =
+            MobileJson
+                .parseToJsonElement(
+                    """{"version":2,"modelQueryNormalization":"reconnect-catalog-race-v1","settingsReadNormalization":"recorded-snapshots-v2","backfillProbeNormalization":"unsupported-legacy-probe-v1"}""",
+                ).jsonObject
+        val resolved = parsed.withQueryPolicy(policy)
+        assertEquals(parsed.steps, resolved.steps)
+        assertEquals(original.getValue("source"), resolved.document.getValue("source"))
+        assertEquals(JsonPrimitive("recorded-snapshots-v2"), resolved.document["settingsReadNormalization"])
+        assertThrows(IllegalArgumentException::class.java) { parsed.withQueryPolicy(JsonObject(policy + ("version" to JsonPrimitive(1)))) }
+    }
+
     @Test fun missingProvenanceWrongVersionAndCredentialsFailWithFixedDiagnostics() {
         val original = candidate()
         val invalid =

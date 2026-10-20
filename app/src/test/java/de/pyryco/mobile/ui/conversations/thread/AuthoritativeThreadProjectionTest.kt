@@ -18,6 +18,94 @@ class AuthoritativeThreadProjectionTest {
 
     private fun ids(rows: List<ThreadRow>) = rows.map { it.listKey(0) }
 
+    @Test fun authoritativeOfferedFileUsesItsSavedAttachmentIdentityAndName() {
+        val attachment = "55555555-5555-4555-8555-555555555555"
+        val source =
+            authoritativeItem(
+                1,
+                "notice",
+                subtype = "attachment_offered",
+                content =
+                    """
+                    {
+                        "conversation_id":"44444444-4444-4444-8444-444444444444",
+                        "attachment_id":"$attachment",
+                        "filename":"offered.txt"
+                    }
+                    """.trimIndent(),
+            )
+        val row = message(project(source).rows.single())
+        assertEquals("", row.content)
+        assertEquals(attachment, row.attachments.single().attachmentId)
+        assertEquals("offered.txt", row.attachments.single().displayName)
+        assertFalse(row.isStreaming)
+        assertEquals(ids(project(source).rows), ids(project(source, source).rows))
+    }
+
+    @Test fun trackedForegroundShellRemainsRunningUntilItsInvocationReturns() {
+        val shell =
+            authoritativeItem(
+                12,
+                "tool_call",
+                active = true,
+                status = "running",
+                content =
+                    """
+                    {
+                      "name": "Bash",
+                      "tool_use_id": "call",
+                      "input": {
+                        "run_in_background": "false",
+                        "timeout": "120000"
+                      },
+                      "task_id": "shell",
+                      "task_link": {
+                        "task_id": "shell",
+                        "task_type": "local_bash"
+                      }
+                    }
+                    """.trimIndent(),
+            )
+        val p = project(shell)
+        assertEquals("Bash", p.foregroundTool?.toolName)
+        assertEquals(ToolCallStatus.Running, p.foregroundTool?.status)
+        assertEquals(
+            "tracked task remains available in its roster",
+            "shell",
+            p.tasks.tasks
+                .single()
+                .taskId,
+        )
+    }
+
+    @Test fun trackedShellThatAlreadyReturnedRemainsBackgroundOnly() {
+        val shell =
+            authoritativeItem(
+                12,
+                "tool_call",
+                active = true,
+                status = "running",
+                content =
+                    """
+                    {
+                      "name": "Bash",
+                      "tool_use_id": "call",
+                      "task_id": "shell",
+                      "task_link": {
+                        "task_id": "shell",
+                        "task_type": "local_bash"
+                      },
+                      "result": {
+                        "result_summary": "Command running in background"
+                      }
+                    }
+                    """.trimIndent(),
+            )
+        val p = project(shell)
+        assertEquals(null, p.foregroundTool)
+        assertEquals(1, p.tasks.liveCount)
+    }
+
     @Test fun allEightKindsUseExistingPresentations() {
         val p =
             project(
