@@ -68,9 +68,9 @@ ViewModel starts closed.
 | Reading | Body |
 |---|---|
 | Claude, no held reading | Only “A context reading arrives after the next turn.”, even if settings supply a footer percentage. |
-| Claude, fresh reading | Model, “X of Y tokens”, computed footer percentage or “Not reported yet”, then Categories when there are rows or a positive dropped count. |
-| Claude, remembered reading (`asOf` present) | Held scalar header only. Categories stay hidden even if the received reading contains them; missing stored detail is not a fresh empty breakdown. |
-| Codex, eligible token source with a positive maximum | Totals and the same computed percentage as the footer. Model and categories are hidden. |
+| Claude, fresh reading | Model, “X of Y tokens”, computed footer percentage or “Not reported yet”, then Categories and MCP tools, each shown when its own list has rows or its own dropped count is positive. |
+| Claude, remembered reading (`asOf` present) | Held scalar header only. Categories and MCP tools stay hidden even if the received reading contains them; missing stored detail is not a fresh empty breakdown. |
+| Codex, eligible token source with a positive maximum | Totals and the same computed percentage as the footer. Model, categories and MCP tools are hidden. |
 | Codex, no usable source | The pending line. |
 
 Fresh category rows retain received order and show a name, token figure and 4 dp bar scaled to
@@ -80,20 +80,44 @@ Token figures follow desktop's one-decimal thousands formatting (`12.4k`, `12k`,
 `contextBarPercent` converts to Double before arithmetic, clamps to 0–100 and returns zero for a
 nonpositive maximum. Counts never control allocations.
 
+Since #2322, the MCP tools group starts collapsed after Categories, with a chevron and a header at
+least 48 dp tall exposing expand/collapse actions and state. Expansion affects only this group.
+Servers retain first-appearance order and tools retain received order within each server. Duplicate
+tool names remain independent rows. Server/tool names ellipsize to one line while trailing token
+figures stay visible, using the same desktop-compatible formatter as categories. The modal body
+scrolls to reach the final row.
+
+The header count is received tool length plus the nonnegative part of `droppedMcpTools`, using unsigned
+arithmetic so even `Long.MAX_VALUE` plus received rows cannot overflow. A positive own dropped count
+adds one “+N more” line after all servers, including a dropped-only inventory. Category and MCP dropped
+counts are independent; neither is inferred from the other or used to allocate or iterate rows.
+Negative counts remain held verbatim but contribute no displayed truncation. A fresh empty inventory
+without a positive dropped count, pending readings, Codex and remembered readings omit the group.
+
+Updates replace inventory rows while preserving expansion when the eligible group stays mounted,
+including updates with unchanged scalar totals. Inventory participates in structural equality so those
+updates reach StateFlow consumers. Hiding the group or dismissing the sheet discards local expansion;
+showing it again starts collapsed.
+
 The [design inventory](../../../app/src/androidTest/assets/design-1220/README.md#context)
-links the loaded, waiting and Codex frames from #2224. The 2026-10-19 decision allows Codex to open
-this sheet with totals only. MCP-tool inventories (#2322), memory-file inventories (#2323) and allowance
-(#2226) have their own scope; this summary has no placeholder rows for them.
+links the loaded, expanded MCP, waiting and Codex frames from #2224. The 2026-10-19 decision allows
+Codex to open this sheet with totals only. Memory-file inventories (#2323) and allowance (#2226)
+have their own scope; this summary has no placeholder rows for them.
 
 ### Decode boundary and coverage
 
 The authoritative wire contract remains pyrycode's `docs/protocol-mobile.md`, section `context_usage`.
-The shared decoder retains model, ordered categories and dropped count. Required summary fields
-must be present with their correct primitive kinds; missing/null lists or fields and stringified token
-counts reject the frame while preserving the held reading. Empty lists, an empty model and unknown
+The shared decoder retains model, ordered categories, ordered MCP tools and independent dropped counts.
+`mcp_tools` and `dropped_mcp_tools` are required; each tool requires string `name` and `server_name`
+and an integer `tokens`. Required summary fields must have their correct primitive kinds.
+Missing, null or wrong-typed lists, malformed entries, invalid dropped primitives and stringified token
+counts reject the entire frame before it can replace the held reading or certify read evidence.
+Empty lists, an empty model and unknown
 extra keys remain valid. Existing scalar validation, timestamp parsing and conversation routing apply.
-Model/category text is bounded to 512 characters and rendered only as inert Text, never as logs,
-exception output, paths, actions or identity keys. DTO/domain string representations redact it.
+Model/category/tool/server text is bounded to 512 characters and rendered only as inert Text, never as logs,
+exception output, paths, URLs, actions or identity keys. DTO/domain string representations redact it.
+Server names group descriptive display rows only; they never resolve an actionable MCP server.
+Names such as `__proto__` are ordinary text. Compose identity and tags use row positions.
 Defaulted domain fields preserve in-process scalar-only constructors; wire fixtures must still be complete.
 
 `ThreadReadEvidence` uses the same decoder. When required wire fields change, complete intended-valid
@@ -104,6 +128,32 @@ source selection, updates and clearing. `ContextSummarySheetTest` exercises the 
 all three dismissals, target edges and adjacent Actions routing, pending/loaded/updating/remembered/Codex
 states, scrolling, ellipsis and clamped bars. Keep composer geometry checks alongside these pointer tests;
 neither proves the other's contract.
+
+MCP ordering coverage must bind the expected server label and every tool name/token pair to its
+position. Checking vertical tag order or finding token figures anywhere can pass after a server sort
+or tool reversal. `mcpFooterExpansionGroupsAndReplaces` uses interleaved, nonalphabetical server
+appearances and distinct figures for duplicate names to detect both regressions.
+
+Linux #2322 evidence at reviewed commit `302fdfdab09cdf4de584197da72d7526075b939d`:
+the fresh shared native-graphics class XML records **11 executed / 11 passed / 0 failed / 0 skipped**,
+including `mcpFooterExpansionGroupsAndReplaces`, `mcpLongNamesEllipsizeAndScroll` and
+`mcpUnavailableStatesAndDroppedOnly`. Raw XML was retained under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2322/builder-rework-20261020-642edcff9c98/green-class/`.
+Each temporary ordering mutation separately recorded **1 executed / 1 failed / 0 skipped** in that
+method; alphabetical servers and reversed tools failed the expected content-position assertions.
+Neither mutation remains in the reviewed code.
+
+Original implementation XML at `15efb682b0d27108d2990518aea7426a161a699e`, retained under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2322/builder-20261020/`, confirms
+`ContextUsageProjectionTest` **8 executed / 8 passed / 0 failed / 0 skipped**,
+`RemoteConversationRepositoryContextUsageTest` **16 / 16 / 0 / 0**, and
+`ThreadViewModelContextUsageTest` **12 / 12 / 0 / 0**. Named passes include
+`malformedMcpInventoryCannotReplaceOrCertify`, `mcpInventoryPreservesOrderCountsAndReplacement`,
+`mcpInventoryReachesRepositoryAndMalformedUpdateRetainsIt`, `mcpInventorySurvivesViewModelUpdates`
+and `contextSheetSurvivesRecollectionAndUsesLatestReading`. The
+[accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2328#issuecomment-6291390083)
+closes the ordering assertion gap. No fresh runtime raster comparison or real-provider run was made;
+macOS was outside this Linux ticket's scope. Raw paths identify retention locations at the time of review.
 
 Linux acceptance at `c7e0aa32779930dfcd832ee806fc86df2817df1f` on 2026-10-20 passed in the complete
 dispatcher gates: JVM/shared **6,221 executed / 6,221 passed / 0 failed / 0 skipped**; device
