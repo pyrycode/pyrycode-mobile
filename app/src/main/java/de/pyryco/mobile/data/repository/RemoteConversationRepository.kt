@@ -1139,6 +1139,9 @@ class RemoteConversationRepository internal constructor(
                         // Hold the conversation's turn phase (#1313) for every conversation, open or not, so
                         // a thread opened mid-turn reads it at once. Only `turn_state` and `turn_end` move it.
                         turnPhaseProjection.apply(event)
+                        if (event is LiveSessionEvent.TurnState) {
+                            RelayLog.d { "event=session_error_turn_state phase=${event.phase.name.lowercase()}" }
+                        }
                         if (event is LiveSessionEvent.TurnState && event.phase != LiveSessionEvent.TurnState.Phase.Idle) {
                             contextUsageProjection.onTurnStarted(event.conversationId)
                             sessionErrorProjection.clear(event.conversationId)
