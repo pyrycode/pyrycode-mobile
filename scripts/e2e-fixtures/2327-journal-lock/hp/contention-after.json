@@ -1,0 +1,8 @@
+{
+  "stage": "after",
+  "nativeEffectiveLock": "/work/Projects/.pyry-test-admission.lock",
+  "dispatcherConfiguredLock": "/work/Projects/.pyry-test-admission.lock",
+  "nativeExit": 0,
+  "dispatcherExit": 0,
+  "privateJournalAcquisitions": 2
+}
