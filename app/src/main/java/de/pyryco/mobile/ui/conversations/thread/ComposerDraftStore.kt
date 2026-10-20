@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.network.MessageAttachmentIds
 import de.pyryco.mobile.data.repository.AttachmentUploadLimit
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,7 +54,12 @@ class ComposerDraftStore {
 
     // Host to conversation to attachment id to the content URI it was uploaded from. Not exposed as a
     // flow: nothing renders it, and the thread reads it once per attachment it shows.
-    private val sentOriginals = MutableStateFlow<Map<String, Map<String, Map<String, String>>>>(emptyMap())
+    private class SentOriginal(
+        val uri: String,
+        val reference: MessageAttachment?,
+    )
+
+    private val sentOriginals = MutableStateFlow<Map<String, Map<String, Map<String, SentOriginal>>>>(emptyMap())
 
     /** Every live pair's pending attachments, host to conversation to entries in the order added. */
     val attachments: StateFlow<Map<String, Map<String, List<PendingAttachment>>>> = _attachments.asStateFlow()
@@ -236,11 +242,14 @@ class ComposerDraftStore {
         serverId: String,
         conversationId: String,
         originals: Map<String, String>,
+        references: List<MessageAttachment> = emptyList(),
     ) {
         if (originals.isEmpty()) return
         sentOriginals.update { hosts ->
             val conversations = hosts[serverId].orEmpty()
-            val merged = conversations[conversationId].orEmpty() + originals
+            val referencesById = references.associateBy { it.attachmentId }
+            val entries = originals.mapValues { (id, uri) -> SentOriginal(uri, referencesById[id]) }
+            val merged = conversations[conversationId].orEmpty() + entries
             hosts + (serverId to conversations + (conversationId to merged))
         }
     }
@@ -250,7 +259,22 @@ class ComposerDraftStore {
         serverId: String,
         conversationId: String,
         attachmentId: String,
-    ): String? = sentOriginals.value[serverId]?.get(conversationId)?.get(attachmentId)
+    ): String? =
+        sentOriginals.value[serverId]
+            ?.get(conversationId)
+            ?.get(attachmentId)
+            ?.uri
+
+    /** Metadata of this pair's acknowledged upload, never borrowed from a legacy thread row. */
+    fun sentOriginalReference(
+        serverId: String,
+        conversationId: String,
+        attachmentId: String,
+    ): MessageAttachment? =
+        sentOriginals.value[serverId]
+            ?.get(conversationId)
+            ?.get(attachmentId)
+            ?.reference
 
     /** Serialize one pair's edit and release removed copies once, outside any StateFlow CAS retries. */
     private fun editAttachments(

@@ -32,6 +32,16 @@ coverage and sight of the exact rendered revisions. A retry retains its producin
 connection and cannot move to a replacement. Saved file-offer notices reuse the existing
 attachment controls after identifier validation and display-name cleaning.
 
+Session cost comes from certified, settled root terminals for the session named by
+the current connection's conversation summary. The latest positive finite estimate
+replaces the previous value, including on a failed turn. Child turns, other sessions,
+quoted numbers and retired sources cannot supply it. The legacy demo retains its
+existing live-event reading.
+
+Phone-uploaded originals retain their acknowledged file name and media type under
+the exact host, conversation and attachment identity. Reopening the original uses
+that metadata even when the daemon supplies only the attachment identifier.
+
 
 **Supplied send reconciliation (#1986).** A send immediately adds one provisional
 **Sending** row owned by the client. Empty acknowledgement is receipt only: it

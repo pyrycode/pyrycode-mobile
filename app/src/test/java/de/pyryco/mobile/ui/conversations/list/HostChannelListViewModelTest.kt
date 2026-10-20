@@ -459,6 +459,31 @@ class HostChannelListViewModelTest {
         }
 
     @Test
+    fun observationOnlySettingsAreRequestedBeforeRememberedModelAndNavigation() =
+        runTest(dispatcher) {
+            val f = fixture(flowOf(preferencesOf(stringPreferencesKey("remembered_model") to "opus")))
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            f.a.repo.observationOnlySettings = true
+            f.a.repo.createdSessionId = ""
+            f.a.repo.modelMenu.value = ModelMenu(listOf(modelRow("opus", ConversationAgent.Claude)), 0)
+            f.a.repo.settingsGate = CompletableDeferred()
+
+            f.vm.createChat("Host")
+            runCurrent()
+            assertEquals(listOf("returned-id"), f.a.repo.settingsRefreshes)
+            assertEquals(listOf("session" to "opus"), f.a.repo.modelWrites)
+            assertTrue(f.nav.isEmpty())
+            f.a.repo.settingsGate
+                ?.complete(Unit)
+            runCurrent()
+            assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
+            assertTrue(
+                f.b.repo.settingsRefreshes
+                    .isEmpty(),
+            )
+        }
+
+    @Test
     fun relayCreateReplyWithoutSessionIdStillAppliesModelBeforeNavigation() =
         runTest(dispatcher) {
             val f = fixture(flowOf(preferencesOf(stringPreferencesKey("remembered_model") to "opus")))
@@ -3395,6 +3420,9 @@ class HostChannelListViewModelTest {
         val settingsReads = mutableListOf<String>()
         var createdSessionId = "session"
         var settingsGate: CompletableDeferred<Unit>? = null
+        var observationOnlySettings = false
+        val settingsRefreshes = mutableListOf<String>()
+        private val requestedSettings = MutableStateFlow<SessionSettings?>(null)
         var settingsFailure = false
         var publishOnCreate = false
 
@@ -3405,6 +3433,7 @@ class HostChannelListViewModelTest {
 
         override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> {
             settingsReads += conversationId
+            if (observationOnlySettings) return requestedSettings
             return flowOf(
                 SessionSettings(
                     sessionId = "session",
@@ -3417,6 +3446,11 @@ class HostChannelListViewModelTest {
                     windowTokens = 0,
                 ),
             )
+        }
+
+        override fun refreshSessionSettings(conversationId: String) {
+            settingsRefreshes += conversationId
+            requestedSettings.value = SessionSettings("session", "", "", EffectiveEffort.Unavailable, "", false, 0, 0)
         }
 
         override suspend fun setSessionSettings(

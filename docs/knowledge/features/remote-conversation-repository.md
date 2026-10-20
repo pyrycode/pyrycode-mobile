@@ -273,6 +273,10 @@ does. Query leases are counted on the producing repository and released idempote
 Model-catalog clear/fresh ownership is separate from current-session ownership, so borrowed
 or unresolved vocabulary cannot grant prompt, status or settings authority.
 
+Applying a remembered model to a new chat explicitly requests a fresh session
+reading. Observation alone sends no request. The subsequent write stays on the exact
+host repository that supplied that reading, before navigation into the new chat.
+
 **Legacy receipt evidence (#1912).** `ThreadSnapshot.readEvidence` binds durable
 `history_entry_id` claims to the exact row version they produced, across history pages,
 direct live delivery and reconnect replay, including every delta folded into a streaming

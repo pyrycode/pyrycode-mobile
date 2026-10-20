@@ -72,6 +72,25 @@ The full recorded Mobile suite uses the actual production selection. Changed pro
 requests require genuine native capture, fresh replay, preserved strict comparisons and
 explicit review of every difference. Neither route synthesizes daemon-built thread items.
 
+The independent reply witness observes actual accepted phone history requests and
+their separately received completion markers. It checks the producing connection,
+conversation, epoch and request identity. Rejected sends and invalid batches cannot
+qualify a later completion. Same-epoch resets require a fresh certified query.
+
+The peer-reopen observer taps the destination's existing negotiated thread collection.
+It adds no query or collection. Ownership updates retain the same subscription token;
+only ending that collection and opening another can establish a reopen. Canonical
+fact identity survives changes to rendered row identities.
+
+Saved-checkpoint recovery checks the actual bounded catch-up tail, including every
+missed post, the independently produced reply, retained baseline facts and rendered
+order. It requires the original saved epoch and checkpoint without a legacy history
+request. Completion certification and the shown-content watermark are separate:
+settling an existing reply may revise it without creating newly shown content.
+
+Replay failures include structural history-query diagnostics without message content.
+Those diagnostics do not change matching, request contracts or frame delivery order.
+
 Replay proves the recorded permission behaviour. Current-daemon compatibility requires
 the explicit live command. Timing, encrypted transport, reconnect, other permissions,
 session grants and other live scenarios retain their existing tests and requirements.

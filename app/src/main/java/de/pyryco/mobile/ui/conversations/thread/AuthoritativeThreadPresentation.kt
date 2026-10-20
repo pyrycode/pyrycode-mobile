@@ -25,6 +25,7 @@ import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 
 /** Supplied-input presentation seam for #1988. No legacy roster or live-session attribution enters it. */
@@ -42,6 +43,31 @@ class AuthoritativeThreadPresentation internal constructor(
     internal val shownRowRevisions: Map<String, Long>,
     internal val sourceSnapshot: AuthoritativeThreadSnapshot,
 ) {
+    /** Latest certified estimate from this session's root terminals. Outcomes do not change cost ownership. */
+    internal fun reportedSessionCost(session: String): Double? {
+        val snapshot = sourceSnapshot
+        if (session.isEmpty() || snapshot.epoch.isNullOrEmpty() || snapshot.repairNeeded || snapshot.resetNeeded) return null
+        return snapshot.items
+            .asSequence()
+            .filter { item ->
+                item.kind == "turn_end" &&
+                    !item.active &&
+                    item.status in setOf("done", "finished", "failed") &&
+                    item.session == session &&
+                    !item.turn.isNullOrEmpty() &&
+                    (item.parent ?: 0) == 0L &&
+                    item.order != null &&
+                    item.order > 0 &&
+                    item.rev <= snapshot.checkpoint
+            }.sortedByDescending { it.order }
+            .mapNotNull { item ->
+                ((item.content as? JsonObject)?.get("cost_usd_total") as? JsonPrimitive)
+                    ?.takeUnless { it.isString }
+                    ?.doubleOrNull
+                    ?.takeIf { it.isFinite() && it > 0 }
+            }.firstOrNull()
+    }
+
     /** Waiting feedback carries no ordered read revision; anchor sight to admitted history. */
     internal val newestReadKey = rows.lastOrNull { it is ThreadRow.Delivered && it.listKey(0) in shownRowRevisions }?.listKey(0)
 

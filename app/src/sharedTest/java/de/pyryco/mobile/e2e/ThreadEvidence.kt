@@ -62,6 +62,7 @@ internal class ThreadEvidence(
     val owner: ThreadEvidenceOwner,
     val records: List<ThreadEvidenceRecord>,
     val admitted: Boolean = true,
+    val sourceSnapshot: AuthoritativeThreadSnapshot? = null,
 ) {
     /** Ordinary loaded history remains usable for selection; it does not acquire delta evidence. */
     fun loadedMainReply(): Message? =
@@ -254,6 +255,7 @@ internal fun authoritativeThreadEvidence(
         ThreadEvidenceOwner(host, conversation, connection, ThreadEvidenceKind.Authoritative, snapshot.epoch, snapshot.generation),
         records,
         admitted = snapshot.epoch != null && !snapshot.repairNeeded && !snapshot.resetNeeded,
+        sourceSnapshot = snapshot,
     )
 }
 

@@ -1203,7 +1203,30 @@ class ThreadViewModel(
         }.combine(repository.observeReadMarks(conversationId)) { uiState, marks ->
             uiState.copy(readUpTo = marks?.readUpTo, readMarks = marks)
         }.combine(negotiatedPresentation) { uiState, presentation ->
-            if (negotiated == null) uiState else uiState.copy(authoritativeThread = presentation)
+            val route = negotiated
+            if (route == null) {
+                uiState
+            } else {
+                val connection = currentRunConnection
+                val supported = route.support.value as? ThreadSupport.Supported
+                val reading = conversationReadings.replayCache.lastOrNull()
+                val session =
+                    reading
+                        ?.takeIf { it.connection === connection }
+                        ?.list
+                        ?.singleOrNull { it.id == conversationId }
+                        ?.currentSessionId
+                        .orEmpty()
+                val current =
+                    presentation?.takeIf {
+                        connection != null &&
+                            supported?.connection === connection &&
+                            it.host == serverId &&
+                            it.conversation == conversationId &&
+                            route.store.current(serverId, conversationId) === it.sourceSnapshot
+                    }
+                uiState.copy(authoritativeThread = presentation, sessionCostUsd = current?.reportedSessionCost(session))
+            }
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(),
@@ -2546,7 +2569,7 @@ class ThreadViewModel(
                 }
                 // #984: before the send, because the confirmed row can be drawn while it is suspended. A
                 // send that then fails leaves harmless entries: its retry names the same ids.
-                draftStore.recordSentOriginals(serverId, conversationId, originals)
+                draftStore.recordSentOriginals(serverId, conversationId, originals, references)
                 onUploaded()
                 draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
                 // #686: a message sent while this opening's recall write is outstanding follows it.
@@ -2692,7 +2715,12 @@ class ThreadViewModel(
                 try {
                     val original = draftStore.sentOriginal(serverId, conversationId, attachmentId)
                     if (original != null && attachmentReader.canRead(original)) {
-                        AttachmentViewState.Ready(AttachmentSource.Original(original), null, null) to "original"
+                        val reference = draftStore.sentOriginalReference(serverId, conversationId, attachmentId)
+                        AttachmentViewState.Ready(
+                            AttachmentSource.Original(original),
+                            reference?.displayName,
+                            reference?.mimeType,
+                        ) to "original"
                     } else {
                         retrieved(repository.retrieveAttachment(conversationId, attachmentId))
                     }

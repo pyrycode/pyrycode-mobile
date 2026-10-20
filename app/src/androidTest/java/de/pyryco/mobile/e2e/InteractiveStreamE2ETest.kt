@@ -169,6 +169,7 @@ import de.pyryco.mobile.ui.conversations.thread.ownedReplyContentMatches
 import de.pyryco.mobile.ui.conversations.thread.ownedReplyDisplayed
 import de.pyryco.mobile.ui.conversations.thread.ownedReplyMatcher
 import de.pyryco.mobile.ui.conversations.thread.ownedReplyNodeCounts
+import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import de.pyryco.mobile.ui.conversations.thread.slashCommandOptions
 import de.pyryco.mobile.ui.conversations.thread.slashCommandTypeAheadRows
 import de.pyryco.mobile.ui.onboarding.ScannerEvent
@@ -180,6 +181,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -189,6 +191,7 @@ import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -204,6 +207,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -577,7 +581,7 @@ class InteractiveStreamE2ETest {
             assertTrue("bold marker must render bold", styled(bold) { it.fontWeight == FontWeight.Bold })
             assertTrue("inline marker must render monospace", styled(inline) { it.fontFamily == FontFamily.Monospace })
             listOf(code, "Key", "Value", cell, "present", end).forEach {
-                composeTestRule.onNode(hasText(it) and inReply, useUnmergedTree = true).assertIsDisplayed()
+                composeTestRule.onNode(hasText(it) and inReply, useUnmergedTree = true).performScrollTo().assertIsDisplayed()
             }
             // The whole reply survives the streaming-to-history boundary with no lost source text.
             assertEquals(reply, observed.records.joinToString("") { it.fullText })
@@ -762,6 +766,11 @@ class InteractiveStreamE2ETest {
             leaveThread()
 
             // 2. With the phone's link cut, the peer's turn runs to its end and the daemon publishes its reading.
+            val repositories =
+                checkNotNull(
+                    GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId),
+                ).coordinator.currentRepository
+            val retiredRepository = checkNotNull(repositories.value)
             setHostLink(serverId, up = false)
             runBlocking {
                 peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS)
@@ -769,22 +778,29 @@ class InteractiveStreamE2ETest {
                 peer.awaitFrame(conversationId, "context_usage", THREAD_TIMEOUT_MS)
             }
 
-            // 3. A fresh connection: the phone holds no reading for the chat, so only the open's ask can fill it.
+            // 3. The old connection is gone. Reconnect may already deliver a fresh reading for this chat.
             setHostLink(serverId, up = true)
             awaitChannelList()
-            assertNull(
-                "the reconnect alone delivered the chat's reading; the open's ask would prove nothing",
-                runBlocking { hostRepository(serverId).observeContextUsage(conversationId).first() },
-            )
+            val currentRepository =
+                runBlocking {
+                    withTimeout(CONNECT_TIMEOUT_MS) {
+                        repositories.filterNotNull().first {
+                            it !==
+                                retiredRepository
+                        }
+                    }
+                }
+            assertNotSame("reconnect must replace the source", retiredRepository, currentRepository)
 
-            // 4. Open the chat and send nothing: the open's ask fills the reading. Waiting on the reading itself,
-            // not only the footer, because the footer also renders a percentage from session_settings alone.
+            // 4. Open the chat and send nothing. Read from the replacement source, whether its fresh
+            // reading arrived on reconnect or on open. The footer alone could come from session_settings.
             openChatRow(chatName)
             runBlocking {
                 withTimeout(THREAD_TIMEOUT_MS) {
-                    hostRepository(serverId).observeContextUsage(conversationId).filterNotNull().first()
+                    currentRepository.observeContextUsage(conversationId).filterNotNull().first()
                 }
             }
+            assertSame("context reading must stay on the replacement source", currentRepository, repositories.value)
             val reported = CONTEXT_REPORTED
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().any { node ->
@@ -3688,40 +3704,99 @@ class InteractiveStreamE2ETest {
                 val source = GlobalContext.get().get<HostConversationSource>()
                 val repository = checkNotNull(source.repositoryFor(serverId))
                 runBlocking {
-                    // Subscribe before release: the alert proves the phone folded this exact completion.
-                    val completed =
-                        async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
-                            withTimeout(WAIT_TURN_TIMEOUT_MS) {
-                                source.alerts.first {
-                                    it.serverId == serverId && it.conversationId == chatA && it.kind == AttentionAlert.Kind.TurnCompleted
+                    // Buffer before release, then select the exact completed turn rather than an older re-emission.
+                    val completions = Channel<AttentionAlert>(64)
+                    val collector =
+                        launch(start = CoroutineStart.UNDISPATCHED) {
+                            source.alerts.collect {
+                                if (it.serverId == serverId && it.conversationId == chatA && it.kind == AttentionAlert.Kind.TurnCompleted) {
+                                    completions.send(it)
                                 }
                             }
                         }
-                    peerStep(peer, "allow A's prompt") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
-                    val turnEnd =
-                        peerStep(peer, "await A's held turn_end") {
-                            peer.awaitFrame(chatA, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
+                    try {
+                        peerStep(peer, "allow A's prompt") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+                        val turnEnd =
+                            peerStep(peer, "await A's held turn_end") {
+                                peer.awaitFrame(chatA, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
+                            }
+                        val turnId = checkNotNull(peer.field(turnEnd, "turn_id")) { "A's turn_end has no turn_id" }
+                        val entryId = checkNotNull(turnEnd.historyEntryId) { "A's turn_end has no durable identity" }
+                        val replyEntry =
+                            checkNotNull(
+                                peer
+                                    .recorded(chatA)
+                                    .filter {
+                                        it.type == "assistant_delta" && peer.field(it, "turn_id") == turnId
+                                    }.mapNotNull { it.historyEntryId }
+                                    .maxOrNull(),
+                            ) { "A's completed reply has no durable identity" }
+                        assertTrue("A's reply precedes its completion", replyEntry < entryId)
+                        val remote = repository as? RemoteConversationRepository
+                        val shownReply =
+                            if (remote?.usesAuthoritativeLiveState == true) {
+                                val completion =
+                                    withTimeout(WAIT_TURN_TIMEOUT_MS) {
+                                        remote.authoritativeCompletions
+                                            .first { facts ->
+                                                facts.any {
+                                                    it.owner === remote &&
+                                                        it.host == serverId &&
+                                                        it.conversation == chatA &&
+                                                        it.item.id.toULong() == entryId &&
+                                                        it.item.turn == turnId &&
+                                                        it.item.session == firstReply.session &&
+                                                        remote.completionIsCurrent(it)
+                                                }
+                                            }.single {
+                                                it.owner === remote &&
+                                                    it.host == serverId &&
+                                                    it.conversation == chatA &&
+                                                    it.item.id.toULong() == entryId &&
+                                                    it.item.turn == turnId &&
+                                                    it.item.session == firstReply.session &&
+                                                    remote.completionIsCurrent(it)
+                                            }
+                                    }
+                                val counted =
+                                    withTimeout(WAIT_TURN_TIMEOUT_MS) {
+                                        completions.receiveAsFlow().first { it.key == completion.key && it.historyEntryId == entryId }
+                                    }
+                                assertTrue("offscreen completion's source was retired", counted.isCurrent())
+                                assertTrue("offscreen completion moved to another repository", source.repositoryFor(serverId) === remote)
+                                withTimeout(WAIT_TURN_TIMEOUT_MS) { while (!pendingReply.producerCompleted()) delay(CACHE_POLL_MS) }
+                                val produced = checkNotNull(pendingReply.produced())
+                                assertEquals("exact offscreen producer turn", turnId, produced.turn)
+                                val current = currentThread(serverId, chatA) { produced.admitted(it, serverId) != null }
+                                val admitted = checkNotNull(produced.admitted(current, serverId))
+                                val snapshot = checkNotNull(current.sourceSnapshot)
+                                assertTrue(
+                                    "completion must have current query certification",
+                                    snapshot.checkpoint >= completion.certifiedVersion,
+                                )
+                                assertEquals("completion retains the original epoch", firstReply.owner.epoch, current.owner.epoch)
+                                // Completion may revise an already shown row without adding content.
+                                // Its query certification is checked above; unread sight follows creation/order.
+                                admitted.records.maxOf { checkNotNull(checkNotNull(it.fact).order).toULong() }
+                            } else {
+                                val counted =
+                                    withTimeout(WAIT_TURN_TIMEOUT_MS) {
+                                        completions.receiveAsFlow().first { it.key == turnId && it.historyEntryId == entryId }
+                                    }
+                                assertTrue("offscreen completion's source was retired", counted.isCurrent())
+                                replyEntry
+                            }
+                        withTimeout(THREAD_TIMEOUT_MS) {
+                            repository.observeReadMarks(chatA).filterNotNull().first {
+                                val latest = if (remote?.usesAuthoritativeLiveState == true) it.lastShownVersion else it.latestEntryId
+                                val read = it.readUpTo
+                                latest != null && latest >= shownReply && read != null && latest > read
+                            }
+                            source.attention.first { it[serverId]?.get(chatA) == ConversationAttention.Unread }
                         }
-                    val turnId = checkNotNull(peer.field(turnEnd, "turn_id")) { "A's turn_end has no turn_id" }
-                    assertTrue("the phone counted a different off-screen completion", completed.await().key == turnId)
-                    val entryId = checkNotNull(turnEnd.historyEntryId) { "A's turn_end has no durable identity" }
-                    val replyEntry =
-                        checkNotNull(
-                            peer
-                                .recorded(chatA)
-                                .filter {
-                                    it.type == "assistant_delta" && peer.field(it, "turn_id") == turnId
-                                }.mapNotNull { it.historyEntryId }
-                                .maxOrNull(),
-                        ) { "A's completed reply has no durable identity" }
-                    assertTrue("A's reply precedes its completion", replyEntry < entryId)
-                    withTimeout(THREAD_TIMEOUT_MS) {
-                        repository.observeReadMarks(chatA).filterNotNull().first {
-                            val latest = it.latestEntryId
-                            val read = it.readUpTo
-                            latest != null && latest >= replyEntry && read != null && latest > read
-                        }
-                        source.attention.first { it[serverId]?.get(chatA) == ConversationAttention.Unread }
+                    } finally {
+                        collector.cancel()
+                        completions.close()
                     }
                 }
                 assertShowingThread(nameB, nameA)
@@ -5486,6 +5561,19 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNode(stop).assertIsDisplayed()
             assertEquals("hold must remain unreleased before Stop", "held", stopTaskFixtureGet(deviceFixture + "/status"))
             assertTrue("joined task must remain in the roster before Stop", taskId == probe.taskId(peer.recorded(chat)))
+            val stopRepository = coordinator.currentRepository.value as? RemoteConversationRepository
+            val taskBaseline =
+                stopRepository?.takeIf { it.usesAuthoritativeLiveState }?.let {
+                    runBlocking { it.observeAuthoritativeThread(chat).first() }
+                }
+            if (taskBaseline != null) {
+                assertTrue(
+                    "the current canonical task must be running before Stop",
+                    projectAuthoritativeThread(serverId, chat, taskBaseline).tasks.tasks.any {
+                        it.taskId == taskId && !it.isFinished
+                    },
+                )
+            }
             val boundary = peer.recorded(chat).size
             composeTestRule.onNode(stop).performTouchInput { click() }
             allowPromptsUntil(
@@ -5500,7 +5588,21 @@ class InteractiveStreamE2ETest {
             }
             assertEquals("natural release cannot be the completion signal", "held", stopTaskFixtureGet(deviceFixture + "/status"))
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                coordinator.backgroundTasks.value[chat]?.liveCount == 0 &&
+                val stopped =
+                    if (taskBaseline == null) {
+                        coordinator.backgroundTasks.value[chat]?.liveCount == 0
+                    } else {
+                        val current = checkNotNull(stopRepository)
+                        val snapshot = runBlocking { current.observeAuthoritativeThread(chat).first() }
+                        coordinator.currentRepository.value === current &&
+                            current.usesAuthoritativeLiveState &&
+                            snapshot.epoch == taskBaseline.epoch &&
+                            !snapshot.repairNeeded &&
+                            !snapshot.resetNeeded &&
+                            snapshot.completedVersion > taskBaseline.completedVersion &&
+                            projectAuthoritativeThread(serverId, chat, snapshot).tasks.tasks.none { it.taskId == taskId && !it.isFinished }
+                    }
+                stopped &&
                     composeTestRule
                         .onAllNodes(hasText(string(R.string.background_tasks_status_running)) and inBackgroundPanel())
                         .fetchSemanticsNodes()
@@ -7069,7 +7171,7 @@ class InteractiveStreamE2ETest {
             openRow(nameB)
             assertNoFileNamed(documentName, "host B's copy after A's send")
             val cachedOnB =
-                runBlocking { GlobalContext.get().get<ConversationCache>().readThread(serverIdB, collisionId) }.any { item ->
+                runBlocking { cachedThreadItems(GlobalContext.get().get<ConversationCache>(), serverIdB, collisionId) }.any { item ->
                     item is ThreadItem.MessageItem && item.message.attachments.any { it.attachmentId == id }
                 }
             assertTrue("host B's thread cache names the file sent on host A", !cachedOnB)
@@ -7397,6 +7499,22 @@ class InteractiveStreamE2ETest {
         return ActivityScenario.launch(MainActivity::class.java)
     }
 
+    /** Read the saved family selected by this host's actual production repository. */
+    private suspend fun cachedThreadItems(
+        cache: ConversationCache,
+        serverId: String,
+        conversationId: String,
+    ): List<ThreadItem> =
+        if (harnessThreadEvidence(hostRepository(serverId)).kind == ThreadEvidenceKind.Authoritative) {
+            cache
+                .readAuthoritativeThread(serverId, conversationId)
+                ?.let {
+                    projectAuthoritativeThread(serverId, conversationId, it.toSnapshot()).items
+                }.orEmpty()
+        } else {
+            cache.readThread(serverId, conversationId)
+        }
+
     /** Wait until the phone's thread cache for [conversationId] holds an assistant row carrying [attachmentId]. */
     private fun awaitCachedOffer(
         serverId: String,
@@ -7407,7 +7525,7 @@ class InteractiveStreamE2ETest {
         try {
             runBlocking {
                 withTimeout(THREAD_TIMEOUT_MS) {
-                    while (cache.readThread(serverId, conversationId).none { item ->
+                    while (cachedThreadItems(cache, serverId, conversationId).none { item ->
                             item is ThreadItem.MessageItem &&
                                 item.message.role == Role.Assistant &&
                                 item.message.attachments.any { it.attachmentId == attachmentId }
@@ -8250,6 +8368,18 @@ class InteractiveStreamE2ETest {
                         repositories.value === repository &&
                         bundle.supervisor.currentConnection.value === transport
                 }
+                if (repository.usesAuthoritativeLiveState &&
+                    bundle.coordinator.hostReadings.liveSessionBindings[conversationId] == null
+                ) {
+                    repository.observeConversations(ConversationFilter.All).first { rows ->
+                        check(isCurrent()) { "settings summary owner changed" }
+                        rows.any { it.id == conversationId && it.currentSessionId.isNotEmpty() }
+                    }
+                    while (bundle.coordinator.hostReadings.liveSessionBindings[conversationId] == null) {
+                        check(isCurrent()) { "settings summary owner changed" }
+                        delay(CACHE_POLL_MS)
+                    }
+                }
                 val reading =
                     SettingsReadProbe.read(repository, conversationId, isCurrent) {
                         bundle.coordinator.hostReadings.liveSessionBindings[conversationId]
@@ -8613,7 +8743,7 @@ class InteractiveStreamE2ETest {
      * ever holds settled rows, and the open thread's collector writes them after drawing them, so this is
      * the phone's own proof that the reply settled — not another device's copy of `turn_end`.
      */
-    private fun cachedRecords(reply: CompletedReplyObservation): List<ThreadEvidenceRecord> =
+    private fun cachedThreadEvidence(reply: CompletedReplyObservation): ThreadEvidence? =
         runBlocking {
             val cache = GlobalContext.get().get<ConversationCache>()
             when (reply.owner.kind) {
@@ -8623,26 +8753,20 @@ class InteractiveStreamE2ETest {
                         reply.owner.conversation,
                         Any(),
                         cache.readThread(reply.host, reply.owner.conversation),
-                    ).records
+                    )
                 ThreadEvidenceKind.Authoritative ->
                     cache
                         .readAuthoritativeThread(reply.host, reply.owner.conversation)
                         ?.let {
-                            authoritativeThreadEvidence(reply.host, reply.owner.conversation, Any(), it.toSnapshot()).records
-                        }.orEmpty()
+                            authoritativeThreadEvidence(reply.host, reply.owner.conversation, Any(), it.toSnapshot())
+                        }
             }
         }
 
-    private fun cacheRetains(reply: CompletedReplyObservation): Boolean {
-        val rows = cachedRecords(reply).filter { it.message.role == Role.Assistant && it.turn == reply.turn && it.agentId == null }
-        return rows.size == reply.records.size &&
-            rows.zip(reply.records).all { (row, held) ->
-                row.message.id == held.message.id &&
-                    (row.session == held.session || held.session.isNullOrEmpty() && row.session == reply.session) &&
-                    row.fullText == held.fullText &&
-                    !row.message.isStreaming
-            }
-    }
+    private fun cachedRecords(reply: CompletedReplyObservation): List<ThreadEvidenceRecord> = cachedThreadEvidence(reply)?.records.orEmpty()
+
+    private fun cacheRetains(reply: CompletedReplyObservation): Boolean =
+        cachedThreadEvidence(reply)?.retainedReply(reply, reply.host) != null
 
     private fun awaitCachedAssistantReply(reply: CompletedReplyObservation) {
         runBlocking { withTimeout(THREAD_TIMEOUT_MS) { while (!cacheRetains(reply)) delay(CACHE_POLL_MS) } }
@@ -9636,7 +9760,8 @@ class InteractiveStreamE2ETest {
                 "for it to finish, then reply with exactly: pyryran. Command: python3 -c \"import time; time.sleep(10); print(950)\""
         const val ELAPSED_TOOL_PROMPT =
             "Run this exact shell command with your tools in the foreground, not in the background, and wait " +
-                "for it to finish, then reply with exactly: pyryran. Command: python3 -c \"import time; time.sleep(45)\""
+                "for it to finish. Use Bash with timeout=120000 and run_in_background=false. " +
+                "Then reply with exactly: pyryran. Command: python3 -c \"import time; time.sleep(45)\""
         const val ELAPSED_SLOT = "\u0000"
         const val DROP_REPLY = "pyrydropped"
         const val PEER_QUEUED_PROMPT = "Reply with exactly: pyrypeerdropped"

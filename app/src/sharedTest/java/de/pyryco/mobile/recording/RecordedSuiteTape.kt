@@ -322,7 +322,9 @@ internal class RecordedSuiteTape(
         checkpoint: Int,
     ): Boolean {
         val step = steps[index]
-        if (boundary != checkpoint || step.direction != "client" || !step.accepted ||
+        if (boundary != checkpoint ||
+            step.direction != "client" ||
+            !step.accepted ||
             step.owner to step.message!!.id !in threadQueryRequests
         ) {
             return false
@@ -331,7 +333,8 @@ internal class RecordedSuiteTape(
             val earlier = steps[before]
             earlier.direction == "client" &&
                 (earlier.message!!.type in queryTypes || earlier.owner == "control" && earlier.message.type == "test-control:checkpoint") ||
-                earlier.direction == "daemon" && earlier.owner != step.owner
+                earlier.direction == "daemon" &&
+                earlier.owner != step.owner
         }
     }
 
@@ -422,6 +425,11 @@ internal class RecordedSuiteTape(
                     expected.message!!.type == actual.type &&
                     (actual.type !in queryTypes || mapped(expected.message.payload) == actual.payload)
             }
+        if (actual.type in
+            setOf("thread_catch_up", "thread_page")
+        ) {
+            lastThreadQueryAttempt = describeThreadQueryAttempt(owner, actual, candidate)
+        }
         if (candidate == null) {
             if (acceptRedundantModelQuery(owner, actual)) {
                 actualIds.getOrPut(owner) { mutableSetOf() } += actual.id
@@ -628,6 +636,37 @@ internal class RecordedSuiteTape(
         polledReads?.connectionEnded(owner)
     }
 
+    private var lastThreadQueryAttempt = "none"
+
+    private fun queryNumber(
+        payload: JsonElement,
+        field: String,
+    ): String =
+        ((payload as? JsonObject)?.get(field) as? JsonPrimitive)
+            ?.takeUnless { it.isString }
+            ?.content
+            ?.toULongOrNull()
+            ?.toString() ?: "none"
+
+    private fun describeThreadQueryAttempt(
+        owner: String,
+        actual: Envelope,
+        candidate: Int?,
+    ): String {
+        val attempts =
+            eligible().filter { steps[it].message?.type in setOf("thread_catch_up", "thread_page") }.take(8).joinToString(";") { index ->
+                val expected = steps[index]
+                val fields = mapped(expected.message!!.payload) as? JsonObject
+                val supplied = actual.payload as? JsonObject
+                "index=$index,ownerMatches=${expected.owner == owner},typeMatches=${expected.message.type == actual.type}," +
+                    "conversationMatches=${fields?.get("conversation_id") == supplied?.get("conversation_id")}," +
+                    "epochMatches=${fields?.get("epoch") == supplied?.get("epoch")}," +
+                    "checkpointMatches=${fields?.get("version") == supplied?.get("version")}"
+            }
+        return "type=${actual.type},request=${actual.id},checkpoint=${queryNumber(actual.payload, "version")}," +
+            "beforeOrder=${queryNumber(actual.payload, "before_order")},candidate=$candidate,candidates=[$attempts]"
+    }
+
     @Synchronized fun progress(): String {
         val index = commandBoundary()
         val next = steps.getOrNull(index)
@@ -636,9 +675,21 @@ internal class RecordedSuiteTape(
             steps.indices.filter { it !in released }.take(8).joinToString {
                 "${steps[it].owner}:${steps[it].message?.type ?: steps[it].direction}"
             }
+        val queries =
+            steps.indices
+                .filter { i ->
+                    i !in released && steps[i].direction == "client" && steps[i].message?.type in setOf("thread_catch_up", "thread_page")
+                }.take(8)
+                .joinToString(";") { i ->
+                    val step = steps[i]
+                    val message = checkNotNull(step.message)
+                    "index=$i,type=${message.type},request=${message.id},checkpoint=${queryNumber(message.payload, "version")}," +
+                        "consumed=${i in consumed},mapped=${step.owner to message.id in requests}"
+                }
         // The first failure is sticky, and the app absorbs a refused send, so a later stall can hide it.
         return "Recorded suite progress: matched=$matched remaining=${steps.size - released.size} " +
-            "next=${next?.owner}:$type index=$index pending=$pending reads=${readReceipts?.progress()} first-failure=$failure"
+            "next=${next?.owner}:$type index=$index pending=$pending reads=${readReceipts?.progress()} " +
+            "query=$lastThreadQueryAttempt query-pending=[$queries] first-failure=$failure"
     }
 
     @Synchronized fun assertComplete() {

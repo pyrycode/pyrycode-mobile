@@ -22,8 +22,11 @@ import de.pyryco.mobile.ui.workspace.isWorkspaceLabelTooLong
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import de.pyryco.mobile.ui.workspace.workspaceLabelFor
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -446,7 +449,7 @@ class ChannelListViewModel(
         pendingNewChatModels += target
         var settled = false
         try {
-            applyRememberedModel(repository, conversation)
+            applyRememberedModel(repository, conversation, serverId)
             settled = true
         } finally {
             pendingNewChatModels -= target
@@ -459,6 +462,7 @@ class ChannelListViewModel(
     private suspend fun applyRememberedModel(
         repository: ConversationRepository,
         conversation: Conversation,
+        serverId: String,
     ) {
         val remembered =
             try {
@@ -495,11 +499,14 @@ class ChannelListViewModel(
         val sessionId =
             try {
                 withTimeoutOrNull(5_000) {
-                    repository
-                        .observeSessionSettings(conversation.id)
-                        .filterNotNull()
-                        .first()
-                        .sessionId
+                    coroutineScope {
+                        val reading =
+                            async(start = CoroutineStart.UNDISPATCHED) {
+                                repository.observeSessionSettings(conversation.id).filterNotNull().first()
+                            }
+                        repository.refreshSessionSettings(conversation.id)
+                        reading.await().sessionId
+                    }
                 }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
@@ -507,6 +514,10 @@ class ChannelListViewModel(
             }
         if (sessionId.isNullOrEmpty()) {
             RelayLog.d { "event=new_chat_model outcome=settings_unavailable" }
+            return
+        }
+        if (hostSource.repositoryFor(serverId) !== repository || !isHostLive(serverId)) {
+            RelayLog.d { "event=new_chat_model outcome=owner_changed" }
             return
         }
         try {

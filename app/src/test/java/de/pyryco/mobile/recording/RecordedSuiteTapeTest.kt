@@ -4,7 +4,9 @@ import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RecordedSuiteTapeTest {
@@ -26,6 +28,32 @@ class RecordedSuiteTapeTest {
         assertEquals(listOf("thread_items", "thread_items", "thread_item_changed"), delivered.map { it.message!!.type })
         assertEquals(listOf(90L, 90L, null), delivered.map { it.message!!.inReplyTo })
         tape.assertComplete()
+    }
+
+    @Test fun stalledQueryDiagnosticsExposeOnlyStructureAndFieldEquality() {
+        val owner = "phone/host/0"
+        val payload = """{"conversation_id":"private-conversation","epoch":"private-epoch","version":12}"""
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client(owner, frame(1, "thread_catch_up", payload)),
+                    daemon(owner, frame(2, "thread_items", """{"final":true}""", reply = 1)),
+                ),
+                literalProducerIdentities = true,
+            )
+        tape.initial()
+        val initial = tape.progress()
+        assertTrue(initial.contains("query-pending=[index=0,type=thread_catch_up,request=1,checkpoint=12,consumed=false,mapped=false]"))
+        assertThrows(IllegalStateException::class.java) {
+            tape.request(owner, frame(90, "thread_catch_up", payload.replace(":12", ":13")))
+        }
+        val stalled = tape.progress()
+        assertTrue(stalled.contains("checkpoint=13"))
+        assertTrue(stalled.contains("conversationMatches=true"))
+        assertTrue(stalled.contains("epochMatches=true"))
+        assertTrue(stalled.contains("checkpointMatches=false"))
+        assertFalse(stalled.contains("private-conversation"))
+        assertFalse(stalled.contains("private-epoch"))
     }
 
     @Test fun threadQueryStartKeepsInterleavedLiveFramesBehindTheActualRequest() {

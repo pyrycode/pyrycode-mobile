@@ -11,6 +11,7 @@ import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -163,6 +164,283 @@ class OwnedReplyObservationTest {
         authoritativeFrames().forEach { observation.received(pump, it) }
         assertTrue(observation.producerCompleted())
         assertNotNull(observation.admitted(evidence(ThreadEvidenceKind.Authoritative, rows()), repository))
+    }
+
+    private fun query(
+        id: Long = 400,
+        epoch: String = "",
+        version: Long = 0,
+    ) = Envelope(
+        id,
+        "thread_catch_up",
+        "",
+        buildJsonObject {
+            put("conversation_id", "chat")
+            put("epoch", epoch)
+            put("version", version)
+        },
+    )
+
+    private fun queryBatch(
+        request: Envelope,
+        items: List<JsonObject>,
+        version: Long = 3,
+    ) = Envelope(
+        500,
+        "thread_items",
+        "",
+        buildJsonObject {
+            put("conversation_id", "chat")
+            put("epoch", "epoch")
+            put("version", version)
+            put("items", JsonArray(items))
+            put("final", false)
+        },
+        inReplyTo = request.id,
+    )
+
+    private fun queryFinal(
+        request: Envelope,
+        version: Long = 3,
+    ) = Envelope(
+        501,
+        "thread_items",
+        "",
+        buildJsonObject {
+            put("conversation_id", "chat")
+            put("epoch", "epoch")
+            put("version", version)
+            put("items", JsonArray(emptyList()))
+            put("final", true)
+            put("lower_order", 1)
+            put("upper_order", version)
+            put("continuation", 1)
+            put("older_exists", false)
+        },
+        inReplyTo = request.id,
+    )
+
+    private fun queryFacts() = authoritativeFrames().map { (it.payload as JsonObject)["item"] as JsonObject }
+
+    private fun OwnedReplyObservation.acceptQuery(
+        request: Envelope,
+        accepted: Boolean = true,
+    ) {
+        phoneSending(pump, request)
+        phoneSent(pump, request, accepted)
+    }
+
+    private fun generationEvidence(generation: Long): ThreadEvidence {
+        val held = evidence(ThreadEvidenceKind.Authoritative, rows())
+        return authoritativeThreadEvidence(
+            "host",
+            "chat",
+            repository,
+            checkNotNull(held.sourceSnapshot).copy(generation = generation),
+        )
+    }
+
+    @Test fun savedCheckpointProbeNeedsAcceptedOwnedSendAndMatchingCatchUpCertificate() {
+        val saved =
+            AuthoritativeThreadSnapshot(
+                epoch = "epoch",
+                checkpoint = 1,
+                completedVersion = 1,
+                items = listOf(ThreadItemDto.decode(queryFacts().first())),
+            )
+        for (accepted in listOf(false, true)) {
+            AuthoritativeHistoryProbe.begin("host", "chat", saved)
+            try {
+                val request = query(epoch = "epoch", version = 1)
+                AuthoritativeHistoryProbe.sending("other", pump, request) { true }
+                AuthoritativeHistoryProbe.sent("other", pump, request, true)
+                assertTrue(AuthoritativeHistoryProbe.requests().isEmpty())
+                AuthoritativeHistoryProbe.sending("host", pump, request) { true }
+                AuthoritativeHistoryProbe.sent("host", pump, request, accepted)
+                val batch = queryBatch(request, queryFacts().drop(1))
+                AuthoritativeHistoryProbe.received("host", Any(), batch)
+                assertTrue(AuthoritativeHistoryProbe.certificates().isEmpty())
+                AuthoritativeHistoryProbe.received("host", pump, batch)
+                assertTrue(AuthoritativeHistoryProbe.certificates().isEmpty())
+                val final = queryFinal(request)
+                val fields = final.payload as JsonObject
+                val catchUp =
+                    final.copy(
+                        payload =
+                            JsonObject(
+                                (fields - setOf("lower_order", "upper_order", "continuation", "older_exists")) +
+                                    ("from_version" to JsonPrimitive(1)),
+                            ),
+                    )
+                AuthoritativeHistoryProbe.received("host", pump, catchUp)
+                assertEquals(if (accepted) 1 else 0, AuthoritativeHistoryProbe.requests().size)
+                assertEquals(if (accepted) 1 else 0, AuthoritativeHistoryProbe.certificates().size)
+                if (accepted) {
+                    val proof = AuthoritativeHistoryProbe.certificates().single()
+                    assertEquals(3, proof.snapshot.items.size)
+                    assertEquals(3L, proof.snapshot.checkpoint)
+                    assertTrue(AuthoritativeHistoryProbe.current())
+                    AuthoritativeHistoryProbe.ended("host", pump)
+                    assertFalse(AuthoritativeHistoryProbe.current())
+                }
+            } finally {
+                AuthoritativeHistoryProbe.end()
+            }
+        }
+    }
+
+    @Test fun queryDeliveredUserAndLiveReplyNeedTheOwnedQueryCertificate() {
+        val target = observation(ThreadEvidenceKind.Authoritative)
+        target.bindPhoneConnection(pump) { true }
+        val request = query()
+        target.acceptQuery(request)
+        target.phoneReceived(pump, queryBatch(request, queryFacts().take(1), 1))
+        assertFalse(target.producerCompleted())
+        assertNull(target.admitted(evidence(ThreadEvidenceKind.Authoritative, rows()), repository))
+        target.phoneReceived(pump, queryFinal(request, 1))
+        authoritativeFrames().drop(1).forEach { target.received(pump, it) }
+        assertTrue(target.producerCompleted())
+        assertNotNull(target.admitted(evidence(ThreadEvidenceKind.Authoritative, rows()), repository))
+    }
+
+    @Test fun queryOnlyProductionRequiresAcceptedSendExactConnectionAndTerminal() {
+        for (rejected in listOf(true, false)) {
+            val target = observation(ThreadEvidenceKind.Authoritative)
+            target.bindPhoneConnection(pump) { true }
+            val request = query()
+            target.acceptQuery(request, !rejected)
+            target.phoneReceived(Any(), queryBatch(request, queryFacts()))
+            target.phoneReceived(pump, queryBatch(request, queryFacts()).copy(inReplyTo = 999))
+            assertFalse(target.producerCompleted())
+            target.phoneReceived(pump, queryBatch(request, queryFacts()))
+            assertFalse(target.producerCompleted())
+            target.phoneReceived(pump, queryFinal(request))
+            assertEquals(!rejected, target.producerCompleted())
+            assertEquals(!rejected, target.admitted(evidence(ThreadEvidenceKind.Authoritative, rows()), repository) != null)
+        }
+    }
+
+    @Test fun queryReplyBeforeSendReturnCannotPassARejectedSend() {
+        for (accepted in listOf(false, true)) {
+            val target = observation(ThreadEvidenceKind.Authoritative)
+            target.bindPhoneConnection(pump) { true }
+            val request = query()
+            target.phoneSending(pump, request)
+            target.phoneReceived(pump, queryBatch(request, queryFacts()))
+            target.phoneReceived(pump, queryFinal(request))
+            assertFalse(target.producerCompleted())
+            target.phoneSent(pump, request, accepted)
+            assertEquals(accepted, target.producerCompleted())
+        }
+    }
+
+    @Test fun sameEpochResetNeedsFreshCertificationBeforeExactGenerationCanBeAdmitted() {
+        for (peerProducer in listOf(false, true)) {
+            val peer = Any()
+            val target =
+                if (peerProducer) {
+                    OwnedReplyObservation("host", evidence(ThreadEvidenceKind.Authoritative, emptyList()), legacyProducer = true)
+                        .also {
+                            it.sending(peer, frame("send_message", "message_id" to "sent"))
+                            it.sent(peer, true)
+                            producer().forEach { frame -> it.received(peer, frame) }
+                        }
+                } else {
+                    observation(ThreadEvidenceKind.Authoritative).also { observation ->
+                        authoritativeFrames().forEach { observation.received(pump, it) }
+                    }
+                }
+            target.bindPhoneConnection(pump) { true }
+            val request = query(epoch = "epoch", version = 1)
+            target.acceptQuery(request)
+            target.phoneReceived(
+                pump,
+                Envelope(
+                    502,
+                    "thread_reset",
+                    "",
+                    buildJsonObject {
+                        put("conversation_id", "chat")
+                        put("epoch", "epoch")
+                        put("version", 3)
+                    },
+                    inReplyTo = request.id,
+                ),
+            )
+            assertNull(target.admitted(generationEvidence(3), repository))
+            val fresh = query(401)
+            target.acceptQuery(fresh)
+            target.phoneReceived(pump, queryBatch(fresh, queryFacts()))
+            assertNull(target.admitted(generationEvidence(3), repository))
+            target.phoneReceived(pump, queryFinal(fresh))
+            assertNull(target.admitted(generationEvidence(2), repository))
+            assertNull(target.admitted(generationEvidence(99), repository))
+            assertNotNull(target.admitted(generationEvidence(3), repository))
+            target.phoneEnded(pump)
+            assertNull(target.admitted(generationEvidence(3), repository))
+        }
+    }
+
+    @Test fun rejectedQueryBatchCannotBeRehabilitatedByItsValidTerminal() {
+        val target = observation(ThreadEvidenceKind.Authoritative)
+        target.bindPhoneConnection(pump) { true }
+        val request = query()
+        target.acceptQuery(request)
+        val facts = queryFacts()
+        val beyondCheckpoint = JsonObject(facts[1] + ("rev" to JsonPrimitive(4)))
+        target.phoneReceived(pump, queryBatch(request, facts + beyondCheckpoint))
+        target.phoneReceived(pump, queryFinal(request))
+        assertFalse(target.producerCompleted())
+        assertNull(target.admitted(evidence(ThreadEvidenceKind.Authoritative, rows()), repository))
+    }
+
+    @Test fun differentEpochResetCannotCertifyAnOldSend() {
+        val target = observation(ThreadEvidenceKind.Authoritative)
+        target.bindPhoneConnection(pump) { true }
+        authoritativeFrames().forEach { target.received(pump, it) }
+        val request = query(epoch = "epoch", version = 1)
+        target.acceptQuery(request)
+        target.phoneReceived(
+            pump,
+            Envelope(
+                502,
+                "thread_reset",
+                "",
+                buildJsonObject {
+                    put("conversation_id", "chat")
+                    put("epoch", "other")
+                    put("version", 3)
+                },
+                inReplyTo = request.id,
+            ),
+        )
+        val fresh = query(401)
+        target.acceptQuery(fresh)
+        target.phoneReceived(pump, queryBatch(fresh, queryFacts()))
+        target.phoneReceived(pump, queryFinal(fresh))
+        assertFalse(target.producerCompleted())
+        assertNull(target.admitted(generationEvidence(3), repository))
+    }
+
+    @Test fun foreignQueryRouteAndEpochCannotRequalifyThePhone() {
+        for (wrongEpoch in listOf(false, true)) {
+            val target = observation(ThreadEvidenceKind.Authoritative)
+            target.bindPhoneConnection(pump) { true }
+            val request = query()
+            target.acceptQuery(request)
+            val batch = queryBatch(request, queryFacts())
+            val payload = batch.payload as JsonObject
+            val changed =
+                if (wrongEpoch) {
+                    JsonObject(payload + ("epoch" to JsonPrimitive("other")))
+                } else {
+                    JsonObject(payload + ("conversation_id" to JsonPrimitive("other")))
+                }
+            target.phoneReceived(pump, batch.copy(payload = changed))
+            target.phoneReceived(pump, queryFinal(request))
+            assertFalse(target.producerCompleted())
+            assertNull(target.admitted(evidence(ThreadEvidenceKind.Authoritative, rows()), repository))
+        }
     }
 
     private fun replaceItem(
@@ -630,6 +908,18 @@ class OwnedReplyObservationTest {
         earlier.sent(pump, true)
         producer().forEach { earlier.received(pump, it) }
         assertFalse(earlier.producerCompleted())
+    }
+
+    @Test fun restoredReplyUsesCanonicalFactsWhenRuntimeGenerationIsDiscarded() {
+        val target = observation(ThreadEvidenceKind.Authoritative)
+        authoritativeFrames().forEach { target.received(pump, it) }
+        val live = generationEvidence(2)
+        val captured = checkNotNull(target.admitted(live, repository))
+        val restored = generationEvidence(0)
+        assertTrue(live.records.map { it.message.id } != restored.records.map { it.message.id })
+        assertNotNull(restored.retainedReply(captured, "host"))
+        assertNull(ThreadEvidence(restored.owner.copy(epoch = "other"), restored.records).retainedReply(captured, "host"))
+        assertNull(ThreadEvidence(restored.owner.copy(conversation = "other"), restored.records).retainedReply(captured, "host"))
     }
 
     @Test fun retiredHostConversationConnectionEpochAndGenerationCannotBeAdmitted() {
