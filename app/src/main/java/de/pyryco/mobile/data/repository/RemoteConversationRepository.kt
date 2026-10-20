@@ -1131,6 +1131,9 @@ class RemoteConversationRepository internal constructor(
                 // Drop silently: the payloads carry message/tool content — nothing here logs them.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     decodeLiveSessionEvent(envelope)?.let { event ->
+                        if (event is LiveSessionEvent.TurnState) {
+                            RelayLog.d { "event=session_error_turn_state phase=${event.phase.name.lowercase()}" }
+                        }
                         // Forward progress ends any active stall for the conversation (#395, AC #2):
                         // the quiet-while-not-idle condition no longer holds. A removal of an absent id
                         // is a no-op, so clearing rides every live event harmlessly. Symmetric with the
