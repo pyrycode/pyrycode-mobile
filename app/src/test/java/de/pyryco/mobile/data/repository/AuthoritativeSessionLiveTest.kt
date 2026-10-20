@@ -115,7 +115,7 @@ class AuthoritativeSessionLiveTest {
                     "thinking_progress" to "\"estimated_tokens\":100,\"estimated_tokens_delta\":10",
                     "resetting" to "\"active\":true,\"phase\":\"wrapping_up\",\"handoff\":\"pending\"",
                     "context_usage" to
-                        "\"model\":\"\",\"total_tokens\":100,\"max_tokens\":1000,\"percentage\":10,\"categories\":[],\"dropped_categories\":0,\"mcp_tools\":[],\"dropped_mcp_tools\":0",
+                        "\"model\":\"\",\"total_tokens\":100,\"max_tokens\":1000,\"percentage\":10,\"categories\":[],\"dropped_categories\":0,\"mcp_tools\":[],\"dropped_mcp_tools\":0,\"memory_files\":[],\"dropped_memory_files\":0",
                     "model_announced" to "\"model\":\"model\",\"truncated\":false",
                     "session_facts" to "\"claude_code_version\":\"1\",\"permission_mode\":\"default\"",
                     "session_settings" to settings("s"),

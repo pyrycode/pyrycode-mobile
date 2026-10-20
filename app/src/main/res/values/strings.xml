@@ -1,6 +1,15 @@
 <resources>
     <string name="thread_open_context">Open context</string>
     <string name="thread_context_title">Context</string>
+    <string name="thread_context_memory_files">Memory files</string>
+    <string name="thread_context_memory_expand">Expand memory files</string>
+    <string name="thread_context_memory_collapse">Collapse memory files</string>
+    <string name="thread_context_memory_expanded">Expanded</string>
+    <string name="thread_context_memory_collapsed">Collapsed</string>
+    <plurals name="thread_context_memory_file_count">
+        <item quantity="one">%1$s file</item>
+        <item quantity="other">%1$s files</item>
+    </plurals>
     <string name="thread_context_pending">A context reading arrives after the next turn.</string>
     <string name="thread_context_total">%1$s of %2$s tokens</string>
     <string name="thread_context_percent">%1$d%%</string>

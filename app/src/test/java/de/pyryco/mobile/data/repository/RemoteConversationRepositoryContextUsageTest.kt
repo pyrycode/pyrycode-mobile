@@ -463,6 +463,8 @@ class RemoteConversationRepositoryContextUsageTest {
                         "dropped_categories" to JsonPrimitive(0),
                         "mcp_tools" to JsonArray(emptyList()),
                         "dropped_mcp_tools" to JsonPrimitive(0),
+                        "memory_files" to JsonArray(emptyList()),
+                        "dropped_memory_files" to JsonPrimitive(0),
                     ) +
                         parsed,
                 )

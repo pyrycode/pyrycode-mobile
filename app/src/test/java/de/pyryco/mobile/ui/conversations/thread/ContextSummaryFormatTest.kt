@@ -5,6 +5,23 @@ import org.junit.Test
 
 class ContextSummaryFormatTest {
     @Test
+    fun memoryPathsUseOnlySlashAndKeepFourNonemptySegments() {
+        for ((path, expected) in listOf(
+            "" to "",
+            "/" to "/",
+            "///" to "///",
+            "//a//b/c/d/" to "//a//b/c/d/",
+            "/a/b/c/d/e.md" to ".../b/c/d/e.md",
+            "a//b/c//d/e/" to ".../b/c/d/e",
+            "a/.././b/c" to ".../.././b/c",
+            "a\\b\\c\\d\\e.md" to "a\\b\\c\\d\\e.md",
+            "a/b\\c/d/e/f" to ".../b\\c/d/e/f",
+        )) {
+            assertEquals(expected, shortenContextMemoryPath(path))
+        }
+    }
+
+    @Test
     fun tokensUseDesktopThousandsRoundingAndStripPointZero() {
         for ((value, expected) in listOf(
             0L to "0",

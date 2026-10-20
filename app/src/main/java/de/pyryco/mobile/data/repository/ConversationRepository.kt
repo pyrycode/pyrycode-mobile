@@ -1746,7 +1746,7 @@ data class SessionFacts(
  * only on a **remembered** answer, the daemon's record of when Claude last reported it for a dormant
  * conversation; the figure is still the last one Claude gave, so it is held like any other.
  *
- * Model/category/tool/server names are bounded untrusted display text, never actions, paths, logs or identity keys.
+ * Model/category/tool/server names and memory paths/types are bounded untrusted display text, never actions, logs or identity keys.
  * A remembered reading does not certify an empty breakdown, even when its lists are empty.
  *
  * `data` is load-bearing: structural equality is what the repository's `distinctUntilChanged` relies on.
@@ -1761,6 +1761,8 @@ data class ContextUsage(
     val droppedCategories: Long = 0,
     val mcpTools: List<ContextMcpTool> = emptyList(),
     val droppedMcpTools: Long = 0,
+    val memoryFiles: List<ContextMemoryFile> = emptyList(),
+    val droppedMemoryFiles: Long = 0,
 ) {
     override fun toString(): String = "ContextUsage(<redacted>)"
 }
@@ -1771,6 +1773,15 @@ data class ContextCategory(
     val tokens: Long,
 ) {
     override fun toString(): String = "ContextCategory(<redacted>)"
+}
+
+/** Descriptive memory inventory only: neither path nor type is an identity or actuation input. */
+data class ContextMemoryFile(
+    val path: String,
+    val type: String,
+    val tokens: Long,
+) {
+    override fun toString(): String = "ContextMemoryFile(<redacted>)"
 }
 
 /** One context contributor, independent of the actionable MCP server inventory. */
