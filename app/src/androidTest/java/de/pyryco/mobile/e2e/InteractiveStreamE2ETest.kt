@@ -4581,7 +4581,11 @@ class InteractiveStreamE2ETest {
                 android.util.Log.i("PermissionIsolation", "event=step_complete stage=${stage.name}")
             }
         }
-        try {
+        withPermissionIsolationCleanup(
+            closePeer = peer::close,
+            beforeHostRemoval = { RecordedSuiteNative.beforeHostLinkClose(serverId) },
+            removeHost = { runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) } },
+        ) {
             step(PermissionIsolationStage.PairPhone) { pairAnswerHost() }
             val (chatA, nameA) = step(PermissionIsolationStage.CreateA) { answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pa-") }
             val (chatB, nameB) = step(PermissionIsolationStage.CreateB) { answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pb-") }
@@ -4638,9 +4642,6 @@ class InteractiveStreamE2ETest {
             step(PermissionIsolationStage.AllowB) { runBlocking { peer.allowOnce(promptB, THREAD_TIMEOUT_MS) } }
             step(PermissionIsolationStage.RemoveB) { awaitNoPromptDialog("B's dialog stayed after the peer allowed it") }
             step(PermissionIsolationStage.EndB) { awaitTurnEnd(peer, chatB, 1, "B's peer-allowed turn") }
-        } finally {
-            peer.close()
-            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
         }
     }
 
