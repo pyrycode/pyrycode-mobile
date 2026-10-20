@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.network
 
 import de.pyryco.mobile.data.repository.ContextCategory
+import de.pyryco.mobile.data.repository.ContextMcpTool
 import de.pyryco.mobile.data.repository.ContextUsage
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
@@ -18,7 +19,7 @@ import kotlinx.serialization.json.longOrNull
  * Wire SSOT: pyrycode `docs/protocol-mobile.md` § `context_usage`. Summary fields are strict-required;
  * only [asOf] is optional, present on remembered answers. Raw primitives prevent string/number coercion.
  *
- * **SECURITY.** Model/category strings become bounded inert Text only. Other inventories remain ignored.
+ * **SECURITY.** Model/category/tool/server strings become bounded inert Text only. Memory inventory remains ignored.
  * `conversation_id` alone is the daemon-authored routing key. Never emit caught decode exceptions.
  */
 @Serializable
@@ -31,6 +32,8 @@ internal data class ContextUsagePayloadDto(
     val model: JsonElement,
     val categories: List<ContextCategoryPayloadDto>,
     @SerialName("dropped_categories") val droppedCategories: JsonElement,
+    @SerialName("mcp_tools") val mcpTools: List<ContextMcpToolPayloadDto>,
+    @SerialName("dropped_mcp_tools") val droppedMcpTools: JsonElement,
 ) {
     override fun toString(): String = "ContextUsagePayloadDto(<redacted>)"
 }
@@ -41,6 +44,15 @@ internal data class ContextCategoryPayloadDto(
     val tokens: JsonElement,
 ) {
     override fun toString(): String = "ContextCategoryPayloadDto(<redacted>)"
+}
+
+@Serializable
+internal data class ContextMcpToolPayloadDto(
+    val name: JsonElement,
+    @SerialName("server_name") val serverName: JsonElement,
+    val tokens: JsonElement,
+) {
+    override fun toString(): String = "ContextMcpToolPayloadDto(<redacted>)"
 }
 
 /**
@@ -59,7 +71,25 @@ internal fun ContextUsagePayloadDto.toReading(): ContextUsage? {
             val tokens = (category.tokens as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull ?: return null
             ContextCategory(name.take(512), tokens)
         }
-    return ContextUsage(totalTokens, maxTokens, percentage, asOf?.let(Instant::parse), modelText.take(512), rows, dropped)
+    val droppedTools = (droppedMcpTools as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull ?: return null
+    val tools =
+        mcpTools.map { tool ->
+            val name = (tool.name as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+            val server = (tool.serverName as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+            val tokens = (tool.tokens as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull ?: return null
+            ContextMcpTool(name.take(512), server.take(512), tokens)
+        }
+    return ContextUsage(
+        totalTokens,
+        maxTokens,
+        percentage,
+        asOf?.let(Instant::parse),
+        modelText.take(512),
+        rows,
+        dropped,
+        tools,
+        droppedTools,
+    )
 }
 
 /**

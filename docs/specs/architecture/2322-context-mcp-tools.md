@@ -87,3 +87,7 @@ None.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-20
+
+## Revisions
+
+- 2026-10-20: Figma's downloaded chevron has a different path from the existing footer icon. Add a vector converted from that supplied SVG, tinted with the primary theme role. Fixture completion spans seven existing test files; no production constructor consumer needs migration. Raw evidence will also be copied to the persistent agents evidence directory before handoff.

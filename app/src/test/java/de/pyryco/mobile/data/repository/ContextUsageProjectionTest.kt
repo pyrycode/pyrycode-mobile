@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -16,6 +17,125 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ContextUsageProjectionTest {
+    @Test
+    fun mcpInventoryPreservesOrderCountsAndReplacement() =
+        runTest {
+            val projection = ContextUsageProjection()
+            val readings = mutableListOf<ContextUsage?>()
+            backgroundScope.launch { projection.observe("c1").collect { readings += it } }
+            runCurrent()
+            val tools = """[{"name":"duplicate","server_name":"__proto__","tokens":1900,"future":true},
+            {"name":"other","server_name":"github","tokens":1400},
+            {"name":"duplicate","server_name":"__proto__","tokens":1200}]"""
+            val payload =
+                JsonObject(
+                    valid +
+                        mapOf(
+                            "mcp_tools" to MobileJson.parseToJsonElement(tools),
+                            "dropped_mcp_tools" to JsonPrimitive(Long.MAX_VALUE),
+                            "dropped_categories" to JsonPrimitive(2),
+                            "dropped_memory_files" to JsonPrimitive(17),
+                        ),
+                )
+            projection.apply(frame(payload))
+            runCurrent()
+            val fresh = checkNotNull(readings.last())
+            assertEquals(
+                listOf(
+                    ContextMcpTool("duplicate", "__proto__", 1900),
+                    ContextMcpTool("other", "github", 1400),
+                    ContextMcpTool("duplicate", "__proto__", 1200),
+                ),
+                fresh.mcpTools,
+            )
+            assertEquals(Long.MAX_VALUE, fresh.droppedMcpTools)
+            assertEquals(2L, fresh.droppedCategories)
+            val entry = HistoryEntry(1L, "context_usage", payload, kotlinx.datetime.Instant.parse("2026-10-19T00:00:00Z"))
+            assertEquals(true, understoodNonvisualEntry(entry, true))
+            projection.apply(frame(JsonObject(valid + ("dropped_mcp_tools" to JsonPrimitive(3)))))
+            runCurrent()
+            assertEquals(emptyList<ContextMcpTool>(), readings.last()?.mcpTools)
+            assertEquals(3L, readings.last()?.droppedMcpTools)
+            assertNotEquals(fresh, readings.last())
+            projection.apply(frame(valid))
+            runCurrent()
+            assertEquals(0L, readings.last()?.droppedMcpTools)
+        }
+
+    @Test
+    fun mcpNamesAreBoundedAndRedacted() =
+        runTest {
+            val text = "<a href='file:///secret'>".repeat(100)
+            val payload =
+                JsonObject(
+                    valid + (
+                        "mcp_tools" to
+                            MobileJson.parseToJsonElement(
+                                """[{"name":${JsonPrimitive(text)},"server_name":${JsonPrimitive(text)},"tokens":-7}]""",
+                            )
+                    ),
+                )
+            val dto = MobileJson.decodeFromJsonElement<de.pyryco.mobile.data.network.ContextUsagePayloadDto>(payload)
+            val projection = ContextUsageProjection()
+            var reading: ContextUsage? = null
+            backgroundScope.launch { projection.observe("c1").collect { reading = it } }
+            projection.apply(frame(payload))
+            runCurrent()
+            val tool = checkNotNull(reading).mcpTools.single()
+            assertEquals(text.take(512), tool.name)
+            assertEquals(text.take(512), tool.serverName)
+            assertEquals(-7L, tool.tokens)
+            for (value in listOf(dto, dto.mcpTools.single(), reading, tool)) assertFalse(value.toString().contains("file:"))
+        }
+
+    @Test
+    fun malformedMcpInventoryCannotReplaceOrCertify() =
+        runTest {
+            val projection = ContextUsageProjection()
+            var held: ContextUsage? = null
+            backgroundScope.launch { projection.observe("c1").collect { held = it } }
+            projection.apply(frame(valid))
+            runCurrent()
+            val previous = checkNotNull(held)
+            val invalid =
+                listOf(
+                    "null",
+                    "{}",
+                    "false",
+                    "7",
+                    "\"tools\"",
+                    "[null]",
+                    "[{}]",
+                    """[{"name":"x","tokens":1}]""",
+                    """[{"server_name":"s","tokens":1}]""",
+                    """[{"name":"x","server_name":"s"}]""",
+                ) +
+                    listOf("name", "server_name", "tokens").flatMap { field ->
+                        val entry = MobileJson.parseToJsonElement("""{"name":"x","server_name":"s","tokens":1}""") as JsonObject
+                        val bad =
+                            if (field == "tokens") {
+                                listOf("null", "\"1\"", "1.5", "true", "[]", "9223372036854775808")
+                            } else {
+                                listOf("null", "42", "false", "[]", "{}")
+                            }
+                        bad.map { "[${JsonObject(entry + (field to MobileJson.parseToJsonElement(it)))}]" }
+                    }
+            val payloads =
+                invalid.map { JsonObject(valid + ("mcp_tools" to MobileJson.parseToJsonElement(it))) } +
+                    listOf(JsonObject(valid - "mcp_tools"), JsonObject(valid - "dropped_mcp_tools")) +
+                    listOf("null", "\"3\"", "1.2", "false", "[]", "9223372036854775808").map {
+                        JsonObject(valid + ("dropped_mcp_tools" to MobileJson.parseToJsonElement(it)))
+                    }
+            for (payload in payloads) {
+                val changed = JsonObject(payload + ("total_tokens" to JsonPrimitive(99)))
+                projection.apply(frame(changed))
+                runCurrent()
+                assertEquals("invalid MCP inventory must preserve held reading", previous, held)
+                val entry = HistoryEntry(1L, "context_usage", changed, kotlinx.datetime.Instant.parse("2026-10-19T00:00:00Z"))
+                assertEquals(null, understoodNonvisualEntry(entry, true))
+            }
+        }
+
     @Test
     fun malformedCategoriesCannotReplaceHeldReadingOrCertifyHistory() =
         runTest {
@@ -176,6 +296,6 @@ class ContextUsageProjectionTest {
     private val valid =
         MobileJson.parseToJsonElement(
             """{"conversation_id":"c1","model":"claude","total_tokens":10,"max_tokens":100,"percentage":99,""" +
-                """"categories":[{"name":"Messages","tokens":10}],"dropped_categories":0}""",
+                """"categories":[{"name":"Messages","tokens":10}],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0}""",
         ) as JsonObject
 }
