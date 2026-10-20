@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 
 /**
@@ -31,6 +32,50 @@ internal class ContextUsageProjection {
      */
     private val readingByConversation = MutableStateFlow<Map<String, ContextUsage>>(emptyMap())
 
+    // Host-held across reconnects. The monitor joins outbound registration with inbound admission.
+    private val latestTransitionByConversation = mutableMapOf<String, ThreadItem.SessionBoundary>()
+    private val latestRequestByConversation = mutableMapOf<String, Pair<Any, Long>>()
+    private val refreshEnabled = mutableSetOf<String>()
+
+    /** A replacement-session turn enables legacy pushes as signals to verify, never as source proof. */
+    @Synchronized
+    fun onTurnStarted(conversationId: String) {
+        if (conversationId in latestTransitionByConversation) refreshEnabled += conversationId
+    }
+
+    /** One pending ask per conversation; the opaque owner prevents id reuse across connections. */
+    @Synchronized
+    fun recordRequest(
+        conversationId: String,
+        owner: Any,
+        requestId: Long,
+    ) {
+        latestRequestByConversation[conversationId] = owner to requestId
+    }
+
+    @Synchronized
+    fun forgetRequests(owner: Any) {
+        latestRequestByConversation.entries.removeAll { it.value.first === owner }
+    }
+
+    /** A terminal error releases only its connection's ask, so a later turn can try a new read. */
+    @Synchronized
+    fun forgetRequest(
+        owner: Any,
+        requestId: Long,
+    ) {
+        latestRequestByConversation.entries.removeAll { it.value.first === owner && it.value.second == requestId }
+    }
+
+    @Synchronized
+    fun forgetRequest(
+        conversationId: String,
+        owner: Any,
+        requestId: Long,
+    ) {
+        if (latestRequestByConversation[conversationId] == (owner to requestId)) latestRequestByConversation.remove(conversationId)
+    }
+
     /**
      * Apply one `context_usage` envelope. Called only from the repository's `interactive`-gated arm. Routing is the
      * payload's own daemon-authored `conversation_id`, never `in_reply_to`, so a frame naming another conversation
@@ -38,15 +83,67 @@ internal class ContextUsageProjection {
      * and is dropped so the single inbound consumer survives, leaving any prior reading standing and never writing a
      * zero one. It folds no thread row, touches no stall and never reaches the session settings' transcript-derived
      * token counts. Drop silently — nothing here logs the payload.
+     * Returns a conversation needing a verified legacy refresh; the repository sends outside this monitor.
      */
-    fun apply(envelope: Envelope) {
+    @Synchronized
+    fun apply(
+        envelope: Envelope,
+        requestOwner: Any? = null,
+        sourceOwned: Boolean = false,
+    ): String? {
         decodeContextUsage(envelope)?.let { (conversationId, reading) ->
+            val boundary = latestTransitionByConversation[conversationId]
+            val correlated =
+                requestOwner != null &&
+                    envelope.inReplyTo != null &&
+                    latestRequestByConversation[conversationId] == (requestOwner to envelope.inReplyTo)
+            if (boundary != null) {
+                // No asOf means non-remembered, not current: old post-turn queries can finish late.
+                // Supplied live state has already passed SessionLiveAdmission. Legacy replies need
+                // a current producer tag or this connection's post-invalidation request correlation.
+                if (!sourceOwned) {
+                    val producer = envelope.sessionProvenance.raw
+                    if (producer != null && producer != JsonPrimitive(boundary.newSessionId)) return null
+                    if (producer == null && !correlated) {
+                        // Arrival cannot distinguish a current push from a delayed predecessor query.
+                        // After a new turn starts, use either as a signal to query the current binding.
+                        return conversationId.takeIf {
+                            it in refreshEnabled &&
+                                it !in latestRequestByConversation &&
+                                envelope.inReplyTo == null &&
+                                reading.asOf == null
+                        }
+                    }
+                }
+                if (reading.asOf?.let { it < boundary.occurredAt } == true) {
+                    if (correlated) latestRequestByConversation.remove(conversationId)
+                    return null
+                }
+            }
+            if (correlated) latestRequestByConversation.remove(conversationId)
             readingByConversation.update { it + (conversationId to reading) }
         }
+        return null
     }
 
     /** The conversation's session was replaced, so its reading describes a gone context: drop it. */
-    fun onSessionTransition(conversationId: String) {
+    @Synchronized
+    fun onSessionTransition(
+        conversationId: String,
+        boundary: ThreadItem.SessionBoundary,
+    ) {
+        val previous = latestTransitionByConversation[conversationId]
+        if (previous == null || boundary.occurredAt > previous.occurredAt) {
+            latestTransitionByConversation[conversationId] = boundary
+        }
+        clear(conversationId)
+    }
+
+    /** Authoritative family invalidation clears the value while retaining its source-time boundary. */
+    @Synchronized
+    fun clear(conversationId: String) {
+        latestRequestByConversation.remove(conversationId)
+        refreshEnabled.remove(conversationId)
         readingByConversation.update { it - conversationId }
     }
 

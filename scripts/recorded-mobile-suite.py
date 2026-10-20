@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -114,11 +115,9 @@ def instrument(serial, method, arguments):
                    if not key.startswith('OP_') and key not in {'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'PYRY_LIVE_CLAUDE_TOKEN', 'PYRY_DEV_AGENTS_TOKEN'}}
     started = time.monotonic()
     result = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, timeout=1200)
-    if result.returncode or b'OK (1 test)' not in result.stdout:
-        diagnostic = ROOT / 'build/recorded-suite' / method / 'replay-private.log'
-        diagnostic.parent.mkdir(parents=True, exist_ok=True)
-        diagnostic.write_bytes(result.stdout + result.stderr)
-        diagnostic.chmod(0o600)
+    diagnostic = ROOT / 'build/recorded-suite' / method / ('replay-' + uuid.uuid4().hex + '-private.log')
+    diagnostic.parent.mkdir(parents=True, exist_ok=True)
+    legacy.private_write(diagnostic, result.stdout + result.stderr)
     executed_one(result.stdout)
     require(result.returncode == 0, 'Instrumentation process failed')
     timing = re.search(rb'(?m)^Time: (\d+(?:\.\d+)?)\r?$', result.stdout)
@@ -643,18 +642,57 @@ def verify_all(args):
     return summary
 
 
+def managed_verify(args, gate):
+    """One reviewed scenario, using normal host admission and managed device custody."""
+    document = json.loads(args.fixture.read_text())
+    validate(document)
+    rows = all_ready_rows()
+    require(any(row['method'] == document['scenario'] and
+                args.fixture.resolve() == (MANIFEST.parent / row['fixture']).resolve() for row in rows),
+            'Managed verification requires an active reviewed manifest fixture')
+    gate.check_selection(ROOT, 'android', ['live', '--tests', gate.LIVE_CLASS + '#' + document['scenario']])
+    require(not legacy.run(['git', 'status', '--porcelain']).strip(), 'Commit source before verification')
+    env = gate.live_claude_environment(dict(os.environ))
+    require(gate.claude_authenticated(env), 'Configured Claude authentication required')
+    env['GRADLE_OPTS'] = (env.get('GRADLE_OPTS', '') + ' -Dorg.gradle.daemon=false').strip()
+    env['ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy'] = 'in-process'
+    env['PYRY_FORCE_TEST_RUN'] = '1'
+    env['LIVE_RELAY_HOST'] = 'pyrycode-relay.pyryco.de'
+    args.output.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with gate.device_hold('live', float(env.get('ANDROID_GATE_WAIT_SECONDS', gate.DEFAULT_DEVICE_WAIT_SECONDS))):
+        require(gate.build_apks(env, 'live') == 0, 'APK build failed; no capture started')
+        avd = gate.managed_avd('pixel2Api33Atd')
+        require(avd is not None, 'Managed Android device required')
+        serial = process = None
+        previous = {sig: signal.signal(sig, gate.raise_interrupt) for sig in (signal.SIGINT, signal.SIGTERM)}
+        try:
+            with (args.output / 'emulator.log').open('w') as log:
+                serial, process = gate.boot_emulator(env, *avd, cold=True, log=log)
+            require(serial is not None, 'Cold emulator boot failed; no capture started')
+            require(gate.install_once(env, serial) is not None, 'APK installation failed; no capture started')
+            command = [sys.executable, str(ROOT / 'scripts/recorded-mobile-suite.py'), 'verify',
+                       '--serial', serial, '--fixture', str(args.fixture), '--output', str(args.output / 'verification'),
+                       '--pyry', str(args.pyry), '--daemon-source', str(args.daemon_source)]
+            return gate.run_device_command(command, cwd=ROOT, env=env).returncode
+        finally:
+            try:
+                gate.stop_emulator(env, serial, process)
+            finally:
+                for sig, handler in previous.items(): signal.signal(sig, handler)
+
+
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='mode', required=True)
-    for name in ['capture', 'replay', 'verify', 'capture-all', 'replay-all', 'verify-all']:
+    for name in ['capture', 'replay', 'verify', 'managed-verify', 'capture-all', 'replay-all', 'verify-all']:
         command = sub.add_parser(name)
-        command.add_argument('--serial', required=True)
+        if name != 'managed-verify': command.add_argument('--serial', required=True)
         if name not in {'replay', 'replay-all'}:
             command.add_argument('--pyry', type=Path, required=True)
             command.add_argument('--daemon-source', type=Path, required=True)
             command.add_argument('--output', type=Path, required=True)
-        if name in {'replay', 'verify'}: command.add_argument('--fixture', type=Path, required=True)
+        if name in {'replay', 'verify', 'managed-verify'}: command.add_argument('--fixture', type=Path, required=True)
         if name == 'capture': command.add_argument('--method', required=True)
         if name == 'capture-all':
             command.add_argument('--stop-file', type=Path)
@@ -663,6 +701,11 @@ def main():
             command.add_argument('--methods-file', type=Path)
             command.add_argument('--stop-file', type=Path)
     args = parser.parse_args()
+    if args.mode == 'managed-verify':
+        spec = importlib.util.spec_from_file_location('managed_android_gate', ROOT / 'scripts/android-test-gate.py')
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        raise SystemExit(managed_verify(args, gate))
     if args.mode in {'capture', 'capture-all', 'verify', 'verify-all'}:
         require(os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') or os.environ.get('ANTHROPIC_API_KEY'), 'Configured Claude login required')
     if args.mode == 'replay-all': result = replay_all(args)

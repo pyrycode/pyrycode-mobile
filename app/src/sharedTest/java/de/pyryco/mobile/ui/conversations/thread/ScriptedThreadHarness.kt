@@ -167,6 +167,8 @@ class ScriptedThreadHarness(
     /** Retained rows for assertions that also run in the scripted device gate. */
     internal fun observeMessages() = repo.observeMessages(conversationId)
 
+    internal fun observeContextUsage() = repo.observeContextUsage(conversationId)
+
     /** Script one `assistant_delta` for [turnId] at [seq] carrying [text] (#337). */
     fun pushAssistantDelta(
         turnId: String,

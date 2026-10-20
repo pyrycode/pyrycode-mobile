@@ -13,6 +13,41 @@ spec.loader.exec_module(suite)
 
 
 class SuiteDriverTest(unittest.TestCase):
+    def test_managed_verification_rejects_unreviewed_input_before_credentials_or_device(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory) / 'unreviewed.json'
+            fixture.write_text(json.dumps(self.fixture()))
+            gate = mock.MagicMock()
+            with mock.patch.object(suite, 'validate'):
+                with self.assertRaises(ValueError):
+                    suite.managed_verify(argparse.Namespace(fixture=fixture), gate)
+            gate.live_claude_environment.assert_not_called()
+            gate.device_hold.assert_not_called()
+
+    def test_managed_verification_keeps_selection_and_custody_on_failed_comparison(self):
+        fixture = suite.MANIFEST.parent / 'suite/interactiveTurn_createEditArchiveChannel_readsPromptBack.json'
+        with tempfile.TemporaryDirectory() as directory:
+            args = argparse.Namespace(fixture=fixture, output=Path(directory), pyry=Path('/test/pyry'),
+                                      daemon_source=Path('/test/daemon'))
+            gate = mock.MagicMock()
+            gate.LIVE_CLASS = 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest'
+            gate.live_claude_environment.return_value = {'ANDROID_HOME': '/sdk'}
+            gate.build_apks.return_value = 0
+            gate.managed_avd.return_value = (Path('/avds'), 'managed')
+            gate.boot_emulator.return_value = ('emulator-owned', 'owned-process')
+            gate.install_once.return_value = []
+            gate.run_device_command.return_value.returncode = 1
+            with mock.patch.object(suite.legacy, 'run', return_value=b''):
+                self.assertEqual(1, suite.managed_verify(args, gate))
+            gate.check_selection.assert_called_once_with(suite.ROOT, 'android', [
+                'live', '--tests', gate.LIVE_CLASS + '#interactiveTurn_createEditArchiveChannel_readsPromptBack'])
+            command = gate.run_device_command.call_args.args[0]
+            self.assertIn('verify', command)
+            self.assertIn('emulator-owned', command)
+            self.assertEqual(str(fixture), command[command.index('--fixture') + 1])
+            gate.stop_emulator.assert_called_once_with(mock.ANY, 'emulator-owned', 'owned-process')
+            gate.device_hold.return_value.__exit__.assert_called_once()
+
     def test_recording_commands_select_only_recorded_rows_and_reject_scripted_requests(self):
         method = 'interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog'
         manifest = {'scenarios': [{'method': 'recorded', 'fixture': 'recorded.json'},

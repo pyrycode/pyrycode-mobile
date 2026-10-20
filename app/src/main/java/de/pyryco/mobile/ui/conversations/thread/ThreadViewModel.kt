@@ -683,7 +683,11 @@ class ThreadViewModel(
                     display?.rowValue?.let { value ->
                         config.choices.singleOrNull { it.agent == config.agent && it.value == value }
                     },
-            ) to freshSettings
+            ) to
+                freshSettings?.takeIf {
+                    // A replaced session's token pair must not fill the gap after context invalidation.
+                    it.sessionId.isNotEmpty() && it.sessionId == conversation?.currentSessionId
+                }
         }.combine(runningModel) { (config, settings), (running, announced) ->
             config.copy(running = running, announcedModel = announced) to settings
         }.combine(repository.observeContextUsage(conversationId)) { (config, settings), usage ->

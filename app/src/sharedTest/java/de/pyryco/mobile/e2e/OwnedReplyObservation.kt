@@ -464,11 +464,13 @@ internal object OwnedReplyProbe {
                 flow {
                     try {
                         delegate.inbound.collect { frame ->
+                            ContextResetProbe.before(host, connection, frame)
                             AuthoritativeHistoryProbe.received(host, connection, frame)
                             observers().forEach { it.phoneReceived(connection, frame) }
                             sessionObservers.filter { it.host == host }.forEach { it.sessionReceived(connection, frame) }
                             active?.takeIf { it.host == host }?.received(connection, frame)
                             emit(frame)
+                            ContextResetProbe.delivered(host, connection, frame)
                         }
                     } finally {
                         AuthoritativeHistoryProbe.ended(host, connection)
@@ -479,6 +481,7 @@ internal object OwnedReplyProbe {
                 }
 
             override fun send(envelope: Envelope): Boolean {
+                val contextReceipt = ContextResetProbe.sending(host, connection, envelope)
                 val observers = observers()
                 AuthoritativeHistoryProbe.sending(host, connection, envelope) { phoneSources[host] === source && source.open() }
                 observers.forEach { it.phoneSending(connection, envelope) }
@@ -486,6 +489,7 @@ internal object OwnedReplyProbe {
                 val observation = active?.takeIf { it.host == host }
                 val targeted = observation?.sending(connection, envelope) { delegate.state.value is PumpState.Open } == true
                 return delegate.send(envelope).also { result ->
+                    contextReceipt?.complete(result)
                     AuthoritativeHistoryProbe.sent(host, connection, envelope, result)
                     observers.forEach { it.phoneSent(connection, envelope, result) }
                     if (targeted) observation?.sent(connection, result)

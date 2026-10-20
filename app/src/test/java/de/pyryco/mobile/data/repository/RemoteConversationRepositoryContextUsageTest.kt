@@ -13,6 +13,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -251,7 +252,14 @@ class RemoteConversationRepositoryContextUsageTest {
             assertEquals(listOf(null, ContextUsage(150_000, 200_000, 75, asOf = null), null), readings)
             assertTrue(pump.sent.isEmpty())
 
-            pump.push(contextUsage("c1", total = 9_000, max = 200_000, percentage = 4, id = 3L))
+            pump.push(probe("turn_state", """{"conversation_id":"c1","state":"thinking"}""", id = 3L))
+            pump.push(probe("turn_end", """{"conversation_id":"c1","turn_id":"replacement-turn","stop_reason":"end_turn"}""", id = 4L))
+            // Preserve the actual legacy push bytes; session ownership needs a verified read.
+            pump.push(contextUsage("c1", total = 9_000, max = 200_000, percentage = 4, id = 5L))
+            runCurrent()
+            val ask = pump.sent.single { it.type == "request_context_usage" }
+            assertNull(readings.last())
+            pump.push(contextUsage("c1", total = 9_000, max = 200_000, percentage = 4, id = 6L, inReplyTo = ask.id))
             runCurrent()
             assertEquals(ContextUsage(9_000, 200_000, 4, asOf = null), readings.last())
         }

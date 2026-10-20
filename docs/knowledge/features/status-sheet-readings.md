@@ -13,17 +13,48 @@ tests and edge cases.
 private fun RunningModelSection(running: ThreadRunningModel)
 ```
 
-Not in Figma node `20:100` — the design has no running-model row; this section reuses the node's existing section/row style and theme tokens rather than inventing new ones (see [§ Design source in the architecture doc](https://github.com/pyrycode/pyrycode-mobile/blob/main/docs/specs/architecture/891-status-sheet-running-model.md)). Two claude-reported values, each a [`ThreadReportedText`](thread-composer-footer.md#running-model-891)`?` already made inert by [`ThreadViewModel.reportedText`](thread-composer-footer.md#running-model-891):
+Not in Figma node `20:100` — the design has no running-model row; this section reuses the node's existing
+section/row style and theme tokens rather than inventing new ones (see [§ Design source in the architecture
+doc](https://github.com/pyrycode/pyrycode-mobile/blob/main/docs/specs/architecture/891-status-sheet-running-model.md)).
+Two claude-reported values, each a [`ThreadReportedText`](thread-composer-footer.md#running-model-891)`?`
+already made inert by [`ThreadViewModel.reportedText`](thread-composer-footer.md#running-model-891):
 
-- **`running.model == null`** → `UnavailableNote(stringResource(R.string.status_sheet_running_model_unavailable))` — `"Not reported yet"`, rather than a blank row or a fallback to `selectedModel`.
-- **`running.model != null`** → a `bodyLarge`/`onSurface` `Text` carrying `withTruncationMark(model.text, model.truncated, ...)` (an `AnnotatedString`), tagged `Modifier.testTag(RUNNING_MODEL_TEST_TAG)` — the anchor the rung-3 `InteractiveStreamE2ETest` scenario waits on and reads. **No `maxLines`/`overflow`**: the ViewModel's 128-character inert bound already caps the length, and an ellipsis would clip exactly the truncation mark that says characters are missing.
-- **`running.build != null`** → a `Caption`-style `bodySmall`/`onSurfaceVariant` line, `stringResource(R.string.status_sheet_running_build, build.text)` (`"Claude Code %1$s"`) through the same `withTruncationMark` treatment. `build == null` (claude reported an empty `claude_code_version`) omits the line entirely rather than rendering an empty caption.
+- **`running.model == null`** →
+`UnavailableNote(stringResource(R.string.status_sheet_running_model_unavailable))` — `"Not reported yet"`,
+rather than a blank row or a fallback to `selectedModel`.
+- **`running.model != null`** → a `bodyLarge`/`onSurface` `Text` carrying `withTruncationMark(model.text,
+model.truncated, ...)` (an `AnnotatedString`), tagged `Modifier.testTag(RUNNING_MODEL_TEST_TAG)` — the anchor
+the rung-3 `InteractiveStreamE2ETest` scenario waits on and reads. **No `maxLines`/`overflow`**: the
+ViewModel's 128-character inert bound already caps the length, and an ellipsis would clip exactly the
+truncation mark that says characters are missing.
+- **`running.build != null`** → a `Caption`-style `bodySmall`/`onSurfaceVariant` line,
+`stringResource(R.string.status_sheet_running_build, build.text)` (`"Claude Code %1$s"`) through the same
+`withTruncationMark` treatment. `build == null` (claude reported an empty `claude_code_version`) omits the
+line entirely rather than rendering an empty caption.
 
-**`withTruncationMark(text, truncated, mark): AnnotatedString`** (file-private) appends the client-owned italic `" (truncated)"` mark (`status_sheet_running_truncated`) as **text**, not a separate icon or `contentDescription`, so it is both visible and read by TalkBack as part of the line — pinned by `a_truncated_value_carries_a_visible_and_announced_mark` in [Tests](status-sheet-hosting-tests-and-edge-cases.md#tests). Named `withTruncationMark` rather than `reportedText` — the verifier's PR #936 review flagged that name colliding (across packages, but confusingly) with `ThreadViewModel.reportedText`, the function that produces the `ThreadReportedText` this one renders. The build line's `Caption` call goes through a same-named `Caption(text: AnnotatedString)` overload added alongside `Caption(text: String)` (which now just wraps it in `AnnotatedString(text)`) — added on the same review round so the build line's style lives in one place instead of repeating `Caption`'s modifier/style inline.
+**`withTruncationMark(text, truncated, mark): AnnotatedString`** (file-private) appends the client-owned
+italic `" (truncated)"` mark (`status_sheet_running_truncated`) as **text**, not a separate icon or
+`contentDescription`, so it is both visible and read by TalkBack as part of the line — pinned by
+`a_truncated_value_carries_a_visible_and_announced_mark` in
+[Tests](status-sheet-hosting-tests-and-edge-cases.md#tests). Named `withTruncationMark` rather than
+`reportedText` — the verifier's PR #936 review flagged that name colliding (across packages, but confusingly)
+with `ThreadViewModel.reportedText`, the function that produces the `ThreadReportedText` this one renders. The
+build line's `Caption` call goes through a same-named `Caption(text: AnnotatedString)` overload added
+alongside `Caption(text: String)` (which now just wraps it in `AnnotatedString(text)`) — added on the same
+review round so the build line's style lives in one place instead of repeating `Caption`'s modifier/style
+inline.
 
-**`RUNNING_MODEL_TEST_TAG`** is a top-level `const val`, not `internal` — the rung-3 `InteractiveStreamE2ETest` (a different Gradle source set, `androidTest`) imports it directly rather than duplicating the literal tag string. It sits on a plain `Text` inside `RunningModelSection`'s `Column` with no merging parent above it, so the default (unmerged) semantics tree finds it — the plan's one open question, resolved during implementation with no change needed.
+**`RUNNING_MODEL_TEST_TAG`** is a top-level `const val`, not `internal` — the rung-3
+`InteractiveStreamE2ETest` (a different Gradle source set, `androidTest`) imports it directly rather than
+duplicating the literal tag string. It sits on a plain `Text` inside `RunningModelSection`'s `Column` with no
+merging parent above it, so the default (unmerged) semantics tree finds it — the plan's one open question,
+resolved during implementation with no change needed.
 
-**`SessionFacts.permissionMode` is never read here or anywhere in this section.** The claimed permission posture claude reports alongside its build is deliberately not rendered — see [Edge cases / limitations](status-sheet-hosting-tests-and-edge-cases.md#edge-cases--limitations) for why, and [Thread composer footer § Permission mode](thread-composer-footer.md#permission-mode-650) for the one permission reading this sheet is allowed to reflect.
+**`SessionFacts.permissionMode` is never read here or anywhere in this section.** The claimed permission
+posture claude reports alongside its build is deliberately not rendered — see [Edge cases /
+limitations](status-sheet-hosting-tests-and-edge-cases.md#edge-cases--limitations) for why, and [Thread
+composer footer § Permission mode](thread-composer-footer.md#permission-mode-650) for the one permission
+reading this sheet is allowed to reflect.
 
 ## `ContextWindowSection`
 
@@ -37,8 +68,13 @@ renders `N% used`; absence renders `Not reported yet` via `status_sheet_context_
 Since [#1411](https://github.com/pyrycode/pyrycode-mobile/issues/1411) that percentage **is** derived
 from token counts — `ThreadViewModel.contextPercent(usage, settings)` prefers Claude's reported
 `totalTokens` / `maxTokens` and falls back to `SessionSettings.usedTokens` / `.windowTokens` — so this
-section can show a number before any turn has ended, as long as the session settings carry a positive
-window. The current modal has one reading line: the older Context window helper caption and progress bar
+section can show a number before any turn has ended, as long as the current session settings carry a positive
+window. Since #1947 the settings fallback requires a nonempty identity matching the conversation’s current
+session. Reset removes the previous reading and excludes the replaced settings. While replacement data is
+pending or unavailable, this section shows `Not reported yet` and the footer shows its unavailable state. A
+valid current context reply takes precedence immediately, even before new settings arrive. Remembered readings
+older than the replacement and unverified legacy pushes cannot restore the previous value. The current modal
+has one reading line: the older Context window helper caption and progress bar
 are absent. This reading is read-only and never triggers a settings write. The current dark Figma frame has
 no unavailable variant; its old token-count mockup is historical.
 
