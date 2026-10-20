@@ -591,6 +591,7 @@ class RemoteConversationRepository internal constructor(
     val backgroundTasks: StateFlow<Map<String, BackgroundTaskRoster>> = backgroundTaskProjection.rosters
 
     private val suppliedModals = MutableStateFlow(HostModalState())
+    private val contextRequestOwner = Any()
     val authoritativeHostModals: StateFlow<HostModalState> get() = suppliedModals
     internal val usesAuthoritativeLiveState: Boolean get() = authoritativeLiveEnabled()
 
@@ -634,6 +635,7 @@ class RemoteConversationRepository internal constructor(
                 try {
                     pump.inbound.collect { envelope -> onInbound(envelope) }
                 } finally {
+                    contextUsageProjection.forgetRequests(contextRequestOwner)
                     expiry.cancel()
                     queryExpiry.cancel()
                     authoritativeQueries.abandon()
@@ -689,7 +691,7 @@ class RemoteConversationRepository internal constructor(
             TYPE_RESETTING -> resettingProjection.clear(conversation)
             TYPE_MODEL_ANNOUNCED -> announcedModelProjection.clear(conversation)
             TYPE_SESSION_FACTS -> sessionFactsProjection.clear(conversation)
-            TYPE_CONTEXT_USAGE -> contextUsageProjection.onSessionTransition(conversation)
+            TYPE_CONTEXT_USAGE -> contextUsageProjection.clear(conversation)
             TYPE_SESSION_ERROR -> sessionErrorProjection.clear(conversation)
             TYPE_MCP_STATUS -> mcpStatusProjection.clear(conversation)
             TYPE_MODEL_LIST -> modelMenuProjection.clear(conversation)
@@ -1016,6 +1018,7 @@ class RemoteConversationRepository internal constructor(
                     // The MCP asks (#1343) register in their own ledger, disjoint by the same one counter.
                     mcpStatusProjection.applyRefusal(id, envelope.payload)
                     backgroundTaskStops.applyRefusal(id, envelope.payload)
+                    contextUsageProjection.forgetRequest(contextRequestOwner, id)
                 }
             TYPE_TURN_STATE, TYPE_ASSISTANT_DELTA, TYPE_TOOL_USE, TYPE_TOOL_RESULT, TYPE_TURN_END -> {
                 // A v2 structured live-session envelope (#385). AC #2: gate on the negotiated
@@ -1036,6 +1039,7 @@ class RemoteConversationRepository internal constructor(
                         // a thread opened mid-turn reads it at once. Only `turn_state` and `turn_end` move it.
                         turnPhaseProjection.apply(event)
                         if (event is LiveSessionEvent.TurnState && event.phase != LiveSessionEvent.TurnState.Phase.Idle) {
+                            contextUsageProjection.onTurnStarted(event.conversationId)
                             sessionErrorProjection.clear(event.conversationId)
                         }
                         // Fold the structured turn into the same thread store ([ThreadProjection]) the live
@@ -1168,7 +1172,9 @@ class RemoteConversationRepository internal constructor(
                 // How full this conversation's context window is, pushed after a turn or answering the phone's own
                 // ask (#945): see [ContextUsageProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    contextUsageProjection.apply(envelope)
+                    contextUsageProjection
+                        .apply(envelope, contextRequestOwner, sourceOwned = authoritativeLiveEnabled())
+                        ?.let(::requestContextUsage)
                 }
             }
             TYPE_REPLY_SUGGESTION -> {
@@ -1201,6 +1207,8 @@ class RemoteConversationRepository internal constructor(
                 // conversation_id / session ids / workspace_cwd are sensitive; nothing here logs the payload.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     decodeSessionTransition(envelope)?.let { (conversationId, boundary) ->
+                        // Invalidate ownership before resetting clears: that edge can issue the new ask.
+                        contextUsageProjection.onSessionTransition(conversationId, boundary)
                         threadProjection.appendSessionBoundary(conversationId, boundary)
                         conversationListProjection.updateCurrentSessionId(conversationId, boundary.newSessionId)
                         // Third write since #590: the session this conversation's settings describe has
@@ -1226,9 +1234,6 @@ class RemoteConversationRepository internal constructor(
                         // an absent key.
                         announcedModelProjection.clear(conversationId)
                         sessionFactsProjection.clear(conversationId)
-                        // Eighth write since #945: the context reading described the replaced session, so it is
-                        // dropped until the new session's first turn ends. Same routing.
-                        contextUsageProjection.onSessionTransition(conversationId)
                         // Ninth since #1360: the replaced session's switch-back offer is over. Emitted on the same
                         // flow as the refusals, so the two keep their wire order.
                         liveRefusalEvents.tryEmit(conversationId to LiveRefusalEvent.SessionReplaced)
@@ -1633,8 +1638,10 @@ class RemoteConversationRepository internal constructor(
                 payload = MobileJson.encodeToJsonElement(RequestContextUsagePayloadDto(conversationId = conversationId)),
             )
         try {
-            pump.send(request)
+            contextUsageProjection.recordRequest(conversationId, contextRequestOwner, request.id)
+            if (!pump.send(request)) contextUsageProjection.forgetRequest(conversationId, contextRequestOwner, request.id)
         } catch (e: Exception) {
+            contextUsageProjection.forgetRequest(conversationId, contextRequestOwner, request.id)
             // Absorbed: the next open or reconnect asks again.
         }
     }
