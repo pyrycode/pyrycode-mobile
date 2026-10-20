@@ -17,6 +17,7 @@ import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
@@ -28,6 +29,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.printToLog
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.espresso.Espresso
@@ -1166,7 +1168,18 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.onNodeWithContentDescription("More actions").performClick()
         composeTestRule.onNode(hasText(context.getString(R.string.background_tasks_title)) and hasClickAction()).performClick()
         val row = hasText("cat ${'$'}FIFO") and hasClickAction()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(row).fetchSemanticsNodes().size == 1 }
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(row).fetchSemanticsNodes().size == 1 }
+        } catch (failure: Throwable) {
+            android.util.Log.d(
+                "ScriptedTaskProof",
+                "supported=${coordinator.supportsBackgroundTaskStop.value} live=${currentTasks()?.liveCount}",
+            )
+            composeTestRule.onAllNodes(isRoot(), useUnmergedTree = true).fetchSemanticsNodes().indices.forEach { index ->
+                composeTestRule.onAllNodes(isRoot(), useUnmergedTree = true)[index].printToLog("ScriptedTaskProof")
+            }
+            throw failure
+        }
         composeTestRule.onNode(row).performTouchInput { click() }
         val stop = context.getString(R.string.background_tasks_stop)
         composeTestRule.onNodeWithText(stop).performTouchInput { click() }
@@ -1274,14 +1287,22 @@ class DeterministicInteractiveStreamE2ETest {
             composeTestRule.onNodeWithText("unmatched1827").assertIsDisplayed()
             composeTestRule.onAllNodes(hasText("unmatched1827") and hasAnyAncestor(child), useUnmergedTree = true).assertCountEquals(0)
         }
+
+        fun childMembership(expanded: Boolean): Boolean {
+            val indexForKey = list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+            return family.childIds.all { id -> (indexForKey("msg:$id") >= 0) == (expanded || id == family.runId) }
+        }
         list.performScrollToNode(run)
         composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
-        composeTestRule.onNode(closedRun).performClick()
+        assertTrue("only the first-tool representative remains in a collapsed run", childMembership(expanded = false))
+        composeTestRule.questionAnswerTarget(closedRun).performTouchInput { click(center) }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { childMembership(expanded = true) }
         list.performScrollToNode(prose)
         composeTestRule.onNode(prose and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(1)
         list.performScrollToNode(run)
-        composeTestRule.onNode(run).performClick()
+        composeTestRule.questionAnswerTarget(run).performTouchInput { click(center) }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { childMembership(expanded = false) }
         composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
         list.performScrollToNode(marker)
         composeTestRule.onNode(marker).performClick()
