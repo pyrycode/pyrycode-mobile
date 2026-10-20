@@ -57,6 +57,8 @@ None in the product contract. Fresh live/capture results remain pending until ex
 
 ## Revisions
 
+2026-10-20: The counted scripted run executed both methods: the retained proof passed and the restart twin timed out before its finished-family receipt. The scripted assistant envelopes supplied message IDs but omitted `message.role`; the protocol's intrinsic child-text completion requires `assistant`. Add that genuine producer field to the two existing fixture fragments. Keep the strict inactive done/finished prose assertion unchanged. The failed 2-executed/1-passed/1-failed result remains retained privately.
+
 2026-10-20: `AuthoritativeThreadCacheTest.interruptedBatchesKeepPriorCertificationWithNewestItems` proves that saved facts can be newer than the saved certified checkpoint. Keep those two assertions separate: require the exact persisted Agent family, then require the original saved checkpoint/coverage after reconstruction without upgrading either from item revisions. The reopened Supported route must still obtain current admitted evidence. This preserves held facts without certifying an interrupted batch or inventing negotiation/progress.
 
 2026-10-20: The first scripted attempt executed zero methods and was gracefully cancelled after its nested Gradle command waited on the host hold already owned by the gate. The new Python wrapper had closed `PYRY_TEST_ADMISSION_FD`. Preserve that original validated descriptor in each nested harness process; do not create or replace admission context. `AgentScenarioReportsTest.test_nested_harness_keeps_the_original_admission_descriptor` failed before the repair and passes with it. Original gate cleanup retained isolated-daemon/relay diagnostics; the cancelled run supplies no passing native evidence.
