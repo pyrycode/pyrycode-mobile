@@ -88,13 +88,20 @@ Pending for documentation stage:
 - [Cryptography] No changes to Noise, keys, nonces or TLS.
 - [Network and I/O] Local pages are capped at 200; no autonomous full hydration or network request. Existing transport limits and timeout/backoff policy remain. Partial evidence never reaches a whole-cache replacement.
 - [Errors and logs] SHOULD FIX: preserve only static outcome/count diagnostics, with no owner, payload, cursor, text or proof logging.
-- [Concurrency] SHOULD FIX: capture retirement identity before reads and verify after suspension, including same-id host re-admission. Preserve the writer's observed removals when pages arrive; no delayed read may restore a removed row. Use caller scopes and serialize only state mutation, never hold live delivery behind disk.
+- [Concurrency] The repository captures the owner's epoch before suspension and passes it to each legacy row, coverage and metadata mutation. `MigratingConversationCache.write` validates that captured epoch under its mutation mutex, after import readiness and before storage work. Retirement awaiting the same lock removes any already-started write before acknowledging deletion; re-admission cannot authorize an old epoch. Suppression creates an owned deletion even outside the loaded window. Use caller scopes and serialize only state mutation, never hold live delivery behind disk.
 - [Threat model] Malicious relay delay/reordering remains handled by existing authenticated transport and generation fences; hostile saved daemon text stays inert and bounded by existing codecs. Phone token theft and keyboard/screenshot leakage gain no new surface. Deletion/restart probes cover stale plaintext resurrection and host isolation.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-20
 
 ## Revisions
+
+### 2026-10-20: verifier rework
+
+- Findings 1–2: pre-dispatch validation did not fence mutations after same-id re-admission, and unchanged visible rows did not persist unloaded suppression. Pass captured epochs into cache mutations and record explicit suppression in the coalesced writer independently of visible changes or daemon completion. Add fresh-storage regressions for both schedules.
+- Finding 3: preserve the failing retained-backlog scripted evidence, diagnose the production cause with a controlled regression, and run the exact `session-error` scenario after repair.
+- Findings 4–5: refuse the actual requested saved cursor while keeping saved evidence display-only; join saved/network evidence on the cancellable projection worker and reuse unchanged inputs. Cover saved-only known/unknown anchors and worker scheduling.
+- These repairs preserve the original behavioural scope and verification floor. The existing grandchild sizing exception still applies; no paging-only split is useful independently of this consumer.
 
 ### 2026-10-20: partial receipts and retirement after collection exit
 
