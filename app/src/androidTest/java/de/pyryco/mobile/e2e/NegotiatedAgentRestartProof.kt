@@ -228,6 +228,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                     markerMatcher =
                         hasText(context.getString(R.string.agent_finished)) and
                             hasText(context.getString(R.string.agent_go_to)) and hasClickAction(),
+                    ownedChildKey = owned.message.id,
                     evidence = {
                         Log.i("NegotiatedAgentRestart", it)
                     },

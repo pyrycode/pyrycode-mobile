@@ -2,6 +2,7 @@
 
 ## Files read
 
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/AgentRunNavigationProof.kt`: the shared navigation/ownership assertions; five callers, one consumer opts into key-based reveal while preserving exact unmerged ownership checks.
 - `app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt`: `interactiveTurn_backgroundAgent_replyStaysUnderAgent` and `restartApp` supply genuine nested work and graph teardown.
 - Salvage `ec63a4644033f88c915c15b1882b5b44613373a9`: `NegotiatedAgentRestartProof.kt` supplies C's original scenario; preserve the restored `TOOL_ROW_TAG` matcher and original carried commit attribution.
 - `app/src/androidTest/java/de/pyryco/mobile/e2e/DeterministicInteractiveStreamE2ETest.kt`: `interactiveTurn_seededChannel_backgroundAgentMovesAndSettles` retains its running/finished placement assertions.
@@ -56,6 +57,8 @@ Write and observe failing held-evidence probes before the helper implementation.
 None in the product contract. Fresh live/capture results remain pending until executed; documentation cannot create them.
 
 ## Revisions
+
+2026-10-20: The next counted run passed graph replacement, offline checkpoint/coverage restoration and fresh negotiated reopening, then failed merged-tree scrolling to the tool tag (2 executed, 1 passed, 1 failed). The expanded list retained every owned key. Add an optional exact child key to the shared navigation proof solely for reveal; still require `TOOL_ROW_TAG` beneath the exact restored Agent child container in the unmerged tree with positive visible bounds. Five callers were checked; only this proof opts in and existing default assertions remain unchanged.
 
 2026-10-20: The fourth counted run reached real graph/cache reconstruction, then failed because the new registry had not yet reconciled its persisted host and the destination therefore had no negotiated provider (2 executed, 1 passed, 1 failed). `RelayConnectionRegistry` loads its entries asynchronously. Await that existing reconciliation before resolving the pre-launch production destination, while still requiring Unverified support and exact saved checkpoint/coverage before Activity launch. No socket is opened to obtain the saved proof.
 
