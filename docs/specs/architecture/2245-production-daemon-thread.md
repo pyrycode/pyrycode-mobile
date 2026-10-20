@@ -200,3 +200,11 @@ The reports cover the required phone thread negotiation, correlated canonical sy
 Replay creates its real per-host phone key before opening. Only an accepted phone send and its exact same-host canonical conversation/message echo bind the recorded phone device to that key. Ambiguity or a changed binding fails. Production device-plus-message reconciliation and post-Stop automatic visibility remain unchanged. Retained-reply assertions use the validated current rendered identities after recovery.
 
 Post-replacement configured JVM/build, phone UI and all scripted scenarios are still required before merge. The normal phone UI gate includes every enabled recorded method, so its exact 67-method report supplies final replay acceptance without a second duplicate replay run.
+
+## Fresh recovery effects and scripted observations, 2026-10-20
+
+The required route now restores the existing model switch-back and Compact recovery actions from fresh accepted canonical additions. History, duplicate facts, foreign sessions and replaced connections cannot arm them. Durable refusal identities also protect a newer offer from an older acknowledgement. A successful root completion clears earlier recovery, including when that completion has no visible row. Child completions cannot do so.
+
+Two new regressions failed with their intended assertions before the repair. The final focused run executed 107 tests with no failures, errors or skips. Formatting and both APK builds passed. All 67 recordings and all 73 recording, index and review files remain byte-identical to the reviewed replacement.
+
+Three scripted observers now read the current contract. The ping scenario waits for the exact optional shown watermark. Stop permits a retained completed task while requiring no live task or Stop control. The agent scenario reads the owned canonical family and retains its exact child, parent, ordering and navigation checks. Blocked status, model switch-back and Compact behaviour remain required. Full final validation is still pending.

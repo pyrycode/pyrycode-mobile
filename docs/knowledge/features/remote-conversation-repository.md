@@ -536,3 +536,7 @@ unconditional legacy refusal and synchronous ownership checks above; they are no
   selector that picks the Fake or the facade is **[#350](../codebase/350.md)**; since #631 it defaults
   to the facade, with the fake selected explicitly for demo builds and ordinary instrumentation.
 </content>
+
+## Fresh required-thread effects
+
+Fresh accepted `thread_item_added` facts can emit dedicated refusal and root-completion effects for the required daemon thread route. Query results, cache restoration, duplicate additions and changes to an existing item cannot arm recovery actions. Delivery requires the current connection lifetime, epoch, generation, stored fact and session. The view model also checks the current negotiated connection identity. No synthetic legacy event or timestamp is introduced. See [the activation plan](../../specs/architecture/2245-production-daemon-thread.md).

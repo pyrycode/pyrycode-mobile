@@ -441,3 +441,7 @@ repeats it for one frame type.
   refusal event), [`Thread screen`](thread-screen.md) (`LazyColumn` key, render arm, `timestamp()`, and the
   `switchBackOffer`/`onSwitchBack` wiring), [`Conversation cache`](conversation-cache.md) (excluded from
   persistence).
+
+## Required daemon thread identity
+
+The production daemon thread route arms Switch back only from a fresh accepted refusal notice. Its occurrence key contains the host, conversation, epoch and item identity. Rendering and acknowledgement use that same key. Equal display timestamps cannot merge two notices, and an older acknowledgement cannot clear a newer offer. Restored history and repeated additions never rearm an action. An already armed offer survives a reconnect within the same session. A replacement source clears transient recovery state. The older timestamp mechanism above remains for the legacy route. See [the activation plan](../../specs/architecture/2245-production-daemon-thread.md).
