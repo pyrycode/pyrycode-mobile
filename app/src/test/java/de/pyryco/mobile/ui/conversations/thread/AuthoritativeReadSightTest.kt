@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.ReadCheckpointRetries
 import de.pyryco.mobile.data.repository.StableConversationRepository
+import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -175,7 +177,16 @@ class AuthoritativeReadSightTest {
                         authoritativeItem(2, kind = kind, subtype = subtype, rev = 8, content = content),
                     ).copy(checkpoint = 8),
                 )
-            assertEquals(p.items.first(), p.items.last())
+            val first = p.items.first()
+            val last = p.items.last()
+            if (first is ThreadItem.ModelRefusal && last is ThreadItem.ModelRefusal) {
+                assertNotNull(first.canonicalIdentity)
+                assertNotNull(last.canonicalIdentity)
+                assertNotEquals(first.canonicalIdentity, last.canonicalIdentity)
+                assertEquals(first.copy(canonicalIdentity = null), last.copy(canonicalIdentity = null))
+            } else {
+                assertEquals(first, last)
+            }
             assertNotEquals(p.rows.first().listKey(0), p.rows.last().listKey(0))
             assertEquals(2, p.shownRowRevisions.size)
             assertNull(kind, p.readCheckpoint(p.rows.last().listKey(0), facts(8u).copy(readUpTo = 5u), p.sightOf(0)))
