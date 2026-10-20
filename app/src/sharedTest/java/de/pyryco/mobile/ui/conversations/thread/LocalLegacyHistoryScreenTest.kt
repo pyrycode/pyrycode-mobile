@@ -20,15 +20,21 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.CachingConversationRepository
+import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.HistoryCoverage
+import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadSnapshot
+import de.pyryco.mobile.data.repository.ThreadSnapshotSource
 import de.pyryco.mobile.data.repository.UnsignedHistorySpan
 import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.data.repository.historyRowProofs
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
@@ -45,7 +51,11 @@ class LocalLegacyHistoryScreenTest {
 
     @get:Rule val temporary = TemporaryFolder()
 
-    @Test fun oldestBoundaryPull_revealsOneSavedPageOffline() {
+    @Test fun oldestBoundaryPull_revealsOneSavedPageOffline() = boundaryPull(false)
+
+    @Test fun oldestBoundaryPull_revealsOneSavedPageWhileNewestIsHeld() = boundaryPull(true)
+
+    private fun boundaryPull(online: Boolean) {
         val database =
             Room
                 .databaseBuilder(
@@ -74,7 +84,21 @@ class LocalLegacyHistoryScreenTest {
                 cache.writeThread("host", "c", rows).getOrThrow()
                 cache.writeHistoryPosition("host", "c", HistoryPosition("saved", false, coverage)).getOrThrow()
             }
-            val repository = CachingConversationRepository(FakeConversationRepository(), cache, "host")
+            var asks = 0
+            val live =
+                object : ConversationRepository by FakeConversationRepository(), ThreadSnapshotSource {
+                    override fun observeThreadSnapshot(conversationId: String) = MutableStateFlow(ThreadSnapshot(emptyList()))
+
+                    override suspend fun requestHistory(
+                        conversationId: String,
+                        cursor: String,
+                        limit: Int,
+                    ): HistoryPage {
+                        asks++
+                        return awaitCancellation()
+                    }
+                }
+            val repository = CachingConversationRepository(live, cache, "host")
             lateinit var vm: ThreadViewModel
             composeRule.runOnUiThread {
                 vm =
@@ -83,7 +107,7 @@ class LocalLegacyHistoryScreenTest {
                         repository,
                         FakeConnectionStateSource(),
                         ComposerDraftStore(),
-                        repositoryAvailable = flowOf(false),
+                        repositoryAvailable = flowOf(online),
                     )
                 store.put("thread", vm)
             }
@@ -97,7 +121,9 @@ class LocalLegacyHistoryScreenTest {
                         {},
                         ConnectionState.Offline,
                         {},
-                        onDemandOlderHistory = vm::onDemandOlderHistory,
+                        onDemandOlderHistory = {
+                            vm.onDemandOlderHistory()
+                        },
                         onDemandUnsignedHistoryGap = {
                             selected += it
                             vm.onDemandUnsignedHistoryGap(it)
@@ -105,20 +131,41 @@ class LocalLegacyHistoryScreenTest {
                     )
                 }
             }
-            composeRule.waitUntil(15000) { vm.state.value.items.size == 200 && vm.state.value.historyMarkers.size == 1 }
-            composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(0)
+            try {
+                composeRule.waitUntil(15000) {
+                    composeRule.waitForIdle()
+                    vm.state.value.items.size == 200 && vm.state.value.historyMarkers.size == 1
+                }
+            } finally {
+                println(
+                    "event=boundary_ready online=$online rows=${vm.state.value.items.size} markers=${vm.state.value.historyMarkers.size} tail=${vm.state.value.historyTail} asks=$asks",
+                )
+            }
+            composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(199)
             composeRule.onNodeWithTag("history-gap:0").assertIsDisplayed()
             composeRule.runOnIdle {
                 assertEquals(200, vm.state.value.items.size)
+                assertEquals(if (online) ThreadHistoryTail.Loading else ThreadHistoryTail.Offline, vm.state.value.historyTail)
+                assertEquals(if (online) 1 else 0, asks)
                 assertEquals(emptyList<ULong>(), selected)
             }
             composeRule.onNodeWithTag("thread-message-region").performTouchInput {
                 swipeDown(startY = height * 0.3f, endY = height * 0.7f, durationMillis = 400)
             }
-            composeRule.waitUntil(15000) { vm.state.value.items.size == 400 }
+            try {
+                composeRule.waitUntil(15000) {
+                    composeRule.waitForIdle()
+                    vm.state.value.items.size == 400
+                }
+            } finally {
+                println(
+                    "event=boundary_pull online=$online rows=${vm.state.value.items.size} selected=${selected.size} tail=${vm.state.value.historyTail} asks=$asks",
+                )
+            }
             composeRule.runOnIdle {
                 assertEquals(listOf(0uL), selected)
                 assertEquals(rows.takeLast(400), vm.state.value.items)
+                assertEquals(if (online) 1 else 0, asks)
             }
         } finally {
             composeRule.runOnUiThread { store.clear() }

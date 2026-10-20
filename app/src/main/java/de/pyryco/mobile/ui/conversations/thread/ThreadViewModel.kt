@@ -1051,11 +1051,14 @@ class ThreadViewModel(
                         },
                         savedLegacyHistory,
                     ) { network, saved ->
-                        (network?.let { saved?.withNetwork(it) ?: it }) to
-                            (if (network?.unsignedUnknown == true) saved?.unknownEdge ?: network.unsignedUnknownEdge else null)
+                        Triple(
+                            network?.let { saved?.withNetwork(it) ?: it },
+                            if (network?.unsignedUnknown == true) saved?.unknownEdge ?: network.unsignedUnknownEdge else null,
+                            saved?.hasOlder == true,
+                        )
                     },
                 ) { reading, queued, demand, connected, projection ->
-                    val (coverage, unknownEdge) = projection
+                    val (coverage, unknownEdge, hasOlderSavedHistory) = projection
                     Triple(
                         reading.items,
                         (coverage ?: HistoryCoverage()) to unknownEdge,
@@ -1065,6 +1068,7 @@ class ThreadViewModel(
                             demand.tail(connected),
                             emptyList(),
                             coverage?.let { reading.evidence.copy(gaps = it.unsignedGaps) },
+                            hasOlderSavedHistory,
                         ),
                     )
                 }.transformLatest { (items, projection, content) ->
@@ -1212,6 +1216,7 @@ class ThreadViewModel(
                 runConfig = runConfig.forLiveSession(liveSession),
                 mutationsSupported = repository.mutationsSupported,
                 historyTail = content.historyTail,
+                hasOlderSavedHistory = content.hasOlderSavedHistory,
                 historyMarkers = content.historyMarkers,
                 readEvidence = content.evidence,
             )
@@ -3942,6 +3947,7 @@ class ThreadViewModel(
         val historyTail: ThreadHistoryTail,
         val historyMarkers: List<ThreadHistoryMarker>,
         val evidence: ThreadReadEvidence?,
+        val hasOlderSavedHistory: Boolean = false,
     )
 
     private data class FoldedThread(

@@ -62,6 +62,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -314,7 +315,11 @@ class SavedThreadFirstDrawDeviceTest {
                             )
                             val cache = MigratingConversationCache(File(root, "files"), db)
                             val delegate = HeldNewest()
-                            val repo = CachingConversationRepository(delegate, cache, "host")
+                            val live =
+                                object : ConversationRepository by delegate {
+                                    override fun observeMessages(conversationId: String) = MutableStateFlow(emptyList<ThreadItem>())
+                                }
+                            val repo = CachingConversationRepository(live, cache, "host")
                             val measured =
                                 object : ConversationRepository by repo, ThreadSnapshotSource, SavedLegacyHistorySource by repo {
                                     override fun observeThreadSnapshot(conversationId: String) =

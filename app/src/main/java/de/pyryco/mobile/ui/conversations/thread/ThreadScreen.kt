@@ -773,7 +773,9 @@ fun ThreadScreen(
                     val demandHistoryGap by rememberUpdatedState(onDemandUnsignedHistoryGap)
                     val gapMarkers by rememberUpdatedState(displayedHistoryMarkers)
                     val gapHeights = remember(state.conversationId) { mutableStateMapOf<ULong, Int>() }
-                    val historyLoading by rememberUpdatedState(state.historyTail == ThreadHistoryTail.Loading)
+                    val historyLoading by rememberUpdatedState(
+                        state.historyTail == ThreadHistoryTail.Loading && !state.hasOlderSavedHistory,
+                    )
                     val pullForOlderHistory = { if (!historyLoading) demandOlderHistory() }
                     if ((authoritative?.rows?.isEmpty() ?: !state.hasMessages) &&
                         state.historyMarkers.isEmpty() &&

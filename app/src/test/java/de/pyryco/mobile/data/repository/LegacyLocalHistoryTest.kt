@@ -11,6 +11,7 @@ import de.pyryco.mobile.data.cache.legacyRowKey
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
+import de.pyryco.mobile.ui.conversations.thread.ThreadHistoryTail
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.fragmentedHistoryFixture
 import kotlinx.coroutines.CompletableDeferred
@@ -32,6 +33,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -97,6 +99,7 @@ class LegacyLocalHistoryTest {
         val snapshots = MutableStateFlow(ThreadSnapshot(emptyList()))
         val reply = CompletableDeferred<HistoryPage>()
         val asks = mutableListOf<String>()
+        val requested = Channel<String>(Channel.UNLIMITED)
 
         override fun observeThreadSnapshot(conversationId: String) = snapshots
 
@@ -106,6 +109,7 @@ class LegacyLocalHistoryTest {
             limit: Int,
         ): HistoryPage {
             asks += cursor
+            requested.send(cursor)
             return reply.await()
         }
     }
@@ -273,10 +277,17 @@ class LegacyLocalHistoryTest {
                     .toSet()
                     .size,
             )
+            live.snapshots.value = ThreadSnapshot(emptyList(), setOf(rows.last().message.id))
+            readings.awaitRows { it.rows.size == 399 && rows.last() !in it.rows }
             live.snapshots.value = ThreadSnapshot(emptyList())
-            live.snapshots.value = ThreadSnapshot(listOf(newest))
-            runCurrent()
+            assertFalse(rows.last() in readings.receive().rows)
+            val delivered = rows.last().copy(message = rows.last().message.copy(content = "confirmed delivery"))
+            live.snapshots.value = ThreadSnapshot(listOf(delivered, newest))
+            readings.awaitRows { delivered in it.rows }
+            live.snapshots.value = ThreadSnapshot(emptyList())
+            assertTrue(delivered in readings.receive().rows)
             job.cancelAndJoin()
+            assertEquals(rows.filterNot { it == rows[350] || it == rows.last() } + delivered + newest, open().readThread("host", "c"))
         }
 
     @Test fun demandInvariant_offlineAndHeldNewest() =
@@ -299,16 +310,17 @@ class LegacyLocalHistoryTest {
                             repositoryAvailable = available,
                         )
                     store.put("thread", vm)
-                    val states = Channel<Int>(Channel.UNLIMITED)
-                    val observer = backgroundScope.launch { vm.state.collect { states.send(it.items.size) } }
+                    val states = Channel<Pair<Int, Boolean>>(Channel.UNLIMITED)
+                    val observer = backgroundScope.launch { vm.state.collect { states.send(it.items.size to it.hasOlderSavedHistory) } }
 
                     suspend fun size(expected: Int) {
-                        while (states.receive() != expected) { /* Skip optional projections. */ }
+                        while (states.receive() != (expected to (expected < rows.size))) { /* Skip optional projections. */ }
                     }
                     size(200)
                     repository.openingHistoryPosition("c")
                     runCurrent()
                     assertEquals(if (online) listOf("") else emptyList<String>(), live.asks)
+                    assertTrue(vm.state.value.hasOlderSavedHistory)
                     vm.onDemandOlderHistory()
                     size(400)
                     assertEquals(if (online) listOf("") else emptyList<String>(), live.asks)
@@ -321,6 +333,49 @@ class LegacyLocalHistoryTest {
                     runCurrent()
                     assertEquals(600, vm.state.value.items.size)
                     assertEquals(1, live.asks.size)
+                    vm.onDemandOlderHistory()
+                    size(601)
+                    assertFalse(vm.state.value.hasOlderSavedHistory)
+                    assertEquals(1, live.asks.size)
+                    store.clear()
+                    observer.cancelAndJoin()
+                }
+            } finally {
+                Dispatchers.resetMain()
+            }
+        }
+
+    @Test fun openingInvariant_emptyOrUnreadableRoomKeepsNewestRefresh() =
+        runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            try {
+                for (unreadable in listOf(false, true)) {
+                    val cache = if (unreadable) seed(rows(1)) else open()
+                    if (unreadable) {
+                        withContext(Dispatchers.IO) {
+                            requireNotNull(database).openHelper.writableDatabase.execSQL("UPDATE legacy_rows SET payload='invalid'")
+                        }
+                    }
+                    val live = Live()
+                    val repository = CachingConversationRepository(live, cache, "host")
+                    val store = ViewModelStore()
+                    val vm =
+                        ThreadViewModel(
+                            SavedStateHandle(mapOf("serverId" to "host", "conversationId" to "c")),
+                            repository,
+                            FakeConnectionStateSource(),
+                            ComposerDraftStore(),
+                        )
+                    store.put("thread", vm)
+                    val observer = backgroundScope.launch { vm.state.collect {} }
+                    assertEquals("", live.requested.receive())
+                    assertTrue(
+                        vm.state
+                            .first { it.historyTail == ThreadHistoryTail.Loading }
+                            .items
+                            .isEmpty(),
+                    )
+                    assertFalse(live.reply.isCompleted)
                     store.clear()
                     observer.cancelAndJoin()
                 }

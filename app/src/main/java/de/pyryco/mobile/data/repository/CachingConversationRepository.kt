@@ -36,6 +36,8 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -841,12 +843,24 @@ class CachingConversationRepository(
             var lastOrder = emptyMap<Any, ULong>()
             var previousLive = emptySet<String>()
             val removed = HashSet<String>()
+            val suppressed = HashSet<String>()
             val observedLocalRemovals = HashSet<String>()
             var first = true
             coroutineScope {
                 val writer = ThreadWriter(conversationId, this, initial.rows, revision, localWindow = window)
                 try {
-                    combine(delegate.threadSnapshots(conversationId), window.readings.filterNotNull()) { live, local -> live to local }
+                    val localReadings = Channel<LegacyLocalWindow.Reading>(Channel.CONFLATED)
+                    localReadings.trySend(initial)
+                    val localReader =
+                        launch {
+                            window.readings.filterNotNull().collect { localReadings.trySend(it) }
+                        }
+                    val liveReadings =
+                        delegate.threadSnapshots(conversationId).onCompletion {
+                            localReader.cancel()
+                            localReadings.close()
+                        }
+                    combine(liveReadings, localReadings.receiveAsFlow()) { live, local -> live to local }
                         .collect { (snapshot, local) ->
                             if (!window.current || conversationId in deleted) return@collect
                             val generation = generations.incrementAndGet()
@@ -855,6 +869,12 @@ class CachingConversationRepository(
                                     writer.restored(local.rows)
                                     removed += local.removed - observedLocalRemovals
                                     observedLocalRemovals += local.removed
+                                    suppressed -=
+                                        snapshot.rows
+                                            .filterIsInstance<ThreadItem.MessageItem>()
+                                            .mapNotNull { it.message.ordinaryId }
+                                            .toSet()
+                                    suppressed += snapshot.suppressedUserMessageIds
                                     val keys = snapshot.rows.mapTo(HashSet()) { it.legacyRowKey() }
                                     if (snapshot.rows.isNotEmpty()) {
                                         removed += previousLive - keys
@@ -879,7 +899,7 @@ class CachingConversationRepository(
                                             row.legacyRowKey() in removed ||
                                                 row is ThreadItem.MessageItem &&
                                                 row.message.role == Role.User &&
-                                                row.message.ordinaryId in snapshot.suppressedUserMessageIds
+                                                row.message.ordinaryId in suppressed
                                         }
                                     val rows =
                                         if (first && snapshot.rows.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
@@ -1027,7 +1047,13 @@ class CachingConversationRepository(
                 }
             val cacheable = withContext(processingDispatcher) { cacheableThreadRows(rows) }
             val baseline = if (owned == null) emptyMap() else baselineRows.associateBy { it.legacyRowKey() }
-            val removed = if (owned == null) emptySet() else baseline.keys - rows.mapTo(HashSet()) { it.legacyRowKey() }
+            val removed =
+                if (owned == null) {
+                    emptySet()
+                } else {
+                    (baseline.keys + snapshot.suppressedUserMessageIds.map { "message:$it" }) -
+                        rows.mapTo(HashSet()) { it.legacyRowKey() }
+                }
             val keys = if (owned == null) emptyList() else cacheable.map { it.legacyRowKey() }
             val nextHeld = arrayOfNulls<String>(keys.size)
             var next: String? = null

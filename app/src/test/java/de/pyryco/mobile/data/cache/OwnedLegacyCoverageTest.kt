@@ -279,7 +279,7 @@ class OwnedLegacyCoverageTest {
                     val source = Source()
                     var repository = CachingConversationRepository(source, cache, "Host")
                     phase("restore_repository")
-                    assertEquals(rows, repository.observeThreadSnapshot("c").first().rows)
+                    assertEquals(rows.takeLast(200), repository.observeThreadSnapshot("c").first().rows)
                     repository.readHistoryPosition("c")
                     val changed = row(1, "changed")
                     source.snapshots.value =
@@ -817,7 +817,7 @@ class OwnedLegacyCoverageTest {
                     cache.writeHistoryPosition("Host", "c", saved).getOrThrow()
                     val source = Source()
                     val repository = CachingConversationRepository(source, cache, "Host")
-                    assertEquals(rows, repository.observeThreadSnapshot("c").first().rows)
+                    assertEquals(rows.takeLast(200), repository.observeThreadSnapshot("c").first().rows)
                     repository.readHistoryPosition("c")
                     val newest = row(size, "changed")
                     source.snapshots.value = ThreadSnapshot(listOf(newest))

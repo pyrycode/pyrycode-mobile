@@ -218,6 +218,7 @@ data class ThreadUiState(
     // its failures: the screen asks, the VM decides whether the ask is honoured, and a second copy of that
     // decision in Compose would be a second place to get it wrong.
     val historyTail: ThreadHistoryTail = ThreadHistoryTail.None,
+    val hasOlderSavedHistory: Boolean = false,
     val historyMarkers: List<ThreadHistoryMarker> = emptyList(),
     // #884: the Actions menu's commands this conversation's published slash-command menu proves absent,
     // greyed out in the menu.
