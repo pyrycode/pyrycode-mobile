@@ -17,6 +17,7 @@ import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -26,6 +27,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
@@ -1167,7 +1169,8 @@ class DeterministicInteractiveStreamE2ETest {
         assertEquals("canonical fixture keeps its task label", "cat ${'$'}FIFO", currentTasks()?.tasks?.single()?.description)
         composeTestRule.onNodeWithContentDescription("More actions").performClick()
         composeTestRule.onNode(hasText(context.getString(R.string.background_tasks_title)) and hasClickAction()).performClick()
-        val row = hasText("cat ${'$'}FIFO") and hasClickAction()
+        val panel = hasAnyAncestor(isDialog())
+        val row = hasText("cat ${'$'}FIFO") and hasClickAction() and panel
         try {
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(row).fetchSemanticsNodes().size == 1 }
         } catch (failure: Throwable) {
@@ -1182,7 +1185,7 @@ class DeterministicInteractiveStreamE2ETest {
         }
         composeTestRule.onNode(row).performTouchInput { click() }
         val stop = context.getString(R.string.background_tasks_stop)
-        composeTestRule.onNodeWithText(stop).performTouchInput { click() }
+        composeTestRule.onNode(hasText(stop) and panel).performTouchInput { click() }
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             currentTasks()?.liveCount == 0 &&
                 composeTestRule.onAllNodesWithText(stop).fetchSemanticsNodes().isEmpty()
@@ -1297,7 +1300,28 @@ class DeterministicInteractiveStreamE2ETest {
         assertTrue("only the first-tool representative remains in a collapsed run", childMembership(expanded = false))
         composeTestRule.questionAnswerTarget(closedRun).performTouchInput { click(center) }
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { childMembership(expanded = true) }
-        list.performScrollToNode(prose)
+        val proseId =
+            family.children
+                .single { it.fullText == "child1827-before" }
+                .message.id
+        val proseIndex = list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:$proseId")
+        assertTrue("the opened run must retain its exact owned prose row", proseIndex >= 0)
+        list.performScrollToIndex(proseIndex)
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(prose, useUnmergedTree = true).fetchSemanticsNodes().size == 1
+            }
+        } catch (failure: Throwable) {
+            val record = family.children.single { it.message.id == proseId }
+            android.util.Log.d(
+                "ScriptedAgentProof",
+                "rendered=${record.message.content} source=${record.fullText} status=${record.fact?.status}",
+            )
+            composeTestRule.onAllNodes(isRoot(), useUnmergedTree = true).fetchSemanticsNodes().indices.forEach { index ->
+                composeTestRule.onAllNodes(isRoot(), useUnmergedTree = true)[index].printToLog("ScriptedAgentProof")
+            }
+            throw failure
+        }
         composeTestRule.onNode(prose and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(1)
         list.performScrollToNode(run)
