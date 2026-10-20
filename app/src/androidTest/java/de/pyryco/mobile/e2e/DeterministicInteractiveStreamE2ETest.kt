@@ -1328,13 +1328,11 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.questionAnswerTarget(run).performTouchInput { click(center) }
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { childMembership(expanded = false) }
         composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
-        val markerTarget =
-            composeTestRule.questionAnswerTarget(
-                marker,
-                lazyKey = "agent-start:${family.agentId}",
-                evidence = { android.util.Log.d("ScriptedAgentProof", it) },
-            )
-        markerTarget.performTouchInput { click(center) }
+        composeTestRule.questionAnswerTap(
+            marker,
+            lazyKey = "agent-start:${family.agentId}",
+            evidence = { android.util.Log.d("ScriptedAgentProof", it) },
+        )
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
         composeTestRule.onAllNodes(isDialog()).assertCountEquals(0)
         composeTestRule.onNode(header).assertIsDisplayed()
@@ -1345,14 +1343,11 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText("after1783").fetchSemanticsNodes().isNotEmpty()
         }
-        val settledMarkerTarget =
-            composeTestRule.questionAnswerTarget(
-                marker,
-                lazyKey = "agent-start:${family.agentId}",
-                evidence = { android.util.Log.d("ScriptedAgentProof", it) },
-            )
-        composeTestRule.onNodeWithText(finished).assertIsDisplayed()
-        settledMarkerTarget.performTouchInput { click(center) }
+        composeTestRule.questionAnswerTap(
+            marker and hasText(finished),
+            lazyKey = "agent-start:${family.agentId}",
+            evidence = { android.util.Log.d("ScriptedAgentProof", it) },
+        )
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
         composeTestRule.onAllNodes(isDialog()).assertCountEquals(0)
         composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("after1783"))

@@ -1,10 +1,12 @@
 package de.pyryco.mobile.e2e
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasTestTag
@@ -13,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
 import org.junit.Assert.assertTrue
 
 /** ScrollTo sees the drawing viewport, including controls behind chrome. Reveal the actual tap target.
@@ -23,7 +26,24 @@ internal fun ComposeTestRule.questionAnswerTarget(
     matcher: SemanticsMatcher,
     lazyKey: String? = null,
     evidence: (String) -> Unit = {},
-): SemanticsNodeInteraction {
+): SemanticsNodeInteraction = questionAnswerLocation(matcher, lazyKey, allowPartial = false, evidence).first
+
+/** Tap once inside the actual exposed control when a short thread cannot scroll past a notice. */
+internal fun ComposeTestRule.questionAnswerTap(
+    matcher: SemanticsMatcher,
+    lazyKey: String? = null,
+    evidence: (String) -> Unit = {},
+) {
+    val (target, localPoint) = questionAnswerLocation(matcher, lazyKey, allowPartial = true, evidence)
+    target.performTouchInput { click(localPoint) }
+}
+
+private fun ComposeTestRule.questionAnswerLocation(
+    matcher: SemanticsMatcher,
+    lazyKey: String?,
+    allowPartial: Boolean,
+    evidence: (String) -> Unit,
+): Pair<SemanticsNodeInteraction, Offset> {
     val list = onNode(hasScrollToNodeAction())
 
     fun clearTop(): Float {
@@ -77,8 +97,16 @@ internal fun ComposeTestRule.questionAnswerTarget(
         evidence(
             "event=question_answer_reveal stage=after measurement=$measurement bounds=$visible header=$checkedHeader composer=$checkedComposer shift=$shift",
         )
-        if (visible.center.y > checkedHeader && visible.center.y < checkedComposer) return target
-        failure = "question-answer tap center must clear thread chrome: $visible in $checkedHeader..$checkedComposer"
+        val exposed =
+            Rect(visible.left, maxOf(visible.top, checkedHeader + 4f), visible.right, minOf(visible.bottom, checkedComposer - 4f))
+        val point = if (allowPartial && exposed.height > 0f) exposed.center else visible.center
+        if (visible.width > 0f && visible.height > 0f &&
+            visible.contains(point) && point.y > checkedHeader && point.y < checkedComposer
+        ) {
+            evidence("event=question_answer_tap_target point=$point target=$visible clear=$checkedHeader..$checkedComposer")
+            return target to (point - visible.topLeft)
+        }
+        failure = "question-answer tap must clear thread chrome: $visible in $checkedHeader..$checkedComposer"
     }
     throw AssertionError(failure)
 }
