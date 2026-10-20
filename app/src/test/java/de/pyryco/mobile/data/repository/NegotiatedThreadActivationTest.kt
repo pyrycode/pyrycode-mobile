@@ -81,7 +81,7 @@ class NegotiatedThreadActivationTest {
                 val repo = requireNotNull(host.coordinator.currentRepository.value) as RemoteConversationRepository
                 backgroundScope.launch { repo.observeThreadSnapshot("c").collect {} }
                 runCurrent()
-                assertEquals(emptyList<String>(), pump.sent.map { it.type })
+                assertEquals(listOf("request_claude_usage"), pump.sent.map { it.type })
             } finally {
                 host.coordinator.close()
             }

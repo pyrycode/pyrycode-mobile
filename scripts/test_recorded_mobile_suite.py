@@ -13,6 +13,33 @@ spec.loader.exec_module(suite)
 
 
 class SuiteDriverTest(unittest.TestCase):
+    def test_allowance_queries_keep_payload_count_connection_and_checkpoint(self):
+        baseline = self.fixture()
+        first = baseline['steps'][0]
+        first['message'].update(type='list_conversations', payload={})
+        allowance = copy.deepcopy(first)
+        allowance['message'].update(id=2, type='request_claude_usage')
+        checkpoint = copy.deepcopy(first)
+        checkpoint.update(owner='control')
+        checkpoint['message'].update(type='test-control:checkpoint', payload={'body': 'ready'})
+        baseline['steps'] = [first, allowance, checkpoint]
+        logical = suite.contract(baseline)
+        self.assertEqual(['test-control:checkpoint'], [row['type'] for row in logical['commands']])
+        self.assertEqual(['list_conversations', 'request_claude_usage'],
+                         sorted(row['type'] for row in logical['queryCheckpoints'][0]['queries']))
+        reordered = copy.deepcopy(baseline)
+        reordered['steps'][:2] = list(reversed(reordered['steps'][:2]))
+        self.assertEqual(suite.contract(baseline), suite.contract(reordered))
+        for change in ['payload', 'missing', 'duplicate', 'host', 'connection', 'checkpoint']:
+            candidate = copy.deepcopy(baseline)
+            if change == 'payload': candidate['steps'][1]['message']['payload'] = {'conversation_id': 'chat'}
+            if change == 'missing': candidate['steps'].pop(1)
+            if change == 'duplicate': candidate['steps'].insert(1, copy.deepcopy(allowance))
+            if change == 'host': candidate['steps'][1]['owner'] = 'phone/other-host/0'
+            if change == 'connection': candidate['steps'][1]['owner'] += '/1'
+            if change == 'checkpoint': candidate['steps'][1:3] = list(reversed(candidate['steps'][1:3]))
+            self.assertNotEqual(suite.contract(baseline), suite.contract(candidate), change)
+
     def test_managed_verification_rejects_unreviewed_input_before_credentials_or_device(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory) / 'unreviewed.json'

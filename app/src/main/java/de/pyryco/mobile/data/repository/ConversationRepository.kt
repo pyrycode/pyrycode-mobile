@@ -313,6 +313,16 @@ interface ConversationRepository {
     fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = flowOf(null)
 
     /**
+     * Latest account allowance for this paired host, shared by every conversation. Null until a valid
+     * frame arrives; retained across disconnect, replaced whole on arrival, dropped when the pairing ends.
+     * [ClaudeUsageReading.None] is an explicit host response, distinct from no response yet.
+     */
+    fun observeClaudeUsage(): Flow<ClaudeUsageReading?> = flowOf(null)
+
+    /** Ask for the host's held allowance. No conversation, capability, polling or model call; offline is a no-op. */
+    fun requestClaudeUsage() = Unit
+
+    /**
      * Emits how far [conversationId]'s current reasoning has got (#801) — claude's own running token
      * estimate, and the **only** mid-turn proof of life the stream-json surface offers, since nothing
      * else crosses the wire during a long assistant turn. Cold flow; re-emits on every change.

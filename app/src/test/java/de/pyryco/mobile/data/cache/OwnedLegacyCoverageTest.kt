@@ -580,12 +580,20 @@ class OwnedLegacyCoverageTest {
         }
 
     @Test fun recoveryInvariant_claimExtensionPreservesSiblingBindings() =
-        runTest {
+        runTest(timeout = 2.minutes) {
+            val started = TimeSource.Monotonic.markNow()
             val counts = ArrayList<Pair<LegacyRoomStorage.MutationCounts, Int>>()
             for (size in listOf(20, 18000)) {
                 for (remove in listOf(false, true)) {
+                    fun phase(name: String) {
+                        println(
+                            "owned_claim_extension_phase saved_rows=$size removal=$remove phase=$name elapsed_ms=${started.elapsedNow().inWholeMilliseconds}",
+                        )
+                    }
+                    phase("open")
                     val name = "extension-$size-$remove"
                     var cache = open(name)
+                    phase("fixture")
                     val rows = (1..size).map { row(it) }
                     val keys = rows.take(2).map { it.historyKeys().first() }
                     val order = rows.mapIndexed { index, row -> row.historyKeys().first() to (index + 1).toULong() * 2u }.toMap()
@@ -602,9 +610,12 @@ class OwnedLegacyCoverageTest {
                             unsignedUnknown = false,
                         )
                     val initial = HistoryPosition("saved", true, evidence)
+                    phase("seed_rows")
                     cache.readThread("Host", "c")
                     cache.writeThread("Host", "c", rows).getOrThrow()
+                    phase("seed_evidence")
                     cache.writeHistoryPosition("Host", "c", initial).getOrThrow()
+                    phase("read_unrelated")
                     val unchanged =
                         requireNotNull(database).legacy().allEvidence("Host", "c").filter {
                             it.ordinal >=
@@ -619,6 +630,7 @@ class OwnedLegacyCoverageTest {
                         }
                     val source = Source()
                     val repository = CachingConversationRepository(source, partial, "Host")
+                    phase("restore_partial")
                     repository.observeThreadSnapshot("c").first()
                     repository.readHistoryPosition("c")
                     val next =
@@ -629,10 +641,12 @@ class OwnedLegacyCoverageTest {
                                     unsignedRowEntries = evidence.unsignedRowEntries + (keys[0] to setOf(1uL, 3uL)),
                                 ),
                         )
+                    phase("mutate")
                     queries.clear()
                     repository.writeHistoryPosition("c", next)
                     val statements = synchronized(queries) { queries.toList() }.filter { it.contains("legacy_", true) }
                     counts += cache.legacyMutationCounts to statements.size
+                    phase("verify_mutation")
                     assertFalse(statements.any { it.startsWith("SELECT * FROM legacy_rows", true) && !it.contains("identity=") })
                     assertFalse(statements.any { it.contains("FROM legacy_evidence WHERE host=? AND conversation=? ORDER BY") })
                     assertFalse(statements.any { it.startsWith("DELETE FROM legacy_rows", true) })
@@ -641,7 +655,9 @@ class OwnedLegacyCoverageTest {
                         unchanged,
                         requireNotNull(database).legacy().allEvidence("Host", "c").filter { it.ordinal >= 2 * LEGACY_ORDINAL_STEP },
                     )
+                    phase("first_reopen")
                     cache = open(name)
+                    phase("verify_first_reopen")
                     assertEquals(rows, cache.readThread("Host", "c"))
                     assertEquals(next, cache.readHistoryPosition("Host", "c"))
                     val changed =
@@ -653,11 +669,15 @@ class OwnedLegacyCoverageTest {
                         }
                     val live = Source()
                     val reopened = CachingConversationRepository(live, cache, "Host")
+                    phase("restore_full")
                     reopened.observeThreadSnapshot("c").first()
                     reopened.readHistoryPosition("c")
                     live.snapshots.value = ThreadSnapshot(changed, suppressedUserMessageIds = if (remove) setOf("id-2") else emptySet())
+                    phase("mutate_sibling")
                     repeat(2) { reopened.writeHistoryPosition("c", next) }
+                    phase("final_reopen")
                     val fresh = open(name)
+                    phase("verify_final_reopen")
                     assertEquals(changed, fresh.readThread("Host", "c"))
                     val saved = requireNotNull(fresh.readHistoryPosition("Host", "c"))
                     assertFalse(saved.atStart)
@@ -667,6 +687,9 @@ class OwnedLegacyCoverageTest {
                         unchanged.filter { it.ordinal > 2 * LEGACY_ORDINAL_STEP },
                         requireNotNull(database).legacy().allEvidence("Host", "c").filter { it.ordinal > 2 * LEGACY_ORDINAL_STEP },
                     )
+                    phase("close")
+                    close()
+                    phase("complete")
                 }
             }
             assertTrue("same relevant work for short and fragmented histories", counts.all { it == counts.first() })

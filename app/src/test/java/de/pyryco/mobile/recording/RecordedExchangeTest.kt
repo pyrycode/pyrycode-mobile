@@ -9,6 +9,44 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class RecordedExchangeTest {
+    @Test fun allowanceCanRaceConnectionReadsWithExactPayloadCountsAndCorrelation() {
+        val entries =
+            arrayOf(
+                "client" to frame(1, "list_conversations"),
+                "daemon" to frame(2, "conversations", reply = 1),
+                "client" to frame(3, "request_claude_usage"),
+                "daemon" to frame(4, "claude_usage", """{"state":"none"}""", reply = 3),
+                "client" to frame(5, "send_message"),
+            )
+        for (order in listOf(listOf("request_claude_usage", "list_conversations"), listOf("list_conversations", "request_claude_usage"))) {
+            val replay = RecordedExchange(recording(*entries))
+            val replies = order.flatMapIndexed { index, type -> replay.reply(frame(90L + index, type)) }
+            assertEquals(listOf("conversations", "claude_usage"), replies.map { it.type })
+            assertEquals(90L + order.indexOf("request_claude_usage"), replies.last().inReplyTo)
+            assertEquals("""{"state":"none"}""", replies.last().payload.toString())
+            replay.reply(frame(92, "send_message"))
+            replay.assertComplete()
+            assertThrows(IllegalStateException::class.java) { replay.reply(frame(93, "request_claude_usage")) }
+        }
+        for (payload in listOf("null", "[]", """{"conversation_id":"foreign"}""")) {
+            val replay = RecordedExchange(recording(*entries))
+            val failure = assertThrows(IllegalStateException::class.java) { replay.reply(frame(90, "request_claude_usage", payload)) }
+            val later = assertThrows(IllegalStateException::class.java) { replay.reply(frame(91, "list_conversations")) }
+            assertEquals(failure.message, later.message)
+        }
+        val missing = RecordedExchange(recording(*entries))
+        missing.reply(frame(90, "list_conversations"))
+        assertThrows(IllegalStateException::class.java) { missing.assertComplete() }
+        val duplicateId = RecordedExchange(recording(*entries))
+        duplicateId.reply(frame(90, "list_conversations"))
+        assertThrows(IllegalStateException::class.java) { duplicateId.reply(frame(90, "request_claude_usage")) }
+    }
+
+    @Test fun allowanceCannotBorrowAReplyAcrossAnAction() {
+        val replay = RecordedExchange(recording("client" to frame(1, "send_message"), "client" to frame(2, "request_claude_usage")))
+        assertThrows(IllegalStateException::class.java) { replay.reply(frame(90, "request_claude_usage")) }
+    }
+
     private fun frame(
         id: Long,
         type: String,

@@ -38,6 +38,7 @@ import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -46,6 +47,7 @@ import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -60,6 +62,16 @@ import org.junit.Test
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RelayRepositoryCoordinatorTest {
+    private val oldSink = RelayLog.sink
+
+    @Before fun quietLogs() {
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After fun restoreLogs() {
+        RelayLog.sink = oldSink
+    }
+
     @Test
     fun debugBundleRetryUsesFreshOpenConnectionAndNeverReplaysIncompleteTransfer() =
         runTest {
@@ -95,7 +107,7 @@ class RelayRepositoryCoordinatorTest {
                 val fresh = env.pumps.last()
                 fresh.open()
                 runCurrent()
-                assertTrue(fresh.sent.isEmpty())
+                assertEquals(listOf("request_claude_usage"), fresh.sent.map { it.type })
                 val retry = env.coordinator.requestDebugBundle()
                 old.push(Envelope(2, "debug_bundle_done", TS, MobileJson.parseToJsonElement("""{"total":1}""")))
                 runCurrent()
@@ -207,7 +219,7 @@ class RelayRepositoryCoordinatorTest {
             runCurrent()
 
             // The subscription drove a list_conversations request over the coordinator-built pump.
-            assertEquals("list_conversations", pump.sent.single().type)
+            assertEquals(1, pump.sent.count { it.type == "list_conversations" })
 
             // Wire order is ascending by last_used_at; the projection sorts most-recent-first.
             pump.push(
@@ -245,7 +257,7 @@ class RelayRepositoryCoordinatorTest {
             runCurrent()
 
             // The subscription drove a backfill_since request over the coordinator-built pump.
-            assertEquals("backfill_since", pump.sent.single().type)
+            assertEquals(1, pump.sent.count { it.type == "backfill_since" })
 
             pump.push(
                 messageChunkEnvelope(
@@ -463,7 +475,7 @@ class RelayRepositoryCoordinatorTest {
             val emissions = mutableListOf<List<Conversation>>()
             backgroundScope.launch { repo2.observeConversations(ConversationFilter.All).collect { emissions += it } }
             runCurrent()
-            assertEquals("list_conversations", pump2.sent.single().type)
+            assertEquals(1, pump2.sent.count { it.type == "list_conversations" })
 
             // The daemon replies with a snapshot → the list loads.
             pump2.push(
@@ -1838,7 +1850,7 @@ class RelayRepositoryCoordinatorTest {
                     b.pumps
                         .single()
                         .sent
-                        .isEmpty(),
+                        .none { it.type == "stop_background_task" },
                 )
                 a.pumps.single().closeState()
                 runCurrent()
@@ -1880,13 +1892,12 @@ class RelayRepositoryCoordinatorTest {
                 runCurrent()
                 assertTrue(a.coordinator.stopBackgroundTask("c1", "shared").isSuccess)
                 assertTrue(b.coordinator.stopBackgroundTask("c1", "shared").isSuccess)
-                assertEquals(1, old.sent.size)
-                assertEquals(1, other.sent.size)
-                assertEquals("stop_background_task", old.sent.single().type)
-                assertEquals(MobileJson.parseToJsonElement("""{"conversation_id":"c1","task_id":"shared"}"""), old.sent.single().payload)
-                Instant.parse(old.sent.single().ts)
-                assertEquals(old.sent.single().id, other.sent.single().id)
-                old.push(RemoteConversationRepositoryStopTaskTest.error(old.sent.single().id))
+                val oldStop = old.sent.single { it.type == "stop_background_task" }
+                val otherStop = other.sent.single { it.type == "stop_background_task" }
+                assertEquals(MobileJson.parseToJsonElement("""{"conversation_id":"c1","task_id":"shared"}"""), oldStop.payload)
+                Instant.parse(oldStop.ts)
+                assertEquals(oldStop.id, otherStop.id)
+                old.push(RemoteConversationRepositoryStopTaskTest.error(oldStop.id))
                 runCurrent()
                 assertEquals(listOf("shared"), aEvents)
                 assertTrue(bEvents.isEmpty())
@@ -1904,8 +1915,8 @@ class RelayRepositoryCoordinatorTest {
                 fresh.open(capabilities = setOf(CAPABILITY_INTERACTIVE, "stop_background_task"))
                 runCurrent()
                 a.coordinator.stopBackgroundTask("c1", "new")
-                fresh.push(RemoteConversationRepositoryStopTaskTest.error(fresh.sent.single().id))
-                other.push(RemoteConversationRepositoryStopTaskTest.error(other.sent.single().id))
+                fresh.push(RemoteConversationRepositoryStopTaskTest.error(fresh.sent.single { it.type == "stop_background_task" }.id))
+                other.push(RemoteConversationRepositoryStopTaskTest.error(otherStop.id))
                 runCurrent()
                 assertEquals(listOf("shared", "new"), aEvents)
                 assertEquals(listOf("shared"), bEvents)

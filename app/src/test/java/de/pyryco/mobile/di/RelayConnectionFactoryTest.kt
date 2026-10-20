@@ -413,7 +413,7 @@ class RelayConnectionFactoryTest {
                 assertFalse(firstB.closed)
                 repoB!!.observeConversations(ConversationFilter.Channels).launchIn(backgroundScope)
                 runCurrent()
-                assertEquals("list_conversations", firstB.outbound.single().type)
+                assertEquals("list_conversations", firstB.outbound.single { it.type == "list_conversations" }.type)
                 firstB.emit(turn(303))
                 runCurrent()
                 assertEquals(303L, b.coordinator.replayCursor.latest)
@@ -575,11 +575,14 @@ class RelayConnectionFactoryTest {
                     registry.interrupt("c")
                     val cancel = async { registry.cancelModal("same") }
                     runCurrent()
-                    assertEquals(listOf("new_session", "interrupt", "modal_cancel"), tb.outbound.map { it.type })
-                    tb.emit(envelope("ack", "{}").copy(inReplyTo = tb.outbound.last().id))
+                    assertEquals(
+                        listOf("new_session", "interrupt", "modal_cancel"),
+                        tb.outbound.filterNot { it.type == "request_claude_usage" }.map { it.type },
+                    )
+                    tb.emit(envelope("ack", "{}").copy(inReplyTo = tb.outbound.single { it.type == "modal_cancel" }.id))
                     runCurrent()
                     cancel.await()
-                    assertTrue(ta.outbound.isEmpty())
+                    assertEquals(listOf("request_claude_usage"), ta.outbound.map { it.type })
                     f.store.remove("B")
                     runCurrent()
                     assertSame(a, registry.selected.value)
@@ -768,7 +771,7 @@ class RelayConnectionFactoryTest {
                 assertEquals(modalB, b.coordinator.hostModals.value)
                 assertEquals(7L, b.coordinator.replayCursor.latest)
                 assertFalse(tb.closed)
-                tb.emit(envelope("ack", "{}").copy(inReplyTo = tb.outbound.single().id))
+                tb.emit(envelope("ack", "{}").copy(inReplyTo = tb.outbound.single { it.type == "modal_answer" }.id))
                 runCurrent()
                 pending.await()
                 tb.emit(turn(8))
@@ -907,7 +910,10 @@ class RelayConnectionFactoryTest {
                         .state.value.status,
                 )
                 for (transport in f.transports) {
-                    val wire = transport.outboundJson.single().jsonObject
+                    val wire =
+                        transport.outboundJson
+                            .single { it.jsonObject["type"]?.jsonPrimitive?.content == "request_debug_bundle" }
+                            .jsonObject
                     assertEquals("request_debug_bundle", wire["type"]!!.jsonPrimitive.content)
                     assertFalse(wire.containsKey("payload"))
                     assertFalse(wire.containsKey("conversation_id"))
@@ -951,7 +957,7 @@ class RelayConnectionFactoryTest {
                 registry.connect()
                 runCurrent()
                 val next = f.transports.last()
-                assertTrue(next.outbound.isEmpty())
+                assertEquals(listOf("request_claude_usage"), next.outbound.map { it.type })
                 val retry = registry.requestDebugBundle("B")
                 next.emit(envelope("debug_bundle_done", """{"total":0}"""))
                 runCurrent()
@@ -985,8 +991,12 @@ class RelayConnectionFactoryTest {
                 assertSame(b.coordinator.currentRepository.value, source.repositoryFor("B"))
                 assertNull(source.repositoryFor("a"))
                 assertNull(source.repositoryFor("unknown"))
-                assertEquals(listOf("list_conversations"), f.transports[0].outbound.map { it.type })
-                assertEquals(listOf("list_conversations"), f.transports[1].outbound.map { it.type })
+                for (transport in f.transports) {
+                    assertEquals(
+                        listOf("list_conversations"),
+                        transport.outbound.filterNot { it.type == "request_claude_usage" }.map { it.type },
+                    )
+                }
                 val rows =
                     envelope(
                         "conversations",
@@ -1599,7 +1609,7 @@ class RelayConnectionFactoryTest {
                 assertEquals(4, f.transports.size)
                 assertTrue(f.transports[3].closed)
                 assertFalse(b.closed)
-                assertTrue(b.outbound.isEmpty())
+                assertEquals(listOf("request_claude_usage"), b.outbound.map { it.type })
                 f.store.save(f.a.record)
                 runCurrent()
                 val restored = thread()

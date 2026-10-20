@@ -108,6 +108,7 @@ internal class RecordedExchange(
             "thread_page",
             "request_session_settings",
             "request_context_usage",
+            "request_claude_usage",
             "request_model_list",
             "request_system_prompt",
             "mcp_status_request",

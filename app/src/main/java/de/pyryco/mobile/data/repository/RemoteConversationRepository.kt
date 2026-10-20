@@ -70,6 +70,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Clock
@@ -193,6 +194,10 @@ class RemoteConversationRepository internal constructor(
         (pump as? ManagedSessionPump)?.close()
         scope.cancel()
     },
+    /** The coordinator checks the exact authenticated transport even before teardown collectors run. */
+    private val ownsConnection: () -> Boolean = { scope.isActive },
+    /** Shared with coordinator retirement so ownership validation and allowance publication are atomic. */
+    private val connectionOwnerLock: Any = Any(),
 ) : ConversationRepository,
     ThreadSnapshotSource {
     internal val authoritativeRoute: AuthoritativeThreadRoute =
@@ -904,6 +909,21 @@ class RemoteConversationRepository internal constructor(
     }
 
     private fun onInbound(envelope: Envelope) {
+        // Account traffic has no conversation/session or history/replay meaning, including replies.
+        if (envelope.type == "claude_usage") {
+            if (!ownsConnection()) return
+            val reading = decodeClaudeUsage(envelope.payload)
+            synchronized(connectionOwnerLock) {
+                if (!ownsConnection()) return
+                if (reading == null) {
+                    RelayLog.d { "event=claude_usage outcome=malformed" }
+                } else {
+                    hostReadings.claudeUsage.value = reading
+                    RelayLog.d { "event=claude_usage outcome=accepted" }
+                }
+            }
+            return
+        }
         // An opted-in connection never promotes legacy replay into authoritative completion proof.
         if (usesAuthoritativeAttention && envelope.type == TYPE_TURN_END) return
         if (authoritativeLiveEnabled() &&
@@ -1744,6 +1764,31 @@ class RemoteConversationRepository internal constructor(
         } catch (e: Exception) {
             contextUsageProjection.forgetRequest(conversationId, contextRequestOwner, request.id)
             // Absorbed: the next open or reconnect asks again.
+        }
+    }
+
+    override fun observeClaudeUsage(): Flow<ClaudeUsageReading?> = hostReadings.observeClaudeUsage()
+
+    override fun requestClaudeUsage() {
+        synchronized(connectionOwnerLock) {
+            if (!ownsConnection()) {
+                RelayLog.d { "event=claude_usage_request outcome=unavailable" }
+                return
+            }
+            val request =
+                Envelope(
+                    id = relayRequests.nextRequestId(),
+                    type = "request_claude_usage",
+                    ts = Clock.System.now().toString(),
+                    payload = JsonObject(emptyMap()),
+                )
+            val sent =
+                try {
+                    pump.send(request)
+                } catch (_: Exception) {
+                    false
+                }
+            RelayLog.d { "event=claude_usage_request outcome=${if (sent) "sent" else "refused"}" }
         }
     }
 

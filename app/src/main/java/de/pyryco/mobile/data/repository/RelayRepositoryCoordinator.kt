@@ -512,6 +512,10 @@ class RelayRepositoryCoordinator(
                 authoritativeThreads = authoritativeThreads,
                 authoritativeHostId = authoritativeHostId,
                 authoritativeDeviceId = authoritativeDeviceId,
+                ownsConnection = {
+                    childScope.isActive && transport === connections.value && pump.state.value is PumpState.Open
+                },
+                connectionOwnerLock = this,
             )
         // Publish the whole connection as ONE object: currentRepository now derives repo and pump-state
         // from this single switched value, closing the #493 cross-StateFlow race (see [currentRepository]).
@@ -519,6 +523,10 @@ class RelayRepositoryCoordinator(
         // launch returns immediately; the suspending re-registration runs on the child scope, off the
         // non-suspending critical path of this collector (the :233 cancellation-atomicity invariant).
         childScope.launch { reregisterPushTokenOnOpen(pump, repo) }
+        childScope.launch {
+            val terminal = pump.state.first { it is PumpState.Open || it is PumpState.Closed }
+            if (terminal is PumpState.Open) repo.requestClaudeUsage()
+        }
     }
 
     /**

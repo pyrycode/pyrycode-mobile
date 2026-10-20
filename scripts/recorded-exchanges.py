@@ -4,6 +4,7 @@ import argparse
 import base64
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -20,7 +22,7 @@ CLASS = 'de.pyryco.mobile.recording.RecordedPermissionTest'
 PACKAGE = 'de.pyryco.mobile'
 ASSET = ROOT / 'app/src/androidTest/assets/recorded/permission-allow.json'
 QUERIES = {'list_conversations', 'request_history', 'thread_catch_up', 'thread_page', 'request_session_settings',
-           'request_context_usage', 'request_model_list', 'request_system_prompt', 'mcp_status_request'}
+           'request_context_usage', 'request_claude_usage', 'request_model_list', 'request_system_prompt', 'mcp_status_request'}
 IDENTITIES = {'conversation_id', 'current_session_id', 'session_id', 'modal_id', 'message_id', 'device_id',
               'tool_use_id', 'parent_tool_use_id', 'turn_id', 'task_id', 'parent', 'epoch', 'answer_token'}
 
@@ -130,7 +132,7 @@ def normalized_contract(recording):
     return groups
 
 
-def execute(serial, arguments, progress=None):
+def execute(serial, arguments, progress=None, evidence=None):
     command = [os.environ.get('ADB', 'adb'), '-s', serial, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', CLASS]
     for key, value in arguments.items():
         command += ['-e', key, value]
@@ -152,7 +154,8 @@ def execute(serial, arguments, progress=None):
         diagnostic_output.seek(0)
         stdout = diagnostic_output.read()
         # A shell exit of zero alone does not establish any test execution.
-        if process.returncode or b'OK (1 test)' not in stdout or b'FAILURES!!!' in stdout:
+        if process.returncode or b'OK (1 test)' not in stdout or b'FAILURES!!!' in stdout or any(
+                code in stdout for code in (b'INSTRUMENTATION_STATUS_CODE: -3', b'INSTRUMENTATION_STATUS_CODE: -4')):
             # Keep the private Android diagnostic on the host, without printing pairing args or raw frames.
             log = ROOT / 'build/recorded-test-failure.log'
             log.parent.mkdir(parents=True, exist_ok=True)
@@ -161,24 +164,50 @@ def execute(serial, arguments, progress=None):
             raise RuntimeError('Android recorded scenario did not execute and pass its one required test')
         return time.monotonic() - started
     finally:
-        if process.poll() is None:
-            process.terminate()
-            process.wait(timeout=10)
-            adb(serial, 'shell', 'am', 'force-stop', PACKAGE)
-        diagnostic_output.close()
+        try:
+            if evidence is not None:
+                diagnostic_output.seek(0)
+                output = diagnostic_output.read()
+                private_write(evidence / 'instrumentation-private.log', output)
+                codes = re.findall(rb'(?m)^INSTRUMENTATION_STATUS_CODE: (-?\d+)\r?$', output)
+                private_write(evidence / 'native-counts.json', json.dumps({
+                    'executed': sum(code in (b'0', b'-1', b'-2') for code in codes),
+                    'failed': sum(code in (b'-1', b'-2') for code in codes),
+                    'skipped': sum(code in (b'-3', b'-4') for code in codes)}).encode())
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=10)
+                adb(serial, 'shell', 'am', 'force-stop', PACKAGE)
+            diagnostic_output.close()
 
 
-def replay(serial, fixture):
+def installed_apks(serial):
+    result = {}
+    for package, key, relative in [(PACKAGE, 'appApkSha256', 'debug/app-debug.apk'),
+                                   (PACKAGE + '.test', 'testApkSha256', 'androidTest/debug/app-debug-androidTest.apk')]:
+        location = adb(serial, 'shell', 'pm', 'path', package).decode().strip()
+        if not re.fullmatch(r'package:/data/app/[A-Za-z0-9_./=+~-]+/base\.apk', location):
+            raise RuntimeError('Unexpected installed package path')
+        installed = adb(serial, 'shell', 'sha256sum', location.removeprefix('package:')).decode().split()[0]
+        if installed != hashlib.sha256((ROOT / 'app/build/outputs/apk' / relative).read_bytes()).hexdigest():
+            raise RuntimeError('Installed Android package differs from the built package')
+        result[key] = installed
+    return result
+
+
+def replay(serial, fixture, evidence=None):
     name = 'recorded-' + uuid.uuid4().hex + '.json'
     data = fixture.read_bytes()
     validate_recording(json.loads(data))
+    packages = installed_apks(serial)
     adb(serial, 'shell', 'run-as', PACKAGE, 'sh', '-c', f"'umask 077; cat > files/{name}'", data=data)
     # Instrumentation gets no test credentials. This mode does not resolve daemon or Claude programs.
-    elapsed = execute(serial, {'replayName': name})
-    return {'executed': 1, 'failed': 0, 'skipped': 0, 'seconds': round(elapsed, 3), 'fixtureSha256': hashlib.sha256(data).hexdigest()}
+    elapsed = execute(serial, {'replayName': name}, evidence=evidence)
+    return {'executed': 1, 'failed': 0, 'skipped': 0, 'seconds': round(elapsed, 3), 'fixtureSha256': hashlib.sha256(data).hexdigest(), **packages}
 
 
-def capture(serial, destination, pyry):
+def capture(serial, destination, pyry, evidence=None, daemon_source=None):
     if destination.exists():
         raise ValueError('Candidate already exists')
     if not (os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') or os.environ.get('ANTHROPIC_API_KEY')):
@@ -190,6 +219,10 @@ def capture(serial, destination, pyry):
     daemon_revision = re.search(r'vcs.revision=([a-f0-9]{40})', metadata)
     if not daemon_revision:
         raise RuntimeError('Daemon executable has no source revision')
+    if daemon_source is not None and (run(['git', '-C', str(daemon_source), 'rev-parse', 'HEAD']).decode().strip() != daemon_revision.group(1)
+                                      or run(['git', '-C', str(daemon_source), 'status', '--porcelain']).strip()):
+        raise RuntimeError('Daemon source differs from the committed executable')
+    packages = installed_apks(serial)
     claude = shutil.which('claude')
     if not claude:
         raise RuntimeError('Claude executable unavailable')
@@ -238,14 +271,14 @@ def capture(serial, destination, pyry):
                         adb(serial, 'shell', 'run-as', PACKAGE, 'touch', 'files/' + name + '.confirm')
                         granted = True
                 elapsed = execute(serial, {'recordExchange': 'true', 'recordingName': name, 'relayUrl': relay,
-                    'serverId': fields['server'], 'token': fields['token'], 'serverStaticPublicKey': fields['server_static_pubkey']}, progress)
+                    'serverId': fields['server'], 'token': fields['token'], 'serverStaticPublicKey': fields['server_static_pubkey']}, progress, evidence=evidence)
                 if not granted or not (work / 'mobile-recorded-witness.txt').exists():
                     raise RuntimeError('Required permission file effect was not proved')
                 document = json.loads(adb(serial, 'exec-out', 'run-as', PACKAGE, 'cat', 'files/' + name))
                 document.update(format='pyrycode.mobile-exchange', version=1, source={
                     'mobileRevision': revision, 'daemonRevision': daemon_revision.group(1),
                     'daemonBinarySha256': hashlib.sha256(Path(pyry).read_bytes()).hexdigest(),
-                    'testApkSha256': hashlib.sha256((ROOT / 'app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk').read_bytes()).hexdigest(),
+                    **packages,
                     'claudeVersion': run([claude, '--version']).decode().strip(), 'capturedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
                     'presentation': 'current-production',
                     'androidRelease': adb(serial, 'shell', 'getprop', 'ro.build.version.release').decode().strip(),
@@ -263,13 +296,19 @@ def capture(serial, destination, pyry):
                     if secret and secret in output: raise RuntimeError('Configured credential found in capture')
                 if len(output) > 2_000_000: raise RuntimeError('Capture exceeds its bound')
                 private_write(destination, output + b'\n')
-                return {'executed': 1, 'failed': 0, 'skipped': 0, 'seconds': round(elapsed, 3), 'frames': len(document['wire']), 'source': document['source']}
+                if evidence is not None:
+                    log.flush()
+                    private_write(evidence / 'daemon-private.log', (private / 'daemon.log').read_bytes())
+                return {'executed': 1, 'failed': 0, 'skipped': 0, 'seconds': round(elapsed, 3), 'frames': len(document['wire']),
+                        'fixtureSha256': hashlib.sha256(output + b'\n').hexdigest(), 'source': document['source'], **packages}
             except Exception:
                 log.flush()
                 diagnostic = ROOT / 'build/recorded-daemon-failure.log'
                 diagnostic.parent.mkdir(parents=True, exist_ok=True)
                 diagnostic.write_bytes((private / 'daemon.log').read_bytes())
                 diagnostic.chmod(0o600)
+                if evidence is not None:
+                    private_write(evidence / 'daemon-failure-private.log', diagnostic.read_bytes())
                 raise
             finally:
                 if daemon.poll() is None:
@@ -279,14 +318,100 @@ def capture(serial, destination, pyry):
                         os.killpg(daemon.pid, signal.SIGKILL); daemon.wait()
 
 
+def verify(args):
+    args.output.mkdir(parents=True, mode=0o700)
+    candidate = args.output / 'candidate.json'
+    names = ['capture', 'committedReplay', 'freshReplay', 'comparison']
+    result = {name: {'status': 'unexecuted', **({'executed': 0, 'failed': 0, 'skipped': 0} if name != 'comparison' else {})} for name in names}
+    result.update(verified=False, failureStages=[])
+
+    def stage(name, operation):
+        evidence = args.output / name
+        evidence.mkdir(mode=0o700)
+        try:
+            result[name] = {'status': 'passed', **operation(evidence)}
+            if name == 'comparison' and not result[name]['matched']:
+                result[name]['status'] = 'failed'
+                result['failureStages'].append(name)
+        except Exception as error:
+            result[name] = {'status': 'failed', 'category': type(error).__name__}
+            if name != 'comparison': result[name].update(executed=0, failed=0, skipped=0)
+            counts = evidence / 'native-counts.json'
+            if counts.exists(): result[name].update(json.loads(counts.read_text()))
+            result['failureStages'].append(name)
+        private_write(args.output / (name + '.json'), (json.dumps(result[name], indent=2) + '\n').encode())
+        return result[name]['status'] == 'passed'
+
+    def compare(evidence):
+        committed, fresh = json.loads(args.fixture.read_text()), json.loads(candidate.read_text())
+        validate_recording(committed)
+        validate_recording(fresh)
+        contracts = {'committed': normalized_contract(committed), 'fresh': normalized_contract(fresh)}
+        matched = contracts['committed'] == contracts['fresh']
+        if not matched: private_write(evidence / 'comparison-private.json', json.dumps(contracts, indent=2).encode())
+        return {'matched': matched}
+
+    if stage('capture', lambda evidence: capture(args.serial, candidate, args.pyry, evidence=evidence,
+                                                daemon_source=getattr(args, 'daemon_source', None))):
+        stage('committedReplay', lambda evidence: replay(args.serial, args.fixture, evidence=evidence))
+        stage('freshReplay', lambda evidence: replay(args.serial, candidate, evidence=evidence))
+        stage('comparison', compare)
+    result['verified'] = not result['failureStages']
+    private_write(args.output / 'verification.json', (json.dumps(result, indent=2) + '\n').encode())
+    if not result['verified']: raise RuntimeError('Verification failed; private candidate and stage reports retained')
+    private_write(args.output / 'receipt.json', (json.dumps(result, indent=2) + '\n').encode())
+    return result
+
+
+def managed_verify(args, gate):
+    if args.fixture.resolve() != ASSET.resolve(): raise RuntimeError('Managed permission verification requires the reviewed asset')
+    gate.check_selection(ROOT, 'android', ['ui', '--tests', CLASS + '#capturedPermissionReachesTheClientAndCompletes'])
+    if run(['git', 'status', '--porcelain']).strip(): raise RuntimeError('Commit source before verification')
+    env = gate.live_claude_environment(dict(os.environ))
+    if not gate.claude_authenticated(env): raise RuntimeError('Configured Claude authentication required')
+    env['GRADLE_OPTS'] = (env.get('GRADLE_OPTS', '') + ' -Dorg.gradle.daemon=false').strip()
+    env['ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy'] = 'in-process'
+    env['PYRY_FORCE_TEST_RUN'] = '1'
+    args.output.mkdir(parents=True, mode=0o700)
+    with gate.device_hold('live', float(env.get('ANDROID_GATE_WAIT_SECONDS', gate.DEFAULT_DEVICE_WAIT_SECONDS))):
+        if gate.build_apks(env, 'live') != 0: raise RuntimeError('APK build failed; no capture started')
+        avd = gate.managed_avd('pixel2Api33Atd')
+        if avd is None: raise RuntimeError('Managed Android device required')
+        serial = process = None
+        previous = {sig: signal.signal(sig, gate.raise_interrupt) for sig in (signal.SIGINT, signal.SIGTERM)}
+        try:
+            with open(args.output / 'emulator.log', 'x', opener=lambda path, flags: os.open(path, flags, 0o600)) as log:
+                serial, process = gate.boot_emulator(env, *avd, cold=True, log=log)
+            if serial is None: raise RuntimeError('Cold emulator boot failed; no capture started')
+            if gate.install_once(env, serial) is None: raise RuntimeError('APK installation failed; no capture started')
+            command = [sys.executable, str(ROOT / 'scripts/recorded-exchanges.py'), 'verify', '--serial', serial,
+                       '--fixture', str(args.fixture), '--output', str(args.output / 'verification'), '--pyry', str(args.pyry)]
+            if getattr(args, 'daemon_source', None): command += ['--daemon-source', str(args.daemon_source)]
+            return gate.run_device_command(command, cwd=ROOT, env=env).returncode
+        finally:
+            try: gate.stop_emulator(env, serial, process)
+            finally:
+                for sig, handler in previous.items(): signal.signal(sig, handler)
+
+
 def main():
+    os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['capture', 'replay', 'verify'])
-    parser.add_argument('--serial', required=True, help='An explicitly owned test device')
+    parser.add_argument('mode', choices=['capture', 'replay', 'verify', 'managed-verify'])
+    parser.add_argument('--serial', help='An explicitly owned test device')
     parser.add_argument('--fixture', type=Path, default=ASSET)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--pyry', default=os.environ.get('PYRY_BIN', 'pyry'))
+    parser.add_argument('--daemon-source', type=Path)
     args = parser.parse_args()
+    if args.mode in {'verify', 'managed-verify'} and args.output is None: parser.error('Verification requires a fresh --output directory')
+    if args.mode == 'managed-verify':
+        if args.daemon_source is None: parser.error('Managed capture requires --daemon-source')
+        spec = importlib.util.spec_from_file_location('managed_android_gate', ROOT / 'scripts/android-test-gate.py')
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        raise SystemExit(managed_verify(args, gate))
+    if not args.serial: parser.error('An owned --serial is required')
     if adb(args.serial, 'shell', 'getprop', 'sys.boot_completed').strip() != b'1':
         raise RuntimeError('Owned Android device is not booted')
     adb(args.serial, 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP')
@@ -297,12 +422,7 @@ def main():
         if args.output is None: parser.error('Capture requires a new --output candidate')
         print(json.dumps(capture(args.serial, args.output, args.pyry)))
     else:
-        with tempfile.TemporaryDirectory(prefix='mobile-verify-') as directory:
-            candidate = Path(directory) / 'candidate.json'
-            live = capture(args.serial, candidate, args.pyry)
-            committed, fresh = json.loads(args.fixture.read_text()), json.loads(candidate.read_text())
-            if normalized_contract(committed) != normalized_contract(fresh): raise RuntimeError('Live request contract changed; review a new recording')
-            print(json.dumps({'live': live, 'committedReplay': replay(args.serial, args.fixture), 'freshReplay': replay(args.serial, candidate)}))
+        print(json.dumps(verify(args)))
 
 
 if __name__ == '__main__':

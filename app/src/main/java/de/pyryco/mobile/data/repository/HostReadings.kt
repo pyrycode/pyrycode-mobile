@@ -54,6 +54,11 @@ class HostReadings(
 
     private val open = MutableStateFlow(true)
 
+    // One account reading for this pairing, never keyed by a conversation or session.
+    internal val claudeUsage = MutableStateFlow<ClaudeUsageReading?>(null)
+
+    fun observeClaudeUsage(): Flow<ClaudeUsageReading?> = whileOpen { claudeUsage }
+
     fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> = whileOpen { announcedModel.observe(conversationId) }
 
     fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = whileOpen { sessionFacts.observe(conversationId) }

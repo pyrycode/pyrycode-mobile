@@ -79,6 +79,7 @@ internal class RecordedSuiteTape(
             "request_attachment",
             "request_model_list",
             "request_context_usage",
+            "request_claude_usage",
             "request_session_settings",
             "request_system_prompt",
             "mcp_status_request",
