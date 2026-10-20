@@ -143,8 +143,13 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
     onNode(hasContentDescription("More actions")).performClick()
     onAllNodesWithText("Reset session").onFirst().performClick()
     awaitDisplayedSessionBoundary(120_000)
+
     fun boundaries(reading: ThreadEvidence) =
-        projectAuthoritativeThread(host, conversation, requireNotNull(reading.sourceSnapshot)).items.filterIsInstance<ThreadItem.SessionBoundary>()
+        projectAuthoritativeThread(
+            host,
+            conversation,
+            requireNotNull(reading.sourceSnapshot),
+        ).items.filterIsInstance<ThreadItem.SessionBoundary>()
     val rotated = evidence { reading -> boundaries(reading).any { it.previousSessionId == session && it.newSessionId != session } }
     val nextSession = boundaries(rotated).single { it.previousSessionId == session }.newSessionId
     receipt("rotated_session_b", rotated)
@@ -157,7 +162,8 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                 while (true) {
                     val snapshot = oldCache.readAuthoritativeThread(host, conversation)?.toSnapshot()
                     val coverage = snapshot?.coverage
-                    if (snapshot != null && snapshot.checkpoint > 0 &&
+                    if (snapshot != null &&
+                        snapshot.checkpoint > 0 &&
                         coverage != null &&
                         baseline.all { row ->
                             val fact = requireNotNull(row.fact)
