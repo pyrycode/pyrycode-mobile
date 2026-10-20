@@ -100,8 +100,11 @@ private fun ComposeTestRule.questionAnswerLocation(
         val exposed =
             Rect(visible.left, maxOf(visible.top, checkedHeader + 4f), visible.right, minOf(visible.bottom, checkedComposer - 4f))
         val point = if (allowPartial && exposed.height > 0f) exposed.center else visible.center
-        if (visible.width > 0f && visible.height > 0f &&
-            visible.contains(point) && point.y > checkedHeader && point.y < checkedComposer
+        if (visible.width > 0f &&
+            visible.height > 0f &&
+            visible.contains(point) &&
+            point.y > checkedHeader &&
+            point.y < checkedComposer
         ) {
             evidence("event=question_answer_tap_target point=$point target=$visible clear=$checkedHeader..$checkedComposer")
             return target to (point - visible.topLeft)
