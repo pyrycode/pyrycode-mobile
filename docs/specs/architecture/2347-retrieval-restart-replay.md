@@ -80,8 +80,8 @@ Write controlled virtual-time regressions first, demonstrate that an unfenced re
 releases early, then implement the wait. Cover current vs future/peer owners, successive
 generations, missing and changed required queries, queued replies and full consumption.
 Run `SuiteConnectionsTest`, `RecordedSuiteTapeTest` and supervisor close coverage.
-Run the exact recorded native method after repair; run the affected recorded class because
-the restart helper is shared. Native coverage needs the real Activity/Koin teardown and
+Run the exact recorded native method after repair; check the other restart consumers
+individually (see Revisions). Native coverage needs the real Activity/Koin teardown and
 app-private cache, unavailable in the pure JVM test. macOS only; Linux is outside scope.
 Run lint, assembly, instrumented Kotlin compilation, formatting and final pre-verify.
 Configured complete UI acceptance remains owned by dispatcher and required before verifier PASS.
@@ -121,6 +121,16 @@ all with zero failures/errors/skips and exit 0.
 Raw failed and passing XML, baseline sources, original sweep logs and focused baseline
 phone diagnostics are retained privately at
 `$AGENTS_REPO_PATH/logs/evidence/2347/builder-20261021-restart/`.
+
+## Revisions
+
+- 2026-10-21: The managed launcher refused the `RecordedMobileSuiteTest` class selector
+  because this class is an aggregate suite reserved for the dispatcher (exit 1, zero
+  tests executed). Replace the builder's planned class run with exact native executions
+  of all three `restartApp` consumers: interrupted retrieval, peer-attachment history
+  reload and Claude-offered-file restart. Preserve complete configured UI acceptance
+  for the dispatcher before verifier PASS. The controlled ordering regression and strict
+  matching requirements are unchanged; no suite independence is claimed from these runs.
 
 ## Security review
 
