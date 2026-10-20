@@ -258,7 +258,8 @@ internal class SuiteReadReceipts(
                 threadReceipts.permits(owner, conversation, target, retainedPhoneHistory)
             } else {
                 target in delivered[owner to conversation].orEmpty() ||
-                    retainedPhoneHistory && target in phoneHistory[host(owner) to conversation].orEmpty()
+                    retainedPhoneHistory &&
+                        target in phoneHistory[host(owner) to conversation].orEmpty()
             }
         check(target > last && wasDelivered && (retainedPhoneHistory || group == null || target <= group.maxRequested)) {
             "Read receipt checkpoint rejected: target=$target previous=$last delivered=$wasDelivered " +
