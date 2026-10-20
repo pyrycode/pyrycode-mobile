@@ -23,6 +23,154 @@ import kotlin.concurrent.thread
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteConnectionsTest {
+    @Test fun phoneRestartWaitsForCurrentQueriesWithoutWaitingForFuturePhonesOrPeers() =
+        runTest {
+            val old = "phone/host/0"
+            val next = "phone/host/1"
+            val peer = "peer/host/0"
+            val query = frame(1, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":20}""")
+            val reply = frame(2, "thread_items", reply = 1)
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", peer),
+                        SuiteStep("open", peer),
+                        SuiteStep("connect", old),
+                        SuiteStep("open", old),
+                        SuiteStep("client", old, query),
+                        SuiteStep("daemon", old, reply, delayMs = 1000),
+                        SuiteStep("close", old),
+                        SuiteStep("inbound_end", old),
+                        SuiteStep("connect", next),
+                        SuiteStep("open", next),
+                        SuiteStep("client", next, query),
+                        SuiteStep("daemon", next, reply),
+                        SuiteStep("close", next),
+                        SuiteStep("inbound_end", next),
+                        SuiteStep("client", peer, frame(1, "list_conversations")),
+                        SuiteStep("close", peer),
+                        SuiteStep("inbound_end", peer),
+                    ),
+                    literalProducerIdentities = true,
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, tape)
+            try {
+                val peerTransport = hub.transport(peer) { error("Live transport started") }
+                val peerPump = hub.pump(peerTransport) { error("Live pump started") }
+                peerPump.start()
+                peerTransport.connect()
+                val first = hub.transport(old) { error("Live transport started") }
+                val firstPump = hub.pump(first) { error("Live pump started") }
+                firstPump.start()
+                first.connect()
+                runCurrent()
+                val restarting =
+                    async {
+                        hub.beforePhoneRestart()
+                        first.close()
+                    }
+                runCurrent()
+                assertFalse("restart released before its required catch-up; ${tape.progress()}", restarting.isCompleted)
+                val received = async { firstPump.inbound.first() }
+                assertTrue(firstPump.send(query.copy(id = 90)))
+                runCurrent()
+                assertFalse("restart released before queued reply delivery", restarting.isCompleted)
+                advanceTimeBy(200)
+                runCurrent()
+                restarting.await()
+                assertEquals(90L, received.await().inReplyTo)
+                runCurrent()
+
+                // A second restart must select the replacement, without reusing the retired owner.
+                val replacement = hub.transport(next) { error("Live transport started") }
+                val pump = hub.pump(replacement) { error("Live pump started") }
+                pump.start()
+                replacement.connect()
+                runCurrent()
+                val secondRestart = async { hub.beforePhoneRestart() }
+                runCurrent()
+                assertFalse(secondRestart.isCompleted)
+                assertTrue(pump.send(query.copy(id = 91)))
+                advanceTimeBy(20)
+                runCurrent()
+                secondRestart.await()
+                replacement.close()
+                assertTrue(peerPump.send(frame(90, "list_conversations")))
+                peerTransport.close()
+                runCurrent()
+                hub.assertComplete()
+            } finally {
+                hub.close()
+            }
+        }
+
+    @Test fun phoneRestartCannotOmitARequiredQuery() =
+        runTest {
+            val owner = "phone/host/0"
+            val query = frame(1, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":20}""")
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", owner),
+                        SuiteStep("open", owner),
+                        SuiteStep("client", owner, query),
+                        SuiteStep("close", owner),
+                    ),
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, tape)
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                runCurrent()
+                val restarting = async { runCatching { hub.beforePhoneRestart() } }
+                advanceTimeBy(30001)
+                runCurrent()
+                assertTrue(restarting.await().exceptionOrNull() is kotlinx.coroutines.TimeoutCancellationException)
+                assertThrows(IllegalStateException::class.java) { hub.assertComplete() }
+            } finally {
+                hub.close()
+            }
+        }
+
+    @Test fun phoneRestartStillRejectsAChangedQuery() =
+        runTest {
+            val owner = "phone/host/0"
+            val query = frame(1, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":20}""")
+            val hub =
+                SuiteConnections.replaying(
+                    backgroundScope,
+                    RecordedSuiteTape(
+                        listOf(
+                            SuiteStep("connect", owner),
+                            SuiteStep("open", owner),
+                            SuiteStep("client", owner, query),
+                            SuiteStep("close", owner),
+                        ),
+                        literalProducerIdentities = true,
+                    ),
+                )
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                runCurrent()
+                val restarting = async { runCatching { hub.beforePhoneRestart() } }
+                runCurrent()
+                assertThrows(IllegalStateException::class.java) {
+                    pump.send(frame(90, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":21}"""))
+                }
+                advanceTimeBy(20)
+                runCurrent()
+                assertTrue(restarting.await().exceptionOrNull() is IllegalStateException)
+                assertThrows(IllegalStateException::class.java) { hub.assertComplete() }
+            } finally {
+                hub.close()
+            }
+        }
+
     @Test fun anUpcomingDisconnectCannotHideAnUnexpectedRequestOnAnOpenConnection() =
         runTest {
             val owner = "phone/host/0"

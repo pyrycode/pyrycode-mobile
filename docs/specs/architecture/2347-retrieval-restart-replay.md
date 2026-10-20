@@ -7,6 +7,7 @@
 - `docs/knowledge/features/relay-reconnect-supervisor.md`: graph disposal closes the current supervisor.
 - `app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt`: `restartApp` destroys the activity before rebuilding; the retrieval scenario retains its original assertions.
 - `app/src/androidTest/java/de/pyryco/mobile/recording/RecordedSuiteNative.kt`: `beforeHostLinkClose` fences an explicit cut, while `beforePhoneTeardown` fences final activity teardown.
+- `app/src/androidTest/java/de/pyryco/mobile/e2e/E2eTestApplication.kt`: `rebuildGraph` removes the old lifecycle observer and disposes the registry; the Application keeps its single preference DataStore.
 - `app/src/sharedTest/java/de/pyryco/mobile/recording/SuiteConnections.kt`: `beforeClose` checks required work and queued delivery while jobs remain alive.
 - `app/src/sharedTest/java/de/pyryco/mobile/recording/RecordedSuiteTape.kt`: `prepareClose`, `closeReady` and `phoneClosesBeforeTeardown` preserve connection ownership and strict work.
 - `app/src/test/java/de/pyryco/mobile/recording/SuiteConnectionsTest.kt`: current close regressions and virtual-time helpers.
@@ -91,6 +92,35 @@ bundles and request the narrowest necessary wider investigation through the shar
 
 None: original first-failure evidence identifies the missing restart fence. Full configured
 gate independence remains acceptance evidence, not a reason to weaken strict matching.
+
+## Investigation evidence
+
+The retained tape distinguishes producer completion from phone catch-up: peer `turn_end`
+precedes the phone's version-0 query, its two replies establishing version 20, then the
+required version-20 query and final reply before generation 0 closes. Seeing the peer
+finish therefore cannot prove the phone's required pre-restart work has completed.
+The original progress names that second query as unconsumed. `prepareTails` cannot
+omit it using the earlier version-0 request; its same-checkpoint proof is absent.
+
+The original shard's five preceding recorded cases were thinking-spinner, permission
+answer routing, attention dot, background task and scanner confirmation. Recorded graph
+cleanup restores pairings/preferences and rebuilds the ordinary graph between cases;
+the missing fence is inside this scenario's explicit restart, bypassing final teardown.
+Original sweep used two managed shards; the focused reproduction used one. No claim
+that host load caused the race, or that a focused pass proves suite independence.
+
+Controlled unfenced baseline: the new restart entry point initially returned immediately,
+matching the old absence of a pre-restart wait. `SuiteConnectionsTest` executed 26,
+passed 23, failed all three new restart regressions, skipped 0, exit 1. Its first
+failure is early release before required catch-up, not a compiler or environment error.
+The strengthened baseline actually closes the old transport after the unfenced wait;
+it reproduces `phone/host/0:close, expected phone/host/0:thread_catch_up` with the
+version-20 query unconsumed (26 executed, 23 passed, 3 failed, 0 skipped, exit 1).
+The implemented fence passes 26/26; strict tape 44/44 and supervisor 38/38 also pass,
+all with zero failures/errors/skips and exit 0.
+Raw failed and passing XML, baseline sources, original sweep logs and focused baseline
+phone diagnostics are retained privately at
+`$AGENTS_REPO_PATH/logs/evidence/2347/builder-20261021-restart/`.
 
 ## Security review
 

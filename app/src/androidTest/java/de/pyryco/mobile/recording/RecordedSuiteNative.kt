@@ -311,6 +311,12 @@ internal object RecordedSuiteNative {
         runBlocking { session.hub.checkpoint(name) }
     }
 
+    /** A graph rebuild must drain its current phones before destroying their request producers. */
+    fun beforePhoneRestart() {
+        val session = current?.takeIf { it.document != null } ?: return
+        runBlocking { session.hub.beforePhoneRestart() }
+    }
+
     /** Keep the real screen active while a replay catches up with its captured pre-close requests. */
     fun beforePhoneTeardown() {
         val session = current ?: return

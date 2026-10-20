@@ -7593,6 +7593,7 @@ class InteractiveStreamE2ETest {
      */
     private fun restartApp(beforeLaunch: () -> Unit = {}): ActivityScenario<MainActivity> {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
+        RecordedSuiteNative.beforePhoneRestart()
         composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
         instrumentation.runOnMainSync {
             (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
