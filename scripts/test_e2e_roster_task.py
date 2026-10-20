@@ -32,6 +32,7 @@ class RosterTaskFixtureTest(unittest.TestCase):
         events = [json.loads(line) for line in prefix.splitlines()]
         tool = events[0]["message"]["content"][0]
         self.assertEqual(tool["name"], "Bash")
+        self.assertEqual(tool["input"]["description"], "cat $FIFO")
         self.assertEqual(events[1]["tool_use_id"], tool["id"])
         self.assertEqual(events[1]["task_id"], "bybi8g8i8")
         self.assertEqual(events[2]["message"]["content"][0]["tool_use_id"], tool["id"])

@@ -1162,6 +1162,7 @@ class DeterministicInteractiveStreamE2ETest {
                         ).tasks
                 }
             }
+        assertEquals("canonical fixture keeps its task label", "cat ${'$'}FIFO", currentTasks()?.tasks?.single()?.description)
         composeTestRule.onNodeWithContentDescription("More actions").performClick()
         composeTestRule.onNode(hasText(context.getString(R.string.background_tasks_title)) and hasClickAction()).performClick()
         val row = hasText("cat ${'$'}FIFO") and hasClickAction()
@@ -1266,9 +1267,13 @@ class DeterministicInteractiveStreamE2ETest {
                 SemanticsMatcher("closed owned Agent run") {
                     it.config.getOrNull(SemanticsActions.OnClick)?.label == expandLabel
                 }
-        list.performScrollToNode(hasText("unmatched1827"))
-        composeTestRule.onNodeWithText("unmatched1827").assertIsDisplayed()
-        composeTestRule.onAllNodes(hasText("unmatched1827") and hasAnyAncestor(child), useUnmergedTree = true).assertCountEquals(0)
+        if (launched.owner.kind == ThreadEvidenceKind.Authoritative) {
+            composeTestRule.onAllNodesWithText("unmatched1827", useUnmergedTree = true).assertCountEquals(0)
+        } else {
+            list.performScrollToNode(hasText("unmatched1827"))
+            composeTestRule.onNodeWithText("unmatched1827").assertIsDisplayed()
+            composeTestRule.onAllNodes(hasText("unmatched1827") and hasAnyAncestor(child), useUnmergedTree = true).assertCountEquals(0)
+        }
         list.performScrollToNode(run)
         composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
         composeTestRule.onNode(closedRun).performClick()
