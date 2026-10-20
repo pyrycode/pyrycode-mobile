@@ -2,6 +2,12 @@ package de.pyryco.mobile.recording
 
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ThreadDecodeOutcome
+import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.network.ThreadQueryDecoder
+import de.pyryco.mobile.data.network.ThreadQueryReply
+import de.pyryco.mobile.data.network.ThreadQueryRequest
+import de.pyryco.mobile.data.network.threadUnsigned
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -37,6 +43,14 @@ internal class RecordedSuiteTape(
     cancelledClearedSettingsReads: Boolean = false,
 ) {
     private var optionalModelReplies = emptyMap<Int, Int>()
+    private val optionalTailReplies = mutableMapOf<Int, List<Int>>()
+    private val deliveredThreadReplies = mutableMapOf<Int, Envelope>()
+
+    private class DeliveredQueryReply(
+        val terminal: ThreadQueryReply.Success,
+        val items: List<ThreadItemDto>,
+    )
+
     private val redundantModels = mutableSetOf<Pair<String, String>>()
     private val consumed = mutableSetOf<Int>()
     private val requests = mutableMapOf<Pair<String, Long>, Long>()
@@ -272,7 +286,7 @@ internal class RecordedSuiteTape(
     private fun precedingRequestsComplete(
         index: Int,
         owner: String,
-    ) = requiredRequests[owner].orEmpty().all { it >= index || it in consumed }
+    ) = requiredRequests[owner].orEmpty().all { it >= index || it in consumed || it in optionalTailReplies }
 
     private fun commandBoundary(): Int =
         steps.indices.firstOrNull {
@@ -354,6 +368,164 @@ internal class RecordedSuiteTape(
             }
         }
     }
+
+    private fun catchUp(index: Int): ThreadQueryRequest.CatchUp? {
+        return try {
+            val step = steps[index]
+            val frame = step.message ?: return null
+            val payload = mapped(frame.payload) as? JsonObject ?: return null
+            if (step.direction != "client" ||
+                !step.accepted ||
+                frame.type != "thread_catch_up" ||
+                payload.keys != setOf("conversation_id", "epoch", "version")
+            ) {
+                return null
+            }
+            val conversation = (payload["conversation_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+            val epoch = (payload["epoch"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+            if (conversation.isEmpty()) return null
+            ThreadQueryRequest.CatchUp(conversation, epoch, payload.threadUnsigned("version"))
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+    }
+
+    private fun replyIndices(query: Int): List<Int> =
+        steps.indices.filter {
+            it > query &&
+                steps[it].direction == "daemon" &&
+                steps[it].owner == steps[query].owner &&
+                steps[it].message?.inReplyTo == steps[query].message!!.id
+        }
+
+    /** Reuse the wire decoder over actual delivered replies, without a second store or certificate authority. */
+    private fun decodedQuery(
+        query: Int,
+        frames: List<Envelope>,
+    ): DeliveredQueryReply? {
+        if (frames.isEmpty() ||
+            frames.any { it.type != "thread_items" } ||
+            (frames.last().payload as? JsonObject)?.get("final") != JsonPrimitive(true)
+        ) {
+            return null
+        }
+        val request = catchUp(query) ?: return null
+        val step = steps[query]
+        val envelope = checkNotNull(step.message)
+        val decoder = ThreadQueryDecoder(step.owner, step.owner, envelope.id, request, nowMillis = { 0 })
+        val items = mutableListOf<ThreadItemDto>()
+        var terminal: ThreadQueryReply.Success? = null
+        for ((index, frame) in frames.withIndex()) {
+            for (outcome in decoder.decode(frame.copy(inReplyTo = envelope.id))) {
+                when (outcome) {
+                    is ThreadDecodeOutcome.Pending ->
+                        if ((frame.payload as? JsonObject)?.get("continuation") !is JsonObject) return null
+                    is ThreadDecodeOutcome.Repair -> return null
+                    is ThreadDecodeOutcome.Complete ->
+                        when (val reply = outcome.value) {
+                            is ThreadQueryReply.Batch -> items += reply.items
+                            is ThreadQueryReply.Success -> {
+                                if (index != frames.lastIndex) return null
+                                terminal = reply
+                            }
+                            else -> return null
+                        }
+                }
+            }
+        }
+        if (items.map { it.id }.distinct().size != items.size) return null
+        return terminal?.let { DeliveredQueryReply(it, items) }
+    }
+
+    private fun mappedFrame(frame: Envelope): Envelope =
+        MobileJson.decodeFromJsonElement(Envelope.serializer(), mapped(MobileJson.encodeToJsonElement(Envelope.serializer(), frame)))
+
+    /** This chooses omission only after the real later terminal boundary is attempted. */
+    private fun prepareTails(
+        boundary: Int,
+        owner: String? = null,
+    ) {
+        for (query in 0 until boundary) {
+            val step = steps[query]
+            if (query in consumed ||
+                query in optionalTailReplies ||
+                !step.owner.startsWith("phone/") ||
+                owner != null &&
+                step.owner != owner ||
+                lifecycleBefore[query]?.let { it !in consumed } == true
+            ) {
+                continue
+            }
+            val request = catchUp(query) ?: continue
+            if (request.version == 0uL || request.epoch.isEmpty()) continue
+            val replies = replyIndices(query)
+            if (replies.isEmpty() || replies.any { it >= boundary }) continue
+            val candidate = decodedQuery(query, replies.map { mappedFrame(checkNotNull(steps[it].message)) }) ?: continue
+            if (candidate.terminal.checkpoint.epoch != request.epoch) continue
+            if (candidate.terminal.checkpoint.version != request.version) continue
+            val prior =
+                (0 until query).lastOrNull { previous ->
+                    if (previous !in consumed ||
+                        steps[previous].owner != step.owner ||
+                        lifecycleBefore[previous] != lifecycleBefore[query]
+                    ) {
+                        return@lastOrNull false
+                    }
+                    val previousRequest = catchUp(previous) ?: return@lastOrNull false
+                    if (previousRequest.conversationId != request.conversationId) return@lastOrNull false
+                    val actualReplies = replyIndices(previous)
+                    if (actualReplies.isEmpty()) return@lastOrNull false
+                    if (actualReplies.any { it >= query || it !in deliveredThreadReplies }) return@lastOrNull false
+                    val priorFrames = actualReplies.map { checkNotNull(deliveredThreadReplies[it]) }
+                    val delivered = decodedQuery(previous, priorFrames) ?: return@lastOrNull false
+                    if (delivered.terminal.checkpoint.epoch != request.epoch) return@lastOrNull false
+                    if (delivered.terminal.checkpoint.version != request.version) return@lastOrNull false
+                    if (candidate.items.any { item -> delivered.items.none { it.raw == item.raw } }) return@lastOrNull false
+                    // No intervening source change, command, external input, reset, or canonical mutation may be borrowed.
+                    (actualReplies.last() + 1..replies.last()).all { index ->
+                        index == query ||
+                            index in replies ||
+                            steps[index].let { between ->
+                                between.direction == "daemon" &&
+                                    (between.owner != step.owner || between.message?.type?.startsWith("thread_") != true)
+                            }
+                    }
+                } ?: continue
+            check(prior < query)
+            optionalTailReplies[query] = replies
+        }
+    }
+
+    @Synchronized fun prepareClose(owner: String): List<SuiteStep> {
+        failure?.let { fail(it) }
+        val close =
+            steps.indices.firstOrNull { it !in consumed && steps[it].owner == owner && steps[it].direction == "close" }
+                ?: fail("No recorded close for connection $owner")
+        prepareTails(close, owner)
+        return drain()
+    }
+
+    private fun testEndBoundary(actual: Envelope): Int {
+        val boundary = commandBoundary()
+        failure?.let { fail(it) }
+        val expected = steps.getOrNull(boundary) ?: fail("Recorded test-end boundary missing")
+        val message = expected.message ?: fail("Recorded test-end boundary missing")
+        if (actual.type != "test-control:test-end" ||
+            expected.owner != "control" ||
+            message.type != actual.type ||
+            mapped(message.payload) != actual.payload
+        ) {
+            fail("Recorded test-end boundary mismatch")
+        }
+        return boundary
+    }
+
+    @Synchronized fun prepareTestEnd(actual: Envelope): List<SuiteStep> {
+        prepareTails(testEndBoundary(actual))
+        return drain()
+    }
+
+    @Synchronized fun testEndReady(actual: Envelope): Boolean = precedingWorkReleased(testEndBoundary(actual), allowDeferredReads = true)
 
     /** A foreground fence must not wait for later cleanup controls or registry disposal. */
     @Synchronized fun phoneClosesBeforeTeardown(): List<String> {
@@ -484,6 +656,7 @@ internal class RecordedSuiteTape(
         actualIds.getOrPut(owner) { mutableSetOf() } += actual.id
         requests[owner to expected.id] = actual.id
         optionalModelReplies[candidate]?.let { released.remove(it) }
+        optionalTailReplies[candidate]?.forEach { released.remove(it) }
         consumed += candidate
         matched++
         readReceipts?.requested(owner, actual)
@@ -614,19 +787,81 @@ internal class RecordedSuiteTape(
     }
 
     /** Metadata remains fenced itself; only a separately requested thread reply may cross it. */
-    private fun matchedIndependentMetadata(step: SuiteStep): Boolean {
+    private fun matchedIndependentMetadata(index: Int): Boolean {
+        val step = steps[index]
         val response = step.message ?: return false
+        val reply = response.inReplyTo
+        if (reply == null) {
+            // A clear is request-independent on the wire. Borrow only its immediately paired,
+            // actually requested response, with the same explicit conversation and source.
+            if (response.type !in setOf("context_usage", "model_list") ||
+                response.sessionStateCleared != JsonPrimitive(true) ||
+                response.payload != JsonObject(emptyMap())
+            ) {
+                return false
+            }
+            val following = steps.getOrNull(index + 1) ?: return false
+            val paired = following.message ?: return false
+            val conversation = (response.conversationId as? JsonPrimitive)?.takeIf { it.isString }?.content
+            if (conversation.isNullOrEmpty() ||
+                following.direction != "daemon" ||
+                following.owner != step.owner ||
+                paired.type != response.type ||
+                paired.sessionStateCleared == JsonPrimitive(true) ||
+                paired.conversationId != response.conversationId
+            ) {
+                return false
+            }
+            return matchedRequestedMetadata(index + 1, paired, conversation)
+        }
+        return matchedRequestedMetadata(index, response)
+    }
+
+    private fun matchedRequestedMetadata(
+        index: Int,
+        response: Envelope,
+        requiredConversation: String? = null,
+    ): Boolean {
+        val step = steps[index]
         val reply = response.inReplyTo ?: return false
         if (step.owner to reply !in requests) return false
         val request =
             steps
+                .take(index)
                 .firstOrNull {
                     it.owner == step.owner && it.direction == "client" && it.accepted && it.message?.id == reply
                 }?.message ?: return false
+        val expectedType =
+            when (request.type) {
+                "request_context_usage" -> "context_usage"
+                "request_model_list" -> "model_list"
+                else -> null
+            }
+        if (response.type == expectedType) {
+            val conversation =
+                ((request.payload as? JsonObject)?.get("conversation_id") as? JsonPrimitive)
+                    ?.takeIf { it.isString }
+                    ?.content
+            val supplied =
+                ((response.payload as? JsonObject)?.get("conversation_id") as? JsonPrimitive)
+                    ?.takeIf { it.isString }
+                    ?.content
+            val envelope = (response.conversationId as? JsonPrimitive)?.takeIf { it.isString }?.content
+            if (conversation.isNullOrEmpty() ||
+                supplied != conversation ||
+                envelope != null &&
+                envelope != conversation ||
+                requiredConversation != null &&
+                requiredConversation != conversation
+            ) {
+                return false
+            }
+            return true
+        }
+        if (requiredConversation != null) return false
         return when (request.type) {
             "register_push_token" -> response.type == "ack"
             "mcp_status_request", "request_context_usage" -> response.type == "error"
-            "request_model_list" -> response.type == "model_list"
             "list_conversations" -> response.type == "conversations"
             else -> false
         }
@@ -670,7 +905,7 @@ internal class RecordedSuiteTape(
                         } == true
                 "daemon" -> {
                     // Summary metadata does not establish a canonical thread base. Its own delivery stays fenced.
-                    if (message?.type == "conversations" || matchedIndependentMetadata(earlier)) return@all true
+                    if (message?.type == "conversations" || matchedIndependentMetadata(before)) return@all true
                     val correlated = message?.inReplyTo?.let { requestConversation(earlier.owner, it) }
                     val supplied =
                         ((message?.payload as? JsonObject)?.get("conversation_id") as? JsonPrimitive)
@@ -692,7 +927,7 @@ internal class RecordedSuiteTape(
             if (index in released) continue
             val step = steps[index]
             if (step.direction in setOf("client", "connect", "close")) {
-                if (index in consumed || index in optionalModelReplies) {
+                if (index in consumed || index in optionalModelReplies || index in optionalTailReplies) {
                     released += index
                 } else if (step.direction == "client" && step.owner to step.message!!.id in threadQueryRequests) {
                     // Preserve the captured query start before any later live frame, even one preceding its reply.
@@ -701,6 +936,16 @@ internal class RecordedSuiteTape(
                 continue
             }
             if (lifecycleBefore[index]?.let { it !in consumed } == true) continue
+            if (optionalTailReplies.any { (query, replies) -> query !in consumed && index in replies }) {
+                released += index
+                continue
+            }
+            // This response is already optional because an identical automatic catalog was captured.
+            // Honor that omission before it can fence another conversation's actual thread request.
+            if (index in optionalModelReplies.values && optionalModelReplies.entries.single { it.value == index }.key !in consumed) {
+                released += index
+                continue
+            }
             if (step.owner in blockedReplies && !independentThreadReply(index)) continue
             // Android inputs affect the whole graph. They cannot cross a captured restart or unfinished request.
             if (step.direction == "external" && !precedingWorkReleased(index, allowDeferredReads = true)) continue
@@ -713,10 +958,6 @@ internal class RecordedSuiteTape(
                 continue
             }
             val frame = step.message
-            if (index in optionalModelReplies.values && optionalModelReplies.entries.single { it.value == index }.key !in consumed) {
-                released += index
-                continue
-            }
             if (step.direction == "daemon" && frame!!.inReplyTo?.let { step.owner to it !in requests } == true) {
                 // An authoritative query must establish its captured base before later live updates.
                 // Ordinary background reads and other connections can still progress independently.
@@ -746,6 +987,19 @@ internal class RecordedSuiteTape(
         owner: String,
         frame: Envelope,
     ) {
+        val delivered =
+            steps.indices.singleOrNull { index ->
+                val step = steps[index]
+                val recorded = step.message ?: return@singleOrNull false
+                step.direction == "daemon" &&
+                    step.owner == owner &&
+                    recorded.id == frame.id &&
+                    recorded.type == frame.type &&
+                    recorded.inReplyTo?.let { expected ->
+                        owner to expected in threadQueryRequests && requests[owner to expected] == frame.inReplyTo
+                    } == true
+            }
+        if (delivered != null) deliveredThreadReplies[delivered] = frame
         readReceipts?.delivered(owner, frame)
         polledReads?.observeCleared(owner, frame)
     }

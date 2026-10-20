@@ -1372,12 +1372,14 @@ class InteractiveStreamE2ETest {
                 //    explanation line under it (#1578).
                 composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
 
-                val boundary =
-                    repository
-                        .observeMessages(conversationId)
-                        .first()
-                        .filterIsInstance<ThreadItem.SessionBoundary>()
-                        .single()
+                val held = currentThread(serverId, conversationId) { true }
+                val boundaryItems =
+                    if (held.owner.kind == ThreadEvidenceKind.Authoritative) {
+                        projectAuthoritativeThread(serverId, conversationId, checkNotNull(held.sourceSnapshot)).items
+                    } else {
+                        repository.observeMessages(conversationId).first()
+                    }
+                val boundary = boundaryItems.filterIsInstance<ThreadItem.SessionBoundary>().single()
                 assertTrue("reset must replace the conversation's session", boundary.newSessionId != boundary.previousSessionId)
                 invalidation.await()
                 val usage = withTimeout(REPLY_TIMEOUT_MS) { resetContext.reply.await() }
@@ -3412,8 +3414,10 @@ class InteractiveStreamE2ETest {
                         peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
                         peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.isEmpty() }
                     }
-                    val waitReplyObservation = awaitWaitReply()
-                    val queuedReplyObservation = awaitQueuedReply()
+                    val firstReplyObservation = awaitWaitReply()
+                    val secondReplyObservation = awaitQueuedReply()
+                    val waitReplyObservation = awaitRetainedReply(firstReplyObservation)
+                    val queuedReplyObservation = awaitRetainedReply(secondReplyObservation)
                     composeTestRule.waitForIdle()
                     composeTestRule.onAllNodes(inThreadList(PING_PROMPT), useUnmergedTree = true).assertCountEquals(1)
                     composeTestRule.onAllNodes(queuedRow(PING_PROMPT)).assertCountEquals(0)
@@ -5814,7 +5818,13 @@ class InteractiveStreamE2ETest {
                     .filter { it.type == "turn_end" }
                     .map { peer.field(it, "turn_id") }
                     .toSet()
-            sendFromPhone(newer)
+            val newerSend = OwnedReplyObservation(serverId, currentThread(serverId, chat) { true })
+            OwnedReplyProbe.observing(newerSend) {
+                sendFromPhone(newer)
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    newerSend.acceptedSendCurrent(hostRepository(serverId))
+                }
+            }
             val newerEnd =
                 allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "newer phone turn did not finish", allowed) {
                     it.type == "turn_end" && peer.field(it, "turn_id") !in priorTurns
@@ -6833,6 +6843,7 @@ class InteractiveStreamE2ETest {
             allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the peer's attachment turn in X did not end") { it.type == "turn_end" }
 
             // 2. Restart with X's thread cache cleared, so the row can only come from history replay.
+            RecordedSuiteNative.beforeHostLinkClose(serverId)
             relaunched =
                 restartApp {
                     val cache = GlobalContext.get().get<ConversationCache>()

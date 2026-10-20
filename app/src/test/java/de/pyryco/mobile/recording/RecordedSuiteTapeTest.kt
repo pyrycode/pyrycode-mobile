@@ -4,19 +4,302 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 class RecordedSuiteTapeTest {
+    private var savedLogSink = RelayLog.sink
+
+    @Before
+    fun muteDecoderLogs() {
+        savedLogSink = RelayLog.sink
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After
+    fun restoreDecoderLogs() {
+        RelayLog.sink = savedLogSink
+    }
+
+    private data class TailCase(
+        val tape: RecordedSuiteTape,
+        val owner: String,
+        val priorOwner: String,
+        val prior: Envelope,
+        val tail: Envelope,
+        val end: Envelope,
+        val boundary: String,
+    )
+
+    private fun tailCase(
+        condition: String,
+        boundary: String,
+        duplicate: Boolean = false,
+    ): TailCase {
+        val owner = "phone/host/0"
+        val priorOwner = if (condition == "foreign-owner") "phone/host/1" else owner
+        val priorConversation = if (condition == "foreign-conversation") "other" else "chat"
+        val priorEpoch = if (condition == "foreign-epoch") "other" else "epoch"
+
+        fun fact(
+            id: Int = 1,
+            text: String = "controlled reply",
+        ) = """{"id":$id,
+"order":$id,
+"rev":17,
+"kind":"assistant_message",
+"session":"session",
+"turn":"turn",
+"status":"done",
+"active":false,
+"shown":true,
+"summary":"reply",
+"content":{"text":"$text"}}"""
+
+        fun batch(
+            conversation: String,
+            epoch: String,
+            item: String,
+        ) = """{"conversation_id":"$conversation","epoch":"$epoch","version":17,"items":[$item],"final":false}"""
+        val window =
+            """
+{"conversation_id":"$priorConversation",
+"epoch":"$priorEpoch",
+"version":17,
+"items":[],
+"final":true,
+"lower_order":1,
+"upper_order":1,
+"continuation":1,
+"older_exists":false}
+"""
+        val prior = frame(1, "thread_catch_up", """{"conversation_id":"$priorConversation","epoch":"$priorEpoch","version":0}""")
+        val tail =
+            when (condition) {
+                "page" -> frame(4, "thread_page", """{"conversation_id":"chat","before_order":1}""")
+                "extra-argument" -> frame(4, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":17,"limit":50}""")
+                else -> frame(4, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":17}""")
+            }
+        val end = frame(1, "test-control:test-end", """{"body":""}""")
+        val rows =
+            mutableListOf(
+                client(priorOwner, prior).copy(accepted = condition != "refused-prior"),
+                daemon(priorOwner, frame(2, "thread_items", batch(priorConversation, priorEpoch, fact()), reply = 1)),
+            )
+        if (condition != "partial-prior") rows += daemon(priorOwner, frame(3, "thread_items", window, reply = 1))
+        when (condition) {
+            "intervening-live", "intervening-unknown" ->
+                rows +=
+                    daemon(
+                        owner,
+                        frame(
+                            10,
+                            if (condition == "intervening-live") "thread_item_added" else "thread_unknown",
+                            """{"conversation_id":"chat","epoch":"epoch","version":18,"item":${fact(2)}}""",
+                        ),
+                    )
+            "intervening-external" ->
+                rows +=
+                    SuiteStep(
+                        "external",
+                        "android",
+                        detail = JsonObject(mapOf("event" to JsonPrimitive("push-wake"))),
+                    )
+            "intervening-command" -> rows += client("peer/host/0", frame(1, "modal_answer"))
+            "intervening-lifecycle" -> rows += SuiteStep("close", "peer/host/0")
+        }
+        rows += client(owner, tail).copy(accepted = condition != "refused-tail")
+        val replyConversation = if (condition == "wrong-reply-conversation") "other" else "chat"
+        val version = if (condition == "higher-checkpoint") 18 else 17
+        val terminal =
+            if (condition == "page") {
+                """{"conversation_id":"chat",
+"epoch":"epoch",
+"version":17,
+"items":[],
+"final":true,
+"lower_order":1,
+"upper_order":1,
+"continuation":1,
+"older_exists":false}"""
+            } else {
+                """{"conversation_id":"$replyConversation","epoch":"epoch","version":$version,"items":[],"final":true,"from_version":17}"""
+            }
+        when (condition) {
+            "reset" ->
+                rows +=
+                    daemon(
+                        owner,
+                        frame(
+                            6,
+                            "thread_reset",
+                            """{"conversation_id":"chat","epoch":"new-epoch","version":17}""",
+                            reply = 4,
+                        ),
+                    )
+            "error" ->
+                rows +=
+                    daemon(
+                        owner,
+                        frame(
+                            6,
+                            "error",
+                            """{"conversation_id":"chat","code":"controlled","message":"controlled","retryable":false}""",
+                            reply = 4,
+                        ),
+                    )
+            "malformed" -> rows += daemon(owner, frame(6, "thread_items", "{}", reply = 4))
+            "partial-tail" -> rows += daemon(owner, frame(6, "thread_items", batch("chat", "epoch", fact()), reply = 4))
+            else -> {
+                if (duplicate || condition in setOf("new-fact", "changed-fact")) {
+                    val item =
+                        when (condition) {
+                            "new-fact" -> fact(2)
+                            "changed-fact" -> fact(text = "changed reply")
+                            else -> fact()
+                        }
+                    rows += daemon(owner, frame(5, "thread_items", batch("chat", "epoch", item), reply = 4))
+                }
+                if (condition == "unexpected-related") rows += daemon(owner, frame(11, "context_usage", "{}", reply = 4))
+                rows += daemon(owner, frame(6, "thread_items", terminal, reply = 4))
+                if (condition == "after-terminal") rows += daemon(owner, frame(7, "thread_items", terminal, reply = 4))
+            }
+        }
+        if (boundary == "test-end") rows += client("control", end)
+        rows += SuiteStep("close", owner)
+        rows += SuiteStep("inbound_end", owner)
+        return TailCase(RecordedSuiteTape(rows, literalProducerIdentities = true), owner, priorOwner, prior, tail, end, boundary)
+    }
+
+    private fun startTail(
+        case: TailCase,
+        condition: String = "valid",
+    ) {
+        case.tape.initial()
+        if (condition == "unrequested-prior") return
+        val delivered = case.tape.request(case.priorOwner, case.prior.copy(id = 90))
+        if (condition == "undelivered-prior") return
+        delivered.forEach { step ->
+            val message = step.message
+            if (message != null && !(condition == "undelivered-final" && message.payload.jsonObject["final"] == JsonPrimitive(true))) {
+                case.tape.delivered(step.owner, message)
+            }
+        }
+    }
+
+    private fun prepareTail(case: TailCase) =
+        if (case.boundary == "test-end") case.tape.prepareTestEnd(case.end) else case.tape.prepareClose(case.owner)
+
+    private fun tailReady(case: TailCase) =
+        if (case.boundary == "test-end") case.tape.testEndReady(case.end) else case.tape.closeReady(case.owner)
+
+    private fun finishTail(case: TailCase) {
+        if (case.boundary == "test-end") case.tape.request("control", case.end.copy(id = 90))
+        case.tape.lifecycle("close", case.owner)
+        case.tape.assertComplete()
+    }
+
+    @Test fun duplicateDeliveredTailBecomesOptionalOnlyAtActualClosePreparation() {
+        for (duplicate in listOf(false, true)) {
+            val case = tailCase("valid", "close", duplicate)
+            startTail(case)
+            assertFalse(case.tape.closeReady(case.owner))
+            assertTrue(prepareTail(case).isEmpty())
+            assertTrue("actual delivered duplicate tail should not block close", tailReady(case))
+            assertThrows(IllegalStateException::class.java) { case.tape.assertComplete() }
+            finishTail(case)
+        }
+    }
+
+    @Test fun duplicateDeliveredTailKeepsTheActualTestEndAndCloseRequired() {
+        for (duplicate in listOf(false, true)) {
+            val case = tailCase("valid", "test-end", duplicate)
+            startTail(case)
+            assertFalse(tailReady(case))
+            assertTrue(prepareTail(case).isEmpty())
+            assertTrue("actual test-end prefix may omit only a delivered duplicate", tailReady(case))
+            assertThrows(IllegalStateException::class.java) { case.tape.assertComplete() }
+            finishTail(case)
+        }
+    }
+
+    @Test fun incompleteChangedOrForeignTailsCannotBorrowDeliveredCoverage() {
+        val conditions =
+            listOf(
+                "unrequested-prior",
+                "refused-prior",
+                "refused-tail",
+                "undelivered-prior",
+                "undelivered-final",
+                "partial-prior",
+                "foreign-owner",
+                "foreign-conversation",
+                "foreign-epoch",
+                "wrong-reply-conversation",
+                "higher-checkpoint",
+                "new-fact",
+                "changed-fact",
+                "page",
+                "extra-argument",
+                "reset",
+                "error",
+                "malformed",
+                "partial-tail",
+                "after-terminal",
+                "unexpected-related",
+                "intervening-live",
+                "intervening-unknown",
+                "intervening-external",
+                "intervening-command",
+                "intervening-lifecycle",
+            )
+        for (boundary in listOf("close", "test-end")) {
+            for (condition in conditions) {
+                val case = tailCase(condition, boundary)
+                startTail(case, condition)
+                if (boundary == "test-end" && condition == "intervening-command") {
+                    assertThrows(IllegalStateException::class.java) { prepareTail(case) }
+                } else {
+                    prepareTail(case)
+                    assertFalse("$boundary/$condition cannot omit its captured query", tailReady(case))
+                }
+            }
+        }
+        val case = tailCase("valid", "test-end")
+        startTail(case)
+        assertThrows(IllegalStateException::class.java) {
+            case.tape.prepareTestEnd(case.end.copy(payload = MobileJson.parseToJsonElement("""{"body":"wrong"}""")))
+        }
+    }
+
+    @Test fun realTailStillConsumesItsExactReplyBeforeOrAfterBoundaryPreparation() {
+        for (boundary in listOf("close", "test-end")) {
+            for (prepareFirst in listOf(false, true)) {
+                val case = tailCase("valid", boundary, duplicate = true)
+                startTail(case)
+                if (prepareFirst) prepareTail(case)
+                val actual = case.tape.request(case.owner, case.tail.copy(id = 91))
+                assertEquals(listOf(91L, 91L), actual.map { it.message!!.inReplyTo })
+                actual.forEach { case.tape.delivered(it.owner, checkNotNull(it.message)) }
+                if (!prepareFirst) prepareTail(case)
+                assertTrue(tailReady(case))
+                finishTail(case)
+            }
+        }
+    }
+
     @Test fun replayCanonicalPhoneEchoRetiresPendingButTheSameMessageFromAPeerDoesNot() {
         val oldSink = de.pyryco.mobile.data.network.RelayLog.sink
         de.pyryco.mobile.data.network.RelayLog.sink = { _, _, _ -> }
@@ -257,6 +540,100 @@ class RecordedSuiteTapeTest {
                 tape.assertComplete()
             } else {
                 assertTrue("unrequested metadata cannot be borrowed", independent.isEmpty())
+            }
+        }
+    }
+
+    @Test fun independentThreadReplyCrossesOnlyTheSameSourceRequestedMetadataClearPair() {
+        val owner = "phone/host/0"
+        val a = """{"conversation_id":"a","epoch":"ea","version":4}"""
+        val b = """{"conversation_id":"b","epoch":"eb","version":14}"""
+        for ((requestType, responseType) in listOf("request_context_usage" to "context_usage", "request_model_list" to "model_list")) {
+            for (condition in listOf("accepted", "unrequested", "foreign-owner", "foreign-conversation", "ordinary-push", "missing-pair")) {
+                val metadataOwner = if (condition == "foreign-owner") "phone/host/1" else owner
+                val responseConversation = if (condition == "foreign-conversation") "other" else "b"
+                val clear =
+                    frame(4, responseType).copy(
+                        conversationId = JsonPrimitive("b"),
+                        sessionStateCleared = JsonPrimitive(condition != "ordinary-push"),
+                    )
+                val response =
+                    frame(5, responseType, """{"conversation_id":"$responseConversation"}""", reply = 1)
+                        .copy(conversationId = JsonPrimitive(responseConversation))
+                val rows =
+                    mutableListOf(
+                        client(metadataOwner, frame(1, requestType, """{"conversation_id":"b"}""")),
+                        client(owner, frame(2, "thread_catch_up", a)),
+                        daemon(owner, clear),
+                    )
+                if (condition != "missing-pair") rows += daemon(owner, response)
+                rows += daemon(owner, frame(6, "thread_items", """{"conversation_id":"a","final":true}""", reply = 2))
+                rows += client(owner, frame(7, "thread_catch_up", b))
+                rows += daemon(owner, frame(8, "thread_items", """{"conversation_id":"b","final":true}""", reply = 7))
+                if (condition == "foreign-owner") {
+                    assertThrows(IllegalArgumentException::class.java) { RecordedSuiteTape(rows, literalProducerIdentities = true) }
+                    continue
+                }
+                val tape = RecordedSuiteTape(rows, literalProducerIdentities = true)
+                assertTrue(tape.initial().isEmpty())
+                if (condition != "unrequested") tape.request(metadataOwner, frame(101, requestType, """{"conversation_id":"b"}"""))
+                val independent = tape.request(owner, frame(90, "thread_catch_up", b))
+                if (condition == "accepted") {
+                    assertEquals(listOf(90L), independent.map { it.message!!.inReplyTo })
+                    // Metadata itself was not delivered early and every original frame remains required.
+                    val remaining = tape.request(owner, frame(91, "thread_catch_up", a))
+                    assertEquals(listOf(responseType, responseType, "thread_items"), remaining.map { it.message!!.type })
+                    assertEquals(listOf(null, 101L, 91L), remaining.map { it.message!!.inReplyTo })
+                    tape.assertComplete()
+                } else {
+                    assertTrue("$requestType/$condition cannot establish an independent metadata pair", independent.isEmpty())
+                }
+            }
+        }
+    }
+
+    @Test fun alreadyQualifiedOptionalCatalogCannotFenceAnIndependentCanonicalReply() {
+        val owner = "phone/host/0"
+        val a = """{"conversation_id":"a","epoch":"ea","version":4}"""
+        val b = """{"conversation_id":"b","epoch":"eb","version":0}"""
+        val automatic = frame(1, "model_list", """{"conversation_id":"b","models":[]}""")
+        for (sameCatalog in listOf(true, false)) {
+            val replyPayload =
+                if (sameCatalog) {
+                    automatic.payload
+                } else {
+                    MobileJson.parseToJsonElement(
+                        """{"conversation_id":"b","models":["changed"]}""",
+                    )
+                }
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        daemon(owner, automatic),
+                        client(owner, frame(2, "request_model_list", """{"conversation_id":"b"}""")),
+                        client(owner, frame(3, "thread_catch_up", a)),
+                        daemon(owner, frame(4, "model_list").copy(payload = replyPayload, inReplyTo = 2)),
+                        daemon(owner, frame(5, "thread_items", """{"conversation_id":"a","final":true}""", reply = 3)),
+                        client(owner, frame(6, "thread_catch_up", b)),
+                        daemon(owner, frame(7, "thread_items", """{"conversation_id":"b","final":true}""", reply = 6)),
+                    ),
+                    literalProducerIdentities = true,
+                    redundantModelQueries = true,
+                )
+            assertEquals(listOf("model_list"), tape.initial().map { it.message!!.type })
+            val independent = tape.request(owner, frame(90, "thread_catch_up", b))
+            if (sameCatalog) {
+                assertEquals(listOf(90L), independent.map { it.message!!.inReplyTo })
+                assertEquals(listOf(91L), tape.request(owner, frame(91, "thread_catch_up", a)).map { it.message!!.inReplyTo })
+                tape.assertComplete()
+            } else {
+                assertTrue("changed catalogs remain required", independent.isEmpty())
+                val nowRequested = tape.request(owner, frame(92, "request_model_list", """{"conversation_id":"b"}"""))
+                assertEquals(listOf(90L), nowRequested.map { it.message!!.inReplyTo })
+                val remaining = tape.request(owner, frame(91, "thread_catch_up", a))
+                assertEquals(listOf("model_list", "thread_items"), remaining.map { it.message!!.type })
+                assertEquals(listOf(92L, 91L), remaining.map { it.message!!.inReplyTo })
+                tape.assertComplete()
             }
         }
     }

@@ -192,6 +192,20 @@ internal class SuiteConnections private constructor(
             capture.observe(SuiteStep("client", "control", frame))
             live()
         } else {
+            if (action == "test-end") {
+                runBlocking {
+                    withTimeout(30000) {
+                        while (!synchronized(this@SuiteConnections) {
+                                enqueue(checkNotNull(tape).prepareTestEnd(frame))
+                                tape.testEndReady(frame)
+                            }
+                        ) {
+                            delay(10)
+                        }
+                        awaitIdle()
+                    }
+                }
+            }
             check(request("control", frame)) { "Recorded suite control rejected" }
         }
     }
@@ -201,7 +215,12 @@ internal class SuiteConnections private constructor(
         if (tape == null || synchronized(this) { transports[owner]?.localClose?.get() == true }) return
         withTimeout(30000) {
             while (!synchronized(this@SuiteConnections) {
-                    transports[owner]?.localClose?.get() == true || tape.closeReady(owner)
+                    if (transports[owner]?.localClose?.get() == true) {
+                        true
+                    } else {
+                        enqueue(tape.prepareClose(owner))
+                        tape.closeReady(owner)
+                    }
                 }
             ) {
                 delay(10)
@@ -467,8 +486,8 @@ internal class SuiteConnections private constructor(
                 }
                 "daemon" -> {
                     val frame = checkNotNull(step.message)
-                    tape!!.delivered(connection.owner, frame)
                     check(frames.trySend(frame).isSuccess)
+                    tape!!.delivered(connection.owner, frame)
                 }
                 "inbound_end" -> {
                     tape!!.connectionEnded(connection.owner)

@@ -42,6 +42,32 @@ class OwnedReplyObservationTest {
     private val repository = Any()
     private val pump = Any()
 
+    @Test fun acceptedSendFenceRequiresTheExactCurrentSourceAndNoTerminal() {
+        for (kind in ThreadEvidenceKind.entries) {
+            var current = true
+            val target = OwnedReplyObservation("host", evidence(kind, emptyList()))
+            assertFalse(target.acceptedSendCurrent(repository))
+            assertFalse(target.sending(pump, frame("send_message", "conversation_id" to "other", "message_id" to "sent")))
+            assertFalse(target.acceptedSendCurrent(repository))
+            assertTrue(target.sending(pump, frame("send_message", "message_id" to "sent")) { current })
+            assertFalse(target.acceptedSendCurrent(repository))
+            target.sent(Any(), true)
+            assertFalse(target.acceptedSendCurrent(repository))
+            target.sent(pump, false)
+            assertFalse(target.acceptedSendCurrent(repository))
+            target.sent(pump, true)
+            assertTrue("an accepted current send is sufficient before any echo or terminal", target.acceptedSendCurrent(repository))
+            assertFalse(target.acceptedSendCurrent(Any()))
+            current = false
+            assertFalse(target.acceptedSendCurrent(repository))
+            current = true
+            target.ended(Any())
+            assertTrue(target.acceptedSendCurrent(repository))
+            target.ended(pump)
+            assertFalse(target.acceptedSendCurrent(repository))
+        }
+    }
+
     @Test fun legacyPlaceholderSessionNeedsCorrelatedCurrentSessionEvidence() {
         val observation = observation()
         producer().forEach { observation.received(pump, it) }

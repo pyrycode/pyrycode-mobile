@@ -180,6 +180,12 @@ internal class OwnedReplyObservation(
         if (pump === connection) accepted = result
     }
 
+    /** Wait for this exact current phone send before another client acts. No reply completion is required. */
+    @Synchronized fun acceptedSendCurrent(current: Any?): Boolean =
+        current === before.owner.connection && !closed && !failed && pump != null && pumpCurrent() &&
+            accepted && messageId != null && request?.field("message_id") == messageId &&
+            request?.field("conversation_id") == before.owner.conversation
+
     @Synchronized fun received(
         connection: Any,
         frame: Envelope,
