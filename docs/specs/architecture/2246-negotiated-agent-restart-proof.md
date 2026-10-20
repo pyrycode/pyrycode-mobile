@@ -57,6 +57,8 @@ None in the product contract. Fresh live/capture results remain pending until ex
 
 ## Revisions
 
+2026-10-20: With valid producer roles the second scripted run reached `finished_session_a`, then failed the lazy boundary-presence wait (2 executed, 1 passed, 1 failed). Agent navigation had left the viewport away from the newest row. Reuse the existing `awaitDisplayedSessionBoundary` assertion, which scrolls the reversed lazy list to its newest edge and requires the delimiter actually displayed. This retains the boundary assertion and its no-explanation check; it does not infer rotation from cached metadata.
+
 2026-10-20: The counted scripted run executed both methods: the retained proof passed and the restart twin timed out before its finished-family receipt. The scripted assistant envelopes supplied message IDs but omitted `message.role`; the protocol's intrinsic child-text completion requires `assistant`. Add that genuine producer field to the two existing fixture fragments. Keep the strict inactive done/finished prose assertion unchanged. The failed 2-executed/1-passed/1-failed result remains retained privately.
 
 2026-10-20: `AuthoritativeThreadCacheTest.interruptedBatchesKeepPriorCertificationWithNewestItems` proves that saved facts can be newer than the saved certified checkpoint. Keep those two assertions separate: require the exact persisted Agent family, then require the original saved checkpoint/coverage after reconstruction without upgrading either from item revisions. The reopened Supported route must still obtain current admitted evidence. This preserves held facts without certifying an interrupted batch or inventing negotiation/progress.

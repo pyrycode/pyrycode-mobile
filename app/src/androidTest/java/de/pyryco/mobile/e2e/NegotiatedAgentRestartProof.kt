@@ -7,7 +7,6 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
@@ -20,8 +19,8 @@ import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.data.repository.matchesPending
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.di.ThreadDestinationFactory
-import de.pyryco.mobile.ui.conversations.components.SESSION_BOUNDARY_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.TOOL_ROW_TAG
+import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -142,7 +141,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
     // Retire session A before rebuilding the graph: the reopened Agent is already historical.
     onNode(hasContentDescription("More actions")).performClick()
     onAllNodesWithText("Reset session").onFirst().performClick()
-    waitUntil(120_000) { onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG).fetchSemanticsNodes().isNotEmpty() }
+    awaitDisplayedSessionBoundary(120_000)
     val nextSession =
         runBlocking {
             withTimeout(120_000) {
