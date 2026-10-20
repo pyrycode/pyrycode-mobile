@@ -580,7 +580,7 @@ class OwnedLegacyCoverageTest {
         }
 
     @Test fun recoveryInvariant_claimExtensionPreservesSiblingBindings() =
-        runTest {
+        runTest(timeout = 2.minutes) {
             val started = TimeSource.Monotonic.markNow()
             val counts = ArrayList<Pair<LegacyRoomStorage.MutationCounts, Int>>()
             for (size in listOf(20, 18000)) {
