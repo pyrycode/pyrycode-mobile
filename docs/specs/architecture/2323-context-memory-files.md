@@ -86,3 +86,4 @@ None. Defaulted domain fields preserve scalar-only in-process callers. MCP is ab
 ## Revisions
 
 - 2026-10-20: Put the four supplied-frame native memory scenarios in `ContextMemoryFilesTest` beside the existing sheet class, keeping its header/footer coverage intact. Complete existing context fixtures in read-evidence, reset-probe and freshness tests so their original assertions still reach the intended admission path. No production flow or request changes are needed.
+- 2026-10-20: Desktop `formatContextTokens` confirms that values below 1000 render as plain numbers (`400`), while Figma's sample uses `0.4k`. Follow the acceptance criterion requiring the sheet's desktop-compatible formatter; retain the existing formatter and its tests.

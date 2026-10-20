@@ -157,7 +157,9 @@ internal fun ContextSummarySheet(
                         }
                     }
                 }
-                if (claude && reading != null && reading.asOf == null &&
+                if (claude &&
+                    reading != null &&
+                    reading.asOf == null &&
                     (reading.memoryFiles.isNotEmpty() || reading.droppedMemoryFiles > 0)
                 ) {
                     ContextMemoryFiles(reading)
