@@ -1783,22 +1783,22 @@
       "fixture": "suite/interactiveTurn_pingPrompt_streamsPingReplyIntoThread.json",
       "retainedLive": [],
       "evidence": {
-        "fixtureSha256": "612743526469e70f2644a289c4d01fdc011c37b069ac78438b7a5e03b83f1b68",
+        "fixtureSha256": "353b79c4341dabdf5b4faf26f1a61f3a42859487276bc9b8dfe6f759f6ef79fa",
         "capture": {
           "executed": 1,
           "failed": 0,
           "skipped": 0,
-          "seconds": 9.385,
-          "nativeSeconds": 6.566,
-          "fixtureSha256": "612743526469e70f2644a289c4d01fdc011c37b069ac78438b7a5e03b83f1b68",
+          "seconds": 18.112,
+          "nativeSeconds": 10.428,
+          "fixtureSha256": "353b79c4341dabdf5b4faf26f1a61f3a42859487276bc9b8dfe6f759f6ef79fa",
           "source": {
-            "mobileRevision": "788314223b701ea5c6a0b530ac255451de97e36e",
-            "daemonRevision": "c2e7bec7a434014dfc2089f64d507898c79f8e89",
-            "daemonBinarySha256": "b34fcad79d7235d1d13ad2763859da92218b63ef33775e17c5300813d6bae9a0",
-            "appApkSha256": "cad388c89fbcfbaff7673ca7d55f8379a0cf4f3a897a5458cb37ea6eba68082d",
-            "testApkSha256": "6633f229d45d1d63b2c42f2854b220e10cf5c2f74bc7502e8bdb6ca5ecc94cb8",
+            "mobileRevision": "f3b1f8f3b6567c2172f03cc50e1568899a688071",
+            "daemonRevision": "bf1e90156c96c4addcd7faa8e70cd892f0cd28a8",
+            "daemonBinarySha256": "3370e4a6026a908b6d801e03a0dccf9cdd100c89209646814ed00fab176d154e",
+            "appApkSha256": "bcccec008e4a034ad0b7f3dfb7c282ee48748841de09afa241b5d6a662632038",
+            "testApkSha256": "499b96d8b1e0c468c426e704365ce400b7f15ff534c70366395fc72f9751cc0b",
             "claudeVersion": "2.1.280 (Claude Code)",
-            "capturedAt": "2026-10-16T16:13:32Z",
+            "capturedAt": "2026-10-20T15:00:01Z",
             "presentation": "current-production",
             "androidApi": "33"
           }
@@ -1807,11 +1807,27 @@
           "executed": 1,
           "failed": 0,
           "skipped": 0,
-          "seconds": 6.938,
-          "nativeSeconds": 6.381,
-          "fixtureSha256": "612743526469e70f2644a289c4d01fdc011c37b069ac78438b7a5e03b83f1b68",
-          "appApkSha256": "cad388c89fbcfbaff7673ca7d55f8379a0cf4f3a897a5458cb37ea6eba68082d",
-          "testApkSha256": "16f52791db376d185899c463fd81603dd89d8f16fa50e2e57ffe449fe12df3ee"
+          "seconds": 7.688,
+          "nativeSeconds": 6.228,
+          "fixtureSha256": "353b79c4341dabdf5b4faf26f1a61f3a42859487276bc9b8dfe6f759f6ef79fa",
+          "appApkSha256": "bcccec008e4a034ad0b7f3dfb7c282ee48748841de09afa241b5d6a662632038",
+          "testApkSha256": "499b96d8b1e0c468c426e704365ce400b7f15ff534c70366395fc72f9751cc0b"
+        },
+        "replacementReview": {
+          "kind": "reviewed-contract-change",
+          "previousFixtureSha256": "612743526469e70f2644a289c4d01fdc011c37b069ac78438b7a5e03b83f1b68",
+          "strictCompatibilityPassed": false,
+          "commandsMatch": true,
+          "lifecycleMatch": true,
+          "checkpointNamesAndOrderMatch": true,
+          "reviewedDifferences": [
+            "One request_claude_usage with exact empty payload and its correlated genuine reply on phone/host-0/0.",
+            "The one push registration retains its token and platform; device_name changes from the original capture device to the Linux capture device."
+          ],
+          "failedStagesRetained": [
+            "reviewedReplay",
+            "comparison"
+          ]
         }
       }
     },
