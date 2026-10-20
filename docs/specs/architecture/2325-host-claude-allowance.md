@@ -95,6 +95,8 @@ None.
 
 Pending for documentation stage: `docs/knowledge/features/remote-conversation-repository.md`, allowance reading section: document host-wide observation/refresh, full replacement, field absence and reconnect/pairing lifetime, linking Core's protocol instead of copying it. Keep `rate_limited` documented as a separate warning signal.
 
+Pending for documentation stage: `docs/recorded-tests.md`, “Capture and compatibility”: document permission `managed-verify`, required fresh private output directories, retained candidates and independent capture, committed replay, fresh replay and comparison reports. Failed comparisons remain failed.
+
 ## Security review
 
 **Verdict:** PASS
@@ -110,6 +112,7 @@ Pending for documentation stage: `docs/knowledge/features/remote-conversation-re
 - Threat model: hostile authenticated frames are type-checked and retain at most one bounded-envelope reading; duplicates cannot grow state. Relay confidentiality/misrouting remains protected by existing Noise authentication. Disk token theft and UI screenshot/keyboard leakage introduce no new surface in this data-only change.
 - Replay repair: test-only query classification adds no production trust boundary, credentials, storage, Android surface, cryptography, I/O or coroutine. Exact payload and per-connection request/correlation checks remain mandatory. Unit-test frames are synthetic regression inputs only; shipped provider content must come from the genuine capture path, with existing secret scanning, bounds, producer metadata and counted receipts. Unexpected sends remain sticky failures. No payload/exception logging is added.
 - Timeout investigation: test-only phases report static phase names, fixture sizes, mutation mode and elapsed milliseconds. No provider content, credentials or production surface is added. The real-disk work, assertions and localized mutation counters stay intact; explicit close bounds each reader's lifetime. A green retry never reclassifies the retained failures as inherited.
+- Permission verification recovery: reports/candidates use exclusive owner-only creation in a new private directory; raw producer and instrumentation output stay private. Verify installed package hashes and committed daemon source before capture. The existing credential-stripped instrumentation, isolated daemon authentication and before/after permission witness checks remain mandatory. Managed device holds, owned commands, signal restoration and emulator cleanup follow the existing suite path, with failure regressions. Stage errors contain only exception class names; no exception text or raw payload reaches public reports. A failed replay/comparison never creates a successful receipt.
 
 **Reviewer:** builder self-review per `builder/security-review.md`
 **Date:** 2026-10-20
