@@ -175,17 +175,21 @@ class CachingConversationRepository(
     private fun localWindow(conversationId: String): LegacyLocalWindow? {
         val disk = cache as? MigratingConversationCache ?: return null
         if (hostThread != null || conversationId in deleted || !legacyCurrent(conversationId)) return null
-        legacyEpochs.putIfAbsent(conversationId, disk.legacyEpoch(serverId, conversationId))
-        return localWindows.computeIfAbsent(conversationId) { LegacyLocalWindow(disk, serverId, it) }
+        val epoch = legacyEpochs.computeIfAbsent(conversationId) { disk.legacyEpoch(serverId, it) }
+        return localWindows.computeIfAbsent(conversationId) { LegacyLocalWindow(disk, serverId, it, epoch) }
     }
 
     override suspend fun openingHistoryPosition(conversationId: String): HistoryPosition? {
         if (hostThread != null || conversationId in deleted || !legacyCurrent(conversationId)) return null
-        val window = localWindow(conversationId) ?: return readHistoryPosition(conversationId)
-        val initial = window.initial()
-        // A fast newest response must not overtake the first readable saved snapshot.
-        if (initial.rows.isNotEmpty() && window.current) window.published.await()
-        return initial.position.takeIf { window.current && conversationId !in deleted }
+        if (cache !is MigratingConversationCache) return readHistoryPosition(conversationId)
+        while (legacyCurrent(conversationId) && conversationId !in deleted) {
+            val window = localWindow(conversationId) ?: return null
+            val initial = window.initial()
+            // A cancelled collection hands seeding to its successor without full hydration.
+            if (initial.rows.isNotEmpty() && window.current && !window.published.await()) continue
+            return initial.position.takeIf { window.current && conversationId !in deleted }
+        }
+        return null
     }
 
     override suspend fun revealOlderSavedHistory(conversationId: String): Boolean {
@@ -897,11 +901,12 @@ class CachingConversationRepository(
                                 }
                             if (!window.current || conversationId in deleted) return@collect
                             emit(snapshot.copy(rows = drawn, savedLegacyHistory = history))
-                            window.published.complete(Unit)
+                            window.published.complete(true)
                             withContext(processingDispatcher) { writer.accept(published) }
                         }
                 } finally {
                     localWindows.remove(conversationId, window)
+                    window.published.complete(false)
                     writer.finish()
                 }
             }

@@ -277,10 +277,19 @@ class SavedThreadFirstDrawDeviceTest {
 
                 fun database() =
                     Room.databaseBuilder(context, ConversationCacheDatabase::class.java, File(root, "history.db").absolutePath).build()
+
+                fun withDatabase(block: (ConversationCacheDatabase) -> Unit) {
+                    val db = database()
+                    try {
+                        block(db)
+                    } finally {
+                        db.close()
+                    }
+                }
                 root.mkdirs()
                 try {
                     // Only fixture seeding is outside timing. Every measured opening is cold through all layers.
-                    database().use { db ->
+                    withDatabase { db ->
                         runBlocking {
                             val seed = MigratingConversationCache(File(root, "files"), db)
                             seed.readThread("host", "c")
@@ -298,7 +307,7 @@ class SavedThreadFirstDrawDeviceTest {
                             Probe("database $name online=$online opening=$opening", (rows.last() as ThreadItem.MessageItem).message.content)
                         probes += probe
                         activeProbe = probe
-                        database().use { db ->
+                        withDatabase { db ->
                             Log.i(
                                 "SavedThreadDatabaseDraw",
                                 "case=${probe.name} database_constructed_ms=${probe.elapsed(SystemClock.elapsedRealtimeNanos())}",

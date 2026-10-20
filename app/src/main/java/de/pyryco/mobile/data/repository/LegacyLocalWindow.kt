@@ -102,6 +102,7 @@ internal class LegacyLocalWindow(
     private val cache: MigratingConversationCache,
     private val host: String,
     private val conversation: String,
+    private val epoch: Pair<Long, Long>,
 ) {
     internal class Reading(
         val rows: List<ThreadItem>,
@@ -111,10 +112,9 @@ internal class LegacyLocalWindow(
         val removed: Set<String> = emptySet(),
     )
 
-    private val epoch = cache.legacyEpoch(host, conversation)
     val current: Boolean get() = cache.legacyEpoch(host, conversation) == epoch
     val readings = MutableStateFlow<Reading?>(null)
-    val published = CompletableDeferred<Unit>()
+    val published = CompletableDeferred<Boolean>()
     private val reads = Mutex()
 
     suspend fun initial(): Reading =

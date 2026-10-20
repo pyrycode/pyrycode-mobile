@@ -18,10 +18,12 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -495,5 +497,35 @@ class LegacyLocalHistoryTest {
                 job.cancelAndJoin()
                 assertTrue(open().readThread("host", "c").isEmpty())
             }
+        }
+
+    @Test fun openingInvariant_recollectionReleasesTheOriginalSeed() =
+        runTest {
+            val rows = rows(401)
+            val cache = seed(rows)
+            val subscribed = Channel<Unit>(Channel.UNLIMITED)
+            val ready = AtomicBoolean(false)
+            val never = CompletableDeferred<Unit>()
+            val live =
+                object : ConversationRepository by FakeConversationRepository(), ThreadSnapshotSource {
+                    override fun observeThreadSnapshot(conversationId: String) =
+                        flow {
+                            subscribed.send(Unit)
+                            if (!ready.get()) never.await()
+                            emit(ThreadSnapshot(emptyList()))
+                            awaitCancellation()
+                        }
+                }
+            val repository = CachingConversationRepository(live, cache, "host")
+            val opening = async { repository.openingHistoryPosition("c") }
+            val (_, first) = watch(repository)
+            subscribed.receive()
+            first.cancelAndJoin()
+            assertFalse(opening.isCompleted)
+            ready.set(true)
+            val (readings, second) = watch(repository)
+            assertEquals(rows.takeLast(200), readings.receive().rows)
+            assertTrue(opening.await() != null)
+            second.cancelAndJoin()
         }
 }
