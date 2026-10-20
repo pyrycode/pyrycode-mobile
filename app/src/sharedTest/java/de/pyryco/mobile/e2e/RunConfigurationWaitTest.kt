@@ -209,6 +209,31 @@ class RunConfigurationWaitTest {
         assertBlocked("Effort", "Effort")
     }
 
+    @Test
+    fun modelMismatchRetainsActualSelectionAndNoteAfterSheetCleanup() {
+        var open by mutableStateOf(true)
+        var model by mutableStateOf("Observed model")
+        rule.setContent {
+            if (open) PyrycodeMobileTheme { content(modelLabel = model, modelNote = "Observed confirmation") }
+        }
+        var confirmations = 0
+        val failure = runCatching {
+            rule.awaitRunConfiguration("Model", "Expected model", 50, confirmed = { confirmations++; true })
+        }.exceptionOrNull()
+        rule.runOnIdle { open = false; model = "Restored model" }
+        rule.waitForIdle()
+        assertTrue("the mismatch must still fail", failure is ComposeTimeoutException)
+        assertTrue("the original timeout is retained", failure?.cause is ComposeTimeoutException)
+        val evidence = failure?.message.orEmpty()
+        assertTrue(evidence, "expected_label=Expected model" in evidence)
+        assertTrue(evidence, "Observed model" in evidence)
+        assertTrue(evidence, "Observed confirmation" in evidence)
+        assertTrue(evidence, "selected=true" in evidence)
+        assertTrue(evidence, "confirmation_matches=false" in evidence)
+        assertTrue(evidence, "Restored model" !in evidence)
+        assertEquals("diagnostics must not invoke a short-circuited predicate", 0, confirmations)
+    }
+
     private fun assertBlocked(
         section: String,
         label: String,
