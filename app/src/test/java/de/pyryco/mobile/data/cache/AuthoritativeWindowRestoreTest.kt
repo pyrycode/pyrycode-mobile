@@ -400,7 +400,16 @@ class AuthoritativeWindowRestoreTest {
                             unavailable = false
                             advanceTimeBy(1500)
                             runCurrent()
-                            val recovered = requireNotNull(vm.state.value.authoritativeThread).sourceSnapshot
+                            val recoveredState =
+                                vm.state.first { state ->
+                                    val snapshot = state.authoritativeThread?.sourceSnapshot ?: return@first false
+                                    if (retired) {
+                                        500L in snapshot.retirements
+                                    } else {
+                                        snapshot.items.any { it.raw == reparented } && snapshot.items.any { it.id == 2L }
+                                    }
+                                }
+                            val recovered = requireNotNull(recoveredState.authoritativeThread).sourceSnapshot
                             if (retired) {
                                 assertFalse(recovered.items.any { it.id == 500L })
                                 assertEquals(mapOf(500L to 500L), recovered.retirements)
