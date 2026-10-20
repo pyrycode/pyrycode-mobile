@@ -724,7 +724,10 @@ class CachingConversationRepository(
                     }
                 }
             }
-        } while (!applied && indexed != null && conversationId !in deleted && authoritativeCurrent(conversationId) &&
+        } while (!applied &&
+            indexed != null &&
+            conversationId !in deleted &&
+            authoritativeCurrent(conversationId) &&
             authoritativeThreads.current(serverId, conversationId).let { it.generation == generation && it != captured }
         )
         return saved.takeIf { applied }
@@ -740,8 +743,10 @@ class CachingConversationRepository(
         while (true) {
             val captured = authoritativeThreads.current(serverId, conversationId)
             if (indexed == null) return saved to captured
-            if (conversationId in deleted || !authoritativeCurrent(conversationId) ||
-                captured.generation != generation || generation != 0L
+            if (conversationId in deleted ||
+                !authoritativeCurrent(conversationId) ||
+                captured.generation != generation ||
+                generation != 0L
             ) {
                 return null
             }
@@ -751,7 +756,8 @@ class CachingConversationRepository(
             val evidence = captured.items.mapTo(mutableSetOf()) { it.id }
             if (parents.isNotEmpty() || evidence.isNotEmpty()) {
                 val closure = indexed.authoritativeParentClosure(serverId, conversationId, saved.epoch, parents, evidence) ?: return null
-                if (closure.epoch != saved.epoch || closure.incarnation != saved.incarnation ||
+                if (closure.epoch != saved.epoch ||
+                    closure.incarnation != saved.incarnation ||
                     !authoritativeCurrent(conversationId)
                 ) {
                     return null
