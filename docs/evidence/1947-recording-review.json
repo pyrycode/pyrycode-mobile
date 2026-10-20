@@ -66,5 +66,72 @@
     }
   },
   "retainedPrivateEvidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/1947/operator-manual-20261020",
-  "completeVerification": "pending"
+  "completeVerification": {
+    "testedMobileRevision": "dc18d9b3a759fa112daf4a109d223f573125c147",
+    "agentsRevision": "e2f17c0ca3173e2991cfbd5d853fd3f6dc8239d0",
+    "scripts": {
+      "executed": 185,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "recordingInventory": "passed",
+    "documentationGuard": "passed",
+    "preVerify": "passed",
+    "unitAndBuild": {
+      "exitCode": 0,
+      "gradleTaskOutcome": "FROM-CACHE",
+      "reusedGradleResult": true,
+      "executedInReport": 6203,
+      "executedThisInvocation": 0,
+      "failed": 0,
+      "skipped": 0
+    },
+    "fullNativeHp": {
+      "exitCode": 0,
+      "recorded": 336,
+      "executed": 335,
+      "passed": 335,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1,
+      "reportSha256": "8edae22e7875a78b7450b62f7eda9949761e4b116f8b9419902dda891e205ff4",
+      "retainedEvidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/1947/operator-manual-20261020-hp"
+    },
+    "fullScriptedFractal": {
+      "exitCode": 0,
+      "recorded": 22,
+      "executed": 22,
+      "passed": 22,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "historicalFullNativeFractal": {
+      "exitCode": 1,
+      "recorded": 336,
+      "executed": 335,
+      "passed": 332,
+      "failed": 3,
+      "errors": 0,
+      "skipped": 1
+    },
+    "unchangedMainControl": {
+      "mobileRevision": "2cda056fe8327d7c568bf6441458e90c50a5736f",
+      "executed": 3,
+      "passed": 1,
+      "failed": 2,
+      "errors": 0,
+      "skipped": 0,
+      "finding": "Both saved-thread CPU-readiness failures reproduced on main. File-restart passed. All three passed in the complete HP candidate run."
+    },
+    "retainedResetProof": {
+      "checksumsMatched": 55,
+      "mobileRevision": "1c507a95ca8a84385357bd34d45bc2c094511d0c",
+      "productionDifference": "formatting only",
+      "capturePassed": 1,
+      "reviewedReplayPassed": 1,
+      "freshReplayPassed": 1
+    }
+  }
 }
