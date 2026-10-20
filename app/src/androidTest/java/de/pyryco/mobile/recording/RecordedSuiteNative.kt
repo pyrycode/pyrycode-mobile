@@ -301,6 +301,13 @@ internal object RecordedSuiteNative {
         runBlocking { session.hub.checkpoint(name) }
     }
 
+    /** Keep the real screen active while a replay catches up with its captured pre-close requests. */
+    fun beforePhoneTeardown() {
+        val session = current ?: return
+        if (session.document == null || session.document.document["checkpointPolicy"] != JsonPrimitive("test-observations-v1")) return
+        runBlocking { session.hub.beforePhoneTeardown() }
+    }
+
     fun finish(success: Boolean) {
         val session = current ?: return
         try {

@@ -156,7 +156,7 @@ those verified hashes. Fresh compatibility evidence lives outside Android assets
 own package hashes cannot change the test package they describe. The complete gate
 requires one common client build and producer, one successful real capture and two counted
 replays per scenario, matching contracts and no skipped methods. The suite index declares
-version 1 of its query policy for all recordings, including historical captures. It enables
+version 2 of its query policy for all recordings, including historical captures. It enables
 only the three bounded models below. Raw captured messages and their capture hashes remain
 verifiable. Standalone recordings without this suite policy retain strict query counts
 unless both recordings declare the same model. Unknown policy keys or versions fail.
@@ -208,6 +208,13 @@ The suite declares three limited scheduling models separately from Claude conten
 - A single model lookup can race an unsolicited catalogue on the same connection and
   conversation. Omitting a recorded lookup requires an identical independent catalogue in
   the same command interval. On-demand lookups without that evidence stay mandatory.
+- Suite query policy version 2 uses `recorded-snapshots-v2`. Version 1 remains supported with its original rules.
+  Version 2 also permits a settings poll after an empty, explicitly cleared session state was delivered on that
+  exact phone connection. The full request must contain only that recorded conversation ID. This exception
+  applies only when the same connection is recorded ending before any fresh settings state or intervening
+  user command. It supplies no answer. Pending reads are cancelled only when that connection actually ends.
+  A replacement connection's snapshot cannot answer them. Captured errors, refusals, changed owners and
+  changed request payloads stay strict. Raw capture bytes and producer identities are unchanged.
 - Successful settings polling reads the most recently delivered captured settings state.
   Snapshot updates remain in producer order and behind their original user commands.
   A settings write invalidates earlier snapshots for that session, including replies

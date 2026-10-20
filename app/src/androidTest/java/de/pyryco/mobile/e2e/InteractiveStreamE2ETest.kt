@@ -5204,29 +5204,32 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_unreported))).assertCountEquals(0)
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_empty))).assertCountEquals(0)
             closeBackgroundTasks()
+            RecordedSuiteNative.checkpoint("background-task-running-ui-checked")
 
-            // 4. Once the task finishes, the count is 0 and the panel no longer lists the task as live. It
-            //    labels the task finished until the empty roster claude sends after a finish drops it (#677's
-            //    `applyRoster`), then says there are no tasks; the live gate saw the empty roster win.
-            allowPromptsUntil(
-                peer,
-                chatId,
-                BACKGROUND_FINISH_TIMEOUT_MS,
-                "the background task never finished",
-                allowed,
-                frame = "background_task_updated",
-            ) { frame ->
-                frame.type == "background_task_updated" &&
-                    runCatching { MobileJson.decodeFromJsonElement(BackgroundTaskUpdatedPayloadDto.serializer(), frame.payload) }
-                        .getOrNull()
-                        ?.let { it.taskId == started.taskId && it.status.isNotEmpty() } == true
-            }
+            // 4. Once this successful task finishes, the count is 0 and the panel shows its
+            //    explicit completed outcome, or the later empty roster has removed it.
+            val finishedFrame =
+                allowPromptsUntil(
+                    peer,
+                    chatId,
+                    BACKGROUND_FINISH_TIMEOUT_MS,
+                    "the background task never finished",
+                    allowed,
+                    frame = "background_task_updated",
+                ) { frame ->
+                    frame.type == "background_task_updated" &&
+                        runCatching { MobileJson.decodeFromJsonElement(BackgroundTaskUpdatedPayloadDto.serializer(), frame.payload) }
+                            .getOrNull()
+                            ?.let { it.taskId == started.taskId && it.status.isNotEmpty() } == true
+                }
+            val finished = MobileJson.decodeFromJsonElement(BackgroundTaskUpdatedPayloadDto.serializer(), finishedFrame.payload)
+            assertEquals("the background sleep must finish successfully", "completed", finished.status)
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(taskPill).fetchSemanticsNodes().isEmpty()
             }
             openBackgroundTasks()
             val finishedOrGone =
-                (hasText(string(R.string.background_tasks_finished)) or hasText(string(R.string.background_tasks_empty))) and
+                (hasText(string(R.string.background_tasks_status_completed)) or hasText(string(R.string.background_tasks_empty))) and
                     inBackgroundPanel()
             try {
                 composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -5333,18 +5336,28 @@ class InteractiveStreamE2ETest {
                 },
             )
             // Raw peer task/tool facts only locate the admitted Agent; rendered identities come from evidence.
-            val evidence =
-                runBlocking {
-                    withTimeout(THREAD_TIMEOUT_MS) {
-                        liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) {
-                            it.agentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn) != null
+            val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
+            var displayedEvidence: AgentReplyEvidence? = null
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                val current =
+                    runBlocking {
+                        withTimeoutOrNull(1000) {
+                            liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { true }
                         }
                     }
-                }.let {
-                    checkNotNull(it.agentReplyEvidence(it.owner, task.taskId, agentId, childTurn, mainTurn)) {
-                        "the held Agent must supply its own paragraph"
-                    }
+                val candidate = current?.agentReplyEvidence(current.owner, task.taskId, agentId, childTurn, mainTurn)
+                val index =
+                    candidate?.let {
+                        list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:${it.runId}")
+                    } ?: -1
+                if (index < 0) {
+                    false
+                } else {
+                    displayedEvidence = candidate
+                    true
                 }
+            }
+            val evidence = checkNotNull(displayedEvidence) { "the held Agent must supply its own displayed tool run" }
             // Body identity excludes user prompts and accepts any reply wording or Markdown.
             val reply = hasTestTag("assistant-reply:${evidence.heldReply.message.id}")
             val child = hasTestTag("background-agent-child:${evidence.agent.block}")
@@ -5363,7 +5376,6 @@ class InteractiveStreamE2ETest {
                     SemanticsMatcher("opened owned Agent run") {
                         it.config.getOrNull(SemanticsActions.OnClick)?.label == collapseLabel
                     }
-            val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
             list.performScrollToNode(run)
             composeTestRule.onNode(closedRun).assertExists()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
@@ -5679,28 +5691,51 @@ class InteractiveStreamE2ETest {
             var newerWait = "messages"
             var newerReadings = emptyList<String>()
             // #2173: the rendered Agent identity comes from the bound source; the raw peer ID only correlates.
-            val runningAgent =
-                runBlocking {
-                    withTimeoutDiagnostic({ "Newer reply wait=$newerWait phone=$newerReadings; ${peer.linkState()}" }) {
-                        withTimeout(THREAD_TIMEOUT_MS) {
-                            val held =
-                                liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { held ->
-                                    newerReadings =
-                                        held.records.map {
-                                            "role=${it.message.role},main=${it.agentId == null},turn=${it.turn == newerTurn}," +
-                                                "streaming=${it.message.isStreaming},agent=${it.rawToolUseId() == agentId}"
-                                        }
-                                    held.settledTurnReply(newerTurn) != null && held.renderedAgent(agentId) != null
-                                }
-                            newerWait = "phase"
-                            liveRepositories.firstOnLive({ it.observeTurnPhase(chat) }) {
-                                newerWait = "phase:$it"
-                                it == LiveSessionEvent.TurnState.Phase.Idle
+            runBlocking {
+                withTimeoutDiagnostic({ "Newer reply wait=$newerWait phone=$newerReadings; ${peer.linkState()}" }) {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        val held =
+                            liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { held ->
+                                newerReadings =
+                                    held.records.map {
+                                        "role=${it.message.role},main=${it.agentId == null},turn=${it.turn == newerTurn}," +
+                                            "streaming=${it.message.isStreaming},agent=${it.rawToolUseId() == agentId}"
+                                    }
+                                held.settledTurnReply(newerTurn) != null && held.renderedAgent(agentId) != null
                             }
-                            checkNotNull(held.renderedAgent(agentId)).agentId
+                        newerWait = "phase"
+                        liveRepositories.firstOnLive({ it.observeTurnPhase(chat) }) {
+                            newerWait = "phase:$it"
+                            it == LiveSessionEvent.TurnState.Phase.Idle
                         }
+                        checkNotNull(held.renderedAgent(agentId)).agentId
                     }
                 }
+            }
+            var displayedAgent: String? = null
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                val evidence =
+                    runBlocking {
+                        withTimeoutOrNull(1000) {
+                            liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { true }
+                        }
+                    }
+                val family = evidence?.renderedAgent(agentId)
+                val markerIndex =
+                    family?.let {
+                        composeTestRule
+                            .onNode(hasScrollToNodeAction())
+                            .fetchSemanticsNode()
+                            .config[SemanticsProperties.IndexForKey]("agent-start:${it.agentId}")
+                    } ?: -1
+                if (evidence?.settledTurnReply(newerTurn) == null || markerIndex < 0) {
+                    false
+                } else {
+                    displayedAgent = checkNotNull(family).agentId
+                    true
+                }
+            }
+            val runningAgent = checkNotNull(displayedAgent)
             val go = string(R.string.agent_go_to)
             val marker = hasText(go) and hasClickAction() and hasText(task.description.orEmpty().take(4096))
             val header = hasTestTag("background-agent:$runningAgent")
@@ -8184,7 +8219,7 @@ class InteractiveStreamE2ETest {
         serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),
     ): ConversationRepository {
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
-        return runBlocking { withTimeout(CONNECT_TIMEOUT_MS) { checkNotNull(bundle.coordinator.currentRepository.first { it != null }) } }
+        return runBlocking { withTimeout(CONNECT_TIMEOUT_MS) { harnessHostRepository(bundle.coordinator) } }
     }
 
     /**

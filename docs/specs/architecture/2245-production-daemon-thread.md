@@ -156,3 +156,11 @@ Pending documentation stage:
 - **Threat model:** malicious relay delay/drop/reorder is handled by Noise plus connection/generation fencing and certified checkpoints. Hostile daemon frames reuse defensive decoding and inert text paths. Keystore wrapping of credentials remains; rooted-device plaintext-content theft and OS screenshot/accessibility/keyboard exposure are existing platform limitations, unchanged by source selection.
 
 **Reviewer:** builder self-review per `builder/security-review.md`. **Date:** 2026-10-18.
+
+## Manual continuation, 2026-10-20
+
+Juhana authorised manual completion through integration, genuine recording refresh, complete Linux verification, review and merge. Preserve the earlier failed results. Current main includes the correlated settings helper, completed-reply observation migration and notification recovery. The captured diagnostic branch is preserved before integration. Its old direct settings helper is superseded by current main’s request-correlated helper.
+
+The completion merge retains the notification repair’s applied-item callback and one shared catch-up query. The same admitted completion also refreshes conversation summaries under the retained exact-generation check. Keep destination query leases, rendered-revision read proofs, bounded attention retry and private-preview certification. The Room held-reader probe stays active because its repair has merged.
+
+Reproduce old failing native and replay scenarios on this combined candidate and a current pinned daemon. Repair demonstrated defects with focused failing regressions. Genuine recording changes require successful native capture, fresh replay, preserved strict changed comparisons and explicit review. Complete coordinated JVM/build, recorded UI and scripted-all verification remains required before merge. This continuation creates no production fallback, skips, fabricated fixture or verifier result. All recording and sizing controls remain until their actual requirements pass.

@@ -34,6 +34,7 @@ internal class RecordedSuiteTape(
     recordedSettingsReads: Boolean = false,
     refusedBackfillProbes: Boolean = false,
     private val requireRecordedReadProgress: Boolean = true,
+    cancelledClearedSettingsReads: Boolean = false,
 ) {
     private var optionalModelReplies = emptyMap<Int, Int>()
     private val redundantModels = mutableSetOf<Pair<String, String>>()
@@ -72,6 +73,12 @@ internal class RecordedSuiteTape(
             "backfill_since",
             "register_push_token",
         )
+    private val threadQueryRequests =
+        steps
+            .filter { it.direction == "client" && it.message?.type in setOf("thread_catch_up", "thread_page") }
+            .map { it.owner to it.message!!.id }
+            .toSet()
+
     private val identityKeys =
         setOf(
             "conversation_id",
@@ -146,7 +153,16 @@ internal class RecordedSuiteTape(
             steps = readReceipts!!.steps
         }
         if (recordedSettingsReads || refusedBackfillProbes) {
-            polledReads = SuitePolledReads(steps, ::mapped, ::nextDaemonId, recordedSettingsReads, refusedBackfillProbes)
+            polledReads =
+                SuitePolledReads(
+                    steps,
+                    ::mapped,
+                    ::nextDaemonId,
+                    recordedSettingsReads,
+                    refusedBackfillProbes,
+                    cancelledClearedSettingsReads,
+                    queryTypes,
+                )
             steps = polledReads!!.steps
         }
         if (redundantModelQueries) {
@@ -299,6 +315,26 @@ internal class RecordedSuiteTape(
         return precedingWorkReleased(boundary, allowDeferredReads = true)
     }
 
+    /** A read may race a pure test observation; its reply still waits in drain until that observation. */
+    private fun threadQueryMayRaceCheckpoint(
+        index: Int,
+        boundary: Int,
+        checkpoint: Int,
+    ): Boolean {
+        val step = steps[index]
+        if (boundary != checkpoint || step.direction != "client" || !step.accepted ||
+            step.owner to step.message!!.id !in threadQueryRequests
+        ) {
+            return false
+        }
+        return (checkpoint + 1 until index).all { before ->
+            val earlier = steps[before]
+            earlier.direction == "client" &&
+                (earlier.message!!.type in queryTypes || earlier.owner == "control" && earlier.message.type == "test-control:checkpoint") ||
+                earlier.direction == "daemon" && earlier.owner != step.owner
+        }
+    }
+
     private fun eligible(): List<Int> {
         val boundary = commandBoundary()
         val checkpoint = checkpointBoundary()
@@ -306,13 +342,27 @@ internal class RecordedSuiteTape(
             val step = steps[index]
             val connected = lifecycleBefore[index]?.let { it in consumed } ?: true
             when {
-                index in consumed || !connected || index > checkpoint -> false
+                index in consumed || !connected -> false
+                index > checkpoint && !threadQueryMayRaceCheckpoint(index, boundary, checkpoint) -> false
                 step.direction == "connect" -> true
                 step.direction == "close" -> precedingRequestsComplete(index, step.owner)
                 step.direction == "client" -> step.message!!.type in queryTypes || index == boundary
                 else -> false
             }
         }
+    }
+
+    /** A foreground fence must not wait for later cleanup controls or registry disposal. */
+    @Synchronized fun phoneClosesBeforeTeardown(): List<String> {
+        val cleanup =
+            steps.indices.firstOrNull {
+                it !in consumed && steps[it].owner == "control" && steps[it].message?.type == "test-control:test-end"
+            } ?: steps.size
+        return steps
+            .take(minOf(cleanup, checkpointBoundary()))
+            .filter { it.direction == "close" && it.owner.startsWith("phone/") }
+            .map { it.owner }
+            .distinct()
     }
 
     @Synchronized fun initial(): List<SuiteStep> = drain()
@@ -491,7 +541,10 @@ internal class RecordedSuiteTape(
                 )
         check(direction in setOf("connect", "close")) { "Invalid lifecycle request" }
         consumed += candidate
-        if (direction == "close") cancelUnsentReadNotifications(candidate, owner)
+        if (direction == "close") {
+            cancelUnsentReadNotifications(candidate, owner)
+            polledReads?.connectionEnded(owner)
+        }
         matched++
         return drain()
     }
@@ -508,14 +561,21 @@ internal class RecordedSuiteTape(
     private fun drain(): List<SuiteStep> {
         val result = mutableListOf<SuiteStep>()
         val blockedOwners = mutableSetOf<String>()
+        val blockedReplies = mutableSetOf<String>()
         for (index in 0 until commandBoundary()) {
             if (index in released) continue
             val step = steps[index]
             if (step.direction in setOf("client", "connect", "close")) {
-                if (index in consumed || index in optionalModelReplies) released += index
+                if (index in consumed || index in optionalModelReplies) {
+                    released += index
+                } else if (step.direction == "client" && step.owner to step.message!!.id in threadQueryRequests) {
+                    // Preserve the captured query start before any later live frame, even one preceding its reply.
+                    blockedReplies += step.owner
+                }
                 continue
             }
             if (lifecycleBefore[index]?.let { it !in consumed } == true) continue
+            if (step.owner in blockedReplies) continue
             // Android inputs affect the whole graph. They cannot cross a captured restart or unfinished request.
             if (step.direction == "external" && !precedingWorkReleased(index, allowDeferredReads = true)) continue
             if (step.direction in setOf("inbound_end", "down", "transport_down") && !precedingRequestsComplete(index, step.owner)) continue
@@ -531,7 +591,12 @@ internal class RecordedSuiteTape(
                 released += index
                 continue
             }
-            if (step.direction == "daemon" && frame!!.inReplyTo?.let { step.owner to it !in requests } == true) continue
+            if (step.direction == "daemon" && frame!!.inReplyTo?.let { step.owner to it !in requests } == true) {
+                // An authoritative query must establish its captured base before later live updates.
+                // Ordinary background reads and other connections can still progress independently.
+                if (step.owner to frame.inReplyTo in threadQueryRequests) blockedReplies += step.owner
+                continue
+            }
             if (step.direction in setOf("inbound_end", "down", "transport_down")) cancelUnsentReadNotifications(index, step.owner)
             if (step.direction in setOf("daemon", "settings_snapshot")) {
                 val encoded = mapped(MobileJson.encodeToJsonElement(Envelope.serializer(), frame!!)).jsonObject.toMutableMap()
@@ -556,6 +621,11 @@ internal class RecordedSuiteTape(
         frame: Envelope,
     ) {
         readReceipts?.delivered(owner, frame)
+        polledReads?.observeCleared(owner, frame)
+    }
+
+    @Synchronized fun connectionEnded(owner: String) {
+        polledReads?.connectionEnded(owner)
     }
 
     @Synchronized fun progress(): String {
