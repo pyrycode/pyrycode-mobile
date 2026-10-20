@@ -3,12 +3,15 @@ package de.pyryco.mobile.e2e
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.SessionProvenance
+import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
+import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -68,7 +71,51 @@ class ContextResetProbeTest {
         assertThrows(IllegalStateException::class.java) { duplicate.probe.assertValid() }
     }
 
-    private class Rig {
+    @Test fun canonicalResetReplyWaitsForTheAdmittedBoundaryInEitherDeliveryOrder() =
+        runTest {
+            for (boundaryFirst in listOf(false, true)) {
+                val rig = Rig(legacy = false)
+                rig.reading = ContextUsage(26_181, 1_000_000, 3, null)
+                if (boundaryFirst) rig.probe.replaced(requireNotNull(rig.boundary))
+                rig.probe.delivered(rig.connection, rig.context(26_181, replyTo = 23))
+                if (!boundaryFirst) {
+                    assertFalse(rig.probe.reply.isCompleted)
+                    rig.probe.replaced(requireNotNull(rig.boundary))
+                }
+                val message = "an accepted reset and its admitted boundary must certify the exact reply"
+                assertTrue(message, rig.probe.reply.isCompleted)
+                assertEquals(rig.reading, rig.probe.reply.await())
+                rig.probe.assertValid()
+            }
+        }
+
+    @Test fun canonicalResetCannotBorrowAnOldProducer() =
+        runTest {
+            val rig = Rig(legacy = false)
+            rig.reading = ContextUsage(26_181, 1_000_000, 3, null)
+            rig.probe.delivered(
+                rig.connection,
+                rig.context(26_181, replyTo = 23).copy(
+                    sessionProvenance = SessionProvenance(JsonPrimitive("old")),
+                ),
+            )
+            rig.probe.replaced(requireNotNull(rig.boundary))
+            assertThrows(IllegalStateException::class.java) { rig.probe.assertValid() }
+        }
+
+    @Test fun refusedResetCannotCertifyAnOtherwiseMatchingContextReply() =
+        runTest {
+            val rig = Rig(legacy = false, resetAccepted = false)
+            rig.reading = ContextUsage(26_181, 1_000_000, 3, null)
+            rig.probe.replaced(requireNotNull(rig.boundary))
+            rig.probe.delivered(rig.connection, rig.context(26_181, replyTo = 23))
+            assertThrows(IllegalStateException::class.java) { rig.probe.assertValid() }
+        }
+
+    private class Rig(
+        legacy: Boolean = true,
+        resetAccepted: Boolean = true,
+    ) {
         val connection = Any()
         var reading: ContextUsage? = ContextUsage(30_031, 1_000_000, 3, null)
         private val repository =
@@ -77,16 +124,33 @@ class ContextResetProbeTest {
             }
         val probe = ContextResetProbe.Reading("host", "c", repository)
 
-        init {
-            probe.before(
-                connection,
-                frame(
-                    "session_transition",
-                    20,
-                    """{"conversation_id":"c","previous_session_id":"old","new_session_id":"new","reason":"clear","occurred_at":"$TS","workspace_cwd":null}""",
-                ),
+        private val transition =
+            frame(
+                "session_transition",
+                20,
+                """{"conversation_id":"c",
+"previous_session_id":"old",
+"new_session_id":"new",
+"reason":"clear",
+"occurred_at":"$TS",
+"workspace_cwd":null}""",
             )
-            checkNotNull(probe.sending(connection, frame("request_context_usage", 23, """{"conversation_id":"c"}"""))).complete(true)
+        private val transitionPayload =
+            MobileJson.decodeFromJsonElement<SessionTransitionPayloadDto>(transition.payload)
+        val boundary = transitionPayload.toBoundary()
+
+        init {
+            if (legacy) {
+                probe.before(connection, transition)
+            } else {
+                probe
+                    .sending(connection, frame("new_session", 19, """{"conversation_id":"c"}"""))
+                    ?.complete(resetAccepted)
+            }
+            val contextRequest = frame("request_context_usage", 23, """{"conversation_id":"c"}""")
+            val receipt = probe.sending(connection, contextRequest)
+            if (legacy) checkNotNull(receipt)
+            receipt?.complete(true)
         }
 
         fun context(
