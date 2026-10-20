@@ -455,6 +455,7 @@ class AuthoritativeRoomStorage internal constructor(
         }
         // An unordered foreground root anchors at its earliest shown descendant, including siblings.
         for (root in facts.values.filter { it.agent && it.orderKey == Long.MAX_VALUE }) {
+            affected.add(root.id)
             val scan = ArrayDeque<Long>().also { it.add(root.id) }
             val seen = mutableSetOf<Long>()
             while (scan.isNotEmpty()) {
@@ -506,8 +507,16 @@ class AuthoritativeRoomStorage internal constructor(
             val pending = ArrayDeque(records.values)
             val lookedUp = HashSet(records.keys)
             var sqlRows = content.size + launches.size + extras.size
+            val witnessed = mutableSetOf<String>()
             while (pending.isNotEmpty()) {
                 val record = pending.removeFirst()
+                for (witness in placementWitnesses(host, conversation, header.epoch, record, witnessed)) {
+                    sqlRows++
+                    if (lookedUp.add(witness.id)) {
+                        records[witness.id] = witness
+                        pending.addLast(witness)
+                    }
+                }
                 val raw = decode(listOf(record), saved).single()
                 val item = ThreadItemDto.decodeReplacement(raw)
                 require(record.display == item.savedDisplayRow() && record.extra == item.savedRendererExtra())
@@ -539,7 +548,7 @@ class AuthoritativeRoomStorage internal constructor(
             val window = saved.copy(items = ordered.map { decoded.getValue(it.id) }, retirements = fences).also { it.toSnapshot() }
             val rows = contributions.mapTo(mutableSetOf()) { (key, record) -> record.id to (key == record.launchKey) }
             extras.filter { it.active }.forEach { record ->
-                if (record.displayKey.isNotEmpty()) rows += record.id to false
+                if (record.display) rows += record.id to false
                 if (record.launchKey.isNotEmpty()) rows += record.id to true
             }
             AuthoritativeThreadWindow(host, conversation, window, rows)
@@ -560,6 +569,7 @@ class AuthoritativeRoomStorage internal constructor(
             val decoded = linkedMapOf<Long, JsonObject>()
             val pending = ArrayDeque(ids)
             val seen = mutableSetOf<Long>()
+            val witnessed = mutableSetOf<String>()
             while (pending.isNotEmpty()) {
                 val id = pending.removeFirst()
                 if (!seen.add(id)) continue
@@ -568,6 +578,9 @@ class AuthoritativeRoomStorage internal constructor(
                 val raw = decode(listOf(record), saved).single()
                 records[id] = record
                 decoded[id] = raw
+                placementWitnesses(host, conversation, epoch, record, witnessed).forEach { witness ->
+                    if (witness.id !in seen) pending.addLast(witness.id)
+                }
                 ThreadItemDto
                     .decodeReplacement(raw)
                     .parent
@@ -578,6 +591,40 @@ class AuthoritativeRoomStorage internal constructor(
             val ordered = records.values.sortedWith(compareBy<AuthoritativeItem> { it.orderKey }.thenBy { it.ordinal })
             saved.copy(items = ordered.map { decoded.getValue(it.id) }, retirements = fences).also { it.toSnapshot() }
         }
+
+    /** An indexed family key retains both its full-history anchor and the first held child tie. */
+    private suspend fun placementWitnesses(
+        host: String,
+        conversation: String,
+        epoch: String,
+        record: AuthoritativeItem,
+        seen: MutableSet<String>,
+    ): List<AuthoritativeItem> {
+        val result = mutableListOf<AuthoritativeItem>()
+        for (storedKey in listOf(record.displayKey, record.launchKey)) {
+            val key = storedKey.removePrefix("!")
+            if (key.length < 51 || key[20] != '1') continue
+            val family = key.substringBefore(':')
+            if (!seen.add(family)) continue
+            val anchor = key.substring(1, 20).toLong()
+            val tieOrder = key.substring(21, 40).toLong()
+            val ordinal = (key.substring(40, 50).toLong() + Int.MIN_VALUE).toInt()
+            lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
+            dao.placementWitness(host, conversation, epoch, tieOrder, ordinal)?.let(result::add)
+            if (anchor != tieOrder) {
+                lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
+                val content = dao.anchorWitness(host, conversation, epoch, "$family:", "$family;", anchor)
+                if (content != null) {
+                    result += content
+                } else {
+                    lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
+                    dao.launchAnchorWitness(host, conversation, epoch, "$family:", "$family;", anchor)?.let(result::add)
+                }
+            }
+        }
+        lastReadCounts = lastReadCounts.copy(itemReads = lastReadCounts.itemReads + result.size)
+        return result
+    }
 
     private suspend fun relevantRetirements(
         host: String,

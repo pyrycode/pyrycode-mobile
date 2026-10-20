@@ -483,9 +483,18 @@ class CachingConversationRepository(
                             CacheCandidate(
                                 DrawnThread(emptyList(), generations.incrementAndGet()),
                                 emptyList(),
-                                authoritative = snapshot.toSavedAuthoritativeThread(),
+                                authoritative =
+                                    retirementSafeSnapshot(
+                                        snapshot,
+                                        latest.get()?.authoritative ?: initialAuthoritative,
+                                    ).toSavedAuthoritativeThread(),
                                 storeGeneration = snapshot.generation,
-                                authoritativeOrderMoves = snapshot.orderMoves,
+                                authoritativeOrderMoves =
+                                    if (snapshot.generation == 0L && snapshot.openingRows != null) {
+                                        latest.get()?.authoritativeOrderMoves.orEmpty()
+                                    } else {
+                                        snapshot.orderMoves
+                                    },
                             ),
                         )
                     }
@@ -515,9 +524,14 @@ class CachingConversationRepository(
                     CacheCandidate(
                         DrawnThread(emptyList(), generations.incrementAndGet()),
                         emptyList(),
-                        authoritative = current.toSavedAuthoritativeThread(),
+                        authoritative = retirementSafeSnapshot(current, selected.authoritative).toSavedAuthoritativeThread(),
                         storeGeneration = current.generation,
-                        authoritativeOrderMoves = current.orderMoves,
+                        authoritativeOrderMoves =
+                            if (current.generation == 0L && current.openingRows != null) {
+                                selected.authoritativeOrderMoves
+                            } else {
+                                current.orderMoves
+                            },
                     )
             }
             val saved = selected.authoritative ?: return null
@@ -614,12 +628,31 @@ class CachingConversationRepository(
         }
     }
 
+    /** Retirement may flush without delivery; it cannot admit unrelated unvalidated live payloads. */
+    private fun retirementSafeSnapshot(
+        current: AuthoritativeThreadSnapshot,
+        accepted: SavedAuthoritativeThread?,
+    ): AuthoritativeThreadSnapshot {
+        if (accepted == null || current.generation > 0 || current.openingRows == null) return current
+        val validated = accepted.toSnapshot()
+        return validated.copy(
+            items = validated.items.filterNot { it.id in current.retirements },
+            retirements = current.retirements,
+            completedVersion = maxOf(validated.completedVersion, current.completedVersion),
+            checkpoint = 0,
+            coverage = null,
+        )
+    }
+
     private suspend fun restoreAuthoritative(
         conversationId: String,
         full: Boolean = false,
     ): SavedAuthoritativeThread? {
         val indexed = (cache as? AuthoritativeWindowCache)?.takeIf { hostThread != null }
-        if (indexed == null) return applyAuthoritativeRestore(conversationId) { cache.readAuthoritativeThread(serverId, conversationId) }
+        if (indexed == null) {
+            val restored = applyAuthoritativeRestore(conversationId) { cache.readAuthoritativeThread(serverId, conversationId) }
+            return (restored as? AuthoritativeRestore.Validated)?.saved
+        }
         return authoritativeOpeningLocks.computeIfAbsent(conversationId) { Mutex() }.withLock {
             if (!authoritativeCurrent(conversationId)) return@withLock null
             if (!full) authoritativeOpenings[conversationId]?.let { return@withLock it }
@@ -637,43 +670,62 @@ class CachingConversationRepository(
                             ?.saved
                     }
                 }
-            if (restored != null && !full) authoritativeOpenings[conversationId] = restored
-            restored
+            val saved = (restored as? AuthoritativeRestore.Validated)?.saved
+            if (saved != null && !full) authoritativeOpenings[conversationId] = saved
+            saved
         }
+    }
+
+    private sealed interface AuthoritativeRestore {
+        data class Validated(
+            val saved: SavedAuthoritativeThread,
+            val snapshot: AuthoritativeThreadSnapshot,
+        ) : AuthoritativeRestore
+
+        data object Unavailable : AuthoritativeRestore
+
+        data object Stale : AuthoritativeRestore
     }
 
     private suspend fun applyAuthoritativeRestore(
         conversationId: String,
         extendBaseline: Boolean = false,
+        preserveOpeningRows: Boolean = false,
         windowRows: () -> Set<Pair<Long, Boolean>>? = { null },
         read: suspend () -> SavedAuthoritativeThread?,
-    ): SavedAuthoritativeThread? {
-        if (conversationId in deleted) return null
-        val generation = authoritativeThreads.current(serverId, conversationId).generation
-        var saved = read() ?: return null
-        val indexed = (cache as? AuthoritativeWindowCache)?.takeIf { hostThread != null }
-        var applied = false
-        do {
-            val resolved = resolveAuthoritativeRestore(conversationId, saved, generation, indexed) ?: return null
-            saved = resolved.first
-            val captured = resolved.second
-            withContext(processingDispatcher) {
+    ): AuthoritativeRestore =
+        withContext(processingDispatcher) {
+            if (conversationId in deleted) return@withContext AuthoritativeRestore.Stale
+            val generation = authoritativeThreads.current(serverId, conversationId).generation
+            var saved = read() ?: return@withContext AuthoritativeRestore.Unavailable
+            val indexed = (cache as? AuthoritativeWindowCache)?.takeIf { hostThread != null }
+            var applied: AuthoritativeThreadSnapshot? = null
+            do {
+                val resolved = resolveAuthoritativeRestore(conversationId, saved, generation, indexed)
+                if (resolved !is AuthoritativeRestore.Validated) return@withContext resolved
+                saved = resolved.saved
+                val captured = resolved.snapshot
                 historyWrites.withLock {
-                    val outcome =
+                    val restoredSnapshot =
                         if (conversationId in deleted || !authoritativeCurrent(conversationId)) {
                             null
                         } else {
-                            authoritativeThreads.restore(
-                                serverId,
-                                conversationId,
-                                saved.toSnapshot(),
-                                generation,
-                                captured.takeIf { indexed != null },
-                                windowRows(),
-                            )
+                            synchronized(authoritativeThreads) {
+                                val outcome =
+                                    authoritativeThreads.restore(
+                                        serverId,
+                                        conversationId,
+                                        saved.toSnapshot(),
+                                        generation,
+                                        captured.takeIf { indexed != null },
+                                        if (preserveOpeningRows) captured.openingRows else windowRows(),
+                                    )
+                                val restored = authoritativeThreads.current(serverId, conversationId)
+                                restored.takeIf { outcome == AuthoritativeThreadOutcome.Applied }
+                            }
                         }
-                    if (outcome == AuthoritativeThreadOutcome.Applied) {
-                        applied = true
+                    if (restoredSnapshot != null) {
+                        applied = restoredSnapshot
                         // The committed restore is a baseline, never a successful live capture or merged live state.
                         persistedAuthoritative.compute(conversationId) { _, previous ->
                             if (previous == null) {
@@ -714,6 +766,8 @@ class CachingConversationRepository(
                                                 items = ordered,
                                                 retirements = baseline.retirements + saved.retirements,
                                                 appliedVersion = maxOf(baseline.appliedVersion, saved.appliedVersion),
+                                                checkpoint = baseline.checkpoint.takeIf { saved.retirements.isEmpty() } ?: 0,
+                                                coverage = baseline.coverage.takeIf { saved.retirements.isEmpty() },
                                             ),
                                     )
                                 } else {
@@ -723,48 +777,56 @@ class CachingConversationRepository(
                         }
                     }
                 }
-            }
-        } while (!applied &&
-            indexed != null &&
-            conversationId !in deleted &&
-            authoritativeCurrent(conversationId) &&
-            authoritativeThreads.current(serverId, conversationId).let { it.generation == generation && it != captured }
-        )
-        return saved.takeIf { applied }
-    }
+            } while (applied == null &&
+                indexed != null &&
+                conversationId !in deleted &&
+                authoritativeCurrent(conversationId) &&
+                authoritativeThreads.current(serverId, conversationId).let { it.generation == generation && it != captured }
+            )
+            applied?.let { AuthoritativeRestore.Validated(saved, it) } ?: AuthoritativeRestore.Stale
+        }
 
     private suspend fun resolveAuthoritativeRestore(
         conversationId: String,
         initial: SavedAuthoritativeThread,
         generation: Long,
         indexed: AuthoritativeWindowCache?,
-    ): Pair<SavedAuthoritativeThread, AuthoritativeThreadSnapshot>? {
+    ): AuthoritativeRestore {
         var saved = initial
         while (true) {
             val captured = authoritativeThreads.current(serverId, conversationId)
-            if (indexed == null) return saved to captured
+            if (indexed == null) return AuthoritativeRestore.Validated(saved, captured)
             if (conversationId in deleted ||
                 !authoritativeCurrent(conversationId) ||
                 captured.generation != generation ||
                 generation != 0L
             ) {
-                return null
+                return AuthoritativeRestore.Stale
             }
             val winners = saved.toSnapshot().items.associateByTo(mutableMapOf()) { it.id }
+            val changed = captured.items.filter { item -> winners[item.id]?.raw != item.raw }.mapTo(mutableSetOf()) { it.id }
             captured.items.forEach { item -> if ((winners[item.id]?.rev ?: -1) <= item.rev) winners[item.id] = item }
             val parents = winners.values.mapNotNull { it.parent?.takeIf { id -> id > 0 && id !in winners } }.toSet()
             val evidence = captured.items.mapTo(mutableSetOf()) { it.id }
             if (parents.isNotEmpty() || evidence.isNotEmpty()) {
-                val closure = indexed.authoritativeParentClosure(serverId, conversationId, saved.epoch, parents, evidence) ?: return null
+                val closure =
+                    try {
+                        indexed.authoritativeParentClosure(serverId, conversationId, saved.epoch, parents + changed, evidence)
+                    } catch (_: java.io.IOException) {
+                        null
+                    } catch (_: SecurityException) {
+                        null
+                    } ?: return AuthoritativeRestore.Unavailable
                 if (closure.epoch != saved.epoch ||
                     closure.incarnation != saved.incarnation ||
                     !authoritativeCurrent(conversationId)
                 ) {
-                    return null
+                    return AuthoritativeRestore.Stale
                 }
                 val facts = saved.toSnapshot().items.associateByTo(LinkedHashMap()) { it.id }
                 closure.toSnapshot().items.forEach { item -> if ((facts[item.id]?.rev ?: -1) < item.rev) facts[item.id] = item }
                 val fences = saved.retirements + closure.retirements
+                if (parents.any { it !in facts && it !in fences }) return AuthoritativeRestore.Unavailable
                 val ordered =
                     facts.values
                         .filterNot { it.id in fences }
@@ -779,7 +841,7 @@ class CachingConversationRepository(
                         coverage = saved.coverage.takeIf { fences.isEmpty() },
                     )
             }
-            if (authoritativeThreads.current(serverId, conversationId) == captured) return saved to captured
+            if (authoritativeThreads.current(serverId, conversationId) == captured) return AuthoritativeRestore.Validated(saved, captured)
         }
     }
 
@@ -798,20 +860,48 @@ class CachingConversationRepository(
                         var snapshot = observed
                         val baseline = persistedAuthoritative[conversationId]?.authoritative
                         if (snapshot.openingRows != null && snapshot.generation == 0L && baseline != null) {
-                            val committedIds = baseline.toSnapshot().items.mapTo(mutableSetOf()) { it.id }
-                            val heldIds = snapshot.items.mapTo(mutableSetOf()) { it.id }
                             val needsClosure =
-                                snapshot.items.any { item ->
-                                    item.id !in committedIds || item.parent?.let { it > 0 && it !in heldIds } == true
+                                withContext(processingDispatcher) {
+                                    val committed = baseline.toSnapshot().items.associateBy { it.id }
+                                    val heldIds = snapshot.items.mapTo(mutableSetOf()) { it.id }
+                                    snapshot.items.any { item ->
+                                        val savedItem = committed[item.id]
+                                        savedItem == null || item.parent?.let { it > 0 && it !in heldIds } == true ||
+                                            item.rev > savedItem.rev && (
+                                                item.parent != savedItem.parent || item.order != savedItem.order ||
+                                                    item.shown != savedItem.shown || item.kind != savedItem.kind ||
+                                                    item.active != savedItem.active || item.endedOrder != savedItem.endedOrder
+                                            )
+                                    }
                                 }
                             if (needsClosure) {
-                                applyAuthoritativeRestore(
-                                    conversationId,
-                                    extendBaseline = true,
-                                    windowRows = { observed.openingRows },
-                                ) { baseline }
-                                snapshot = authoritativeThreads.current(serverId, conversationId)
-                                if (snapshot.generation != observed.generation || !authoritativeCurrent(conversationId)) return@collect
+                                var retryMs = 100L
+                                while (true) {
+                                    when (
+                                        val result =
+                                            applyAuthoritativeRestore(
+                                                conversationId,
+                                                extendBaseline = true,
+                                                preserveOpeningRows = true,
+                                            ) { baseline }
+                                    ) {
+                                        is AuthoritativeRestore.Validated -> {
+                                            snapshot = result.snapshot
+                                            break
+                                        }
+                                        AuthoritativeRestore.Stale -> return@collect
+                                        AuthoritativeRestore.Unavailable -> {
+                                            if (!authoritativeCurrent(conversationId) || conversationId in deleted ||
+                                                authoritativeThreads.current(serverId, conversationId).generation != observed.generation
+                                            ) {
+                                                return@collect
+                                            }
+                                            RelayLog.d { "event=authoritative_restore code=supplement_unavailable" }
+                                            delay(retryMs)
+                                            retryMs = (retryMs * 2).coerceAtMost(1000L)
+                                        }
+                                    }
+                                }
                             }
                         }
                         val capture = generations.incrementAndGet()
@@ -860,9 +950,18 @@ class CachingConversationRepository(
                         CacheCandidate(
                             DrawnThread(emptyList(), generations.incrementAndGet()),
                             emptyList(),
-                            authoritative = snapshot.toSavedAuthoritativeThread(),
+                            authoritative =
+                                retirementSafeSnapshot(
+                                    snapshot,
+                                    persistedAuthoritative[target.conversation]?.authoritative,
+                                ).toSavedAuthoritativeThread(),
                             storeGeneration = snapshot.generation,
-                            authoritativeOrderMoves = snapshot.orderMoves,
+                            authoritativeOrderMoves =
+                                if (snapshot.generation == 0L && snapshot.openingRows != null) {
+                                    persistedAuthoritative[target.conversation]?.authoritativeOrderMoves.orEmpty()
+                                } else {
+                                    snapshot.orderMoves
+                                },
                         )
                     persistAuthoritative(target.conversation, candidate, refreshReset = true)
                         ?: Result.failure(IllegalStateException("authoritative removal not persisted"))

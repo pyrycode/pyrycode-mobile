@@ -57,6 +57,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class AuthoritativeWindowRestoreTest {
     @get:Rule val temporary = TemporaryFolder()
     private var database: ConversationCacheDatabase? = null
+    private var databaseFile = "window.db"
 
     private fun open(): AuthoritativeRoomStorage {
         database?.close()
@@ -65,7 +66,7 @@ class AuthoritativeWindowRestoreTest {
                 .databaseBuilder(
                     ApplicationProvider.getApplicationContext(),
                     ConversationCacheDatabase::class.java,
-                    File(temporary.root, "window.db").absolutePath,
+                    File(temporary.root, databaseFile).absolutePath,
                 ).build()
         database = db
         return AuthoritativeRoomStorage(db)
@@ -266,6 +267,178 @@ class AuthoritativeWindowRestoreTest {
                 val snapshot = selected.saved.toSnapshot().copy(openingRows = selected.rows)
                 val rows = projectAuthoritativeThread("host", "c", snapshot).rows.map { it.listKey(0) }
                 assertEquals(expected.takeLast(size), rows)
+            }
+            val large =
+                SavedAuthoritativeThread(
+                    "e",
+                    (1..17_799).map { fact(it) } + agent(40_000, 0, 0) +
+                        fact(18_010, parent = 40_000) + fact(19_000, parent = 40_000) +
+                        (18_050..18_248).map { fact(it) },
+                    50_000,
+                    50_000,
+                    null,
+                ).retained()
+            open().writeAuthoritativeThread("host", "c", large).getOrThrow()
+            val fullRows = projectAuthoritativeThread("host", "c", large.toSnapshot()).rows.map { it.listKey(0) }.takeLast(200)
+            open()
+            val productionDisk = migrating()
+            destination(productionDisk) { _, vm, _ ->
+                val opened = vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                assertEquals(fullRows, requireNotNull(opened.authoritativeThread).rows.map { it.listKey(0) })
+                val facts = requireNotNull(opened.authoritativeThread).sourceSnapshot.items
+                val ids = (18_050L..18_248L).toSet() + setOf(18_010L, 19_000L, 40_000L)
+                assertEquals(
+                    large
+                        .toSnapshot()
+                        .items
+                        .filter { it.id in ids }
+                        .map { it.raw },
+                    facts.map { it.raw },
+                )
+                assertTrue(productionDisk.authoritativeReadCounts.itemDecodes <= 203)
+                assertTrue(productionDisk.authoritativeReadCounts.queries <= 10)
+                println("production family witness counts=${productionDisk.authoritativeReadCounts}")
+            }
+            val cold = open()
+            val window = requireNotNull(cold.newestDisplayWindow("host", "c", 200))
+            val partial = window.saved.toSnapshot().copy(openingRows = window.rows)
+            assertEquals(fullRows, projectAuthoritativeThread("host", "c", partial).rows.map { it.listKey(0) })
+            assertTrue(cold.lastReadCounts.itemDecodes <= 203)
+            assertTrue(cold.lastReadCounts.itemReads <= 205)
+            assertTrue(cold.lastReadCounts.queries <= 10)
+            assertEquals(0, cold.fullReads)
+            println("cold family witness counts=${cold.lastReadCounts}")
+            val launchAnchor =
+                SavedAuthoritativeThread(
+                    "e",
+                    listOf(
+                        agent(1, 0, 0),
+                        JsonObject(agent(2, 1, 0, parent = 1) + ("content" to MobileJson.parseToJsonElement("""{"name":"Agent"}"""))),
+                        agent(3, 2, 1, parent = 2, shown = true),
+                        JsonObject(fact(4, parent = 1) + ("order" to JsonPrimitive(9))),
+                    ) + (10..12).map { fact(it) },
+                    1000,
+                    1000,
+                    null,
+                ).retained()
+            open().writeAuthoritativeThread("host", "launch-anchor", launchAnchor).getOrThrow()
+            val launchWindow = requireNotNull(open().newestDisplayWindow("host", "launch-anchor", 4))
+            val launchSnapshot = launchWindow.saved.toSnapshot().copy(openingRows = launchWindow.rows)
+            assertEquals(
+                projectAuthoritativeThread("host", "launch-anchor", launchAnchor.toSnapshot()).rows.takeLast(4).map { it.listKey(0) },
+                projectAuthoritativeThread("host", "launch-anchor", launchSnapshot).rows.map { it.listKey(0) },
+            )
+        }
+
+    @Test fun validationInvariant_unavailableSupplementNeverDeliversOrCommitsUnverifiedFacts() =
+        runTest {
+            for (retired in listOf(true, false)) {
+                for (throws in listOf(false, true)) {
+                    for (recover in listOf(false, true)) {
+                        databaseFile = "validation-$retired-$throws-$recover.db"
+                        val original =
+                            SavedAuthoritativeThread(
+                                "e",
+                                listOf(agent(1, 0, 0)) + (2..300).map { fact(it, parent = if (it == 2) 1 else null) },
+                                1000,
+                                0,
+                                null,
+                                retirements = mapOf(500L to 500L),
+                            ).retained()
+                        open().writeAuthoritativeThread("host", "c", original).getOrThrow()
+                        open()
+                        val disk = migrating()
+                        var unavailable = false
+                        var attempts = 0
+                        val reparented = JsonObject(fact(300, parent = 1) + ("rev" to JsonPrimitive(1001)))
+                        val cache =
+                            object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
+                                override suspend fun authoritativeParentClosure(
+                                    serverId: String,
+                                    conversationId: String,
+                                    epoch: String,
+                                    parents: Set<Long>,
+                                    evidence: Set<Long>,
+                                ): SavedAuthoritativeThread? {
+                                    attempts++
+                                    if (unavailable) {
+                                        if (throws) throw java.io.IOException("classified unavailable")
+                                        return null
+                                    }
+                                    return disk.authoritativeParentClosure(serverId, conversationId, epoch, parents, evidence)
+                                }
+                            }
+                        destination(cache) { _, vm, repo ->
+                            vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                            val beforeFailure = attempts
+                            unavailable = true
+                            val revised = if (retired) fact(500) else reparented
+                            repo.authoritativeThreads.applyBatch(
+                                "host",
+                                "c",
+                                "e",
+                                1001,
+                                listOf(ThreadItemDto.decodeReplacement(revised)),
+                                0,
+                            )
+                            runCurrent()
+                            val shown = requireNotNull(vm.state.value.authoritativeThread).sourceSnapshot
+                            assertFalse(shown.items.any { it.raw == revised })
+                            advanceTimeBy(500)
+                            runCurrent()
+                            assertEquals(original, disk.readAuthoritativeThread("host", "c"))
+                            assertTrue(attempts > beforeFailure)
+                            println(
+                                "supplemental failure attempts=${attempts - beforeFailure} " +
+                                    "retired=$retired throws=$throws recovery=$recover",
+                            )
+                            if (!recover) {
+                                val removal = requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 299))
+                                repo.removeAuthoritativeFact(removal).getOrThrow()
+                                return@destination
+                            }
+                            unavailable = false
+                            advanceTimeBy(1500)
+                            runCurrent()
+                            val recovered = requireNotNull(vm.state.value.authoritativeThread).sourceSnapshot
+                            if (retired) {
+                                assertFalse(recovered.items.any { it.id == 500L })
+                                assertEquals(mapOf(500L to 500L), recovered.retirements)
+                            } else {
+                                assertEquals(revised, recovered.items.single { it.id == 300L }.raw)
+                                assertTrue(recovered.items.any { it.id == 1L })
+                                assertTrue(recovered.items.any { it.id == 2L })
+                                assertEquals(
+                                    300L,
+                                    requireNotNull(vm.state.value.authoritativeThread).rows.first().let { row ->
+                                        row.listKey(0).substringAfterLast(':').toLong()
+                                    },
+                                )
+                            }
+                            assertEquals(0, disk.authoritativeFullReads - 1)
+                        }
+                        val fresh = requireNotNull(open().readAuthoritativeThread("host", "c"))
+                        if (!recover) {
+                            assertEquals(
+                                original.copy(
+                                    items = original.items.filterNot { it["id"] == JsonPrimitive(299) },
+                                    appliedVersion = 1001,
+                                    retirements = original.retirements + (299L to 299L),
+                                ),
+                                fresh,
+                            )
+                        } else if (retired) {
+                            assertEquals(original.copy(appliedVersion = 1001), fresh)
+                        } else {
+                            assertEquals(
+                                original.items.map { raw ->
+                                    if (raw["id"] == JsonPrimitive(300)) reparented else raw
+                                },
+                                fresh.items,
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -832,6 +1005,17 @@ class AuthoritativeWindowRestoreTest {
                     assertTrue(cursor.moveToFirst())
                     assertTrue(cursor.getString(3).contains("$column>?"))
                 }
+                requireNotNull(database)
+                    .openHelper.readableDatabase
+                    .query(
+                        "EXPLAIN QUERY PLAN SELECT * FROM authoritative_items " +
+                            "WHERE host='host' AND conversation='c' AND epoch='e' AND orderKey=2 " +
+                            "AND $column>='0' AND $column<'1' LIMIT 1",
+                    ).use { cursor ->
+                        assertTrue(cursor.moveToFirst())
+                        val detail = cursor.getString(3)
+                        assertTrue(detail, detail.contains("orderKey=? AND $column>?"))
+                    }
             }
         }
 }

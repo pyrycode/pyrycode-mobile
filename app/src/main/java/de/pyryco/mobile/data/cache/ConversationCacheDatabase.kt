@@ -25,7 +25,7 @@ import java.io.IOException
         ConversationCacheDatabase.FileImport::class,
         ConversationCacheDatabase.AuthoritativeRetirement::class,
     ],
-    version = 7,
+    version = 8,
     autoMigrations = [
         AutoMigration(
             from = 1,
@@ -34,6 +34,7 @@ import java.io.IOException
         AutoMigration(from = 4, to = 5),
         AutoMigration(from = 5, to = 6, spec = ConversationCacheDatabase.DisplayWindowMigration::class),
         AutoMigration(from = 6, to = 7, spec = ConversationCacheDatabase.RenderPlacementMigration::class),
+        AutoMigration(from = 7, to = 8, spec = ConversationCacheDatabase.RenderPlacementMigration::class),
     ],
 )
 abstract class ConversationCacheDatabase : RoomDatabase() {
@@ -247,6 +248,8 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
             Index(value = ["host", "conversation", "epoch", "parentId"]),
             Index(value = ["host", "conversation", "epoch", "displayKey"]),
             Index(value = ["host", "conversation", "epoch", "launchKey"]),
+            Index(value = ["host", "conversation", "epoch", "orderKey", "displayKey"]),
+            Index(value = ["host", "conversation", "epoch", "orderKey", "launchKey"]),
         ],
     )
     internal data class AuthoritativeItem(
@@ -281,7 +284,42 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
     @Dao
     internal interface AuthoritativeDao {
         @Query(
-            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND displayKey>'' ORDER BY displayKey DESC LIMIT :limit",
+            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND orderKey=:orderKey AND ordinal=:ordinal LIMIT 1",
+        )
+        suspend fun placementWitness(
+            host: String,
+            conversation: String,
+            epoch: String,
+            orderKey: Long,
+            ordinal: Int,
+        ): AuthoritativeItem?
+
+        @Query(
+            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND displayKey>=:lower AND displayKey<:upper AND orderKey=:orderKey LIMIT 1",
+        )
+        suspend fun anchorWitness(
+            host: String,
+            conversation: String,
+            epoch: String,
+            lower: String,
+            upper: String,
+            orderKey: Long,
+        ): AuthoritativeItem?
+
+        @Query(
+            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND launchKey>=:lower AND launchKey<:upper AND orderKey=:orderKey LIMIT 1",
+        )
+        suspend fun launchAnchorWitness(
+            host: String,
+            conversation: String,
+            epoch: String,
+            lower: String,
+            upper: String,
+            orderKey: Long,
+        ): AuthoritativeItem?
+
+        @Query(
+            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND displayKey>'/' ORDER BY displayKey DESC LIMIT :limit",
         )
         suspend fun displayWindow(
             host: String,

@@ -68,7 +68,13 @@ internal fun AuthoritativeItem.savedPlacementKeys(
             segment(anchor?.second ?: root) + ":" + descendants.joinToString(":", transform = ::segment)
     }
     val descendants = (listOf(this) + agents.takeWhile { it.id != block.id }).asReversed().filter { it.id != block.id }
-    val content = if (display) key(block, descendants) else ""
+    // Hidden unordered agents retain a non-row metadata key for bounded supplemental lookup.
+    val content =
+        when {
+            display -> key(block, descendants)
+            agent && orderKey == Long.MAX_VALUE -> "!" + key(block, descendants)
+            else -> ""
+        }
     val launch =
         if (background && display) {
             // A foreground family embeds a nested launch; moving background families leave it at launch order.
