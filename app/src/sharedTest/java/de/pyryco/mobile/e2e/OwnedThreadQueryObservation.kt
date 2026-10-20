@@ -23,6 +23,7 @@ internal class OwnedThreadQueryObservation(
     private val onAccepted: (ThreadQueryRequest) -> Unit = {},
     private val onCertified: (ThreadQueryRequest, ThreadQueryReply.Success, AuthoritativeThreadSnapshot) -> Unit = { _, _, _ -> },
     private val onReset: (ThreadQueryRequest, ThreadQueryReply.Reset) -> Unit = { _, _ -> },
+    private val followReplacementReset: Boolean = false,
 ) {
     private class Query(
         val decoder: ThreadQueryDecoder,
@@ -134,7 +135,7 @@ internal class OwnedThreadQueryObservation(
                 is ThreadDecodeOutcome.Complete ->
                     when (val reply = outcome.value) {
                         is ThreadQueryReply.Batch -> {
-                            if (reply.checkpoint.epoch != before.epoch) {
+                            if (reply.checkpoint.epoch != expected.epoch) {
                                 close(connection)
                                 return
                             }
@@ -151,7 +152,7 @@ internal class OwnedThreadQueryObservation(
                         }
                         is ThreadQueryReply.Success -> {
                             queries.remove(query.decoder.requestId)
-                            if (reply.checkpoint.epoch != before.epoch) {
+                            if (reply.checkpoint.epoch != expected.epoch) {
                                 close(connection)
                                 return
                             }
@@ -165,7 +166,7 @@ internal class OwnedThreadQueryObservation(
                             }
                         }
                         is ThreadQueryReply.Reset -> {
-                            if (reply.checkpoint.epoch != before.epoch) {
+                            if (reply.checkpoint.epoch != expected.epoch && !followReplacementReset) {
                                 close(connection)
                                 return
                             }
@@ -173,7 +174,8 @@ internal class OwnedThreadQueryObservation(
                             queries.clear()
                             route.reset(before.conversation, reply.checkpoint.epoch)
                             expected =
-                                before.copy(
+                                expected.copy(
+                                    epoch = reply.checkpoint.epoch,
                                     generation =
                                         checkNotNull(before.generation) + store.current(host, before.conversation).generation,
                                 )

@@ -287,6 +287,12 @@ internal class DurableGapProof(
             assertEquals("saved source checkpoint", baseline.checkpoint.toULong(), savedRequest.version)
             assertTrue("no page demand before the older gesture", initialRequests.none { it is ThreadQueryRequest.Page })
             val resets = AuthoritativeHistoryProbe.resets()
+            val recoveryEpoch =
+                resets
+                    .singleOrNull()
+                    ?.reply
+                    ?.checkpoint
+                    ?.epoch ?: baseline.epoch
             if (resets.isEmpty()) {
                 val certificate = AuthoritativeHistoryProbe.certificates().single()
                 assertTrue("the exact saved request was certified", certificate.request === savedRequest)
@@ -299,14 +305,18 @@ internal class DurableGapProof(
             } else {
                 val reset = resets.single()
                 assertTrue("reset belongs to the exact accepted saved request", reset.request === savedRequest)
-                assertEquals("reset retains the durable source epoch", baseline.epoch, reset.reply.checkpoint.epoch)
+                assertTrue(
+                    "reset names its actual current source",
+                    reset.reply.checkpoint.epoch
+                        .isNotBlank(),
+                )
                 val certificates = AuthoritativeHistoryProbe.certificates()
                 val newest = certificates.first()
                 val opening =
                     newest.request as? ThreadQueryRequest.CatchUp
                         ?: throw AssertionError("reset did not request a fresh window")
                 assertEquals("reset is followed by its exact zero request", initialRequests[1], opening)
-                assertEquals("fresh window retains source epoch", baseline.epoch, opening.epoch)
+                assertEquals("fresh window names the actual reset source", recoveryEpoch, opening.epoch)
                 assertEquals("fresh window begins without a borrowed checkpoint", 0uL, opening.version)
                 val window =
                     newest.reply.coverage as? ThreadQueryReply.Coverage.Window
@@ -320,7 +330,7 @@ internal class DurableGapProof(
                     val coverage =
                         extra.reply.coverage as? ThreadQueryReply.Coverage.CatchUp
                             ?: throw AssertionError("unexpected replacement window")
-                    assertEquals("same source follow-up epoch", baseline.epoch, request.epoch)
+                    assertEquals("same source follow-up epoch", recoveryEpoch, request.epoch)
                     assertEquals("follow-up begins at the freshly certified checkpoint", newest.reply.checkpoint.version, request.version)
                     assertEquals("follow-up certifies its actual requested interval", request.version, coverage.fromVersion)
                 }
@@ -367,7 +377,7 @@ internal class DurableGapProof(
                             ?: throw AssertionError("older gesture did not certify a window")
                     assertEquals("page's exclusive upper boundary", request.beforeOrder, coverage.upperOrder)
                     assertEquals("actual continuation matches lower boundary", coverage.lowerOrder, coverage.continuation)
-                    assertEquals("page source epoch", baseline.epoch, proof.reply.checkpoint.epoch)
+                    assertEquals("page source epoch", recoveryEpoch, proof.reply.checkpoint.epoch)
                     val accumulated = checkNotNull(checkNotNull(authoritativeEvidence()).sourceSnapshot?.coverage)
                     assertEquals("accumulated coverage is continuous", coverage.lowerOrder, accumulated.lowerOrder)
                     assertEquals("accumulated coverage retains its newest boundary", previous.upperOrder, accumulated.upperOrder)
@@ -397,7 +407,7 @@ internal class DurableGapProof(
             val snapshot = checkNotNull(evidence.sourceSnapshot)
             val certificates = AuthoritativeHistoryProbe.certificates()
             val version = certificates.maxOf { it.reply.checkpoint.version }
-            assertEquals("recovered source epoch", baseline.epoch, snapshot.epoch)
+            assertEquals("recovered source epoch", recoveryEpoch, snapshot.epoch)
             assertTrue("current source certifies every actual recovery", snapshot.checkpoint.toULong() >= version)
             assertTrue("current source is completely certified", snapshot.checkpoint >= snapshot.completedVersion)
             assertEquals(
@@ -427,7 +437,26 @@ internal class DurableGapProof(
             val baselineRows = authoritativeThreadEvidence(serverId, conversationId, Any(), baseline).records
             val retained =
                 baselineRows.map { old ->
-                    val held = evidence.records.single { it.fact?.id == checkNotNull(old.fact).id }
+                    val held =
+                        evidence.records.single { now ->
+                            if (recoveryEpoch == baseline.epoch) {
+                                now.fact?.id == checkNotNull(old.fact).id
+                            } else {
+                                now.session == old.session &&
+                                    now.turn == old.turn &&
+                                    now.message.role == old.message.role &&
+                                    now.fullText == old.fullText &&
+                                    (now.fact?.parent ?: 0) == (old.fact?.parent ?: 0) &&
+                                    (
+                                        old.message.role != Role.User ||
+                                            (
+                                                (old.fact?.content as? JsonObject)?.get("message_id")?.let { id ->
+                                                    (now.fact?.content as? JsonObject)?.get("message_id") == id
+                                                } == true
+                                            )
+                                    )
+                            }
+                        }
                     assertEquals("saved source session", old.session, held.session)
                     assertEquals("saved source turn", old.turn, held.turn)
                     assertEquals("saved source role", old.message.role, held.message.role)

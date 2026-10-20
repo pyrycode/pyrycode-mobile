@@ -84,10 +84,23 @@ fact identity survives changes to rendered row identities.
 
 Saved-checkpoint recovery first proves the actual request from the saved epoch and
 checkpoint. A successful bounded tail retains every missed post and baseline fact.
-A real same-epoch reset instead requires its independently decoded receipt and a fresh
-certified newest window. Physical pulls then request exactly one contiguous older page
+A real correlated reset instead requires its independently decoded current epoch and
+fresh certified newest window. That reset may replace the saved epoch; only the recovery
+observer follows it, while ordinary live reply ownership stays strict. Physical pulls then request exactly one contiguous older page
 at a time. Both paths retain every missed post, the exact independently produced reply,
-baseline facts and rendered order. Neither path uses a legacy history request. Completion certification and the shown-content watermark are separate:
+baseline facts and rendered order. Across an actual epoch replacement, baseline rows
+are rebound by their original session, turn, role, full producer text and user message
+identity, using only the newly received canonical rows. Same-epoch facts retain exact
+canonical identity. Neither path uses a legacy history request.
+
+The offscreen cache check proves the exact certified baseline family is saved. It does
+not require unrelated newer live facts to be certified. The same immutable saved snapshot
+is also inspected for every raw missed-turn assistant fact, including hidden or partial
+facts. This persistence check never grants live admission. Queue-consistency and Markdown
+cases reveal their exact targets through existing scroll actions. Dedicated following
+checks still require automatic visibility without a reveal.
+
+Completion certification and the shown-content watermark are separate:
 settling an existing reply may revise it without creating newly shown content.
 
 Replay failures include structural history-query diagnostics without message content.

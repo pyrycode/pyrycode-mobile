@@ -178,9 +178,15 @@ background-only. Parent, source and progress admission remain unchanged.
 
 Test migration uses actual accepted thread queries, canonical identities and the
 destination's own subscription. Saved-checkpoint recovery proves either the complete
-bounded tail or an actual same-epoch reset, fresh newest window and physical older
-page walk. Both paths retain every missed post, exact independent reply, baseline
+bounded tail or an actual correlated reset, its current epoch, a fresh newest window
+and physical older page walk. A recovery-only observer may follow an explicitly decoded
+replacement epoch; ordinary live reply ownership still rejects one. Both paths retain every missed post, exact independent reply, baseline
 facts and rendered order. Offscreen unread proof separates completion certification
 from shown content. Exact matched replies for independent conversations can progress
 without borrowing an unrequested query. Same-conversation causal fences remain.
-None of these repairs replaces genuine counted native and replay evidence.
+Saved baseline persistence is checked independently of unrelated newer uncertified work.
+Raw missed-turn facts remain absent even if they would not render. Queue-consistency and
+Markdown checks reveal exact targets; following checks retain their no-reveal requirement.
+The post-Stop phone send uses the phone observer and separately checks the peer's actual
+successful fresh terminal. None of these repairs replaces genuine counted native and
+replay evidence.

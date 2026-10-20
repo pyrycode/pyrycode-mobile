@@ -93,3 +93,63 @@ internal fun ThreadEvidence.retainedReply(
     }
     return CompletedReplyObservation(owner, captured.session, captured.turn, captured.producerText, family, this, currentHost)
 }
+
+/** Persistence only. Unrelated newer facts never grant this saved source current admission. */
+internal fun ThreadEvidence.retainsCachedReply(
+    captured: CompletedReplyObservation,
+    currentHost: String,
+): Boolean {
+    if (owner.kind == ThreadEvidenceKind.Legacy) return retainedReply(captured, currentHost) != null
+    val snapshot = sourceSnapshot ?: return false
+    val epoch = captured.owner.epoch?.takeIf { it.isNotBlank() } ?: return false
+    if (currentHost != captured.host ||
+        owner.host != currentHost ||
+        owner.conversation != captured.owner.conversation ||
+        captured.owner.kind != ThreadEvidenceKind.Authoritative ||
+        owner.epoch != epoch ||
+        snapshot.epoch != epoch ||
+        snapshot.resetNeeded ||
+        captured.session.isBlank() ||
+        captured.turn.isBlank() ||
+        captured.records.isEmpty()
+    ) {
+        return false
+    }
+    val family =
+        snapshot.items
+            .filter {
+                it.kind == "assistant_message" && it.session == captured.session && it.turn == captured.turn && (it.parent ?: 0) == 0L
+            }.sortedBy { it.order }
+    if (family.map { it.id } != captured.records.map { it.fact?.id } || family.map { it.id }.distinct().size != family.size) return false
+    return family.zip(captured.records).all { (now, old) ->
+        val original = old.fact ?: return@all false
+        val retained = records.singleOrNull { it.fact?.id == now.id } ?: return@all false
+        val text = ((now.content as? JsonObject)?.get("text") as? JsonPrimitive)?.takeIf { it.isString }?.content
+        now.shown &&
+            !now.active &&
+            now.status in setOf("done", "finished") &&
+            now.rev >= original.rev &&
+            now.rev <= snapshot.checkpoint &&
+            retained.fact?.rev == now.rev &&
+            retained.agentId == null &&
+            !retained.message.isStreaming &&
+            retained.session == captured.session &&
+            retained.turn == captured.turn &&
+            text == old.fullText &&
+            retained.fullText == old.fullText &&
+            retained.message.content == old.message.content
+    }
+}
+
+/** Inspect the same raw saved source, including assistant facts omitted from display. */
+internal fun ThreadEvidence.cachedReplyAbsent(produced: ProducedReplyEvidence): Boolean {
+    if (owner.host != produced.host || owner.conversation != produced.conversation) return false
+    return if (owner.kind == ThreadEvidenceKind.Authoritative) {
+        if (produced.session.isNullOrBlank()) return false
+        sourceSnapshot?.items?.none {
+            it.kind == "assistant_message" && it.session == produced.session && it.turn == produced.turn
+        } == true
+    } else {
+        records.none { it.message.role == Role.Assistant && it.turn == produced.turn }
+    }
+}

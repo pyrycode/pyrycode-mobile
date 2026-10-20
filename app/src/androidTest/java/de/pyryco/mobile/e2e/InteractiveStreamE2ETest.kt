@@ -159,11 +159,13 @@ import de.pyryco.mobile.ui.conversations.thread.PERMISSION_SETTLE_WINDOW_MS
 import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
 import de.pyryco.mobile.ui.conversations.thread.PermissionModeOption
 import de.pyryco.mobile.ui.conversations.thread.STATUS_READING_TEST_TAG
+import de.pyryco.mobile.ui.conversations.thread.ThreadRow
 import de.pyryco.mobile.ui.conversations.thread.UNAVAILABLE_MODEL_LABEL
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
 import de.pyryco.mobile.ui.conversations.thread.completeSlashCommand
 import de.pyryco.mobile.ui.conversations.thread.dropdownLabel
 import de.pyryco.mobile.ui.conversations.thread.inert
+import de.pyryco.mobile.ui.conversations.thread.listKey
 import de.pyryco.mobile.ui.conversations.thread.ownedReplyContentMatches
 import de.pyryco.mobile.ui.conversations.thread.ownedReplyDisplayed
 import de.pyryco.mobile.ui.conversations.thread.ownedReplyMatcher
@@ -580,7 +582,8 @@ class InteractiveStreamE2ETest {
             assertTrue("inline marker must render monospace", styled(inline) { it.fontFamily == FontFamily.Monospace })
             listOf(code, "Key", "Value", cell, "present", end).forEach {
                 composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(it) and inReply)
-                composeTestRule.onNode(hasText(it) and inReply, useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+                composeTestRule.onNode(hasText(it) and inReply, useUnmergedTree = true).performScrollTo()
+                composeTestRule.questionAnswerTarget(hasText(it) and inReply).assertIsDisplayed()
             }
             // The whole reply survives the streaming-to-history boundary with no lost source text.
             assertEquals(reply, observed.records.joinToString("") { it.fullText })
@@ -3334,6 +3337,11 @@ class InteractiveStreamE2ETest {
                     serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
                 ),
             )
+
+        fun revealQueuedRow(text: String) {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { runCatching { scrollListTo(queuedRow(text)) }.isSuccess }
+            composeTestRule.onNode(queuedRow(text)).assertIsDisplayed()
+        }
         try {
             // 1. The phone creates and renames a chat, as #848 does; the peer joins as its own device.
             awaitChannelList()
@@ -3359,13 +3367,13 @@ class InteractiveStreamE2ETest {
                 // 3. AC-2: the phone's message queues behind it, on the phone and in the peer's snapshot.
                 withOwnedReply(serverId, conversationId) { awaitQueuedReply ->
                     sendFromPhone(PING_PROMPT)
-                    awaitQueuedRow(PING_PROMPT)
+                    revealQueuedRow(PING_PROMPT)
                     runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == PING_PROMPT } } }
 
                     // 4. AC-3: a message the phone queues and drops leaves both backlogs and the phone's thread; the
                     //    ping stays queued.
                     sendFromPhone(DROP_PROMPT)
-                    awaitQueuedRow(DROP_PROMPT)
+                    revealQueuedRow(DROP_PROMPT)
                     runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == DROP_PROMPT } } }
                     val dropControl = hasContentDescription(queuedDropDescription) and hasAnyAncestor(queuedRow(DROP_PROMPT))
                     // A real scroll pauses following before revealing an older action above the held prompt.
@@ -3389,7 +3397,7 @@ class InteractiveStreamE2ETest {
                                 .awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == PEER_QUEUED_PROMPT } }
                                 .first { it.text == PEER_QUEUED_PROMPT }
                         }
-                    awaitQueuedRow(PEER_QUEUED_PROMPT)
+                    revealQueuedRow(PEER_QUEUED_PROMPT)
                     peer.dequeueMessage(conversationId, peerItem.queuedMsgId)
                     awaitGoneFromThread(PEER_QUEUED_PROMPT)
                     runBlocking {
@@ -5658,12 +5666,13 @@ class InteractiveStreamE2ETest {
                     .filter { it.type == "turn_end" }
                     .map { peer.field(it, "turn_id") }
                     .toSet()
-            withOwnedReply(serverId, chat, peer = peer) { awaitReply ->
+            withOwnedReply(serverId, chat) { awaitReply ->
                 sendFromPhone("Briefly acknowledge this message. Do not use tools.")
                 val ended =
                     allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "the post-Stop turn did not finish", allowed) {
                         it.type == "turn_end" && peer.field(it, "turn_id") !in priorTurns
                     }
+                assertTrue("the independently completed post-Stop turn must succeed", (ended.payload as? JsonObject).isSuccessfulReplyEnd())
                 val turnId = requireNotNull(peer.field(ended, "turn_id"))
                 assertEquals(
                     "the rendered post-Stop reply must belong to the independently completed fresh turn",
@@ -8808,13 +8817,11 @@ class InteractiveStreamE2ETest {
                 "checkpoint=${snapshot?.checkpoint} completed=${snapshot?.completedVersion} " +
                 "repair=${snapshot?.repairNeeded} reset=${snapshot?.resetNeeded} records=${saved?.records?.size} " +
                 "baselineFacts=${saved?.records?.count { now -> baseline.records.any { old -> now.fact?.id == old.fact?.id } }}",
-            saved?.retainedReply(baseline, baseline.host) != null,
+            saved?.retainsCachedReply(baseline, baseline.host) == true,
         )
         assertTrue(
             "cache must not already hold the missed turn",
-            cachedRecords(baseline).none {
-                it.message.role == Role.Assistant && it.turn == missed.turn
-            },
+            saved?.cachedReplyAbsent(missed) == true,
         )
     }
 
@@ -9016,9 +9023,22 @@ class InteractiveStreamE2ETest {
                 .singleOrNull()
                 ?.boundsInRoot
         val intersecting = family.count { (_, bounds) -> viewport != null && bounds.overlaps(viewport) }
+        val projected = reply.thread.sourceSnapshot?.let { projectAuthoritativeThread(reply.host, reply.owner.conversation, it) }
+        val list = composeTestRule.onNode(hasScrollToNodeAction()).fetchSemanticsNode()
+        val indexForKey = list.config.getOrNull(SemanticsProperties.IndexForKey)
+        val indices =
+            reply.records.map { record ->
+                val row =
+                    projected?.rows?.withIndex()?.singleOrNull {
+                        (((it.value as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message?.id) == record.message.id
+                    }
+                row?.let { indexForKey?.invoke(it.value.listKey(it.index)) } ?: -1
+            }
+        val axis = list.config.getOrNull(SemanticsProperties.VerticalScrollAxisRange)
         Log.i(
             "OwnedReply",
-            "event=rendering_failure generation=${reply.owner.generation} " +
+            "event=rendering_failure lazyIndices=$indices scroll=${axis?.value?.invoke()} " +
+                "maximum=${axis?.maxValue?.invoke()} generation=${reply.owner.generation} " +
                 "currentGeneration=${current?.owner?.generation} checkpoint=${snapshot?.checkpoint} " +
                 "completed=${snapshot?.completedVersion} repair=${snapshot?.repairNeeded} reset=${snapshot?.resetNeeded} " +
                 "sourceCurrent=${current?.owner?.connection === repository} " +

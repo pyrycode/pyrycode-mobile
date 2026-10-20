@@ -78,6 +78,7 @@ internal object AuthoritativeHistoryProbe {
                     onAccepted = { accepted += it },
                     onCertified = { request, reply, snapshot -> certified += Certificate(request, reply, snapshot) },
                     onReset = { request, reply -> resets += Reset(request, reply) },
+                    followReplacementReset = true,
                 ).also { it.bind(connection, current) }
         }
         witness?.sending(connection, envelope)

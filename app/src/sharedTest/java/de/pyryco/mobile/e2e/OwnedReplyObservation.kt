@@ -527,7 +527,7 @@ private fun ThreadItemDto.field(name: String): String? = ((content as? JsonObjec
 
 // The daemon forwards terminal_reason verbatim; older/scripted producers leave it empty.
 // The terminal boundary and all success fields are still mandatory, and explicit failure reasons fail.
-private fun JsonObject?.isSuccessfulReplyEnd(): Boolean {
+internal fun JsonObject?.isSuccessfulReplyEnd(): Boolean {
     fun field(name: String) = (this?.get(name) as? JsonPrimitive)?.content
     val reason = this?.get("terminal_reason")
     return field("stop_reason") == "end_turn" &&
