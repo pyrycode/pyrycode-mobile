@@ -235,7 +235,16 @@ internal class TappingConversationRepository(
     private val observeThread: ((String, Flow<ThreadSnapshot>) -> Flow<ThreadSnapshot>)? = null,
 ) : ConversationRepository by delegate,
     ThreadSnapshotSource {
-    private val tappedNegotiated = if (tapNegotiated) delegate.negotiatedThread?.let(PassiveThreadProbe::negotiated) else null
+    private val tappedNegotiated =
+        if (tapNegotiated) {
+            delegate.negotiatedThread?.let {
+                PassiveThreadProbe.negotiated(
+                    InitialAttentionQueryGate.negotiated(it),
+                )
+            }
+        } else {
+            null
+        }
     override val negotiatedThread get() = if (tapNegotiated) tappedNegotiated else delegate.negotiatedThread
 
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = observeThreadSnapshot(conversationId).map { it.rows }
