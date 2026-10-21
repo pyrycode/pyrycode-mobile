@@ -232,6 +232,16 @@ internal class SuiteConnections private constructor(
         }
     }
 
+    /** Drain only this graph's phones while its activity and request-producing jobs are alive. */
+    suspend fun beforePhoneRestart() {
+        if (tape == null) return
+        val owners =
+            synchronized(this) {
+                transports.values.filter { it.owner.startsWith("phone/") && !it.localClose.get() }.map { it.owner }
+            }
+        for (owner in owners) beforeClose(owner)
+    }
+
     suspend fun beforePhoneTeardown() {
         val replay = tape ?: return
         for (owner in replay.phoneClosesBeforeTeardown()) {
