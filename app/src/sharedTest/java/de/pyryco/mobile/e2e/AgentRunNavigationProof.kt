@@ -87,6 +87,9 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
     }
 
     fun assertClosed(stage: String) {
+        // A certified reset can briefly remove the merged scrolling view while facts reload.
+        // Wait for the actual view before revealing the exact owned control; no tap is retried.
+        waitUntil(10_000) { onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes().size == 1 }
         questionAnswerTarget(closed).assertIsDisplayed()
         record(stage)
         assertTrue("only the first-tool representative may retain a collapsed child key", childMembership(expanded = false))

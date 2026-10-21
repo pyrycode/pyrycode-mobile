@@ -1,5 +1,10 @@
 package de.pyryco.mobile.e2e
 
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
@@ -17,6 +22,7 @@ import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadUiState
 import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.delay
 import org.junit.Assert.assertThrows
 import org.junit.Rule
 import org.junit.Test
@@ -32,16 +38,29 @@ class AuthoritativeScenarioScreenTest {
     private fun mount(
         items: List<ThreadItemDto>,
         collapseToolUses: Boolean = false,
+        restoreAfterReset: Boolean = false,
     ): ThreadEvidence {
         val snapshot: AuthoritativeThreadSnapshot = scenarioSnapshot(items)
         compose.setContent {
+            var restored by remember { mutableStateOf(!restoreAfterReset) }
+            LaunchedEffect(Unit) {
+                if (restoreAfterReset) {
+                    delay(1_000)
+                    restored = true
+                }
+            }
             PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
                         ThreadUiState(
                             "conversation",
                             "Channel",
-                            authoritativeThread = projectAuthoritativeThread("host", "conversation", snapshot),
+                            authoritativeThread =
+                                projectAuthoritativeThread(
+                                    "host",
+                                    "conversation",
+                                    if (restored) snapshot else scenarioSnapshot(emptyList()),
+                                ),
                         ),
                     onBack = {},
                     onSendMessage = {},
@@ -89,6 +108,20 @@ class AuthoritativeScenarioScreenTest {
             expandLabel = "Show tool uses",
             collapseLabel = "Hide tool uses",
             evidence = { println(it) },
+        )
+    }
+
+    @Test fun navigationWaitsForTheScrollingViewAfterAnAuthoritativeReset() {
+        val evidence = mount(finishedAgentScenarioItems(), collapseToolUses = true, restoreAfterReset = true)
+        val family = requireNotNull(evidence.agentFamily(evidence.owner))
+        compose.verifyAgentRunNavigation(
+            agentId = family.agentId,
+            runId = requireNotNull(family.runId),
+            childIds = family.childIds,
+            ownedChild = hasText("child1827-after") and hasAnyAncestor(hasTestTag("background-agent-child:${family.agentId}")),
+            goLabel = "Go to agent ↓",
+            expandLabel = "Show tool uses",
+            collapseLabel = "Hide tool uses",
         )
     }
 }
