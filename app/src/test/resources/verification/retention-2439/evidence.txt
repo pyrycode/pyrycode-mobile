@@ -25,6 +25,7 @@ Fresh builder runs
 - Repair: method-local two-minute runTest deadline. All rows, independent reads, exact record and bounded-write assertions remain unchanged. This finite bound stays below the existing 180-second outer test watchdog.
 - repaired-method.xml: plan-first parent plus the repair; test source SHA256 25360c23d8b2e1b02e10ac8b7bf40d5131153b2a23300fd868fb9676973566a1; 1 executed/passed, 0 failed/errors/skipped, 51.529 s. Four independent reads again completed in 10.582-10.845 s; flushes completed in 3-43 ms.
 - repaired-method-output-tail.txt retains raw final task/result output; unrelated compiler warnings omitted.
+- repaired-class.xml and repaired-class-output.txt: source 5643be8abb991820b06fbf80aa1b70e87d1b10c9; same repaired test SHA256; class selector --tests de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest --console=plain; 17 executed/passed, 0 failed/errors/skipped, 79.520 s total. Named method passed in 43.871 s and all four full-cap reads completed (9.670-9.858 s each).
 
 Complete configured JVM acceptance belongs to the dispatcher/verifier and is pending.
 No emulator, daemon, real-Claude observation or second-operating-system check applies.
