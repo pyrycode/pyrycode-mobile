@@ -1991,9 +1991,6 @@ class RemoteConversationRepository internal constructor(
         /** Capability-gated retirement of a question batch `{question_batch_id, outcome, source}` (#822). */
         const val TYPE_QUESTION_DISMISSED = "question_dismissed"
 
-        /** Capability-gated snapshot of a conversation's background tasks `{conversation_id, tasks, dropped_tasks}` (#677). */
-        const val TYPE_BACKGROUND_TASK_ROSTER = "background_task_roster"
-
         /**
          * Capability-gated current activity of a running background task `{conversation_id, task_id, description,
          * subagent_type, last_tool_name, total_tokens, tool_uses, duration_ms, truncated_fields}` (#1042).
