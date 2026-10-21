@@ -266,7 +266,7 @@ class AuthoritativeReaderPagingTest {
                         .payload.jsonObject["before_order"],
                 )
             }
-            assertEquals(original, disk().readAuthoritativeThread("host", "c"))
+            assertEquals(original.copy(checkpoint = 1000), disk().readAuthoritativeThread("host", "c"))
         }
 
     @Test fun ownedWritesReselectAtTheReaderBoundary() =

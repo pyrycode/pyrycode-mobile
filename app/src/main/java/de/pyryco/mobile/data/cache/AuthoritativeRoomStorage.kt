@@ -577,6 +577,7 @@ class AuthoritativeRoomStorage internal constructor(
             if (cursor.generation != header.generation) {
                 lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
                 val boundary = dao.indexItem(host, conversation, header.epoch, cursor.id)
+                if (boundary != null) lastReadCounts = lastReadCounts.copy(ordinalReads = lastReadCounts.ordinalReads + 1)
                 val currentKey = if (cursor.launch) boundary?.launchKey else boundary?.displayKey
                 if (!currentKey.isNullOrEmpty() && !currentKey.startsWith("!")) before = maxOf(before, currentKey)
             }

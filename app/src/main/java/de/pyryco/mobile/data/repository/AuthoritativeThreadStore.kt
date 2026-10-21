@@ -283,7 +283,7 @@ internal class AuthoritativeThreadStore {
         val adoptCertification = current.checkpoint == 0L
         val completedVersion = maxOf(current.completedVersion, saved.completedVersion)
         val checkpoint = if (adoptCertification) saved.checkpoint else current.checkpoint
-        publish(
+        publishSnapshot(
             host,
             conversation,
             current.copy(
@@ -298,6 +298,7 @@ internal class AuthoritativeThreadStore {
                 repairNeeded = current.repairNeeded || completedVersion > checkpoint,
             ),
             restoring = true,
+            preservePlacement = olderSaved,
         )
         RelayLog.i { "event=thread_store code=restored" }
         return AuthoritativeThreadOutcome.Applied
