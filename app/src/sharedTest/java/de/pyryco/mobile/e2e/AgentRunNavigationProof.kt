@@ -110,6 +110,23 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
         }
     }
 
+    // Repository evidence can precede a reset/catch-up frame on the screen. Wait for the
+    // exact family in the merged list; an absent list or a different Agent is not ready.
+    var lastReadiness: String? = null
+    waitUntil(10_000) {
+        val lists = onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes()
+        assertTrue("Agent proof needs one message list", lists.size <= 1)
+        val index = lists.singleOrNull()?.config?.getOrNull(SemanticsProperties.IndexForKey)
+        val keys = listOf("msg:$agentId", "agent-start:$agentId", "msg:$runId")
+        val indexes = keys.map { index?.invoke(it) ?: -1 }
+        val ready = indexes.all { it >= 0 }
+        val sample = "event=agent_run_readiness ready=$ready lists=${lists.size} key_indexes=$indexes"
+        if (sample != lastReadiness) {
+            evidence(sample)
+            lastReadiness = sample
+        }
+        ready
+    }
     assertClosed("before-navigation")
     questionAnswerTap(markerMatcher, lazyKey = "agent-start:$agentId", evidence = evidence)
     waitUntil(10_000) { onAllNodes(root).fetchSemanticsNodes().size == 1 }

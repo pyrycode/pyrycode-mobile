@@ -24,7 +24,7 @@ Forecast: approximately 300–450 written lines, three acceptance criteria, no n
 
 ## State and concurrency model
 
-No new application state or coroutine jobs. Use synchronized Compose semantics snapshots and the proof's existing 10-second wait budget. Poll readiness, never retry a scenario or a tap, sleep, force expansion, or broaden an owned matcher. Repository completion is not a render fence.
+No new application state or coroutine jobs. Use synchronized Compose semantics snapshots and the same 10-second duration already used for proof transitions; their existing deadlines remain unchanged. Poll readiness, never retry a scenario or a tap, sleep, force expansion, or broaden an owned matcher. Repository completion is not a render fence.
 
 ## State transitions and identity reuse
 
@@ -51,3 +51,9 @@ Run lint, assembleDebug, compileDebugAndroidTestKotlin, Spotless apply/check, th
 
 - Does a controlled empty projection reproduce the first missing merged-list assertion? Compare merged/unmerged samples rather than assuming the diagnostic proves visibility differences.
 - Is the reset still active at proof entry or initiated only during cleanup? Preserve the original first failure separately from suppressed replay-close errors and report the evidence limits.
+
+## Revisions
+
+2026-10-21 — `resetBeforeClosedRunCheckWaitsForTheSameOwnedFamily` fails before repair: one executed, one failed, zero errors/skips. It mounts the real screen with a settled owned family, publishes an empty reset, then invokes the original proof. The failure is the same missing merged-list `performScrollToNode` stack through the first `assertClosed`, before input. Both merged and unmerged lists are absent in this controlled state. This establishes a reset/readiness mechanism, not a persistent semantics-merging defect. The historical diagnostic's unmerged lookup may sample the returning list; it cannot establish simultaneity. Historical logs put reset and zero projected rows after `late_agent_tools` and before destruction, while the replay-close mismatch is explicitly suppressed under the original assertion. They do not expose the exact semantics snapshot at the instant of failure.
+
+The local readiness boundary uses the existing 10-second wait duration and a single synchronized list sample to require `msg:<agentId>`, `agent-start:<agentId>` and `msg:<runId>`. It emits content-free readiness changes and does not catch assertions, scroll, or tap while unready. The reset regression releases catch-up only after observing absence, then executes the complete original navigation/open/owned-child/close proof. Permanent absence and another Agent's list must time out; ambiguity fails immediately. No product, recording, request matching, deadline constant, shared question-answer helper, or caller signature changes. The original baseline also passed one native execution, with six owned children and two late tools on main's existing recording; #2246's retained failed candidate used its newer genuine recording with three late tools. Keep these source/evidence identities distinct. All Open Questions are resolved to these stated evidence limits.
