@@ -178,7 +178,10 @@ class InitialAttentionQueryTest {
             replay.deliverBatch()
             replay.deliverTerminal()
             awaitInitialAttentionQuery(replay.store.observe("host", "b"))
-            val lease = checkNotNull(replay.queries.acquire("b"))
+            val lease =
+                InitialAttentionQueryGate.arm(replay.thread, "b", 30_000).use {
+                    checkNotNull(InitialAttentionQueryGate.negotiated(replay.thread).acquire("b", replay.connection))
+                }
             replay.assertExactQueriesAndComplete()
             lease.close()
         }
