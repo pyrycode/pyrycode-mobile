@@ -41,6 +41,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
 import java.io.IOException
+import kotlin.time.Duration.Companion.minutes
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -339,7 +340,10 @@ class AuthoritativeOwnedUpsertTest {
         }
 
     @Test fun retentionInvariant_trimClearsCertification() =
-        runTest {
+        runTest(timeout = 2.minutes) {
+            val started = System.nanoTime()
+
+            fun phase(code: String) = println("retention_phase=$code elapsed_ms=${(System.nanoTime() - started) / 1_000_000}")
             val cache = open()
             val original =
                 saved((1..MAX_CACHED_THREAD_ROWS).map { raw(it) }, 200_000).copy(
@@ -347,12 +351,14 @@ class AuthoritativeOwnedUpsertTest {
                     coverage = SavedThreadCoverage(1, 100_001, 1, false),
                 )
             cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
+            phase("seeded")
             val repo = wrapper(PartialCache(cache))
             var observer = observe(repo)
             apply(repo, 210_000, raw(100_001, 210_000))
             runCurrent()
             observer.cancelAndJoin()
             assertWork(cache, 0, 1, 1)
+            phase("trimmed")
             // The held store still carries the old certificate. A later revision must not reinstall it.
             observer = observe(repo)
             apply(repo, 210_001, raw(100_001, 210_001))
@@ -365,6 +371,7 @@ class AuthoritativeOwnedUpsertTest {
             assertEquals(210_001L, restored.appliedVersion)
             assertEquals(0L, restored.checkpoint)
             assertNull(restored.coverage)
+            phase("reopened")
 
             // Completion inherits coverage for the trimmed fact; metadata changes cannot repair it.
             val checkpoint =
@@ -402,6 +409,7 @@ class AuthoritativeOwnedUpsertTest {
                 val reopened = wrapper(PartialCache(cache)).observeAuthoritativeThread("c").first()
                 assertEquals(0L, reopened.checkpoint)
                 assertNull(reopened.coverage)
+                phase("certificate_rejected")
             }
 
             // A fresh conservative baseline can certify a newly supplied, fully durable window.
@@ -424,6 +432,7 @@ class AuthoritativeOwnedUpsertTest {
             observer.cancelAndJoin()
             assertWork(cache, 0, 0)
             assertEquals(restored.copy(checkpoint = 210_001, coverage = SavedThreadCoverage(99_802, 100_001, 99_802, true)), fresh())
+            phase("complete")
         }
 
     @Test fun retentionInvariant_coverageCompletionCannotReinstateTrimmedRange() =
