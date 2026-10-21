@@ -711,6 +711,11 @@ changes B's single Waiting label to an aggregate count. The same prompt must rem
 the pill tap and Back. Cleanup restores original pairing records, names and ordering even after failure
 or cancellation, then closes the peer and removes the answer pairing. This first-Waiting isolation
 repair is separate from #1735's expiry-clock repair; neither retries nor longer timeouts are used.
+Since #2350, the scenario fences only B's destination acquisition after metadata setup,
+using the exact connection/generation's authoritative store certificate. A pre-tap wait can
+prevent the initial query from starting. The original assertions and captured queries remain
+required; [recorded-test guidance](recorded-tests.md#attention-destination-acquisition-2350)
+records the controlled regressions and focused/configured macOS replay evidence.
 Controlled `AttentionHostIsolationTest` drives the production attention fold with the inherited prompt;
 unit/render tests separately cover aggregation, mute filtering, cross-host identity and timer races.
 No `DeterministicInteractiveStreamE2ETest` twin was added: its fixtures lack the answer-host peer and
@@ -7469,6 +7474,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
   wall-clock polling alone was load-dependent. No `DeterministicInteractiveStreamE2ETest` twin exists
   for the live-only answer-host setup; controlled unit/render tests own mute, aggregation, cross-host
   and timer races. The pre-ship command remains `python3 scripts/android-test-gate.py live`.
+  #2350 adds the test-only acquisition fence after destination metadata, with controlled active/completed
+  initial-query regressions in `InitialAttentionQueryTest`. Both exact captured queries and every original
+  assertion remain required. Its focused and configured UI replay passed on macOS; the
+  [failed/passing replay evidence](recorded-tests.md#counted-macos-replay-evidence-2026-10-21)
+  records the separate overall gate dispositions. This supplies replay evidence; the existing live
+  harness, deterministic-twin coverage and pre-ship command remain as described above.
 
 - **Operator-bypass pairing lifetime (#1756):**
   `InteractiveStreamE2ETest.interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`
