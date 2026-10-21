@@ -815,6 +815,7 @@ class RemoteConversationRepository internal constructor(
                 try {
                     val settings = envelope.payload.toSessionSettings()
                     val arrival = ++settingsArrival
+                    hostReadings.holdSessionSettings(conversation, settings)
                     authoritativeSettings.update { it + (conversation to (arrival to settings)) }
                     relayRequests.waiter(envelope.inReplyTo)?.complete(envelope.payload)
                 } catch (_: IllegalArgumentException) {

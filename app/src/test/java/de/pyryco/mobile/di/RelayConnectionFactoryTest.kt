@@ -1154,8 +1154,11 @@ class RelayConnectionFactoryTest {
     @Test
     fun destinationCacheUsesConfiguredWorker() =
         runTest {
-            val f = Fixture(this)
+            val f = Fixture(this).also { it.threadSupport = true }
+            f.store.save(f.a.record)
             val registry = f.registry()
+            registry.connect()
+            runCurrent()
             val dispatches = AtomicInteger()
             val dispatcher = StandardTestDispatcher(testScheduler)
             val worker =
@@ -1175,7 +1178,7 @@ class RelayConnectionFactoryTest {
                     fake = FakeConversationRepository(),
                     store = f.store,
                     decorateRepository = { it },
-                    cache = InertConversationCache,
+                    cache = FileConversationCache(temporary.root, worker),
                     attachmentReader = lazy { AttachmentReader { AttachmentRead.Unreadable } },
                     contentScheduling = ThreadContentScheduling(worker),
                 )

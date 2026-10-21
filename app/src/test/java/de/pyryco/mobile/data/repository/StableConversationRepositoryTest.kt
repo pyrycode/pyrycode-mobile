@@ -70,7 +70,6 @@ class StableConversationRepositoryTest {
             val facade = StableConversationRepository(current)
 
             val conversations = mutableListOf<List<Conversation>>()
-            val messages = mutableListOf<List<ThreadItem>>()
             val lastMessages = mutableListOf<Message?>()
             val workspaces = mutableListOf<List<String>>()
             backgroundScope.launch { facade.observeConversations(ConversationFilter.All).collect { conversations += it } }
@@ -79,7 +78,7 @@ class StableConversationRepositoryTest {
             runCurrent()
 
             assertEquals(listOf(emptyList<Conversation>()), conversations)
-            assertEquals(listOf(emptyList<ThreadItem>()), messages)
+            assertNull("An absent bare facade must not manufacture a content route", facade.negotiatedThread)
             assertEquals(listOf<Message?>(null), lastMessages)
             assertEquals(listOf(emptyList<String>()), workspaces)
         }

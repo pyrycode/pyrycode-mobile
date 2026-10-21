@@ -1,12 +1,8 @@
 package de.pyryco.mobile.data.network
 
 import de.pyryco.mobile.data.model.LiveSessionEvent
-import de.pyryco.mobile.data.model.ToolDenial
-import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
-import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.UnrecognizedSite
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -64,10 +60,9 @@ internal data class ToolResultPayloadDto(
  * `tool_denied` (#811, pyrycode#2233): claude refused the call [toolUseId] names. The seven strings are
  * strict-required, the [UnrecognizedMessagePayloadDto] posture — a missing or wrong-typed one fails the
  * decode and the one envelope is dropped. The two report arrays take [RateLimitedPayloadDto.truncatedFields]'
- * shape, so `null` and `[]` decode apart; do not coalesce them as [QueueStatePayloadDto.toQueue] does.
+ * shape, so `null` and `[]` decode apart.
  *
- * Not a [LiveSessionEvent]: nothing on the live stream consumes a denial, so it folds into the thread
- * store only. Both lanes decode it through this type and [toDenial].
+ * Independent producer diagnostics only. This type never populates phone content.
  */
 @Serializable
 internal data class ToolDeniedPayloadDto(
@@ -81,20 +76,6 @@ internal data class ToolDeniedPayloadDto(
     @SerialName("truncated_fields") val truncatedFields: List<String>? = null,
     @SerialName("dropped_fields") val droppedFields: List<String>? = null,
 )
-
-/**
- * Total verbatim copy of a [ToolDeniedPayloadDto] into the retained [ToolDenial]. The routing keys —
- * `conversation_id`, `tool_use_id`, `turn_id` — stay on the DTO for the caller; no token is interpreted.
- */
-internal fun ToolDeniedPayloadDto.toDenial(): ToolDenial =
-    ToolDenial(
-        toolName = toolName,
-        decisionReasonType = decisionReasonType,
-        decisionReason = decisionReason,
-        message = message,
-        truncatedFields = truncatedFields,
-        droppedFields = droppedFields,
-    )
 
 /**
  * `turn_end`. The four trailing fields (#805) are claude's own stop shape and are **optional and open-set**
@@ -159,24 +140,6 @@ internal data class QueueStatePayloadDto(
     @SerialName("conversation_id") val conversationId: String,
     val queued: List<QueuedMessageDto>? = null,
 )
-
-/**
- * Map a decoded [QueueStatePayloadDto] to the portable ordered [QueuedMessage] backlog (#460),
- * preserving wire array order verbatim (no sort, no dedup — AC #1). A `null`/absent [queued] coalesces
- * to `emptyList()` (the documented empty-backlog latitude). Element strictness is preserved: a bad item
- * (a non-parseable [QueuedMessageDto.ts]) throws [IllegalArgumentException] inside the `map`, dropping
- * the **whole** snapshot at the decode boundary — the established "one bad row drops the chunk" idiom.
- */
-internal fun QueueStatePayloadDto.toQueue(): List<QueuedMessage> =
-    queued.orEmpty().map {
-        QueuedMessage(
-            id = it.queuedMsgId,
-            text = it.text,
-            timestamp = Instant.parse(it.ts),
-            // Verbatim, like `text`: a correlation key is only useful byte-for-byte (#781, AC #1).
-            messageId = it.messageId,
-        )
-    }
 
 /**
  * The `session_transition` thread event (#336, pyrycode#656/#657/#740): a session boundary
@@ -298,38 +261,6 @@ internal data class UnrecognizedMessagePayloadDto(
 )
 
 /**
- * Map a decoded [UnrecognizedMessagePayloadDto] to a [ThreadItem.UnrecognizedMessage], or **null** when
- * [site] is not one of the six documented values (AC #4 — the unknown-value drop is a mapper concern,
- * like [SessionTransitionPayloadDto.toBoundary], distinct from a malformed envelope). [site] is the one
- * payload field that is **narrowed** rather than copied: only the six client-owned [UnrecognizedSite]
- * constants can reach the UI's exhaustive label lookup, so a hostile daemon cannot inject a fifth label.
- *
- * [id] and [occurredAt] are **client-owned** and injected by the caller — the wire carries neither a row
- * id nor a timestamp (the [MessagePayloadDto.toMessage] idiom of passing non-wire values in). Keeping
- * [occurredAt] a parameter rather than reading the clock here is what keeps this mapper pure and
- * deterministically testable; the caller stamps both (see `decodeUnrecognizedMessage`).
- *
- * Every other field is a **total verbatim copy**. In particular this does **not** cross-validate the
- * empty-[messageType]-iff-`undecodable` invariant: it is daemon-guaranteed, and enforcing it here would
- * defend an unobserved failure and could drop a valid frame. The desktop client made the same call
- * (`parseUnrecognizedMessagePayload`, `inboundMessage.ts`), so the two clients agree deliberately.
- */
-internal fun UnrecognizedMessagePayloadDto.toRow(
-    id: String,
-    occurredAt: Instant,
-): ThreadItem.UnrecognizedMessage? =
-    site.toUnrecognizedSite()?.let { unrecognizedSite ->
-        ThreadItem.UnrecognizedMessage(
-            id = id,
-            site = unrecognizedSite,
-            messageType = messageType,
-            raw = raw,
-            truncated = truncated,
-            occurredAt = occurredAt,
-        )
-    }
-
-/**
  * The `banner` thread event (#873, pyrycode#2256): text claude printed about the session
  * `{conversation_id, level, text, truncated, stops_turn}`, folded into the conversation thread as a
  * [ThreadItem.Banner]. Decode-only — the phone never sends one. Always decode through [MobileJson].
@@ -352,26 +283,6 @@ internal data class BannerPayloadDto(
 )
 
 /**
- * Map a decoded [BannerPayloadDto] to a [ThreadItem.Banner]. **Total** — `info` is a [BannerLevel.Info]
- * (#1359), and an unrecognised `level` is not a drop but a [BannerLevel.Notice], the protocol's "treat it as
- * unknown" rule. [text] is copied verbatim;
- * stripping is the renderer's. [occurredAt] is the caller's: the envelope `ts` on the live lane, the
- * entry timestamp on replay, which is what lets the two lanes join on one identity.
- */
-internal fun BannerPayloadDto.toRow(occurredAt: Instant): ThreadItem.Banner =
-    ThreadItem.Banner(
-        level =
-            when (level) {
-                "warning" -> BannerLevel.Warning
-                "info" -> BannerLevel.Info
-                else -> BannerLevel.Notice
-            },
-        text = text,
-        truncated = truncated,
-        occurredAt = occurredAt,
-    )
-
-/**
  * The `model_refusal_fallback` thread event (#875, pyrycode#2265): claude refused a turn on one model and
  * retried it on another, folded into the conversation thread as a [ThreadItem.ModelRefusal]. Decode-only —
  * the phone never sends one. Always decode through [MobileJson].
@@ -380,7 +291,7 @@ internal fun BannerPayloadDto.toRow(occurredAt: Instant): ThreadItem.Banner =
  * `docs/protocol-mobile.md` § `model_refusal_fallback`. The six strings are strict-required with no Kotlin
  * default: the Go struct sets no `omitempty`, so each always arrives present. The two report arrays are
  * nullable because `null` is their normal wire value. [scope] and [refusalCategory] are decoded so their
- * shape is checked and then dropped by [toRow]: they are claude's open assertions and drive nothing.
+ * shape is checked by diagnostics. This type never populates phone content.
  */
 @Serializable
 internal data class ModelRefusalFallbackPayloadDto(
@@ -408,77 +319,3 @@ internal data class ModelRefusalNoFallbackPayloadDto(
     @SerialName("truncated_fields") val truncatedFields: List<String>?,
     @SerialName("dropped_fields") val droppedFields: List<String>?,
 )
-
-/**
- * Map a decoded [ModelRefusalFallbackPayloadDto] to a [ThreadItem.ModelRefusal]. **Total.** Strings are
- * copied verbatim; stripping is the renderer's. [occurredAt] is the caller's: the envelope `ts` live, the
- * entry timestamp on replay, which is what lets the two lanes join on one identity.
- */
-internal fun ModelRefusalFallbackPayloadDto.toRow(occurredAt: Instant): ThreadItem.ModelRefusal =
-    ThreadItem.ModelRefusal(
-        originalModel = originalModel,
-        fallbackModel = fallbackModel,
-        banner = banner,
-        bannerTruncated = bannerWasCut(truncatedFields),
-        occurredAt = occurredAt,
-    )
-
-internal fun ModelRefusalNoFallbackPayloadDto.toRow(occurredAt: Instant): ThreadItem.ModelRefusal =
-    ThreadItem.ModelRefusal(
-        originalModel = originalModel,
-        fallbackModel = null,
-        banner = banner,
-        bannerTruncated = bannerWasCut(truncatedFields),
-        occurredAt = occurredAt,
-    )
-
-private fun bannerWasCut(truncatedFields: List<String>?): Boolean = truncatedFields.orEmpty().contains("banner")
-
-/**
- * The `compaction_boundary` thread event (#874, pyrycode#2237): a finished compaction
- * `{conversation_id, trigger, pre_tokens, post_tokens}`, folded into the conversation thread as a
- * [ThreadItem.CompactionBoundary]. Decode-only — the phone never sends one. Always decode through [MobileJson].
- *
- * Wire SSOT: pyrycode `internal/protocol/interactive.go` (`CompactionBoundaryPayload`) +
- * `docs/protocol-mobile.md` § `compaction_boundary`. [conversationId] and [trigger] are strict-required.
- * The two counts default to null, so a missing key reads as "no count stated" and the divider still draws
- * without a size. A count that is not a JSON integer fitting a [Long] fails the decode and drops the one
- * frame — the daemon's own posture for a count it cannot read as an integer is no frame at all.
- */
-@Serializable
-internal data class CompactionBoundaryPayloadDto(
-    @SerialName("conversation_id") val conversationId: String,
-    val trigger: String,
-    @SerialName("pre_tokens") val preTokens: Long? = null,
-    @SerialName("post_tokens") val postTokens: Long? = null,
-)
-
-/**
- * Map a decoded [CompactionBoundaryPayloadDto] to a [ThreadItem.CompactionBoundary]. **Total** — an
- * unrecognised `trigger` is not a drop but "not manual", and an invalid count is not a drop but no count.
- * Only validated numbers and the recognised `manual` token cross into the domain, so no claude-authored
- * string can reach the label. [occurredAt] is the caller's: the envelope `ts` live, the entry timestamp on
- * replay, which is what lets the two lanes join on one identity.
- */
-internal fun CompactionBoundaryPayloadDto.toRow(occurredAt: Instant): ThreadItem.CompactionBoundary =
-    ThreadItem.CompactionBoundary(
-        preTokens = validTokenCount(preTokens),
-        postTokens = validTokenCount(postTokens),
-        manual = trigger == "manual",
-        occurredAt = occurredAt,
-    )
-
-private const val MAX_SAFE_TOKEN_COUNT = 9_007_199_254_740_991L
-
-private fun validTokenCount(value: Long?): Long? = value?.takeIf { it in 0..MAX_SAFE_TOKEN_COUNT }
-
-private fun String.toUnrecognizedSite(): UnrecognizedSite? =
-    when (this) {
-        "line_type" -> UnrecognizedSite.LineType
-        "assistant_block" -> UnrecognizedSite.AssistantBlock
-        "user_block" -> UnrecognizedSite.UserBlock
-        "undecodable" -> UnrecognizedSite.Undecodable
-        "codex_method" -> UnrecognizedSite.CodexMethod
-        "codex_item" -> UnrecognizedSite.CodexItem
-        else -> null
-    }

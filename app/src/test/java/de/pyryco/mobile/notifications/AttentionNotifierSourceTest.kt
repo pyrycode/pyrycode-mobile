@@ -11,6 +11,7 @@ import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
+import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -53,6 +54,7 @@ class AttentionNotifierSourceTest {
             a.prompt("initial-prompt")
             runCurrent()
             assertEquals(setOf(target("a")), postedTargets())
+            a.modals.value = HostModalState()
             a.state("thinking")
             runCurrent()
             a.read(5u)
@@ -108,14 +110,22 @@ class AttentionNotifierSourceTest {
         val a =
             Host(
                 "a",
-                RemoteConversationRepository(aPump, backgroundScope, negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) }),
+                RemoteConversationRepository(
+                    aPump,
+                    backgroundScope,
+                    negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE, CAPABILITY_THREAD) },
+                ),
                 aPump,
             )
         val bPump = Pump()
         val b =
             Host(
                 "b",
-                RemoteConversationRepository(bPump, backgroundScope, negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) }),
+                RemoteConversationRepository(
+                    bPump,
+                    backgroundScope,
+                    negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE, CAPABILITY_THREAD) },
+                ),
                 bPump,
             )
         val source = HostConversationSource(MutableStateFlow(listOf(a.connection, b.connection)), { null }, dispatcher)
@@ -164,7 +174,7 @@ class AttentionNotifierSourceTest {
             read: ULong?,
             latest: ULong?,
         ) {
-            val fields = listOfNotNull(read?.let { "\"read_up_to\":$it" }, latest?.let { "\"latest_entry_id\":$it" })
+            val fields = listOfNotNull(read?.let { "\"read_up_to\":$it" }, latest?.let { "\"last_shown_version\":$it" })
             val extra = if (fields.isEmpty()) "" else "," + fields.joinToString(",")
             pump.push(
                 "conversations",
@@ -175,7 +185,7 @@ class AttentionNotifierSourceTest {
         fun read(mark: ULong) =
             pump.push(
                 "conversation_updated",
-                """{"id":"same","name":"test","is_promoted":true,"cwd":"/test","last_used_at":"$TS","read_up_to":$mark}""",
+                """{"id":"same","name":"test","is_promoted":true,"cwd":"/test","last_used_at":"$TS","read_up_to":$mark,"last_shown_version":$mark}""",
             )
 
         fun end(

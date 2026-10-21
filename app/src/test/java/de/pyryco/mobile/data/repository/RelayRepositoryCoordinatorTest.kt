@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.model.scopedTo
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
+import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.InnerFrameV2
 import de.pyryco.mobile.data.network.MobileJson
@@ -38,6 +39,7 @@ import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -46,6 +48,7 @@ import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -60,6 +63,16 @@ import org.junit.Test
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RelayRepositoryCoordinatorTest {
+    private val previousSink = RelayLog.sink
+
+    @Before fun silencePlatformLogging() {
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After fun restorePlatformLogging() {
+        RelayLog.sink = previousSink
+    }
+
     @Test
     fun debugBundleRetryUsesFreshOpenConnectionAndNeverReplaysIncompleteTransfer() =
         runTest {
@@ -1161,43 +1174,48 @@ class RelayRepositoryCoordinatorTest {
     @Test
     fun hostReadings_takeReplacementsAndClearsFromTheNextConnection() =
         runTest {
-            val env = newEnv()
-            val readings = env.coordinator.hostReadings
-            HostReadingFrames.all("conv-1", model = "opus").forEach(openInteractiveConnection(env)::push)
-            runCurrent()
-            env.connections.value = null
-            runCurrent()
+            val env = newEnv(authoritativeHostId = "host")
+            try {
+                val readings = env.coordinator.hostReadings
+                val first = openInteractiveConnection(env, authoritative = true)
+                first.push(sessionSnapshotClear("conv-1", "s1"))
+                HostReadingFrames.all("conv-1", model = "opus").forEach { first.push(it.ownedBy("conv-1", "s1")) }
+                runCurrent()
+                env.connections.value = null
+                runCurrent()
 
-            val second = openInteractiveConnection(env)
-            second.push(HostReadingFrames.modelAnnounced("conv-1", "sonnet"))
-            second.push(HostReadingFrames.contextUsage("conv-1", total = 80_000))
-            second.push(HostReadingFrames.slashCommandList("conv-1", name = "review"))
-            runCurrent()
-            assertEquals(AnnouncedModel("sonnet", truncated = false), readings.observeAnnouncedModel("conv-1").first())
-            assertEquals(80_000L, readings.observeContextUsage("conv-1").first()?.totalTokens)
-            assertEquals(
-                listOf("review"),
-                readings
-                    .observeSlashCommandMenu("conv-1")
-                    .first()
-                    ?.rows
-                    ?.map { it.name },
-            )
+                val second = openInteractiveConnection(env, authoritative = true)
+                second.push(HostReadingFrames.modelAnnounced("conv-1", "sonnet").ownedBy("conv-1", "s1"))
+                second.push(HostReadingFrames.contextUsage("conv-1", total = 80_000).ownedBy("conv-1", "s1"))
+                second.push(HostReadingFrames.slashCommandList("conv-1", name = "review").ownedBy("conv-1", "s1"))
+                runCurrent()
+                assertEquals(AnnouncedModel("sonnet", truncated = false), readings.observeAnnouncedModel("conv-1").first())
+                assertEquals(80_000L, readings.observeContextUsage("conv-1").first()?.totalTokens)
+                assertEquals(
+                    listOf("review"),
+                    readings
+                        .observeSlashCommandMenu("conv-1")
+                        .first()
+                        ?.rows
+                        ?.map { it.name },
+                )
 
-            second.push(HostReadingFrames.sessionTransition("conv-1"))
-            runCurrent()
-            assertNull(readings.observeAnnouncedModel("conv-1").first())
-            assertNull(readings.observeSessionFacts("conv-1").first())
-            assertNull(readings.observeContextUsage("conv-1").first())
-            assertNotNull(readings.observeUsageLimit("conv-1").first())
-            assertNotNull(readings.observeSlashCommandMenu("conv-1").first())
+                second.push(sessionSnapshotClear("conv-1", "s2"))
+                runCurrent()
+                assertNull(readings.observeAnnouncedModel("conv-1").first())
+                assertNull(readings.observeSessionFacts("conv-1").first())
+                assertNull(readings.observeContextUsage("conv-1").first())
+                assertNotNull(readings.observeUsageLimit("conv-1").first())
+                assertNull(readings.observeSlashCommandMenu("conv-1").first())
 
-            second.push(HostReadingFrames.rateLimited("conv-1", status = "allowed"))
-            runCurrent()
-            assertNull(readings.observeUsageLimit("conv-1").first())
-            assertNotNull(readings.observeSlashCommandMenu("conv-1").first())
-
-            env.coordinator.close()
+                second.push(HostReadingFrames.rateLimited("conv-1", status = "allowed").ownedBy("conv-1", "s2"))
+                second.push(HostReadingFrames.slashCommandList("conv-1", name = "review").ownedBy("conv-1", "s2"))
+                runCurrent()
+                assertNull(readings.observeUsageLimit("conv-1").first())
+                assertNotNull(readings.observeSlashCommandMenu("conv-1").first())
+            } finally {
+                env.coordinator.close()
+            }
         }
 
     // The usage-limit expiry is read against the coordinator's clock, so a reading held across a reconnect
@@ -1290,41 +1308,100 @@ class RelayRepositoryCoordinatorTest {
     @Test
     fun hostReadings_reReadTriggersStillReplaceTheHeldSettings() =
         runTest {
-            val env = newEnv()
-            val facade = env.facade()
-            val first = openInteractiveConnection(env)
-            val readings = collect(facade.observeSessionSettings("conv-1"))
-            first.push(HostReadingFrames.sessionSettings(first.settingsAsks().single().id, model = "opus"))
-            runCurrent()
-            env.connections.value = null
-            runCurrent()
-            val second = openInteractiveConnection(env)
-            second.push(HostReadingFrames.sessionSettings(second.settingsAsks().single().id, model = "opus"))
-            runCurrent()
+            val env = newEnv(authoritativeHostId = "host")
+            try {
+                val facade = env.facade()
+                val first = openInteractiveConnection(env, authoritative = true)
+                first.push(sessionSnapshotClear("conv-1", "sess-a"))
+                val readings = collect(facade.observeSessionSettings("conv-1"))
+                facade.refreshSessionSettings("conv-1")
+                runCurrent()
+                first.push(
+                    HostReadingFrames
+                        .sessionSettings(first.settingsAsks().single().id, model = "opus")
+                        .ownedBy("conv-1", "sess-a"),
+                )
+                runCurrent()
+                env.connections.value = null
+                runCurrent()
+                assertEquals("opus", readings.last()?.model)
+                assertTrue(readings.last()?.held == true)
+                val second = openInteractiveConnection(env, authoritative = true)
+                facade.refreshSessionSettings("conv-1")
+                runCurrent()
+                second.push(
+                    HostReadingFrames
+                        .sessionSettings(second.settingsAsks().single().id, model = "opus")
+                        .ownedBy("conv-1", "sess-a"),
+                )
+                runCurrent()
 
-            second.push(HostReadingFrames.sessionTransition("conv-1"))
-            runCurrent()
-            second.push(HostReadingFrames.sessionSettings(second.settingsAsks().last().id, model = "haiku"))
-            runCurrent()
-            assertEquals(2, second.settingsAsks().size)
-            assertEquals("haiku", readings.last()?.model)
+                second.push(sessionSnapshotClear("conv-1", "sess-b"))
+                runCurrent()
+                assertNull(readings.last())
+                assertNull(
+                    env.coordinator.hostReadings
+                        .observeHeldSessionSettings("conv-1")
+                        .first(),
+                )
+                second.push(
+                    HostReadingFrames
+                        .sessionSettings(second.settingsAsks().last().id, model = "retired")
+                        .ownedBy("conv-1", "sess-a"),
+                )
+                runCurrent()
+                assertNull("retired settings cannot repopulate the live reading", readings.last())
+                assertNull(
+                    env.coordinator.hostReadings
+                        .observeHeldSessionSettings("conv-1")
+                        .first(),
+                )
+                facade.refreshSessionSettings("conv-1")
+                runCurrent()
+                second.push(
+                    HostReadingFrames
+                        .sessionSettings(second.settingsAsks().last().id, model = "haiku")
+                        .let {
+                            it.copy(
+                                payload =
+                                    kotlinx.serialization.json.JsonObject(
+                                        it.payload.jsonObject + ("session_id" to kotlinx.serialization.json.JsonPrimitive("sess-b")),
+                                    ),
+                            )
+                        }.ownedBy("conv-1", "sess-b"),
+                )
+                runCurrent()
+                assertEquals(2, second.settingsAsks().size)
+                assertEquals("haiku", readings.last()?.model)
 
-            facade.refreshSessionSettings("conv-1")
-            runCurrent()
-            second.push(HostReadingFrames.sessionSettings(second.settingsAsks().last().id, model = "sonnet"))
-            runCurrent()
-            assertEquals(3, second.settingsAsks().size)
-            assertEquals("sonnet", readings.last()?.model)
-            assertEquals(
-                "the latest reply is what the next connection starts from",
-                "sonnet",
-                env.coordinator.hostReadings
-                    .observeHeldSessionSettings("conv-1")
-                    .first()
-                    ?.model,
-            )
-
-            env.coordinator.close()
+                facade.refreshSessionSettings("conv-1")
+                runCurrent()
+                second.push(
+                    HostReadingFrames
+                        .sessionSettings(second.settingsAsks().last().id, model = "sonnet")
+                        .let {
+                            it.copy(
+                                payload =
+                                    kotlinx.serialization.json.JsonObject(
+                                        it.payload.jsonObject + ("session_id" to kotlinx.serialization.json.JsonPrimitive("sess-b")),
+                                    ),
+                            )
+                        }.ownedBy("conv-1", "sess-b"),
+                )
+                runCurrent()
+                assertEquals(3, second.settingsAsks().size)
+                assertEquals("sonnet", readings.last()?.model)
+                assertEquals(
+                    "the latest reply is what the next connection starts from",
+                    "sonnet",
+                    env.coordinator.hostReadings
+                        .observeHeldSessionSettings("conv-1")
+                        .first()
+                        ?.model,
+                )
+            } finally {
+                env.coordinator.close()
+            }
         }
 
     // #1320: a held model menu is still offered after a reconnect, and the new connection still asks for its own.
@@ -1759,6 +1836,7 @@ class RelayRepositoryCoordinatorTest {
         relayStatus: MutableStateFlow<RelayLinkStatus> = MutableStateFlow(RelayLinkStatus.Connected),
         now: () -> Instant = Clock.System::now,
         messageTrail: MessageTrail = MessageTrail(),
+        authoritativeHostId: String = "",
     ): Env {
         val connections = MutableStateFlow<RelayTransport?>(null)
         val pumps = mutableListOf<FakeManagedPump>()
@@ -1772,6 +1850,7 @@ class RelayRepositoryCoordinatorTest {
                 pushTokens = pushTokens,
                 now = now,
                 messageTrail = messageTrail,
+                authoritativeHostId = authoritativeHostId,
             )
         coordinator.start()
         return Env(connections, pumps, coordinator, relayStatus)
@@ -1888,11 +1967,14 @@ class RelayRepositoryCoordinatorTest {
     private fun RelayRepositoryCoordinator.heldIds(): List<String> = hostModals.value.outstanding.map { it.modalId }
 
     /** Publishes a new connection, drives its pump to Open with `interactive`, and returns the pump. */
-    private fun TestScope.openInteractiveConnection(env: Env): FakeManagedPump {
+    private fun TestScope.openInteractiveConnection(
+        env: Env,
+        authoritative: Boolean = false,
+    ): FakeManagedPump {
         env.connections.value = StubRelayTransport()
         runCurrent()
         val pump = env.pumps.last()
-        pump.open(capabilities = setOf(CAPABILITY_INTERACTIVE))
+        pump.open(capabilities = if (authoritative) setOf(CAPABILITY_INTERACTIVE, CAPABILITY_THREAD) else setOf(CAPABILITY_INTERACTIVE))
         runCurrent()
         return pump
     }

@@ -602,7 +602,7 @@ open class BackgroundAgentViewportTest {
                 ) {
                     PyrycodeMobileTheme(darkTheme = true) {
                         ThreadScreen(
-                            state.value,
+                            state.value.withLiteralRows(),
                             {},
                             {},
                             ConnectionState.Connected,

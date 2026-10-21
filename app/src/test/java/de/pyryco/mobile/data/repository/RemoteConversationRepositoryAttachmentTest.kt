@@ -387,7 +387,7 @@ class RemoteConversationRepositoryAttachmentTest {
             assertEquals(payload.getValue("message_id").jsonPrimitive.content, message.id)
             assertEquals(listOf(ThreadItem.MessageItem(message)), thread.last())
             assertEquals(echo, message)
-            assertEquals(listOf("event=send_message attachments=2"), logs)
+            assertEquals(listOf("event=send_message attachments=2", "event=thread_send code=provisional"), logs)
         }
 
     @Test
@@ -444,7 +444,7 @@ class RemoteConversationRepositoryAttachmentTest {
             pump.sends().forEach { sent ->
                 assertEquals(setOf("conversation_id", "message_id", "text"), sent.payload.jsonObject.keys)
             }
-            assertTrue(logs.isEmpty())
+            assertEquals(List(2) { "event=thread_send code=provisional" }, logs)
         }
 
     @Test

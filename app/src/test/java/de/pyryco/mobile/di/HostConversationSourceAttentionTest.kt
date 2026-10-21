@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.Question
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
@@ -20,6 +21,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
+import de.pyryco.mobile.notifications.notificationPreview
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -38,6 +40,8 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import kotlin.coroutines.CoroutineContext
@@ -154,6 +158,64 @@ class HostConversationSourceAttentionTest {
                 ),
                 alerts.map { it.identityOnly() },
             )
+        }
+
+    @Test
+    fun permissionUsesDisplayTitleAndPromptAndQuestionsKeepFirstWireOrder() =
+        withSource { a, _, source ->
+            val alerts = collectAlerts(source)
+            a.modals.value =
+                HostModalState(
+                    listOf(
+                        ModalUiState.Open(
+                            "permission",
+                            "permission",
+                            "Allow Bash?",
+                            "claude wants to run: ./gradlew lint",
+                            emptyList(),
+                            "deny",
+                            "conv",
+                        ),
+                    ),
+                )
+            runCurrent()
+            assertEquals("Allow Bash? claude wants to run: ./gradlew lint", notificationPreview(alerts.last().preview?.invoke()))
+            a.batches.value =
+                listOf(
+                    QuestionBatch(
+                        "conv",
+                        "batch",
+                        listOf(Question("First?", "", emptyList(), false), Question("Second?", "", emptyList(), false)),
+                    ),
+                )
+            runCurrent()
+            assertEquals("First?", alerts.last().preview?.invoke())
+            assertTrue(logs.none { line -> listOf("gradlew", "First?", "Second?").any { it in line } })
+        }
+
+    @Test
+    fun blankPermissionPromptBlankFirstQuestionAndOtherModalClassesFallback() =
+        withSource { a, _, source ->
+            val alerts = collectAlerts(source)
+            listOf(
+                ModalUiState.Open("m0", "permission", "Allow Bash?", " ", emptyList(), "deny", "conv"),
+                ModalUiState.Open("m1", "choice", "Choice", "Private choice", emptyList(), "deny", "conv"),
+            ).forEach { modal ->
+                a.modals.value = HostModalState(listOf(modal))
+                runCurrent()
+                assertNull(alerts.last().preview?.invoke())
+            }
+            a.batches.value =
+                listOf(
+                    QuestionBatch(
+                        "conv",
+                        "batch",
+                        listOf(Question(" ", "", emptyList(), false), Question("Second?", "", emptyList(), false)),
+                    ),
+                )
+            runCurrent()
+            assertNull(alerts.last().preview?.invoke())
+            assertTrue(logs.none { line -> listOf("Private choice", "Second?").any { it in line } })
         }
 
     @Test

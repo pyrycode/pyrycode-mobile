@@ -385,19 +385,16 @@ class NegotiatedThreadActivationTest {
                 pump.open(emptySet())
                 runCurrent()
                 val events =
-                    messages.filter {
-                        it.startsWith("event=thread_negotiation") ||
-                            it.startsWith("event=legacy_content_request_refused")
-                    }
+                    messages.filter { it.startsWith("event=thread_negotiation") }
                 assertEquals(
                     setOf(
                         "event=thread_negotiation verdict=supported",
                         "event=thread_negotiation verdict=unverified",
                         "event=thread_negotiation verdict=missing",
-                        "event=legacy_content_request_refused",
                     ),
                     events.toSet(),
                 )
+                assertFalse(messages.any { "sensitive-host" in it })
             } finally {
                 host.coordinator.close()
                 RelayLog.enabled = enabled
