@@ -3,8 +3,8 @@ package de.pyryco.mobile.design
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.ThreadItemDto
-import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.data.repository.AuthoritativeLiveProgress
+import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -32,9 +32,11 @@ internal class CaptureThread(
 
     override fun observe(conversationId: String) =
         combine(base.observe(conversationId), extras, showSeed, queue, taskFacts) { seed, rows, shown, queued, tasks ->
-            val ids = rows.mapIndexedNotNull { index, row ->
-                (row as? ThreadItem.MessageItem)?.message?.id?.let { it to index + 10_000L }
-            }.toMap()
+            val ids =
+                rows
+                    .mapIndexedNotNull { index, row ->
+                        (row as? ThreadItem.MessageItem)?.message?.id?.let { it to index + 10_000L }
+                    }.toMap()
             val authored =
                 (if (shown) seed.items else emptyList()) + tasks + rows.mapIndexed { index, row -> fact(index + 10_000L, row, ids) } +
                     queued.mapIndexed { index, item ->
@@ -51,12 +53,21 @@ internal class CaptureThread(
                         )
                     }
             store.reset(host, conversationId, "capture")
-            store.establishComplete(host, conversationId, "capture", maxOf(30_000, authored.maxOfOrNull { it.rev } ?: 0), authored,
-                store.current(host, conversationId).generation)
+            store.establishComplete(
+                host,
+                conversationId,
+                "capture",
+                maxOf(30_000, authored.maxOfOrNull { it.rev } ?: 0),
+                authored,
+                store.current(host, conversationId).generation,
+            )
             store.current(host, conversationId)
         }
 
-    override fun progress(conversationId: String, connection: Any) = combine(extras, taskProgress) { rows, progress ->
+    override fun progress(
+        conversationId: String,
+        connection: Any,
+    ) = combine(extras, taskProgress) { rows, progress ->
         val messages = rows.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
         AuthoritativeLiveProgress(
             sessionId = messages.firstOrNull { it.toolCall != null }?.sessionId ?: progress.sessionId,
@@ -110,20 +121,26 @@ internal class CaptureThread(
                         put("attachment_ids", JsonArray(message.attachments.map { JsonPrimitive(it.attachmentId) }))
                         if (tool != null) {
                             active = tool.status == ToolCallStatus.Running
-                            status = when (tool.status) {
-                                ToolCallStatus.Running -> "running"
-                                ToolCallStatus.Failed -> "failed"
-                                ToolCallStatus.Denied -> "denied"
-                                ToolCallStatus.Done -> "done"
-                            }
+                            status =
+                                when (tool.status) {
+                                    ToolCallStatus.Running -> "running"
+                                    ToolCallStatus.Failed -> "failed"
+                                    ToolCallStatus.Denied -> "denied"
+                                    ToolCallStatus.Done -> "done"
+                                }
                             text("name", tool.toolName)
                             text("tool_use_id", message.id)
                             text("input_summary", tool.input)
                             put("input", JsonObject(tool.inputFields.mapValues { JsonPrimitive(it.value) }))
-                            put("result", JsonObject(buildMap {
-                                put("result_summary", JsonPrimitive(tool.output))
-                                tool.resultDetail?.let { put("result_detail", JsonPrimitive(it)) }
-                            }))
+                            put(
+                                "result",
+                                JsonObject(
+                                    buildMap {
+                                        put("result_summary", JsonPrimitive(tool.output))
+                                        tool.resultDetail?.let { put("result_detail", JsonPrimitive(it)) }
+                                    },
+                                ),
+                            )
                         }
                     }
                     is ThreadItem.SessionBoundary -> {
@@ -173,12 +190,12 @@ internal class CaptureThread(
                         text(
                             "site",
                             when (row.site) {
-                            de.pyryco.mobile.data.repository.UnrecognizedSite.LineType -> "line_type"
-                            de.pyryco.mobile.data.repository.UnrecognizedSite.AssistantBlock -> "assistant_block"
-                            de.pyryco.mobile.data.repository.UnrecognizedSite.UserBlock -> "user_block"
-                            de.pyryco.mobile.data.repository.UnrecognizedSite.Undecodable -> "undecodable"
-                            de.pyryco.mobile.data.repository.UnrecognizedSite.CodexMethod -> "codex_method"
-                            de.pyryco.mobile.data.repository.UnrecognizedSite.CodexItem -> "codex_item"
+                                de.pyryco.mobile.data.repository.UnrecognizedSite.LineType -> "line_type"
+                                de.pyryco.mobile.data.repository.UnrecognizedSite.AssistantBlock -> "assistant_block"
+                                de.pyryco.mobile.data.repository.UnrecognizedSite.UserBlock -> "user_block"
+                                de.pyryco.mobile.data.repository.UnrecognizedSite.Undecodable -> "undecodable"
+                                de.pyryco.mobile.data.repository.UnrecognizedSite.CodexMethod -> "codex_method"
+                                de.pyryco.mobile.data.repository.UnrecognizedSite.CodexItem -> "codex_item"
                             },
                         )
                     }
@@ -186,7 +203,8 @@ internal class CaptureThread(
                 }
             }
         return authoritativeItem(
-            id, kind,
+            id,
+            kind,
             parent = parent,
             session = session,
             active = active,
@@ -199,31 +217,37 @@ internal class CaptureThread(
 }
 
 /** Explicit hidden task facts exercise the production count/panel path without inferred roster state. */
-internal fun captureTaskCount(count: Int) = (0 until count).map { index ->
-    de.pyryco.mobile.ui.conversations.thread.authoritativeAgent(
-        id = 40_000L + index,
-        shown = false,
-        task = "capture-task-$index",
-    )
-}
+internal fun captureTaskCount(count: Int) =
+    (0 until count).map { index ->
+        de.pyryco.mobile.ui.conversations.thread.authoritativeAgent(
+            id = 40_000L + index,
+            shown = false,
+            task = "capture-task-$index",
+        )
+    }
 
-internal fun captureTasks(roster: de.pyryco.mobile.data.model.BackgroundTaskRoster) = roster.tasks.mapIndexed { index, task ->
-    authoritativeItem(
-        id = 40_000L + index,
-        kind = if (task.taskType == "local_agent") "agent" else "tool_call",
-        shown = false,
-        active = !task.isFinished,
-        status = if (task.isFinished) task.finish?.status ?: "finished" else "running",
-        content = JsonObject(mapOf(
-            "name" to JsonPrimitive(if (task.taskType == "local_agent") "Agent" else "Bash"),
-            "task_id" to JsonPrimitive(task.taskId),
-            "task_link" to JsonObject(
-                mapOf(
-                    "task_type" to JsonPrimitive(task.taskType),
-                    "description" to JsonPrimitive(task.description),
-                ),
-            ),
-            "task_report" to JsonObject(mapOf("summary" to JsonPrimitive(task.finish?.summary.orEmpty()))),
-        )).toString(),
-    )
-}
+internal fun captureTasks(roster: de.pyryco.mobile.data.model.BackgroundTaskRoster) =
+    roster.tasks.mapIndexed { index, task ->
+        authoritativeItem(
+            id = 40_000L + index,
+            kind = if (task.taskType == "local_agent") "agent" else "tool_call",
+            shown = false,
+            active = !task.isFinished,
+            status = if (task.isFinished) task.finish?.status ?: "finished" else "running",
+            content =
+                JsonObject(
+                    mapOf(
+                        "name" to JsonPrimitive(if (task.taskType == "local_agent") "Agent" else "Bash"),
+                        "task_id" to JsonPrimitive(task.taskId),
+                        "task_link" to
+                            JsonObject(
+                                mapOf(
+                                    "task_type" to JsonPrimitive(task.taskType),
+                                    "description" to JsonPrimitive(task.description),
+                                ),
+                            ),
+                        "task_report" to JsonObject(mapOf("summary" to JsonPrimitive(task.finish?.summary.orEmpty()))),
+                    ),
+                ).toString(),
+        )
+    }
