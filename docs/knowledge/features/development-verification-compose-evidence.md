@@ -88,6 +88,15 @@ when the physical center clears the measured header and composer; otherwise the
 chrome guard still fails. This adds no tap, sleep or timeout. Its defaulted evidence
 sink records only geometry and static stages, without content or identifiers.
 
+Repository completion also precedes rendered readiness during reset/catch-up (#2373).
+Before the Agent pointer proof, sample one merged list and require its exact root,
+marker and closed representative keys together through `IndexForKey`. Missing content
+or another Agent must time out; ambiguity fails. Keep the existing pointer and membership
+proof after readiness. A failure diagnostic's later unmerged lookup is not a simultaneous
+tree snapshot: the controlled reset had no list in either tree, so switching trees
+would not fix it. Separate the original lookup assertion from suppressed replay-close
+teardown failures. See [the causal regression and counted Linux evidence](thread-screen-subagent-tool-rows.md#agent-navigation-proof-readiness-2373).
+
 Peer `turn_end` is not a phone render fence (#1994). Before the first held-Agent
 marker reveal, wait for the phone repository's finalized main newer reply and Idle
 phase using the existing timeout. Later layout can still dispose the revealed row.
