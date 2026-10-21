@@ -89,7 +89,8 @@ class ScriptedThreadRenderTest {
             val snapshot = harness.authoritativeSnapshot()
             snapshot.coverage != null &&
                 snapshot.checkpoint == snapshot.completedVersion &&
-                !snapshot.repairNeeded && !snapshot.resetNeeded
+                !snapshot.repairNeeded &&
+                !snapshot.resetNeeded
         }
         composeRule.onNodeWithText("Supplied reply").assertIsDisplayed()
     }

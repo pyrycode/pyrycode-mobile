@@ -19,6 +19,7 @@ internal class ScriptedThreadContent(
     private val summaries = mutableMapOf<String, JsonObject>()
     private val replies = mutableMapOf<Pair<String, String>, String>()
     private val sequences = mutableSetOf<Triple<String, String, String>>()
+    private val stalled = mutableSetOf<String>()
     private var nextIdentity = 0L
     private var version = 1000L
     private var segment = 0L
@@ -49,7 +50,7 @@ internal class ScriptedThreadContent(
             envelope.copy(
                 conversationId = JsonPrimitive(conversation),
                 sessionProvenance =
-                    SessionProvenance(
+                    envelope.sessionProvenance.takeIf { it.raw != null } ?: SessionProvenance(
                         JsonPrimitive(fields?.text("session_id")?.takeIf { it.isNotEmpty() } ?: session(conversation)),
                     ),
             ),
@@ -181,7 +182,18 @@ internal class ScriptedThreadContent(
             }
             "assistant_delta" -> {
                 if (!sequences.add(Triple(conversation, turn, fields.text("seq")))) return
-                clear(conversation, "stall")
+                if (stalled.remove(conversation)) {
+                    live(
+                        frame(
+                            "turn_state",
+                            buildJsonObject {
+                                put("conversation_id", conversation)
+                                put("state", "responding")
+                            },
+                        ),
+                        conversation,
+                    )
+                }
                 val key = replies.getOrPut(conversation to turn) { "reply:$turn:${++segment}" }
                 val prior = document(conversation)[id(conversation, key)]?.get("content") as? JsonObject
                 put(
@@ -280,6 +292,7 @@ internal class ScriptedThreadContent(
                 )
             }
             "turn_end" -> {
+                stalled.remove(conversation)
                 document(conversation)
                     .values
                     .filter {
@@ -315,6 +328,7 @@ internal class ScriptedThreadContent(
                 )
             }
             "session_transition" -> {
+                stalled.remove(conversation)
                 val next = fields.text("new_session_id")
                 put(conversation, "divider:$next", "session_divider", JsonObject(fields + ("occurred_at" to JsonPrimitive(envelope.ts))))
                 sessions[conversation] = next
@@ -324,6 +338,10 @@ internal class ScriptedThreadContent(
                 }
                 listOf("thinking_progress", "tool_progress", "api_retry", "compacting", "resetting", "turn_state")
                     .forEach { clear(conversation, it) }
+            }
+            "stall" -> {
+                stalled += conversation
+                live(envelope, conversation)
             }
             "unrecognized_message" ->
                 put(
@@ -342,6 +360,7 @@ internal class ScriptedThreadContent(
                 deliver(envelope)
             }
             else -> {
+                if (envelope.type == "turn_state") stalled.remove(conversation)
                 if (conversation.isNotEmpty() && envelope.type !in setOf("ack", "error", "thread_items")) {
                     live(envelope, conversation)
                 } else {
