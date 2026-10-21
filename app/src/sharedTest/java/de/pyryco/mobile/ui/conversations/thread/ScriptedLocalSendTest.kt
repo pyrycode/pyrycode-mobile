@@ -15,6 +15,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MobileJson
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -99,6 +100,22 @@ class ScriptedLocalSendTest {
     @Test
     fun claude_sendWaitsForItsCorrelatedAcknowledgement_thenForItsOwnTurnState() {
         start()
+        // A foreign phase must come from an admitted producer to prove conversation isolation.
+        harness.pushEnvelope(
+            Envelope(
+                698L,
+                "conversations",
+                "2026-10-07T00:00:00Z",
+                MobileJson.parseToJsonElement(
+                    """{"conversations":[
+                        {"id":"c1","name":"Harness channel","agent":"claude","is_promoted":true,
+                         "cwd":"/p/c1","last_message_ts":"2026-10-07T00:00:00Z","last_used_at":"2026-10-07T00:00:00Z","current_session_id":"session"},
+                        {"id":"another-chat","name":"Other channel","agent":"claude","is_promoted":true,
+                         "cwd":"/p/another-chat","last_message_ts":"2026-10-07T00:00:00Z","last_used_at":"2026-10-07T00:00:00Z","current_session_id":"session"}
+                    ]}""",
+                ),
+            ),
+        )
         val request = send()
         assertLocalOnly(R.string.thread_sending_label)
 
