@@ -60,6 +60,9 @@ Disk selection uses the cache IO dispatcher and one Room transaction. Decode/mer
 | Loaded removal; conversation/host deletion during held/final save; colliding second host | `AuthoritativeWindowRestoreTest.retirementInvariant_freshReopenCannotResurrectOrLoseOtherHost` plus retained #2256/#2149 writer probes |
 | Hydration followed by owned saves; fragmented saved certification | `AuthoritativeWindowRestoreTest.certificationInvariant_hydrationNeverChangesCommittedCertificate` |
 | Existing database upgrade | `AuthoritativeWindowRestoreTest.migrationInvariant_existingFactsAndIndexesSurviveUpgrade` |
+| Explicit zero versus absent child order under ordered/unordered roots | `AuthoritativeWindowRestoreTest.placementInvariant_zeroAndAbsentChildOrdersMatchRenderer` |
+| Winning root order cleared after opening or during held opening; cold reopen | `AuthoritativeWindowRestoreTest.placementInvariant_winningUnorderedRootResolvesHistoricalWitness` |
+| Loaded placement witness retired; replacement resolved before delivery and durable reopen | `AuthoritativeWindowRestoreTest.placementInvariant_ownedWitnessRemovalResolvesReplacementBeforeDelivery` |
 
 ## Error handling
 
