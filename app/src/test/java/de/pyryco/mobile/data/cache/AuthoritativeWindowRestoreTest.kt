@@ -1146,11 +1146,15 @@ class AuthoritativeWindowRestoreTest {
             for (version in listOf(5, 8)) {
                 databaseFile = "migration-$version.db"
                 val fixtures =
-                    listOf(
-                        JsonObject(agent(1, 1, 0) + ("content" to MobileJson.parseToJsonElement("""{"name":"Root"}"""))),
-                        agent(2, 0, 0, parent = 1),
-                        fact(300, parent = 2),
-                    ) + (3..202).map { fact(it, parent = 1) }
+                    if (version == 5) {
+                        listOf(agent(1, 1, 10), fact(2, active = true, parent = 1))
+                    } else {
+                        listOf(
+                            JsonObject(agent(1, 1, 0) + ("content" to MobileJson.parseToJsonElement("""{"name":"Root"}"""))),
+                            agent(2, 0, 0, parent = 1),
+                            fact(300, parent = 2),
+                        ) + (3..202).map { fact(it, parent = 1) }
+                    }
                 val original = SavedAuthoritativeThread("e", fixtures, 1000, 1000).retained()
                 val schema =
                     MobileJson
@@ -1186,6 +1190,12 @@ class AuthoritativeWindowRestoreTest {
                             "INSERT INTO authoritative_items (host,conversation,epoch,id,ordinal,orderKey,payload) VALUES ('host','c','e',?,?,?,?)",
                             arrayOf(item.id, index, item.order?.takeIf { it > 0 } ?: Long.MAX_VALUE, raw.toString()),
                         )
+                        if (version == 8) {
+                            db.execSQL(
+                                "UPDATE authoritative_items SET display=?,extra=? WHERE id=?",
+                                arrayOf(if (item.savedDisplayRow()) 1 else 0, if (item.savedRendererExtra()) 1 else 0, item.id),
+                            )
+                        }
                     }
                     db.version = version
                 }
@@ -1201,9 +1211,18 @@ class AuthoritativeWindowRestoreTest {
                 )
                 assertEquals(original, cold.readAuthoritativeThread("host", "c"))
                 val root = requireNotNull(requireNotNull(database).authoritative().item("host", "c", "e", 1))
-                assertEquals(3L, root.anchorId)
+                assertEquals(if (version == 5) 2L else 3L, root.anchorId)
                 assertEquals(2L, root.tieId)
-                assertEquals(0L, requireNotNull(requireNotNull(database).authoritative().item("host", "c", "e", 2)).rendererOrder)
+                assertEquals(
+                    if (version ==
+                        5
+                    ) {
+                        2L
+                    } else {
+                        0L
+                    },
+                    requireNotNull(requireNotNull(database).authoritative().item("host", "c", "e", 2)).rendererOrder,
+                )
                 for (column in listOf("displayKey", "launchKey")) {
                     val plans =
                         requireNotNull(database).openHelper.readableDatabase.query(
