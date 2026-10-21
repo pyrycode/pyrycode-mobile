@@ -2,6 +2,7 @@ package de.pyryco.mobile.e2e
 
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ordinaryId
+import de.pyryco.mobile.data.network.ThreadItemDto
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -87,3 +88,25 @@ internal fun ThreadEvidence.deliveredUser(text: String): ThreadEvidenceRecord? =
                     (it.fact == null || it.fact.kind == "user_message" && it.fact.status == "delivered")
             }.singleOrNull()
     }
+
+/** Retain a finished Agent between canonical messages from before and after its finish. */
+internal fun ThreadEvidence.retainsFinishedAgentPlacement(
+    expected: ThreadItemDto,
+    before: ThreadItemDto,
+    after: ThreadItemDto? = null,
+): Boolean {
+    if (!admitted || owner.kind != ThreadEvidenceKind.Authoritative) return false
+    val launched = expected.order ?: return false
+    val ended = expected.endedOrder ?: return false
+    val older = before.order ?: return false
+    if (expected.kind != "agent" || expected.active || ended <= launched || older <= launched || older >= ended) return false
+    if (after != null && (after.order == null || after.order <= ended)) return false
+    val rootIndex = records.indexOfFirst { it.fact?.id == expected.id }
+    val beforeIndex = records.indexOfFirst { it.fact?.id == before.id }
+    val root = records.getOrNull(rootIndex)?.fact ?: return false
+    if (root.order != launched || root.endedOrder != ended || root.status != expected.status || root.active) return false
+    if (records.getOrNull(beforeIndex)?.fact?.order != older || beforeIndex >= rootIndex) return false
+    if (after == null) return true
+    val afterIndex = records.indexOfFirst { it.fact?.id == after.id }
+    return afterIndex > rootIndex && records.getOrNull(afterIndex)?.fact?.order == after.order
+}

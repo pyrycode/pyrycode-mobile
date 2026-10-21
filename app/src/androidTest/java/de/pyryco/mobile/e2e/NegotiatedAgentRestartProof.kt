@@ -1,8 +1,10 @@
 package de.pyryco.mobile.e2e
 
 import android.util.Log
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
@@ -121,6 +123,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
         assertEquals("original turn", fact.turn, current.turn)
         assertEquals("original parent", fact.parent, current.parent)
         assertEquals("daemon order", fact.order, current.order)
+        assertEquals("finished placement order", fact.endedOrder, current.endedOrder)
         assertEquals("finished state", fact.status, current.status)
         assertEquals("finished activity", fact.active, current.active)
         assertTrue("newest revision retained", current.rev >= fact.rev)
@@ -197,6 +200,38 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
             row
         }
 
+    val placementRoot = requireNotNull(baseline.single { it.fact?.id == rootId }.fact)
+    val endedOrder = requireNotNull(placementRoot.endedOrder) { "finished Agent needs its canonical placement order" }
+    val launchOrder = requireNotNull(placementRoot.order)
+    val beforeAnchor =
+        requireNotNull(
+            persisted.records
+                .mapNotNull { row ->
+                    row.fact?.takeIf { fact ->
+                        row.message.role == Role.User && row.agentId == null && fact.kind == "user_message" &&
+                            fact.order != null && fact.order > launchOrder && fact.order < endedOrder
+                    }
+                }.maxByOrNull { requireNotNull(it.order) },
+        ) { "release message must anchor the Agent between launch and finish" }
+
+    fun assertUiPlacement(
+        reading: ThreadEvidence,
+        after: ThreadEvidenceRecord? = null,
+    ) {
+        val root = reading.records.single { it.fact?.id == rootId }
+        val before = reading.records.single { it.fact?.id == beforeAnchor.id }
+        var indexes = emptyList<Int>()
+        waitUntil(120_000) {
+            val indexForKey = onNode(hasScrollToNodeAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+            indexes = listOf(indexForKey("msg:${root.message.id}"), indexForKey("msg:${before.message.id}")) +
+                after?.let { listOf(indexForKey("msg:${it.message.id}")) }.orEmpty()
+            indexes.all { it >= 0 }
+        }
+        // The lazy list is reversed: a newer row has a smaller index.
+        assertTrue("finished Agent stays after the pre-finish phone message", indexes[0] < indexes[1])
+        if (after != null) assertTrue("new-session send stays after the finished Agent", indexes[2] < indexes[0])
+    }
+
     fun assertFamily(restored: ThreadEvidence) {
         for (old in baseline) {
             val fact = requireNotNull(old.fact)
@@ -204,6 +239,10 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
             assertStableFact(fact, current)
             assertEquals("complete content across restart", fact.content, current.content)
         }
+        val anchor = requireNotNull(restored.records.single { it.fact?.id == beforeAnchor.id }.fact)
+        assertStableFact(beforeAnchor, anchor)
+        assertEquals("complete chronological anchor content", beforeAnchor.content, anchor.content)
+        assertTrue("canonical finished placement is preserved", restored.retainsFinishedAgentPlacement(placementRoot, beforeAnchor))
     }
     Log.i("NegotiatedAgentRestart", "event=saved_family_ready checkpoint=${saved.checkpoint}")
     restart {
@@ -244,6 +283,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
             val owned = children.first { it.message.role == Role.Tool }
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             if (verifyUi) {
+                assertUiPlacement(restored)
                 verifyAgentRunNavigation(
                     agent.message.id,
                     requireNotNull(owned.toolRunId),
@@ -344,7 +384,13 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                     .pendingSends
                     .isEmpty(),
             )
-            checkFamily(verifyUi = false)
+            val reopened = checkFamily(verifyUi = false)
+            val settledAnchor = reopened.records.single { it.matchesSend() }
+            assertTrue(
+                "finished Agent remains between the original release and recovered send",
+                reopened.retainsFinishedAgentPlacement(placementRoot, beforeAnchor, requireNotNull(settledAnchor.fact)),
+            )
+            assertUiPlacement(reopened, settledAnchor)
             Log.i("NegotiatedAgentRestart", "event=thread_activation route=authoritative restart=passed settlement_reconnect=passed")
         } finally {
             scope.cancel()
