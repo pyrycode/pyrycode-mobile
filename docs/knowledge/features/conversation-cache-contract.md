@@ -344,7 +344,7 @@ See [repository validation](caching-conversation-repository.md#bounded-authorita
 One reader movement/retry selects up to 200 older display contributions plus required extras,
 independently of held newest/catch-up. Committed owned placement changes extend storage-owned
 reader bounds using old/new metadata already visited by the writer. This retains access to
-moved older components regardless of boundary survival or their distance from the reader. Local failures retain retry; local exhaustion cannot certify
+moved older components regardless of boundary survival or distance. Retry belongs to its reader/generation; reset or replacement clears it. Local exhaustion cannot certify
 coverage, set daemon exhaustion or overwrite daemon continuation. Owned saves retain unloaded
 facts. The [reader paging contract and evidence](authoritative-reader-paging.md) covers bounded
 metadata recovery, fragmented ranges, retirement and fresh reopen.

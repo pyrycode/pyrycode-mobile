@@ -60,3 +60,15 @@ Record the final generation/reader-owned local status contract and exact accepte
 candidate/results in `authoritative-reader-paging.md`. Preserve the parent contract links,
 historical failures, configured counts and full native fixture/timing evidence. Closing this
 child does not complete parent #2334's acceptance or documentation stage.
+
+## Manual verification receipt
+
+On Linux source `a0b55d71a`, both new regressions passed, as did all 178 affected JVM methods,
+lint/build/instrumented compilation/format and all six existing native saved-thread methods
+(`ui-x6u8ru_r`), with zero failures/errors/skips. The original real red and subsequent fixture
+corrections remain retained. Exact source/APK/image identities, named methods, bounds, timings
+and evidence locations are in the [paging companion](../../knowledge/features/authoritative-reader-paging.md#manual-repair-checks-before-independent-acceptance).
+Main `4cf670c96` was subsequently merged normally through the parent branch, retaining all
+catalog entries; its changes are unrelated test helpers/probes and documentation. Final
+pre-verification and independent complete configured acceptance remain required on the final
+candidate. The security verdict and bounded ownership design are unchanged by that integration.

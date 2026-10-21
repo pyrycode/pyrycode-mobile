@@ -170,3 +170,90 @@ The durable `manual-20261021/` root retains `build.log`, `native.log`, `scripted
 managed-image metadata and raw phone logs, plus `SHA256SUMS`.
 These manual results complement the 176 JVM methods; independent review and complete configured
 acceptance remain required on the repaired candidate and must receive a separate final receipt.
+
+## Local load ownership repair (#2437)
+
+A local Loading/Retry record names the exact observation and runtime generation. Registration
+replaces the previous status and cancels its local hydration. Runtime generation advancement,
+including a reset reusing the same epoch text, clears obsolete status, cursor and work before
+snapshot delivery. Result and cleanup publications update only their captured owner. Ending a
+reader clears settled Retry as well as Loading; old cleanup cannot erase a replacement reader's
+state. An ordinary failed read in the same generation keeps its cursor for explicit retry.
+Daemon requests keep their existing slot and certification; they do not set the legacy/local
+history-tail Loading flag. The reset probe asserts exact request ownership and None tails
+while those requests are pending and after success/exhaustion, rather than inventing a new UI
+loading state.
+
+The production disk/repository/ViewModel reset probe opens 600 saved facts, fails local demand,
+settles Retry, resets with reused epoch, admits separate daemon fact batches and empty terminal
+coverage for newest and older responses, then checks exact facts 599/600, exhaustion, request
+counts, no page at rest and fresh disk reopen. The replacement probe collects two cold
+observations of the same repository, cancels the old reader while the new local read is held,
+and proves its Loading/completion/ordinary Retry and final cleanup remain owned. Separate
+destination factories create separate repositories and cannot establish this owner collision.
+
+### Retained independent FAIL on the preceding candidate
+
+Verifier `26f513ea363b0a75f3e0aa79933b529b79e1a995bc5dc0794e88429cfa343798`
+reviewed `b7724753efb9cc9848cdea2bbe5ebb3370bb71e8` and confirmed the committed-bound storage
+repair, but returned **FAIL** for settled Retry surviving reset. Its configured Linux gates
+were accepted under the existing known-flake rerun policy, not as acceptance of this fix:
+
+- JVM `jvm-o66eep9e`: **6450 executed/passed, 0 failures/errors/skips**.
+- UI `ui-rkv5xsl0`: **338 executed, 337 passed, 1 failed, 0 errors, 1 skipped** (339 listed).
+  The finished-Agent recorded method passed its named 1/1 rerun `ui-7i4n3at7`, tracked #2373.
+- Scripted `scripted-all-9yjnp4uo`: **22 executed, 21 passed, 1 failed, 0 errors, 1 skipped**
+  (23 listed). Reply-suggestion long-press passed named 1/1 rerun `scripted-all-von_3u71`,
+  tracked #2436. Historical failures and both skips remain recorded.
+
+All six saved-thread native methods passed in that UI run. Raw XML, phone/read records,
+identities and the full FAIL are retained at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2334/verifier-retry-reset-20261021/`;
+manifest SHA-256 `853f92cc02d17f55546b58807a9ce8ce5bcc6afdeb77a1acccf35074b97b9f53`.
+That result allocated blocking child #2437. Child closure cannot establish parent acceptance.
+
+### Manual repair checks, before independent acceptance
+
+Linux/build-fractal-2 source **`a0b55d71a`** executed **178 affected JVM methods / 178 passed /
+0 failures/errors/skips**: paging 14, Room 15, opening 25, migration 17, placement 5, owned
+removal 18, owned upsert 17, cache 23, store 15, queries 23 and negotiated ViewModel 6.
+Lint, assembly, instrumented compilation and formatting passed. The focused two new methods
+also passed separately, 2/2 with zero failures/errors/skips. Initial real test-first source
+`9da782ce6` failed 1/1 with `expected Idle but was Retry`. Subsequent fixture mistakes are
+retained separately: `focused/` 2/2 failed for an incorrect daemon Loading expectation and
+separate-repository setup; `focused-2/` passed ownership but timed out on an invalid terminal
+frame carrying facts. Those fixture failures do not count as new product defects or acceptance.
+
+Native invocation **`ui-x6u8ru_r`** executed/passed all six existing
+`SavedThreadFirstDrawDeviceTest` methods once, **0 failures/errors/skips**:
+
+- `databaseSavedThreads_upwardDemandAndRetry_offlineAndHeldNewest_coldReopen`
+- `databaseSavedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_coldOpenAndReopen`
+- `savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen`
+- `delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen`
+- `slowRestore_negativeControlRejectsTheSameFirstDrawBound`
+- `heldCpuPipeCancelsAndClosesItsDescriptor`
+
+In offline open/reopen then held-newest open/reopen order, paging frames were
+**529/414/396/291 ms**, with 400 rows after two attempts, exact older text visible and no
+extra page at rest. Each successful page returned/decoded **200 payloads**, with **200 metadata
+results, 6 queries, 1 evidence result/decode**. Database opening frames were
+**302/321/322/326 ms**, each with 200 payload results/decodes, 0 ordinal results, 5 queries
+and 1 evidence result/decode. Full-file compatibility retained **36000 durable entries,
+18000 spans and 18000 rows**, with frames **598/270/585/285 ms**. Delayed fragmented frames
+were **775/277/653/301 ms**. Every positive frame met the unchanged **1000 ms product target**;
+SwiftShader used the unchanged **2000 ms assertion bound** and correctly rejected the
+**3632 ms** slow control. Descriptor cancellation also passed.
+
+Evidence is retained under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2437/manual-20261022/`:
+`red/`, historical `focused/` and `focused-2/`, passing `focused-3/`, and `affected/` containing
+fresh per-class XML/counts, Gradle output and the native invocation with all six raw phone logs.
+App APK SHA-256: `5b3ba7ed9b134edc1a6c533c0b5a74370c6fb7801ec526c71576aad040214ca7`;
+test APK: `5837434e99fef03299b4c6ebbb076ec73c1701b6f8cad9f6adb8984df4abdff5`.
+Managed image identity: `cec1892f04abcb5b7c13b3954e66527b3567c105c6ee2d60b7e3d797ae0d0135`.
+The later integration of main `4cf670c96` contains the independently merged #2373/#2436 test
+and documentation repairs; it changes none of this repair's production or saved-thread native
+code. Final pre-verification and independent complete configured acceptance must bind the
+resulting candidate. These manual passes do not replace either child's review or parent's
+current-candidate acceptance, documentation stage and final merged/Done workflow.

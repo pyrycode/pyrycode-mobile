@@ -9,7 +9,11 @@ retain allocation, restore and projection evidence, including every earlier miss
 The [paging proof and counted evidence](authoritative-reader-paging.md#native-and-deterministic-proof)
 covers offline/held-newest demand, explicit retry and cold reopen through the production
 negotiated destination and real database. It retains the 1000 ms product target, unchanged
-renderer bound, full-file fixture, delayed projection and slow control below.
+renderer bound, full-file fixture, delayed projection and slow control below. The bounded
+repair in #2437 adds production disk/repository/ViewModel reset-after-settled-Retry and exact
+reader-replacement cleanup probes. Its focused manual 178 JVM and six native passes are
+recorded separately from the parent's failed review and pending independent acceptance in
+the companion; they do not establish final #2334 acceptance.
 
 ## Bounded database and retained file acceptance (#2333)
 

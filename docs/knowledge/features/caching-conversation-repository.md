@@ -331,7 +331,12 @@ local reads have their own observation-owned slot, so offline operation and held
 requests do not block them. Repeated movement during a read is dropped; completing a page,
 reconnecting or receiving a network page never starts an automatic local walk. A failed local
 read retains held content and its boundary for explicit retry; it cannot authorize a daemon
-request. Exit, reset and confirmed deletion fence pending reads and final saves.
+request. Local Loading/Retry belongs to the exact observation and runtime generation. A reset,
+including reused epoch text, clears that state and obsolete cursor/work before delivering the
+new snapshot. Replacement clears the old status; old completion or cleanup cannot clear its
+new owner's state. Same-generation failed-boundary retry is retained. Daemon queries keep their
+existing coordinator slot; they do not set the legacy/local Loading tail. Exit, reset and
+confirmed deletion fence pending reads and final saves.
 
 The cursor binds exact host/conversation, authoritative epoch/incarnation, disk generation and
 content/launch identity. Storage retains a weakly owned, content-free seek bound for each live
