@@ -9,6 +9,7 @@
 - `app/src/main/java/de/pyryco/mobile/data/repository/RelayRepositoryCoordinator.kt`: `negotiatedThread` exposes passive host-qualified snapshots without acquiring a destination.
 - `app/src/test/java/de/pyryco/mobile/data/repository/AuthoritativeThreadQueriesTest.kt`: controlled terminal responses and real query-controller construction.
 - `docs/recorded-tests.md`: exact request counts, observation checkpoints, temporary prompts and independent peer progress remain mandatory.
+- `../pyrycode/docs/protocol-mobile.md`: Thread query messages define separate batch and terminal coverage shapes; read in the sibling product checkout.
 - `docs/knowledge/features/dependency-injection-host-conversation-source.md`: host-qualified destination ownership and attention workers.
 - `docs/knowledge/features/development-verification.md`: focused native evidence and dispatcher gate ownership.
 
@@ -55,3 +56,7 @@ Write the controlled JVM regressions first, observe the active-query failure wit
 ## Open Questions
 
 None. If focused evidence requires production admission or a different capture contract, stop implementation and return that causal scope for reassessment.
+
+## Revisions
+
+- 2026-10-21: The negative reply-attribution/generation probe uses a standalone real query controller: rejecting an old generation legitimately sends a fresh zero-checkpoint repair, which cannot belong to the successful two-query tape. Exact tape matching remains unchanged. The checkpoint probe asserts reply fencing; read-only request matching itself may precede that observation.

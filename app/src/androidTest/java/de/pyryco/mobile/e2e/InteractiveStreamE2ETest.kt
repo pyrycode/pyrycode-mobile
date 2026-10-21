@@ -4918,6 +4918,11 @@ class InteractiveStreamE2ETest {
                         throw AssertionError(evidence("first_waiting_timeout"), e)
                     }
                     android.util.Log.i("AttentionPillProbe", evidence("first_waiting_seen"))
+                    // The capture contains a separate destination query after B's initial attention catch-up.
+                    // Let that real query certify before the tap, which would otherwise coalesce into it.
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        awaitInitialAttentionQuery(checkNotNull(coordinator.negotiatedThread).observe(chatB))
+                    }
                     composeTestRule.onNodeWithText(waitingLabel).assertIsDisplayed().performTouchInput { click(center) }
                     composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                         composeTestRule.onAllNodes(hasText(nameB)).fetchSemanticsNodes().isNotEmpty()
