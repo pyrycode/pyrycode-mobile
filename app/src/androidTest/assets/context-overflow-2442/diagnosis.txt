@@ -1,0 +1,92 @@
+Compact context-overflow reliability, Mobile #2442
+
+Supported mechanism
+Core #3725 / PR #3726, merged as 3d5379ec4b778c569c27b7639a2ae495b32cee0d,
+repairs accepted-message publication identity. Previously operatorMessageHistory
+appended the message before its linked send_delivered outcome. A follower could
+publish that message under an identity which the later join withdrew. The
+publisher then required a baseline and retired the live peer. Reconnection can
+recover durable thread content without recovering the original fresh recovery
+offer. The repaired message carries its committed accepted_entry_id before it
+can become public. Delivery and outcome update the same permanent item.
+
+This mechanism is consistent with BOTH historical Compact failures below.
+Neither archived Mobile failure establishes the exact assertion phase or actual
+history publication boundaries. Core's controlled regression establishes the
+mechanism; a passing Mobile rerun alone does not diagnose it. No distinct Mobile
+production defect has been established. The teardown-time destroyed Activity
+and focus record is not evidence that lifecycle caused either failure.
+
+First sighting (#2333, build-hp-1, Linux)
+Mobile: 7e6940251cd3cff775b67c913fc070d36f365734
+Daemon source/binary revision: 2c68b595440dd7e8e843af9cff0d9a708bcc81a7
+Daemon SHA256: d93c56662d0072e8aec9d1466bee3f6845f7cdc55247273f177b48b209bdb6ac
+Bundle: 90abda3218de9cc9777c5e43e68006208c8ae09e6124dfef2d9867958511b090
+Bundle digest: 13accac7033c0de67f9146ec58e9fb4f6c3d3894ef534282c806aaa31ed8c81c
+Failure: logs/verifier-gate__2333_6.stderr.log.failure-1792553630698.log
+Failed daemon: evidence/harness/fault-94cdb0741de818b0e215f5f201a05a59/daemon.log
+03:32:18.508Z first send; 03:32:19.521Z baseline_required and teardown 4414;
+03:32:20.868Z reconnect handshake. No second send recorded.
+The named method executed once and failed once; the containing gate executed 21
+methods and also failed reply-suggestion (owned separately).
+Rerun: logs/2026-10-21T03-33-50-703Z_verifier-gate-rerun__2333.{log,stderr.log}
+Passing daemon: evidence/harness/fault-59b384b6ed135129fe9b84eaf3e5c64a/daemon.log
+03:34:14.497Z and 03:34:15.772Z sends; no baseline_required gap.
+Same revisions/binary hash. Named method: 1 executed/passed, 0 failed/errors/skips.
+Failed XML: evidence/verifier-7e69402-20261021/scripted-all-_oz59vs2/dispatcher.xml
+Rerun XML: evidence/verifier-7e69402-20261021/scripted-all-_dsorq5e/dispatcher.xml
+
+Second sighting (#2373, build-fractal-2, Linux)
+Mobile: 75bed5e5eaf1969e48a13dcbe191e69e65b194be
+Daemon source/binary revision: 647a4e7526f581f78d422195cb22b3e9b979e767
+Daemon SHA256: 871b3cf96e8c8993f09cedc97b8269bb2f4c80b7f829743afaae7f5a4d32a49a
+Bundle: e5eba22d4c5739ad10d084895ccb7b724dee3e17332f0e4485b00c54ec786b7e
+Bundle digest: 585086e9e81b8c69118d27002e1875600f2dd0d84f423d2f77c738aab759eea5
+Failure: logs/verifier-gate__2373_6.stderr.log.failure-1792620519096.log
+Failed daemon: evidence/harness/fault-ebbd053c224476ae4bb22f96f552ba92/daemon.log
+22:07:07.385Z first send; 22:07:08.407Z baseline_required and teardown 4414;
+22:07:09.677Z reconnect handshake. No second send recorded.
+Named method: 1 executed/failed; containing gate: 22 executed, only Compact failed.
+Rerun: logs/2026-10-21T22-08-39-107Z_verifier-gate-rerun__2373.{log,stderr.log}
+Passing daemon: evidence/harness/fault-1e6d15b9963d7df77adf928e53e60315/daemon.log
+22:12:30.201Z and 22:12:31.683Z sends; no baseline_required gap.
+Same revisions/binary hash. Named method: 1 executed/passed, 0 failed/errors/skips.
+The rerun stdout contains counted XML. Failed stdout contains a single failure
+record for this method; raw instrument-report stderr confirms 1 failed of 1.
+
+Historical limits and surrounding conditions
+Both complete scripted gates ran Compact after refusal and mcp-failed. Each
+scenario had its own isolated daemon/relay/home and pairing. The failed phase
+is bounded to after the first daemon send and before any recorded Compact send;
+there is no surviving stack proving which UI wait/assertion timed out. Failed
+instrument-raw.txt paths point into removed verifier worktrees, are absent from
+the bundles, and are not recoverable from their pointers.json. The surviving
+#2373 temporary daemon directory also contains no raw instrumentation. #2333's
+original computer differs from this worker. Machine-load samples and original
+raw history are unavailable, so neither load nor a specific publication schedule
+is asserted. No Activity-lifecycle repair, retry or timeout extension is inferred.
+
+Controlled repair evidence reused from Core
+cmd/pyry/testdata/accepted_delivery/{before.jsonl,after.jsonl,evidence.json}
+Selector: TestAcceptedDeliveryLiveRefusal, Linux amd64, zero real Claude turns.
+Before Go revision: 7e7c93e149337c118e4e59cac33a1bc25af945f5
+2 leaf cases executed: 1 passed, 1 failed, 0 skipped. separated_segment reports
+baseline_required=true, retired=1, live_refusals=0; coalesced passes.
+After Go revision: 34c185e1a3843db9779b46573360f38566ed9936
+2 leaf cases executed/passed, 0 failed/skipped. Both schedules report
+baseline_required=false, retired=0, live_refusals=1, duplicate_delivery=false.
+The real producer, ForwardReader segment cut, source-backed Store and daemon
+publisher are exercised. Core's final verifier also passed these tests and its
+written-prefix follow-up at b5513cefbfa87de101e773cbcf5e3f0d151d7394.
+https://github.com/pyrycode/pyrycode/pull/3726#issuecomment-6322486428
+
+Mobile acceptance contract
+Keep the existing prompt-too-long fixture and unchanged named Android method:
+clickable combined context/Compact notice; zero /compact rows before tapping;
+physical tap; at least two exact /compact rows (phone send and child echo);
+notice absent afterward. Keep the existing deadlines and assertions.
+Only the context-overflow harness now requires a versioned daemon containing
+Core's merge, checking the selected binary revision rather than source HEAD.
+The prerequisite unit tests cannot substitute for the three fresh native runs.
+Fresh Linux counted results and durable raw paths are recorded in native-proof.txt.
+Complete scripted-all coverage remains dispatcher-owned. macOS is outside scope.
