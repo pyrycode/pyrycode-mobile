@@ -47,6 +47,7 @@ class RecordedSuiteTapeTest {
         condition: String,
         boundary: String,
         duplicate: Boolean = false,
+        liveProgress: Boolean = false,
     ): TailCase {
         val owner = "phone/host/0"
         val priorOwner = if (condition == "foreign-owner") "phone/host/1" else owner
@@ -56,9 +57,10 @@ class RecordedSuiteTapeTest {
         fun fact(
             id: Int = 1,
             text: String = "controlled reply",
+            rev: Int = 17,
         ) = """{"id":$id,
 "order":$id,
-"rev":17,
+"rev":$rev,
 "kind":"assistant_message",
 "session":"session",
 "turn":"turn",
@@ -72,7 +74,8 @@ class RecordedSuiteTapeTest {
             conversation: String,
             epoch: String,
             item: String,
-        ) = """{"conversation_id":"$conversation","epoch":"$epoch","version":17,"items":[$item],"final":false}"""
+            version: Int = 17,
+        ) = """{"conversation_id":"$conversation","epoch":"$epoch","version":$version,"items":[$item],"final":false}"""
         val window =
             """
 {"conversation_id":"$priorConversation",
@@ -119,10 +122,14 @@ class RecordedSuiteTapeTest {
                     )
             "intervening-command" -> rows += client("peer/host/0", frame(1, "modal_answer"))
             "intervening-lifecycle" -> rows += SuiteStep("close", "peer/host/0")
+            "intervening-reset" -> rows += daemon(owner, frame(13, "thread_reset", """{"conversation_id":"chat","epoch":"new","version":0}"""))
         }
         rows += client(owner, tail).copy(accepted = condition != "refused-tail")
+        if (liveProgress) {
+            rows += daemon(owner, frame(12, "thread_item_added", """{"conversation_id":"chat","epoch":"epoch","version":18,"item":${fact(2, rev = 18)}}"""))
+        }
         val replyConversation = if (condition == "wrong-reply-conversation") "other" else "chat"
-        val version = if (condition == "higher-checkpoint") 18 else 17
+        val version = if (condition == "higher-checkpoint" || liveProgress) 18 else 17
         val terminal =
             if (condition == "page") {
                 """{"conversation_id":"chat",
@@ -163,14 +170,14 @@ class RecordedSuiteTapeTest {
             "malformed" -> rows += daemon(owner, frame(6, "thread_items", "{}", reply = 4))
             "partial-tail" -> rows += daemon(owner, frame(6, "thread_items", batch("chat", "epoch", fact()), reply = 4))
             else -> {
-                if (duplicate || condition in setOf("new-fact", "changed-fact")) {
+                if (duplicate || liveProgress || condition in setOf("new-fact", "changed-fact")) {
                     val item =
                         when (condition) {
                             "new-fact" -> fact(2)
                             "changed-fact" -> fact(text = "changed reply")
-                            else -> fact()
+                            else -> if (liveProgress) fact(2, rev = 18) else fact()
                         }
-                    rows += daemon(owner, frame(5, "thread_items", batch("chat", "epoch", item), reply = 4))
+                    rows += daemon(owner, frame(5, "thread_items", batch("chat", "epoch", item, version), reply = 4))
                 }
                 if (condition == "unexpected-related") rows += daemon(owner, frame(11, "context_usage", "{}", reply = 4))
                 rows += daemon(owner, frame(6, "thread_items", terminal, reply = 4))
@@ -209,6 +216,30 @@ class RecordedSuiteTapeTest {
         if (case.boundary == "test-end") case.tape.request("control", case.end.copy(id = 90))
         case.tape.lifecycle("close", case.owner)
         case.tape.assertComplete()
+    }
+
+    @Test fun deliveredCertifiedBaseLetsLiveProgressTriggerItsStillRequiredCatchUp() {
+        val case = tailCase("valid", "close", liveProgress = true)
+        startTail(case)
+        assertEquals(listOf("thread_item_added"), case.tape.initial().map { it.message?.type })
+        assertFalse(case.tape.closeReady(case.owner))
+        assertThrows(IllegalStateException::class.java) { case.tape.assertComplete() }
+        val replies = case.tape.request(case.owner, case.tail.copy(id = 91))
+        assertEquals(listOf("thread_items", "thread_items"), replies.map { it.message?.type })
+        assertEquals(listOf(91L, 91L), replies.map { it.message?.inReplyTo })
+        replies.forEach { case.tape.delivered(it.owner, checkNotNull(it.message)) }
+        assertTrue(case.tape.closeReady(case.owner))
+        finishTail(case)
+    }
+
+    @Test fun liveProgressCannotBorrowAnUnconfirmedForeignOrResetBase() {
+        for (condition in listOf("undelivered-prior", "partial-prior", "foreign-owner", "foreign-conversation", "foreign-epoch",
+                                "refused-prior", "refused-tail", "extra-argument", "page", "intervening-reset")) {
+            val case = tailCase(condition, "close", liveProgress = true)
+            startTail(case, condition)
+            assertTrue("live progress must retain $condition fence", case.tape.initial().isEmpty())
+            assertFalse(case.tape.closeReady(case.owner))
+        }
     }
 
     @Test fun duplicateDeliveredTailBecomesOptionalOnlyAtActualClosePreparation() {
