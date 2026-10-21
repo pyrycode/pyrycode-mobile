@@ -4855,6 +4855,7 @@ class InteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_otherConversationAttentionPills_waitingAndFinished() {
         val (serverId, peer) = answerHostPeer()
+        var acquisitionGate: InitialAttentionQueryGate? = null
         try {
             pairAnswerHost()
             runBlocking {
@@ -4919,7 +4920,12 @@ class InteractiveStreamE2ETest {
                         throw AssertionError(evidence("first_waiting_timeout"), e)
                     }
                     android.util.Log.i("AttentionPillProbe", evidence("first_waiting_seen"))
+                    // Destination metadata starts the attention query; fence only the subsequent acquisition.
+                    val gate = InitialAttentionQueryGate.arm(checkNotNull(coordinator.negotiatedThread), chatB, THREAD_TIMEOUT_MS)
+                    acquisitionGate = gate
                     composeTestRule.onNodeWithText(waitingLabel).assertIsDisplayed().performTouchInput { click(center) }
+                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { gate.finished }
+                    gate.awaitAcquired()
                     composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                         composeTestRule.onAllNodes(hasText(nameB)).fetchSemanticsNodes().isNotEmpty()
                     }
@@ -4962,6 +4968,7 @@ class InteractiveStreamE2ETest {
                 }
             }
         } finally {
+            acquisitionGate?.close()
             peer.close()
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
         }
