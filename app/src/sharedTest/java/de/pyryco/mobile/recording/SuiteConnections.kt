@@ -254,7 +254,9 @@ internal class SuiteConnections private constructor(
                     enqueue(replay.preparePhoneTeardown())
                     replay.phoneWorkBeforeTestEndReady()
                 }
-            ) delay(10)
+            ) {
+                delay(10)
+            }
             awaitIdle()
         }
     }

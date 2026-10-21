@@ -440,7 +440,7 @@ internal class RecordedSuiteTape(
     private fun mappedFrame(frame: Envelope): Envelope =
         MobileJson.decodeFromJsonElement(Envelope.serializer(), mapped(MobileJson.encodeToJsonElement(Envelope.serializer(), frame)))
 
-    /** This chooses omission only after the real later terminal boundary is attempted. */
+    /** Terminal cleanup may omit only tails whose complete coverage has already been delivered. */
     private fun prepareTails(
         boundary: Int,
         owner: String? = null,
@@ -528,9 +528,10 @@ internal class RecordedSuiteTape(
     @Synchronized fun testEndReady(actual: Envelope): Boolean = precedingWorkReleased(testEndBoundary(actual), allowDeferredReads = true)
 
     private fun phoneTeardownBoundary(): Int? {
-        val end = steps.indices.firstOrNull {
-            it !in consumed && steps[it].owner == "control" && steps[it].message?.type == "test-control:test-end"
-        } ?: return null
+        val end =
+            steps.indices.firstOrNull {
+                it !in consumed && steps[it].owner == "control" && steps[it].message?.type == "test-control:test-end"
+            } ?: return null
         return minOf(end, checkpointBoundary())
     }
 
