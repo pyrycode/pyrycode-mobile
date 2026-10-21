@@ -95,6 +95,7 @@ import de.pyryco.mobile.data.network.BackgroundTaskProgressPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.HistoryEntryDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.RelayLog
@@ -4757,11 +4758,11 @@ class InteractiveStreamE2ETest {
             val replyCheckpoint = requireNotNull(beforePhoneRead.latestEntryId) { "daemon omitted latest durable id" }
             assertTrue("real reply has durable history", replyCheckpoint > 0u)
             assertTrue("list view must leave the real reply unread", (beforePhoneRead.readUpTo ?: 0uL) < replyCheckpoint)
-            val phoneHistory = peerStep(peer, "receive A's history backing the watermark") { peer.threadWindow(chatA, THREAD_TIMEOUT_MS) }
+            val phoneHistory = peerStep(peer, "receive A's history backing the watermark") { peer.history(chatA, THREAD_TIMEOUT_MS) }
             assertTrue(
                 "peer received the entry backing A's filtered daemon watermark",
                 phoneHistory.any {
-                    it.rev.toULong() >= replyCheckpoint
+                    it.id == replyCheckpoint && it.type !in setOf("turn_state", "stall", "api_retry", "compacting", "session_transition")
                 },
             )
 
@@ -4806,14 +4807,14 @@ class InteractiveStreamE2ETest {
             awaitRowAttention(nameB, unread, "B after its prompt was answered and its turn ended")
 
             // 6. The peer reads B's actual durable reply while the phone remains on the list.
-            val history = peerStep(peer, "read B's real reply history") { peer.threadWindow(chatB, THREAD_TIMEOUT_MS) }
-            assertTrue("peer received B's assistant reply", history.any { it.kind == "assistant_message" })
+            val history = peerStep(peer, "read B's real reply history") { peer.history(chatB, THREAD_TIMEOUT_MS) }
+            assertTrue("peer received B's assistant reply", history.any { it.type == "assistant_delta" })
             val beforePeerRead = peerStep(peer, "confirm B is still unread") { peer.readMarks(chatB, THREAD_TIMEOUT_MS) }
             val peerCheckpoint = requireNotNull(beforePeerRead.latestEntryId) { "daemon omitted B's unread watermark" }
             assertTrue(
                 "peer received the entry backing B's filtered daemon watermark",
                 history.any {
-                    it.rev.toULong() >= peerCheckpoint
+                    it.id == peerCheckpoint && it.type !in setOf("turn_state", "stall", "api_retry", "compacting", "session_transition")
                 },
             )
             assertTrue("the list did not acknowledge B", (beforePeerRead.readUpTo ?: 0uL) < peerCheckpoint)
@@ -6286,14 +6287,10 @@ class InteractiveStreamE2ETest {
                 peerStep(peer, "await the allowed turn's turn_end") { peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
             val turn = MobileJson.decodeFromJsonElement(TurnEndPayloadDto.serializer(), completed.payload)
             val history =
-                peerStep(peer, "read the completed reply for notification evidence") { peer.threadWindow(chatId, THREAD_TIMEOUT_MS) }
-            val reply =
-                history.lastOrNull {
-                    it.kind == "assistant_message" && it.turn == turn.turnId && !it.active && (it.parent ?: 0L) == 0L
-                }
+                peerStep(peer, "read the completed reply for notification evidence") { peer.history(chatId, THREAD_TIMEOUT_MS) }
             val preview =
                 requireNotNull(
-                    notificationPreview(reply?.let { (it.content as? JsonObject)?.get("text")?.jsonPrimitive?.content }),
+                    notificationPreview(completedProducerReply(history, turn.turnId)),
                 ) { "the completed real turn supplied no reply preview" }
             assertNotEquals("completion evidence must contain a reply", string(R.string.notification_turn_completed), preview)
 
@@ -6675,7 +6672,7 @@ class InteractiveStreamE2ETest {
 
             // 4. AC-1: the peer's view of X holds one user message naming two ids, each fetching its fixture's
             // exact bytes; Y gained nothing.
-            val named = userMessageAttachmentIds(runBlocking { peer.threadWindow(chatX, THREAD_TIMEOUT_MS) })
+            val named = userMessageAttachmentIds(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) })
             assertEquals("user messages in the peer's view of X", 1, named.size)
             val ids = named.single()
             assertEquals("attachment ids named by X's user message", 2, ids.distinct().size)
@@ -6684,7 +6681,7 @@ class InteractiveStreamE2ETest {
             assertEquals(
                 "user messages in the other conversation",
                 0,
-                userMessages(runBlocking { peer.threadWindow(chatY, THREAD_TIMEOUT_MS) }),
+                userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }),
             )
         } finally {
             instrumentation.removeMonitor(stub)
@@ -6752,19 +6749,19 @@ class InteractiveStreamE2ETest {
                 ).all { composeTestRule.onAllNodes(hasContentDescription(it)).fetchSemanticsNodes().isNotEmpty() }
             }
             composeTestRule.onNode(hasSetTextAction()).assertTextContains(PING_PROMPT)
-            assertEquals("no automatic send in X", 0, userMessages(runBlocking { peer.threadWindow(chatX, THREAD_TIMEOUT_MS) }))
+            assertEquals("no automatic send in X", 0, userMessages(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }))
             composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
             allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the shared-content turn in X did not end") { it.type == "turn_end" }
-            val history = runBlocking { peer.threadWindow(chatX, THREAD_TIMEOUT_MS) }
+            val history = runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }
             val named = userMessageAttachmentIds(history)
             assertEquals("user messages in X", 1, named.size)
             val ids = named.single()
             assertEquals("attachment ids in X", 2, ids.distinct().size)
             val digests = ids.map { sha256(runBlocking { peer.retrieveAttachment(chatX, it, REPLY_TIMEOUT_MS) }.bytes) }
             assertEquals(setOf(sha256(png), sha256(document)), digests.toSet())
-            val payload = history.single { it.isUserMessage() }.content as JsonObject
+            val payload = history.single { it.isUserMessage() }.payload as JsonObject
             assertEquals("peer received the shared text", PING_PROMPT, payload["text"]?.jsonPrimitive?.content)
-            assertEquals("messages in Y", 0, userMessages(runBlocking { peer.threadWindow(chatY, THREAD_TIMEOUT_MS) }))
+            assertEquals("messages in Y", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
         } finally {
             deleteFixtures(inserted)
             peer.close()
@@ -6839,19 +6836,19 @@ class InteractiveStreamE2ETest {
             }
             composeTestRule.onAllNodes(hasText("Share to…")).assertCountEquals(0)
             composeTestRule.onNode(hasSetTextAction()).assertTextContains(PING_PROMPT)
-            assertEquals("no automatic send in X", 0, userMessages(runBlocking { peer.threadWindow(chatX, THREAD_TIMEOUT_MS) }))
+            assertEquals("no automatic send in X", 0, userMessages(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }))
             composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
             allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the shared-content turn in X did not end") { it.type == "turn_end" }
-            val history = runBlocking { peer.threadWindow(chatX, THREAD_TIMEOUT_MS) }
+            val history = runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }
             val named = userMessageAttachmentIds(history)
             assertEquals("user messages in X", 1, named.size)
             val ids = named.single()
             assertEquals("attachment ids in X", 2, ids.distinct().size)
             val digests = ids.map { sha256(runBlocking { peer.retrieveAttachment(chatX, it, REPLY_TIMEOUT_MS) }.bytes) }
             assertEquals(setOf(sha256(png), sha256(document)), digests.toSet())
-            val payload = history.single { it.isUserMessage() }.content as JsonObject
+            val payload = history.single { it.isUserMessage() }.payload as JsonObject
             assertEquals("peer received the shared text", PING_PROMPT, payload["text"]?.jsonPrimitive?.content)
-            assertEquals("messages in Y", 0, userMessages(runBlocking { peer.threadWindow(chatY, THREAD_TIMEOUT_MS) }))
+            assertEquals("messages in Y", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
         } finally {
             deleteFixtures(inserted)
             peer.close()
@@ -7093,7 +7090,7 @@ class InteractiveStreamE2ETest {
                 0,
                 userMessages(
                     runBlocking {
-                        peer.threadWindow(chatX, THREAD_TIMEOUT_MS)
+                        peer.history(chatX, THREAD_TIMEOUT_MS)
                     },
                 ),
             )
@@ -7107,7 +7104,7 @@ class InteractiveStreamE2ETest {
             allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the retried attachment turn in X did not end") { it.type == "turn_end" }
 
             // 4. AC-1: the peer's view of X holds one user message naming one id, which fetches the fixture's bytes.
-            val named = userMessageAttachmentIds(runBlocking { peer.threadWindow(chatX, THREAD_TIMEOUT_MS) })
+            val named = userMessageAttachmentIds(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) })
             assertEquals("user messages in the peer's view of X", 1, named.size)
             val ids = named.single()
             assertEquals("attachment ids named by X's user message", 1, ids.size)
@@ -7292,7 +7289,7 @@ class InteractiveStreamE2ETest {
                     "turn_end"
             }
             val named =
-                userMessageAttachmentIds(peerStep(peer, "read A attachment history") { peer.threadWindow(collisionId, THREAD_TIMEOUT_MS) })
+                userMessageAttachmentIds(peerStep(peer, "read A attachment history") { peer.history(collisionId, THREAD_TIMEOUT_MS) })
             assertEquals("user messages in the peer's view of A's copy", 1, named.size)
             val ids = named.single()
             assertEquals("attachment ids named by A's user message", 1, ids.size)
@@ -7537,15 +7534,16 @@ class InteractiveStreamE2ETest {
      * The user messages in a history. The host logs the operator's turn as a `message` entry with role `user`
      * when it is delivered; a stored `send_message` counts too, the shape the phone's reducer also reads.
      */
-    private fun userMessages(history: List<de.pyryco.mobile.data.network.ThreadItemDto>): Int = history.count { it.isUserMessage() }
+    private fun userMessages(history: List<HistoryEntryDto>): Int = history.count { it.isUserMessage() }
 
     /** The `attachment_ids` of each user message in a history, in log order; empty for a message naming none. */
-    private fun userMessageAttachmentIds(history: List<de.pyryco.mobile.data.network.ThreadItemDto>): List<List<String>> =
+    private fun userMessageAttachmentIds(history: List<HistoryEntryDto>): List<List<String>> =
         history.filter { it.isUserMessage() }.map { entry ->
-            ((entry.content as? JsonObject)?.get("attachment_ids") as? JsonArray)?.map { it.jsonPrimitive.content }.orEmpty()
+            ((entry.payload as? JsonObject)?.get("attachment_ids") as? JsonArray)?.map { it.jsonPrimitive.content }.orEmpty()
         }
 
-    private fun de.pyryco.mobile.data.network.ThreadItemDto.isUserMessage(): Boolean = kind == "user_message"
+    private fun HistoryEntryDto.isUserMessage(): Boolean =
+        type == "send_message" || (type == "message" && (payload as? JsonObject)?.get("role")?.jsonPrimitive?.content == "user")
 
     /**
      * Fail fast, and say so, when [peer]'s open session carries no frames: one `request_history` for
@@ -7557,7 +7555,7 @@ class InteractiveStreamE2ETest {
         peer: SecondClientPeer,
         conversationId: String,
     ) {
-        runBlocking { requirePeerAnswer(THREAD_TIMEOUT_MS) { peer.threadWindow(conversationId, THREAD_TIMEOUT_MS) } }
+        runBlocking { requirePeerAnswer(THREAD_TIMEOUT_MS) { peer.history(conversationId, THREAD_TIMEOUT_MS) } }
     }
 
     /**
@@ -8882,20 +8880,9 @@ class InteractiveStreamE2ETest {
     private fun cachedThreadEvidence(reply: CompletedReplyObservation): ThreadEvidence? =
         runBlocking {
             val cache = GlobalContext.get().get<ConversationCache>()
-            when (reply.owner.kind) {
-                ThreadEvidenceKind.Legacy ->
-                    legacyThreadEvidence(
-                        reply.host,
-                        reply.owner.conversation,
-                        Any(),
-                        cache.readThread(reply.host, reply.owner.conversation),
-                    )
-                ThreadEvidenceKind.Authoritative ->
-                    cache
-                        .readAuthoritativeThread(reply.host, reply.owner.conversation)
-                        ?.let {
-                            authoritativeThreadEvidence(reply.host, reply.owner.conversation, Any(), it.toSnapshot())
-                        }
+            check(reply.owner.kind == ThreadEvidenceKind.Authoritative) { "cache evidence requires authoritative content" }
+            cache.readAuthoritativeThread(reply.host, reply.owner.conversation)?.let {
+                authoritativeThreadEvidence(reply.host, reply.owner.conversation, Any(), it.toSnapshot())
             }
         }
 

@@ -246,7 +246,6 @@ class RemoteConversationRepository internal constructor(
 
     private val completionFacts = MutableStateFlow<List<AuthoritativeCompletion>>(emptyList())
     internal val authoritativeCompletions: StateFlow<List<AuthoritativeCompletion>> = completionFacts
-    internal val usesAuthoritativeAttention: Boolean get() = authoritativeHostId.isNotEmpty()
 
     @Volatile private var authoritativeCommandsEnded = false
 
@@ -844,8 +843,6 @@ class RemoteConversationRepository internal constructor(
     }
 
     private fun onInbound(envelope: Envelope) {
-        // An opted-in connection never promotes legacy replay into authoritative completion proof.
-        if (usesAuthoritativeAttention && envelope.type == TYPE_TURN_END) return
         if (authoritativeLiveEnabled() &&
             envelope.type in setOf("thread_items", "thread_reset", TYPE_ERROR) &&
             authoritativeQueries.accept(envelope)
@@ -959,11 +956,10 @@ class RemoteConversationRepository internal constructor(
                 // folder's canonical path); a `recent_workspaces_list` (#565) carries the
                 // `{workspaces:[…]}` the [recentWorkspaces] waiter decodes for its path list. An
                 // `inReplyTo` matching no pending entry (or null) is a
-                // no-op: `list_conversations` / `backfill_since` draw no reply here; `screen_snapshot` /
+                // no-op: an uncorrelated list request draws no reply here; `screen_snapshot` /
                 // `session_settings_updated` / `conversation_deleted` / `workspace_folder_created` /
                 // `recent_workspaces_list` are always correlated replies (the daemon never broadcasts
-                // them); a `history_page` (#623) carries the `{entries,cursor,at_start}` the
-                // [requestHistory] waiter decodes for its page; a `session_settings` (#590) carries the
+                // them); a `session_settings` (#590) carries the
                 // run configuration the [observeSessionSettings] read decodes. That last one is where the
                 // demux does load-bearing safety work: the reply carries NO conversation_id of its own, so
                 // a stale, duplicate or unsolicited one has no pending entry to complete and therefore no
@@ -1038,8 +1034,7 @@ class RemoteConversationRepository internal constructor(
                 }
             }
             TYPE_COMPACTING -> {
-                // Context-compaction status (#596): see [CompactingProjection.apply]. The same frame folds
-                // the thread's compaction divider (#1358): see [ThreadProjection.applyCompacting].
+                // Session-owned compaction status; the authoritative thread supplies its divider.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     compactingProjection.apply(envelope)
                 }
@@ -1622,12 +1617,6 @@ class RemoteConversationRepository internal constructor(
     /** Archive every active row at a workspace path (#663); see [WorkspaceCommands.archiveWorkspace]. */
     override suspend fun archiveWorkspace(path: String): Unit = workspaceCommands.archiveWorkspace(path)
 
-    /**
-     * Widened from `private` to `internal` by #645 so [reduceHistoryPage] can dispatch a stored
-     * [HistoryEntry.type] against the **same** wire-string declarations this class demuxes live frames
-     * on, rather than re-spelling eight protocol strings in a second place. The constants are protocol
-     * vocabulary, not state — nothing here becomes writable by widening it.
-     */
     internal companion object {
         /** Request: list the conversations (payload `{}` per protocol). */
         const val TYPE_LIST_CONVERSATIONS = "list_conversations"
@@ -1645,29 +1634,6 @@ class RemoteConversationRepository internal constructor(
          * the [onInbound] success-reply arm, or its pending deferred hangs (the delete/create-family hazard).
          */
         const val TYPE_RECENT_WORKSPACES_LIST = "recent_workspaces_list"
-
-        /** Request: one backward page of a conversation's stored history (#623, pyrycode#2113). Reply is [TYPE_HISTORY_PAGE]. */
-        const val TYPE_REQUEST_HISTORY = "request_history"
-
-        /**
-         * Correlated reply for [TYPE_REQUEST_HISTORY] (#623, pyrycode#2116): one page of entries,
-         * newest-first, with the next cursor and `at_start`. A **new** reply type, so it must be
-         * registered in the [onInbound] success-reply arm or its pending deferred hangs (the
-         * delete/create-family hazard [TYPE_RECENT_WORKSPACES_LIST] records).
-         */
-        const val TYPE_HISTORY_PAGE = "history_page"
-
-        /**
-         * Live/echo single-`message` payload (#317) — feeds both the last-message preview (#329) and
-         * the conversation thread (#313). The batched backfill response is [TYPE_MESSAGE_CHUNK].
-         */
-        const val TYPE_MESSAGE = "message"
-
-        /** Request: full thread backfill for one conversation (#313, #272 `BackfillSincePayload`). */
-        const val TYPE_BACKFILL_SINCE = "backfill_since"
-
-        /** Response: a batch of finished `message` rows answering a `backfill_since` (#313, #272). */
-        const val TYPE_MESSAGE_CHUNK = "message_chunk"
 
         /** Request: post a user message to a conversation (#346, #272 `SendMessagePayload`). */
         const val TYPE_SEND_MESSAGE = "send_message"
@@ -1786,23 +1752,11 @@ class RemoteConversationRepository internal constructor(
         /** Structured-stream event: coarse turn lifecycle `{conversation_id, state}` (#385, #607). */
         const val TYPE_TURN_STATE = "turn_state"
 
-        /** Structured-stream event: incremental assistant text `{…, seq, text}` (#385, #607). */
-        const val TYPE_ASSISTANT_DELTA = "assistant_delta"
-
-        /** Structured-stream event: a tool invocation `{…, tool_use_id, name, input_summary}` (#385, #607). */
-        const val TYPE_TOOL_USE = "tool_use"
-
-        /** Structured-stream event: a tool result `{…, tool_use_id, is_error, result_summary}` (#385, #607). */
-        const val TYPE_TOOL_RESULT = "tool_result"
-
         /** Thread-store event: claude refused a tool call `{…, tool_use_id, tool_name, message, …}` (#811). */
         const val TYPE_TOOL_DENIED = "tool_denied"
 
         /** Thread-store event: claude's elapsed reading for an open call `{…, tool_use_id, elapsed_seconds}` (#812). */
         const val TYPE_TOOL_PROGRESS = "tool_progress"
-
-        /** Structured-stream event: end of a turn `{…, turn_id, stop_reason}` (#385, #607). */
-        const val TYPE_TURN_END = "turn_end"
 
         /**
          * Capability-gated control event: a remote-head stall `{conversation_id}` (#395, #638/#639) —
@@ -1812,13 +1766,6 @@ class RemoteConversationRepository internal constructor(
 
         /** Unsolicited conversation-scoped failure; carries no replay event id or retry instruction. */
         const val TYPE_SESSION_ERROR = "session_error"
-
-        /**
-         * Capability-gated snapshot event: a conversation's queued-message backlog
-         * `{conversation_id, queued:[{queued_msg_id, text, ts}]}` (#460, pyrycode#705/#720) — the full
-         * current backlog (`msgqueue.Snapshot`) in FIFO order, each snapshot replacing the prior one.
-         */
-        const val TYPE_QUEUE_STATE = "queue_state"
 
         /**
          * Capability-gated snapshot event: a conversation's published model menu
@@ -1967,15 +1914,6 @@ class RemoteConversationRepository internal constructor(
         const val TYPE_REQUEST_CONTEXT_USAGE = "request_context_usage"
 
         /**
-         * Capability-gated thread event: a session transition `{conversation_id, previous_session_id,
-         * new_session_id, reason, occurred_at, workspace_cwd}` (#336, pyrycode#656/#657/#740) — folds a
-         * [ThreadItem.SessionBoundary] into the conversation thread (keyed by `conversation_id`) in
-         * arrival order at a `/clear` / idle-evict / workspace-change transition. `reason` ∈ {`clear`,
-         * `idle_evict`, `workspace_change`}; `workspace_cwd` is non-null only for `workspace_change`.
-         */
-        const val TYPE_SESSION_TRANSITION = "session_transition"
-
-        /**
          * Capability-gated thread event: a claude message the daemon's stream-json parser could not map
          * `{conversation_id, site, message_type, raw, truncated}` (#609, pyrycode#1074) — folds a
          * [ThreadItem.UnrecognizedMessage] into the conversation thread (keyed by `conversation_id`) in
@@ -2053,18 +1991,6 @@ class RemoteConversationRepository internal constructor(
         /** Capability-gated retirement of a question batch `{question_batch_id, outcome, source}` (#822). */
         const val TYPE_QUESTION_DISMISSED = "question_dismissed"
 
-        /**
-         * Capability-gated background task claude started past its turn
-         * `{conversation_id, task_id, tool_call_id, description, task_type, truncated_fields}` (#677).
-         */
-        const val TYPE_BACKGROUND_TASK_STARTED = "background_task_started"
-
-        /**
-         * Capability-gated change to a background task
-         * `{conversation_id, task_id, patch, status, summary, truncated_fields}` (#677); `status != ""` ends it.
-         */
-        const val TYPE_BACKGROUND_TASK_UPDATED = "background_task_updated"
-
         /** Capability-gated snapshot of a conversation's background tasks `{conversation_id, tasks, dropped_tasks}` (#677). */
         const val TYPE_BACKGROUND_TASK_ROSTER = "background_task_roster"
 
@@ -2107,14 +2033,6 @@ class RemoteConversationRepository internal constructor(
          * "New session" (/clear). No payload, no reply, interactive-gated server-side; replay-safe.
          */
         const val TYPE_NEW_SESSION = "new_session"
-
-        /**
-         * Capability-gated control marker: a replay resync `{conversation_id}`, no `event_id` (#417,
-         * pyrycode#646/#647) — the daemon's signal that the advertised `last_event_id` aged out of its
-         * bounded ring, so gap-free in-ring replay is impossible. The phone resets its replay cursor and
-         * surfaces the gap; full reload via `backfill_since` is deferred (no daemon handler yet).
-         */
-        const val TYPE_RESYNC = "resync"
 
         /** Correlated success reply (empty `{}`) to a request, matched on `in_reply_to` (#346). */
         const val TYPE_ACK = "ack"
@@ -2184,13 +2102,5 @@ class RemoteConversationRepository internal constructor(
          * required `time.Time` on the wire (#272), so full history is the epoch, not an absent field.
          */
         const val BACKFILL_ALL_HISTORY_SINCE = "1970-01-01T00:00:00Z"
-
-        /**
-         * Advisory cap on the backfilled-message count (`backfill_since.max_messages`, #272). Sized
-         * to cover a full thread without truncation; the server chunks the response and may deliver
-         * fewer. The backfill dispatcher is not yet live, so this value is not yet exercised against
-         * real server behaviour.
-         */
-        const val BACKFILL_MAX_MESSAGES = 10_000
     }
 }

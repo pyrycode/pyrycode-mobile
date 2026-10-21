@@ -113,3 +113,14 @@ None requiring a product decision. Record implementation changes to this contrac
 - Peer history/attachment assertions now consume ThreadItemDto instead of raw history. Their retained raw-producer peer still needs an explicit authoritative query connection strategy and strict recorded/native verification before handoff. It must not silently query an unnegotiated peer or weaken watermark/attachment assertions.
 - Remaining removal audit: eliminate obsolete UI history-key/gap compatibility consumers and stale exclusive fixture helpers while retaining authoritative/presentation assertions. Complete affected class checks, deterministic durable-gap/scripted and recorded checks, final merge, final pre-verify and PR before claiming completion.
 - The focused scripted run on 2870f1185 passed ping but skipped the durable-gap method because its stale Ignore still described a legacy-only cache proof. Remove that annotation now that the shared proof uses authoritative saved certification and recovery receipts. Retain the skipped result as history and require fresh counted execution before acceptance.
+
+
+### 2026-10-21 — Continuation audit
+
+- Main integration preserves the reviewed restart evidence from #2246.
+- The independent producer peer keeps its original diagnostic history requests in test sources. Its exact watermark and attachment assertions retain the captured boundary; those observations never populate or certify phone content. Runtime history DTOs and domain page APIs are deleted.
+- Remove raw completion readers, legacy unread tokens and their storage collectors. Recovery notices and session cost use the existing authoritative effects and certified facts. Missing shown metadata cannot fall back to legacy receipt.
+- Remove gap markers and demand plumbing because there is no authoritative production producer. Retain oldest-end paging, gesture, retry and scroll coverage.
+- Remove queue matching and background placement inference from the app APK. Literal presentation fixtures prepare rows in shared test sources, while runtime rows come from authoritative presentation. Keep actual grouping, navigation, row identity and viewport assertions.
+- The demo repository also supplies complete authored facts through a demo-owned negotiated route; it does not consume raw content frames. Existing demo content/chip tests caught the missing route and remain in the verification set.
+- Retire the native history-tail capture that drove deleted raw-history requests. Shared presentation checks retain loading, retry, unavailable and offline rows; documentation stage must update that capture inventory.

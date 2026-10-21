@@ -11,8 +11,6 @@ import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 
 /** Independent daemon-producer observations used only by retained native evidence. */
 @Serializable
@@ -179,51 +177,6 @@ internal fun QueueStatePayloadDto.toQueue(): List<QueuedMessage> =
             messageId = it.messageId,
         )
     }
-
-/** Total field copy: every [AssistantDeltaPayloadDto] decodes to a [LiveSessionEvent.AssistantDelta]. */
-internal fun AssistantDeltaPayloadDto.toEvent(): LiveSessionEvent =
-    LiveSessionEvent.AssistantDelta(conversationId, turnId, seq, text, parentToolUseId)
-
-/** Total field copy: every [ToolUsePayloadDto] decodes to a [LiveSessionEvent.ToolUse]. */
-internal fun ToolUsePayloadDto.toEvent(): LiveSessionEvent =
-    LiveSessionEvent.ToolUse(conversationId, turnId, toolUseId, name, inputSummary, parentToolUseId, input.toInputFields())
-
-/** Total field copy: every [ToolResultPayloadDto] decodes to a [LiveSessionEvent.ToolResult]. */
-internal fun ToolResultPayloadDto.toEvent(): LiveSessionEvent =
-    LiveSessionEvent.ToolResult(conversationId, turnId, toolUseId, isError, resultSummary, parentToolUseId, resultDetail)
-
-/**
- * `tool_use.input` narrowed to its string fields (#810): anything but a JSON object yields no fields,
- * and within an object each JSON-string value is kept **verbatim** in wire order. A non-string value is
- * off-contract (the daemon stringifies every value) and is skipped rather than rewritten.
- */
-private fun JsonElement?.toInputFields(): Map<String, String> {
-    if (this !is JsonObject) return emptyMap()
-    return buildMap {
-        for ((key, value) in this@toInputFields) {
-            if (value is JsonPrimitive && value.isString) put(key, value.content)
-        }
-    }
-}
-
-/**
- * Total field copy: every string passes through verbatim (consumers map and sanitize the wire values). The
- * cost (#1346) is kept only when the wire carried a JSON number.
- */
-internal fun TurnEndPayloadDto.toEvent(historyEntryId: ULong? = null): LiveSessionEvent =
-    LiveSessionEvent.TurnEnd(
-        conversationId,
-        turnId,
-        stopReason,
-        outcome,
-        isError,
-        terminalReason,
-        errorCategory,
-        costUsdTotal.jsonNumberOrNull(),
-        historyEntryId,
-    )
-
-private fun JsonElement?.jsonNumberOrNull(): Double? = (this as? JsonPrimitive)?.takeUnless { it.isString }?.content?.toDoubleOrNull()
 
 /**
  * The `session_transition` thread event (#336, pyrycode#656/#657/#740): a session boundary

@@ -1,7 +1,6 @@
 package de.pyryco.mobile.di
 
 import de.pyryco.mobile.data.cache.ConversationCache
-import de.pyryco.mobile.data.cache.ReadPosition
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.HostModalState
@@ -36,7 +35,6 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -177,20 +175,6 @@ class HostConversationSource internal constructor(
         retry(serverId)
     }
 
-    /**
-     * The operator opened [conversationId] on [serverId]: clear its legacy local unread position.
-     * A modern conversation stays unread until its confirmed shared mark covers its newest known entry.
-     */
-    @Synchronized
-    fun markOpened(
-        serverId: String,
-        conversationId: String,
-    ) {
-        val entry = held[serverId] ?: return
-        updateAttention(entry) { attention = attention.opened(conversationId) }
-        RelayLog.d { "event=conversation_attention_opened" }
-    }
-
     @Synchronized
     private fun reconcile(current: List<HostConversationConnection>) {
         if (disposed) return
@@ -261,10 +245,8 @@ class HostConversationSource internal constructor(
         val connection = entry.connection
         scope.launch(entry.job) {
             connection.liveSessionEvents.collect { event ->
-                if (event is LiveSessionEvent.TurnEnd) return@collect
                 updateAttention(entry) {
-                    val before = attention.counted[event.conversationId]
-                    attention = attention.onEvent(event, viewing.isViewing(connection.serverId, event.conversationId))
+                    attention = attention.onEvent(event)
                 }
             }
         }
@@ -332,13 +314,6 @@ class HostConversationSource internal constructor(
             }
         }
         scope.launch(entry.job) {
-            // Opening is idempotent, so every viewed conversation of this host is re-opened on each change.
-            viewing.viewed.collect { viewed ->
-                val opened = viewed.filter { it.first == connection.serverId }.map { it.second }
-                if (opened.isNotEmpty()) updateAttention(entry) { attention = opened.fold(attention) { state, id -> state.opened(id) } }
-            }
-        }
-        scope.launch(entry.job) {
             combine(connection.modals, connection.questionBatches, ::Pair).collect { (modals, batches) ->
                 updateAttention(entry) {
                     this.modals = modals.outstanding
@@ -362,23 +337,6 @@ class HostConversationSource internal constructor(
                         alert(entry, conversationId, AttentionAlert.Kind.Prompt, key, preview = { prompt })
                     }
                     prompts = current.keys
-                }
-            }
-        }
-        val store = cache ?: return
-        scope.launch(entry.job) {
-            // Written only after the restore landed, so an empty map never overwrites stored positions.
-            var written = store.readReadPositions(connection.serverId)
-            updateAttention(entry) {
-                attention = attention.restored(written)
-                positions.value = attention.positions
-            }
-            entry.positions.filterNotNull().collect { positions ->
-                if (positions != written) {
-                    written = positions
-                    store
-                        .writeReadPositions(connection.serverId, positions)
-                        .onFailure { RelayLog.d { "event=conversation_attention_write_failed" } }
                 }
             }
         }
@@ -410,7 +368,6 @@ class HostConversationSource internal constructor(
             if (current != null) entry.attention = entry.attention.withReadMarks(emptyMap())
         }
         entry.change()
-        if (entry.positions.value != null) entry.positions.value = entry.attention.positions
         entry.resolved = entry.attention.resolve(entry.modals, entry.batches)
         publish()
     }
@@ -560,9 +517,6 @@ class HostConversationSource internal constructor(
 
         /** The prompt keys already alerted for this generation, so an unchanged prompt emits once (#685). */
         var prompts: Set<String> = emptySet()
-
-        /** The positions to persist; null until the stored ones were restored, and never set without a cache. */
-        val positions = MutableStateFlow<Map<String, ReadPosition>?>(null)
     }
 
     companion object {

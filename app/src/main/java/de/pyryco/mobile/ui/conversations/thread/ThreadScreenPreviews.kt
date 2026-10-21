@@ -16,7 +16,6 @@ import de.pyryco.mobile.data.model.QuestionOption
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.repository.BoundaryReason
-import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.settings.label
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -337,21 +336,12 @@ private fun ThreadScreenQueuedRowsDarkPreview() {
                     displayName = "kitchenclaw refactor",
                     isPromoted = true,
                     items = previewQueuedItems(),
-                    queuedMessages =
-                        listOf(
-                            QueuedMessage(
-                                id = 1L,
-                                text = "Also update the migration tests once you're done.",
-                                timestamp = Instant.parse("2026-05-17T14:34:00Z"),
-                                messageId = "u-queued",
+                    displayRows =
+                        previewQueuedItems().dropLast(1).map { ThreadRow.Delivered(it) } +
+                            listOf(
+                                ThreadRow.Queued(1L, "Also update the migration tests once you're done.", "u-queued"),
+                                ThreadRow.Queued(2L, "Then push a draft PR.", null),
                             ),
-                            QueuedMessage(
-                                id = 2L,
-                                text = "Then push a draft PR.",
-                                timestamp = Instant.parse("2026-05-17T14:34:10Z"),
-                                messageId = "minted-on-another-device",
-                            ),
-                        ),
                 ),
             onBack = {},
             onSendMessage = {},

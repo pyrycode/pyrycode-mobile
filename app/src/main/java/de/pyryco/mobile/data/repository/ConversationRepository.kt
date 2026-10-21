@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.datetime.Instant
-import kotlinx.serialization.json.JsonElement
 
 /**
  * Phase 1 data-layer contract. The fake (Phase 1) and Ktor-backed remote
@@ -1146,28 +1145,6 @@ data class QueuedMessage(
 )
 
 /**
- * One backward step of a history walk (#623) — the return of [ConversationRepository.requestHistory].
- * The element type is co-located with the contract it serves, like [ThreadItem] / [QueuedMessage].
- *
- * @param entries This page's entries in the wire's **newest-first** order, preserved verbatim; the
- *   client never re-sorts. An empty list is a normal page, not an error and not a termination signal.
- * @param cursor The position to ask with next, opaque — store it and hand it back unexamined. Empty
- *   whenever [atStart] is true, so the two are never both meaningful. Not a secret and not a
- *   capability: it is unsigned by design and carries only the conversation id the caller already
- *   knows. Authorization is pairing, enforced at the Noise handshake.
- * @param atStart The start of the log was reached while filling this page — **the only termination
- *   signal there is**. A walk stops on this and never on an empty [entries] list: a page that fills
- *   exactly at the log's first entry reports `false` with a usable [cursor], and the call after it
- *   returns no entries with `true`. A **short** page says nothing about the end of the log either —
- *   the daemon narrows a page to fit its frame size cap without touching this flag.
- */
-data class HistoryPage(
-    val entries: List<HistoryEntry>,
-    val cursor: String,
-    val atStart: Boolean,
-)
-
-/**
  * The independent backwards walk's position, saved beside cached rows, plus received durable entry
  * coverage and unresolved gaps. Default-null coverage means legacy rows cannot certify completeness.
  * Only received pages establish coverage; live rows never do.
@@ -1181,50 +1158,6 @@ data class HistoryPosition(
     val coverage: HistoryCoverage? = null,
 ) {
     override fun toString(): String = "HistoryPosition(atStart=$atStart)"
-}
-
-/**
- * One stored frame in a conversation's history log (#623) — a wire type, its payload, a timestamp and
- * a durable id, which is what makes a loaded page renderable by re-reducing it **oldest-first**
- * through the same timeline reducer the live stream already runs.
- *
- * **[type] and [payload] are replayed content and are exactly as untrusted as the live lane's** —
- * operator-authored for a stored `send_message`, `claude`-authored for a stored assistant frame — so
- * a consumer applies the same sanitisation it applies live: render as inert text, never as markup, a
- * URL, a filename, a cache key or a log line. This is the [ThreadItem.UnrecognizedMessage] posture,
- * and it holds for **every** entry, not only the unrecognized ones. Nothing in the data layer logs
- * either field.
- *
- * @param unsignedId The **durable, host/conversation-scoped** positive unsigned log id: monotonic within one conversation and stable
- *   across daemon restarts. **Never join it to a replay `event_id`** ([de.pyryco.mobile.data.network.Envelope.eventId]),
- *   which is the in-memory ring's per-process id. They are different sequences that both look like
- *   small integers, and some live frames carry no `event_id` at all.
- * @param type The wire type the stored frame carried. **Nothing re-validates it**, so a consumer must
- *   tolerate a type it does not recognise rather than treating one as a protocol violation — the same
- *   forward-compatibility rule the wire applies to unknown fields.
- * @param payload The stored frame's body, verbatim and still undecoded — a [JsonElement] rather than
- *   a `String` so a consumer feeds it straight back into the same `MobileJson.decodeFromJsonElement`
- *   arms the live lane uses, with no second parse and no second failure surface.
- * @param timestamp When the entry was appended. Together with [type] it is the join key against the
- *   live lane: an entry in a page and its twin on the live stream carry the same pair, which is how a
- *   client meets the two with no gap and no duplicate.
- */
-data class HistoryEntry(
-    val type: String,
-    val payload: JsonElement,
-    val timestamp: Instant,
-    val unsignedId: ULong,
-) {
-    init {
-        require(unsignedId > 0u) { "Invalid durable history id" }
-    }
-
-    /** Source-compatible construction for existing positive signed fixtures. */
-    constructor(id: Long, type: String, payload: JsonElement, timestamp: Instant) :
-        this(type, payload, timestamp, id.also { require(it > 0) { "Invalid durable history id" } }.toULong())
-
-    /** Exact signed compatibility identity, or no claim when the durable id exceeds the signed range. */
-    val id: Long? get() = unsignedId.takeIf { it <= Long.MAX_VALUE.toULong() }?.toLong()
 }
 
 /**

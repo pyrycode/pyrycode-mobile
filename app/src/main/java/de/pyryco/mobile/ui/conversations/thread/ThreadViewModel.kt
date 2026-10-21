@@ -37,7 +37,6 @@ import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.ReplySuggestion
 import de.pyryco.mobile.data.repository.ResetStatus
-import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.SlashCommandMenu
 import de.pyryco.mobile.data.repository.SwitchAgentFailure
@@ -838,27 +837,7 @@ class ThreadViewModel(
         }
     }
 
-    /**
-     * Claude's latest estimate of this session's cost (#1346): the newest positive finite `cost_usd_total`
-     * on this conversation's `turn_end`s. Each replaces the last (the value is already a running total, so
-     * it is never summed), and an absent, zero, negative or non-finite one leaves the earlier value standing.
-     * Collected eagerly so it lasts as long as this view model, as desktop keeps it while the timeline lives;
-     * `WhileSubscribed` would forget it whenever the screen stops collecting. Claude's claim: never logged.
-     */
-    private val sessionCostUsd: StateFlow<Double?> =
-        liveSessionEvents
-            .filterIsInstance<LiveSessionEvent.TurnEnd>()
-            .mapNotNull { event ->
-                event.costUsdTotal?.takeIf { event.conversationId == conversationId && it.isFinite() && it > 0 }
-            }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
-
-    /**
-     * Channel info's Session readings (#1346): what Claude reports about its session, with the permission
-     * mode [runningModel] leaves unread, and [sessionCostUsd]. A second `observeSessionFacts` subscription is
-     * a projection read that sends nothing. None of it reaches [runConfigFlow].
-     */
-    private val channelInfoSession: Flow<Pair<SessionFacts?, Double?>> =
-        combine(repository.observeSessionFacts(conversationId), sessionCostUsd, ::Pair)
+    private val channelInfoSession = repository.observeSessionFacts(conversationId)
 
     /** This conversation's MCP server reading (#1344), seeded so a source that never emits cannot stall [state]. */
     private val mcpStatusReading: Flow<McpStatus> =
@@ -1004,8 +983,8 @@ class ThreadViewModel(
                 expandedBackgroundTaskIds = tasks.expanded,
                 pendingBackgroundTaskIds = tasks.pending,
             )
-        }.combine(channelInfoSession) { uiState, (facts, cost) ->
-            uiState.copy(reportedSessionFacts = facts, sessionCostUsd = cost)
+        }.combine(channelInfoSession) { uiState, facts ->
+            uiState.copy(reportedSessionFacts = facts)
         }.combine(mcpStatusReading) { uiState, mcp ->
             uiState.copy(mcpStatus = mcp)
         }.combine(combine(channelEditor.state, hostAvailable, ::Pair)) { uiState, (editor, available) ->
@@ -1041,7 +1020,12 @@ class ThreadViewModel(
                             it.conversation == conversationId &&
                             route.store.current(serverId, conversationId) === it.sourceSnapshot
                     }
-                uiState.copy(authoritativeThread = presentation, sessionCostUsd = current?.reportedSessionCost(session))
+                uiState.copy(
+                    authoritativeThread = presentation,
+                    items = presentation?.items.orEmpty(),
+                    hasMessages = presentation?.rows?.isNotEmpty() == true,
+                    sessionCostUsd = current?.reportedSessionCost(session),
+                )
             }
         }.combine(contextSheetOpen) { uiState, open ->
             uiState.copy(contextSheetOpen = open)
@@ -1775,16 +1759,8 @@ class ThreadViewModel(
         event: LiveSessionEvent,
     ): TurnRecoveryNotice? {
         if (event.conversationId != conversationId) return current
-        return when (event) {
-            is LiveSessionEvent.TurnEnd -> turnRecoveryNotice(event)
-            is LiveSessionEvent.TurnState ->
-                if (event.phase == LiveSessionEvent.TurnState.Phase.Idle) current else null
-            is LiveSessionEvent.AssistantDelta,
-            is LiveSessionEvent.ToolUse,
-            is LiveSessionEvent.ToolResult,
-            -> null
-            is LiveSessionEvent.ReplayGap -> current
-        }
+        val phase = (event as LiveSessionEvent.TurnState).phase
+        return if (phase == LiveSessionEvent.TurnState.Phase.Idle) current else null
     }
 
     private fun setTurnOutcome(
@@ -1822,22 +1798,9 @@ class ThreadViewModel(
         // repository drops a reading on `turn_end`, so any reading that follows belongs to a later step.
         viewModelScope.launch {
             liveSessionEvents.collect { event ->
-                val reason =
-                    when (event) {
-                        is LiveSessionEvent.TurnEnd -> "turn_end"
-                        is LiveSessionEvent.TurnState -> "turn_state"
-                        is LiveSessionEvent.AssistantDelta -> "assistant_delta"
-                        is LiveSessionEvent.ToolUse -> "tool_use"
-                        is LiveSessionEvent.ToolResult -> "tool_result"
-                        is LiveSessionEvent.ReplayGap -> "replay_gap"
-                    }
+                val reason = "turn_state"
                 if (event.conversationId == conversationId &&
-                    (
-                        event is LiveSessionEvent.AssistantDelta ||
-                            event is LiveSessionEvent.ToolUse ||
-                            event is LiveSessionEvent.ToolResult ||
-                            (event is LiveSessionEvent.TurnState && event.phase != LiveSessionEvent.TurnState.Phase.Idle)
-                    )
+                    (event as LiveSessionEvent.TurnState).phase != LiveSessionEvent.TurnState.Phase.Idle
                 ) {
                     invalidateSuggestion("turn")
                 }

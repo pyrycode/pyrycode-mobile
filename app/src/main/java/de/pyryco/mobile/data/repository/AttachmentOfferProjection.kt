@@ -1,8 +1,5 @@
 package de.pyryco.mobile.data.repository
 
-import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.MessageAttachment
-import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.AttachmentOfferedPayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
@@ -14,7 +11,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
-import kotlinx.datetime.Instant
 import kotlinx.serialization.json.decodeFromJsonElement
 
 /**
@@ -84,25 +80,3 @@ internal class AttachmentOfferProjection {
         return dto.conversationId to AttachmentOffer(dto.attachmentId, attachmentDisplayName(dto.filename))
     }
 }
-
-/**
- * The thread row for one offered file (#983): an assistant-side message with no text and one reference
- * carrying the offer's cleaned name and no MIME hint, since the wire sends none. Its id is derived from the
- * validated attachment id, so the same offer on another connection, or the row restored from the disk cache,
- * joins this one on `message_id` rather than adding a second. The prefix keeps it clear of the UUIDs the
- * wire uses for `message_id`, `turn_id` and `tool_use_id`. [timestamp] is the arrival instant, the clock of
- * every locally assembled live row.
- */
-internal fun attachmentOfferRow(
-    offer: AttachmentOffer,
-    timestamp: Instant,
-): Message =
-    Message(
-        id = "attachment-offer-${offer.attachmentId}",
-        sessionId = "",
-        role = Role.Assistant,
-        content = "",
-        timestamp = timestamp,
-        isStreaming = false,
-        attachments = listOf(MessageAttachment(offer.attachmentId, offer.displayName)),
-    )

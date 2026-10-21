@@ -19,7 +19,6 @@ import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -37,7 +36,6 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.e2e.questionAnswerTarget
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
@@ -55,7 +53,6 @@ class BackgroundAgentProseScreenTest {
     private val ts = Instant.parse("2026-10-06T10:00:00Z")
     private var collapse by mutableStateOf(true)
     private var items by mutableStateOf<List<ThreadItem>>(emptyList())
-    private var markers by mutableStateOf<List<ThreadHistoryMarker>>(emptyList())
 
     private fun prose(
         id: String,
@@ -103,7 +100,7 @@ class BackgroundAgentProseScreenTest {
             val screen: @Composable () -> Unit = {
                 PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
-                        state = ThreadUiState("c", "Channel", items = items, hasMessages = true, historyMarkers = markers),
+                        state = (ThreadUiState("c", "Channel", items = items, hasMessages = true)).withLiteralRows(),
                         onBack = {},
                         onSendMessage = {},
                         connectionState = ConnectionState.Connected,
@@ -338,36 +335,6 @@ class BackgroundAgentProseScreenTest {
         compose.onNodeWithText("Later child 29").assertDoesNotExist()
         compose.questionAnswerTarget(ownedRun).assertIsDisplayed()
         assertEquals(-1, compose.onNode(hasScrollToIndexAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:Child"))
-    }
-
-    @Test fun childGapStaysVisibleBesideItsAlwaysVisibleProse() {
-        mount(false, true)
-        compose.runOnIdle {
-            val child = items.filterIsInstance<ThreadItem.MessageItem>().first { it.message.id == "Child" }
-            val agent = items.filterIsInstance<ThreadItem.MessageItem>().first { it.message.id == "a" }
-            markers =
-                listOf(
-                    ThreadHistoryMarker(1, child.historyKeys().first()),
-                    ThreadHistoryMarker(2, agent.historyKeys().first()),
-                )
-        }
-
-        fun assertEachGapOnce() {
-            for (anchor in listOf(1, 2)) {
-                compose.onAllNodesWithTag("history-gap:$anchor").assertCountEquals(1)
-                compose.onNodeWithTag("history-gap:$anchor").assertIsDisplayed()
-            }
-        }
-        // A lone prose child never meets the two-row fold threshold (#1827 follow-up), so it -- and both
-        // gap markers anchored around it -- are visible regardless of the collapse setting.
-        compose.onNodeWithText("Child").assertIsDisplayed()
-        assertEachGapOnce()
-        val gap = compose.onNodeWithTag("history-gap:1").getUnclippedBoundsInRoot()
-        val prose = compose.onNodeWithText("Child").getUnclippedBoundsInRoot()
-        org.junit.Assert.assertTrue(gap.bottom <= prose.top)
-        compose.runOnIdle { collapse = false }
-        compose.onNodeWithText("Child").assertIsDisplayed()
-        assertEachGapOnce()
     }
 
     @Test fun finishAndLaterMainReplyKeepProseNestedAndAlwaysVisible() {

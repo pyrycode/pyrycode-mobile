@@ -1096,13 +1096,11 @@ class StableConversationRepositoryTest {
         val requestScreenSnapshotCalls = mutableListOf<String>()
         val sendQueuedNowCalls = mutableListOf<Pair<String, Long>>()
         val dropQueuedMessageCalls = mutableListOf<Pair<String, Long>>()
-        val requestHistoryCalls = mutableListOf<Triple<String, String, Int>>()
 
         var createDiscussionResult: Conversation = conversation("created")
         var createChannelResult: Conversation = conversation("created-channel")
         var sendMessageResult: Message = message("sent")
         var requestScreenSnapshotResult: String = "snapshot-text"
-        var requestHistoryResult: HistoryPage = HistoryPage(entries = emptyList(), cursor = "", atStart = true)
         val requestSystemPromptResult = SystemPromptReading("stored", SessionPromptStatus.Matches)
         val requestSystemPromptCalls = mutableListOf<String>()
         val setSystemPromptCalls = mutableListOf<Pair<String, String?>>()

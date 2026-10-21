@@ -100,8 +100,8 @@ internal fun ThreadReadViewport(
                         content.row,
                         checkpoint,
                         presentation,
-                        rowKey = if (presentation != null) content.key as? String else null,
-                        seenRowRevisions = if (presentation != null) seen.toMap() else emptyMap(),
+                        rowKey = content.key as? String,
+                        seenRowRevisions = seen.toMap(),
                     ),
                 )
             }

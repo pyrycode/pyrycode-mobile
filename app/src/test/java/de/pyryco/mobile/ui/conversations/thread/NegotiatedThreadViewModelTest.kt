@@ -148,7 +148,8 @@ class NegotiatedThreadViewModelTest {
             val vm = viewModel(owner, legacy, Route("other"))
             backgroundScope.launch { vm.state.collect {} }
             runCurrent()
-            assertTrue(legacy.observed > 0)
+            assertEquals(0, legacy.observed)
+            assertEquals(0, legacy.historyAsks)
             assertNull(vm.state.value.authoritativeThread)
             owner.clear()
         }

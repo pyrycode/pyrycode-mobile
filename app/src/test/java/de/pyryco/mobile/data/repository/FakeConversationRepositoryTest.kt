@@ -2,14 +2,11 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
-import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -22,6 +19,26 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
 class FakeConversationRepositoryTest {
+    @Test
+    fun authoritativeDemoDeletionClearsAnAlreadyCollectedThread() =
+        kotlinx.coroutines.test.runTest {
+            val previousSink = de.pyryco.mobile.data.network.RelayLog.sink
+            de.pyryco.mobile.data.network.RelayLog.sink = { _, _, _ -> }
+            try {
+                val repo = FakeConversationRepository()
+                val route = checkNotNull(repo.negotiatedThread)
+                val snapshots = mutableListOf<AuthoritativeThreadSnapshot>()
+                backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) {
+                    route.observe("seed-channel-personal").collect { snapshots += it }
+                }
+                assertTrue(snapshots.last().items.isNotEmpty())
+                repo.delete("seed-channel-personal")
+                assertTrue("deleted demo content must leave an existing observer", snapshots.last().items.isEmpty())
+            } finally {
+                de.pyryco.mobile.data.network.RelayLog.sink = previousSink
+            }
+        }
+
     @Test
     fun observeConversations_emitsExpectedSeeds_initially_for_all_filters() =
         runBlocking {
@@ -840,32 +857,6 @@ class FakeConversationRepositoryTest {
 
     // An unknown conversation throws IllegalArgumentException — the same type the remote surfaces for
     // the daemon's `conversation.not_found`, so a consumer handles one type either way.
-
-    /** A repo whose [SEED_ID] conversation holds exactly [count] messages, one minute apart. */
-    private fun seededHistoryRepo(count: Int): FakeConversationRepository =
-        FakeConversationRepository(
-            initialMessages =
-                mapOf(
-                    SEED_ID to
-                        (1..count).map { n ->
-                            Message(
-                                id = "m$n",
-                                sessionId = "s1",
-                                role = if (n % 2 == 0) Role.Assistant else Role.User,
-                                content = "line $n",
-                                timestamp = Instant.parse("2026-05-10T10:00:00Z") + n.minutes,
-                                isStreaming = false,
-                            )
-                        },
-                ),
-        )
-
-    /** The `message_id` inside a fake history entry's `message`-shaped payload. */
-    private fun entryMessageId(entry: HistoryEntry): String =
-        entry.payload.jsonObject
-            .getValue("message_id")
-            .jsonPrimitive
-            .content
 
     private fun conv(
         promoted: Boolean,

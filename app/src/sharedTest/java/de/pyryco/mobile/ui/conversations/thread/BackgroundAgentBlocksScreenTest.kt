@@ -103,7 +103,7 @@ class BackgroundAgentBlocksScreenTest {
         val content: @Composable () -> Unit = {
             PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
-                    state = state,
+                    state = (state).withLiteralRows(),
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
@@ -167,7 +167,7 @@ class BackgroundAgentBlocksScreenTest {
                     val index = list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("agent-start:a")
                     val composed = compose.onAllNodes(ownedMarker).fetchSemanticsNodes().size
                     val projected =
-                        foldBackgroundAgentBlocks(foldQueuedRows(state.items, state.queuedMessages), state.items, state.backgroundTasks)
+                        fixtureBackgroundRows(fixtureQueuedRows(state.items, state.queuedMessages), state.items, state.backgroundTasks)
                             .filterIsInstance<ThreadRow.AgentStartMarker>()
                             .single { it.agentId == "a" }
                     assertTrue("the held Agent must still be running", !projected.finished)

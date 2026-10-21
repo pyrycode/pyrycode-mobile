@@ -35,7 +35,6 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.hasScrollToIndexAction
-import androidx.compose.ui.test.hasScrollToKeyAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -50,7 +49,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
-import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -73,7 +71,6 @@ import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
-import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.AttachmentContent
 import de.pyryco.mobile.data.repository.AttachmentFetchResult
@@ -86,7 +83,6 @@ import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.FakeConversationRepository
-import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.LiveRefusalEvent
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
@@ -105,7 +101,6 @@ import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.QueuedMessageRow
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.PickedAttachment
-import de.pyryco.mobile.ui.conversations.thread.ThreadHistoryTail
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.threadColors
@@ -152,9 +147,6 @@ class ThreadDesignCaptureTest {
     private val turnPhase = MutableStateFlow(LiveSessionEvent.TurnState.Phase.Idle)
     private val usageLimit = MutableStateFlow<UsageLimitReading?>(null)
     private val hostAvailable = MutableStateFlow(true)
-
-    /** While set, the override's `requestHistory` answers with this gate instead of the fake's page. */
-    @Volatile private var historyGate: CompletableDeferred<HistoryPage>? = null
 
     /** While set, the override's `setSessionSettings` awaits this gate instead of the fake's write. */
     @Volatile private var settingsGate: CompletableDeferred<Unit>? = null
@@ -618,8 +610,9 @@ class ThreadDesignCaptureTest {
         // #1603: the outcome is a combined Error pill in the top overlay.
         extraItems.value = listOf(ThreadItem.StoppedTurn("design-turn", "prompt_too_long", "", at(10)))
         runBlocking {
-            inputs.liveSessionEvents.emit(
-                LiveSessionEvent.TurnEnd(CONVERSATION, "design-turn", "end_turn", isError = true, terminalReason = "prompt_too_long"),
+            inputs.turnEnds.emit(
+                de.pyryco.mobile.data.repository
+                    .LiveRootTurnEnd(true, "", "end_turn", "prompt_too_long", "", { true }, inputs.turnSourceOwner),
             )
         }
         await("Stopped: context too long, compact or reset")
@@ -665,33 +658,6 @@ class ThreadDesignCaptureTest {
     }
 
     /** #1529: the oldest-end row's four states, `689:4281`, `689:4330`, `689:4379` and `689:4427`. */
-    @Test fun historyTailFramesAt412By892() {
-        // Held before the open, whose newest-page ask is the walk's first page.
-        val loading = CompletableDeferred<HistoryPage>()
-        historyGate = loading
-        openThread()
-        inputs.contextUsage.value = CONTEXT
-        awaitHistoryTail(ThreadHistoryTail.Loading, "Loading earlier messages")
-        design.capture(FOLDER, "history-loading", "689:4281")
-
-        loading.completeExceptionally(RelayErrorException("history.unavailable", true, ""))
-        awaitHistoryTail(ThreadHistoryTail.Retry, "Try again")
-        design.capture(FOLDER, "history-retry", "689:4330")
-
-        val retry = CompletableDeferred<HistoryPage>()
-        historyGate = retry
-        checkNotNull(inputs.thread.value).onRetryOlderHistory()
-        awaitHistoryTail(ThreadHistoryTail.Loading, "Loading earlier messages")
-        retry.completeExceptionally(RelayErrorException("history.not_found", false, ""))
-        awaitHistoryTail(ThreadHistoryTail.DeadEnd, "Earlier messages are unavailable")
-        design.capture(FOLDER, "history-dead-end", "689:4379")
-
-        hostAvailable.value = false
-        awaitHistoryTail(ThreadHistoryTail.Offline, "Older messages require a connection.")
-        design.capture(FOLDER, "history-offline", "689:4427")
-    }
-
-    /** #1529: the composer strip while its send uploads, `689:4475`; the first upload stops at 4 of 10 chunks. */
     @Test fun uploadingFrameAt412By892() {
         openThread()
         inputs.contextUsage.value = CONTEXT
@@ -806,16 +772,6 @@ class ThreadDesignCaptureTest {
         turnPhase.value = LiveSessionEvent.TurnState.Phase.Thinking
         runBlocking { inputs.liveSessionEvents.emit(LiveSessionEvent.TurnState(CONVERSATION, LiveSessionEvent.TurnState.Phase.Thinking)) }
         await("Thinking", substring = true)
-    }
-
-    /** Waits for the oldest-end row to read [tail], scrolls the reverse list to it and waits for its [text]. */
-    private fun awaitHistoryTail(
-        tail: ThreadHistoryTail,
-        text: String,
-    ) {
-        rule.waitUntil(5_000) { checkNotNull(inputs.thread.value).state.value.historyTail == tail }
-        rule.onNode(hasScrollToKeyAction() and hasAnyAncestor(hasTestTag("thread-message-region"))).performScrollToKey("history-tail")
-        await(text)
     }
 
     /** The bubble's photo is fetched by the view model, then decoded off the main clock, so wait for both. */
@@ -1154,6 +1110,10 @@ class ThreadDesignCaptureTest {
                     val fake = get<FakeConversationRepository>()
                     val repository =
                         object : ConversationRepository by fake {
+                            override val negotiatedThread = CaptureThread(checkNotNull(fake.negotiatedThread), extraItems, seedShown, queue)
+
+                            override fun observeLiveRootTurnEnds(conversationId: String) = inputs.turnEnds
+
                             override fun observeLiveRefusalEvents(conversationId: String) = refusals
 
                             override fun observeTurnPhase(conversationId: String) = turnPhase
@@ -1223,6 +1183,7 @@ class ThreadDesignCaptureTest {
                         pairingRejected = inputs.pairingRejected,
                         attachmentReader = get<AttachmentReader>(),
                     ).also {
+                        inputs.turnSourceOwner = checkNotNull(repository.negotiatedThread)
                         inputs.thread.value = it
                         val handle = get<SavedStateHandle>()
                         it.addCloseable(

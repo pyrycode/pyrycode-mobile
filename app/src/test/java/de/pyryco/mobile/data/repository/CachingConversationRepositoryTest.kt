@@ -98,7 +98,21 @@ class CachingConversationRepositoryTest {
         ThreadItem.SessionBoundary("session-1", "session-2", BoundaryReason.Clear, Instant.parse("2026-09-22T09:00:00Z"))
 
     private val offer =
-        ThreadItem.MessageItem(attachmentOfferRow(AttachmentOffer(ATTACHMENT_ID, "report.pdf"), Instant.parse("2026-09-22T10:00:01Z")))
+        ThreadItem.MessageItem(
+            de.pyryco.mobile.data.model.Message(
+                "offered",
+                "",
+                de.pyryco.mobile.data.model.Role.Assistant,
+                "",
+                Instant.parse("2026-09-22T10:00:01Z"),
+                false,
+                attachments =
+                    listOf(
+                        de.pyryco.mobile.data.model
+                            .MessageAttachment(ATTACHMENT_ID, "report.pdf"),
+                    ),
+            ),
+        )
 
     private val banner = ThreadItem.Banner(BannerLevel.Warning, "hook said no", false, Instant.parse("2026-09-22T10:00:01Z"))
     private val compaction = ThreadItem.CompactionBoundary(24000, 3000, true, Instant.parse("2026-09-22T10:00:02Z"))

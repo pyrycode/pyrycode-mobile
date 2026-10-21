@@ -15,10 +15,8 @@ import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
-import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.reconnected
 import de.pyryco.mobile.data.model.reduce
-import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConnectionStateSource
@@ -27,9 +25,6 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
-import de.pyryco.mobile.data.repository.HistoryEntry
-import de.pyryco.mobile.data.repository.HistoryPage
-import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
@@ -1340,34 +1335,6 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun onDropQueued_doesNotMutateBacklog_rowLeavesOnlyOnNextQueueState() =
-        runTest {
-            val repo = QueueControllableRepo()
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
-            val vm = makeVm(handle, repo)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            val a = QueuedMessage(1L, "a", Instant.parse("2026-06-23T10:00:00Z"))
-            val b = QueuedMessage(2L, "b", Instant.parse("2026-06-23T10:00:01Z"))
-            repo.queue.value = listOf(a, b)
-            advanceUntilIdle()
-            assertEquals(listOf(a, b), vm.state.value.queuedMessages)
-
-            // AC #3: no optimistic removal — the drop fires but the backlog is unchanged afterwards.
-            vm.onDropQueued(a.id)
-            advanceUntilIdle()
-            assertEquals(listOf(ACTIVE_CONV to 1L), repo.dropCalls)
-            assertEquals(listOf(a, b), vm.state.value.queuedMessages)
-
-            // AC #5 (disappears half): the row leaves only when the daemon broadcasts the next queue_state.
-            repo.queue.value = listOf(b)
-            advanceUntilIdle()
-            assertEquals(listOf(b), vm.state.value.queuedMessages)
-            collector.cancel()
-        }
-
-    @Test
     fun onDropQueued_whenDropFailsInert_isSwallowedWithoutCrashing() =
         runTest {
             // AC #4: both inert throws — not-connected (IllegalStateException) and a server-error reply
@@ -2062,410 +2029,6 @@ class ThreadViewModelTest {
         }
 
     // ---- #461: queuedMessages projection over repository.observeQueue ----------------------------
-
-    @Test
-    fun queuedMessages_initialValue_isEmptyWithNonQueueingRepo() =
-        runTest {
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
-            // A plain fake inherits observeQueue's flowOf(emptyList()) default — the backlog stays empty.
-            val vm = makeVm(handle, FakeConversationRepository())
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-            assertEquals(emptyList<QueuedMessage>(), vm.state.value.queuedMessages)
-            collector.cancel()
-        }
-
-    @Test
-    fun queuedMessages_reflectsOrderedSnapshotThenFullReplaceThenClear() =
-        runTest {
-            val repo = QueueControllableRepo()
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
-            val vm = makeVm(handle, repo)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            val a = QueuedMessage(1L, "a", Instant.parse("2026-06-23T10:00:00Z"))
-            val b = QueuedMessage(2L, "b", Instant.parse("2026-06-23T10:00:01Z"))
-            repo.queue.value = listOf(a, b)
-            advanceUntilIdle()
-            // AC #1 ordered (wire order preserved), AC #3/#4 reactive surfacing through UiState.
-            assertEquals(listOf(a, b), vm.state.value.queuedMessages)
-
-            val c = QueuedMessage(3L, "c", Instant.parse("2026-06-23T10:00:02Z"))
-            repo.queue.value = listOf(c)
-            advanceUntilIdle()
-            // Full-snapshot semantics flow through: the new snapshot replaces, not appends.
-            assertEquals(listOf(c), vm.state.value.queuedMessages)
-
-            repo.queue.value = emptyList()
-            advanceUntilIdle()
-            assertEquals(emptyList<QueuedMessage>(), vm.state.value.queuedMessages)
-            collector.cancel()
-        }
-
-    @Test
-    fun queuedMessages_observesOnlyOwnConversationId() =
-        runTest {
-            val repo = QueueControllableRepo()
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
-            val vm = makeVm(handle, repo)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            assertTrue(repo.observedIds.isNotEmpty())
-            assertTrue(repo.observedIds.all { it == ACTIVE_CONV })
-            collector.cancel()
-        }
-
-    // ---- #337: accumulate assistant_delta into a growing streaming MessageItem -------------------
-
-    @Test
-    fun assistantDeltas_lateParentReplayMovesSyntheticIntoJoinedBlockBeforeRepositoryHandoff() =
-        runTest {
-            val repo = MessagesControllableRepo()
-            val ts = Instant.parse("2026-10-06T10:00:00Z")
-            val agent =
-                ThreadItem.MessageItem(
-                    Message(
-                        "a",
-                        "s",
-                        Role.Tool,
-                        "",
-                        ts,
-                        false,
-                        toolCall = ToolCall("Agent", "", "", inputFields = mapOf("run_in_background" to "true")),
-                    ),
-                )
-            val base = listOf(agent, ThreadItem.BackgroundTaskLifecycle("task-a", ts, "a", "Agent", "local_agent"))
-            repo.messages.value = base
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            val delta = LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "child", 0, "reply")
-            events.emit(delta)
-            advanceUntilIdle()
-            val before =
-                vm.state.value.items
-                    .filterIsInstance<ThreadItem.MessageItem>()
-                    .single { it.message.id == "child" }
-                    .message
-            events.emit(delta.copy(parentToolUseId = "a"))
-            advanceUntilIdle()
-            val after =
-                vm.state.value.items
-                    .filterIsInstance<ThreadItem.MessageItem>()
-                    .single { it.message.id == "child" }
-                    .message
-            assertEquals(before.copy(parentToolUseId = "a"), after)
-            assertEquals(base, repo.messages.value) // No repository emission repairs the synthetic.
-            val items = vm.state.value.items
-            val rows = foldBackgroundAgentBlocks(foldQueuedRows(items, emptyList()), items, null)
-            assertEquals("a", rows.filterIsInstance<ThreadRow.Delivered>().single { it.item == ThreadItem.MessageItem(after) }.agentBlockId)
-            val keys = rows.mapIndexed { i, row -> row.listKey(i) }
-            assertEquals(keys.distinct(), keys)
-            for (expanded in listOf(emptySet(), setOf("a"), emptySet())) {
-                val visible = foldToolRuns(rows, expanded)
-                val replies =
-                    visible
-                        .filterIsInstance<ThreadRow.Delivered>()
-                        .mapNotNull { (it.item as? ThreadItem.MessageItem)?.message }
-                        .filter { it.id == "child" }
-                // "a" draws as itself, and its one prose child never meets the two-row fold threshold
-                // either (#1827 follow-up), so it is always visible regardless of expansion.
-                assertEquals(listOf(after), replies)
-                val visibleKeys = visible.mapIndexed { i, row -> row.listKey(i) }
-                assertEquals(visibleKeys.distinct(), visibleKeys)
-            }
-            repo.messages.value = base + ThreadItem.MessageItem(after.copy(isStreaming = false))
-            advanceUntilIdle()
-            assertEquals(
-                listOf(after.copy(isStreaming = false)),
-                vm.state.value.items
-                    .filterIsInstance<ThreadItem.MessageItem>()
-                    .filter { it.message.id == "child" }
-                    .map { it.message },
-            )
-            collector.cancel()
-        }
-
-    @Test
-    fun assistantDeltas_syntheticRowRetainsEachWireLanesParent() =
-        runTest {
-            val repo = MessagesControllableRepo()
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-            for ((lane, parent) in listOf("main" to "", "child-a" to "agent-a", "child-b" to "agent-b")) {
-                events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, lane, 0, lane, parent))
-                advanceUntilIdle()
-                val message =
-                    vm.state.value.items
-                        .filterIsInstance<ThreadItem.MessageItem>()
-                        .single()
-                        .message
-                assertEquals(lane, message.id)
-                assertEquals(lane, message.content)
-                assertEquals(parent, message.parentToolUseId)
-            }
-            collector.cancel()
-        }
-
-    @Test
-    fun assistantDeltas_produceSingleGrowingStreamingMessage() =
-        runTest {
-            val repo = MessagesControllableRepo()
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, turnId = "t1", seq = 0, text = "Hel"))
-            advanceUntilIdle()
-            assertEquals(listOf("Hel"), streamingContents(vm))
-
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, turnId = "t1", seq = 1, text = "lo"))
-            advanceUntilIdle()
-            // One growing streaming item — accumulated text, isStreaming == true (AC #1).
-            assertEquals(listOf("Hello"), streamingContents(vm))
-            assertEquals(
-                1,
-                vm.state.value.items
-                    .count { it is ThreadItem.MessageItem },
-            )
-            collector.cancel()
-        }
-
-    @Test
-    fun assistantDeltas_outOfOrderOrDuplicateSeq_areIgnored() =
-        runTest {
-            val repo = MessagesControllableRepo()
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 0, text = "A"))
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 1, text = "B"))
-            advanceUntilIdle()
-            assertEquals(listOf("AB"), streamingContents(vm))
-
-            // A replayed seq (== lastSeq) and an out-of-order seq (< lastSeq) leave the text unchanged (AC #2).
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 1, text = "X"))
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 0, text = "Y"))
-            advanceUntilIdle()
-            assertEquals(listOf("AB"), streamingContents(vm))
-            collector.cancel()
-        }
-
-    @Test
-    fun assistantDelta_forOtherConversation_neverAddsItem() =
-        runTest {
-            val repo = MessagesControllableRepo()
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            // A delta for a different conversation must never surface in this thread (AC #2 confidentiality).
-            events.emit(LiveSessionEvent.AssistantDelta("other-conversation", "t1", seq = 0, text = "leak"))
-            advanceUntilIdle()
-            assertTrue(
-                vm.state.value.items
-                    .isEmpty(),
-            )
-            collector.cancel()
-        }
-
-    @Test
-    fun turnEndThenFinishedMessage_settlesToFinishedWithoutDuplicate() =
-        runTest {
-            val repo = MessagesControllableRepo()
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 0, text = "Done"))
-            advanceUntilIdle()
-            assertEquals(listOf("Done"), streamingContents(vm))
-
-            // turn_end settles the typewriter but the item stays until the finished message arrives (AC #3).
-            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, "t1", stopReason = "end_turn"))
-            advanceUntilIdle()
-            val settled =
-                vm.state.value.items
-                    .filterIsInstance<ThreadItem.MessageItem>()
-                    .single()
-            assertFalse(settled.message.isStreaming)
-            assertEquals("Done", settled.message.content)
-
-            // The persisted finished message (distinct id) replaces the streaming item — no duplicate (AC #3/#5).
-            repo.messages.value = listOf(assistantMessage(id = "m1", content = "Done"))
-            advanceUntilIdle()
-            assertEquals(listOf("m1"), messageIds(vm))
-            assertTrue(
-                vm.state.value.items
-                    .none { it is ThreadItem.MessageItem && it.message.isStreaming },
-            )
-            collector.cancel()
-        }
-
-    @Test
-    fun finishedMessageBeforeTurnEnd_dropsStreamingWithoutDuplicate() =
-        runTest {
-            val repo = MessagesControllableRepo()
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 0, text = "Done"))
-            advanceUntilIdle()
-            assertEquals(listOf("Done"), streamingContents(vm))
-
-            // The finished message wins the race against turn_end → streaming item dropped immediately (AC #3).
-            repo.messages.value = listOf(assistantMessage(id = "m1", content = "Done"))
-            advanceUntilIdle()
-            assertEquals(listOf("m1"), messageIds(vm))
-
-            // The later turn_end is a no-op — no resurrected streaming item, still single.
-            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, "t1", stopReason = "end_turn"))
-            advanceUntilIdle()
-            assertEquals(listOf("m1"), messageIds(vm))
-            collector.cancel()
-        }
-
-    @Test
-    fun assistantDelta_turnIdEqualsPersistedMessageId_noDuplicateKeySettlesToSingle() =
-        runTest {
-            val repo = MessagesControllableRepo()
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            // The persisted assistant message is already in the baseline at turn start, and the daemon's
-            // turnId equals its id — the live-failure ordering #421 surfaced (the colliding id is in the
-            // baseline set, so the structural finalise never sees a "new" id and never drops the synthetic).
-            repo.messages.value = listOf(assistantMessage(id = "t1", content = "Done"))
-            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 0, text = "Done"))
-            advanceUntilIdle()
-
-            // AC #1: exactly one item, and no duplicate list key (a duplicate id is a duplicate "msg:<id>" key).
-            assertEquals(listOf("t1"), messageIds(vm))
-            assertEquals(messageIds(vm).distinct(), messageIds(vm))
-            // AC #2: the synthetic is suppressed — no transient streaming bubble, no double-render.
-            assertTrue(streamingContents(vm).isEmpty())
-
-            // A later turn_end for the colliding turn keeps it single — no resurrected synthetic.
-            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, "t1", stopReason = "end_turn"))
-            advanceUntilIdle()
-            assertEquals(listOf("t1"), messageIds(vm))
-            assertEquals(messageIds(vm).distinct(), messageIds(vm))
-            collector.cancel()
-        }
-
-    @Test
-    fun streamingThenFinishedMessageWithSameTurnId_settlesWithoutDuplicate() =
-        runTest {
-            val repo = MessagesControllableRepo()
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            // AC #3: the synthetic still appears and grows while the turn is in flight (no collision yet).
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 0, text = "Don"))
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 1, text = "e"))
-            advanceUntilIdle()
-            assertEquals(listOf("Done"), streamingContents(vm))
-            assertEquals(listOf("t1"), messageIds(vm))
-
-            // The finished message arrives with id == turnId — settles to exactly one, no duplicate key.
-            repo.messages.value = listOf(assistantMessage(id = "t1", content = "Done"))
-            advanceUntilIdle()
-            assertEquals(listOf("t1"), messageIds(vm))
-            assertEquals(messageIds(vm).distinct(), messageIds(vm))
-            assertTrue(streamingContents(vm).isEmpty())
-            collector.cancel()
-        }
-
-    @Test
-    fun streamingTurn_appendsAtEndWithoutReorderingBackfill() =
-        runTest {
-            val repo = MessagesControllableRepo()
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            repo.messages.value =
-                listOf(
-                    userMessage(id = "u1", content = "hi"),
-                    assistantMessage(id = "a1", content = "prior answer"),
-                )
-            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t2", seq = 0, text = "new"))
-            advanceUntilIdle()
-            // The backfilled items keep their order; exactly one streaming item is appended last (AC #4).
-            assertEquals(listOf("u1", "a1", "t2"), messageIds(vm))
-            assertEquals(listOf("new"), streamingContents(vm))
-
-            // Finalising with the new persisted message leaves the prior items untouched.
-            repo.messages.value =
-                listOf(
-                    userMessage(id = "u1", content = "hi"),
-                    assistantMessage(id = "a1", content = "prior answer"),
-                    assistantMessage(id = "a2", content = "new"),
-                )
-            advanceUntilIdle()
-            assertEquals(listOf("u1", "a1", "a2"), messageIds(vm))
-            collector.cancel()
-        }
-
-    @Test
-    fun cancelledTurn_withNoFinishedMessage_keepsSettledPartial() =
-        runTest {
-            val repo = MessagesControllableRepo()
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 0, text = "partial"))
-            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, "t1", stopReason = "cancelled"))
-            advanceUntilIdle()
-
-            // No finished message ever arrives — the settled partial stays as a non-streaming message, no orphan.
-            val item =
-                vm.state.value.items
-                    .filterIsInstance<ThreadItem.MessageItem>()
-                    .single()
-            assertEquals("partial", item.message.content)
-            assertFalse(item.message.isStreaming)
-            collector.cancel()
-        }
-
-    @Test
-    fun inertLiveEvents_itemsEqualObserveMessagesProjection() =
-        runTest {
-            val repo = MessagesControllableRepo()
-            repo.messages.value =
-                listOf(
-                    userMessage(id = "u1", content = "hi"),
-                    assistantMessage(id = "a1", content = "answer"),
-                )
-            // Default emptyFlow() live source → behaves exactly as the #313 finished-message thread (AC #5).
-            val vm = makeVm(activeHandle(), repo)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            assertEquals(repo.messages.value, vm.state.value.items)
-            collector.cancel()
-        }
 
     @Test
     fun state_resolvedTitle_isChannelNameForSeededChannel() =
@@ -3716,10 +3279,10 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun state_items_reflectsObserveMessagesStream() =
+    fun state_items_reflectsAuthoritativeDemoItems() =
         runTest {
             val repository = FakeConversationRepository()
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val handle = SavedStateHandle(initialState = mapOf("serverId" to "demo", "conversationId" to "seed-channel-personal"))
             val vm = makeVm(handle, repository)
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
@@ -3738,7 +3301,7 @@ class ThreadViewModelTest {
     fun state_chipFields_reflectChannelAndMessagePresence() =
         runTest {
             // Seeded channel: isPromoted = true; hasMessages = true (currentMessages are seeded).
-            val channelHandle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val channelHandle = SavedStateHandle(initialState = mapOf("serverId" to "demo", "conversationId" to "seed-channel-personal"))
             val channelRepo = FakeConversationRepository()
             val channelVm = makeVm(channelHandle, channelRepo)
             val channelCollector = launch { channelVm.state.collect {} }
@@ -3751,7 +3314,7 @@ class ThreadViewModelTest {
             val discussionRepo = FakeConversationRepository()
             val freshDiscussion = discussionRepo.createDiscussion(workspace = null)
             val discussionHandle =
-                SavedStateHandle(initialState = mapOf("conversationId" to freshDiscussion.id))
+                SavedStateHandle(initialState = mapOf("serverId" to "demo", "conversationId" to freshDiscussion.id))
             val discussionVm = makeVm(discussionHandle, discussionRepo)
             val discussionCollector = launch { discussionVm.state.collect {} }
             advanceUntilIdle()
@@ -4387,42 +3950,6 @@ class ThreadViewModelTest {
 
     // --- #1354: the walk resumes from the position saved beside the cached rows ------------------------
 
-    private fun unsignedPage(
-        vararg ids: ULong,
-        cursor: String,
-    ) = HistoryPage(
-        ids.sortedDescending().map { id ->
-            HistoryEntry(
-                unsignedId = id,
-                type = "send_message",
-                payload = MobileJson.parseToJsonElement("""{"conversation_id":"$ACTIVE_CONV","message_id":"m$id","text":"message $id"}"""),
-                timestamp = Instant.fromEpochSeconds(1),
-            )
-        },
-        cursor,
-        false,
-    )
-
-    private fun durablePage(
-        vararg ids: Long,
-        cursor: String,
-    ) = HistoryPage(
-        ids.reversed().map { id ->
-            HistoryEntry(
-                id,
-                "send_message",
-                MobileJson.parseToJsonElement("""{"conversation_id":"$ACTIVE_CONV","message_id":"m$id","text":"message $id"}"""),
-                Instant.fromEpochSeconds(id),
-            )
-        },
-        cursor,
-        false,
-    )
-
-    private fun historyHandle() = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
-
-    private fun page(cursor: String) = HistoryPage(entries = emptyList(), cursor = cursor, atStart = false)
-
     private fun messageItem(id: String) =
         ThreadItem.MessageItem(
             Message(
@@ -4434,29 +3961,6 @@ class ThreadViewModelTest {
                 isStreaming = false,
             ),
         )
-
-    /**
-     * Delegates the whole [ConversationRepository] surface to a seeded [FakeConversationRepository] and
-     * overrides [requestHistory] with a caller-supplied [answer] over the asked cursor, recording every
-     * cursor the walk asks with (#777). [observeMessages] is controllable too, because the fake's own
-     * thread cannot be driven on demand — and because a page's entries must be shown *not* to become
-     * rows, which needs the two sides separable.
-     */
-    private class HistoryRepo(
-        private val delegate: FakeConversationRepository = FakeConversationRepository(),
-        /** #1354: the position saved beside the cached rows, read once at open and replaced by every write. */
-        var saved: HistoryPosition? = null,
-        /** #1354: when set, the saved-position read suspends until it completes. */
-        private val readGate: CompletableDeferred<Unit>? = null,
-        private val answer: suspend (String) -> HistoryPage,
-    ) : ConversationRepository by delegate {
-        val asks = mutableListOf<String>()
-        val limits = mutableListOf<Int>()
-        val messages = MutableStateFlow<List<ThreadItem>>(emptyList())
-
-        /** Every position write, in order; `null` is a clear. */
-        val positionWrites = mutableListOf<HistoryPosition?>()
-    }
 
     /**
      * A thread destination's handle (#789): both route arguments, as `Routes.hostArguments` supplies

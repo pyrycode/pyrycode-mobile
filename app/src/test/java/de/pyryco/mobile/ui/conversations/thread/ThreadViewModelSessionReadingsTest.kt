@@ -26,7 +26,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -58,79 +57,6 @@ class ThreadViewModelSessionReadingsTest {
         Dispatchers.resetMain()
         RelayLog.sink = oldSink
     }
-
-    @Test
-    fun noCostReported_leavesTheCostAbsent() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = collectedVm(events = events)
-
-            events.emit(turnEnd(cost = null))
-            runCurrent()
-
-            assertNull(vm.state.value.sessionCostUsd)
-        }
-
-    @Test
-    fun theLatestPositiveCost_replacesAnEarlierOne() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = collectedVm(events = events)
-
-            events.emit(turnEnd(cost = 0.42))
-            runCurrent()
-            assertEquals(0.42, vm.state.value.sessionCostUsd)
-
-            // Latest, not the largest and not a sum: a new session's smaller total wins.
-            events.emit(turnEnd(cost = 0.1))
-            runCurrent()
-            assertEquals(0.1, vm.state.value.sessionCostUsd)
-        }
-
-    @Test
-    fun anUnusableCost_neverReplacesAnEarlierOne() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = collectedVm(events = events)
-            events.emit(turnEnd(cost = 1.25))
-
-            for (cost in listOf(null, 0.0, -3.0, Double.POSITIVE_INFINITY, Double.NaN)) {
-                events.emit(turnEnd(cost = cost))
-                runCurrent()
-                assertEquals("after $cost", 1.25, vm.state.value.sessionCostUsd)
-            }
-        }
-
-    @Test
-    fun anotherConversationsCost_isIgnored() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = collectedVm(events = events)
-
-            events.emit(turnEnd(cost = 9.99, conversationId = OTHER_CONV))
-            runCurrent()
-
-            assertNull(vm.state.value.sessionCostUsd)
-        }
-
-    @Test
-    fun aCostReportedWhileNoScreenCollects_isStillShownAfterwards() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vm(events = events)
-            val screen = backgroundScope.launch { vm.state.collect {} }
-            runCurrent()
-            screen.cancel()
-            advanceTimeBy(60_000)
-
-            // The view model lives on with no screen collecting, as it does behind another destination.
-            events.emit(turnEnd(cost = 0.42))
-            runCurrent()
-            backgroundScope.launch { vm.state.collect {} }
-            runCurrent()
-
-            assertEquals(0.42, vm.state.value.sessionCostUsd)
-        }
 
     @Test
     fun reportedFacts_reachTheStateButNotThePermissionReading() =
@@ -235,11 +161,6 @@ class ThreadViewModelSessionReadingsTest {
     }
 
     // ---- fixtures -------------------------------------------------------------------------------
-
-    private fun turnEnd(
-        cost: Double?,
-        conversationId: String = CONV,
-    ) = LiveSessionEvent.TurnEnd(conversationId, "t1", "end_turn", costUsdTotal = cost)
 
     private fun vm(
         repo: ConversationRepository = ScriptedRepo(MutableStateFlow(null)),

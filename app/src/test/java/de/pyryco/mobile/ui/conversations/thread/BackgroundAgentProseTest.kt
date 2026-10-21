@@ -4,14 +4,8 @@ import de.pyryco.mobile.data.model.BackgroundTaskUpdate
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
-import de.pyryco.mobile.data.network.MobileJson
-import de.pyryco.mobile.data.repository.HistoryEntry
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.historyKeys
-import kotlinx.coroutines.flow.first
 import kotlinx.datetime.Instant
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -56,7 +50,7 @@ class BackgroundAgentProseTest {
             terminal = BackgroundTaskUpdate("", "completed", "", null),
         )
 
-    private fun project(items: List<ThreadItem>) = foldBackgroundAgentBlocks(foldQueuedRows(items, emptyList()), items, null)
+    private fun project(items: List<ThreadItem>) = fixtureBackgroundRows(fixtureQueuedRows(items, emptyList()), items, null)
 
     private fun delivered(rows: List<ThreadRow>) = rows.filterIsInstance<ThreadRow.Delivered>()
 
@@ -96,52 +90,6 @@ class BackgroundAgentProseTest {
             listOf(listOf("read")),
             foldToolRuns(rows, emptySet()).filterIsInstance<ThreadRow.ToolRun>().map { it.tools.map(Message::id) },
         )
-    }
-
-    @Test fun historyGapBeforeChildDoesNotLetItsProseEscapeAClosedAgentRun() {
-        val agent = tool("a")
-        val child = text("child", "a")
-        val items = listOf(agent, start("a"), text("main"), child, tool("read", "a", "Read"))
-        val rows = project(items)
-        for (prepared in listOf(false, true)) {
-            val markers =
-                listOf(
-                    ThreadHistoryMarker(
-                        beforeRow = child.historyKeys().first(),
-                        unsignedAnchor = 1u,
-                        displayRow = child.takeIf { prepared },
-                    ),
-                    ThreadHistoryMarker(
-                        beforeRow = agent.historyKeys().first(),
-                        unsignedAnchor = 2u,
-                        displayRow = agent.takeIf { prepared },
-                    ),
-                )
-            val closed = foldHistoryToolRuns(rows, emptySet(), markers)
-            val open = foldHistoryToolRuns(rows, setOf("read"), markers)
-            val reclosed = foldHistoryToolRuns(rows, emptySet(), markers)
-            // Check every row: expanded runs retain both their header and the original first tool.
-            for (display in listOf(closed, open, reclosed, rows)) {
-                val projected = foldedAgentHistoryMarkers(rows, display, markers)
-                assertEquals(listOf(1L, 2L), display.flatMap { historyMarkersFor(it, projected) }.map { it.anchor }.sorted())
-                assertUnique(display)
-                val run = display.filterIsInstance<ThreadRow.ToolRun>().singleOrNull()
-                if (run != null && !run.expanded) {
-                    // "a" itself is never folded away (#1827 follow-up); only its "read" child run collapses.
-                    assertEquals(listOf("main", "a"), ids(display))
-                    assertEquals("read", run.runId)
-                    assertEquals(projected, historyMarkersFor(run, projected))
-                } else {
-                    assertEquals(ids(rows), ids(display))
-                    assertEquals(markers, projected)
-                    if (run != null) assertEquals(emptyList<ThreadHistoryMarker>(), historyMarkersFor(run, projected))
-                    for ((id, marker) in listOf("child" to markers[0], "a" to markers[1])) {
-                        val row = delivered(display).single { (it.item as? ThreadItem.MessageItem)?.message?.id == id }
-                        assertEquals(listOf(marker), historyMarkersFor(row, projected))
-                    }
-                }
-            }
-        }
     }
 
     @Test fun emptyUnknownUntrackedAndCyclicParentsRetainOrdinaryText() {
@@ -208,28 +156,4 @@ class BackgroundAgentProseTest {
         assertEquals(listOf("ordinary", "main", "a", "child"), ids(foldToolRuns(after, carried.expandedRuns)))
         assertUnique(after)
     }
-
-    private fun entry(
-        id: Long,
-        type: String,
-        json: String,
-    ) = HistoryEntry(id, type, MobileJson.parseToJsonElement(json), ts)
-
-    private fun deltaEntry(
-        id: Long,
-        lane: String,
-        text: String,
-        parent: String = "",
-    ) = HistoryEntry(
-        id,
-        "assistant_delta",
-        buildJsonObject {
-            put("conversation_id", "c")
-            put("turn_id", lane)
-            put("seq", 0)
-            put("text", text)
-            put("parent_tool_use_id", parent)
-        },
-        ts,
-    )
 }

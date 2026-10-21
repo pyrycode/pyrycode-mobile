@@ -61,6 +61,8 @@ import org.koin.dsl.module
 class DesignInputs {
     val connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Connected)
     val liveSessionEvents = MutableSharedFlow<LiveSessionEvent>(replay = 16)
+    var turnSourceOwner: Any = Any()
+    val turnEnds = MutableSharedFlow<de.pyryco.mobile.data.repository.LiveRootTurnEnd>(replay = 1)
 
     /** The host's prompts; each `ModalUiState.Open` shows only in the thread its `conversationId` names. */
     val hostModal = MutableStateFlow(HostModalState())
@@ -157,6 +159,8 @@ class DesignInputs {
                 val fake = get<FakeConversationRepository>()
                 val repository =
                     object : ConversationRepository by fake {
+                        override fun observeLiveRootTurnEnds(conversationId: String) = turnEnds
+
                         override fun observeAttachmentOffers(conversationId: String) = attachmentOffers
 
                         override fun observeSessionFacts(conversationId: String) = sessionFacts
@@ -171,6 +175,7 @@ class DesignInputs {
                             fake.setSystemPrompt(conversationId, systemPrompt)
                         }
                     }
+                turnSourceOwner = checkNotNull(repository.negotiatedThread)
                 val connection =
                     object : ConnectionStateSource {
                         override fun observe() = connectionState

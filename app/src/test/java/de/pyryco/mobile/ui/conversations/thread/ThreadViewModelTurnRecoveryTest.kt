@@ -67,6 +67,10 @@ class ThreadViewModelTurnRecoveryTest {
         val items = negotiatedThread.facts
         val sessions = MutableSharedFlow<LiveRefusalEvent>()
         val reading = MutableStateFlow<ThinkingProgress?>(null)
+        val ends = MutableSharedFlow<de.pyryco.mobile.data.repository.LiveRootTurnEnd>()
+
+        override fun observeLiveRootTurnEnds(conversationId: String) = ends
+
         var sends = 0
 
         override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> = sessions
@@ -126,7 +130,7 @@ class ThreadViewModelTurnRecoveryTest {
 
     /** Raise the context notice and check it holds. */
     private suspend fun TestScope.raise(f: Fixture) {
-        f.events.emit(contextOverflow())
+        f.repo.ends.emit(contextOverflow(f.repo.negotiatedThread))
         advanceUntilIdle()
         assertEquals(TurnRecoveryNotice.ContextTooLong, f.vm.turnOutcome.value)
     }
@@ -137,43 +141,37 @@ class ThreadViewModelTurnRecoveryTest {
             val f = fixture()
             assertNull(f.vm.turnOutcome.value)
 
-            f.events.emit(
-                LiveSessionEvent.TurnEnd(CONV, "t1", "end_turn", isError = true, errorCategory = "billing_error"),
+            f.repo.ends.emit(
+                de.pyryco.mobile.data.repository.LiveRootTurnEnd(
+                    true,
+                    "",
+                    "end_turn",
+                    "",
+                    "billing_error",
+                    { true },
+                    f.repo.negotiatedThread,
+                ),
             )
             advanceUntilIdle()
             assertEquals(TurnRecoveryNotice.BillingError, f.vm.turnOutcome.value)
 
-            f.events.emit(LiveSessionEvent.TurnEnd(CONV, "t2", "end_turn"))
+            f.repo.ends.emit(
+                de.pyryco.mobile.data.repository
+                    .LiveRootTurnEnd(false, "", "end_turn", "", "", { true }, f.repo.negotiatedThread),
+            )
             advanceUntilIdle()
             assertNull(f.vm.turnOutcome.value)
             assertTrue(logs.contains("event=turn_recovery_notice state=shown notice=BillingError"))
-            assertTrue(logs.contains("event=turn_recovery_notice state=cleared reason=turn_end"))
+            assertTrue(logs.contains("event=turn_recovery_notice state=cleared reason=canonical_turn_end"))
         }
 
     @Test
-    fun anIdleTurnState_andAReplayGap_keepIt() =
+    fun anIdleTurnState_keepsIt() =
         runTest {
             val f = fixture()
             raise(f)
 
             f.events.emit(LiveSessionEvent.TurnState(CONV, Phase.Idle))
-            f.events.emit(LiveSessionEvent.ReplayGap(CONV))
-            advanceUntilIdle()
-
-            assertEquals(TurnRecoveryNotice.ContextTooLong, f.vm.turnOutcome.value)
-        }
-
-    @Test
-    fun anotherConversationsEvents_leaveIt() =
-        runTest {
-            val f = fixture()
-            f.events.emit(contextOverflow(conversationId = OTHER))
-            advanceUntilIdle()
-            assertNull(f.vm.turnOutcome.value)
-
-            raise(f)
-            f.events.emit(LiveSessionEvent.TurnState(OTHER, Phase.Thinking))
-            f.events.emit(LiveSessionEvent.AssistantDelta(OTHER, "t9", 0, "hi"))
             advanceUntilIdle()
 
             assertEquals(TurnRecoveryNotice.ContextTooLong, f.vm.turnOutcome.value)
@@ -191,42 +189,6 @@ class ThreadViewModelTurnRecoveryTest {
 
                 assertNull("turn_state $phase", f.vm.turnOutcome.value)
             }
-        }
-
-    @Test
-    fun anAssistantDelta_clearsIt() =
-        runTest {
-            val f = fixture()
-            raise(f)
-
-            f.events.emit(LiveSessionEvent.AssistantDelta(CONV, "t2", 0, "hi"))
-            advanceUntilIdle()
-
-            assertNull(f.vm.turnOutcome.value)
-        }
-
-    @Test
-    fun aToolUse_clearsIt() =
-        runTest {
-            val f = fixture()
-            raise(f)
-
-            f.events.emit(LiveSessionEvent.ToolUse(CONV, "t2", "tool-1", "Bash", "ls"))
-            advanceUntilIdle()
-
-            assertNull(f.vm.turnOutcome.value)
-        }
-
-    @Test
-    fun aToolResult_clearsIt() =
-        runTest {
-            val f = fixture()
-            raise(f)
-
-            f.events.emit(LiveSessionEvent.ToolResult(CONV, "t2", "tool-1", isError = false, resultSummary = "ok"))
-            advanceUntilIdle()
-
-            assertNull(f.vm.turnOutcome.value)
         }
 
     @Test
@@ -336,15 +298,9 @@ class ThreadViewModelTurnRecoveryTest {
             assertTrue(logs.contains("event=turn_recovery_notice state=cleared reason=reconnect"))
         }
 
-    private fun contextOverflow(conversationId: String = CONV) =
-        LiveSessionEvent.TurnEnd(
-            conversationId,
-            turnId = "t1",
-            stopReason = "end_turn",
-            outcome = "success",
-            isError = true,
-            terminalReason = "prompt_too_long",
-        )
+    private fun contextOverflow(owner: Any) =
+        de.pyryco.mobile.data.repository
+            .LiveRootTurnEnd(true, "success", "end_turn", "prompt_too_long", "", { true }, owner)
 
     private fun messageItem(id: String) =
         authoritativeItem(

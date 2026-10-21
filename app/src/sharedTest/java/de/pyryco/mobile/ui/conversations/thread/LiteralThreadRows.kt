@@ -4,10 +4,64 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ordinaryId
+import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
 
+/** Supplies literal presentation inputs without running an app content reducer. */
+internal fun ThreadUiState.withLiteralRows(): ThreadUiState =
+    copy(displayRows = fixtureBackgroundRows(fixtureQueuedRows(items, queuedMessages), items, backgroundTasks))
+
+internal fun fixtureQueuedRows(
+    items: List<ThreadItem>,
+    queued: List<QueuedMessage>,
+): List<ThreadRow> {
+    // echo id -> the positions in `items` carrying it, in thread order. Built only from user rows with
+    // a non-empty id, so rules 3 and 4 are satisfied by what goes IN rather than by a check at every
+    // lookup. Removing from the front of each list is what makes the assignment first-come.
+    val echoPositions = mutableMapOf<String, MutableList<Int>>()
+    items.forEachIndexed { index, item ->
+        val id = item.userEchoId() ?: return@forEachIndexed
+        echoPositions.getOrPut(id) { mutableListOf() }.add(index)
+    }
+
+    val claimed = mutableMapOf<Int, ThreadRow.Queued>()
+    val unmatched = mutableListOf<ThreadRow.Queued>()
+    val occurrences = mutableMapOf<Long, Int>()
+    for (entry in queued) {
+        val occurrence = occurrences[entry.id] ?: 0
+        occurrences[entry.id] = occurrence + 1
+        val position = entry.messageId.takeIf { it.isNotEmpty() }?.let { echoPositions[it]?.removeFirstOrNull() }
+        if (position == null) {
+            // Carries the snapshot's own text and NO echo id: an id this device did not mint must never
+            // look like one it did, or a later reader would treat somebody else's message as this
+            // device's own.
+            unmatched += ThreadRow.Queued(queuedMessageId = entry.id, text = entry.text, echoId = null, occurrence = occurrence)
+        } else {
+            // The echo's own content, not the snapshot's: the two are the same message, and the one this
+            // device sent is the one it can vouch for.
+            val echo = (items[position] as ThreadItem.MessageItem).message
+            claimed[position] = ThreadRow.Queued(queuedMessageId = entry.id, text = echo.content, echoId = echo.id, occurrence = occurrence)
+        }
+    }
+
+    return items.mapIndexedNotNull { index, item ->
+        if (item is ThreadItem.BackgroundTaskLifecycle) null else claimed[index] ?: ThreadRow.Delivered(item)
+    } + unmatched
+}
+
+/**
+ * This row's correlation candidacy: the echo id a backlog item may claim, or `null` when the row is not
+ * a candidate at all. Rules 3 and 4 of [fixtureQueuedRows], in one place — a row that is not a
+ * user-authored message, or carries no id, correlates with nothing.
+ */
+private fun ThreadItem.userEchoId(): String? =
+    (this as? ThreadItem.MessageItem)
+        ?.message
+        ?.takeIf { it.role == Role.User && !it.ordinaryId.isNullOrEmpty() }
+        ?.ordinaryId
+
 /** Display-only placement. Lifecycle positions stay in repository order; no tool rows are invented. */
-internal fun foldBackgroundAgentBlocks(
+internal fun fixtureBackgroundRows(
     rows: List<ThreadRow>,
     items: List<ThreadItem>,
     roster: BackgroundTaskRoster?,
@@ -139,50 +193,6 @@ internal fun foldBackgroundAgentBlocks(
     return result
 }
 
-/** Run expansion after a block change; [pending] holds block tools that left an open run alone. */
-internal data class CarriedExpansion(
-    val expandedRuns: Set<String>,
-    val pending: Set<String>,
-)
-
-/**
- * A late join or a parent backfill moves tools between runs. A run that receives a tool from an open run opens,
- * once. A block tool left alone keeps that intent until its block forms a run. Without a block change, a run
- * the reader closed stays closed.
- */
-internal fun carryRunExpansion(
-    previous: List<ThreadRow>,
-    current: List<ThreadRow>,
-    expandedRuns: Set<String>,
-    pending: Set<String>,
-): CarriedExpansion {
-    val previousBlocks = previous.toolBlocks()
-    val currentBlocks = current.toolBlocks()
-    val moved = currentBlocks.any { (id, block) -> id in previousBlocks && previousBlocks[id] != block }
-    if (!moved && pending.isEmpty()) return CarriedExpansion(expandedRuns, pending)
-    val currentRuns =
-        foldToolRuns(current, emptySet())
-            .filterIsInstance<ThreadRow.ToolRun>()
-            .flatMap { run -> run.tools.map { it.id to run.runId } }
-            .toMap()
-    val intent = pending.toMutableSet()
-    if (moved) {
-        foldToolRuns(previous, expandedRuns)
-            .filterIsInstance<ThreadRow.ToolRun>()
-            .filter { it.expanded }
-            .forEach { run -> run.tools.forEach { if (currentRuns[it.id] != run.runId) intent += it.id } }
-    }
-    return CarriedExpansion(
-        expandedRuns = expandedRuns + intent.mapNotNull { currentRuns[it] },
-        pending = intent.filterTo(mutableSetOf()) { it !in currentRuns && currentBlocks[it] != null },
-    )
-}
-
-private fun List<ThreadRow>.toolBlocks(): Map<String, String?> =
-    filterIsInstance<ThreadRow.Delivered>()
-        .filter { it.isToolRow() }
-        .associate { (it.item as ThreadItem.MessageItem).message.id to it.agentBlockId }
-
 private data class AgentEvidence(
     val toolId: String? = null,
     val type: String? = null,
@@ -191,5 +201,3 @@ private data class AgentEvidence(
     val finishPosition: Int? = null,
     val launchOrder: Int? = null,
 )
-
-/** Hidden task receipt is nonvisual except when it changes a displayed Agent block. */

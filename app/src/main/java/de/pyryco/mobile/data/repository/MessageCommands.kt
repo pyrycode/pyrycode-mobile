@@ -363,46 +363,7 @@ internal class MessageCommands(
             ),
         )
 
-    /**
-     * Drop a not-yet-drained message from [conversationId]'s queued backlog over v2 `dequeue_message`
-     * (#466, ADR 025): send `{conversation_id, queued_msg_id}` and return once the frame is sent. The
-     * daemon **never replies** — not on success, and not when it cannot apply the request (an unknown,
-     * already-delivered or in-flight head id is silently ignored); `docs/protocol-mobile.md` § Queue
-     * (v2) lists no reply (#859). [queuedMessageId] is the `QueuedMessage.id` the caller received from
-     * [RemoteConversationRepository.observeQueue] (#460), echoed **verbatim** as the wire `queued_msg_id` (a `uint64` → [Long] JSON
-     * number, not a String — the pyrycode#720 trap).
-     *
-     * The backlog entry leaves only on the next `queue_state` (#467's non-optimistic ruling, which the
-     * daemon owns), and that same snapshot is the drop's only confirmation. When it arrives without the
-     * dropped `queued_msg_id`, [ThreadProjection.settleDrops] also removes **this device's own undelivered echo** for the
-     * message (#781) — the thread row [sendMessage] drew when it sent, which the daemon never
-     * authored and which otherwise stays behind reading as a message claude received. The correlation
-     * key is the item's `message_id` (pyrycode#2092), resolved from this connection's own snapshot, so
-     * no caller above needs to learn a second id. Never logs the payload or either id.
-     *
-     * Load-bearing properties of the sequence:
-     *  - **Resolved before the send.** The confirming `queue_state` replaces the snapshot this reads
-     *    from. Reading it early is safe because `queued_msg_id` is a per-conversation counter that is
-     *    never recycled — item *N* in a stale snapshot is still the same item *N*.
-     *  - **Recorded before the send, withdrawn if it fails.** The request goes into the pending drops first,
-     *    so a confirming snapshot can never land before there is a request to settle. A not-connected
-     *    send withdraws it and throws [IllegalStateException]: the daemon never heard the drop, the
-     *    message will still run, and the echo is still true.
-     *  - **Keyed on the requested `queued_msg_id`, never a backlog diff.** A backlog also shrinks when
-     *    the daemon *drains* it, so a diff-driven removal would delete the echo of every message that
-     *    ran normally. Only an item this device asked to drop settles.
-     *  - **Removed only against the minted-id ledger.** An item carrying `""`, one whose id this device
-     *    never minted (another paired device's real queued message), or a `queuedMessageId` absent from
-     *    the snapshot correlates with nothing: the send still goes and no thread row is touched. Text is
-     *    never compared.
-     *
-     * **The drain/drop race is accepted, not defended.** The daemon pushes the same `queue_state` for a
-     * removal and for a drain. If the operator drops the head item just as the running turn ends, it can
-     * drain before the dequeue lands; the daemon then ignores the dequeue and the next snapshot lacks
-     * the item exactly as it would after a drop. The phone cannot tell the two apart and removes the
-     * echo of a message claude did receive. The daemon offers no signal to distinguish them, and the
-     * operator had asked for that message to go, so no defence is added.
-     */
+    /** Send the supplied queue control target; daemon-authored item state confirms its outcome. */
     suspend fun dropQueuedMessage(
         conversationId: String,
         queuedMessageId: Long,

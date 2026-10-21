@@ -1939,30 +1939,6 @@ class RemoteConversationRepositoryTest {
     // AC #4, trigger ③: this conversation's session transition issues a FRESH read, and the newer
     // reply replaces the older reading.
     @Test
-    fun observeSessionSettings_sessionTransition_issuesFreshReadAndReplacesReading() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-
-            val emissions = collectSessionSettings(repo, "c1")
-            runCurrent()
-            pump.push(sessionSettingsEnvelope(inReplyTo = pump.sent.single().id))
-            runCurrent()
-
-            pump.push(sessionTransitionEnvelope("c1", previousSessionId = "sess-a", newSessionId = "sess-b", reason = "clear"))
-            runCurrent()
-            val second = pump.sent.filter { it.type == "request_session_settings" }
-            assertEquals(2, second.size)
-            pump.push(sessionSettingsEnvelope(inReplyTo = second.last().id, raw = REPLACEMENT_SETTINGS))
-            runCurrent()
-
-            assertEquals("sess-b", requireNotNull(emissions.last()).sessionId)
-            assertEquals(EffectiveEffort.NotReported, requireNotNull(emissions.last()).effectiveEffort)
-        }
-
-    // AC #1/#4: a transition for ANOTHER conversation leaves this reading alone and sends no second
-    // frame — the per-conversation revision slice, not a global tick.
-    @Test
     fun observeSessionSettings_transitionForAnotherConversation_doesNotReRead() =
         runTest {
             val pump = FakeSessionPump()
@@ -2476,20 +2452,15 @@ class RemoteConversationRepositoryTest {
     // AC #1: a successful delete removes chan from ALL THREE read projections — the list, the thread,
     // and the last-message preview. This is the delete-specific divergence from archive's in-place fold.
     @Test
-    fun delete_onSuccess_removesFromAllThreeStreams() =
+    fun delete_onSuccess_removesConversation() =
         runTest {
             val pump = FakeSessionPump()
             val repo = RemoteConversationRepository(pump, backgroundScope)
             val all = collectConversations(repo, ConversationFilter.All)
-            val messages = collectMessages(repo, "chan")
-            val lastMessage = collectLastMessage(repo, "chan")
             runCurrent()
             pump.push(conversationsEnvelope(MIXED_FIXTURE))
-            pump.push(messageEnvelope("chan", "m1", "user", "hi", ts = TS))
             runCurrent()
             assertEquals(listOf("chan", "disc"), all.last().map { it.id })
-            assertEquals(listOf("m1"), messageIds(messages.last()))
-            assertEquals("m1", lastMessage.last()?.id)
 
             val delete = startDelete(repo, "chan")
             runCurrent()
@@ -2499,8 +2470,6 @@ class RemoteConversationRepositoryTest {
             delete().getOrThrow()
 
             assertEquals(listOf("disc"), all.last().map { it.id })
-            assertEquals(emptyList<ThreadItem>(), messages.last())
-            assertNull(lastMessage.last())
         }
 
     // The ack field is `id`, NOT `conversation_id`: an ack whose only key is `conversation_id` has no
@@ -3306,65 +3275,6 @@ class RemoteConversationRepositoryTest {
     // #859 AC #2: a not-Open session (pump.send returns false) fails fast with IllegalStateException,
     // and because the drop was never sent, a later snapshot without the item removes nothing.
     @Test
-    fun dropQueuedMessage_whenNotConnected_throwsAndLeavesEchoInPlace() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
-
-            val queued = sendAndAck(repo, pump, "c-1", "two")
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
-            runCurrent()
-
-            pump.sendResult = false
-            val drop = startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            runCurrent()
-
-            assertTrue(drop().exceptionOrNull() is IllegalStateException)
-            assertEquals(listOf(queued), messageIds(thread.last()))
-        }
-
-    // ---- #781 / #859: a confirmed drop also removes the undelivered echo this device minted --------
-
-    // #859 AC #1: the drop settles when a queue_state for the conversation arrives without the dropped
-    // queued_msg_id — and not before. It removes the entry's own echo and NOTHING else: every other
-    // thread row keeps its place, in order.
-
-    // #1558 AC 1, 2: the queue_state arm reads this device's queued echo below a row that arrived after it,
-    // and the drain settles it there before the pushed copy lands, which leaves it in place.
-
-    // #1636: with no turn_state open, the queued echo waits behind nothing, so it keeps its tap-time slot above
-    // the reply that streams before the delivery confirmation, and the reply stays one segment.
-
-    // #859 AC #1: a snapshot that still carries the dropped id (the backlog changed for another reason,
-    // e.g. an enqueue landed before the dequeue) does not settle the drop; the next one without it does.
-
-    // #859 AC #2: an item that leaves the snapshot without a drop request from this device keeps its
-    // echo — a drain shrinks the backlog exactly as a drop does, so removal is keyed on the dropped id.
-
-    // #859 AC #1: a queue_state for ANOTHER conversation settles nothing here.
-
-    // #781 AC #4: an item carrying `""` correlates with NOTHING. The drop still goes — the row must leave
-    // the backlog even against a daemon that mints no id — and no echo is guessed at.
-
-    // #781 AC #4 and the multi-device rule (protocol-mobile.md § Queue (v2)): `queue_state` fans out to
-    // EVERY interactive connection, so items routinely carry ids this device never minted. Such an item
-    // is another device's real queued message: it correlates with nothing here even when a thread row
-    // carries that very id and the texts are identical. Text is never used to match.
-
-    // The drained-between-render-and-tap race: the id is no longer in this connection's snapshot, so
-    // nothing correlates. The send still goes (the daemon silently ignores it) and no row moves, even
-    // when the item's own echo later drains out of a following snapshot.
-
-    // ---- requestScreenSnapshot (#375): request_snapshot request → screen_snapshot correlation ----
-
-    // AC #2 + happy path: the sent envelope matches the request_snapshot wire contract
-    // {conversation_id}, and the correlated screen_snapshot reply's text is returned VERBATIM (a
-    // whitespace-laden, multi-line value proves the consumer never trims or sanitizes it).
-    @Test
     fun requestScreenSnapshot_sendsRequestSnapshotAndReturnsTextVerbatim() =
         runTest {
             val pump = FakeSessionPump()
@@ -3514,80 +3424,6 @@ class RemoteConversationRepositoryTest {
 
     // AC #1: assistant_delta decodes all four fields, including the seq == 0 boundary.
     @Test
-    fun liveEvents_assistantDelta_decodesAllFieldsIncludingSeqZero() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "hel"))
-            runCurrent()
-
-            assertEquals(listOf(LiveSessionEvent.AssistantDelta("c1", "t1", 0, "hel")), events)
-        }
-
-    // AC #1: tool_use decodes every field.
-    @Test
-    fun liveEvents_toolUse_decodesAllFields() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls -la"))
-            runCurrent()
-
-            assertEquals(listOf(LiveSessionEvent.ToolUse("c1", "t1", "tu1", "Bash", "ls -la")), events)
-        }
-
-    // AC #1: tool_result decodes both is_error boundaries.
-    @Test
-    fun liveEvents_toolResult_decodesIsErrorBothValues() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "ok"))
-            pump.push(toolResultEnvelope("c1", "t1", "tu2", isError = true, resultSummary = "boom"))
-            runCurrent()
-
-            assertEquals(
-                listOf(
-                    LiveSessionEvent.ToolResult("c1", "t1", "tu1", false, "ok"),
-                    LiveSessionEvent.ToolResult("c1", "t1", "tu2", true, "boom"),
-                ),
-                events,
-            )
-        }
-
-    // AC #1: turn_end passes a non-mapped stop_reason string through verbatim (no enum).
-    @Test
-    fun liveEvents_turnEnd_passesStopReasonVerbatim() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
-            pump.push(turnEndEnvelope("c1", "t2", "some_future_reason"))
-            runCurrent()
-
-            assertEquals(
-                listOf(
-                    LiveSessionEvent.TurnEnd("c1", "t1", "end_turn"),
-                    LiveSessionEvent.TurnEnd("c1", "t2", "some_future_reason"),
-                ),
-                events,
-            )
-        }
-
-    // AC #2: without `interactive` negotiated, a well-formed structured envelope is ignored.
-    @Test
     fun liveEvents_capabilityGateClosed_blocksEmission() =
         runTest {
             val pump = FakeSessionPump()
@@ -3657,66 +3493,6 @@ class RemoteConversationRepositoryTest {
 
     // AC #4: a malformed envelope (missing required field) is dropped; the next envelope still surfaces.
     @Test
-    fun liveEvents_malformedEnvelope_droppedNextSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            // `tool_use` missing the required `tool_use_id` → SerializationException → envelope dropped.
-            pump.push(
-                Envelope(
-                    id = 1L,
-                    type = "tool_use",
-                    ts = TS,
-                    payload =
-                        MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","turn_id":"t1","name":"Bash","input_summary":"ls"}""",
-                        ),
-                ),
-            )
-            runCurrent()
-            assertEquals(emptyList<LiveSessionEvent>(), events)
-
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 1, text = "ok"))
-            runCurrent()
-            assertEquals(listOf(LiveSessionEvent.AssistantDelta("c1", "t1", 1, "ok")), events)
-        }
-
-    // AC #1: a full five-envelope turn surfaces all five typed events in push order.
-    @Test
-    fun liveEvents_fullTurnSequence_surfacesAllFiveInOrder() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            pump.push(turnStateEnvelope("c1", "thinking"))
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "done"))
-            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
-            runCurrent()
-
-            assertEquals(
-                listOf("turn_state", "tool_use", "tool_result", "assistant_delta", "turn_end"),
-                events.map {
-                    when (it) {
-                        is LiveSessionEvent.TurnState -> "turn_state"
-                        is LiveSessionEvent.AssistantDelta -> "assistant_delta"
-                        is LiveSessionEvent.ToolUse -> "tool_use"
-                        is LiveSessionEvent.ToolResult -> "tool_result"
-                        is LiveSessionEvent.TurnEnd -> "turn_end"
-                        is LiveSessionEvent.ReplayGap -> "replay_gap"
-                    }
-                },
-            )
-        }
-
-    // AC #1: hot fan-out — two collectors of the one flow both receive the event.
-    @Test
     fun liveEvents_multipleCollectors_eachReceive() =
         runTest {
             val pump = FakeSessionPump()
@@ -3775,10 +3551,6 @@ class RemoteConversationRepositoryTest {
             assertClearsStall(turnStateEnvelope("c1", "responding"))
             assertClearsStall(turnStateEnvelope("c1", "idle"))
             assertClearsStall(turnStateEnvelope("c1", "thinking"))
-            assertClearsStall(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "x"))
-            assertClearsStall(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            assertClearsStall(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "ok"))
-            assertClearsStall(turnEndEnvelope("c1", "t1", "end_turn"))
         }
 
     // AC #3: a malformed `stall` payload is dropped without tearing down the inbound consumer — a later
@@ -4544,28 +4316,6 @@ class RemoteConversationRepositoryTest {
     // AC #2: that conversation's `session_transition` clears the reading — the daemon emits `restarting`
     // before it respawns claude, so no rising edge can follow the transition — and no other conversation's.
     @Test
-    fun resetting_sessionTransitionClearsOnlyItsConversation() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val c1 = collectResetting(repo, "c1")
-            val c2 = collectResetting(repo, "c2")
-            runCurrent()
-
-            pump.push(resettingEnvelope("c1", active = true, phase = "restarting", handoff = "written", id = 1L))
-            pump.push(resettingEnvelope("c2", active = true, phase = "wrapping_up", handoff = "pending", id = 2L))
-            runCurrent()
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", id = 3L))
-            runCurrent()
-
-            assertEquals(listOf(null, ResetStatus(ResetStatus.Phase.Restarting, ResetStatus.Handoff.Written), null), c1)
-            assertEquals(listOf(null, ResetStatus(ResetStatus.Phase.WrappingUp, ResetStatus.Handoff.Pending)), c2)
-        }
-
-    // AC #3: a `resetting` frame neither raises nor clears a stall — on c1 an existing stall survives both
-    // edges, and on c2 no stall appears. Clearing here would hand a daemon a lever to suppress the stall
-    // indicator; raising one would draw a stall where the daemon is doing its own reset work.
-    @Test
     fun resetting_neitherRaisesNorClearsAStall() =
         runTest {
             val pump = FakeSessionPump()
@@ -5048,27 +4798,6 @@ class RemoteConversationRepositoryTest {
 
     // AC #3: the reading has no falling edge of its own, so the conversation's TURN END clears it.
     @Test
-    fun thinkingProgress_turnEndClearsTheReading() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val readings = collectThinkingProgress(repo, "c1")
-            runCurrent()
-
-            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 167, estimatedTokensDelta = 31, id = 1L))
-            runCurrent()
-            assertEquals(listOf(null, ThinkingProgress(167, 31)), readings)
-
-            pump.push(turnEndEnvelope("c1", "t1", "end_turn", id = 2L))
-            runCurrent()
-            assertEquals(listOf(null, ThinkingProgress(167, 31), null), readings)
-            assertNull("a finished turn must not leave a reading standing", readings.last())
-        }
-
-    // AC #3: the clear is scoped to the conversation the clearing frame names — one conversation's turn
-    // ending must not wipe another's live reading. This is the case a clear hoisted out of the
-    // per-conversation routing would fail.
-    @Test
     fun thinkingProgress_turnEndForAnotherConversation_leavesThisReadingStanding() =
         runTest {
             val pump = FakeSessionPump()
@@ -5085,27 +4814,6 @@ class RemoteConversationRepositoryTest {
 
     // AC #3: a SESSION TRANSITION clears the reading too — the second of the two clears, since the
     // think the reading described belongs to the session that just ended.
-    @Test
-    fun thinkingProgress_sessionTransitionClearsTheReading() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val readings = collectThinkingProgress(repo, "c1")
-            runCurrent()
-
-            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 91, estimatedTokensDelta = 8, id = 1L))
-            runCurrent()
-            assertEquals(listOf(null, ThinkingProgress(91, 8)), readings)
-
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", id = 2L))
-            runCurrent()
-            assertEquals(listOf(null, ThinkingProgress(91, 8), null), readings)
-        }
-
-    // The reading survives an ordinary live event that is not a turn end — an `assistant_delta` must
-    // leave it standing. This is the test that fails if the turn-end clear is hoisted beside the
-    // live-session arm's pre-`when` stall clear, where it would fire on EVERY live event: that
-    // placement still passes the turn-end case above, so this is the one that catches it.
     @Test
     fun thinkingProgress_nonTurnEndLiveEvent_leavesTheReadingStanding() =
         runTest {

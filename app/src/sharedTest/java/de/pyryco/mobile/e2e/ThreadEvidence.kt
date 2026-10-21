@@ -11,8 +11,8 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.ui.conversations.thread.ThreadRow
-import de.pyryco.mobile.ui.conversations.thread.foldBackgroundAgentBlocks
-import de.pyryco.mobile.ui.conversations.thread.foldQueuedRows
+import de.pyryco.mobile.ui.conversations.thread.fixtureBackgroundRows
+import de.pyryco.mobile.ui.conversations.thread.fixtureQueuedRows
 import de.pyryco.mobile.ui.conversations.thread.foldToolRuns
 import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.flow.Flow
@@ -212,7 +212,7 @@ internal fun legacyThreadEvidence(
     connection: Any,
     items: List<ThreadItem>,
 ): ThreadEvidence {
-    val rows = foldBackgroundAgentBlocks(foldQueuedRows(items, emptyList()), items, null)
+    val rows = fixtureBackgroundRows(fixtureQueuedRows(items, emptyList()), items, null)
     val delivered = rows.filterIsInstance<ThreadRow.Delivered>().associateBy { (it.item as? ThreadItem.MessageItem)?.message?.id }
     val runs = toolRunIds(foldToolRuns(rows, emptySet()))
     return ThreadEvidence(

@@ -376,21 +376,21 @@ class ConversationReadMarksTest {
             assertNull(stable.observeReadMarks("a").first())
         }
 
-    @Test fun fakeClampsInItsDurableHistorySpaceAndKeepsMarksMonotonic() =
+    @Test fun fakeClampsToAuthoredShownFactsAndKeepsMarksMonotonic() =
         runTest {
             val fake = FakeConversationRepository()
             val id = "seed-channel-personal"
             val latest = checkNotNull(fake.observeReadMarks(id).first()?.unreadWatermark)
-            assertEquals(ConversationReadMarks(0uL, latest), fake.observeReadMarks(id).first())
+            assertEquals(ConversationReadMarks(0uL, null, latest, true), fake.observeReadMarks(id).first())
             assertEquals(1uL, fake.markConversationRead(id, 1uL).getOrThrow())
             assertEquals(latest, fake.markConversationRead(id, ULong.MAX_VALUE).getOrThrow())
             assertEquals(latest, fake.markConversationRead(id, 0uL).getOrThrow())
-            assertEquals(ConversationReadMarks(latest, latest), fake.observeReadMarks(id).first())
+            assertEquals(ConversationReadMarks(latest, null, latest, true), fake.observeReadMarks(id).first())
             assertTrue(fake.markConversationRead("missing", 1uL).isFailure)
             assertNull(fake.observeReadMarks("missing").first())
             val empty = fake.createDiscussion(null)
             assertEquals(0uL, fake.markConversationRead(empty.id, ULong.MAX_VALUE).getOrThrow())
-            assertEquals(ConversationReadMarks(0uL, 0uL), fake.observeReadMarks(empty.id).first())
+            assertEquals(ConversationReadMarks(0uL, null, 0uL, true), fake.observeReadMarks(empty.id).first())
         }
 
     private fun TestScope.interactiveRepo(pump: Pump) =
