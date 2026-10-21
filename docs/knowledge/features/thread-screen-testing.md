@@ -21,6 +21,33 @@ ownership only; strict settlement still needs its own inactive done/finished fac
 See [live, scripted and recorded restart evidence](../../e2e-interactive-stream.md#negotiated-agent-restart-and-settlement-2246)
 and [restart replay contracts](../../recorded-tests.md#what-replay-proves).
 
+## Earlier-session terminal family beside a running Agent (#1963)
+
+`EarlierSessionAgentScreenTest.terminalFamilySurvivesRestartOlderPageAndReplacementBesideRunningAgent`
+collects the production negotiated destination into `ThreadScreen`, rebuilding the
+cache, registry and ViewModel over persisted facts. A correct running-count badge
+alone misses the original phantom spinner: require the finished launch marker, no
+spinner for A, B's spinner and the one-task badge, with A's family bracketed by
+historical anchors before session B. Check canonical identities, newest revisions,
+sessions, parent ownership and unique content keys in stored and projected state.
+`missingTerminalNeverInfersCompletionFromLaterSessionOrAbsentRoster` keeps both
+Agents active with two spinners; roster absence cannot supply a terminal fact.
+
+Hold an actual older-page request across newer live terminal/child revisions, then
+admit its correlated batch and final certificate. Preserve incoming children inside
+the exclusive page bound and held children beyond it. Replace the admitted connection
+and certify catch-up before duplicate stale active-Agent/tool deliveries. An unchanged
+terminal state cannot acknowledge those deliveries: enqueue a previously unseen row
+revision after them on the same FIFO pump, await it in the production presentation,
+then repeat state, stable-key, placement, ownership and screen assertions. Persist
+that revision too. `compose.waitForIdle()` alone does not drain the fixture's injected
+repository scheduler; polling also idles Android's main looper, and cache persistence
+explicitly advances the writer's 100ms coroutine timer.
+
+See [counted Linux results and page/connection receipts](../../e2e-interactive-stream.md#earlier-session-agent-with-older-paging-and-overlapping-replay-1963).
+These deterministic integration probes complement #2246's genuine restart proof;
+the latter contains no page query or simultaneously running session-B Agent.
+
 ## Passive reopen evidence (#2317)
 
 Thread retention assertions can themselves collect cold repository flows and send
