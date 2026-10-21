@@ -254,3 +254,5 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 - [Caching conversation repository — connection-boundary merge](features/caching-conversation-repository-connection-boundary.md): reconnect rebasing, deliberate removals and retained boundary probes; split for #2256.
 
 - [Markdown reader — testing](features/markdown-reader-screen-testing.md): coordinate and typography coverage, fractional-density rounding bounds and retained reader acceptance evidence; split from the screen overview for #2292.
+
+- [Caching conversation repository — state and concurrency](features/caching-conversation-repository-concurrency.md): restore generations, successful writer baselines, retirement, cancellation and final-flush custody; split for #2333.
