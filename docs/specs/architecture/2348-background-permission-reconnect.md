@@ -7,6 +7,7 @@
 - `app/src/sharedTest/java/de/pyryco/mobile/recording/SuiteConnections.kt`: `beforeClose`, `awaitIdle`, and `ReplayPump.inbound` currently distinguish scheduled delivery from neither buffering nor application consumption.
 - `app/src/sharedTest/java/de/pyryco/mobile/recording/RecordedSuiteTape.kt`: full-payload matching, `closeReady`, and delivered reply accounting remain strict.
 - `app/src/test/java/de/pyryco/mobile/recording/SuiteConnectionsTest.kt`: existing close and negative admission coverage.
+- `app/src/test/java/de/pyryco/mobile/recording/RecordedActivityRuleTest.kt`: `capturedBackgroundQueriesFinishBeforeTheActivityClosesItsConnection` must consume its correlated reply before activity teardown.
 - `app/src/main/java/de/pyryco/mobile/data/repository/RemoteConversationRepository.kt`: its single inbound collector synchronously invokes `onInbound`.
 - `app/src/main/java/de/pyryco/mobile/data/repository/AuthoritativeThreadQueries.kt`: `accept` certifies only a separately consumed terminal reply; `dispatch` reads the certified checkpoint.
 - `app/src/main/java/de/pyryco/mobile/data/repository/AuthoritativeThreadStore.kt`: batches retain facts without advancing the resumable checkpoint.
@@ -56,6 +57,8 @@ None. If the controlled regression contradicts the consumption-boundary diagnosi
 
 ## Revisions
 
+2026-10-21 (verifier rework): The verifier found another synthetic close fixture without an inbound consumer: `RecordedActivityRuleTest.capturedBackgroundQueriesFinishBeforeTheActivityClosesItsConnection`. Focused reproduction on `559e0c083` executed one test and failed with the unchanged close-consumption timeout (zero passed/skipped, exit 1). Add a collector in the fixture's existing scope, assert the received `conversations` response is correlated to the actual request, and retain the activity-lifetime, query, cleanup and complete-tape assertions. This completes the existing consumption contract; the barrier, timeout, production code, tape bytes and admission remain unchanged. Run the entire affected class, the close-consumption and strict replay classes, plus the original focused native scenario. No independent behaviour slice or new state is introduced; the repair adds about 30 lines including this plan update, within the ticket's original sizing.
+
 2026-10-21: The controlled real-repository regression confirmed the planned race: the old barrier returned and cancelled the collector after the batch, while the held terminal had not certified checkpoint 12. Both new probes failed before repair (2 executed, 0 passed, 2 failed, 0 skipped, exit 1) and passed afterwards (2 executed/passed, 0 failed/skipped, exit 0). `ReplayPump.inbound` now counts successful downstream emissions, and `beforeClose` waits for that exact pump's queued prefix. Cancellation leaves the prefix incomplete under the original timeout. Two existing close fixtures now run a collector and assert reply correlation; all their original lifecycle assertions remain.
 
 The original report lists the other-conversation attention-pill scenario immediately before the failing method, but report ordering does not establish actual shard execution order. The existing replay cleanup restores arguments, pairings and the shared preference snapshot, then rebuilds the ordinary graph. The fresh focused baseline passed, while the controlled case fails without any earlier scenario, preferences or machine load. Original machine load is not established by the retained logs. Complete configured UI execution remains pending with the dispatcher; focused proof alone is not suite-independence evidence.
@@ -78,3 +81,8 @@ Raw original logs, baseline XML/phone diagnostics and failing regression XML are
 
 **Reviewer:** builder self-review per `builder/security-review.md`.
 **Date:** 2026-10-21.
+
+## Documentation handoff
+
+- Pending for documentation stage: `docs/recorded-tests.md`, "What replay proves" / "Complete native suite": explain that test-driven close waits for successful downstream consumption of the selected pump's queued prefix within the existing timeout; preserve cancellation, owner isolation and strict payload/causal/observation rules. Synthetic close fixtures need a real inbound consumer.
+- Pending for documentation stage: `docs/knowledge/features/development-verification-test-scheduling.md`, "Test scheduling and harnesses": carry the diagnosis and final counted macOS evidence, distinguishing focused replay from configured-suite evidence and retaining private artifact references without payload content.
