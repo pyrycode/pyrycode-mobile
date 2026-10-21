@@ -256,3 +256,5 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 - [Markdown reader — testing](features/markdown-reader-screen-testing.md): coordinate and typography coverage, fractional-density rounding bounds and retained reader acceptance evidence; split from the screen overview for #2292.
 
 - [Caching conversation repository — state and concurrency](features/caching-conversation-repository-concurrency.md): restore generations, successful writer baselines, retirement, cancellation and final-flush custody; split for #2333.
+
+- [Authoritative saved-history reader paging](features/authoritative-reader-paging.md): bounded authoritative demand/retry, changed-placement recovery, fragmented-range traversal and counted Linux paging/reopen evidence; #2334.

@@ -81,8 +81,9 @@ None concerning product scope. Record any change to boundary recovery or supplem
 
 ## Documentation handoff
 
-- Pending documentation stage: `docs/knowledge/features/caching-conversation-repository.md` and `conversation-cache-contract.md`, authoritative local continuation, demand/retry, fragmented ranges and stale-token handling versus durable certification; remove the prerequisite's temporary compatibility-hydration description.
-- Pending documentation stage: `docs/knowledge/features/thread-screen-testing-saved-first-draw.md`, measured native database paging/reopen evidence alongside database opening and file compatibility.
+- Manual maintenance updated `docs/knowledge/features/caching-conversation-repository.md` and `conversation-cache-contract.md` for local continuation, demand/retry, fragmented ranges and committed reader-bound custody, removing the temporary compatibility-hydration contract.
+- `docs/knowledge/features/authoritative-reader-paging.md` holds the detailed contract and counted paging/reopen evidence. The cache contract and `thread-screen-testing-saved-first-draw.md` link to it to retain their 50000-byte caps; index/catalog entries expose it.
+- Final documentation stage must record the current repaired candidate's complete configured acceptance, counted native paging/database-opening/file-compatibility methods, source identities and durable raw evidence. Earlier green gates do not accept the manual repair.
 
 ## Security review
 
@@ -104,6 +105,8 @@ None concerning product scope. Record any change to boundary recovery or supplem
 ## Revisions
 
 ### 2026-10-21: manual committed placement-bound recovery
+
+The tested tree committed as `e189309842e7d4eeea08fbea36f65c1efb1a14a9` passed all 12 paging methods, including 200/220/420-standalone variants and the complete fragmented 18000-row walk. Ordinary pages record exactly 200 payload decodes, 200 metadata results and six queries; each mixed-component child page records 201 payload decodes, 200 metadata results and seven queries. The 420-row variant failed against the bounded-predecessor implementation before this replacement. Durable XML and raw records are under the ticket's `manual-20261021/` evidence directory. Writer/native and independent complete acceptance remain required.
 
 A bounded sample of older identities is insufficient: with 420 standalone rows, all 200 captured predecessors belong to unmoved components while the children move beyond the surviving reader boundary. The manual regression includes this case in addition to 200 and 220 standalones. Replace predecessor guessing with a storage-owned reachability bound for each live cursor. Keep one content-free key/generation record per cursor in a weak-key registry, under the existing storage mutex. During the writer's already-required affected-component metadata traversal, compare old contribution keys with each reader's pre-mutation bound and extend the bound to include their new placement. Stage these changes and publish them only after the owning database transaction commits. A rollback never changes reader state. Each bounded read advances to its newly selected oldest contribution; weak cursor ownership releases obsolete positions without retaining thread payloads or a full metadata snapshot.
 

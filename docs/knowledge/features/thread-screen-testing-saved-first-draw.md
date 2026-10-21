@@ -4,6 +4,13 @@ Split from [thread-screen-testing.md](thread-screen-testing.md) for #1985 to kee
 The [historical comparisons](thread-screen-testing-saved-first-draw-comparisons.md)
 retain allocation, restore and projection evidence, including every earlier miss.
 
+## Authoritative reader paging (#2334)
+
+The [paging proof and counted evidence](authoritative-reader-paging.md#native-and-deterministic-proof)
+covers offline/held-newest demand, explicit retry and cold reopen through the production
+negotiated destination and real database. It retains the 1000 ms product target, unchanged
+renderer bound, full-file fixture, delayed projection and slow control below.
+
 ## Bounded database and retained file acceptance (#2333)
 
 `SavedThreadFirstDrawDeviceTest.databaseSavedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_coldOpenAndReopen`

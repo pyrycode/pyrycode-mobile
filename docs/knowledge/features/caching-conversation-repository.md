@@ -287,7 +287,7 @@ anchor/held-tie witnesses outside the selected rows. Complete parent/witness fac
 expose their unselected launch or content rows. Transient `openingRows` selects individual
 contributions and filters block membership and first-draw read evidence; it is scoped to the
 snapshot owner/generation, never persisted or used as certification. Accepted live revisions
-admit their rows; full reader hydration clears this selection. See the
+admit their rows; older local pages extend this selection without exposing extras. See the
 [storage selection and placement contract](conversation-cache-contract.md#bounded-authoritative-display-windows-2333).
 
 Durable certification and hydrated display state are independent. A validated window seeds the
@@ -323,15 +323,36 @@ recheck before merge/save, including reused ids/epoch text. Exit cancels pending
 hydration; confirmed conversation/host deletion fences final saves while preserving colliding
 identities on another host. See [writer custody](caching-conversation-repository-concurrency.md#state-and-concurrency).
 
-### Temporary older saved-history access
+### Older authoritative saved pages (#2334)
 
-Reader movement or the existing explicit retry may start compatibility full restoration inside
-the active observation's child scope. Opening, reconnect and page arrival never start it.
-Hydration jobs belong to their collecting scope, so an older collector cannot cancel a newer
-collector's job. Failed/null or generation-refused hydration forwards the original older demand
-to the negotiated daemon route; a nonzero reset generation bypasses compatibility hydration.
-Cancellation and deletion still fence forwarding. This temporary bridge preserves older saved
-history until authoritative demand paging replaces it; it does not change legacy paging.
+Reader movement and the existing explicit retry admit one local page of at most **200 additional
+display contributions**, plus active inputs and required parent/placement witnesses. Indexed
+local reads have their own observation-owned slot, so offline operation and held newest/catch-up
+requests do not block them. Repeated movement during a read is dropped; completing a page,
+reconnecting or receiving a network page never starts an automatic local walk. A failed local
+read retains held content and its boundary for explicit retry; it cannot authorize a daemon
+request. Exit, reset and confirmed deletion fence pending reads and final saves.
+
+The cursor binds exact host/conversation, authoritative epoch/incarnation, disk generation and
+content/launch identity. Storage retains a weakly owned, content-free seek bound for each live
+cursor. Its owned writer already traverses metadata for changed components; it compares old
+contribution positions with the pre-write reader bound and extends that bound to include their
+new placement. The bound and new generation become visible only after the database transaction
+commits. A rollback leaves reader state unchanged. This covers moved components beyond any
+fixed predecessor lookahead, even when the boundary and nearer components remain unchanged.
+It adds no reader-side full scan, payload lookahead or newest restart. Skip already admitted
+content/launch identities before decoding selected payloads. Missing generation custody retains
+retry; a write from a different storage instance cannot bless an old cursor. Production cache
+readers and writers share one instance, and fresh reopen obtains a new committed cursor.
+
+Fragmented saved groups remain readable without certifying the holes between them. Only a
+successful local exhaustion forwards that reader demand to the existing authoritative
+coordinator, whose certified continuous boundary owns daemon continuation. Local paging cannot
+set daemon `olderExists` false, manufacture coverage or overwrite a daemon cursor. Hydration
+extends only the successful committed baseline; owned writes preserve unloaded facts, raw
+revision winners, explicit clears, held ordering and retirement fences. Read the
+[storage continuation contract](conversation-cache-contract.md#authoritative-reader-continuation-2334)
+and [counted paging evidence](thread-screen-testing-saved-first-draw.md#authoritative-reader-paging-2334).
 
 ## What is written, and when
 
