@@ -62,6 +62,10 @@ The local readiness boundary uses the existing 10-second wait duration and a sin
 
 2026-10-21 — Main advanced to include #2246 during final verification. The merge gate correctly rejected the stale branch. Merge its newer genuine recordings and optional owned-child keyed reveal without changing this ticket's readiness boundary, then repeat the causal screen class and five native executions on that merged recording. Preserve the earlier five passes as older-capture evidence, not acceptance of the newer capture. This resolves the recorded shared-file overlap; no recording is authored or modified by this ticket.
 
+2026-10-21 — The new `finishedMarkerIsRemeasuredAfterLaterReplyGrowth` executes once and fails at the original finished-label display assertion under the extracted one-shot operation. Its preceding assertions establish that the exact marker key remains projected while the finished marker is no longer displayed. This reproduces stale reveal across later-reply rendering on the already-repaired baseline. The repair checks the exact key, calls the existing bounded keyed geometry correction, then asserts the finished text on that same owned marker. Only the failing later-reply check changes: the earlier finish wait already waits for status composition and is retained. This narrows the proposed two checks to one consumer without changing its deadline. The #2334 raw gate logs, first-assertion XML and same-tree passing XML are retained under `recurrence-20261021/historical-available`; the original phone timeline was inspected before verifier cleanup, but that scenario's phone log was not preserved in its selected archive. The exact historical geometry remains unknown.
+
+2026-10-21 — The first repaired class run passes 23 tests but the growth probe fails its intermediate expectation that the marker must become hidden: the initial keyed reveal establishes a history anchor and prevents that displacement. Keep the same late-growth stimulus, exact projected-key and final finished-display assertions; replace that intermediate failure-state expectation with a stronger final chrome-clear geometry assertion. The original red evidence still demonstrates the original one-shot failure. This adjusts the probe to accept prevention as well as correction of the race; it does not relax ownership, finished status, final visibility or collapsed membership. Retain this failed probe separately as `keyed-anchor-probe/`.
+
 ## Recurrence repair plan (2026-10-21)
 
 ### Files read and context
@@ -93,6 +97,6 @@ No application state, jobs or lifecycle changes. Controlled state publication us
 
 Run the new growth probe red against the extracted old one-shot operation, then green; retain raw XML and source identities. Run the full affected Agent block class plus existing prose/authoritative proof classes. Retain five separate consecutive Linux native passes of the named recorded method on the pushed repaired revision and the unchanged recording identity, with XML and phone logs. Run the focused scripted background-Agent scenario and required lint/assembly/compilation/format/final gates. Complete configured UI/scripted acceptance remains pending for the dispatcher, including this method. macOS is outside scope.
 
-### Documentation handoff
+## Documentation handoff
 
 Pending for documentation stage: `docs/knowledge/features/thread-screen-subagent-tool-rows.md`, Agent navigation evidence, and `docs/knowledge/features/development-verification-compose-evidence.md`, Compose evidence: distinguish this earlier finished-marker reveal race from proof-entry readiness; record the new controlled red/green and native source/recording identities without claiming the historical geometry was captured.

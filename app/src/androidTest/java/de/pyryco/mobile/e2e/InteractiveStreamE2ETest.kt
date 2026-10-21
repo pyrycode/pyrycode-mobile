@@ -6053,8 +6053,12 @@ class InteractiveStreamE2ETest {
                     liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { it.settledTurnReply(laterTurn) != null }
                 }
             }
-            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
-            composeTestRule.onNodeWithText(string(R.string.agent_finished)).assertIsDisplayed()
+            composeTestRule.assertFinishedAgentMarker(
+                runningAgent,
+                marker,
+                string(R.string.agent_finished),
+                evidence = { Log.i("AgentRunProof", it) },
+            )
             // A late child reply can have its own turn identity. Its parent identifies
             // the Agent; do not require the launching main turn's identity.
             val childReplyFrame =

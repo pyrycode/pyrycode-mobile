@@ -4,6 +4,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
@@ -20,6 +21,20 @@ import androidx.compose.ui.test.performTouchInput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import java.security.MessageDigest
+
+/** Later reply rendering can displace a finished marker after its first reveal. */
+internal fun ComposeTestRule.assertFinishedAgentMarker(
+    agentId: String,
+    markerMatcher: SemanticsMatcher,
+    finishedLabel: String,
+    evidence: (String) -> Unit = {},
+) {
+    val key = "agent-start:$agentId"
+    val index = onNode(hasScrollToNodeAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey](key)
+    assertTrue("finished marker must retain its Agent key", index >= 0)
+    val target = questionAnswerTarget(markerMatcher, lazyKey = key, evidence = evidence)
+    target.assert(hasText(finishedLabel)).assertIsDisplayed()
+}
 
 /** A single pointer tap per transition; list membership distinguishes collapse from lazy disposal. */
 internal fun ComposeTestRule.verifyAgentRunNavigation(
