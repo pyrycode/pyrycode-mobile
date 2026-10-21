@@ -6,6 +6,8 @@ from unittest import mock
 import argparse
 import json
 import tempfile
+import os
+import fcntl
 
 spec = importlib.util.spec_from_file_location('suite', Path(__file__).with_name('recorded-mobile-suite.py'))
 suite = importlib.util.module_from_spec(spec)
@@ -13,6 +15,136 @@ spec.loader.exec_module(suite)
 
 
 class SuiteDriverTest(unittest.TestCase):
+    def setUp(self):
+        host = mock.patch.object(suite, 'require_host_admission')
+        environment = mock.patch.dict(suite.os.environ, {'PYRY_TEST_ADMISSION_FD': '17'})
+        self.host_guard = host.start()
+        self.host_patch = host
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.addCleanup(host.stop)
+
+    def test_failed_replay_retains_phone_log_before_reporting_original_failure(self):
+        self.assert_replay_phone_log_retained(b'phone diagnostic', b'phone diagnostic')
+
+    def test_phone_log_collection_error_does_not_replace_replay_failure(self):
+        self.assert_replay_phone_log_retained(RuntimeError('private exception text'), b'Phone log collection failed: RuntimeError\n')
+
+    def assert_replay_phone_log_retained(self, phone_result, expected):
+        with tempfile.TemporaryDirectory() as directory:
+            output = mock.Mock(stdout=b'FAILURES!!!', stderr=b'failed replay', returncode=1)
+            phone = {'side_effect': phone_result} if isinstance(phone_result, Exception) else {'return_value': phone_result}
+            with mock.patch.object(suite, 'ROOT', Path(directory)), mock.patch.object(suite.subprocess, 'run', return_value=output), \
+                    mock.patch.object(suite.legacy, 'adb', **phone):
+                with self.assertRaisesRegex(ValueError, 'Native scenario did not execute and pass exactly one test'):
+                    suite.instrument('test-device', 'test-method', {})
+            logs = list(Path(directory).rglob('*-phone-private.log'))
+            self.assertEqual(1, len(logs))
+            self.assertEqual(expected, logs[0].read_bytes())
+            self.assertEqual(0o600, logs[0].stat().st_mode & 0o777)
+            original = [p for p in Path(directory).rglob('*-private.log') if p not in logs]
+            self.assertEqual([output.stdout + output.stderr], [p.read_bytes() for p in original])
+
+    def test_host_admission_reuses_only_the_original_descriptor(self):
+        self.host_patch.stop()
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / 'host.lock'
+            foreign = Path(directory) / 'foreign.lock'
+            foreign.touch()
+            with lock.open('w') as held:
+                descriptor = held.fileno()
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                environment = {'PYRY_TEST_ADMISSION_FD': str(descriptor), 'PYRY_TEST_ADMISSION_LOCK': str(lock)}
+                self.assertEqual(descriptor, suite.require_host_admission(environment))
+                self.assertEqual(str(descriptor), environment['PYRY_TEST_ADMISSION_FD'])
+                with self.assertRaisesRegex(ValueError, 'original validated host admission'):
+                    suite.require_host_admission(dict(environment, PYRY_TEST_ADMISSION_LOCK=str(foreign)))
+                with self.assertRaisesRegex(ValueError, 'original validated host admission'):
+                    suite.require_host_admission(dict(environment, PYRY_TEST_ADMISSION_FD='-1'))
+                self.assertEqual(lock.stat().st_ino, os.fstat(descriptor).st_ino)
+
+    def test_invalid_inherited_admission_is_rejected_without_replacement_or_device(self):
+        self.host_patch.stop()
+        gate = mock.MagicMock()
+        gate.LIVE_CLASS = 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest'
+        args = argparse.Namespace(method='interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect')
+        with mock.patch.dict(suite.os.environ, {'PYRY_TEST_ADMISSION_FD': '-1'}), mock.patch.object(suite.os, 'execv') as delegate:
+            with self.assertRaisesRegex(ValueError, 'original validated host admission'):
+                suite.managed_verify(args, gate, capturing=True)
+        delegate.assert_not_called()
+        gate.live_claude_environment.assert_not_called()
+        gate.device_hold.assert_not_called()
+
+    def test_managed_capture_enters_host_admission_before_credentials_or_device(self):
+        method = 'interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect'
+        gate = mock.MagicMock()
+        gate.LIVE_CLASS = 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest'
+        gate.live_claude_environment.return_value = {'ANDROID_HOME': '/sdk'}
+        gate.build_apks.return_value = 1
+        with tempfile.TemporaryDirectory() as directory:
+            args = argparse.Namespace(method=method, output=Path(directory), pyry=Path('/test/pyry'), daemon_source=Path('/test/daemon'))
+            original = ['recorded-mobile-suite.py', 'managed-capture', '--method', method]
+            with mock.patch.dict(suite.os.environ), mock.patch.object(suite.sys, 'argv', original), \
+                    mock.patch.object(suite.os, 'execv', side_effect=RuntimeError('host admission transfer')) as delegate, \
+                    mock.patch.object(suite.legacy, 'run', return_value=b''):
+                suite.os.environ.pop('PYRY_TEST_ADMISSION_FD', None)
+                with self.assertRaisesRegex(RuntimeError, 'host admission transfer'):
+                    suite.managed_verify(args, gate, capturing=True)
+            delegate.assert_called_once_with(suite.sys.executable, [
+                suite.sys.executable, str(suite.ROOT / 'scripts/test-admission.py'), '--',
+                suite.sys.executable, str(suite.ROOT / 'scripts/recorded-mobile-suite.py'), *original[1:]])
+            gate.live_claude_environment.assert_not_called()
+            gate.device_hold.assert_not_called()
+
+    def test_managed_capture_keeps_a_named_subset_at_the_selection_boundary(self):
+        methods = ['interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect',
+                   'interactiveTurn_permissionPrompts_heldPerConversation']
+        with tempfile.TemporaryDirectory() as directory:
+            selected = Path(directory) / 'methods.json'
+            selected.write_text(json.dumps(methods))
+            gate = mock.MagicMock()
+            gate.LIVE_CLASS = 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest'
+            gate.check_selection.side_effect = RuntimeError('selection stopped')
+            with self.assertRaisesRegex(RuntimeError, 'selection stopped'):
+                suite.managed_verify(argparse.Namespace(methods_file=selected), gate, capturing=True)
+            gate.check_selection.assert_called_once_with(suite.ROOT, 'android', [
+                'live', '--tests', ','.join(gate.LIVE_CLASS + '#' + name for name in methods)])
+            gate.live_claude_environment.assert_not_called()
+            selected.write_text(json.dumps(json.loads(suite.MANIFEST.read_text())['liveSelection']))
+            with self.assertRaises(ValueError):
+                suite.managed_verify(argparse.Namespace(methods_file=selected), gate, capturing=True)
+            gate.live_claude_environment.assert_not_called()
+
+    def test_managed_capture_rejects_uninventoried_method_before_credentials_or_device(self):
+        gate = mock.MagicMock()
+        with self.assertRaises(ValueError):
+            suite.managed_verify(argparse.Namespace(method='unknown'), gate, capturing=True)
+        gate.live_claude_environment.assert_not_called()
+        gate.device_hold.assert_not_called()
+
+    def test_managed_capture_uses_live_selection_and_releases_custody_on_failure(self):
+        method = 'interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect'
+        with tempfile.TemporaryDirectory() as directory:
+            args = argparse.Namespace(mode='managed-capture', method=method, output=Path(directory),
+                                      pyry=Path('/test/pyry'), daemon_source=Path('/test/daemon'))
+            gate = mock.MagicMock()
+            gate.LIVE_CLASS = 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest'
+            gate.live_claude_environment.return_value = {'ANDROID_HOME': '/sdk'}
+            gate.build_apks.return_value = 0
+            gate.managed_avd.return_value = (Path('/avds'), 'managed')
+            gate.boot_emulator.return_value = ('emulator-owned', 'owned-process')
+            gate.install_once.return_value = []
+            gate.run_device_command.return_value.returncode = 1
+            with mock.patch.object(suite.legacy, 'run', return_value=b''):
+                self.assertEqual(1, suite.managed_verify(args, gate, capturing=True))
+            gate.check_selection.assert_called_once_with(suite.ROOT, 'android', ['live', '--tests', gate.LIVE_CLASS + '#' + method])
+            command = gate.run_device_command.call_args.args[0]
+            self.assertIn('capture-all', command)
+            self.assertEqual([method], json.loads(Path(command[command.index('--methods-file') + 1]).read_text()))
+            self.assertEqual(str(args.output / 'capture'), command[command.index('--output') + 1])
+            gate.stop_emulator.assert_called_once_with(mock.ANY, 'emulator-owned', 'owned-process')
+            gate.device_hold.return_value.__exit__.assert_called_once()
+
     def test_managed_verification_rejects_unreviewed_input_before_credentials_or_device(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory) / 'unreviewed.json'

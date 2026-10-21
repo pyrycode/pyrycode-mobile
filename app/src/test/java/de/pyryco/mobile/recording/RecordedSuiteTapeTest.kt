@@ -33,6 +33,30 @@ class RecordedSuiteTapeTest {
         RelayLog.sink = savedLogSink
     }
 
+    @Test fun automaticPeerPermissionKeepsTheRecordedPhoneActionOrder() {
+        val peer = "peer/host/0"
+        val phone = "phone/host/0"
+        val checkpoint = frame(1, "test-control:checkpoint", """{"body":"phone-send"}""")
+        val send = frame(1, "send_message", """{"text":"controlled release"}""")
+        val approval = frame(1, "modal_answer", """{"modal_id":"prompt","option_id":"allow_once","answer_token":"captured"}""")
+        val tape =
+            RecordedSuiteTape(
+                listOf(client("control", checkpoint), client(phone, send), client(peer, approval)),
+                literalProducerIdentities = true,
+            )
+        assertFalse(tape.peerPermissionReady(peer, "prompt"))
+        assertTrue(tape.send("control", checkpoint.copy(id = 10)).accepted)
+        assertFalse("checkpoint alone cannot spend the phone command", tape.peerPermissionReady(peer, "prompt"))
+        assertTrue(tape.send(phone, send.copy(id = 11)).accepted)
+        assertFalse("another peer cannot borrow the approval", tape.peerPermissionReady("peer/other/0", "prompt"))
+        assertFalse("another prompt cannot borrow the approval", tape.peerPermissionReady(peer, "other"))
+        assertTrue(tape.peerPermissionReady(peer, "prompt"))
+        val answer = frame(12, "modal_answer", """{"modal_id":"prompt","option_id":"allow_once","answer_token":"fresh"}""")
+        assertTrue(tape.send(peer, answer).accepted)
+        assertFalse("the captured approval is still exactly once", tape.peerPermissionReady(peer, "prompt"))
+        tape.assertComplete()
+    }
+
     private data class TailCase(
         val tape: RecordedSuiteTape,
         val owner: String,
@@ -47,6 +71,7 @@ class RecordedSuiteTapeTest {
         condition: String,
         boundary: String,
         duplicate: Boolean = false,
+        liveProgress: Boolean = false,
     ): TailCase {
         val owner = "phone/host/0"
         val priorOwner = if (condition == "foreign-owner") "phone/host/1" else owner
@@ -56,9 +81,10 @@ class RecordedSuiteTapeTest {
         fun fact(
             id: Int = 1,
             text: String = "controlled reply",
+            rev: Int = 17,
         ) = """{"id":$id,
 "order":$id,
-"rev":17,
+"rev":$rev,
 "kind":"assistant_message",
 "session":"session",
 "turn":"turn",
@@ -72,7 +98,8 @@ class RecordedSuiteTapeTest {
             conversation: String,
             epoch: String,
             item: String,
-        ) = """{"conversation_id":"$conversation","epoch":"$epoch","version":17,"items":[$item],"final":false}"""
+            version: Int = 17,
+        ) = """{"conversation_id":"$conversation","epoch":"$epoch","version":$version,"items":[$item],"final":false}"""
         val window =
             """
 {"conversation_id":"$priorConversation",
@@ -119,10 +146,24 @@ class RecordedSuiteTapeTest {
                     )
             "intervening-command" -> rows += client("peer/host/0", frame(1, "modal_answer"))
             "intervening-lifecycle" -> rows += SuiteStep("close", "peer/host/0")
+            "intervening-reset" ->
+                rows +=
+                    daemon(owner, frame(13, "thread_reset", """{"conversation_id":"chat","epoch":"new","version":0}"""))
         }
         rows += client(owner, tail).copy(accepted = condition != "refused-tail")
+        if (liveProgress) {
+            rows +=
+                daemon(
+                    owner,
+                    frame(
+                        12,
+                        "thread_item_added",
+                        """{"conversation_id":"chat","epoch":"epoch","version":18,"item":${fact(2, rev = 18)}}""",
+                    ),
+                )
+        }
         val replyConversation = if (condition == "wrong-reply-conversation") "other" else "chat"
-        val version = if (condition == "higher-checkpoint") 18 else 17
+        val version = if (condition == "higher-checkpoint" || liveProgress) 18 else 17
         val terminal =
             if (condition == "page") {
                 """{"conversation_id":"chat",
@@ -163,14 +204,14 @@ class RecordedSuiteTapeTest {
             "malformed" -> rows += daemon(owner, frame(6, "thread_items", "{}", reply = 4))
             "partial-tail" -> rows += daemon(owner, frame(6, "thread_items", batch("chat", "epoch", fact()), reply = 4))
             else -> {
-                if (duplicate || condition in setOf("new-fact", "changed-fact")) {
+                if (duplicate || liveProgress || condition in setOf("new-fact", "changed-fact")) {
                     val item =
                         when (condition) {
                             "new-fact" -> fact(2)
                             "changed-fact" -> fact(text = "changed reply")
-                            else -> fact()
+                            else -> if (liveProgress) fact(2, rev = 18) else fact()
                         }
-                    rows += daemon(owner, frame(5, "thread_items", batch("chat", "epoch", item), reply = 4))
+                    rows += daemon(owner, frame(5, "thread_items", batch("chat", "epoch", item, version), reply = 4))
                 }
                 if (condition == "unexpected-related") rows += daemon(owner, frame(11, "context_usage", "{}", reply = 4))
                 rows += daemon(owner, frame(6, "thread_items", terminal, reply = 4))
@@ -209,6 +250,44 @@ class RecordedSuiteTapeTest {
         if (case.boundary == "test-end") case.tape.request("control", case.end.copy(id = 90))
         case.tape.lifecycle("close", case.owner)
         case.tape.assertComplete()
+    }
+
+    @Test fun deliveredCertifiedBaseLetsLiveProgressTriggerItsStillRequiredCatchUp() {
+        for (condition in listOf("valid", "intervening-live")) {
+            val case = tailCase(condition, "close", liveProgress = true)
+            startTail(case)
+            assertEquals(listOf("thread_item_added"), case.tape.initial().map { it.message?.type })
+            assertFalse(case.tape.closeReady(case.owner))
+            assertThrows(IllegalStateException::class.java) { case.tape.assertComplete() }
+            val replies = case.tape.request(case.owner, case.tail.copy(id = 91))
+            assertEquals(listOf("thread_items", "thread_items"), replies.map { it.message?.type })
+            assertEquals(listOf(91L, 91L), replies.map { it.message?.inReplyTo })
+            replies.forEach { case.tape.delivered(it.owner, checkNotNull(it.message)) }
+            assertTrue(case.tape.closeReady(case.owner))
+            finishTail(case)
+        }
+    }
+
+    @Test fun liveProgressCannotBorrowAnUnconfirmedForeignOrResetBase() {
+        for (condition in listOf(
+            "unrequested-prior",
+            "undelivered-prior",
+            "undelivered-final",
+            "partial-prior",
+            "foreign-owner",
+            "foreign-conversation",
+            "foreign-epoch",
+            "refused-prior",
+            "refused-tail",
+            "extra-argument",
+            "page",
+            "intervening-reset",
+        )) {
+            val case = tailCase(condition, "close", liveProgress = true)
+            startTail(case, condition)
+            assertTrue("live progress must retain $condition fence", case.tape.initial().isEmpty())
+            assertFalse(case.tape.closeReady(case.owner))
+        }
     }
 
     @Test fun duplicateDeliveredTailBecomesOptionalOnlyAtActualClosePreparation() {
@@ -635,6 +714,80 @@ class RecordedSuiteTapeTest {
                 assertEquals(listOf(92L, 91L), remaining.map { it.message!!.inReplyTo })
                 tape.assertComplete()
             }
+        }
+    }
+
+    @Test fun peerPermissionDismissalForBCanPassAHeldCatchUpWithoutSpendingIt() {
+        val owner = "phone/host/0"
+        val peer = "peer/host/0"
+        val a = frame(1, "thread_catch_up", """{"conversation_id":"a","epoch":"ea","version":13}""")
+        val b = frame(4, "thread_catch_up", """{"conversation_id":"b","epoch":"eb","version":13}""")
+        val answer = frame(1, "modal_answer", """{"request_id":"permission-b","choice":"allow_once"}""")
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client(owner, frame(9, "mcp_status_request", """{"conversation_id":"b"}""")),
+                    client(owner, a),
+                    daemon(owner, frame(2, "thread_item_changed", """{"conversation_id":"a"}""")),
+                    daemon(owner, frame(3, "thread_items", """{"conversation_id":"a","final":true}""", reply = 1)),
+                    daemon(owner, frame(8, "conversation_updated", """{"id":"a","read_up_to":14}""")),
+                    daemon(owner, frame(10, "mcp_status", """{"conversation_id":"b","servers":[]}""", reply = 9)),
+                    client(owner, b),
+                    daemon(owner, frame(5, "thread_items", """{"conversation_id":"b","final":true}""", reply = 4)),
+                    client(peer, answer),
+                    daemon(peer, frame(2, "modal_dismissed")),
+                    daemon(
+                        owner,
+                        frame(6, "modal_dismissed", """{"request_id":"permission-b"}""").copy(conversationId = JsonPrimitive("b")),
+                    ),
+                    daemon(owner, frame(7, "thread_item_added", """{"conversation_id":"b"}""")),
+                    SuiteStep("close", owner),
+                ),
+                literalProducerIdentities = true,
+            )
+        assertTrue(tape.initial().isEmpty())
+        assertTrue(tape.request(owner, frame(89, "mcp_status_request", """{"conversation_id":"b"}""")).isEmpty())
+        assertEquals(listOf("thread_items"), tape.request(owner, b.copy(id = 90)).map { it.message?.type })
+        val released = tape.request(peer, answer.copy(id = 90))
+        assertEquals(listOf("modal_dismissed", "modal_dismissed", "thread_item_added"), released.map { it.message?.type })
+        assertFalse(tape.closeReady(owner))
+        assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
+        assertEquals(
+            listOf("thread_item_changed", "thread_items", "conversation_updated", "mcp_status"),
+            tape.request(owner, a.copy(id = 91)).map { it.message?.type },
+        )
+        assertTrue(tape.closeReady(owner))
+        tape.lifecycle("close", owner)
+        tape.assertComplete()
+    }
+
+    @Test fun independentLiveDeliveryCannotCrossItsOwnQueryUnknownAttributionOrAnAndroidInput() {
+        val owner = "phone/host/0"
+        val a = frame(1, "thread_catch_up", """{"conversation_id":"a","epoch":"ea","version":13}""")
+        val b = frame(10, "thread_catch_up", """{"conversation_id":"b","epoch":"eb","version":13}""")
+        for (condition in listOf("same-conversation", "unknown", "conflicting", "android", "checkpoint", "reconnect")) {
+            val conversation = if (condition == "same-conversation") "a" else "b"
+            val live =
+                frame(3, "modal_dismissed", if (condition == "unknown") "{}" else """{"conversation_id":"$conversation"}""")
+                    .copy(conversationId = if (condition == "conflicting") JsonPrimitive("a") else null)
+            val rows =
+                mutableListOf(
+                    client(owner, b),
+                    daemon(owner, frame(11, "thread_items", """{"conversation_id":"b","final":true}""", reply = 10)),
+                    client(owner, a),
+                    daemon(owner, frame(2, "thread_items", """{"conversation_id":"a","final":true}""", reply = 1)),
+                )
+            when (condition) {
+                "android" -> rows += SuiteStep("external", "android", detail = JsonObject(mapOf("event" to JsonPrimitive("push-wake"))))
+                "checkpoint" -> rows += client("control", frame(1, "test-control:checkpoint", """{"body":"observed"}"""))
+                "reconnect" -> rows += SuiteStep("connect", owner)
+            }
+            rows += daemon(owner, live)
+            val tape = RecordedSuiteTape(rows, literalProducerIdentities = true)
+            assertTrue(tape.initial().isEmpty())
+            assertEquals(listOf("thread_items"), tape.request(owner, b.copy(id = 90)).map { it.message?.type })
+            assertTrue("must retain $condition fence", tape.initial().isEmpty())
+            assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
         }
     }
 
