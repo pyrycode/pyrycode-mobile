@@ -39,9 +39,9 @@ import java.util.UUID
  *
  * Built on [requests], the connection's one request counter and reply waiters, so every frame takes its
  * envelope id from the same sequence as every other request. [send] is the repository's pump send, used by
- * the frames that go out raw: the attachment chunks, the debug bundle request and the dequeue. A send's
- * echo folds into [conversationList] and [threadProjection]; a drop reads [queueProjection] and records
- * into [threadProjection].
+ * the attachment chunks, the debug bundle request and the dequeue. Local sends register pending
+ * identity through [registerAuthoritativeSend]; daemon-authored thread items establish acceptance.
+ * Queue commands use the caller's authoritative target without settling content locally.
  *
  * One instance per repository, and a fresh repository per connection (#351), so the transfer state is
  * connection-scoped exactly as it was when it lived in the repository. Every accessor of that state is

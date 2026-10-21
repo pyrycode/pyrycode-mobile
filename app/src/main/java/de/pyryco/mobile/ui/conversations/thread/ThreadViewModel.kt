@@ -861,8 +861,6 @@ class ThreadViewModel(
             )
         }
 
-    private var pendingNewest = 0
-
     /**
      * Whether this thread's host has a live repository right now (#1352), desktop's
      * `connectedConversationHostNow`: a history ask is sent only while it holds, and the oldest-end slot

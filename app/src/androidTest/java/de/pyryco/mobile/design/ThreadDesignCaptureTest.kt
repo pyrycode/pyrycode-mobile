@@ -40,6 +40,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -1082,13 +1083,20 @@ class ThreadDesignCaptureTest {
 
     @Test fun threadSavedFrameAt412By892() {
         val file = MessageAttachment("design-save-file", "report.txt", "text/plain")
+        val report =
+            File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "design-save-report.txt").apply {
+                writeText("The report is ready.\n")
+            }
+        attachmentGates[file.attachmentId] = CompletableDeferred(AttachmentRetrievalResult.Retrieved(report, "report.txt", "text/plain"))
         openThread()
         extraItems.value = listOf(message("design-save-message", Role.Assistant, "Here is the report.", 12, file))
         await("Here is the report.")
         withSavedDocument { destination ->
-            checkNotNull(inputs.thread.value).onAttachmentRequested(file, AttachmentAction.SAVE)
+            await("report.txt")
+            rule.onNodeWithText("report.txt").performTouchInput { longClick() }
             await("File saved")
             assertTrue("production save wrote its destination", destination.length() > 0)
+            assertEquals(report.readText(), destination.readText())
             captureConfirmation("thread-saved", "File saved", "thread-top-bar", "696:5065")
         }
     }

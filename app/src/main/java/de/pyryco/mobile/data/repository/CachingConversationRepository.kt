@@ -799,8 +799,7 @@ class CachingConversationRepository(
         }.onFailure { RelayLog.d { "event=authoritative_cache_reset_failed" } }
     }
 
-    /** This thread's saved history position (#1354), under this wrapper's own [serverId]. */
-
+    /** Retrieves bytes through this host's attachment store, falling back to its delegate. */
     override suspend fun retrieveAttachment(
         conversationId: String,
         attachmentId: String,

@@ -30,6 +30,7 @@ import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.InnerFrameV2
 import de.pyryco.mobile.data.network.NoiseClientInfo
@@ -99,6 +100,8 @@ class RecordedPermissionTest {
         val reply = scenario?.getValue("expectedReply")?.jsonPrimitive?.content ?: REPLY
         val transport: RelayTransport
         val pump: ManagedSessionPump
+        val hostId: String
+        val deviceId: String
         if (live) {
             fun arg(name: String) = requireNotNull(args.getString(name)) { "Missing capture argument" }
             val pairing =
@@ -108,8 +111,10 @@ class RecordedPermissionTest {
                     relayUrl = arg("relayUrl"),
                     serverStaticPublicKey = arg("serverStaticPublicKey"),
                 )
-            // This standalone legacy fixture is separate from the suite's production phone graph.
-            val info = NoiseClientInfo("mobile-recorded-tests", "1.0.999999", listOf("interactive", "multi_agent", "stop_background_task"))
+            hostId = pairing.serverId
+            val keys = PeerDeviceKeyStore(pairing)
+            deviceId = runBlocking { keys.publicKey(hostId).joinToString("") { "%02x".format(it.toInt() and 0xff) } }
+            val info = NoiseClientInfo("mobile-recorded-tests", "1.0.999999")
             transport = OkHttpRelayTransport(pairing, info, OkHttpRelayTransport.defaultClient())
             val store =
                 object : PairedServerStore {
@@ -117,7 +122,7 @@ class RecordedPermissionTest {
 
                     override suspend fun save(record: PairedServer): Unit = error("Read-only test pairing")
                 }
-            pump = CapturingPump(NoiseSessionPump(transport, NoiseSessionFactory(PeerDeviceKeyStore(pairing), store, info)), capture)
+            pump = CapturingPump(NoiseSessionPump(transport, NoiseSessionFactory(keys, store, info)), capture)
             runBlocking {
                 withTimeout(20000) {
                     transport.connect()
@@ -125,10 +130,33 @@ class RecordedPermissionTest {
                 }
             }
         } else {
+            require(
+                CAPABILITY_THREAD in checkNotNull(recording).capabilities,
+            ) { "Permission recording requires authoritative thread support" }
+            hostId =
+                recording.scenario
+                    .getValue("serverId")
+                    .jsonPrimitive.content
+            deviceId =
+                checkNotNull(replay).reboundIdentity(
+                    recording.scenario
+                        .getValue("deviceId")
+                        .jsonPrimitive.content,
+                )
             transport = UnusedTransport()
             pump = ReplayingPump(checkNotNull(recording), checkNotNull(replay))
         }
-        val coordinator = RelayRepositoryCoordinator(MutableStateFlow(transport), MutableStateFlow(RelayLinkStatus.Connected), { pump })
+        val coordinator =
+            RelayRepositoryCoordinator(
+                MutableStateFlow(transport),
+                MutableStateFlow(RelayLinkStatus.Connected),
+                { pump },
+                authoritativeHostId = hostId,
+                authoritativeDeviceId = { host ->
+                    check(host == hostId) { "Permission device requested for another host" }
+                    deviceId
+                },
+            )
         val viewModels = ViewModelStore()
         try {
             coordinator.start()
@@ -136,13 +164,14 @@ class RecordedPermissionTest {
                 runBlocking {
                     withTimeout(20000) {
                         check(pump.state.first { it !is PumpState.Handshaking } is PumpState.Open)
+                        check(CAPABILITY_THREAD in (pump.state.value as PumpState.Open).capabilities)
                         coordinator.currentRepository.filterNotNull().first()
                     }
                 }
             val conversation = runBlocking { withTimeout(20000) { repository.createDiscussion(null) } }
             val vm =
                 ThreadViewModel(
-                    SavedStateHandle(mapOf("conversationId" to conversation.id)),
+                    SavedStateHandle(mapOf("serverId" to hostId, "conversationId" to conversation.id)),
                     repository,
                     FakeConnectionStateSource(),
                     ComposerDraftStore(),
@@ -258,6 +287,8 @@ class RecordedPermissionTest {
                                 put("prompt", prompt)
                                 put("expectedReply", reply)
                                 put("allowLabel", allow)
+                                put("serverId", hostId)
+                                put("deviceId", deviceId)
                             },
                         )
                     }
