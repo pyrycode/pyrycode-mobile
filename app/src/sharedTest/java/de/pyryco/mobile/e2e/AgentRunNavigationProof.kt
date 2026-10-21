@@ -27,11 +27,22 @@ internal fun ComposeTestRule.assertFinishedAgentMarker(
     agentId: String,
     markerMatcher: SemanticsMatcher,
     finishedLabel: String,
+    readinessTimeoutMillis: Long = 10_000,
     evidence: (String) -> Unit = {},
 ) {
     val key = "agent-start:$agentId"
-    val index = onNode(hasScrollToNodeAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey](key)
-    assertTrue("finished marker must retain its Agent key", index >= 0)
+    var lastReadiness: String? = null
+    waitUntil(readinessTimeoutMillis) {
+        val lists = onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes()
+        assertTrue("finished marker needs one message list", lists.size <= 1)
+        val index = lists.singleOrNull()?.config?.getOrNull(SemanticsProperties.IndexForKey)?.invoke(key) ?: -1
+        val sample = "event=finished_agent_readiness lists=${lists.size} key_present=${index >= 0}"
+        if (sample != lastReadiness) {
+            evidence(sample)
+            lastReadiness = sample
+        }
+        index >= 0
+    }
     val target = questionAnswerTarget(markerMatcher, lazyKey = key, evidence = evidence)
     target.assert(hasText(finishedLabel)).assertIsDisplayed()
 }

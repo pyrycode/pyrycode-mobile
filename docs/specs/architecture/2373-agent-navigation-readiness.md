@@ -66,6 +66,8 @@ The local readiness boundary uses the existing 10-second wait duration and a sin
 
 2026-10-21 — The first repaired class run passes 23 tests but the growth probe fails its intermediate expectation that the marker must become hidden: the initial keyed reveal establishes a history anchor and prevents that displacement. Keep the same late-growth stimulus, exact projected-key and final finished-display assertions; replace that intermediate failure-state expectation with a stronger final chrome-clear geometry assertion. The original red evidence still demonstrates the original one-shot failure. This adjusts the probe to accept prevention as well as correction of the race; it does not relax ownership, finished status, final visibility or collapsed membership. Retain this failed probe separately as `keyed-anchor-probe/`.
 
+2026-10-21 — The first native candidate `3d7ba31af799e2cae848670716a4695d354c7e4d` executes once and fails the new immediate marker-key guard. Retained phone evidence shows certification reset at the later-reply boundary; an immediate lookup still assumes rendered readiness. Retain this failure under `native-first-candidate-failed/`, without retrying that candidate. Resolve the rendered Agent identity from the same current snapshot that supplies the settled later reply, rather than reusing the earlier running projection's identity, and log only whether that identity changed. Before geometry correction, wait for one list containing this exact marker key; missing and wrong-family keys remain unready, ambiguity fails and the finished label must still belong to the owned marker. Share the original `THREAD_TIMEOUT_MS` budget between repository settlement and marker readiness using monotonic elapsed time and pass only the remaining duration into the local helper. No existing deadline is extended. `resetBeforeFinishedMarkerRevealWaitsForTheOwnedFamily` releases catch-up only after observed absence; the permanent wrong-family test now requires timeout. Keep the late-growth regression and the earlier proof-entry reset negatives. The historical reset timeline and this native failure establish readiness as another necessary condition at this same finished-marker boundary; the new identity diagnostic will distinguish identity replacement from projection-only reset. This remains one local scenario repair, below 450 written lines and with no production type or consumer migration.
+
 ## Recurrence repair plan (2026-10-21)
 
 ### Files read and context
@@ -89,6 +91,7 @@ No application state, jobs or lifecycle changes. Controlled state publication us
 | Event | Regression |
 | --- | --- |
 | Finished marker is displaced by late later-reply rendering | `finishedMarkerIsRemeasuredAfterLaterReplyGrowth` |
+| Catch-up temporarily removes the finished marker before reveal | `resetBeforeFinishedMarkerRevealWaitsForTheOwnedFamily` |
 | Expected marker is missing but another finished Agent is present | `anotherFinishedAgentCannotSatisfyTheOwnedMarkerCheck` |
 | Owned marker is running while another Agent is finished | `anotherAgentsFinishedLabelCannotSatisfyTheOwnedMarkerCheck` |
 | Reset/wrong family before pointer proof | Retain `resetBeforeClosedRunCheckWaitsForTheSameOwnedFamily`, `missingListCannotPassTheAgentNavigationProof`, `anotherAgentsListCannotPassTheAgentNavigationProof` |

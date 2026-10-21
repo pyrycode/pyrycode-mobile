@@ -300,11 +300,32 @@ class BackgroundAgentBlocksScreenTest {
             collapsed = true,
         )
         compose.onNodeWithText("Agent finished").assertIsDisplayed()
-        val failure =
-            assertThrows(AssertionError::class.java) {
+        assertThrows(ComposeTimeoutException::class.java) {
                 compose.assertFinishedAgentMarker("a", hasText("Go to agent ↓") and hasText("Launch description"), "Agent finished")
             }
-        assertEquals("finished marker must retain its Agent key", failure.message)
+    }
+
+    @Test fun resetBeforeFinishedMarkerRevealWaitsForTheOwnedFamily() {
+        val settled =
+            listOf(tool("a", "Agent"), launch(), tool("child", "Read", "a"), tool("child2", "Glob", "a"), finish(), user("Later"))
+        mount(settled, collapsed = true)
+        compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+        compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(0)
+        var resetObserved = false
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        compose.assertFinishedAgentMarker("a", ownedMarker, "Agent finished") { sample ->
+            println(sample)
+            if ("event=finished_agent_readiness" in sample && "key_present=false" in sample && !resetObserved) {
+                resetObserved = true
+                compose.runOnIdle { state = state.copy(items = settled, hasMessages = true) }
+            }
+        }
+        assertTrue("observe the reset before allowing catch-up", resetObserved)
+        compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
+        assertTrue(
+            "the child run remains collapsed",
+            list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:child2") < 0,
+        )
     }
 
     @Test fun anotherAgentsFinishedLabelCannotSatisfyTheOwnedMarkerCheck() {
