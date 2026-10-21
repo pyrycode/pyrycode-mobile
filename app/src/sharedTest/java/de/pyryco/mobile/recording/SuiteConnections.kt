@@ -46,6 +46,7 @@ internal class SuiteConnections private constructor(
     private val capture: SuiteCapture?,
     private val onExternal: (SuiteStep) -> Unit = { error("Unexpected recorded external event") },
     private val originalSpeed: Boolean = false,
+    private val beforeRequestEnqueue: () -> Unit = {},
 ) : AutoCloseable {
     private val scope = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
     private val transports = mutableMapOf<String, RecordedTransport>()
@@ -117,6 +118,7 @@ internal class SuiteConnections private constructor(
         frame: Envelope,
     ): Boolean {
         val result = checkNotNull(tape).send(owner, frame)
+        beforeRequestEnqueue()
         enqueue(result.deliveries)
         return result.accepted
     }
@@ -248,7 +250,11 @@ internal class SuiteConnections private constructor(
             beforeClose(owner)
         }
         withTimeout(30000) {
-            while (!replay.phoneWorkBeforeTestEndReady()) delay(10)
+            while (!synchronized(this@SuiteConnections) {
+                    enqueue(replay.preparePhoneTeardown())
+                    replay.phoneWorkBeforeTestEndReady()
+                }
+            ) delay(10)
             awaitIdle()
         }
     }
@@ -537,8 +543,10 @@ internal class SuiteConnections private constructor(
             scope: CoroutineScope,
             tape: RecordedSuiteTape,
             originalSpeed: Boolean = false,
+            // Controlled concurrency probes pause after tape release, while the hub monitor is held.
+            beforeRequestEnqueue: () -> Unit = {},
             onExternal: (SuiteStep) -> Unit = { error("Unexpected recorded external event") },
-        ) = SuiteConnections(scope, tape, null, onExternal, originalSpeed)
+        ) = SuiteConnections(scope, tape, null, onExternal, originalSpeed, beforeRequestEnqueue)
 
         fun recording(
             scope: CoroutineScope,

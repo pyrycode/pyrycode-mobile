@@ -527,14 +527,28 @@ internal class RecordedSuiteTape(
 
     @Synchronized fun testEndReady(actual: Envelope): Boolean = precedingWorkReleased(testEndBoundary(actual), allowDeferredReads = true)
 
+    private fun phoneTeardownBoundary(): Int? {
+        val end = steps.indices.firstOrNull {
+            it !in consumed && steps[it].owner == "control" && steps[it].message?.type == "test-control:test-end"
+        } ?: return null
+        return minOf(end, checkpointBoundary())
+    }
+
+    /** Foreground cleanup shares terminal-tail validation, without sending the terminal control. */
+    @Synchronized fun preparePhoneTeardown(): List<SuiteStep> {
+        failure?.let { fail(it) }
+        val boundary = phoneTeardownBoundary() ?: return emptyList()
+        if (boundary == commandBoundary() && steps[boundary].message?.type == "test-control:test-end") {
+            prepareTails(boundary)
+        }
+        return drain()
+    }
+
     /** Keep request-producing activity jobs alive even when the phone closes after test-end. */
     @Synchronized fun phoneWorkBeforeTestEndReady(): Boolean {
         failure?.let { fail(it) }
-        val end =
-            steps.indices.firstOrNull {
-                it !in consumed && steps[it].owner == "control" && steps[it].message?.type == "test-control:test-end"
-            } ?: return true
-        return (0 until minOf(end, checkpointBoundary())).all { index ->
+        val boundary = phoneTeardownBoundary() ?: return true
+        return (0 until boundary).all { index ->
             val step = steps[index]
             !step.owner.startsWith("phone/") ||
                 step.direction !in setOf("client", "daemon", "settings_snapshot") ||
