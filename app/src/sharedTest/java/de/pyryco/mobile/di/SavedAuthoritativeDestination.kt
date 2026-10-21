@@ -121,6 +121,12 @@ internal class SavedAuthoritativeDestination(
 
     val requests get() = pumps.flatMap { it.sent }
 
+    val hostReady get() = registry.connectionFor("host") != null
+
+    fun push(envelope: Envelope) {
+        pumps.last().push(envelope)
+    }
+
     fun reply(
         request: Envelope,
         payload: String,
@@ -160,6 +166,10 @@ internal class SavedAuthoritativeDestination(
         override val inbound = frames.receiveAsFlow()
         override val state = MutableStateFlow<PumpState>(PumpState.Handshaking)
         val sent = CopyOnWriteArrayList<Envelope>()
+
+        fun push(envelope: Envelope) {
+            frames.trySend(envelope).getOrThrow()
+        }
 
         fun reset(request: Envelope) {
             frames
