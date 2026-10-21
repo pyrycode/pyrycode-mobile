@@ -1,0 +1,68 @@
+# Fence permission-isolation host cleanup (#2349)
+
+## Files read
+- `docs/recorded-tests.md`: What replay proves, Capture and compatibility, and Read acknowledgements and temporary prompts require strict requests, causal delivery and complete consumption.
+- `docs/knowledge/features/development-verification.md` and `development-verification-gates.md`: focused native replay and durable counted evidence; complete gates belong to the dispatcher.
+- `app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt`: `interactiveTurn_permissionPrompts_heldPerConversation` removes its host immediately after peer completion.
+- `app/src/androidTest/java/de/pyryco/mobile/recording/RecordedSuiteNative.kt`: `beforeHostLinkClose` maps the current phone owner and is a no-op in capture and ordinary execution.
+- `app/src/sharedTest/java/de/pyryco/mobile/recording/SuiteConnections.kt`: `beforeClose` retains the existing 30-second bound and waits for required requests and queued deliveries.
+- `app/src/sharedTest/java/de/pyryco/mobile/recording/RecordedSuiteTape.kt`: `closeReady`, `prepareClose`, and sticky failure handling keep strict matching.
+- `app/src/test/java/de/pyryco/mobile/recording/SuiteConnectionsTest.kt` and `RecordedActivityRuleTest.kt`: existing close-fence and failure-preservation patterns.
+- The original and current-main failure bundles under agents `logs/evidence/2343/builder-20261021-macos/`: both show premature phone closure after all permission stages complete.
+
+## Context
+One behaviour: paired-host cleanup must preserve the phone connection until required replay work finishes. This repair and its regression form one useful slice. Peer turn end does not prove phone catch-up completion. No production contract, recording, UI or dependency change is needed.
+
+## Design
+Add an internal test-only `withPermissionIsolationCleanup` wrapper beside `PermissionIsolationStage`. The scenario body retains all existing assertions and deadlines. Cleanup closes the peer first, preserving captured lifecycle order, calls `RecordedSuiteNative.beforeHostLinkClose(serverId)`, then removes the paired host. The wrapper attempts every cleanup action even on failure. The scenario's throwable remains primary; otherwise the first cleanup throwable is primary, with later failures suppressed without self-suppression. No tape or scheduler rules change.
+
+Remote branches overlap the scenario file: #1682, #1689, #1690, #1691, #1693, #1695, #1766, #1869, #1879, #1947, #2009, #2032, #2052, #2057, #2088, #2089, #2090, #2091, #2092, #2098, #2099, #2100, #2102, #2104, #2112, #2114, #2117, #2118, #2119, #2138, #2139, #2175, #2246, #2311, #2347. This edit is local to permission isolation; #2347 changes `restartApp`, independently. No dependency on those branches.
+
+## State and concurrency model
+No production state or coroutine scope changes. The existing instrumentation thread blocks in the replay-only fence while the live phone graph continues background requests. The shared helper is inline so controlled coroutine tests use the actual fence with virtual time. Closing the peer precedes the fence; host removal follows it. A fence timeout still allows physical cleanup and remains a test failure.
+
+## State transitions and identity reuse
+| Event | Regression |
+| --- | --- |
+| Peer completes while required phone query is held, then released | `hostRemovalWaitsForPhoneCatchUpAndScheduledDeliveryAfterPeerCompletion` |
+| Required query never arrives | `missingPhoneWorkFailsAtTheExistingDeadlineAndStillRemovesHost` |
+| Wrong owner or full payload arrives | `aReplayMismatchRemainsFirstThroughCleanup` plus existing tape tests |
+| Scenario and cleanup both fail | `scenarioFailureKeepsCleanupFailuresSuppressedInOrder` |
+| Capture or ordinary execution has no replay fence | `ordinaryCleanupKeepsPeerThenHostOrder` |
+No identity allocation or reuse changes; existing tape owner/request correlation remains authoritative.
+
+## Error handling
+Retain the original scenario error and the first replay mismatch. Missing work fails within the existing 30-second fence, without fabricated requests or cancellation as a success. Cleanup runs all actions and retains subsequent errors as suppressed exceptions. Existing content-free replay diagnostics remain unchanged.
+
+## Testing strategy
+Write the controlled regression against the extracted old cleanup first and observe early removal fail. Then enable the fence. Exercise actual `SuiteConnections` and `RecordedSuiteTape`, holding a real accepted catch-up send until peer completion and retaining delayed delivery. Add timeout, strict owner/payload mismatch and failure aggregation probes. Run the new class plus affected `SuiteConnectionsTest`, `RecordedSuiteTapeTest` and `RecordedActivityRuleTest`. Run focused macOS native `RecordedMobileSuiteTest#interactiveTurn_permissionPrompts_heldPerConversation` with the original fixture, retaining revision, exit, XML/logcat, hashes and counts. The existing device method needs the real Android graph and background scheduling. No new device-only test is added. Dispatcher configured UI acceptance remains pending before verifier PASS. Run lint, assembly, Android test compilation, formatting and final pre-verify checks.
+
+## Open Questions
+None. Scope forecast: approximately 400 written lines, three acceptance criteria, zero exported production types or migrated consumers, one scenario integration. Below the numeric ceilings; no independently useful second deliverable.
+
+## Revisions
+
+### 2026-10-21: investigate the attention-pill gate finding
+
+The verifier found no independent source defect in this repair, but its configured UI gate and three-method comparison failed `interactiveTurn_otherConversationAttentionPills_waitingAndFinished`. That comparison selected model, offscreen-reply and attention together; the passing merged-main comparison selected attention alone. Those results do not establish a causal regression or an inherited-failure exemption.
+
+The parent investigation already retained a failing unchanged-main attention execution at `77b5717d6d3a1dba9f1a92a251162e7f9b3770e2`, with verified raw XML/logcat and load metadata under agents `logs/evidence/2343/builder-20261021-macos/current-main-fail-2/`. B's initial catch-up starts before destination acquisition and finishes afterwards. `AuthoritativeThreadQueries.acquire` calls `open`, whose `enqueue` coalesces the active query. The recorded second query remains missing, holding phone dismissal/completion; the finished-pill timeout precedes the secondary cleanup close mismatch. Production query/attention code, tape, connection/native replay code and the attention recording match that main revision. The scenario diff changes only permission isolation.
+
+This is the independently useful acquisition-timing repair assigned to open sibling #2350. Do not extend this permission cleanup wrapper to hide the attention scenario's earlier failure or relax its matching/deadlines. Link #2350 as the acceptance blocker and request recovery assessment of the retained model/offscreen/attention sequence before any wider diagnostic. A queued assessment and any focused pass do not establish complete acceptance. The configured UI and scripted gates remain dispatcher-owned and pending after the blocker lands. The permission cleanup design and elevated risk assessment remain unchanged.
+
+Focused attention replay on the unchanged reviewed source `ee784e3bce152366b6efefdaaedb082e1caf5cf5` passed: `ui-btxiaay9`, exit 0, one executed/passed, zero failed/errors/skipped. This is baseline evidence, not a repair. Recovery assessment `0b17a700adf962af43cb1e8edc2380ddb5a31c0f6de829adce72678f7774ac3b` is queued with zero executions for the retained three-method sequence; it grants no wider-run authority. The open #2350 blocker link was read back successfully. Rework raw native, parent-baseline and verifier evidence, source comparisons, request/acknowledgement and hashes are retained under agents `logs/evidence/2349/rework-20261021-macos/`.
+
+### 2026-10-21: integrate the reviewed acquisition repair
+
+The restored branch at `01e48af6269733a309e75ed2c7d03041ade44bb0` already merges main containing #2350's complete lineage: the initial `ae336abd8` wait, corrected acquisition placement in `d67988609`, and final scoped-gate regression in `9598c1f6f451aba5b6e21125c1cef1c899aebe29`. Its helper, decorator and regression sources match that reviewed revision. Preserve this integration and the permission cleanup implementation; no additional production, recording or scheduler change is proposed.
+
+`InitialAttentionQueryGate` permits destination metadata setup, waits inside acquisition on the authoritative store for the exact target's certified initial query, checks connection/generation/scope, then delegates real acquisition. The rejected pre-tap placement prevented metadata setup. #2350's accepted verifier evidence confirms 11 acquisition regressions and focused/configured-gate attention execution; none supplies verification of this integrated candidate. Finding 1 is addressed by the merged repair and fresh focused cleanup/acquisition plus exact permission/attention replay. Complete configured gates and independent review remain dispatcher-owned and pending.
+
+The retained #2350 gate also fails permission isolation at B's dialog dismissal before cleanup. Its first failure differs from the original #2349 close mismatch after every permission stage completed. Preserve that failure separately; do not infer that this cleanup fence repairs it. If it recurs, retain pending query/delivery diagnostics and raw logcat before considering further changes. Unresolved sequence effects use only recovery assessment of model-change, offscreen-reply, attention in that order, retaining actual execution order, cold state and load metadata; an isolated pass supplies no sequence or complete-suite claim.
+
+Scope remains one permission cleanup behaviour, about 400 written lines including this revision, zero production changes, no new exported production types or migrated consumers. #2350 remains an independently reviewed main prerequisite rather than additional implementation in this ticket.
+
+## Documentation handoff
+
+- Pending for the documentation stage: `docs/recorded-tests.md`, replay lifecycle/close readiness, and `docs/knowledge/features/development-verification-gates.md`, Device gate: explain why scenario host removal needs its own fence after peer close and how earlier failures remain primary.
+- Pending for the documentation stage: carry forward the controlled red, focused permission replay and eventual complete dispatcher gate evidence, preserving failed attempts and exact revisions. Documentation does not supply pending acceptance.
