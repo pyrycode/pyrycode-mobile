@@ -41,6 +41,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
 import java.io.IOException
+import kotlin.time.Duration.Companion.minutes
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -339,27 +340,45 @@ class AuthoritativeOwnedUpsertTest {
         }
 
     @Test fun retentionInvariant_trimClearsCertification() =
-        runTest {
+        // Four independent full-cap Room reads dominate this proof; retain them within a bounded allowance (#2439).
+        runTest(timeout = 2.minutes) {
+            val started = System.nanoTime()
+            var previous = started
+
+            fun phase(code: String) {
+                val now = System.nanoTime()
+                println("retention_phase=$code phase_ms=${(now - previous) / 1_000_000} elapsed_ms=${(now - started) / 1_000_000}")
+                previous = now
+            }
+
             val cache = open()
             val original =
                 saved((1..MAX_CACHED_THREAD_ROWS).map { raw(it) }, 200_000).copy(
                     checkpoint = 190_000,
                     coverage = SavedThreadCoverage(1, 100_001, 1, false),
                 )
+            phase("fixture")
             cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
+            phase("seeded")
             val repo = wrapper(PartialCache(cache))
             var observer = observe(repo)
+            phase("observed")
             apply(repo, 210_000, raw(100_001, 210_000))
             runCurrent()
+            phase("trim_processed")
             observer.cancelAndJoin()
+            phase("trim_flushed")
             assertWork(cache, 0, 1, 1)
             // The held store still carries the old certificate. A later revision must not reinstall it.
             observer = observe(repo)
             apply(repo, 210_001, raw(100_001, 210_001))
             runCurrent()
+            phase("revision_processed")
             observer.cancelAndJoin()
+            phase("revision_flushed")
             assertWork(cache, 1, 1)
             val restored = requireNotNull(fresh())
+            phase("reopened")
             assertEquals(MAX_CACHED_THREAD_ROWS, restored.items.size)
             assertEquals(original.items.drop(1) + raw(100_001, 210_001), restored.items)
             assertEquals(210_001L, restored.appliedVersion)
@@ -386,7 +405,9 @@ class AuthoritativeOwnedUpsertTest {
                     ),
                 )
                 runCurrent()
+                phase("completion_processed")
                 observer.cancelAndJoin()
+                phase("completion_flushed")
                 assertWork(cache, 0, 0)
                 assertEquals(210_001L, repo.authoritativeThreads.current("host", "c").checkpoint)
                 if (request is ThreadQueryRequest.Page) {
@@ -399,9 +420,11 @@ class AuthoritativeOwnedUpsertTest {
                     )
                 }
                 assertEquals(restored, fresh())
+                phase("completion_reopened")
                 val reopened = wrapper(PartialCache(cache)).observeAuthoritativeThread("c").first()
                 assertEquals(0L, reopened.checkpoint)
                 assertNull(reopened.coverage)
+                phase("certificate_rejected")
             }
 
             // A fresh conservative baseline can certify a newly supplied, fully durable window.
@@ -421,9 +444,12 @@ class AuthoritativeOwnedUpsertTest {
                 ),
             )
             runCurrent()
+            phase("recovery_processed")
             observer.cancelAndJoin()
+            phase("recovery_flushed")
             assertWork(cache, 0, 0)
             assertEquals(restored.copy(checkpoint = 210_001, coverage = SavedThreadCoverage(99_802, 100_001, 99_802, true)), fresh())
+            phase("complete")
         }
 
     @Test fun retentionInvariant_coverageCompletionCannotReinstateTrimmedRange() =
