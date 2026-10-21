@@ -52,6 +52,16 @@ This is the independently useful acquisition-timing repair assigned to open sibl
 
 Focused attention replay on the unchanged reviewed source `ee784e3bce152366b6efefdaaedb082e1caf5cf5` passed: `ui-btxiaay9`, exit 0, one executed/passed, zero failed/errors/skipped. This is baseline evidence, not a repair. Recovery assessment `0b17a700adf962af43cb1e8edc2380ddb5a31c0f6de829adce72678f7774ac3b` is queued with zero executions for the retained three-method sequence; it grants no wider-run authority. The open #2350 blocker link was read back successfully. Rework raw native, parent-baseline and verifier evidence, source comparisons, request/acknowledgement and hashes are retained under agents `logs/evidence/2349/rework-20261021-macos/`.
 
+### 2026-10-21: integrate the reviewed acquisition repair
+
+The restored branch at `01e48af6269733a309e75ed2c7d03041ade44bb0` already merges main containing #2350's complete lineage: the initial `ae336abd8` wait, corrected acquisition placement in `d67988609`, and final scoped-gate regression in `9598c1f6f451aba5b6e21125c1cef1c899aebe29`. Its helper, decorator and regression sources match that reviewed revision. Preserve this integration and the permission cleanup implementation; no additional production, recording or scheduler change is proposed.
+
+`InitialAttentionQueryGate` permits destination metadata setup, waits inside acquisition on the authoritative store for the exact target's certified initial query, checks connection/generation/scope, then delegates real acquisition. The rejected pre-tap placement prevented metadata setup. #2350's accepted verifier evidence confirms 11 acquisition regressions and focused/configured-gate attention execution; none supplies verification of this integrated candidate. Finding 1 is addressed by the merged repair and fresh focused cleanup/acquisition plus exact permission/attention replay. Complete configured gates and independent review remain dispatcher-owned and pending.
+
+The retained #2350 gate also fails permission isolation at B's dialog dismissal before cleanup. Its first failure differs from the original #2349 close mismatch after every permission stage completed. Preserve that failure separately; do not infer that this cleanup fence repairs it. If it recurs, retain pending query/delivery diagnostics and raw logcat before considering further changes. Unresolved sequence effects use only recovery assessment of model-change, offscreen-reply, attention in that order, retaining actual execution order, cold state and load metadata; an isolated pass supplies no sequence or complete-suite claim.
+
+Scope remains one permission cleanup behaviour, about 400 written lines including this revision, zero production changes, no new exported production types or migrated consumers. #2350 remains an independently reviewed main prerequisite rather than additional implementation in this ticket.
+
 ## Documentation handoff
 
 - Pending for the documentation stage: `docs/recorded-tests.md`, replay lifecycle/close readiness, and `docs/knowledge/features/development-verification-gates.md`, Device gate: explain why scenario host removal needs its own fence after peer close and how earlier failures remain primary.
