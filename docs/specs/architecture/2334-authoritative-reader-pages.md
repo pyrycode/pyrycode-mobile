@@ -110,6 +110,8 @@ The production-route retirement probe failed before implementation with 1 execut
 
 The retirement probe checks applied repository selection before awaiting the exact projected rows: local loading settlement is not a ViewModel projection barrier. Keep the first repaired-class result (9 passed/1 failed) alongside the original red run; no content or bounded-read assertion is relaxed by waiting for delivery.
 
+The subsequent 9/10 run confirmed bounded recovery (202 payload decodes, 399 metadata results, nine queries), but exposed a probe error: `openingRows` can retain retired identities and both contribution flags from a live update. Count held shown facts in this fixture before awaiting its 400 exact projected rows, rather than treating selection-set cardinality as delivered content. Retain this failed XML too.
+
 ### 2026-10-21: concrete display continuation and retry contract
 
 The display continuation is separate from the unchanged raw-fact `AuthoritativeThreadPage.Continuation`. Before-key metadata seeks skip already admitted content/launch identities in bounded chunks; only selected payloads cross the codec boundary. Owned mutations resolve the boundary identity under the same epoch/incarnation, retaining the preceding key if the identity retired and avoiding a backwards jump when its placement moved. Runtime generation and cache retirement fences still reject reset/deletion.
