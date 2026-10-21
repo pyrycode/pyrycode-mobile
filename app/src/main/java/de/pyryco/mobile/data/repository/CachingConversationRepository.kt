@@ -35,9 +35,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -160,10 +163,47 @@ class CachingConversationRepository(
     private val authoritativeReaders = ConcurrentHashMap<String, CoroutineScope>()
     private val authoritativeHydrations = ConcurrentHashMap<CoroutineScope, Job>()
     private val authoritativeCursors = ConcurrentHashMap<String, AuthoritativeDisplayCursor>()
-    private val authoritativeLoads = ConcurrentHashMap<String, MutableStateFlow<AuthoritativeHistoryLoad>>()
+    private data class AuthoritativeLocalLoad(
+        val reader: CoroutineScope? = null,
+        val generation: Long = 0,
+        val load: AuthoritativeHistoryLoad = AuthoritativeHistoryLoad.Idle,
+    )
 
-    private fun localAuthoritativeHistory(conversationId: String) =
-        authoritativeLoads.computeIfAbsent(conversationId) { MutableStateFlow(AuthoritativeHistoryLoad.Idle) }
+    private val authoritativeLoads = ConcurrentHashMap<String, MutableStateFlow<AuthoritativeLocalLoad>>()
+
+    private fun localAuthoritativeLoad(conversationId: String) =
+        authoritativeLoads.computeIfAbsent(conversationId) { MutableStateFlow(AuthoritativeLocalLoad()) }
+
+    private fun currentLocalHistory(
+        conversationId: String,
+        local: AuthoritativeLocalLoad,
+    ): Boolean =
+        local.reader?.isActive == true &&
+            authoritativeReaders[conversationId] === local.reader &&
+            authoritativeThreads.current(serverId, conversationId).generation == local.generation &&
+            conversationId !in deleted && authoritativeCurrent(conversationId)
+
+    private fun localAuthoritativeHistory(conversationId: String): Flow<AuthoritativeHistoryLoad> =
+        localAuthoritativeLoad(conversationId)
+            .map { local -> local.load.takeIf { currentLocalHistory(conversationId, local) } ?: AuthoritativeHistoryLoad.Idle }
+            .distinctUntilChanged()
+
+    private fun publishLocalHistory(
+        conversationId: String,
+        reader: CoroutineScope,
+        load: AuthoritativeHistoryLoad,
+    ): Boolean {
+        val published =
+            localAuthoritativeLoad(conversationId).updateAndGet { local ->
+                if (local.reader === reader && local.generation == 0L && currentLocalHistory(conversationId, local)) {
+                    local.copy(load = load)
+                } else {
+                    local
+                }
+            }
+        return published.reader === reader && published.generation == 0L &&
+            published.load == load && currentLocalHistory(conversationId, published)
+    }
 
     private fun authoritativeCurrent(conversationId: String): Boolean =
         authoritativeLifetimes[conversationId]?.let {
@@ -182,8 +222,8 @@ class CachingConversationRepository(
         val cursor = authoritativeCursors[conversationId] ?: return false
         authoritativeHydrations.compute(reader) { _, held ->
             held?.takeIf { it.isActive } ?: reader.launch {
-                val loading = localAuthoritativeHistory(conversationId)
-                loading.value = AuthoritativeHistoryLoad.Loading
+                val loading = localAuthoritativeLoad(conversationId)
+                if (!publishLocalHistory(conversationId, reader, AuthoritativeHistoryLoad.Loading)) return@launch
                 var page: AuthoritativeThreadWindow? = null
                 try {
                     val result =
@@ -224,23 +264,27 @@ class CachingConversationRepository(
                     when {
                         result is AuthoritativeRestore.Validated -> {
                             page?.cursor?.let { authoritativeCursors[conversationId] = it }
-                            loading.value = AuthoritativeHistoryLoad.Idle
+                            publishLocalHistory(conversationId, reader, AuthoritativeHistoryLoad.Idle)
                             RelayLog.d { "event=authoritative_restore code=reader_page" }
                         }
                         page?.cursor == null && page != null -> {
-                            loading.value = AuthoritativeHistoryLoad.Idle
+                            publishLocalHistory(conversationId, reader, AuthoritativeHistoryLoad.Idle)
                             hostThread?.older(conversationId)
                             RelayLog.d { "event=authoritative_restore code=local_exhausted" }
                         }
                         result == AuthoritativeRestore.Unavailable -> {
-                            loading.value = AuthoritativeHistoryLoad.Retry
+                            publishLocalHistory(conversationId, reader, AuthoritativeHistoryLoad.Retry)
                             RelayLog.d { "event=authoritative_restore code=local_unavailable" }
                         }
-                        else -> loading.value = AuthoritativeHistoryLoad.Idle
+                        else -> publishLocalHistory(conversationId, reader, AuthoritativeHistoryLoad.Idle)
                     }
                 } finally {
-                    if (authoritativeReaders[conversationId] === reader && loading.value == AuthoritativeHistoryLoad.Loading) {
-                        loading.value = AuthoritativeHistoryLoad.Idle
+                    loading.update { local ->
+                        if (local.reader === reader && local.generation == 0L && local.load == AuthoritativeHistoryLoad.Loading) {
+                            local.copy(load = AuthoritativeHistoryLoad.Idle)
+                        } else {
+                            local
+                        }
                     }
                 }
             }
@@ -958,7 +1002,14 @@ class CachingConversationRepository(
             val restored = restoreAuthoritative(conversationId)
             coroutineScope {
                 val reader = this
-                authoritativeReaders[conversationId] = reader
+                var replaced: CoroutineScope? = null
+                authoritativeReaders.compute(conversationId) { _, previous ->
+                    replaced = previous
+                    localAuthoritativeLoad(conversationId).value =
+                        AuthoritativeLocalLoad(reader, authoritativeThreads.current(serverId, conversationId).generation)
+                    reader
+                }
+                replaced?.takeIf { it !== reader }?.let { authoritativeHydrations.remove(it)?.cancel() }
                 val writer = ThreadWriter(conversationId, this, emptyList(), 0, restored)
                 var observedGeneration = 0L
                 var observedRetirements: Map<Long, Long> = restored?.retirements.orEmpty()
@@ -1025,6 +1076,17 @@ class CachingConversationRepository(
                                 }
                             }
                         }
+                        if (snapshot.generation != observedGeneration) {
+                            localAuthoritativeLoad(conversationId).update { local ->
+                                if (local.reader === reader) {
+                                    local.copy(generation = snapshot.generation, load = AuthoritativeHistoryLoad.Idle)
+                                } else {
+                                    local
+                                }
+                            }
+                            if (authoritativeReaders[conversationId] === reader) authoritativeCursors.remove(conversationId)
+                            authoritativeHydrations.remove(reader)?.cancel()
+                        }
                         val capture = generations.incrementAndGet()
                         val reset = snapshot.generation > observedGeneration || snapshot.retirements != observedRetirements
                         if (reset) {
@@ -1039,8 +1101,9 @@ class CachingConversationRepository(
                 } finally {
                     authoritativeReaders.computeIfPresent(conversationId) { _, active ->
                         if (active === reader) {
-                            val loading = localAuthoritativeHistory(conversationId)
-                            if (loading.value == AuthoritativeHistoryLoad.Loading) loading.value = AuthoritativeHistoryLoad.Idle
+                            localAuthoritativeLoad(conversationId).update { local ->
+                                if (local.reader === reader) AuthoritativeLocalLoad() else local
+                            }
                             null
                         } else {
                             active

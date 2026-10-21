@@ -697,6 +697,7 @@ class AuthoritativeReaderPagingTest {
                 val collector = backgroundScope.launch { current.state.collect {} }
                 try {
                     current.state.first { it.authoritativeThread?.rows?.size == 200 }
+                    runCurrent()
                     assertEquals(AuthoritativeHistoryLoad.Idle, route.localHistory("c").first())
                     assertEquals(ThreadHistoryTail.Offline, current.state.value.historyTail)
                     current.onDemandOlderHistory()
@@ -708,6 +709,7 @@ class AuthoritativeReaderPagingTest {
                     assertEquals(ThreadHistoryTail.Loading, current.state.value.historyTail)
                     release.complete(Unit)
                     current.state.first { it.authoritativeThread?.rows?.size == 400 }
+                    runCurrent()
                     assertEquals(AuthoritativeHistoryLoad.Idle, route.localHistory("c").first())
                     assertEquals((201..600).map { fact(it) }, repo.authoritativeThreads.current("host", "c").items.map { it.raw })
                     current.onDemandOlderHistory()

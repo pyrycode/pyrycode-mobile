@@ -468,17 +468,6 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
 
         @Query(
             "SELECT " + AUTHORITATIVE_INDEX_FIELDS +
-                " FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id IN (:ids)",
-        )
-        suspend fun indexItems(
-            host: String,
-            conversation: String,
-            epoch: String,
-            ids: Set<Long>,
-        ): List<AuthoritativeItem>
-
-        @Query(
-            "SELECT " + AUTHORITATIVE_INDEX_FIELDS +
                 " FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND parentId=:parent",
         )
         suspend fun indexChildren(

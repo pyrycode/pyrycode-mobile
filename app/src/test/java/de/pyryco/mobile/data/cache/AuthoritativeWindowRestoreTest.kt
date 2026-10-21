@@ -1086,7 +1086,7 @@ class AuthoritativeWindowRestoreTest {
             assertEquals(listOf(fact(1), fact(2)) + items.subList(17_800, 18_000) + items.last(), window.saved.items)
             assertEquals(203, cold.lastReadCounts.itemReads)
             assertEquals(203, cold.lastReadCounts.itemDecodes)
-            assertTrue(cold.lastReadCounts.ordinalReads <= 201)
+            assertTrue(cold.lastReadCounts.ordinalReads <= 1)
             assertNotNull(window)
         }
 
