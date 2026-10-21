@@ -8,6 +8,7 @@
 - `app/src/sharedTest/java/de/pyryco/mobile/recording/RecordedSuiteTape.kt`: full-payload matching, `closeReady`, and delivered reply accounting remain strict.
 - `app/src/test/java/de/pyryco/mobile/recording/SuiteConnectionsTest.kt`: existing close and negative admission coverage.
 - `app/src/test/java/de/pyryco/mobile/recording/RecordedActivityRuleTest.kt`: `capturedBackgroundQueriesFinishBeforeTheActivityClosesItsConnection` must consume its correlated reply before activity teardown.
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/PermissionIsolationCleanup.kt` and `app/src/test/java/de/pyryco/mobile/e2e/PermissionIsolationCleanupTest.kt`: reviewed peer/fence/host ordering and its delayed correlated phone-reply fixture.
 - `app/src/main/java/de/pyryco/mobile/data/repository/RemoteConversationRepository.kt`: its single inbound collector synchronously invokes `onInbound`.
 - `app/src/main/java/de/pyryco/mobile/data/repository/AuthoritativeThreadQueries.kt`: `accept` certifies only a separately consumed terminal reply; `dispatch` reads the certified checkpoint.
 - `app/src/main/java/de/pyryco/mobile/data/repository/AuthoritativeThreadStore.kt`: batches retain facts without advancing the resumable checkpoint.
@@ -40,6 +41,7 @@ All additions are test-source only. The hub's existing scope owns replay deliver
 | Close after batch but before terminal consumption | `SuiteCloseConsumptionTest.closeWaitsForTerminalConsumptionBeforeReplacementResumes`: held checkpoint remains zero and close remains pending; after release, replacement sends 12. |
 | Cancellation while terminal is held | `SuiteCloseConsumptionTest.cancelledCollectorCannotAcknowledgeTheClosePrefix`: existing timeout fails instead of claiming completion. |
 | Another owner has unconsumed frames | `SuiteCloseConsumptionTest.closeWaitsForTerminalConsumptionBeforeReplacementResumes`: peer buffering does not satisfy or block the selected phone prefix. |
+| Pairing removal after peer completion while phone work remains | `PermissionIsolationCleanupTest.hostRemovalWaitsForPhoneCatchUpAndScheduledDeliveryAfterPeerCompletion`: retain the phone collector through the required request, delayed correlated reply and host removal. |
 | Changed checkpoint, epoch or owner | Existing `RecordedSuiteTapeTest` strict request and identity rejection tests, plus the replacement request goes through the real tape. |
 | Repeated reconnect and prompt replay | Original focused native background permission method: one active private alert, public redaction and unchanged post time, original resolution/cleanup. |
 
@@ -56,6 +58,12 @@ Write the held-terminal regression first and retain its failing executed result.
 None. If the controlled regression contradicts the consumption-boundary diagnosis, investigate before changing admission and record the revised design here.
 
 ## Revisions
+
+2026-10-21 (second verifier rework): The retained configured gate and same-tree rerun first fail at step 45, closing `phone/host-2/0` with required catch-ups at tape indices 235 and 237 unmapped (`matched=44 remaining=16`). `RelayConnectionRegistry.reconcile` closes the bundle when the permission-isolation scenario removes its pairing; later teardown repeats that sticky failure. This is scenario cleanup ordering, distinct from the original checkpoint mismatch. Main `313f151cc` supplies the reviewed `withPermissionIsolationCleanup` fence: peer close, exact phone-owner `beforeHostLinkClose`, then pairing removal, preserving original-error precedence. The dispatcher already merged that main into this worktree at `46a06d3b6`.
+
+The combined tree exposes a fixture integration gap: the cleanup regression's `phonePump.inbound.first` cancels its emission before the pump can acknowledge downstream consumption. Replace only this phone consumer with a `backgroundScope` collector and a correlated deferred receipt; assert it remains active and has received the reply when host removal begins. Keep the peer's independent completion observation, required query/delivery holds, deadline and complete-tape assertions. Audit the other synthetic close consumers: the activity fixture and teardown/replacement fixture already collect in their owned scopes; the real-repository consumption probes intentionally retain or cancel their collector. No other close fixture needs a change.
+
+This remains one close-lifecycle invariant and its regression, not another independently useful behaviour. The existing branch is about 375 inserted/deleted lines against merged main; this repair adds about 35 written lines, no exported types, signature changes or product branches, within all sizing limits. No in-flight feature branch overlaps the two edited paths. Run the cleanup, consumption, activity, connections and strict tape classes individually, then the exact permission-isolation and background-alert native methods on macOS with counted raw XML/phone evidence. Combined-candidate configured gates remain pending for the dispatcher; Linux is outside scope.
 
 2026-10-21 (verifier rework): The verifier found another synthetic close fixture without an inbound consumer: `RecordedActivityRuleTest.capturedBackgroundQueriesFinishBeforeTheActivityClosesItsConnection`. Focused reproduction on `559e0c083` executed one test and failed with the unchanged close-consumption timeout (zero passed/skipped, exit 1). Add a collector in the fixture's existing scope, assert the received `conversations` response is correlated to the actual request, and retain the activity-lifetime, query, cleanup and complete-tape assertions. This completes the existing consumption contract; the barrier, timeout, production code, tape bytes and admission remain unchanged. Run the entire affected class, the close-consumption and strict replay classes, plus the original focused native scenario. No independent behaviour slice or new state is introduced; the repair adds about 30 lines including this plan update, within the ticket's original sizing.
 
@@ -77,6 +85,7 @@ Raw original logs, baseline XML/phone diagnostics and failing regression XML are
 - Network/I/O: no producer launch, new transport or timeout extension. Missing consumption fails under the existing bounded close deadline.
 - Errors/logs: counters carry no content; sticky request mismatch and full tape consumption checks remain intact.
 - Concurrency: acknowledge after successful emission only, scoped per exact pump; cancellation and foreign-owner regressions prevent false release. No suspension under the hub lock.
+- Rework review: the scoped cleanup-fixture collector remains alive through host removal and is cancelled by `backgroundScope`; its correlated receipt cannot grant replay admission. The imported cleanup helper attempts peer/fence/host actions in order and retains earlier errors. Strict payload, owner, observation, cancellation and complete-consumption checks remain the security boundary; no recording or production change is needed.
 - Threat model: malicious relay, rooted-device token theft and hostile daemon frames remain governed by unchanged production validation/encryption/storage. Test-only scheduling cannot admit changed wire data. UI leakage is guarded by the original notification privacy assertions.
 
 **Reviewer:** builder self-review per `builder/security-review.md`.
