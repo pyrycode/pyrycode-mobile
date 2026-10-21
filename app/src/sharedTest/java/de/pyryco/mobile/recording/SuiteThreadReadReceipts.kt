@@ -38,6 +38,13 @@ internal class SuiteThreadReadReceipts(
     private val queries = mutableMapOf<Pair<String, Long>, Query>()
     private val certified = mutableMapOf<Pair<String, String>, Pair<Long, Long>>()
 
+    private class ReadEvidence(
+        val generation: Long,
+        val targets: MutableSet<ULong> = mutableSetOf(),
+    )
+
+    private val eligible = mutableMapOf<Pair<String, String>, ReadEvidence>()
+
     private fun family(owner: String) = owner.substringBeforeLast('/')
 
     private fun route(owner: String) =
@@ -80,6 +87,7 @@ internal class SuiteThreadReadReceipts(
         frame: Envelope,
     ) {
         if (owner !in owners) return
+        rememberEligible(owner)
         val payload = frame.payload as? JsonObject ?: return
         val summaries =
             when (frame.type) {
@@ -144,6 +152,36 @@ internal class SuiteThreadReadReceipts(
         } else if (frame.type in setOf("thread_item_added", "thread_item_changed", "thread_text_append")) {
             route(owner).accept(frame)
         }
+        rememberEligible(owner)
+    }
+
+    /** A read can be in flight when a later live fact overtakes its qualifying window. */
+    private fun rememberEligible(owner: String) {
+        for ((key, targets) in watermarks) {
+            if (key.first != family(owner)) continue
+            val conversation = key.second
+            val snapshot = store.current(family(owner), conversation)
+            if (snapshot.repairNeeded || snapshot.resetNeeded) {
+                eligible.keys.removeAll { family(it.first) == family(owner) && it.second == conversation }
+                continue
+            }
+            val certificate = certified[owner to conversation] ?: continue
+            if (certificate.first != snapshot.generation) continue
+            val presentation = projectAuthoritativeThread(family(owner), conversation, snapshot)
+            val checkpoint = presentation.certifiedCheckpoint ?: continue
+            if (presentation.shownRowRevisions.values.any { it > checkpoint }) continue
+            val admitted =
+                targets.filter { target ->
+                    target <= checkpoint.toULong() &&
+                        target <= certificate.second.toULong() &&
+                        presentation.shownRowRevisions.values.any { it.toULong() >= target }
+                }
+            if (admitted.isEmpty()) continue
+            val evidence =
+                eligible[owner to conversation]?.takeIf { it.generation == snapshot.generation }
+                    ?: ReadEvidence(snapshot.generation).also { eligible[owner to conversation] = it }
+            evidence.targets += admitted
+        }
     }
 
     fun handles(owner: String): Boolean = owner in owners
@@ -161,19 +199,12 @@ internal class SuiteThreadReadReceipts(
     ): Boolean {
         if (owner !in owners || target !in watermarks[family(owner) to conversation].orEmpty()) return false
         val snapshot = store.current(family(owner), conversation)
-        val certificate =
-            certified.any { (key, value) ->
-                key.second == conversation &&
-                    (key.first == owner || retained && family(key.first) == family(owner)) &&
-                    value.first == snapshot.generation &&
-                    value.second.toULong() >= target
-            }
-        if (!certificate) return false
-        val presentation = projectAuthoritativeThread(family(owner), conversation, snapshot)
-        val checkpoint = presentation.certifiedCheckpoint ?: return false
-        // Supplied content and its terminal marker prove delivery. The real UI must still qualify sight.
-        return checkpoint.toULong() >= target &&
-            presentation.shownRowRevisions.values.any { it.toULong() >= target } &&
-            presentation.shownRowRevisions.values.all { it <= checkpoint }
+        if (snapshot.repairNeeded || snapshot.resetNeeded) return false
+        return eligible.any { (key, value) ->
+            key.second == conversation &&
+                (key.first == owner || retained && family(key.first) == family(owner)) &&
+                value.generation == snapshot.generation &&
+                target in value.targets
+        }
     }
 }
