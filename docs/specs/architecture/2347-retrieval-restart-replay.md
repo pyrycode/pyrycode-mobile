@@ -131,6 +131,27 @@ phone diagnostics are retained privately at
   reload and Claude-offered-file restart. Preserve complete configured UI acceptance
   for the dispatcher before verifier PASS. The controlled ordering regression and strict
   matching requirements are unchanged; no suite independence is claimed from these runs.
+- 2026-10-21: Verifier finding 1 identifies permission-isolation host removal as a
+  separate close boundary owned by #2349. Integrate its reviewed repair through
+  `96c4e6303` and main merge `313f151cc`, already merged into this branch by
+  `8a8b2c138`. `withPermissionIsolationCleanup` closes the peer, fences the current
+  phone owner, then removes the host while preserving earlier failures. The retrieval
+  restart design, strict matching and recording remain unchanged. Recheck the cleanup,
+  acquisition, connection, tape and supervisor regressions plus the exact permission
+  and retrieval native methods. #2349's accepted dispatcher evidence is supporting
+  dependency evidence; fresh complete gates on this integrated branch remain pending
+  with the dispatcher before verifier PASS.
+
+## Documentation handoff
+
+- Pending for documentation stage: `docs/recorded-tests.md`, Complete native suite,
+  distinguish explicit graph-restart readiness from final Activity teardown: drain
+  current phone owners while request producers remain alive, excluding peers and
+  future generations. Peer completion alone does not certify phone catch-up.
+- Pending for documentation stage: `docs/knowledge/features/development-verification-gates.md`,
+  Device gate, and `docs/knowledge/features/attachment-retrieval.md`, Testing,
+  preserve the original failure diagnosis, controlled before/after evidence and eventual
+  complete dispatcher results with revisions and counts. Unfinished gates stay pending.
 
 ## Security review
 
