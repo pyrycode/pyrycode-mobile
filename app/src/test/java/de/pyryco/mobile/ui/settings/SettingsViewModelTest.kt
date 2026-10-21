@@ -1394,6 +1394,8 @@ class SettingsViewModelTest {
                 return source
             }
 
+            override val negotiatedThread: de.pyryco.mobile.data.repository.NegotiatedThread get() = TODO("not used")
+
             override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
 
             override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")

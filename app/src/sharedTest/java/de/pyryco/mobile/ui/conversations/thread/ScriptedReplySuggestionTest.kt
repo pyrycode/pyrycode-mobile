@@ -21,6 +21,21 @@ class ScriptedReplySuggestionTest {
         harness = ScriptedThreadHarness(composeRule, conversationId = C1)
         harness.start()
         harness.pushSessionTransition("", S1, "clear")
+        harness.pushEnvelope(
+            Envelope(
+                698L,
+                "conversations",
+                "2026-10-07T00:00:00Z",
+                MobileJson.parseToJsonElement(
+                    """{"conversations":[
+                        {"id":"$C1","name":"Harness channel","agent":"claude","is_promoted":true,
+                         "cwd":"/p/$C1","last_message_ts":"2026-10-07T00:00:00Z","last_used_at":"2026-10-07T00:00:00Z","current_session_id":"$S1"},
+                        {"id":"$C2","name":"another thread","agent":"claude","is_promoted":true,
+                         "cwd":"/p/$C2","last_message_ts":"2026-10-07T00:00:00Z","last_used_at":"2026-10-07T00:00:00Z","current_session_id":"$S3"}
+                    ]}""",
+                ),
+            ),
+        )
     }
 
     @After fun close() = harness.close()
@@ -42,14 +57,20 @@ class ScriptedReplySuggestionTest {
         awaitText("active")
         harness.pushEnvelope(suggestion(1, "other session", session = S2))
         harness.pushEnvelope(suggestion(1, "other conversation", conversation = C2))
+        harness.pushEnvelope(suggestion(1, "owned foreign reply", session = S3, conversation = C2))
         composeRule.waitForIdle()
         composeRule.onNodeWithText("active").assertExists()
         composeRule.onNodeWithText("other session").assertDoesNotExist()
         composeRule.onNodeWithText("other conversation").assertDoesNotExist()
         harness.pushSessionTransition(S1, S2, "clear")
+        // The daemon re-sends the new session's current reading after its clear.
+        harness.pushEnvelope(suggestion(1, "other session", session = S2))
         awaitText("other session")
         composeRule.onNodeWithText("active").assertDoesNotExist()
+        // The current-session reading above is an inbound barrier after the valid foreign reading.
+        composeRule.onNodeWithText("owned foreign reply").assertDoesNotExist()
         harness.openConversation(C2, "another thread")
+        awaitText("owned foreign reply")
         composeRule.onNodeWithText("other session").assertDoesNotExist()
         composeRule.onNodeWithText("other conversation").assertDoesNotExist()
     }
@@ -81,6 +102,7 @@ class ScriptedReplySuggestionTest {
         const val C1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         const val C2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
         const val S2 = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+        const val S3 = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
         const val S1 = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
     }
 }

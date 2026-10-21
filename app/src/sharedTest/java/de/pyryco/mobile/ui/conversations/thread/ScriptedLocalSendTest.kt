@@ -15,8 +15,14 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MobileJson
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -94,6 +100,22 @@ class ScriptedLocalSendTest {
     @Test
     fun claude_sendWaitsForItsCorrelatedAcknowledgement_thenForItsOwnTurnState() {
         start()
+        // A foreign phase must come from an admitted producer to prove conversation isolation.
+        harness.pushEnvelope(
+            Envelope(
+                698L,
+                "conversations",
+                "2026-10-07T00:00:00Z",
+                MobileJson.parseToJsonElement(
+                    """{"conversations":[
+                        {"id":"c1","name":"Harness channel","agent":"claude","is_promoted":true,
+                         "cwd":"/p/c1","last_message_ts":"2026-10-07T00:00:00Z","last_used_at":"2026-10-07T00:00:00Z","current_session_id":"session"},
+                        {"id":"another-chat","name":"Other channel","agent":"claude","is_promoted":true,
+                         "cwd":"/p/another-chat","last_message_ts":"2026-10-07T00:00:00Z","last_used_at":"2026-10-07T00:00:00Z","current_session_id":"session"}
+                    ]}""",
+                ),
+            ),
+        )
         val request = send()
         assertLocalOnly(R.string.thread_sending_label)
 
@@ -113,6 +135,58 @@ class ScriptedLocalSendTest {
         harness.pushTurnState("thinking")
         awaitReading(string(R.string.thread_thinking_label))
         composeRule.onNodeWithContentDescription(string(R.string.cd_thread_interrupt)).assertIsDisplayed()
+    }
+
+    @Test
+    fun invariantAcknowledgementAndPeerCollisionCannotAcceptTheLocalSendingRow() {
+        start()
+        val request = send()
+        acknowledge(request)
+        val payload = request.payload as JsonObject
+        val messageId = (payload.getValue("message_id") as JsonPrimitive).content
+
+        fun acceptance(
+            item: Long,
+            device: String,
+        ) = harness.pushEnvelope(
+            Envelope(
+                901,
+                "thread_item_added",
+                "2026-10-21T00:00:00Z",
+                buildJsonObject {
+                    put("conversation_id", "c1")
+                    put("epoch", "scripted")
+                    put("version", item)
+                    putJsonObject("item") {
+                        put("id", item)
+                        put("rev", item)
+                        put("order", item)
+                        put("kind", "user_message")
+                        put("session", "session")
+                        put("agent", "claude")
+                        put("active", false)
+                        put("shown", true)
+                        put("status", "delivered")
+                        put("summary", "accepted")
+                        putJsonObject("content") {
+                            put("text", "Please reply")
+                            put("message_id", messageId)
+                            put("device_id", device)
+                        }
+                    }
+                },
+            ),
+        )
+        composeRule.waitForIdle()
+        assertEquals(1, harness.authoritativeSnapshot().pendingSends.size)
+        acceptance(100, "peer-device")
+        composeRule.waitUntil(TIMEOUT_MS) { harness.authoritativeSnapshot().items.any { it.id == 100L } }
+        assertEquals(1, harness.authoritativeSnapshot().pendingSends.size)
+        acceptance(101, "scripted-device")
+        composeRule.waitUntil(TIMEOUT_MS) { harness.authoritativeSnapshot().pendingSends.isEmpty() }
+        acceptance(101, "scripted-device")
+        composeRule.waitForIdle()
+        assertEquals(2, harness.authoritativeSnapshot().items.count { it.kind == "user_message" })
     }
 
     @Test

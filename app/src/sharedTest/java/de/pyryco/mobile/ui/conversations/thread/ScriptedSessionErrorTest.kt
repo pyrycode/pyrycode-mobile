@@ -14,8 +14,10 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.network.Envelope
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
@@ -48,6 +50,31 @@ class ScriptedSessionErrorTest {
                 },
             )
         harness.start()
+        // Both conversations own a producing session before any offscreen reading is sent.
+        harness.pushEnvelope(
+            Envelope(
+                id = 699L,
+                type = "conversations",
+                ts = TS,
+                payload =
+                    buildJsonObject {
+                        putJsonArray("conversations") {
+                            for ((id, name) in listOf("c1" to "Harness channel", "other" to "Second channel")) {
+                                addJsonObject {
+                                    put("id", id)
+                                    put("name", name)
+                                    put("agent", agent.name.lowercase())
+                                    put("is_promoted", true)
+                                    put("cwd", "/p/$id")
+                                    put("current_session_id", "session")
+                                    put("last_message_ts", TS)
+                                    put("last_used_at", TS)
+                                }
+                            }
+                        }
+                    },
+            ),
+        )
     }
 
     private fun error(
