@@ -270,7 +270,7 @@ class ThreadDesignCaptureTest {
         inputs.connectionState.value = ConnectionState.Connected
         inputs.pairingRejected.value = true
         usageLimit.value = UsageLimitReading("allowed_warning", "seven_day", 0, 0.94, null)
-        inputs.backgroundTaskCount.value = 2
+        inputs.taskFacts.value = captureTaskCount(2)
         thinking()
         await("2 tasks running")
         await("usage", substring = true)
@@ -295,7 +295,7 @@ class ThreadDesignCaptureTest {
         design.capture(FOLDER, "notification-text", "620:1577")
 
         fake().setSessionSettingsReading(CONVERSATION, settings("claude-sonnet-5"))
-        runBlocking { refusals.emit(LiveRefusalEvent.Refused(refusal, "session")) }
+        emitRefusal(refusal)
         await("Switch back to Opus")
         design.capture(FOLDER, "refusal-switch-back", "646:4707")
     }
@@ -320,7 +320,7 @@ class ThreadDesignCaptureTest {
         await("Show details")
 
         fake().setSessionSettingsReading(CONVERSATION, settings("claude-sonnet-5"))
-        runBlocking { refusals.emit(LiveRefusalEvent.Refused(refusal, "session")) }
+        emitRefusal(refusal)
         await("Switch back to Opus")
         val write = CompletableDeferred<Unit>()
         settingsGate = write
@@ -340,28 +340,28 @@ class ThreadDesignCaptureTest {
 
     @Test fun backgroundTaskPanelAt412By892() {
         openThread()
-        inputs.backgroundTasks.value = populated()
-        inputs.backgroundTaskCount.value = 2
+        inputs.taskFacts.value = captureTasks(populated())
+        showTaskPanel(populated())
         openPanel()
         await("npm run build")
         design.capture(FOLDER, "tasks-populated", "568:877")
         closePanel()
 
-        inputs.backgroundTasks.value = capped()
-        inputs.backgroundTaskCount.value = 11
+        inputs.taskFacts.value = captureTasks(capped())
+        showTaskPanel(capped(), 11)
         openPanel()
         await("python3 scripts/replay_capture.py")
         design.capture(FOLDER, "tasks-capped", "568:932")
         closePanel()
 
-        inputs.backgroundTasks.value = BackgroundTaskRoster(emptyList(), 0)
-        inputs.backgroundTaskCount.value = 0
+        inputs.taskFacts.value = emptyList()
+        showTaskPanel(BackgroundTaskRoster(emptyList(), 0))
         openPanel()
         await("No background tasks")
         design.capture(FOLDER, "tasks-empty", "568:981")
         closePanel()
 
-        inputs.backgroundTasks.value = null
+        showTaskPanel(null)
         openPanel()
         await("No background-task report yet")
         design.capture(FOLDER, "tasks-never-reported", "568:997")
@@ -539,7 +539,7 @@ class ThreadDesignCaptureTest {
     fun compactAt320By700() {
         openThread()
         inputs.contextUsage.value = CONTEXT
-        inputs.backgroundTaskCount.value = 2
+        inputs.taskFacts.value = captureTaskCount(2)
         thinking()
         await("2 tasks running")
         design.capture(FOLDER, "compact-thread", "16:8")
@@ -558,7 +558,7 @@ class ThreadDesignCaptureTest {
         val refusal = refusal()
         extraItems.value = listOf(refusal)
         fake().setSessionSettingsReading(CONVERSATION, settings("claude-sonnet-5"))
-        runBlocking { refusals.emit(LiveRefusalEvent.Refused(refusal, "session")) }
+        emitRefusal(refusal)
         await("Switch back to", substring = true)
         rule.onNodeWithText("Switch back to", substring = true).performScrollTo()
         await("usage", substring = true)
@@ -578,7 +578,13 @@ class ThreadDesignCaptureTest {
         Espresso.pressBack()
         rule.waitForIdle()
 
-        inputs.backgroundTasks.value = populated()
+        val tasks = populated()
+        inputs.taskFacts.value = captureTasks(tasks)
+        inputs.taskProgress.value =
+            de.pyryco.mobile.data.repository.AuthoritativeLiveProgress(
+                sessionId = "old-session",
+                tasks = tasks.tasks.mapNotNull { task -> task.progress?.let { task.taskId to it } }.toMap(),
+            )
         openPanel()
         await("npm run build")
         design.capture(FOLDER, "compact-tasks", "568:877")
@@ -591,7 +597,7 @@ class ThreadDesignCaptureTest {
         rule.waitForIdle()
 
         // Last: the focused composer's cursor handle is its own popup root, which would confuse openMenu.
-        inputs.backgroundTasks.value = null
+        inputs.taskFacts.value = emptyList()
         keyboard()
         design.capture(FOLDER, "compact-keyboard", "676:3981")
         design.closeKeyboard()
@@ -603,9 +609,35 @@ class ThreadDesignCaptureTest {
         inputs.contextUsage.value = CONTEXT
         extraItems.value = unrecognized()
         await("Unrecognized message", substring = true)
+        // This presentation-only scene includes a historical truncation flag absent from thread facts.
+        val literal = unrecognized()
+        val current = checkNotNull(inputs.thread.value).state.value
+        val scene =
+            current.copy(
+                authoritativeThread = null,
+                items = literal,
+                displayRows =
+                    literal.map {
+                        de.pyryco.mobile.ui.conversations.thread.ThreadRow
+                            .Delivered(it)
+                    },
+            )
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            (design.view.context as ComponentActivity).setContent {
+                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                    de.pyryco.mobile.ui.conversations.thread
+                        .ThreadScreen(scene, {}, {}, ConnectionState.Connected, {})
+                }
+            }
+        }
+        rule.waitForIdle()
         rule.onNodeWithText("server_tool_use", substring = true).performClick()
         await("Payload truncated by the daemon.")
         design.capture(FOLDER, "unrecognized-message", "685:4112")
+
+        // Return to the subscribed production screen for the remaining outcome and control assertions.
+        inputs.thread.value = null
+        openThread()
 
         // #1603: the outcome is a combined Error pill in the top overlay.
         extraItems.value = listOf(ThreadItem.StoppedTurn("design-turn", "prompt_too_long", "", at(10)))
@@ -779,6 +811,45 @@ class ThreadDesignCaptureTest {
         rule.waitUntil(10_000) { checkNotNull(inputs.thread.value).attachmentStates.value["design-photo"] is AttachmentViewState.Ready }
         val spinner = hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate)
         rule.waitUntil(10_000) { rule.onAllNodes(spinner).fetchSemanticsNodes().isEmpty() }
+        rule.waitForIdle()
+    }
+
+    /** Use the exact projected row identity that arms the production switch-back offer. */
+    private fun emitRefusal(refusal: ThreadItem.ModelRefusal) {
+        val vm = checkNotNull(inputs.thread.value)
+        rule.waitUntil(5_000) {
+            vm.state.value.items
+                .filterIsInstance<ThreadItem.ModelRefusal>()
+                .any { it.banner == refusal.banner }
+        }
+        val shown =
+            vm.state.value.items
+                .filterIsInstance<ThreadItem.ModelRefusal>()
+                .single { it.banner == refusal.banner }
+        runBlocking { refusals.emit(LiveRefusalEvent.Refused(shown, "session")) }
+    }
+
+    /** Panel-only states retain literal truncation/progress metadata absent from authoritative content. */
+    private fun showTaskPanel(
+        roster: BackgroundTaskRoster?,
+        count: Int = roster?.liveCount ?: 0,
+    ) {
+        val current = checkNotNull(inputs.thread.value).state.value
+        val scene =
+            current.copy(
+                authoritativeThread = null,
+                displayRows = current.authoritativeThread?.rows,
+                backgroundTasks = roster,
+                backgroundTaskCount = count,
+            )
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            (design.view.context as ComponentActivity).setContent {
+                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                    de.pyryco.mobile.ui.conversations.thread
+                        .ThreadScreen(scene, {}, {}, ConnectionState.Connected, {})
+                }
+            }
+        }
         rule.waitForIdle()
     }
 
@@ -1110,7 +1181,15 @@ class ThreadDesignCaptureTest {
                     val fake = get<FakeConversationRepository>()
                     val repository =
                         object : ConversationRepository by fake {
-                            override val negotiatedThread = CaptureThread(checkNotNull(fake.negotiatedThread), extraItems, seedShown, queue)
+                            override val negotiatedThread =
+                                CaptureThread(
+                                    checkNotNull(fake.negotiatedThread),
+                                    extraItems,
+                                    seedShown,
+                                    queue,
+                                    inputs.taskFacts,
+                                    inputs.taskProgress,
+                                )
 
                             override fun observeLiveRootTurnEnds(conversationId: String) = inputs.turnEnds
 

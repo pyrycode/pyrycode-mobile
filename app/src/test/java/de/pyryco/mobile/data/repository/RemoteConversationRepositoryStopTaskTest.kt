@@ -151,6 +151,39 @@ class RemoteConversationRepositoryStopTaskTest {
         }
 
     @Test
+    fun successfulDistinctTargetsExpireWithoutDisconnectAndRejectStaleRefusals() =
+        runTest {
+            val (pump, repo) = repository()
+            val events = collect(repo.observeBackgroundTaskStopRefusals("c1"))
+            repeat(100) { repo.stopBackgroundTask("c1", "old-$it") }
+            testScheduler.advanceTimeBy(30_000)
+            runCurrent()
+            repo.stopBackgroundTask("c1", "current")
+            pump.sent.forEach { pump.push(error(it.id)) }
+            runCurrent()
+            assertEquals(listOf("current"), events)
+            assertTrue(repo.supportsBackgroundTaskStop)
+        }
+
+    @Test
+    fun expiredOlderAttemptCannotRetireReplacementForTheSameTask() =
+        runTest {
+            val (pump, repo) = repository()
+            val events = collect(repo.observeBackgroundTaskStopRefusals("c1"))
+            repo.stopBackgroundTask("c1", "task")
+            testScheduler.advanceTimeBy(15_000)
+            repo.stopBackgroundTask("c1", "task")
+            testScheduler.advanceTimeBy(15_000)
+            runCurrent()
+            pump.push(error(pump.sent.first().id))
+            runCurrent()
+            assertTrue(events.isEmpty())
+            pump.push(error(pump.sent.last().id))
+            runCurrent()
+            assertEquals(listOf("task"), events)
+        }
+
+    @Test
     fun failedSendRetiresCorrelationAndKeepsTaskData() =
         runTest {
             val (pump, repo) = repository()

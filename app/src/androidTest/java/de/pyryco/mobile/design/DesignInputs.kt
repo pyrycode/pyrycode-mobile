@@ -4,7 +4,6 @@ import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerEntry
-import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.HostModalState
@@ -13,6 +12,7 @@ import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.RelayConnectionController
+import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AttachmentOffer
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ContextUsage
@@ -67,8 +67,12 @@ class DesignInputs {
     /** The host's prompts; each `ModalUiState.Open` shows only in the thread its `conversationId` names. */
     val hostModal = MutableStateFlow(HostModalState())
     val questionBatch = MutableStateFlow<QuestionBatch?>(null)
-    val backgroundTasks = MutableStateFlow<BackgroundTaskRoster?>(null)
-    val backgroundTaskCount = MutableStateFlow(0)
+    internal val taskFacts = MutableStateFlow<List<ThreadItemDto>>(emptyList())
+    internal val taskProgress =
+        MutableStateFlow(
+            de.pyryco.mobile.data.repository
+                .AuthoritativeLiveProgress(),
+        )
     val pairingRejected = MutableStateFlow(false)
     val attachmentOffers = MutableStateFlow<List<AttachmentOffer>>(emptyList())
     val sessionFacts = MutableStateFlow<SessionFacts?>(null)
@@ -112,8 +116,8 @@ class DesignInputs {
                 "liveSessionEvents" to liveSessionEvents,
                 "hostModal" to hostModal,
                 "questionBatch" to questionBatch,
-                "backgroundTasks" to backgroundTasks,
-                "backgroundTaskCount" to backgroundTaskCount,
+                "taskFacts" to taskFacts,
+                "taskProgress" to taskProgress,
                 "pairingRejected" to pairingRejected,
                 "sessionFacts" to sessionFacts,
                 "contextUsage" to contextUsage,
@@ -159,6 +163,9 @@ class DesignInputs {
                 val fake = get<FakeConversationRepository>()
                 val repository =
                     object : ConversationRepository by fake {
+                        override val negotiatedThread =
+                            CaptureThread(checkNotNull(fake.negotiatedThread), taskFacts = taskFacts, taskProgress = taskProgress)
+
                         override fun observeLiveRootTurnEnds(conversationId: String) = turnEnds
 
                         override fun observeAttachmentOffers(conversationId: String) = attachmentOffers

@@ -90,7 +90,25 @@ class RestoredSubagentNestingTest {
         compose.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
-                    state = ThreadUiState("c", "Channel", items = restored, hasMessages = true, backgroundTasks = roster),
+                    state =
+                        ThreadUiState(
+                            "c",
+                            "Channel",
+                            items = restored,
+                            hasMessages = true,
+                            backgroundTasks = roster,
+                            // Literal presentation ownership is part of this scene, not inferred by the runtime.
+                            displayRows =
+                                listOf(
+                                    ThreadRow.Delivered(restored[0]),
+                                    ThreadRow.Delivered(restored[1]),
+                                    ThreadRow.AgentStartMarker("bg_agent", "Background agent", false),
+                                    ThreadRow.Delivered(restored[5]),
+                                    ThreadRow.Delivered(restored[2], agentBlockId = "bg_agent"),
+                                    ThreadRow.Delivered(restored[3], agentBlockId = "bg_agent"),
+                                    ThreadRow.Delivered(restored[4], agentBlockId = "bg_agent"),
+                                ),
+                        ),
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,

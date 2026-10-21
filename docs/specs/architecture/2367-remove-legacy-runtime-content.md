@@ -46,6 +46,8 @@ Delete exclusive tests, fixture publishers and skipped legacy cases. Preserve al
 
 No new scope or mutex. The connection collector, query expiry and fragment expiry remain connection-owned and cancel together. The authoritative store remains host-owned across reconnect. Cache writes retain collection ownership and existing non-cancellable retirement cleanup; deleting legacy branches must not change lock ordering. ViewModel jobs stay in `viewModelScope`. `ReadCheckpointRetries` retains owner-qualified pending work and its application cancellation path.
 
+Stop-refusal correlations expire after 30 seconds through jobs in the existing connection scope. Replacement, refusal, send failure and connection end cancel and remove the corresponding jobs. An old expiry cannot remove a newer attempt's request identity.
+
 ## State transitions and identity reuse
 
 | Event | Required proof |
@@ -58,6 +60,7 @@ No new scope or mutex. The connection collector, query expiry and fragment expir
 | Local send, ack, then matching daemon item | Authoritative pending-send tests retain device/message matching and feedback until acceptance. |
 | Older demand, reopen, repeated collection and cancellation | Authoritative cache/window tests retain supplied boundaries, older facts and observation cleanup. |
 | Offline durable gap and daemon restart | Retain deterministic durable-gap method and live offline/reconnect caller, with authoritative baseline, real query receipts and rendered order. |
+| Successful stops for distinct targets, expiry, same-target replacement and stale refusal | `RemoteConversationRepositoryStopTaskTest.successfulDistinctTargetsExpireWithoutDisconnectAndRejectStaleRefusals` and `expiredOlderAttemptCannotRetireReplacementForTheSameTask`, with the retained cancellation/disconnect probes. |
 
 ## Error handling
 
@@ -109,11 +112,13 @@ None requiring a product decision. Record implementation changes to this contrac
 
 - Repair the five verifier findings as one incomplete producer/consumer migration, retaining every existing scene, viewport and recovery assertion. The split-depth exception and verification floor still apply.
 - Select queued evidence from current-owner authoritative `user_message` facts with `queued` status, binding text and device/message identity to the same fact. Delivered evidence records cannot prove queue state.
-- Supply literal rows to viewport fixtures and persist authoritative parent facts for reopened ancestry. Neither fixture may reintroduce runtime reconstruction.
+- Supply literal rows to viewport fixtures and explicit Agent-child presentation ownership for reopened storage rows. The existing dormant-storage round-trip assertion remains until #2364. Neither fixture may reintroduce runtime reconstruction.
 - Design overrides subscribe to authored task facts. Capture translations preserve tool status, numeric parent links, result detail and supported live progress, unrecognized fields and canonical refusal identity. Capped/unreported panel-only presentation states remain explicit component scenes where authoritative content has no such metadata.
 - Delete the unused lifecycle fold and exclusive started/updated/roster production DTOs and codec tests. Independent-peer diagnostic DTOs belong in shared test sources; supported progress decoding and dormant storage definitions remain.
 - Bound stop refusal correlations by connection-owned timeout jobs, cancelled on replacement, refusal, send failure and disconnect. Tests must prove distinct-target cleanup and stale-refusal rejection without raw roster callbacks or authoritative content mutation.
 - Security review addendum: timeout jobs inherit the connection scope, carry only local correlation identity, and never log daemon text. No new wire admission, storage or cryptographic behavior is introduced. Existing accepted live offline/reconnect observations remain unchanged; focused scripted, capture and unit evidence is required before handoff.
+- Managed admission does not catalog the old manual `stream-queued-echo` scenario. Retain the ordinary stream method and execute the repaired queued-prompt method alongside it in `scripted stream`, using the existing background-agent runner pattern with independent phones, daemons and release fences. Preserve named XML counts for both methods; focused runner tests reject missing/skipped outcomes, retain earlier failures and preserve the inherited admission descriptor.
+- The affected capture run executed seven methods, passing six; `rowAndNoticeFramesAt412By892` exposed the historical truncation flag that authoritative presentation does not carry. Preserve that exact scene with literal rows, then reopen the subscribed screen for its existing outcome/control assertions. Capped/unreported panel metadata is likewise a literal component scene. Supported task counts and compact task rows still come from authored facts and session-owned progress.
 
 ### 2026-10-21 — Runtime removal and evidence migration
 

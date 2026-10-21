@@ -608,7 +608,7 @@ class RemoteConversationRepository internal constructor(
     val questionBatches: StateFlow<List<QuestionBatch>> = questionBatchProjection.batches
 
     /** Independent stop-refusal ledger; IDs come from the same counter as ordinary reply waiters. */
-    private val backgroundTaskStops = BackgroundTaskStops(relayRequests, pump::send, negotiatedCapabilities)
+    private val backgroundTaskStops = BackgroundTaskStops(relayRequests, pump::send, negotiatedCapabilities, scope)
 
     private val suppliedModals = MutableStateFlow(HostModalState())
     private val contextRequestOwner = Any()
