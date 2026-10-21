@@ -47,12 +47,19 @@ class AgentScenarioReportsTest(unittest.TestCase):
         return status, calls, cases
 
     def test_two_independent_outcomes_keep_the_first_failure(self):
-        status, calls, cases = self.run_cases([1, 0])
-        self.assertEqual(1, status)
-        self.assertEqual(['retained', 'restart'], calls)
-        self.assertEqual(list(scenarios.METHODS.values()), [case.get('name') for case in cases])
-        self.assertIsNotNone(cases[0].find('failure'))
-        self.assertIsNone(cases[1].find('failure'))
+        rglob = Path.rglob
+        for reverse in (False, True):
+            with self.subTest(reverse=reverse), patch.object(
+                    Path, 'rglob', autospec=True,
+                    side_effect=lambda path, pattern: iter(sorted(rglob(path, pattern), reverse=reverse))):
+                status, calls, cases = self.run_cases([1, 0])
+                self.assertEqual(1, status)
+                self.assertEqual(['retained', 'restart'], calls)
+                self.assertCountEqual(list(scenarios.METHODS.values()), [case.get('name') for case in cases])
+                by_name = {case.get('name'): case for case in cases}
+                self.assertIsNotNone(by_name[scenarios.METHODS['retained']].find('failure'))
+                self.assertFalse(any(by_name[scenarios.METHODS['restart']].find(outcome) is not None
+                                     for outcome in ('failure', 'error', 'skipped')))
 
     def test_missing_second_report_is_not_a_pass_or_duplicate_first_execution(self):
         status, _, cases = self.run_cases([0, None])
