@@ -18,6 +18,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -32,7 +33,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeDown
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
@@ -503,7 +503,24 @@ class SavedThreadFirstDrawDeviceTest {
                         composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(199)
                         composeRule.waitForIdle()
                         assertEquals(0, attempts.get())
-                        composeRule.onNode(hasScrollToIndexAction()).performTouchInput { swipeDown() }
+                        val list = composeRule.onNode(hasScrollToIndexAction())
+                        val listBounds = list.fetchSemanticsNode().boundsInRoot
+                        val header = composeRule.onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot
+                        val composer = composeRule.onNodeWithTag("thread-composer").fetchSemanticsNode().boundsInRoot
+                        val readingHeight = composer.top - header.bottom
+                        val start = header.bottom - listBounds.top + readingHeight * 0.2f
+                        val distance = readingHeight * 0.4f
+                        assertTrue(start + distance < composer.top - listBounds.top)
+                        Log.i(
+                            "SavedThreadPaging",
+                            "case=${probe.name} list=$listBounds header=$header composer=$composer start=$start distance=$distance",
+                        )
+                        list.performTouchInput {
+                            down(Offset(center.x, start))
+                            moveBy(Offset(0f, distance), delayMillis = 100)
+                            advanceEventTime(250)
+                            up()
+                        }
                         composeRule.waitUntil(15_000) { attempts.get() == 1 }
                         assertEquals(
                             200,
@@ -528,8 +545,10 @@ class SavedThreadFirstDrawDeviceTest {
                         val olderBounds = composeRule.onNodeWithText("Saved 17601.").fetchSemanticsNode().boundsInRoot
                         val viewport = composeRule.onNodeWithTag("thread-message-region").fetchSemanticsNode().boundsInRoot
                         assertTrue(
-                            olderBounds.left >= viewport.left && olderBounds.right <= viewport.right &&
-                                olderBounds.top >= viewport.top && olderBounds.bottom <= viewport.bottom,
+                            olderBounds.left >= viewport.left &&
+                                olderBounds.right <= viewport.right &&
+                                olderBounds.top >= viewport.top &&
+                                olderBounds.bottom <= viewport.bottom,
                         )
                         runBlocking { delay(300) }
                         composeRule.runOnIdle {
@@ -560,7 +579,8 @@ class SavedThreadFirstDrawDeviceTest {
                         Log.i(
                             "SavedThreadPaging",
                             "case=${probe.name} attempts=${attempts.get()} rows=400 " +
-                                "counts=${disk.authoritativeReadCounts} drawn_ms=${probe.elapsed(probe.drawn.get())}",
+                                "counts=${disk.authoritativeReadCounts} drawn_ms=${probe.elapsed(probe.drawn.get())} " +
+                                "older=$olderBounds viewport=$viewport",
                         )
                     } finally {
                         composeRule.runOnUiThread {
