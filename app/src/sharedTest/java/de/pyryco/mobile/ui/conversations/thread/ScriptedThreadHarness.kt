@@ -14,10 +14,14 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
+import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
+import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.e2e.TappingConversationRepository
+import de.pyryco.mobile.e2e.ThreadEvidenceSource
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +29,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.add
@@ -79,7 +85,45 @@ class ScriptedThreadHarness(
             scope = scope,
             // Gate open: with the default closed set, `assistant_delta` folds nothing and
             // `liveSessionEvents` stays silent (see assistantDelta_capabilityGateClosed_producesNoRow).
-            negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) },
+            negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE, "thread") },
+            authoritativeHostId = "scripted-host",
+            authoritativeDeviceId = { "scripted-device" },
+        )
+
+    private val supported = MutableStateFlow<ThreadSupport>(ThreadSupport.Supported(repo))
+    private val route =
+        object : NegotiatedThread() {
+            override val host = "scripted-host"
+            override val support = supported
+            override val store = repo.authoritativeThreads
+
+            override fun observe(conversationId: String) = repo.observeAuthoritativeThread(conversationId)
+
+            override fun progress(
+                conversationId: String,
+                connection: Any,
+            ) = repo.observeAuthoritativeProgress(conversationId)
+
+            override suspend fun open(conversationId: String) = repo.openAuthoritativeThread(conversationId)
+
+            override suspend fun acquire(
+                conversationId: String,
+                connection: Any,
+            ) = repo.acquireAuthoritativeThread(conversationId)
+
+            override fun older(conversationId: String) = repo.requestOlderAuthoritativeThread(conversationId)
+
+            override fun cancel(conversationId: String) = repo.cancelAuthoritativeThread(conversationId)
+        }
+    private val repository =
+        TappingConversationRepository(
+            object : ConversationRepository by repo {
+                override val negotiatedThread = route
+
+                override fun observeMessages(conversationId: String): Flow<List<de.pyryco.mobile.data.repository.ThreadItem>> =
+                    error("legacy rows used by authoritative fixture")
+            },
+            tapNegotiated = true,
         )
 
     /** Records taps on the interrupt affordance (#459) — the recording analog of #458's send path,
@@ -93,11 +137,11 @@ class ScriptedThreadHarness(
 
     private fun newVm(conversationId: String) =
         ThreadViewModel(
-            savedStateHandle = SavedStateHandle(mapOf("conversationId" to conversationId)),
+            savedStateHandle = SavedStateHandle(mapOf("serverId" to "scripted-host", "conversationId" to conversationId)),
             // #586: the same inert tap the live graph installs, so the rung-2 non-vacuity proof covers the
             // whole chain (scripted envelope → real fold → tap → recorder → finding) rather than a pure
             // function in isolation. It records and nothing more, so every other scenario is unaffected.
-            repository = TappingConversationRepository(repo),
+            repository = repository,
             connectionStateSource = connectionStateSource,
             // #789: a store of this harness's own — the scenarios never type, and an isolated one keeps
             // the scripted render independent of any other surface's composer state.
@@ -165,7 +209,18 @@ class ScriptedThreadHarness(
     fun pushEnvelope(envelope: Envelope) = pump.push(envelope)
 
     /** Retained rows for assertions that also run in the scripted device gate. */
-    internal fun observeMessages() = repo.observeMessages(conversationId)
+    internal fun observeMessages() =
+        repo.observeAuthoritativeThread(conversationId).map {
+            projectAuthoritativeThread("scripted-host", conversationId, it).items
+        }
+
+    internal fun observeEvidence() = ThreadEvidenceSource.negotiated(route).observe(conversationId)
+
+    internal fun presentation() = projectAuthoritativeThread("scripted-host", conversationId, authoritativeSnapshot())
+
+    internal fun itemKey(name: String) = "${presentation().scope}:${pump.itemId(conversationId, name)}"
+
+    internal fun authoritativeSnapshot() = repo.authoritativeThreads.current("scripted-host", conversationId)
 
     internal fun observeContextUsage() = repo.observeContextUsage(conversationId)
 
@@ -375,6 +430,7 @@ class ScriptedThreadHarness(
 
     /** Cancel [scope] — stops the inbound collector and the DataStore scope. Call from `@After`. */
     fun close() {
+        supported.value = ThreadSupport.Missing(repo)
         scope.cancel()
     }
 
@@ -429,13 +485,19 @@ private class FakeSessionPump(
     private val onSend: (Envelope) -> Boolean,
 ) : SessionPump {
     private val inboundChannel = Channel<Envelope>(Channel.UNLIMITED)
+    private val content = ScriptedThreadContent { inboundChannel.trySend(it) }
 
     override val inbound: Flow<Envelope> = inboundChannel.receiveAsFlow()
 
-    override fun send(envelope: Envelope): Boolean = onSend(envelope)
+    override fun send(envelope: Envelope): Boolean = onSend(envelope).also { if (it) content.respond(envelope) }
+
+    fun itemId(
+        conversation: String,
+        name: String,
+    ) = content.id(conversation, name)
 
     fun push(envelope: Envelope) {
-        inboundChannel.trySend(envelope)
+        content.push(envelope)
     }
 }
 

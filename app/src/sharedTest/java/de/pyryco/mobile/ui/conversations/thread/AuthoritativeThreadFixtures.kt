@@ -5,10 +5,36 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativePendingSend
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
+import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
+import de.pyryco.mobile.data.repository.NegotiatedThread
+import de.pyryco.mobile.data.repository.ThreadSupport
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+
+/** A retained supported-flow double supplies complete facts, never legacy repository rows. */
+internal class FixtureThread(
+    override val host: String,
+) : NegotiatedThread() {
+    val facts = MutableStateFlow<List<ThreadItemDto>>(emptyList())
+    override val support = MutableStateFlow<ThreadSupport>(ThreadSupport.Supported(this))
+    override val store = AuthoritativeThreadStore()
+
+    override fun observe(conversationId: String) =
+        facts.map { items ->
+            store.establishComplete(host, conversationId, "fixture", items.maxOfOrNull { it.rev } ?: 0, items, 0)
+            store.current(host, conversationId)
+        }
+
+    override suspend fun open(conversationId: String) = true
+
+    override fun older(conversationId: String) = false
+
+    override fun cancel(conversationId: String) = Unit
+}
 
 internal fun authoritativeItem(
     id: Long,

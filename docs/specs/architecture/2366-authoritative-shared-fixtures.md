@@ -75,3 +75,10 @@ Pending documentation stage: update shared-harness/evidence descriptions in `doc
 ## Open Questions
 
 None at initial planning. Implementation findings that change contracts will be recorded under Revisions.
+
+## Revisions
+
+- 2026-10-21: The scenario adapter retains the existing operation vocabulary but sends only supplied item facts and session-tagged live readings across the pump. It answers actual catch-up requests with a separate correlated batch and final marker. This keeps all construction sites stable without letting legacy reduction supply rendered content.
+- 2026-10-21: Authoritative messages have scoped item keys and no client-reduced delta metadata. Reply-order positives and duplicate/order negatives now use `ThreadEvidence`; the three old delta-sequence rejection checks retain explicit literal presentation inputs that never enter the repository or screen. Agent assertions use scoped daemon identities and the actual authoritative presentation, including its separate lifecycle markers.
+- 2026-10-21: Recovery session replacement is exercised with its supplied divider and the supported `SessionReplaced` live control. The historical/older-divider check supplies facts without that control and must retain the recovery notice. Its existing clear assertion now checks the canonical `session` reason rather than the legacy `session_boundary` reason; no recovery outcome is relaxed.
+- 2026-10-21: The managed test selector requires one exact class per invocation. A wildcard and a multi-class selection were refused before execution; run the affected class inventory individually. The initial route regression executed once and failed because no thread query was sent, then executed once and passed after migration, with no skips.

@@ -34,6 +34,8 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -131,7 +133,22 @@ class ThreadViewModelRefusalOfferTest {
     @Test
     fun refusalRowsInTheThread_neverArm() =
         runTest {
-            repo.rows.value = listOf(row(ORIGINAL, FALLBACK, T1))
+            repo.rows.value =
+                listOf(
+                    authoritativeItem(
+                        1,
+                        "notice",
+                        session = SESSION,
+                        subtype = "model_refusal_fallback",
+                        content =
+                            buildJsonObject {
+                                put("original_model", ORIGINAL)
+                                put("fallback_model", FALLBACK)
+                                put("banner", "Retried.")
+                                put("occurred_at", T1.toString())
+                            }.toString(),
+                    ),
+                )
             val vm = collectedVm()
 
             assertTrue(
@@ -516,12 +533,13 @@ class ThreadViewModelRefusalOfferTest {
     private inner class RecordingRepo(
         val fake: FakeConversationRepository = FakeConversationRepository(),
     ) : ConversationRepository by fake {
-        var route: NegotiatedThread? = null
+        private val thread = FixtureThread(SERVER)
+        var route: NegotiatedThread? = thread
         override val negotiatedThread get() = route
         val readings = MutableStateFlow<SessionSettings?>(reading())
         val announced = MutableStateFlow<AnnouncedModel?>(null)
         val refusals = MutableSharedFlow<LiveRefusalEvent>()
-        val rows = MutableStateFlow<List<ThreadItem>>(emptyList())
+        val rows = thread.facts
         val settings = mutableListOf<SetSessionSettingsPayloadDto>()
         var hold: CompletableDeferred<Unit>? = null
         var failWith: Exception? = null
@@ -533,7 +551,7 @@ class ThreadViewModelRefusalOfferTest {
 
         override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> = refusals
 
-        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = rows
+        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = error("legacy rows must not supply refusal evidence")
 
         override fun refreshSessionSettings(conversationId: String) {
             refreshes++
