@@ -108,6 +108,8 @@ Finding 2 changes the 18000-display-row walk to separated saved groups with genu
 
 The production-route retirement probe failed before implementation with 1 executed/1 failed: demand settled with 200 rather than 400 visible rows after the committed ancestor move. The failed XML is retained. Its older active extra also guards against recovering from the oldest global admitted row instead of the reader's captured window frontier.
 
+The retirement probe checks applied repository selection before awaiting the exact projected rows: local loading settlement is not a ViewModel projection barrier. Keep the first repaired-class result (9 passed/1 failed) alongside the original red run; no content or bounded-read assertion is relaxed by waiting for delivery.
+
 ### 2026-10-21: concrete display continuation and retry contract
 
 The display continuation is separate from the unchanged raw-fact `AuthoritativeThreadPage.Continuation`. Before-key metadata seeks skip already admitted content/launch identities in bounded chunks; only selected payloads cross the codec boundary. Owned mutations resolve the boundary identity under the same epoch/incarnation, retaining the preceding key if the identity retired and avoiding a backwards jump when its placement moved. Runtime generation and cache retirement fences still reject reset/deletion.
