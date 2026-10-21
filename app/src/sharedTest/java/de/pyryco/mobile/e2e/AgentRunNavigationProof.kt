@@ -14,6 +14,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import org.junit.Assert.assertEquals
@@ -30,6 +31,7 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
     expandLabel: String,
     collapseLabel: String,
     markerMatcher: SemanticsMatcher = hasText(goLabel) and hasClickAction(),
+    ownedChildKey: String? = null,
     evidence: (String) -> Unit = {},
 ) {
     require(childIds.isNotEmpty()) { "Agent proof needs loaded owned children" }
@@ -135,7 +137,14 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
     tapAndAwait(closed, opened, "open", expandedAfter = true)
     assertTrue("opened run must contain every loaded child key", childIndexes().all { it >= 0 })
     // Positive owned visibility first: an off-screen paragraph is not evidence of collapse.
-    list.performScrollToNode(ownedChild)
+    if (ownedChildKey == null) {
+        list.performScrollToNode(ownedChild)
+    } else {
+        assertTrue("reveal key belongs to this Agent", ownedChildKey in childIds)
+        val index = list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:$ownedChildKey")
+        assertTrue("the exact owned child remains in the opened run", index >= 0)
+        list.performScrollToIndex(index)
+    }
     // Claude may emit several paragraphs or split text around tools. Visibility, not a
     // single prescribed paragraph, is the navigation contract.
     val top = onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot.bottom
