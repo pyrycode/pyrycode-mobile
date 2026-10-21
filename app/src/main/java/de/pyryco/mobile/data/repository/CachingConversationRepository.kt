@@ -163,6 +163,7 @@ class CachingConversationRepository(
     private val authoritativeReaders = ConcurrentHashMap<String, CoroutineScope>()
     private val authoritativeHydrations = ConcurrentHashMap<CoroutineScope, Job>()
     private val authoritativeCursors = ConcurrentHashMap<String, AuthoritativeDisplayCursor>()
+
     private data class AuthoritativeLocalLoad(
         val reader: CoroutineScope? = null,
         val generation: Long = 0,

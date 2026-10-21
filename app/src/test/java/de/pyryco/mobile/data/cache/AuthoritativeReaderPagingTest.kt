@@ -609,6 +609,7 @@ class AuthoritativeReaderPagingTest {
                 }
             destination(cache, online = true) { fixture, vm, repo ->
                 val route = requireNotNull(repo.negotiatedThread)
+
                 fun requests() = fixture.requests.filter { it.type in setOf("thread_page", "thread_catch_up") }
                 vm.state.first { it.authoritativeThread?.rows?.size == 200 }
                 vm.onDemandOlderHistory()
@@ -634,7 +635,13 @@ class AuthoritativeReaderPagingTest {
                 vm.state.first { it.authoritativeThread?.sourceSnapshot?.checkpoint == 1000L }
                 runCurrent()
                 assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
-                assertEquals(listOf(fact(600)), repo.authoritativeThreads.current("host", "c").items.map { it.raw })
+                assertEquals(
+                    listOf(fact(600)),
+                    repo.authoritativeThreads
+                        .current("host", "c")
+                        .items
+                        .map { it.raw },
+                )
                 advanceTimeBy(1000)
                 runCurrent()
                 assertEquals(beforeReset + 1, requests().size)
@@ -649,10 +656,21 @@ class AuthoritativeReaderPagingTest {
                     """{"conversation_id":"c","epoch":"e","version":1000,"items":[${fact(599)}],"final":true,
                     "lower_order":0,"upper_order":1200,"continuation":0,"older_exists":false}""",
                 )
-                vm.state.first { it.authoritativeThread?.sourceSnapshot?.coverage?.olderExists == false }
+                vm.state.first {
+                    it.authoritativeThread
+                        ?.sourceSnapshot
+                        ?.coverage
+                        ?.olderExists == false
+                }
                 runCurrent()
                 assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
-                assertEquals(listOf(fact(599), fact(600)), repo.authoritativeThreads.current("host", "c").items.map { it.raw })
+                assertEquals(
+                    listOf(fact(599), fact(600)),
+                    repo.authoritativeThreads
+                        .current("host", "c")
+                        .items
+                        .map { it.raw },
+                )
                 vm.onDemandOlderHistory()
                 advanceTimeBy(1000)
                 runCurrent()
@@ -711,7 +729,13 @@ class AuthoritativeReaderPagingTest {
                     current.state.first { it.authoritativeThread?.rows?.size == 400 }
                     runCurrent()
                     assertEquals(AuthoritativeHistoryLoad.Idle, route.localHistory("c").first())
-                    assertEquals((201..600).map { fact(it) }, repo.authoritativeThreads.current("host", "c").items.map { it.raw })
+                    assertEquals(
+                        (201..600).map { fact(it) },
+                        repo.authoritativeThreads
+                            .current("host", "c")
+                            .items
+                            .map { it.raw },
+                    )
                     current.onDemandOlderHistory()
                     current.state.first { it.historyTail == ThreadHistoryTail.Retry }
                     advanceTimeBy(1000)
