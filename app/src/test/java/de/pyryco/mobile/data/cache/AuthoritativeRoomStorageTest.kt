@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.HistoryCoverage
 import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -38,6 +39,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
 import java.io.IOException
+import kotlin.time.Duration.Companion.minutes
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -91,6 +93,194 @@ class AuthoritativeRoomStorageTest {
     ) {
         store.writeAuthoritativeThread(host, thread, value).getOrThrow()
     }
+
+    private fun deepFacts(): List<JsonObject> =
+        (1..18_001).map { id ->
+            JsonObject(
+                raw(id) +
+                    mapOf(
+                        "parent" to JsonPrimitive(if (id == 18_001) 1 else id - 1),
+                        "shown" to JsonPrimitive(id >= 18_000),
+                        "kind" to JsonPrimitive(if (id == 1) "agent" else "future-kind"),
+                    ),
+            )
+        }
+
+    private fun assertDeepContributions() {
+        val leaf = "0000000000000018000" + "2147501647:18000"
+        val sibling = "0000000000000018001" + "2147501648:18001"
+        val rootTie = "0000000000000000001" + "2147483648:1"
+        requireNotNull(database)
+            .openHelper.readableDatabase
+            .query(
+                "SELECT id,anchorContribution,tieContribution FROM authoritative_items WHERE host='Host' AND conversation='thread' ORDER BY ordinal",
+            ).use { cursor ->
+                var count = 0
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(0)
+                    assertEquals(if (id == 18_001L) sibling else leaf, cursor.getString(1))
+                    assertEquals(
+                        if (id == 1L) {
+                            rootTie
+                        } else if (id == 18_001L) {
+                            sibling
+                        } else {
+                            leaf
+                        },
+                        cursor.getString(2),
+                    )
+                    count++
+                }
+                assertEquals(18_001, count)
+            }
+    }
+
+    @Test fun availabilityInvariant_deepImportAndMigrationPreserveContributions() =
+        runTest(timeout = 5.minutes) {
+            val value = saved(deepFacts())
+            val cycle = saved((1..3).map { JsonObject(raw(it) + ("parent" to JsonPrimitive(if (it == 1) 3 else it - 1))) })
+            seed(open(), value)
+            seed(requireNotNull(database).let { AuthoritativeRoomStorage(it) }, cycle, thread = "cycle")
+            assertEquals(value, open().readAuthoritativeThread("Host", "thread"))
+            assertEquals(cycle, open().readAuthoritativeThread("Host", "cycle"))
+            assertDeepContributions()
+            database?.close()
+
+            val upgradePath = File(temporary.root, "upgrade.db").absolutePath
+            val schema =
+                MobileJson
+                    .parseToJsonElement(
+                        File("src/main/roomSchemas/de.pyryco.mobile.data.cache.ConversationCacheDatabase/9.json").readText(),
+                    ).jsonObject
+                    .getValue("database")
+                    .jsonObject
+            SQLiteDatabase.openOrCreateDatabase(upgradePath, null).use { db ->
+                for (entry in schema.getValue("entities").jsonArray) {
+                    val entity = entry.jsonObject
+                    val table = entity.getValue("tableName").jsonPrimitive.content
+                    db.execSQL(
+                        entity
+                            .getValue("createSql")
+                            .jsonPrimitive.content
+                            .replace("\${TABLE_NAME}", table),
+                    )
+                    entity["indices"]?.jsonArray?.forEach {
+                        db.execSQL(
+                            it.jsonObject
+                                .getValue("createSql")
+                                .jsonPrimitive.content
+                                .replace("\${TABLE_NAME}", table),
+                        )
+                    }
+                }
+                schema.getValue("setupQueries").jsonArray.forEach { db.execSQL(it.jsonPrimitive.content) }
+                db.beginTransaction()
+                try {
+                    for ((conversation, fixture) in mapOf("thread" to value, "cycle" to cycle)) {
+                        db.execSQL(
+                            "INSERT INTO authoritative_headers VALUES (?,?,?,?,?,?,?,?,?)",
+                            arrayOf<Any?>(
+                                "Host",
+                                conversation,
+                                fixture.epoch,
+                                "generation",
+                                fixture.appliedVersion,
+                                fixture.checkpoint,
+                                MobileJson.encodeToString(SavedThreadCoverage.serializer(), requireNotNull(fixture.coverage)),
+                                fixture.items.size,
+                                fixture.incarnation,
+                            ),
+                        )
+                        fixture.items.forEachIndexed { ordinal, raw ->
+                            val item = ThreadItemDto.decodeReplacement(raw)
+                            db.execSQL(
+                                "INSERT INTO authoritative_items (host,conversation,epoch,id,ordinal,orderKey,payload,display,extra) VALUES (?,?,?,?,?,?,?,?,?)",
+                                arrayOf<Any?>(
+                                    "Host",
+                                    conversation,
+                                    fixture.epoch,
+                                    item.id,
+                                    ordinal,
+                                    item.order,
+                                    raw.toString(),
+                                    if (item.savedDisplayRow()) 1 else 0,
+                                    if (item.savedRendererExtra()) 1 else 0,
+                                ),
+                            )
+                        }
+                    }
+                    db.version = 9
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            }
+            val upgraded =
+                Room
+                    .databaseBuilder(
+                        ApplicationProvider.getApplicationContext(),
+                        ConversationCacheDatabase::class.java,
+                        upgradePath,
+                    ).build()
+            database = upgraded
+            assertEquals(value, AuthoritativeRoomStorage(upgraded).readAuthoritativeThread("Host", "thread"))
+            assertEquals(cycle, AuthoritativeRoomStorage(upgraded).readAuthoritativeThread("Host", "cycle"))
+            assertDeepContributions()
+            upgraded.close()
+            val reopened =
+                Room
+                    .databaseBuilder(
+                        ApplicationProvider.getApplicationContext(),
+                        ConversationCacheDatabase::class.java,
+                        upgradePath,
+                    ).build()
+            database = reopened
+            assertEquals(value, AuthoritativeRoomStorage(reopened).readAuthoritativeThread("Host", "thread"))
+            assertEquals(cycle, AuthoritativeRoomStorage(reopened).readAuthoritativeThread("Host", "cycle"))
+            assertDeepContributions()
+        }
+
+    @Test fun availabilityInvariant_deepAndCyclicWinningPathsResolveWitnesses() =
+        runTest(timeout = 5.minutes) {
+            val value = saved(deepFacts())
+            seed(open(), value)
+            seed(requireNotNull(database).let { AuthoritativeRoomStorage(it) }, saved(listOf(raw(1))), host = "other")
+            val store = open()
+            for (cyclic in listOf(false, true)) {
+                val root =
+                    JsonObject(
+                        value.items.first() +
+                            mapOf(
+                                "rev" to JsonPrimitive(200_001),
+                                "order" to JsonPrimitive(2),
+                                "parent" to JsonPrimitive(if (cyclic) 18_000 else 0),
+                            ),
+                    )
+                val hidden = JsonObject(value.items[17_999] + mapOf("rev" to JsonPrimitive(200_002), "shown" to JsonPrimitive(false)))
+                val resolved =
+                    requireNotNull(
+                        store.parentClosure(
+                            "Host",
+                            "thread",
+                            value.epoch,
+                            emptySet(),
+                            emptySet(),
+                            structuralChanges = listOf(root, hidden).map(ThreadItemDto::decodeReplacement),
+                        ),
+                    )
+                assertEquals(listOf(value.items.first(), value.items.last()), resolved.items)
+                assertEquals(value.checkpoint, resolved.checkpoint)
+                assertEquals(value.coverage, resolved.coverage)
+                assertEquals(value.appliedVersion, resolved.appliedVersion)
+                assertTrue(store.lastReadCounts.queries <= (if (cyclic) 2 else 1) * 54_010)
+                assertEquals((if (cyclic) 2 else 1) * 2, store.lastReadCounts.itemDecodes)
+                assertEquals(0, store.fullReads)
+                println("deep_contribution cyclic=$cyclic counts=${store.lastReadCounts}")
+            }
+            assertEquals(value, open().readAuthoritativeThread("Host", "thread"))
+            assertEquals(saved(listOf(raw(1))), open().readAuthoritativeThread("other", "thread"))
+            assertDeepContributions()
+        }
 
     @Test fun orderingInvariant_restartAndBackwardTraversal() =
         runTest {

@@ -45,12 +45,9 @@ internal fun AuthoritativeItem.savedContributions(children: Pair<String, String>
 internal fun savedContributionIndex(facts: Collection<AuthoritativeItem>): Map<Long, Pair<String, String>> {
     val children = facts.groupBy { it.parentId }
     val result = mutableMapOf<Long, Pair<String, String>>()
-    val visiting = mutableSetOf<Long>()
-
-    fun visit(item: AuthoritativeItem): Pair<String, String> {
-        result[item.id]?.let { return it }
-        if (!visiting.add(item.id)) return "" to ""
-        val keys = children[item.id].orEmpty().map(::visit)
+    for (item in savedContributionPostorder(facts)) {
+        // Unfinished ancestors have no summary, preserving the empty contribution of a cycle edge.
+        val keys = children[item.id].orEmpty().mapNotNull { result[it.id] }
         val anchor =
             keys
                 .map { it.first }
@@ -63,12 +60,29 @@ internal fun savedContributionIndex(facts: Collection<AuthoritativeItem>): Map<L
                 .filter { it.isNotEmpty() }
                 .minOrNull()
                 .orEmpty()
-        return item.savedContributions(anchor to tie).also {
-            result[item.id] = it
-            visiting.remove(item.id)
+        result[item.id] = item.savedContributions(anchor to tie)
+    }
+    return result
+}
+
+/** Held-order DFS without a JVM call frame per parent; back edges never schedule a node twice. */
+internal fun savedContributionPostorder(facts: Collection<AuthoritativeItem>): List<AuthoritativeItem> {
+    val children = facts.groupBy { it.parentId }
+    val seen = mutableSetOf<Long>()
+    val result = mutableListOf<AuthoritativeItem>()
+    val pending = ArrayDeque<Pair<AuthoritativeItem, Boolean>>()
+    for (root in facts) {
+        pending.addLast(root to false)
+        while (pending.isNotEmpty()) {
+            val (item, expanded) = pending.removeLast()
+            if (expanded) {
+                result += item
+            } else if (seen.add(item.id)) {
+                pending.addLast(item to true)
+                children[item.id].orEmpty().asReversed().forEach { pending.addLast(it to false) }
+            }
         }
     }
-    facts.forEach(::visit)
     return result
 }
 

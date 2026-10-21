@@ -638,6 +638,7 @@ class AuthoritativeRoomStorage internal constructor(
         if (changes.isEmpty()) return emptySet()
         val facts = loaded.toMutableMap()
         val affected = mutableSetOf<Long>()
+        val formerChildren = mutableMapOf<Long, MutableSet<Long>>()
 
         suspend fun index(id: Long): AuthoritativeItem? {
             facts[id]?.let { return it }
@@ -661,6 +662,7 @@ class AuthoritativeRoomStorage internal constructor(
             val stored = decoded[item.id]?.let(ThreadItemDto::decodeReplacement)
             if (stored != null && (stored.rev >= item.rev || stored.sameSavedStructure(item))) continue
             val old = index(item.id)
+            old?.let { formerChildren.getOrPut(it.parentId) { mutableSetOf() }.add(it.id) }
             ancestors(old?.parentId ?: 0)
             val base = old ?: AuthoritativeItem(host, conversation, saved.epoch, item.id, Int.MAX_VALUE, orderKey(item), "")
             facts[item.id] =
@@ -678,32 +680,28 @@ class AuthoritativeRoomStorage internal constructor(
             ancestors(item.parent ?: 0)
         }
         val summaries = mutableMapOf<Long, Pair<String, String>>()
-        val visiting = mutableSetOf<Long>()
         val witnesses = mutableSetOf<Long>()
-
-        suspend fun reduce(id: Long): Pair<String, String> {
-            summaries[id]?.let { return it }
-            if (!visiting.add(id)) return "" to ""
-            val item = facts.getValue(id)
-            val anchor = dao.anchorContribution(host, conversation, saved.epoch, id, affected)
-            val tie = dao.tieContribution(host, conversation, saved.epoch, id, affected)
+        val affectedFacts = affected.map { facts.getValue(it) }
+        val children = affectedFacts.groupBy { it.parentId }
+        for (item in savedContributionPostorder(affectedFacts)) {
+            val id = item.id
+            // Exclude both saved and winning child positions; moved children cannot supply stale summaries.
+            val excluded = formerChildren[id].orEmpty() + children[id].orEmpty().map { it.id }
+            val anchor = dao.anchorContribution(host, conversation, saved.epoch, id, excluded)
+            val tie = dao.tieContribution(host, conversation, saved.epoch, id, excluded)
             lastReadCounts =
                 lastReadCounts.copy(
                     queries = lastReadCounts.queries + 2,
                     itemReads = lastReadCounts.itemReads + listOfNotNull(anchor, tie).size,
                 )
-            val children = affected.mapNotNull(facts::get).filter { it.parentId == id }.map { reduce(it.id) }
-            val first = (children.map { it.first } + listOfNotNull(anchor)).filter { it.isNotEmpty() }.minOrNull().orEmpty()
-            val held = (children.map { it.second } + listOfNotNull(tie)).filter { it.isNotEmpty() }.minOrNull().orEmpty()
+            val keys = children[id].orEmpty().mapNotNull { summaries[it.id] }
+            val first = (keys.map { it.first } + listOfNotNull(anchor)).filter { it.isNotEmpty() }.minOrNull().orEmpty()
+            val held = (keys.map { it.second } + listOfNotNull(tie)).filter { it.isNotEmpty() }.minOrNull().orEmpty()
             if (item.agent) {
                 for (key in listOf(first, held).filter { it.isNotEmpty() }) witnesses += key.substringAfterLast(':').toLong()
             }
-            return item.savedContributions(first to held).also {
-                summaries[id] = it
-                visiting.remove(id)
-            }
+            summaries[id] = item.savedContributions(first to held)
         }
-        affected.forEach { reduce(it) }
         return witnesses
     }
 
