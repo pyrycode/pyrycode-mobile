@@ -117,3 +117,19 @@ The native baseline's raw XML and phone trace are under the adjacent
 `builder-baseline-20261021/`; daemon/binary metadata is in
 `harness/fault-f89f38493678f0dae4054c591c2b34e8/`.
 Native checkpoint logs identify each stage without offer text or connection secrets.
+
+### 2026-10-21 — Focused native verification
+
+Linux `scripted reply-suggestion` on pushed candidate
+`c225d335bb83120f7395ffd95bb8cfc328e8e3c6` executed/passed the named method once,
+with zero failures, errors or skips. All seven checkpoint stages reached completion.
+This invocation had no producer gap; the controlled replacement probes provide the
+causal proof, rather than a claim that a native passing rerun alone proves reliability.
+Raw XML, phone and isolated-daemon logs, APK/source hashes and counted provenance
+are retained and hash-verified under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2436/builder-native-c225d335b-20261021/`.
+Daemon source is `2c68b595440dd7e8e843af9cff0d9a708bcc81a7`; its binary SHA-256 is
+`d93c56662d0072e8aec9d1466bee3f6845f7cdc55247273f177b48b209bdb6ac`.
+The four focused JVM classes executed/passed 19 tests, with zero failures or skips;
+their raw reports are in the adjacent `builder-green-jvm-20261021/` directory.
+Lint passed. Complete configured scripted acceptance remains dispatcher/verifier-owned.
