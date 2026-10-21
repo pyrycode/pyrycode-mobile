@@ -628,9 +628,14 @@ class AuthoritativeReaderPagingTest {
                 assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
                 // Daemon synchronization owns its request slot, not the legacy/local Loading tail.
                 assertEquals(beforeReset + 1, requests().size)
+                val newest = requests().last()
                 fixture.reply(
-                    requests().last(),
-                    """{"conversation_id":"c","epoch":"e","version":1000,"items":[${fact(600)}],"final":true,
+                    newest,
+                    """{"conversation_id":"c","epoch":"e","version":1000,"items":[${fact(600)}],"final":false}""",
+                )
+                fixture.reply(
+                    newest,
+                    """{"conversation_id":"c","epoch":"e","version":1000,"items":[],"final":true,
                     "lower_order":1200,"upper_order":1201,"continuation":1200,"older_exists":true}""",
                 )
                 vm.state.first { it.authoritativeThread?.sourceSnapshot?.checkpoint == 1000L }
@@ -652,9 +657,14 @@ class AuthoritativeReaderPagingTest {
                 assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
                 assertEquals(beforeReset + 2, requests().size)
                 assertEquals(JsonPrimitive(1200), requests().last().payload.jsonObject["before_order"])
+                val older = requests().last()
                 fixture.reply(
-                    requests().last(),
-                    """{"conversation_id":"c","epoch":"e","version":1000,"items":[${fact(599)}],"final":true,
+                    older,
+                    """{"conversation_id":"c","epoch":"e","version":1000,"items":[${fact(599)}],"final":false}""",
+                )
+                fixture.reply(
+                    older,
+                    """{"conversation_id":"c","epoch":"e","version":1000,"items":[],"final":true,
                     "lower_order":0,"upper_order":1200,"continuation":0,"older_exists":false}""",
                 )
                 vm.state.first {
