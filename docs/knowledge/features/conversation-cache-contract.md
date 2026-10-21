@@ -119,7 +119,7 @@ static operation/failure codes. Legacy rows remain readable through `readThread`
 converted into authoritative items or certify this checkpoint. Both thread families are removed
 with the conversation or host. The sole save/restore consumer is the
 [supplied caching seam](caching-conversation-repository.md#what-is-written-and-when);
-production route activation remains with #2245 and bounded reading with #2252.
+production negotiated binding is supplied by #2245 and bounded opening by #2333 below.
 Ordinary Room saves use the owned mutation contract below (#2255/#2256); full-file compatibility and
 import continue to use replacement while preserving committed retirement fences.
 Authoritative Room storage (#2163) is bound through the migration-aware cache (#2161).
@@ -234,7 +234,7 @@ identity ownership, placement, coverage invalidation/recovery and counted Linux 
 `LegacyRoomStorage`, exposing full `readAuthoritativeThread`/`writeAuthoritativeThread`
 equivalent to `ConversationCache`'s, plus owned upserts/removals, `newestPage`/`beforePage` and scoped removal.
 It is used by the application through the migration-aware cache (#2161); #2255 supplies ordinary
-owned writes and #2252 owns bounded reader activation. Ownership is the same exact, case-sensitive
+owned writes and #2333 supplies bounded production opening. Ownership is the same exact, case-sensitive
 host-plus-conversation scoping as
 every other family in this cache, with the authoritative family additionally scoped by epoch —
 identical ids under another host, another conversation or another epoch are different rows,
@@ -298,6 +298,77 @@ Room's additive
 [Layout § the additive version 1 → 2 migration](conversation-cache-layout.md#indexed-legacy-room-layout-2162)
 — adding the authoritative tables without touching existing legacy content. Version 3
 adds the import ledger described above.
+
+### Bounded authoritative display windows (#2333)
+
+`AuthoritativeWindowCache` is an optional import-aware opening/lifetime capability implemented
+by `MigratingConversationCache`. `newestAuthoritativeWindow` returns `AuthoritativeThreadWindow`
+with exact owner, committed partial facts/metadata and selected row contributions. It does not
+reuse `AuthoritativeThreadPage`: a null continuation would incorrectly imply local exhaustion
+while older saved facts remain omitted. Raw-fact pages and full reads keep their contracts.
+The production repository requests 200 displayed contributions; fewer saved rows return all.
+
+Room selects content and launch candidates independently in renderer placement order, each
+limited to the row budget, then takes their combined newest contributions. Hidden/state-only
+facts do not consume the budget; a fact's separated launch/content rows count independently.
+Active facts and unordered shown queued/lost user feedback are indexed extras. Identity lookups
+recursively close required parents and historical agent anchor/held-tie witnesses. These complete
+facts are renderer inputs, not permission to draw their unselected rows or certify a range.
+Only selected/current-overlap retirement evidence enters memory, rather than every historical
+fence. SQL result counts include discarded candidates and duplicate extra results even when
+payload decoding reuses an identity. Plain 18000-row opening returns/decodes 200 items in five
+queries with one header evidence result/decode, zero ordinal results and no full read.
+
+Selected payloads undergo full-item and exact owner/epoch/index identity/order validation,
+including display/extra flags, parent, agent/background classification, active/ended order and
+nullable renderer child order. Explicit zero sorts before positive child orders; absent order
+sorts last, independently of the raw-fact paging key. Invalid selection restores nothing and
+never repairs disk. Supplemental resolution validates winning roots **and descendants**, using
+indexed contribution candidates over old/new ancestor paths when a witness is hidden, moved,
+reparented or retired. Task-link/id validity is part of that structural boundary. Only resulting
+witnesses/parents cross the payload boundary; unrelated sibling payloads remain unloaded.
+Compound owner/epoch/order/placement-key seeks and positive `key > ''` ranges are required:
+`key != ''` can scan an entire empty category despite a small result count. Query-plan assertions
+therefore complement result/query/decode counters.
+
+Initial and later unavailable supplemental reads withhold unchecked captures from delivery and
+writer baselines. Observation-owned bounded retries retain the last validated view; stale owner,
+incarnation, generation or cache lifetime rejects application. Hydration may retain the committed
+certificate but cannot advance it over unapplied/unsaved facts, manufacture continuous coverage,
+or replace a daemon cursor with local position. Owned saves retain omitted facts. Until
+authoritative demand paging replaces it, reader movement or explicit retry can request a full
+compatibility restore in the observation lifetime; opening, reconnect and page arrival cannot.
+Failed/unapplied hydration forwards the original older demand to the negotiated route. See
+[repository validation and reader-only compatibility hydration](caching-conversation-repository.md#bounded-authoritative-opening-2333).
+
+#### Placement metadata and deep-parent availability
+
+Additive migrations 5→6 through 10→11 derive display/extra flags, placement keys, nullable child
+order, anchor/tie identities and per-node contribution summaries without changing raw payloads
+or certification. Import and accepted writes maintain the same metadata atomically. Version 11
+rebuilds old keys non-destructively; earlier upgrade steps also use the bounded representation.
+Existing no-backup database/sidecar custody remains unchanged.
+
+`SavedPlacementIndex` uses fixed-width preorder ranks over a shared iterative agent forest,
+retaining family phase/order/held-tie prefixes. Non-agent links are collapsed once, ancestor
+classification is memoized, and sibling order matches nullable renderer order and held ordinal.
+No descendant stores its complete ancestry: iterative traversal alone would still leave
+quadratic allocation/storage if paths were copied. Keys are at most 62 characters; retained
+forest metadata and aggregate key output grow linearly in admitted facts. Structural writes
+load metadata for affected former/winning parent components and coherently rerank siblings,
+leaving unrelated payloads untouched. This maintenance can visit an affected component;
+opening payload bounds do not imply constant-time structural writes or migration.
+
+Both contribution construction and winning-path reduction use iterative postorder and visited
+sets, with one reduction per node and children grouped once. Back edges to unfinished ancestors
+retain the existing empty-contribution cycle semantics. There is no parent-depth rejection or
+one JVM stack frame per admitted fact. Deep chains/cycles and 18000 nested foreground agents
+are covered across import, upgrade, fresh reopen and structural reparenting. Current full-gate
+measurements retain 18000 ancestry visits, 18000 rank visits, 1098000 total key characters and
+maximum 61-character display keys. Database sizes for import/upgrade/reopen/structural write are
+17940480/17752064/17752064/18239488 bytes, with exact witnesses, raw payloads, certificates and
+other-host content preserved. [Current counted evidence](thread-screen-testing-saved-first-draw.md#bounded-database-and-retained-file-acceptance-2333)
+distinguishes these correctness/availability probes from native first-draw timing.
 
 ### Owned incremental authoritative mutations (#2255)
 
@@ -391,7 +462,7 @@ instead returns a validated newer held fact after rollback; the writer withdraws
 uncommitted fence and restores that fact and its tie position. Committed fences cannot be withdrawn.
 Recovery peers last until commit or definitive rejection; the durable fence lasts until reset.
 Admission and durable failures use static, causeless/redacted errors and content-free diagnostics.
-See [writer concurrency](caching-conversation-repository.md#state-and-concurrency) for cancellation,
+See [writer concurrency](caching-conversation-repository-concurrency.md#state-and-concurrency) for cancellation,
 pending-removal ordering and post-commit cleanup.
 
 Removal changes the committed page generation. Old local tokens explicitly reject; resume from

@@ -25,16 +25,161 @@ import java.io.IOException
         ConversationCacheDatabase.FileImport::class,
         ConversationCacheDatabase.AuthoritativeRetirement::class,
     ],
-    version = 5,
+    version = 11,
     autoMigrations = [
         AutoMigration(
             from = 1,
             to = 2,
         ), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4, spec = ConversationCacheDatabase.OwnedRowsMigration::class),
         AutoMigration(from = 4, to = 5),
+        AutoMigration(from = 5, to = 6, spec = ConversationCacheDatabase.DisplayWindowMigration::class),
+        AutoMigration(from = 6, to = 7, spec = ConversationCacheDatabase.RenderPlacementMigration::class),
+        AutoMigration(from = 7, to = 8, spec = ConversationCacheDatabase.RenderPlacementMigration::class),
+        AutoMigration(from = 8, to = 9, spec = ConversationCacheDatabase.PlacementWitnessMigration::class),
+        AutoMigration(from = 9, to = 10, spec = ConversationCacheDatabase.PlacementWitnessMigration::class),
+        AutoMigration(from = 10, to = 11, spec = ConversationCacheDatabase.PlacementWitnessMigration::class),
     ],
 )
 abstract class ConversationCacheDatabase : RoomDatabase() {
+    class RenderPlacementMigration : AutoMigrationSpec {
+        override fun onPostMigrate(db: SupportSQLiteDatabase) = backfill(db, false)
+
+        internal fun backfill(
+            db: SupportSQLiteDatabase,
+            witnesses: Boolean,
+            contributions: Boolean = false,
+        ) {
+            val owners = linkedMapOf<Triple<String, String, String>, MutableList<AuthoritativeItem>>()
+            db.query("SELECT host,conversation,epoch,id,ordinal,orderKey,payload FROM authoritative_items").use { cursor ->
+                while (cursor.moveToNext()) {
+                    val raw = cursor.getString(6)
+                    val item =
+                        try {
+                            de.pyryco.mobile.data.network.ThreadItemDto.decodeReplacement(
+                                de.pyryco.mobile.data.network.MobileJson
+                                    .parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject
+                                    ?: continue,
+                            )
+                        } catch (_: IllegalArgumentException) {
+                            continue
+                        }
+                    val owner = Triple(cursor.getString(0), cursor.getString(1), cursor.getString(2))
+                    owners.getOrPut(owner) { mutableListOf() } +=
+                        AuthoritativeItem(
+                            owner.first,
+                            owner.second,
+                            owner.third,
+                            cursor.getLong(3),
+                            cursor.getInt(4),
+                            cursor.getLong(5),
+                            raw,
+                            item.savedDisplayRow(),
+                            item.savedRendererExtra(),
+                            parentId = item.parent ?: 0,
+                            agent = item.kind == "agent",
+                            background = item.savedBackgroundAgent(),
+                            active = item.active,
+                            endedOrder = item.endedOrder ?: 0,
+                            rendererOrder = item.order ?: Long.MAX_VALUE,
+                        )
+                }
+            }
+            for (records in owners.values) {
+                val placement = SavedPlacementIndex(records.sortedBy { it.ordinal })
+                for (record in records) {
+                    val keys = placement.keys.getValue(record.id)
+                    db.execSQL(
+                        "UPDATE authoritative_items SET parentId=?,agent=?,background=?,active=?,endedOrder=?,displayKey=?,launchKey=? " +
+                            "WHERE host=? AND conversation=? AND epoch=? AND id=?",
+                        arrayOf<Any>(
+                            record.parentId,
+                            if (record.agent) 1 else 0,
+                            if (record.background) 1 else 0,
+                            if (record.active) 1 else 0,
+                            record.endedOrder,
+                            keys.first,
+                            keys.second,
+                            record.host,
+                            record.conversation,
+                            record.epoch,
+                            record.id,
+                        ),
+                    )
+                    if (witnesses) {
+                        val anchor = placement.anchors[record.id]
+                        db.execSQL(
+                            "UPDATE authoritative_items SET rendererOrder=?,anchorId=?,tieId=? WHERE host=? AND conversation=? AND epoch=? AND id=?",
+                            arrayOf<Any>(
+                                record.rendererOrder,
+                                anchor?.third?.id ?: 0L,
+                                anchor?.second?.id ?: 0L,
+                                record.host,
+                                record.conversation,
+                                record.epoch,
+                                record.id,
+                            ),
+                        )
+                    }
+                    if (contributions) {
+                        val keys = placement.contributions.getValue(record.id)
+                        db.execSQL(
+                            "UPDATE authoritative_items SET anchorContribution=?,tieContribution=? WHERE host=? AND conversation=? AND epoch=? AND id=?",
+                            arrayOf<Any>(keys.first, keys.second, record.host, record.conversation, record.epoch, record.id),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    class PlacementWitnessMigration : AutoMigrationSpec {
+        override fun onPostMigrate(db: SupportSQLiteDatabase) {
+            val contributions =
+                db.query("PRAGMA table_info(authoritative_items)").use { cursor ->
+                    var present = false
+                    while (cursor.moveToNext()) if (cursor.getString(1) == "anchorContribution") present = true
+                    present
+                }
+            RenderPlacementMigration().backfill(db, true, contributions)
+        }
+    }
+
+    class DisplayWindowMigration : AutoMigrationSpec {
+        override fun onPostMigrate(db: SupportSQLiteDatabase) {
+            // Backfill once during upgrade; ordinary opening never scans payloads.
+            db.query("SELECT host,conversation,epoch,id,payload FROM authoritative_items").use { cursor ->
+                val update =
+                    db.compileStatement(
+                        "UPDATE authoritative_items SET display=?,extra=? WHERE host=? AND conversation=? AND epoch=? AND id=?",
+                    )
+                try {
+                    while (cursor.moveToNext()) {
+                        val item =
+                            try {
+                                de.pyryco.mobile.data.network.ThreadItemDto.decodeReplacement(
+                                    de.pyryco.mobile.data.network.MobileJson.parseToJsonElement(
+                                        cursor.getString(4),
+                                    ) as? kotlinx.serialization.json.JsonObject
+                                        ?: continue,
+                                )
+                            } catch (_: IllegalArgumentException) {
+                                continue // Preserve invalid bytes; validated readers still reject them.
+                            }
+                        update.bindLong(1, if (item.savedDisplayRow()) 1 else 0)
+                        update.bindLong(2, if (item.savedRendererExtra()) 1 else 0)
+                        update.bindString(3, cursor.getString(0))
+                        update.bindString(4, cursor.getString(1))
+                        update.bindString(5, cursor.getString(2))
+                        update.bindLong(6, cursor.getLong(3))
+                        update.executeUpdateDelete()
+                    }
+                } finally {
+                    update.close()
+                }
+            }
+        }
+    }
+
     class OwnedRowsMigration : AutoMigrationSpec {
         override fun onPostMigrate(db: SupportSQLiteDatabase) {
             // Migration is the only backfill. Ordinary mutations never scan the saved thread.
@@ -140,7 +285,18 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
     @Entity(
         tableName = "authoritative_items",
         primaryKeys = ["host", "conversation", "epoch", "id"],
-        indices = [Index(value = ["host", "conversation", "epoch", "ordinal"], unique = true)],
+        indices = [
+            Index(value = ["host", "conversation", "epoch", "ordinal"], unique = true),
+            Index(value = ["host", "conversation", "epoch", "display", "orderKey", "ordinal"]),
+            Index(value = ["host", "conversation", "epoch", "extra"]),
+            Index(value = ["host", "conversation", "epoch", "parentId"]),
+            Index(value = ["host", "conversation", "epoch", "displayKey"]),
+            Index(value = ["host", "conversation", "epoch", "launchKey"]),
+            Index(value = ["host", "conversation", "epoch", "orderKey", "displayKey"]),
+            Index(value = ["host", "conversation", "epoch", "orderKey", "launchKey"]),
+            Index(value = ["host", "conversation", "epoch", "parentId", "anchorContribution"]),
+            Index(value = ["host", "conversation", "epoch", "parentId", "tieContribution"]),
+        ],
     )
     internal data class AuthoritativeItem(
         val host: String,
@@ -150,6 +306,20 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         val ordinal: Int,
         val orderKey: Long,
         val payload: String,
+        @ColumnInfo(defaultValue = "0") val display: Boolean = false,
+        @ColumnInfo(defaultValue = "0") val extra: Boolean = false,
+        @ColumnInfo(defaultValue = "0") val parentId: Long = 0,
+        @ColumnInfo(defaultValue = "0") val agent: Boolean = false,
+        @ColumnInfo(defaultValue = "0") val background: Boolean = false,
+        @ColumnInfo(defaultValue = "0") val active: Boolean = false,
+        @ColumnInfo(defaultValue = "0") val endedOrder: Long = 0,
+        @ColumnInfo(defaultValue = "''") val displayKey: String = "",
+        @ColumnInfo(defaultValue = "''") val launchKey: String = "",
+        @ColumnInfo(defaultValue = "9223372036854775807") val rendererOrder: Long = orderKey,
+        @ColumnInfo(defaultValue = "0") val anchorId: Long = 0,
+        @ColumnInfo(defaultValue = "0") val tieId: Long = 0,
+        @ColumnInfo(defaultValue = "''") val anchorContribution: String = "",
+        @ColumnInfo(defaultValue = "''") val tieContribution: String = "",
     ) {
         override fun toString(): String = "AuthoritativeItem(redacted)"
     }
@@ -164,6 +334,156 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
 
     @Dao
     internal interface AuthoritativeDao {
+        @Query(
+            "SELECT anchorContribution FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND parentId=:parent AND anchorContribution>'' AND id NOT IN (:excluded) ORDER BY anchorContribution LIMIT 1",
+        )
+        suspend fun anchorContribution(
+            host: String,
+            conversation: String,
+            epoch: String,
+            parent: Long,
+            excluded: Set<Long>,
+        ): String?
+
+        @Query(
+            "SELECT tieContribution FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND parentId=:parent AND tieContribution>'' AND id NOT IN (:excluded) ORDER BY tieContribution LIMIT 1",
+        )
+        suspend fun tieContribution(
+            host: String,
+            conversation: String,
+            epoch: String,
+            parent: Long,
+            excluded: Set<Long>,
+        ): String?
+
+        @Query(
+            "UPDATE authoritative_items SET anchorContribution=:anchor,tieContribution=:tie WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id=:id",
+        )
+        suspend fun contributions(
+            host: String,
+            conversation: String,
+            epoch: String,
+            id: Long,
+            anchor: String,
+            tie: String,
+        )
+
+        @Query(
+            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND orderKey=:orderKey AND ordinal=:ordinal LIMIT 1",
+        )
+        suspend fun placementWitness(
+            host: String,
+            conversation: String,
+            epoch: String,
+            orderKey: Long,
+            ordinal: Int,
+        ): AuthoritativeItem?
+
+        @Query(
+            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND displayKey>=:lower AND displayKey<:upper AND orderKey=:orderKey LIMIT 1",
+        )
+        suspend fun anchorWitness(
+            host: String,
+            conversation: String,
+            epoch: String,
+            lower: String,
+            upper: String,
+            orderKey: Long,
+        ): AuthoritativeItem?
+
+        @Query(
+            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND launchKey>=:lower AND launchKey<:upper AND orderKey=:orderKey LIMIT 1",
+        )
+        suspend fun launchAnchorWitness(
+            host: String,
+            conversation: String,
+            epoch: String,
+            lower: String,
+            upper: String,
+            orderKey: Long,
+        ): AuthoritativeItem?
+
+        @Query(
+            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND displayKey>'/' ORDER BY displayKey DESC LIMIT :limit",
+        )
+        suspend fun displayWindow(
+            host: String,
+            conversation: String,
+            epoch: String,
+            limit: Int,
+        ): List<AuthoritativeItem>
+
+        @Query(
+            "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND launchKey>'' ORDER BY launchKey DESC LIMIT :limit",
+        )
+        suspend fun launchWindow(
+            host: String,
+            conversation: String,
+            epoch: String,
+            limit: Int,
+        ): List<AuthoritativeItem>
+
+        @Query(
+            "SELECT " + AUTHORITATIVE_INDEX_FIELDS +
+                " FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id=:id",
+        )
+        suspend fun indexItem(
+            host: String,
+            conversation: String,
+            epoch: String,
+            id: Long,
+        ): AuthoritativeItem?
+
+        @Query(
+            "SELECT " + AUTHORITATIVE_INDEX_FIELDS +
+                " FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND parentId=:parent",
+        )
+        suspend fun indexChildren(
+            host: String,
+            conversation: String,
+            epoch: String,
+            parent: Long,
+        ): List<AuthoritativeItem>
+
+        @Query(
+            "SELECT " + AUTHORITATIVE_INDEX_FIELDS +
+                " FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch ORDER BY orderKey,ordinal LIMIT :count",
+        )
+        suspend fun oldestIndexItems(
+            host: String,
+            conversation: String,
+            epoch: String,
+            count: Int,
+        ): List<AuthoritativeItem>
+
+        @Query(
+            "UPDATE authoritative_items SET displayKey=:displayKey,launchKey=:launchKey,anchorId=:anchorId,tieId=:tieId WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id=:id",
+        )
+        suspend fun placement(
+            host: String,
+            conversation: String,
+            epoch: String,
+            id: Long,
+            displayKey: String,
+            launchKey: String,
+            anchorId: Long,
+            tieId: Long,
+        )
+
+        @Query("SELECT * FROM authoritative_retirements WHERE host=:host AND conversation=:conversation AND id IN (:ids)")
+        suspend fun relevantRetirements(
+            host: String,
+            conversation: String,
+            ids: List<Long>,
+        ): List<AuthoritativeRetirement>
+
+        @Query("SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND extra=1")
+        suspend fun rendererExtras(
+            host: String,
+            conversation: String,
+            epoch: String,
+        ): List<AuthoritativeItem>
+
         @Query("SELECT * FROM authoritative_retirements WHERE host=:host AND conversation=:conversation")
         suspend fun retirements(
             host: String,
