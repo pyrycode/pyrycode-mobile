@@ -482,12 +482,16 @@ class EarlierSessionAgentScreenTest {
                 live(agent(true, 20))
                 live(tool(21, active = true))
             }
+            live(authoritativeItem(80, rev = 221, session = "session-b"))
         }
-        compose.waitForIdle()
-        assertFamily(expected)
+        // This new revision follows every replay on the same FIFO pump; unchanged terminal facts cannot fence delivery.
+        awaitFact(80, 221)
+        println("receipt=stale-replay-presented duplicate-pairs=2 fence-item=80 fence-revision=221")
+        val replayExpected = expected + (80L to 221L)
+        assertFamily(replayExpected)
         assertEquals(previousKeys, presentation().rows.map { it.listKey(0) })
         assertRendered()
-        persisted(expected, 19uL)
+        persisted(replayExpected, 19uL)
         assertTrue(destination.requests.none { it.type in setOf("request_history", "backfill", "backfill_since") })
     }
 
