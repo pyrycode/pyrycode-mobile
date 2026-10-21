@@ -584,27 +584,26 @@ class AuthoritativeRoomStorage internal constructor(
                 if (boundary != null) lastReadCounts = lastReadCounts.copy(ordinalReads = lastReadCounts.ordinalReads + 1)
                 val currentKey = if (cursor.launch) boundary?.launchKey else boundary?.displayKey
                 var recovered = currentKey?.takeIf { it.isNotEmpty() && !it.startsWith("!") }?.let { it to cursor.launch }
-                if (recovered == null) {
-                    // A newer successor may belong to another component that did not move.
-                    // Recover inclusively from the older side, where saved work remains.
-                    for (batch in cursor.predecessors.chunked(200)) {
-                        val records = dao.indexItems(host, conversation, header.epoch, batch.mapTo(mutableSetOf()) { it.first })
-                        lastReadCounts =
-                            lastReadCounts.copy(
-                                queries = lastReadCounts.queries + 1,
-                                ordinalReads = lastReadCounts.ordinalReads + records.size,
-                            )
-                        val indexed = records.associateBy { it.id }
-                        recovered =
-                            batch.firstNotNullOfOrNull { (id, launch) ->
-                                val record = indexed[id]
-                                val key = if (launch) record?.launchKey else record?.displayKey
-                                key?.takeIf { it.isNotEmpty() && !it.startsWith("!") }?.let { "$it~" to false }
-                            }
-                        if (recovered != null) break
+                // The boundary and nearer predecessors can survive in unmoved components.
+                // Resolve the entire bounded older frontier on every changed generation.
+                for (batch in cursor.predecessors.chunked(200)) {
+                    val records = dao.indexItems(host, conversation, header.epoch, batch.mapTo(mutableSetOf()) { it.first })
+                    lastReadCounts =
+                        lastReadCounts.copy(
+                            queries = lastReadCounts.queries + 1,
+                            ordinalReads = lastReadCounts.ordinalReads + records.size,
+                        )
+                    val indexed = records.associateBy { it.id }
+                    for ((id, launch) in batch) {
+                        val record = indexed[id]
+                        val key = (if (launch) record?.launchKey else record?.displayKey)
+                            ?.takeIf { it.isNotEmpty() && !it.startsWith("!") } ?: continue
+                        // The predecessor itself is unadmitted saved work, so include it.
+                        val inclusive = "$key~"
+                        if (recovered == null || inclusive > recovered.first) recovered = inclusive to false
                     }
-                    RelayLog.d { "event=authoritative_local_boundary outcome=${if (recovered == null) "unavailable" else "recovered"}" }
                 }
+                RelayLog.d { "event=authoritative_local_boundary outcome=${if (recovered == null) "unavailable" else "recovered"}" }
                 val position = recovered ?: return@read null
                 if (position.first >= before) {
                     before = position.first
