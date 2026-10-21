@@ -65,7 +65,32 @@ internal fun ComposeTestRule.assertFinishedAgentMarker(
         }
         return requireNotNull(readyKey)
     }
-    val target = questionAnswerTargetWithCurrentKey(markerMatcher, ::currentMarkerKey, evidence)
+
+    fun revealCurrentMarker(): Int {
+        var revealedIndex = -1
+        waitUntil(remainingMillis()) {
+            val key = currentMarkerKey()
+            val lists = onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes()
+            assertTrue("finished marker needs one message list", lists.size <= 1)
+            lists.singleOrNull()?.let { node ->
+                // Validate and dispatch together: a generation may change after readiness.
+                runOnIdle {
+                    if (node.layoutInfo.isAttached) {
+                        val config = node.config
+                        val index = config.getOrNull(SemanticsProperties.IndexForKey)?.invoke(key) ?: -1
+                        if (index >= 0) {
+                            val scroll = requireNotNull(config.getOrNull(SemanticsActions.ScrollToIndex)?.action)
+                            assertTrue("the owned marker scroll must be accepted", scroll(index))
+                            revealedIndex = index
+                        }
+                    }
+                }
+            }
+            revealedIndex >= 0
+        }
+        return revealedIndex
+    }
+    val target = questionAnswerTargetWithCurrentKey(markerMatcher, ::currentMarkerKey, ::revealCurrentMarker, evidence)
     currentMarkerKey()
     target.assert(hasText(finishedLabel)).assertIsDisplayed()
 }

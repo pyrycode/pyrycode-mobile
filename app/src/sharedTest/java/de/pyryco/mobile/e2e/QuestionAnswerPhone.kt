@@ -32,8 +32,9 @@ internal fun ComposeTestRule.questionAnswerTarget(
 internal fun ComposeTestRule.questionAnswerTargetWithCurrentKey(
     matcher: SemanticsMatcher,
     currentKey: () -> String,
+    revealCurrentKey: () -> Int,
     evidence: (String) -> Unit = {},
-): SemanticsNodeInteraction = questionAnswerLocation(matcher, null, allowPartial = false, evidence, currentKey).first
+): SemanticsNodeInteraction = questionAnswerLocation(matcher, null, allowPartial = false, evidence, currentKey, revealCurrentKey).first
 
 /** Tap once inside the actual exposed control when a short thread cannot scroll past a notice. */
 internal fun ComposeTestRule.questionAnswerTap(
@@ -51,6 +52,7 @@ private fun ComposeTestRule.questionAnswerLocation(
     allowPartial: Boolean,
     evidence: (String) -> Unit,
     currentKey: (() -> String)? = null,
+    revealCurrentKey: (() -> Int)? = null,
 ): Pair<SemanticsNodeInteraction, Offset> {
     val list = onNode(hasScrollToNodeAction())
 
@@ -75,13 +77,15 @@ private fun ComposeTestRule.questionAnswerLocation(
             return nodes.single().boundsInRoot
         }
         val revealKey = keyForRead() ?: key
-        val index = list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey](revealKey)
+        val index = revealCurrentKey?.invoke() ?: list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey](revealKey)
         evidence("event=question_answer_reveal stage=disposed key_index=$index composed=0")
-        assertTrue("tap target left the projected list", index >= 0)
-        list.performScrollToKey(revealKey)
+        if (revealCurrentKey == null) {
+            assertTrue("tap target left the projected list", index >= 0)
+            list.performScrollToKey(revealKey)
+        }
         return null
     }
-    keyForRead()?.let { list.performScrollToKey(it) }
+    if (revealCurrentKey != null) revealCurrentKey() else keyForRead()?.let { list.performScrollToKey(it) }
     currentKey?.invoke()
     list.performScrollToNode(matcher)
     val target = onNode(matcher)

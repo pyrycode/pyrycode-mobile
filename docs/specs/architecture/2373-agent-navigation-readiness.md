@@ -76,6 +76,12 @@ The local finished-marker helper will accept a current-identity sampler, retain 
 
 2026-10-21 — The controlled generation-replacement probe executes once and fails before repair with the exact native `tap target left the projected list` assertion through `boundsOrReveal`, with `key_index=-1` after its old-key-absent/new-owned-key-present checks. Retain XML and the frozen-key source patch under `generation-red/`. Implement the opt-in bridge and current-identity sampler; its deadline is absolute, shared across all samples, and its default callers retain their previous constant-key behavior.
 
+2026-10-21 — On `d9350a7907df61c304795cdefafc4334e96d863a`, separate native executions one and two passed; execution three failed with `performScrollToKey` reporting that the sampled marker key could not be found, before geometry measurement. Retain all three under `generation-native-*/`; these are not five-pass acceptance. The generation can change between readiness and keyed scroll dispatch, so refreshing at geometry boundaries alone is insufficient.
+
+Add `generationBetweenReadinessAndScrollDoesNotDispatchAStaleKey`, replacing the owned generation immediately after a successful readiness sample. For this opt-in finished-marker path, validate the exact key's current index and invoke `ScrollToIndex` together on the UI thread. A detached list or missing key dispatches no action and remains unready within the same absolute deadline; ambiguity still fails. The default question-answer helper retains its strict removed-key assertion and existing behavior. No scenario, assertion or tap retry, extra physical input, deadline increase, production or recording change is introduced. Run the new regression red first, then the complete affected class green and restart five native executions on a new pushed revision.
+
+2026-10-21 — The readiness-to-dispatch regression executes once and fails before repair with the same `performScrollToKey` missing-key exception as native execution three. Raw XML and the pre-repair source patch are retained in `dispatch-red/`. Implement the atomic index validation/scroll dispatch in the opt-in helper; its readiness and geometry checks still use the same absolute budget and final owned finished-label assertion.
+
 ## Recurrence repair plan (2026-10-21)
 
 ### Files read and context
@@ -101,6 +107,7 @@ No application state, jobs or lifecycle changes. Controlled state publication us
 | Finished marker is displaced by late later-reply rendering | `finishedMarkerIsRemeasuredAfterLaterReplyGrowth` |
 | Catch-up temporarily removes the finished marker before reveal | `resetBeforeFinishedMarkerRevealWaitsForTheOwnedFamily` |
 | Generation replacement changes the owned marker key during geometry measurement | `generationReplacementDuringFinishedRevealUsesTheCurrentOwnedKey` |
+| Generation changes after readiness and before keyed scroll dispatch | `generationBetweenReadinessAndScrollDoesNotDispatchAStaleKey` |
 | Expected marker is missing but another finished Agent is present | `anotherFinishedAgentCannotSatisfyTheOwnedMarkerCheck` |
 | Owned marker is running while another Agent is finished | `anotherAgentsFinishedLabelCannotSatisfyTheOwnedMarkerCheck` |
 | Reset/wrong family before pointer proof | Retain `resetBeforeClosedRunCheckWaitsForTheSameOwnedFamily`, `missingListCannotPassTheAgentNavigationProof`, `anotherAgentsListCannotPassTheAgentNavigationProof` |

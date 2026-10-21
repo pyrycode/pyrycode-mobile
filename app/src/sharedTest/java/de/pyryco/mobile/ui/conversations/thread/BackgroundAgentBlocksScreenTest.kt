@@ -374,6 +374,36 @@ class BackgroundAgentBlocksScreenTest {
         compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
     }
 
+    @Test fun generationBetweenReadinessAndScrollDoesNotDispatchAStaleKey() {
+        var currentAgent = "a"
+        mount(listOf(tool("a", "Agent"), launch(), finish(), user("Later")), collapsed = true)
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        var replaced = false
+        compose.assertFinishedAgentMarker(
+            "a",
+            ownedMarker,
+            "Agent finished",
+            resolveAgentId = { currentAgent },
+        ) { sample ->
+            println(sample)
+            if ("event=finished_agent_readiness" in sample && "key_present=true" in sample && !replaced) {
+                replaced = true
+                currentAgent = "a-next"
+                compose.runOnIdle {
+                    state =
+                        state.copy(
+                            items = listOf(tool(currentAgent, "Agent"), launch().copy(toolCallId = currentAgent), finish(), user("Later")),
+                        )
+                }
+                val index = list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+                assertTrue("the sampled generation must be gone before scroll dispatch", index("agent-start:a") < 0)
+                assertTrue("the same owned Agent has its replacement key", index("agent-start:$currentAgent") >= 0)
+            }
+        }
+        assertTrue("replace the generation after readiness but before scroll dispatch", replaced)
+        compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
+    }
+
     @Test fun anotherAgentsFinishedLabelCannotSatisfyTheOwnedMarkerCheck() {
         mount(
             listOf(
