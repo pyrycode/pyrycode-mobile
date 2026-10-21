@@ -8,7 +8,7 @@ import kotlinx.serialization.json.JsonPrimitive
 // Metadata-only ancestor/descendant lookups never return a saved payload.
 internal const val AUTHORITATIVE_INDEX_FIELDS =
     "host,conversation,epoch,id,ordinal,orderKey,'' AS payload,display,extra,parentId," +
-        "agent,background,active,endedOrder,displayKey,launchKey"
+        "agent,background,active,endedOrder,displayKey,launchKey,rendererOrder,anchorId,tieId"
 
 internal fun ThreadItemDto.savedBackgroundAgent(): Boolean {
     val fields = content as? JsonObject ?: return false
@@ -19,7 +19,7 @@ internal fun ThreadItemDto.savedBackgroundAgent(): Boolean {
 /** The renderer sorts placements, then walks each agent block depth first. Launches are separate rows. */
 internal fun AuthoritativeItem.savedPlacementKeys(
     lookup: (Long) -> AuthoritativeItem?,
-    unorderedAnchor: (Long) -> Pair<Long, AuthoritativeItem>?,
+    unorderedAnchor: (Long) -> Triple<Long, AuthoritativeItem, AuthoritativeItem>?,
 ): Pair<String, String> {
     val path = mutableListOf(this)
     val seen = mutableSetOf(id)
@@ -42,7 +42,7 @@ internal fun AuthoritativeItem.savedPlacementKeys(
 
     fun number(value: Long) = value.toString().padStart(19, '0')
 
-    fun segment(item: AuthoritativeItem) = number(item.orderKey) + (item.ordinal.toLong() - Int.MIN_VALUE).toString().padStart(10, '0')
+    fun segment(item: AuthoritativeItem) = number(item.rendererOrder) + (item.ordinal.toLong() - Int.MIN_VALUE).toString().padStart(10, '0')
 
     fun key(
         root: AuthoritativeItem,
@@ -93,22 +93,26 @@ internal fun AuthoritativeItem.savedPlacementKeys(
 internal fun savedUnorderedAnchor(
     root: Long,
     facts: Collection<AuthoritativeItem>,
-): Pair<Long, AuthoritativeItem>? {
+): Triple<Long, AuthoritativeItem, AuthoritativeItem>? {
     val children = facts.groupBy { it.parentId }
     val seen = mutableSetOf<Long>()
     val pending = ArrayDeque<Pair<Long, Boolean>>().also { it.add(root to true) }
     var anchor: Long? = null
     var first: AuthoritativeItem? = null
+    var anchorItem: AuthoritativeItem? = null
     while (pending.isNotEmpty()) {
         val (id, direct) = pending.removeFirst()
         if (!seen.add(id)) continue
         for (child in children[id].orEmpty()) {
-            if (child.display) anchor = minOf(anchor ?: Long.MAX_VALUE, child.orderKey)
+            if (child.display && child.orderKey < (anchor ?: Long.MAX_VALUE)) {
+                anchor = child.orderKey
+                anchorItem = child
+            }
             if (direct && (child.agent || child.display)) {
                 val held = first
                 if (held == null ||
-                    child.orderKey < held.orderKey ||
-                    child.orderKey == held.orderKey &&
+                    child.rendererOrder < held.rendererOrder ||
+                    child.rendererOrder == held.rendererOrder &&
                     child.ordinal < held.ordinal
                 ) {
                     first = child
@@ -117,5 +121,5 @@ internal fun savedUnorderedAnchor(
             if (!child.background) pending.add(child.id to (direct && !child.agent))
         }
     }
-    return anchor?.let { it to requireNotNull(first) }
+    return anchor?.let { Triple(it, requireNotNull(first), requireNotNull(anchorItem)) }
 }

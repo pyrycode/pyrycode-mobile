@@ -25,7 +25,7 @@ import java.io.IOException
         ConversationCacheDatabase.FileImport::class,
         ConversationCacheDatabase.AuthoritativeRetirement::class,
     ],
-    version = 8,
+    version = 9,
     autoMigrations = [
         AutoMigration(
             from = 1,
@@ -35,11 +35,17 @@ import java.io.IOException
         AutoMigration(from = 5, to = 6, spec = ConversationCacheDatabase.DisplayWindowMigration::class),
         AutoMigration(from = 6, to = 7, spec = ConversationCacheDatabase.RenderPlacementMigration::class),
         AutoMigration(from = 7, to = 8, spec = ConversationCacheDatabase.RenderPlacementMigration::class),
+        AutoMigration(from = 8, to = 9, spec = ConversationCacheDatabase.PlacementWitnessMigration::class),
     ],
 )
 abstract class ConversationCacheDatabase : RoomDatabase() {
     class RenderPlacementMigration : AutoMigrationSpec {
-        override fun onPostMigrate(db: SupportSQLiteDatabase) {
+        override fun onPostMigrate(db: SupportSQLiteDatabase) = backfill(db, false)
+
+        internal fun backfill(
+            db: SupportSQLiteDatabase,
+            witnesses: Boolean,
+        ) {
             val owners = linkedMapOf<Triple<String, String, String>, MutableList<AuthoritativeItem>>()
             db.query("SELECT host,conversation,epoch,id,ordinal,orderKey,payload FROM authoritative_items").use { cursor ->
                 while (cursor.moveToNext()) {
@@ -71,6 +77,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
                             background = item.savedBackgroundAgent(),
                             active = item.active,
                             endedOrder = item.endedOrder ?: 0,
+                            rendererOrder = item.order ?: Long.MAX_VALUE,
                         )
                 }
             }
@@ -95,9 +102,28 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
                             record.id,
                         ),
                     )
+                    if (witnesses) {
+                        val anchor = if (record.agent) savedUnorderedAnchor(record.id, held.values) else null
+                        db.execSQL(
+                            "UPDATE authoritative_items SET rendererOrder=?,anchorId=?,tieId=? WHERE host=? AND conversation=? AND epoch=? AND id=?",
+                            arrayOf<Any>(
+                                record.rendererOrder,
+                                anchor?.third?.id ?: 0L,
+                                anchor?.second?.id ?: 0L,
+                                record.host,
+                                record.conversation,
+                                record.epoch,
+                                record.id,
+                            ),
+                        )
+                    }
                 }
             }
         }
+    }
+
+    class PlacementWitnessMigration : AutoMigrationSpec {
+        override fun onPostMigrate(db: SupportSQLiteDatabase) = RenderPlacementMigration().backfill(db, true)
     }
 
     class DisplayWindowMigration : AutoMigrationSpec {
@@ -269,6 +295,9 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         @ColumnInfo(defaultValue = "0") val endedOrder: Long = 0,
         @ColumnInfo(defaultValue = "''") val displayKey: String = "",
         @ColumnInfo(defaultValue = "''") val launchKey: String = "",
+        @ColumnInfo(defaultValue = "9223372036854775807") val rendererOrder: Long = orderKey,
+        @ColumnInfo(defaultValue = "0") val anchorId: Long = 0,
+        @ColumnInfo(defaultValue = "0") val tieId: Long = 0,
     ) {
         override fun toString(): String = "AuthoritativeItem(redacted)"
     }
@@ -372,7 +401,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         ): List<AuthoritativeItem>
 
         @Query(
-            "UPDATE authoritative_items SET displayKey=:displayKey,launchKey=:launchKey WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id=:id",
+            "UPDATE authoritative_items SET displayKey=:displayKey,launchKey=:launchKey,anchorId=:anchorId,tieId=:tieId WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id=:id",
         )
         suspend fun placement(
             host: String,
@@ -381,6 +410,8 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
             id: Long,
             displayKey: String,
             launchKey: String,
+            anchorId: Long,
+            tieId: Long,
         )
 
         @Query("SELECT * FROM authoritative_retirements WHERE host=:host AND conversation=:conversation AND id IN (:ids)")

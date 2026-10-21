@@ -256,6 +256,9 @@ class AuthoritativeRoomStorage internal constructor(
                         endedOrder = item.endedOrder ?: 0,
                         displayKey = record?.displayKey.orEmpty(),
                         launchKey = record?.launchKey.orEmpty(),
+                        rendererOrder = item.order ?: Long.MAX_VALUE,
+                        anchorId = record?.anchorId ?: 0,
+                        tieId = record?.tieId ?: 0,
                     )
                 val newPlacement = replacement.copy(payload = "", displayKey = "", launchKey = "")
                 val oldPlacement = record?.copy(payload = "", displayKey = "", launchKey = "")
@@ -384,6 +387,7 @@ class AuthoritativeRoomStorage internal constructor(
                     background = item.savedBackgroundAgent(),
                     active = item.active,
                     endedOrder = item.endedOrder ?: 0,
+                    rendererOrder = item.order ?: Long.MAX_VALUE,
                 )
             }
         dao.deleteItems(serverId, conversationId)
@@ -391,14 +395,21 @@ class AuthoritativeRoomStorage internal constructor(
         dao.deleteRetirements(serverId, conversationId)
         for ((id, revision) in fences) dao.retire(AuthoritativeRetirement(serverId, conversationId, id, revision))
         val indexed = records.associateBy { it.id }
-        val anchors = mutableMapOf<Long, Pair<Long, AuthoritativeItem>?>()
+        val anchors = mutableMapOf<Long, Triple<Long, AuthoritativeItem, AuthoritativeItem>?>()
         dao.insertItems(
             records.map { record ->
                 val keys =
                     record.savedPlacementKeys(indexed::get) { root ->
                         anchors.getOrPut(root) { savedUnorderedAnchor(root, indexed.values) }
                     }
-                record.copy(displayKey = keys.first, launchKey = keys.second)
+                val anchor = if (record.agent) anchors.getOrPut(record.id) { savedUnorderedAnchor(record.id, indexed.values) } else null
+                record.copy(
+                    displayKey = keys.first,
+                    launchKey = keys.second,
+                    anchorId = anchor?.third?.id ?: 0,
+                    tieId =
+                        anchor?.second?.id ?: 0,
+                )
             },
         )
         dao.insertHeader(
@@ -453,8 +464,8 @@ class AuthoritativeRoomStorage internal constructor(
                 parent = fact.parentId
             }
         }
-        // An unordered foreground root anchors at its earliest shown descendant, including siblings.
-        for (root in facts.values.filter { it.agent && it.orderKey == Long.MAX_VALUE }) {
+        // Every agent retains hypothetical unordered witnesses, including currently ordered roots.
+        for (root in facts.values.filter { it.agent }) {
             affected.add(root.id)
             val scan = ArrayDeque<Long>().also { it.add(root.id) }
             val seen = mutableSetOf<Long>()
@@ -468,11 +479,12 @@ class AuthoritativeRoomStorage internal constructor(
                 }
             }
         }
-        val anchors = mutableMapOf<Long, Pair<Long, AuthoritativeItem>?>()
+        val anchors = mutableMapOf<Long, Triple<Long, AuthoritativeItem, AuthoritativeItem>?>()
         for (id in affected) {
             val record = facts.getValue(id)
             val keys = record.savedPlacementKeys(facts::get) { root -> anchors.getOrPut(root) { savedUnorderedAnchor(root, facts.values) } }
-            dao.placement(host, conversation, epoch, id, keys.first, keys.second)
+            val anchor = if (record.agent) anchors.getOrPut(id) { savedUnorderedAnchor(id, facts.values) } else null
+            dao.placement(host, conversation, epoch, id, keys.first, keys.second, anchor?.third?.id ?: 0, anchor?.second?.id ?: 0)
         }
     }
 
@@ -525,7 +537,8 @@ class AuthoritativeRoomStorage internal constructor(
                         record.agent == (item.kind == "agent") &&
                         record.background == item.savedBackgroundAgent() &&
                         record.active == item.active &&
-                        record.endedOrder == (item.endedOrder ?: 0L),
+                        record.endedOrder == (item.endedOrder ?: 0L) &&
+                        record.rendererOrder == (item.order ?: Long.MAX_VALUE),
                 )
                 decoded[item.id] = raw
                 val parent = item.parent?.takeIf { it > 0 }
@@ -561,13 +574,14 @@ class AuthoritativeRoomStorage internal constructor(
         epoch: String,
         ids: Set<Long>,
         evidence: Set<Long>,
+        placementRoots: Set<Long> = emptySet(),
     ): SavedAuthoritativeThread? =
         read("read_parent_closure", accumulate = true) {
             val header = header(host, conversation)?.takeIf { it.epoch == epoch } ?: return@read null
             val saved = metadata(header, includeRetirements = false)
             val records = linkedMapOf<Long, AuthoritativeItem>()
             val decoded = linkedMapOf<Long, JsonObject>()
-            val pending = ArrayDeque(ids)
+            val pending = ArrayDeque(ids + placementRoots)
             val seen = mutableSetOf<Long>()
             val witnessed = mutableSetOf<String>()
             while (pending.isNotEmpty()) {
@@ -578,6 +592,11 @@ class AuthoritativeRoomStorage internal constructor(
                 val raw = decode(listOf(record), saved).single()
                 records[id] = record
                 decoded[id] = raw
+                if (id in placementRoots) {
+                    for (witness in setOf(record.anchorId, record.tieId).filter { it > 0 }) {
+                        if (witness !in seen) pending.addLast(witness)
+                    }
+                }
                 placementWitnesses(host, conversation, epoch, record, witnessed).forEach { witness ->
                     if (witness.id !in seen) pending.addLast(witness.id)
                 }
@@ -610,7 +629,7 @@ class AuthoritativeRoomStorage internal constructor(
             val tieOrder = key.substring(21, 40).toLong()
             val ordinal = (key.substring(40, 50).toLong() + Int.MIN_VALUE).toInt()
             lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
-            dao.placementWitness(host, conversation, epoch, tieOrder, ordinal)?.let(result::add)
+            dao.placementWitness(host, conversation, epoch, tieOrder.takeIf { it > 0 } ?: Long.MAX_VALUE, ordinal)?.let(result::add)
             if (anchor != tieOrder) {
                 lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
                 val content = dao.anchorWitness(host, conversation, epoch, "$family:", "$family;", anchor)
@@ -774,6 +793,7 @@ class AuthoritativeRoomStorage internal constructor(
         require(records.map { it.ordinal }.distinct().size == records.size)
         records.zip(decoded).forEach { (record, item) ->
             require(record.id == item.id && record.orderKey == orderKey(item))
+            require(record.rendererOrder == (item.order ?: Long.MAX_VALUE))
         }
         return raw
     }

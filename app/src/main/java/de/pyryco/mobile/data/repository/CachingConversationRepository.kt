@@ -810,10 +810,20 @@ class CachingConversationRepository(
             captured.items.forEach { item -> if ((winners[item.id]?.rev ?: -1) <= item.rev) winners[item.id] = item }
             val parents = winners.values.mapNotNull { it.parent?.takeIf { id -> id > 0 && id !in winners } }.toSet()
             val evidence = captured.items.mapTo(mutableSetOf()) { it.id }
+            val placementRoots = winners.values.filter { it.kind == "agent" && (it.order ?: 0) <= 0 }.mapTo(mutableSetOf()) { it.id }
             if (parents.isNotEmpty() || evidence.isNotEmpty()) {
                 val closure =
                     try {
-                        indexed.authoritativeParentClosure(serverId, conversationId, saved.epoch, parents + changed, evidence)
+                        historyWrites.withLock {
+                            indexed.authoritativeParentClosure(
+                                serverId,
+                                conversationId,
+                                saved.epoch,
+                                parents + changed,
+                                evidence,
+                                placementRoots,
+                            )
+                        }
                     } catch (_: java.io.IOException) {
                         null
                     } catch (_: SecurityException) {
@@ -866,15 +876,21 @@ class CachingConversationRepository(
                                 withContext(processingDispatcher) {
                                     val committed = baseline.toSnapshot().items.associateBy { it.id }
                                     val heldIds = snapshot.items.mapTo(mutableSetOf()) { it.id }
-                                    snapshot.items.any { item ->
-                                        val savedItem = committed[item.id]
-                                        savedItem == null || item.parent?.let { it > 0 && it !in heldIds } == true ||
-                                            item.rev > savedItem.rev && (
-                                                item.parent != savedItem.parent || item.order != savedItem.order ||
-                                                    item.shown != savedItem.shown || item.kind != savedItem.kind ||
-                                                    item.active != savedItem.active || item.endedOrder != savedItem.endedOrder
-                                            )
-                                    }
+                                    snapshot.retirements != observedRetirements ||
+                                        snapshot.items.any { item ->
+                                            val savedItem = committed[item.id]
+                                            savedItem == null ||
+                                                item.parent?.let { it > 0 && it !in heldIds } == true ||
+                                                item.rev > savedItem.rev &&
+                                                (
+                                                    item.parent != savedItem.parent ||
+                                                        item.order != savedItem.order ||
+                                                        item.shown != savedItem.shown ||
+                                                        item.kind != savedItem.kind ||
+                                                        item.active != savedItem.active ||
+                                                        item.endedOrder != savedItem.endedOrder
+                                                )
+                                        }
                                 }
                             if (needsClosure) {
                                 var retryMs = 100L
@@ -893,7 +909,8 @@ class CachingConversationRepository(
                                         }
                                         AuthoritativeRestore.Stale -> return@collect
                                         AuthoritativeRestore.Unavailable -> {
-                                            if (!authoritativeCurrent(conversationId) || conversationId in deleted ||
+                                            if (!authoritativeCurrent(conversationId) ||
+                                                conversationId in deleted ||
                                                 authoritativeThreads.current(serverId, conversationId).generation != observed.generation
                                             ) {
                                                 return@collect

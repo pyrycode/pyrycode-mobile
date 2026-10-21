@@ -198,9 +198,10 @@ internal class MigratingConversationCache(
         epoch: String,
         parents: Set<Long>,
         evidence: Set<Long>,
+        placementRoots: Set<Long>,
     ): SavedAuthoritativeThread? =
         read(serverId, conversationId, AUTHORITATIVE) {
-            authoritative.parentClosure(serverId, conversationId, epoch, parents, evidence)
+            authoritative.parentClosure(serverId, conversationId, epoch, parents, evidence, placementRoots)
         }
 
     internal suspend fun beforeAuthoritativePage(

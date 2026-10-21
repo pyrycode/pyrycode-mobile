@@ -30,12 +30,14 @@ internal interface AuthoritativeWindowCache {
         size: Int,
     ): AuthoritativeThreadWindow?
 
+    /** [placementRoots] names winning unordered agents; durable revisions may still be ordered. */
     suspend fun authoritativeParentClosure(
         serverId: String,
         conversationId: String,
         epoch: String,
         parents: Set<Long>,
         evidence: Set<Long>,
+        placementRoots: Set<Long> = emptySet(),
     ): SavedAuthoritativeThread?
 }
 

@@ -9,6 +9,7 @@ import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayTransport
 import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.network.ThreadUpdateDto
 import de.pyryco.mobile.data.repository.CachingConversationRepository
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
@@ -330,6 +331,179 @@ class AuthoritativeWindowRestoreTest {
             )
         }
 
+    @Test fun placementInvariant_zeroAndAbsentChildOrdersMatchRenderer() =
+        runTest {
+            for (rootOrder in listOf(0, 1)) {
+                for (childOrder in listOf(0, null)) {
+                    val root = JsonObject(agent(1, rootOrder, 0) + ("content" to MobileJson.parseToJsonElement("""{"name":"Root"}""")))
+                    val nested = JsonObject(agent(2, 0, 0, parent = 1) + ("order" to (childOrder?.let(::JsonPrimitive) ?: JsonNull)))
+                    val original =
+                        SavedAuthoritativeThread(
+                            "e",
+                            listOf(root, nested, fact(300, parent = 2)) + (3..202).map { fact(it, parent = 1) },
+                            1000,
+                            1000,
+                        ).retained()
+                    open().writeAuthoritativeThread("host", "c", original).getOrThrow()
+                    val cold = open()
+                    val window = requireNotNull(cold.newestDisplayWindow("host", "c", 200))
+                    val expected = projectAuthoritativeThread("host", "c", original.toSnapshot()).rows.takeLast(200).map { it.listKey(0) }
+                    val partial = window.saved.toSnapshot().copy(openingRows = window.rows)
+                    assertEquals(
+                        "root=$rootOrder child=$childOrder",
+                        expected,
+                        projectAuthoritativeThread("host", "c", partial).rows.map { it.listKey(0) },
+                    )
+                    assertTrue(cold.lastReadCounts.itemDecodes <= 204)
+                    assertTrue(cold.lastReadCounts.queries <= 12)
+                    println("zero-order root=$rootOrder child=$childOrder counts=${cold.lastReadCounts}")
+                }
+            }
+        }
+
+    private fun structuralFixture(
+        unordered: Boolean,
+        replacement: Boolean = false,
+    ): SavedAuthoritativeThread =
+        SavedAuthoritativeThread(
+            "e",
+            (1..(if (replacement) 17_798 else 17_799)).map { fact(it) } +
+                JsonObject(
+                    agent(40_000, if (unordered) 0 else 18_010, 0) + ("content" to MobileJson.parseToJsonElement("""{"name":"Root"}""")),
+                ) +
+                fact(18_010, parent = 40_000) +
+                (if (replacement) listOf(fact(18_020, parent = 40_000)) else emptyList()) +
+                fact(19_000, parent = 40_000) + (18_050..18_248).map { fact(it) },
+            50_000,
+            50_000,
+        ).retained()
+
+    @Test fun placementInvariant_winningUnorderedRootResolvesHistoricalWitness() =
+        runTest {
+            for (heldOpening in listOf(false, true)) {
+                databaseFile = "structure-$heldOpening.db"
+                val original = structuralFixture(unordered = false)
+                assertEquals(18_000, projectAuthoritativeThread("host", "c", original.toSnapshot()).rows.size)
+                open().writeAuthoritativeThread("host", "c", original).getOrThrow()
+                open()
+                val disk = migrating()
+                val captured = CompletableDeferred<Unit>()
+                val release = CompletableDeferred<Unit>()
+                val cache =
+                    object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
+                        override suspend fun newestAuthoritativeWindow(
+                            serverId: String,
+                            conversationId: String,
+                            size: Int,
+                        ) = disk.newestAuthoritativeWindow(serverId, conversationId, size).also {
+                            captured.complete(Unit)
+                            if (heldOpening) release.await()
+                        }
+                    }
+                val revised =
+                    JsonObject(
+                        original.items.first { it["id"] == JsonPrimitive(40_000) } +
+                            mapOf("order" to JsonPrimitive(0), "rev" to JsonPrimitive(50_001)),
+                    )
+                val updated =
+                    original.copy(
+                        items = original.items.filterNot { it["id"] == JsonPrimitive(40_000) } + revised,
+                        appliedVersion = 50_001,
+                    )
+                val expected = projectAuthoritativeThread("host", "c", updated.toSnapshot()).rows.takeLast(200).map { it.listKey(0) }
+                destination(cache) { _, vm, repo ->
+                    captured.await()
+                    if (!heldOpening) vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                    if (heldOpening) {
+                        repo.authoritativeThreads.applyBatch("host", "c", "e", 50_001, listOf(ThreadItemDto.decodeReplacement(revised)), 0)
+                    } else {
+                        val clear =
+                            requireNotNull(
+                                ThreadUpdateDto.decode(
+                                    "thread_item_changed",
+                                    MobileJson
+                                        .parseToJsonElement(
+                                            """{"conversation_id":"c","epoch":"e","version":50001,"item_id":40000,"base_rev":40000,"rev":50001,"changes":{"order":0}}""",
+                                        ).jsonObject,
+                                ),
+                            )
+                        repo.authoritativeThreads.apply("host", clear, 0)
+                    }
+                    release.complete(Unit)
+                    val opened =
+                        vm.state.first {
+                            it.authoritativeThread?.sourceSnapshot?.items?.any { item ->
+                                item.id == 40_000L &&
+                                    item.rev == 50_001L
+                            } ==
+                                true
+                        }
+                    assertEquals(expected, requireNotNull(opened.authoritativeThread).rows.map { it.listKey(0) })
+                    assertTrue(requireNotNull(opened.authoritativeThread).sourceSnapshot.items.any { it.id == 18_010L })
+                    assertTrue(disk.authoritativeReadCounts.itemDecodes <= 215)
+                    assertTrue(disk.authoritativeReadCounts.queries <= 25)
+                    assertEquals(0, disk.authoritativeFullReads)
+                    println("winning-structure held=$heldOpening counts=${disk.authoritativeReadCounts}")
+                }
+                val fresh = requireNotNull(open().readAuthoritativeThread("host", "c"))
+                assertEquals(updated.items.associateBy { it["id"] }, fresh.items.associateBy { it["id"] })
+                open()
+                destination(migrating()) { _, vm, _ ->
+                    val reopened = vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                    assertEquals(expected, requireNotNull(reopened.authoritativeThread).rows.map { it.listKey(0) })
+                }
+            }
+        }
+
+    @Test fun placementInvariant_ownedWitnessRemovalResolvesReplacementBeforeDelivery() =
+        runTest {
+            val original = structuralFixture(unordered = true, replacement = true)
+            assertEquals(18_000, projectAuthoritativeThread("host", "c", original.toSnapshot()).rows.size)
+            open().writeAuthoritativeThread("host", "c", original).getOrThrow()
+            open()
+            val disk = migrating()
+            val expected =
+                projectAuthoritativeThread(
+                    "host",
+                    "c",
+                    original
+                        .copy(
+                            items =
+                                original.items.filterNot {
+                                    it["id"] ==
+                                        JsonPrimitive(18_010)
+                                },
+                        ).toSnapshot(),
+                ).rows.takeLast(200).map { it.listKey(0) }
+            destination(disk) { _, vm, repo ->
+                val initial = vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                assertFalse(requireNotNull(initial.authoritativeThread).sourceSnapshot.items.any { it.id == 18_020L })
+                val target = requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 18_010))
+                repo.removeAuthoritativeFact(target).getOrThrow()
+                val removed =
+                    vm.state.first {
+                        it.authoritativeThread
+                            ?.sourceSnapshot
+                            ?.retirements
+                            ?.containsKey(18_010L) == true
+                    }
+                assertEquals(expected, requireNotNull(removed.authoritativeThread).rows.map { it.listKey(0) })
+                assertTrue(requireNotNull(removed.authoritativeThread).sourceSnapshot.items.any { it.id == 18_020L })
+                assertTrue(disk.authoritativeReadCounts.itemDecodes <= 215)
+                assertTrue(disk.authoritativeReadCounts.queries <= 25)
+                assertEquals(0, disk.authoritativeFullReads)
+                println("removed-witness counts=${disk.authoritativeReadCounts}")
+            }
+            val fresh = requireNotNull(open().readAuthoritativeThread("host", "c"))
+            assertFalse(fresh.items.any { it["id"] == JsonPrimitive(18_010) })
+            assertTrue(18_010L in fresh.retirements)
+            open()
+            destination(migrating()) { _, vm, _ ->
+                val reopened = vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                assertEquals(expected, requireNotNull(reopened.authoritativeThread).rows.map { it.listKey(0) })
+            }
+        }
+
     @Test fun validationInvariant_unavailableSupplementNeverDeliversOrCommitsUnverifiedFacts() =
         runTest {
             for (retired in listOf(true, false)) {
@@ -359,13 +533,21 @@ class AuthoritativeWindowRestoreTest {
                                     epoch: String,
                                     parents: Set<Long>,
                                     evidence: Set<Long>,
+                                    placementRoots: Set<Long>,
                                 ): SavedAuthoritativeThread? {
                                     attempts++
                                     if (unavailable) {
                                         if (throws) throw java.io.IOException("classified unavailable")
                                         return null
                                     }
-                                    return disk.authoritativeParentClosure(serverId, conversationId, epoch, parents, evidence)
+                                    return disk.authoritativeParentClosure(
+                                        serverId,
+                                        conversationId,
+                                        epoch,
+                                        parents,
+                                        evidence,
+                                        placementRoots,
+                                    )
                                 }
                             }
                         destination(cache) { _, vm, repo ->
@@ -961,70 +1143,90 @@ class AuthoritativeWindowRestoreTest {
 
     @Test fun migrationInvariant_existingFactsAndIndexesSurviveUpgrade() =
         runTest {
-            val fixtures = listOf(agent(1, 1, 10), fact(2, active = true, parent = 1))
-            val schema =
-                MobileJson
-                    .parseToJsonElement(
-                        File("src/main/roomSchemas/de.pyryco.mobile.data.cache.ConversationCacheDatabase/5.json").readText(),
-                    ).jsonObject
-                    .getValue("database")
-                    .jsonObject
-            SQLiteDatabase.openOrCreateDatabase(File(temporary.root, "window.db"), null).use { db ->
-                schema.getValue("entities").jsonArray.forEach { entry ->
-                    val entity = entry.jsonObject
-                    val table = entity.getValue("tableName").jsonPrimitive.content
-                    db.execSQL(
-                        entity
-                            .getValue("createSql")
-                            .jsonPrimitive.content
-                            .replace("\${TABLE_NAME}", table),
-                    )
-                    entity["indices"]?.jsonArray?.forEach {
+            for (version in listOf(5, 8)) {
+                databaseFile = "migration-$version.db"
+                val fixtures =
+                    listOf(
+                        JsonObject(agent(1, 1, 0) + ("content" to MobileJson.parseToJsonElement("""{"name":"Root"}"""))),
+                        agent(2, 0, 0, parent = 1),
+                        fact(300, parent = 2),
+                    ) + (3..202).map { fact(it, parent = 1) }
+                val original = SavedAuthoritativeThread("e", fixtures, 1000, 1000).retained()
+                val schema =
+                    MobileJson
+                        .parseToJsonElement(
+                            File("src/main/roomSchemas/de.pyryco.mobile.data.cache.ConversationCacheDatabase/$version.json").readText(),
+                        ).jsonObject
+                        .getValue("database")
+                        .jsonObject
+                SQLiteDatabase.openOrCreateDatabase(File(temporary.root, databaseFile), null).use { db ->
+                    schema.getValue("entities").jsonArray.forEach { entry ->
+                        val entity = entry.jsonObject
+                        val table = entity.getValue("tableName").jsonPrimitive.content
                         db.execSQL(
-                            it.jsonObject
+                            entity
                                 .getValue("createSql")
                                 .jsonPrimitive.content
                                 .replace("\${TABLE_NAME}", table),
                         )
+                        entity["indices"]?.jsonArray?.forEach {
+                            db.execSQL(
+                                it.jsonObject
+                                    .getValue("createSql")
+                                    .jsonPrimitive.content
+                                    .replace("\${TABLE_NAME}", table),
+                            )
+                        }
                     }
+                    schema.getValue("setupQueries").jsonArray.forEach { db.execSQL(it.jsonPrimitive.content) }
+                    db.execSQL("INSERT INTO authoritative_headers VALUES ('host','c','e','g',1000,1000,NULL,${fixtures.size},'')")
+                    for ((index, raw) in original.items.withIndex()) {
+                        val item = ThreadItemDto.decodeReplacement(raw)
+                        db.execSQL(
+                            "INSERT INTO authoritative_items (host,conversation,epoch,id,ordinal,orderKey,payload) VALUES ('host','c','e',?,?,?,?)",
+                            arrayOf(item.id, index, item.order?.takeIf { it > 0 } ?: Long.MAX_VALUE, raw.toString()),
+                        )
+                    }
+                    db.version = version
                 }
-                schema.getValue("setupQueries").jsonArray.forEach { db.execSQL(it.jsonPrimitive.content) }
-                db.execSQL("INSERT INTO authoritative_headers VALUES ('host','c','e','g',10,10,NULL,2,'')")
-                for ((index, item) in fixtures.withIndex()) {
-                    db.execSQL(
-                        "INSERT INTO authoritative_items VALUES ('host','c','e',?,?,?,?)",
-                        arrayOf(index + 1, index, index + 1, item.toString()),
-                    )
-                }
-                db.version = 5
-            }
-            val cold = open()
-            assertEquals(
-                fixtures,
-                cold.newestDisplayWindow("host", "c", 200)?.saved?.items,
-            )
-            for (column in listOf("displayKey", "launchKey")) {
-                val plans =
-                    requireNotNull(database).openHelper.readableDatabase.query(
-                        "EXPLAIN QUERY PLAN SELECT * FROM authoritative_items " +
-                            "WHERE host='host' AND conversation='c' AND epoch='e' AND $column>'' " +
-                            "ORDER BY $column DESC LIMIT 200",
-                    )
-                plans.use { cursor ->
-                    assertTrue(cursor.moveToFirst())
-                    assertTrue(cursor.getString(3).contains("$column>?"))
-                }
-                requireNotNull(database)
-                    .openHelper.readableDatabase
-                    .query(
-                        "EXPLAIN QUERY PLAN SELECT * FROM authoritative_items " +
-                            "WHERE host='host' AND conversation='c' AND epoch='e' AND orderKey=2 " +
-                            "AND $column>='0' AND $column<'1' LIMIT 1",
-                    ).use { cursor ->
+                val cold = open()
+                val window = requireNotNull(cold.newestDisplayWindow("host", "c", 200))
+                assertEquals(
+                    projectAuthoritativeThread("host", "c", original.toSnapshot()).rows.takeLast(200).map { it.listKey(0) },
+                    projectAuthoritativeThread(
+                        "host",
+                        "c",
+                        window.saved.toSnapshot().copy(openingRows = window.rows),
+                    ).rows.map { it.listKey(0) },
+                )
+                assertEquals(original, cold.readAuthoritativeThread("host", "c"))
+                val root = requireNotNull(requireNotNull(database).authoritative().item("host", "c", "e", 1))
+                assertEquals(3L, root.anchorId)
+                assertEquals(2L, root.tieId)
+                assertEquals(0L, requireNotNull(requireNotNull(database).authoritative().item("host", "c", "e", 2)).rendererOrder)
+                for (column in listOf("displayKey", "launchKey")) {
+                    val plans =
+                        requireNotNull(database).openHelper.readableDatabase.query(
+                            "EXPLAIN QUERY PLAN SELECT * FROM authoritative_items " +
+                                "WHERE host='host' AND conversation='c' AND epoch='e' AND $column>'' " +
+                                "ORDER BY $column DESC LIMIT 200",
+                        )
+                    plans.use { cursor ->
                         assertTrue(cursor.moveToFirst())
-                        val detail = cursor.getString(3)
-                        assertTrue(detail, detail.contains("orderKey=? AND $column>?"))
+                        assertTrue(cursor.getString(3).contains("$column>?"))
                     }
+                    requireNotNull(database)
+                        .openHelper.readableDatabase
+                        .query(
+                            "EXPLAIN QUERY PLAN SELECT * FROM authoritative_items " +
+                                "WHERE host='host' AND conversation='c' AND epoch='e' AND orderKey=2 " +
+                                "AND $column>='0' AND $column<'1' LIMIT 1",
+                        ).use { cursor ->
+                            assertTrue(cursor.moveToFirst())
+                            val detail = cursor.getString(3)
+                            assertTrue(detail, detail.contains("orderKey=? AND $column>?"))
+                        }
+                }
             }
         }
 }

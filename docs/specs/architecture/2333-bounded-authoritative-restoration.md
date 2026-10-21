@@ -86,7 +86,7 @@ None concerning product scope. Validate display-contributor indexing against the
 
 **Verdict:** PASS
 
-- [Trust boundaries] MUST FIX addressed: selected disk payloads pass existing full-item validation and exact owner/epoch/index identity checks. A bounded live capture must successfully resolve supplemental parents, placement witnesses and retirement evidence before delivery or writer acceptance; null/failed reads retain the last validated output and cannot poison its committed baseline. Cached facts grant no negotiated support. Unknown daemon fields stay inert.
+- [Trust boundaries] MUST FIX addressed: selected disk payloads pass existing full-item validation and exact owner/epoch/index identity checks. A bounded live capture must successfully resolve supplemental parents, placement witnesses and retirement evidence before delivery or writer acceptance; null/failed reads retain the last validated output and cannot poison its committed baseline. Witness requirements follow the winning structure, including an ordered durable agent becoming unordered in a live revision. Retirement invalidates witness sufficiency and requires its bounded replacement before delivery. Cached facts grant no negotiated support. Unknown daemon fields stay inert.
 - [Tokens] No credentials or credential storage change; selection stores existing conversation facts only.
 - [Files and storage] Keep the app-private no-backup database/sidecars and additive migration. Existing plaintext cache threat model remains; rooted-device content access is unchanged. Failed reads never rewrite or delete content.
 - [Android attack surface] No component, intent, provider or WebView change. Existing bounded text rendering remains.
