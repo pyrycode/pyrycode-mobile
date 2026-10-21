@@ -447,10 +447,14 @@ class AuthoritativeReaderPagingTest {
                 val parent = JsonObject(fact(90_000, false) + mapOf("kind" to JsonPrimitive("agent"), "order" to JsonPrimitive(10_000)))
                 val children = (1..600).map { JsonObject(fact(it) + ("parent" to JsonPrimitive(90_000))) }
                 val standalone = (11_000 until 11_000 + standaloneCount).map { JsonObject(fact(it) + ("order" to JsonPrimitive(it))) }
-                val original = SavedAuthoritativeThread(
-                    "e", children + parent + standalone, 100_000, 99_000,
-                    SavedThreadCoverage(11_000, 11_000L + standaloneCount - 1, 11_000, true),
-                )
+                val original =
+                    SavedAuthoritativeThread(
+                        "e",
+                        children + parent + standalone,
+                        100_000,
+                        99_000,
+                        SavedThreadCoverage(11_000, 11_000L + standaloneCount - 1, 11_000, true),
+                    )
                 disk().writeAuthoritativeThread("host", "c", original).getOrThrow()
                 val cache = disk()
                 val moved = JsonObject(parent + mapOf("rev" to JsonPrimitive(110_000), "order" to JsonPrimitive(20_000)))
@@ -467,12 +471,17 @@ class AuthoritativeReaderPagingTest {
                         val snapshot = repo.authoritativeThreads.current("host", "c")
                         val selected = requireNotNull(snapshot.openingRows)
                         val expected = children.takeLast((page + 1) * 200)
-                        assertEquals(expected, snapshot.items.filter { it.parent == 90_000L && (it.id to false) in selected }.map { it.raw })
+                        assertEquals(
+                            expected,
+                            snapshot.items.filter { it.parent == 90_000L && (it.id to false) in selected }.map { it.raw },
+                        )
                         vm.state.first { it.authoritativeThread?.rows?.size == expected.size + 200 }
                         assertEquals(
                             (standalone.takeLast(200) + expected).map { it["id"].toString().toLong() to "Saved exact ${it["id"]}" },
                             vm.state.value.authoritativeThread?.items?.filterIsInstance<ThreadItem.MessageItem>()?.map {
-                                it.message.id.substringAfterLast(':').toLong() to it.message.content
+                                it.message.id
+                                    .substringAfterLast(':')
+                                    .toLong() to it.message.content
                             },
                         )
                         assertEquals(original.coverage?.toDomain(), snapshot.coverage)
@@ -486,7 +495,12 @@ class AuthoritativeReaderPagingTest {
                         advanceTimeBy(1000)
                         runCurrent()
                         assertEquals(requests, fixture.requests)
-                        assertEquals(expected.size + 200, vm.state.value.authoritativeThread?.rows?.size)
+                        assertEquals(
+                            expected.size + 200,
+                            vm.state.value.authoritativeThread
+                                ?.rows
+                                ?.size,
+                        )
                     }
                     var count = 800
                     while (count < children.size + standaloneCount) {
@@ -510,7 +524,9 @@ class AuthoritativeReaderPagingTest {
                     assertEquals(
                         (standalone + children).map { it["id"].toString().toLong() },
                         vm.state.value.authoritativeThread?.items?.filterIsInstance<ThreadItem.MessageItem>()?.map {
-                            it.message.id.substringAfterLast(':').toLong()
+                            it.message.id
+                                .substringAfterLast(':')
+                                .toLong()
                         },
                     )
                     assertTrue(fixture.requests.none { it.type in setOf("thread_page", "thread_catch_up") })

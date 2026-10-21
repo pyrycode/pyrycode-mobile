@@ -56,7 +56,11 @@ class AuthoritativeRoomStorage internal constructor(
     private val dao = database.authoritative()
     private val mutex = Mutex()
 
-    private data class ReaderBoundary(val generation: String, val key: String, val launch: Boolean) {
+    private data class ReaderBoundary(
+        val generation: String,
+        val key: String,
+        val launch: Boolean,
+    ) {
         override fun toString(): String = "ReaderBoundary(redacted)"
     }
 
@@ -64,7 +68,11 @@ class AuthoritativeRoomStorage internal constructor(
     private val readerBoundaries = WeakHashMap<AuthoritativeDisplayCursor, ReaderBoundary>()
     private val pendingReaderBoundaries = mutableMapOf<AuthoritativeDisplayCursor, ReaderBoundary>()
 
-    private fun displayCursor(header: AuthoritativeHeader, key: String, launch: Boolean): AuthoritativeDisplayCursor =
+    private fun displayCursor(
+        header: AuthoritativeHeader,
+        key: String,
+        launch: Boolean,
+    ): AuthoritativeDisplayCursor =
         AuthoritativeDisplayCursor(header.host, header.conversation, header.epoch, header.incarnation).also {
             readerBoundaries[it] = ReaderBoundary(header.generation, key, launch)
         }
@@ -305,10 +313,15 @@ class AuthoritativeRoomStorage internal constructor(
             val affectedIds = placementChanged + assigned.keys + saved.retirements.keys + trimmedRecords.map { it.id }
             val nextGeneration = UUID.randomUUID().toString()
             val previousActive = changes.associate { it.first.id to it.second?.active }
-            val readers = readerBoundaries.entries.filter { (cursor, boundary) ->
-                cursor.host == host && cursor.conversation == conversation && cursor.epoch == saved.epoch &&
-                    cursor.incarnation == saved.incarnation && boundary.generation == header?.generation
-            }.associate { it.key to it.value }
+            val readers =
+                readerBoundaries.entries
+                    .filter { (cursor, boundary) ->
+                        cursor.host == host &&
+                            cursor.conversation == conversation &&
+                            cursor.epoch == saved.epoch &&
+                            cursor.incarnation == saved.incarnation &&
+                            boundary.generation == header?.generation
+                    }.associate { it.key to it.value }
             val movedReaders = readers.mapValues { (_, boundary) -> boundary.copy(generation = nextGeneration) }.toMutableMap()
             updatePlacements(host, conversation, saved.epoch, affectedIds, formerParents) { record, keys ->
                 // Old positions classify reachability. Do not widen this classification as the
@@ -319,7 +332,14 @@ class AuthoritativeRoomStorage internal constructor(
                             Triple(false, record.displayKey, keys.first),
                             Triple(true, record.launchKey, keys.second),
                         )) {
-                            if (oldKey.isEmpty() || oldKey.startsWith("!") || newKey.isEmpty() || newKey.startsWith("!") || oldKey == newKey) continue
+                            if (oldKey.isEmpty() ||
+                                oldKey.startsWith("!") ||
+                                newKey.isEmpty() ||
+                                newKey.startsWith("!") ||
+                                oldKey == newKey
+                            ) {
+                                continue
+                            }
                             if (oldKey < boundary.key || (oldKey == boundary.key && (!launch || boundary.launch))) {
                                 val inclusive = "$newKey~"
                                 val held = movedReaders.getValue(cursor)
@@ -1063,10 +1083,11 @@ class AuthoritativeRoomStorage internal constructor(
                     pendingReaderBoundaries.clear()
                     try {
                         when (val done = database.classifiedTransaction(beforeCommit, block)) {
-                            is CacheTransaction.Committed -> Result.success(Unit).also {
-                                readerBoundaries.putAll(pendingReaderBoundaries)
-                                log(operation, "ok")
-                            }
+                            is CacheTransaction.Committed ->
+                                Result.success(Unit).also {
+                                    readerBoundaries.putAll(pendingReaderBoundaries)
+                                    log(operation, "ok")
+                                }
                             is CacheTransaction.Failed -> {
                                 log(operation, done.code)
                                 Result.failure(ConversationCacheException("conversation cache $operation failed: ${done.code}"))
