@@ -288,12 +288,19 @@ internal fun projectAuthoritativeThread(
             }.groupBy { it.second.taskId }
             .values
             .map { entries -> entries.maxBy { it.first.rev }.second }
+    val selectedKeys =
+        snapshot.openingRows?.mapTo(HashSet()) { (id, launch) ->
+            if (launch) "agent-start:${identity(id)}" else "msg:${identity(id)}"
+        }
+
+    fun selected(row: ThreadRow) = selectedKeys == null || row.listKey(0) in selectedKeys
+    val selectedRows = rows.filter(::selected)
     return AuthoritativeThreadPresentation(
         scope,
         host,
         conversation,
-        rows + waiting,
-        rows.filterIsInstance<ThreadRow.Delivered>().map { it.item },
+        selectedRows + waiting,
+        selectedRows.filterIsInstance<ThreadRow.Delivered>().map { it.item },
         depths,
         BackgroundTaskRoster(tasks, 0),
         background.mapKeys { (id, _) -> identity(id) }.mapValues { (_, item) ->
@@ -302,7 +309,7 @@ internal fun projectAuthoritativeThread(
                 item.endedOrder?.takeIf {
                     it > 0
                 } ?: requireNotNull(item.order),
-                backgroundContents.getValue(item.id).mapTo(HashSet()) { it.listKey(0) },
+                backgroundContents.getValue(item.id).filter(::selected).mapTo(HashSet()) { it.listKey(0) },
             )
         },
         ordered.asReversed().firstNotNullOfOrNull { item ->
@@ -315,7 +322,7 @@ internal fun projectAuthoritativeThread(
             ((adapted[item.id]?.item as? ThreadItem.MessageItem)?.message?.toolCall)?.takeIf { it.status == ToolCallStatus.Running }
         },
         snapshot.checkpoint.takeIf { snapshot.epoch != null && !snapshot.repairNeeded && !snapshot.resetNeeded && it >= 0 },
-        visible.mapNotNull { item -> adapted[item.id]?.let { it.listKey(0) to item.rev } }.toMap(),
+        visible.mapNotNull { item -> adapted[item.id]?.takeIf(::selected)?.let { it.listKey(0) to item.rev } }.toMap(),
         snapshot,
     )
 }
