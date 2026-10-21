@@ -527,6 +527,22 @@ internal class RecordedSuiteTape(
 
     @Synchronized fun testEndReady(actual: Envelope): Boolean = precedingWorkReleased(testEndBoundary(actual), allowDeferredReads = true)
 
+    /** Keep request-producing activity jobs alive even when the phone closes after test-end. */
+    @Synchronized fun phoneWorkBeforeTestEndReady(): Boolean {
+        failure?.let { fail(it) }
+        val end =
+            steps.indices.firstOrNull {
+                it !in consumed && steps[it].owner == "control" && steps[it].message?.type == "test-control:test-end"
+            } ?: return true
+        return (0 until minOf(end, checkpointBoundary())).all { index ->
+            val step = steps[index]
+            !step.owner.startsWith("phone/") ||
+                step.direction !in setOf("client", "daemon", "settings_snapshot") ||
+                index in released ||
+                readReceipts?.permits(step) == false
+        }
+    }
+
     /** A foreground fence must not wait for later cleanup controls or registry disposal. */
     @Synchronized fun phoneClosesBeforeTeardown(): List<String> {
         val cleanup =

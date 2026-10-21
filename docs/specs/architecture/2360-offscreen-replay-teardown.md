@@ -7,7 +7,7 @@
 - `app/src/androidTest/java/de/pyryco/mobile/recording/RecordedSuiteNative.kt`: `beforePhoneTeardown` delegates to the replay hub; `finish` checks complete consumption.
 - `app/src/sharedTest/java/de/pyryco/mobile/recording/SuiteConnections.kt`: `beforePhoneTeardown`, `beforeClose`, delivery serialization and test-end readiness.
 - `app/src/sharedTest/java/de/pyryco/mobile/recording/RecordedSuiteTape.kt`: `phoneClosesBeforeTeardown` excludes the post-test-end close; released work and checkpoint fences govern admission.
-- `app/src/test/java/de/pyryco/mobile/recording/SuiteConnectionsTest.kt` and `RecordedActivityRuleTest.kt`: existing pre-close and registry-disposal boundaries.
+- `app/src/test/java/de/pyryco/mobile/recording/SuiteConnectionsTest.kt`, `RecordedSuiteTapeTest.kt` and `RecordedActivityRuleTest.kt`: existing pre-close, strict admission and registry-disposal boundaries; new `RecordedPhoneTeardownTest` adds focused boundary probes.
 - `docs/recorded-tests.md`, What replay proves: complete requests, owner correlation and causal observation remain strict.
 - `docs/knowledge/features/development-verification-gates.md`, Scenario cleanup before activity teardown: keep request-producing jobs alive until their required prefix arrives.
 
@@ -35,8 +35,8 @@ No production state or jobs change. Replay continues on its scoped coroutine dis
 | --- | --- |
 | Final query delayed until after scenario assertions; activity teardown cancels producer; delayed stop follows | `SuiteConnectionsTest.phoneTeardownRetainsRequiredWorkBeforeTestEnd` controls this interleaving, first red before repair. |
 | Request accepted but reply delivery remains queued | Same regression holds the original scheduled reply and requires delivery before fence completion. |
-| Required request never arrives | `SuiteConnectionsTest.phoneTeardownDoesNotReleaseIncompleteWork` checks the fence remains pending and early close still fails. |
-| Foreign connection/host/conversation/epoch/checkpoint or duplicate request | Focused strict tape/hub probes reject mismatches and cannot release the fence. |
+| Required request never arrives | `RecordedPhoneTeardownTest.missingWorkAndAnEarlyCloseStillFail` checks incomplete readiness and strict early close rejection. |
+| Foreign connection/host/conversation/epoch/checkpoint or duplicate request | `RecordedPhoneTeardownTest.foreignWorkCannotReleaseTheRequiredQuery` and `aRequiredRepeatedQueryCannotBeOmittedOrSatisfiedByADuplicateRequestId` reject mismatches and cannot release the fence. |
 | Observation checkpoint precedes cleanup; disposal follows | Existing `phoneTeardownDoesNotWaitForRegistryDisposalAfterTheCompletionCheckpoint` and new checkpoint-boundary probe. |
 | Repeated native execution, reconnect and original row identities | Five consecutive executions of the unchanged recorded offscreen method on macOS. |
 
@@ -50,4 +50,4 @@ Write and run the controlled hub regression before changing the player. Run affe
 
 ## Open Questions
 
-The controlled regression and native results must confirm that keeping the query producer alive reaches the strict prefix. If they establish another cause, revise this design before implementing that repair.
+The controlled regression reproduced the original lifecycle mismatch before repair (one executed, one failed). It explicitly withholds request 13/checkpoint 28 until the fence starts, simulates delayed process stop on premature return, and keeps the queued reply distinct from request acceptance. Native confirmation remains part of the testing strategy.

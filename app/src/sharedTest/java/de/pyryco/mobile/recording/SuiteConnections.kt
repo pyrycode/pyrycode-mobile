@@ -237,6 +237,10 @@ internal class SuiteConnections private constructor(
             }
             beforeClose(owner)
         }
+        withTimeout(30000) {
+            while (!replay.phoneWorkBeforeTestEndReady()) delay(10)
+            awaitIdle()
+        }
     }
 
     suspend fun checkpoint(name: String) {

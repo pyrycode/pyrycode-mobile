@@ -23,6 +23,69 @@ import kotlin.concurrent.thread
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteConnectionsTest {
+    @Test fun phoneTeardownRetainsRequiredWorkBeforeTestEnd() =
+        runTest {
+            val owner = "phone/host/1"
+            val query = frame(13, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":28}""")
+            val reply =
+                frame(
+                    48,
+                    "thread_items",
+                    """{"conversation_id":"chat","epoch":"epoch","version":28,"items":[],"final":true,"from_version":28}""",
+                    13,
+                )
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", owner),
+                        SuiteStep("open", owner),
+                        SuiteStep("client", owner, query),
+                        SuiteStep("daemon", owner, reply, delayMs = 1000),
+                        SuiteStep("client", "control", frame(4, "test-control:test-end", """{"body":""}""")),
+                        SuiteStep("close", owner),
+                        SuiteStep("inbound_end", owner),
+                        SuiteStep("client", "control", frame(5, "test-control:checkpoint", """{"body":"scenario-complete"}""")),
+                    ),
+                    literalProducerIdentities = true,
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, tape)
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                runCurrent()
+                // The scenario has asserted its rows; its asynchronous query has not sent yet.
+                val foreground = async { hub.beforePhoneTeardown() }
+                runCurrent()
+                if (foreground.isCompleted) {
+                    // Activity destruction permits the delayed process stop to close the phone.
+                    transport.close()
+                    hub.awaitIdle()
+                }
+                assertFalse("Activity teardown must keep the pending query producer alive", foreground.isCompleted)
+                assertTrue(pump.send(query.copy(id = 90)))
+                runCurrent()
+                advanceTimeBy(20)
+                runCurrent()
+                assertFalse("Matching the request does not deliver its queued reply", foreground.isCompleted)
+                advanceTimeBy(100)
+                runCurrent()
+                foreground.await()
+                assertEquals(reply.copy(inReplyTo = 90), pump.inbound.first())
+                // The foreground fence did not consume test-end or the physical close.
+                // Send directly through the strict tape: control() uses a blocking bridge, which
+                // cannot drive this test's virtual delivery dispatcher while awaiting its barrier.
+                assertTrue(tape.send("control", frame(90, "test-control:test-end", """{"body":""}""")).accepted)
+                transport.close()
+                runCurrent()
+                hub.checkpoint("scenario-complete")
+                hub.assertComplete()
+            } finally {
+                hub.close()
+            }
+        }
+
     @Test fun anUpcomingDisconnectCannotHideAnUnexpectedRequestOnAnOpenConnection() =
         runTest {
             val owner = "phone/host/0"
