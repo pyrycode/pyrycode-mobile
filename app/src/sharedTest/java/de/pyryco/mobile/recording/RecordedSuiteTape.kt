@@ -556,6 +556,25 @@ internal class RecordedSuiteTape(
             steps[it].direction == "client" && steps[it].owner == owner && !steps[it].accepted
         }
 
+    /** Automatic peer approval waits for its captured action; send still checks every field. */
+    @Synchronized fun peerPermissionReady(
+        owner: String,
+        modalId: String,
+    ): Boolean {
+        failure?.let { fail(it) }
+        return owner.startsWith("peer/") &&
+            eligible().any { index ->
+                val step = steps[index]
+                val frame = step.message
+                val payload = frame?.payload?.let(::mapped) as? JsonObject
+                step.owner == owner &&
+                    step.direction == "client" &&
+                    frame?.type == "modal_answer" &&
+                    payload?.get("modal_id") == JsonPrimitive(modalId) &&
+                    payload?.get("option_id") == JsonPrimitive("allow_once")
+            }
+    }
+
     @Synchronized fun send(
         owner: String,
         actual: Envelope,

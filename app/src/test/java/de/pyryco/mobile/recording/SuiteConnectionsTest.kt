@@ -24,6 +24,64 @@ import kotlin.concurrent.thread
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteConnectionsTest {
+    @Test fun automaticPeerApprovalWaitsForTheActualPhoneSend() =
+        runTest {
+            val peer = "peer/host/0"
+            val phone = "phone/host/0"
+            val checkpoint = frame(1, "test-control:checkpoint", """{"body":"phone-send"}""")
+            val send = frame(1, "send_message", """{"text":"controlled release"}""")
+            val approval = frame(1, "modal_answer", """{"modal_id":"prompt","option_id":"allow_once","answer_token":"captured"}""")
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", peer),
+                        SuiteStep("open", peer),
+                        SuiteStep("connect", phone),
+                        SuiteStep("open", phone),
+                        SuiteStep("client", "control", checkpoint),
+                        SuiteStep("client", phone, send),
+                        SuiteStep("client", peer, approval),
+                        SuiteStep("close", peer),
+                        SuiteStep("inbound_end", peer),
+                        SuiteStep("close", phone),
+                        SuiteStep("inbound_end", phone),
+                    ),
+                    literalProducerIdentities = true,
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, tape)
+            try {
+                val peerTransport = hub.transport(peer) { error("Live transport started") }
+                val phoneTransport = hub.transport(phone) { error("Live transport started") }
+                val peerPump = hub.pump(peerTransport) { error("Live pump started") }
+                val phonePump = hub.pump(phoneTransport) { error("Live pump started") }
+                peerPump.start()
+                phonePump.start()
+                peerTransport.connect()
+                phoneTransport.connect()
+                runCurrent()
+                val waiting = async { hub.beforePeerPermission(peerPump, "prompt", 1000) }
+                runCurrent()
+                assertFalse(waiting.isCompleted)
+                assertTrue(tape.send("control", checkpoint.copy(id = 10)).accepted)
+                advanceTimeBy(20)
+                runCurrent()
+                assertFalse("the phone checkpoint cannot replace its actual send", waiting.isCompleted)
+                assertTrue(phonePump.send(send.copy(id = 11)))
+                assertFalse("the phone pump cannot borrow the peer action", hub.peerPermissionReady(phonePump, "prompt"))
+                advanceTimeBy(10)
+                runCurrent()
+                waiting.await()
+                assertTrue(peerPump.send(approval.copy(id = 12)))
+                assertFalse(hub.peerPermissionReady(peerPump, "prompt"))
+                peerTransport.close()
+                phoneTransport.close()
+                runCurrent()
+                hub.assertComplete()
+            } finally {
+                hub.close()
+            }
+        }
+
     @Test fun deliveredQueryCertificateReschedulesLiveProgressWithoutAnotherPhoneRequest() =
         runTest {
             val owner = "phone/host/0"

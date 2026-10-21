@@ -33,6 +33,30 @@ class RecordedSuiteTapeTest {
         RelayLog.sink = savedLogSink
     }
 
+    @Test fun automaticPeerPermissionKeepsTheRecordedPhoneActionOrder() {
+        val peer = "peer/host/0"
+        val phone = "phone/host/0"
+        val checkpoint = frame(1, "test-control:checkpoint", """{"body":"phone-send"}""")
+        val send = frame(1, "send_message", """{"text":"controlled release"}""")
+        val approval = frame(1, "modal_answer", """{"modal_id":"prompt","option_id":"allow_once","answer_token":"captured"}""")
+        val tape =
+            RecordedSuiteTape(
+                listOf(client("control", checkpoint), client(phone, send), client(peer, approval)),
+                literalProducerIdentities = true,
+            )
+        assertFalse(tape.peerPermissionReady(peer, "prompt"))
+        assertTrue(tape.send("control", checkpoint.copy(id = 10)).accepted)
+        assertFalse("checkpoint alone cannot spend the phone command", tape.peerPermissionReady(peer, "prompt"))
+        assertTrue(tape.send(phone, send.copy(id = 11)).accepted)
+        assertFalse("another peer cannot borrow the approval", tape.peerPermissionReady("peer/other/0", "prompt"))
+        assertFalse("another prompt cannot borrow the approval", tape.peerPermissionReady(peer, "other"))
+        assertTrue(tape.peerPermissionReady(peer, "prompt"))
+        val answer = frame(12, "modal_answer", """{"modal_id":"prompt","option_id":"allow_once","answer_token":"fresh"}""")
+        assertTrue(tape.send(peer, answer).accepted)
+        assertFalse("the captured approval is still exactly once", tape.peerPermissionReady(peer, "prompt"))
+        tape.assertComplete()
+    }
+
     private data class TailCase(
         val tape: RecordedSuiteTape,
         val owner: String,

@@ -7980,7 +7980,8 @@ class InteractiveStreamE2ETest {
                                 }.filter { shown ->
                                     shown.modalClass == PERMISSION_CLASS &&
                                         shown.modalId !in allowed &&
-                                        shown.options.any { it.id == ALLOW_ONCE }
+                                        shown.options.any { it.id == ALLOW_ONCE } &&
+                                        peer.canAllowOnce(shown.modalId)
                                 }.forEach { shown ->
                                     allowed += shown.modalId
                                     peer.allowOnce(shown.modalId, THREAD_TIMEOUT_MS)

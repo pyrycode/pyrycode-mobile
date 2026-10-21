@@ -304,6 +304,35 @@ internal class SuiteConnections private constructor(
         }
     }
 
+    fun peerPermissionReady(
+        pump: ManagedSessionPump?,
+        modalId: String,
+    ): Boolean =
+        if (tape == null) {
+            true
+        } else {
+            val replay = pump as? ReplayPump
+            replay != null &&
+                synchronized(this) {
+                    pumps[replay.connection.owner] === replay && tape.peerPermissionReady(replay.connection.owner, modalId)
+                }
+        }
+
+    suspend fun beforePeerPermission(
+        pump: ManagedSessionPump,
+        modalId: String,
+        timeoutMs: Long,
+    ) {
+        if (tape == null) return
+        withTimeout(timeoutMs) {
+            while (!peerPermissionReady(pump, modalId)) {
+                failure.get()?.let { throw it }
+                if (pump.state.value is PumpState.Closed) return@withTimeout
+                delay(10)
+            }
+        }
+    }
+
     suspend fun awaitIdle() {
         val done = CompletableDeferred<Unit>()
         deliveries.send(Delivery.Barrier(done))
