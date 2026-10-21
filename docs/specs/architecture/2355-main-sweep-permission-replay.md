@@ -24,3 +24,7 @@ Reuse #2349's controlled red and #2345's accepted cleanup regression evidence; r
 ## Documentation handoff
 
 - Pending for documentation stage: `docs/recorded-tests.md`, Scenario host-removal readiness / Counted Linux evidence: add this original main-sweep occurrence comparison, repaired source, fresh focused results and eventual configured UI evidence. Preserve the failed sweep, the later sweep's additional retrieval failure, and the pending dispatcher-owned in-depth sweep until counted evidence exists.
+
+## Verification
+
+At `1782cb8b65c395fc88b80f2393f9c65afd524520` (merged repair plus this plan), fresh exact-method Linux replay `ui-zqi07wfm` exited 0: one executed/passed, zero failed/errors/skipped, 8.219 seconds, all 26 original permission stages complete. The unchanged cleanup class also exited 0: seven executed/passed, zero failed/errors/skipped. The content-free index retains report hashes and the persistent raw XML/logcat/source location. #2345's accepted verifier at `b575f0e5442c3960fd4cd3adb79e5341c6079ce9` supplies separate prerequisite UI evidence (335 executed/passed; exact method passed once). This branch's configured UI gate and next post-repair in-depth main sweep remain pending for dispatcher acceptance; no complete suite was run by this builder.
