@@ -5396,6 +5396,7 @@ class InteractiveStreamE2ETest {
         val preferences = GlobalContext.get().get<AppPreferences>()
         val previousCollapse = runBlocking { preferences.collapseToolUses.first() }
         val allowed = mutableSetOf<String>()
+        var failure: Throwable? = null
         try {
             runBlocking { preferences.setCollapseToolUses(true) }
             awaitChannelList()
@@ -5574,13 +5575,30 @@ class InteractiveStreamE2ETest {
                     openChatRow(name)
                 }, send = { sendFromPhone("Reply briefly to this new-session settlement check.") })
             }
+        } catch (error: Throwable) {
+            failure = error
+            throw error
         } finally {
-            try {
-                stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release-reply")
-            } finally {
-                runBlocking { preferences.setCollapseToolUses(previousCollapse) }
-                peer.close()
+            val original = failure
+            val cleanups =
+                listOf<() -> Unit>(
+                    { stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release-reply") },
+                    { runBlocking { preferences.setCollapseToolUses(previousCollapse) } },
+                    { peer.close() },
+                )
+            for (cleanup in cleanups) {
+                try {
+                    cleanup()
+                } catch (error: Throwable) {
+                    val previous = failure
+                    if (previous == null) {
+                        failure = error
+                    } else if (previous !== error) {
+                        previous.addSuppressed(error)
+                    }
+                }
             }
+            if (original == null) failure?.let { throw it }
         }
     }
 

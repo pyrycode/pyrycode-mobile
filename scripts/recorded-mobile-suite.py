@@ -119,6 +119,11 @@ def instrument(serial, method, arguments):
     diagnostic = ROOT / 'build/recorded-suite' / method / ('replay-' + uuid.uuid4().hex + '-private.log')
     diagnostic.parent.mkdir(parents=True, exist_ok=True)
     legacy.private_write(diagnostic, result.stdout + result.stderr)
+    try:
+        phone_log = legacy.adb(serial, 'logcat', '-d')
+    except Exception as error:
+        phone_log = ('Phone log collection failed: ' + type(error).__name__ + '\n').encode()
+    legacy.private_write(diagnostic.with_name(diagnostic.name.replace('-private.log', '-phone-private.log')), phone_log)
     executed_one(result.stdout)
     require(result.returncode == 0, 'Instrumentation process failed')
     timing = re.search(rb'(?m)^Time: (\d+(?:\.\d+)?)\r?$', result.stdout)

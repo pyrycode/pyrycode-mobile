@@ -24,6 +24,27 @@ class SuiteDriverTest(unittest.TestCase):
         self.addCleanup(environment.stop)
         self.addCleanup(host.stop)
 
+    def test_failed_replay_retains_phone_log_before_reporting_original_failure(self):
+        self.assert_replay_phone_log_retained(b'phone diagnostic', b'phone diagnostic')
+
+    def test_phone_log_collection_error_does_not_replace_replay_failure(self):
+        self.assert_replay_phone_log_retained(RuntimeError('private exception text'), b'Phone log collection failed: RuntimeError\n')
+
+    def assert_replay_phone_log_retained(self, phone_result, expected):
+        with tempfile.TemporaryDirectory() as directory:
+            output = mock.Mock(stdout=b'FAILURES!!!', stderr=b'failed replay', returncode=1)
+            phone = {'side_effect': phone_result} if isinstance(phone_result, Exception) else {'return_value': phone_result}
+            with mock.patch.object(suite, 'ROOT', Path(directory)), mock.patch.object(suite.subprocess, 'run', return_value=output), \
+                    mock.patch.object(suite.legacy, 'adb', **phone):
+                with self.assertRaisesRegex(ValueError, 'Native scenario did not execute and pass exactly one test'):
+                    suite.instrument('test-device', 'test-method', {})
+            logs = list(Path(directory).rglob('*-phone-private.log'))
+            self.assertEqual(1, len(logs))
+            self.assertEqual(expected, logs[0].read_bytes())
+            self.assertEqual(0o600, logs[0].stat().st_mode & 0o777)
+            original = [p for p in Path(directory).rglob('*-private.log') if p not in logs]
+            self.assertEqual([output.stdout + output.stderr], [p.read_bytes() for p in original])
+
     def test_host_admission_reuses_only_the_original_descriptor(self):
         self.host_patch.stop()
         with tempfile.TemporaryDirectory() as directory:
