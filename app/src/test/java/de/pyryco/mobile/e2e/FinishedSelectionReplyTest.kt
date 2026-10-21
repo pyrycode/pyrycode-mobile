@@ -1,6 +1,7 @@
 package de.pyryco.mobile.e2e
 
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -15,14 +16,26 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Before
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class FinishedSelectionReplyTest {
+    private val oldSink = RelayLog.sink
+
+    @Before fun quietAndroidLogs() {
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After fun restoreAndroidLogs() {
+        RelayLog.sink = oldSink
+    }
+
     private class Source : ConversationRepository by FakeConversationRepository() {
-        override val negotiatedThread = FixtureThread("selection-host")
+        override val negotiatedThread = FixtureThread("selection-host", "chat")
         val rows get() = negotiatedThread.facts
 
         override fun observeMessages(conversationId: String): kotlinx.coroutines.flow.Flow<List<ThreadItem>> =

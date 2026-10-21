@@ -152,7 +152,7 @@ class ThreadViewModelRefusalOfferTest {
             val vm = collectedVm()
 
             assertTrue(
-                vm.state.value.items
+                requireNotNull(vm.state.value.authoritativeThread).items
                     .any { it is ThreadItem.ModelRefusal },
             )
             assertNull(vm.switchBackOffer.value)
@@ -533,7 +533,7 @@ class ThreadViewModelRefusalOfferTest {
     private inner class RecordingRepo(
         val fake: FakeConversationRepository = FakeConversationRepository(),
     ) : ConversationRepository by fake {
-        private val thread = FixtureThread(SERVER)
+        private val thread = FixtureThread(SERVER, CONV)
         var route: NegotiatedThread? = thread
         override val negotiatedThread get() = route
         val readings = MutableStateFlow<SessionSettings?>(reading())

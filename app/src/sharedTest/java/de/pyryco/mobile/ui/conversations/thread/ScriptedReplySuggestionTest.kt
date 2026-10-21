@@ -47,6 +47,8 @@ class ScriptedReplySuggestionTest {
         composeRule.onNodeWithText("other session").assertDoesNotExist()
         composeRule.onNodeWithText("other conversation").assertDoesNotExist()
         harness.pushSessionTransition(S1, S2, "clear")
+        // The daemon re-sends the new session's current reading after its clear.
+        harness.pushEnvelope(suggestion(1, "other session", session = S2))
         awaitText("other session")
         composeRule.onNodeWithText("active").assertDoesNotExist()
         harness.openConversation(C2, "another thread")

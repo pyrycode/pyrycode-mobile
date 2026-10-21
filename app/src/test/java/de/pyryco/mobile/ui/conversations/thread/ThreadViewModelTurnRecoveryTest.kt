@@ -64,7 +64,7 @@ class ThreadViewModelTurnRecoveryTest {
 
     /** Thread rows and the thinking reading are set by the test; sends are counted. */
     private class ControlledRepository : ConversationRepository by FakeConversationRepository() {
-        override val negotiatedThread = FixtureThread(HOST)
+        override val negotiatedThread = FixtureThread(HOST, CONV)
         val items = negotiatedThread.facts
         val sessions = MutableSharedFlow<LiveRefusalEvent>()
         val reading = MutableStateFlow<ThinkingProgress?>(null)

@@ -181,6 +181,7 @@ internal class ScriptedThreadContent(
             }
             "assistant_delta" -> {
                 if (!sequences.add(Triple(conversation, turn, fields.text("seq")))) return
+                clear(conversation, "stall")
                 val key = replies.getOrPut(conversation to turn) { "reply:$turn:${++segment}" }
                 val prior = document(conversation)[id(conversation, key)]?.get("content") as? JsonObject
                 put(

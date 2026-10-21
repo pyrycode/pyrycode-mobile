@@ -18,6 +18,7 @@ import kotlinx.serialization.json.JsonPrimitive
 /** A retained supported-flow double supplies complete facts, never legacy repository rows. */
 internal class FixtureThread(
     override val host: String,
+    private val conversation: String,
 ) : NegotiatedThread() {
     val facts = MutableStateFlow<List<ThreadItemDto>>(emptyList())
     override val support = MutableStateFlow<ThreadSupport>(ThreadSupport.Supported(this))
@@ -25,6 +26,7 @@ internal class FixtureThread(
 
     override fun observe(conversationId: String) =
         facts.map { items ->
+            require(conversationId == conversation) { "fixture conversation ownership mismatch" }
             store.establishComplete(host, conversationId, "fixture", items.maxOfOrNull { it.rev } ?: 0, items, 0)
             store.current(host, conversationId)
         }

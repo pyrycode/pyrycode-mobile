@@ -7,6 +7,7 @@
 - `app/src/sharedTest/java/de/pyryco/mobile/e2e/UnrecognizedRowSentinel.kt`: destination-only recording decorator.
 - `app/src/sharedTest/java/de/pyryco/mobile/e2e/PassiveThreadObservation.kt`: passive authoritative observation without additional queries.
 - `app/src/test/java/de/pyryco/mobile/e2e/FinishedSelectionReplyTest.kt`: reply rejection and replacement-source assertions.
+- `app/src/test/java/de/pyryco/mobile/e2e/PassiveAuthoritativeThreadObservationTest.kt`: exact destination collection, retirement and no extra query proof through the tapping decorator.
 - `app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelRefusalOfferTest.kt`: live refusal controls and retained refusal rows.
 - `app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTurnRecoveryTest.kt`: recovery, sends and session-boundary assertions.
 - `app/src/test/java/de/pyryco/mobile/ui/settings/ArchivedDiscussionsViewModelTest.kt`: non-content fail-if-used doubles.
@@ -70,7 +71,12 @@ Run lint, APK assembly, instrumented Kotlin compilation, Spotless, then merge ma
 
 ## Documentation handoff
 
-Pending documentation stage: update shared-harness/evidence descriptions in `docs/e2e-interactive-stream.md`, `docs/recorded-tests.md` and their linked testing topics. Record unchanged scenario coverage, method/class inventories and any inventory changes. Preserve frozen archives, past specs and accepted/failed evidence.
+Pending documentation stage:
+
+- `docs/e2e-interactive-stream.md`, “Layer 1 — component render harness (rung 2)” and “Queue, recovery and agent evidence migration (#2174)”: describe supplied facts, correlated query completion, session-tagged live state and the authoritative parser-gap tap.
+- `docs/recorded-tests.md`, “Passive thread assertion evidence (#2317)”: document the decorator's authoritative destination-only observation and unchanged recorded scenario assertions; record the class/method inventory changes without refreshing recordings unnecessarily.
+- Linked testing topics `docs/knowledge/features/thread-screen-testing-coverage.md` and `docs/knowledge/features/development-verification-compose-evidence.md` (“Compose evidence” / “Probe the evidence itself”): incorporate the checked inventory, scoped identity assertions and preserved literal sequence probes.
+- Record unchanged scenario coverage and any inventory changes. Preserve frozen archives, past specs and accepted/failed evidence.
 
 ## Open Questions
 
@@ -82,3 +88,5 @@ None at initial planning. Implementation findings that change contracts will be 
 - 2026-10-21: Authoritative messages have scoped item keys and no client-reduced delta metadata. Reply-order positives and duplicate/order negatives now use `ThreadEvidence`; the three old delta-sequence rejection checks retain explicit literal presentation inputs that never enter the repository or screen. Agent assertions use scoped daemon identities and the actual authoritative presentation, including its separate lifecycle markers.
 - 2026-10-21: Recovery session replacement is exercised with its supplied divider and the supported `SessionReplaced` live control. The historical/older-divider check supplies facts without that control and must retain the recovery notice. Its existing clear assertion now checks the canonical `session` reason rather than the legacy `session_boundary` reason; no recovery outcome is relaxed.
 - 2026-10-21: The managed test selector requires one exact class per invocation. A wildcard and a multi-class selection were refused before execution; run the affected class inventory individually. The initial route regression executed once and failed because no thread query was sent, then executed once and passed after migration, with no skips.
+- 2026-10-21: First-round failures identified fixture seams rather than product changes: the real store needs a JVM log sink in selection tests, retained refusal assertions must read `authoritativeThread.items`, and Agent-only display depth differs from tool-parent nesting depth. Preserve both the original two-edge nesting assertion and the supplied one-Agent display depth. Bind retained fixture facts to their declared conversation as well as host.
+- 2026-10-21: Source-owned transient state needs explicit producer delivery. The suggestion fixture re-sends the new session's current reading after its session clear rather than reviving a pre-binding reading. Supplied assistant progress emits the producer's stall clear before updating the item. Existing suggestion isolation and stalled/tool status assertions stay intact; no production inference is added.

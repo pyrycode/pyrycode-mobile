@@ -130,7 +130,8 @@ class ScriptedBackgroundAgentToolsTest {
         assertEquals(key("other-agent"), rows.single { (it.item as ThreadItem.MessageItem).message.id == key("other-child") }.agentBlockId)
         assertEquals(null, rows.single { (it.item as ThreadItem.MessageItem).message.id == key("foreground") }.agentBlockId)
         assertEquals(items().size, rows.size) // Lifecycle is held on the supplied Agent facts; markers are separate.
-        assertEquals(2, harness.presentation().depths[key("grandchild")])
+        assertEquals(2, toolNestingDepths(items())[key("grandchild")])
+        assertEquals(1, harness.presentation().depths[key("grandchild")])
         val run = foldToolRuns(projected(), emptySet()).filterIsInstance<ThreadRow.ToolRun>().single()
         assertEquals(children.map(::key), run.tools.map { it.id })
         assertEquals(key("early"), run.runId)
