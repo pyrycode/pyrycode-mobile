@@ -19,26 +19,62 @@ class SavedAuthoritativePlacementTest {
             assertEquals(facts.size, placement.rankVisits)
             assertEquals(facts.size, placement.contributions.size)
             assertEquals(facts.size, placement.anchors.size)
-            println("nested_agent_allocation ancestry=${placement.ancestryVisits} ranks=${placement.rankVisits} characters=${keys.sumOf { it.length }}")
+            println(
+                "nested_agent_allocation ancestry=${placement.ancestryVisits} ranks=${placement.rankVisits} characters=${keys.sumOf {
+                    it.length
+                }}",
+            )
         }
     }
 
     @Test fun placementInvariant_sharedRanksKeepBranchesTiesTransparentParentsAndCycleRoots() {
-        fun item(id: Int, parent: Int, order: Long, agent: Boolean = true) =
-            fact(id, parent, display = true).copy(agent = agent, orderKey = order, rendererOrder = order)
-        val facts = listOf(
-            item(1, 0, 50), item(2, 1, 2), item(3, 1, 2), item(4, 2, 400, agent = false),
-            item(5, 4, 1), item(6, 5, 30, agent = false), item(7, 0, 10, agent = false),
-        )
+        fun item(
+            id: Int,
+            parent: Int,
+            order: Long,
+            agent: Boolean = true,
+        ) = fact(id, parent, display = true).copy(agent = agent, orderKey = order, rendererOrder = order)
+        val facts =
+            listOf(
+                item(1, 0, 50),
+                item(2, 1, 2),
+                item(3, 1, 2),
+                item(4, 2, 400, agent = false),
+                item(5, 4, 1),
+                item(6, 5, 30, agent = false),
+                item(7, 0, 10, agent = false),
+            )
         val expected = listOf(7L, 1L, 2L, 5L, 6L, 4L, 3L)
         for (input in listOf(facts, facts.asReversed())) {
             val index = SavedPlacementIndex(input)
-            assertEquals(expected, index.keys.entries.sortedBy { it.value.first }.map { it.key })
-            assertEquals(5L, index.anchors.getValue(1)?.third?.id)
-            assertEquals(2L, index.anchors.getValue(1)?.second?.id)
+            assertEquals(
+                expected,
+                index.keys.entries
+                    .sortedBy { it.value.first }
+                    .map { it.key },
+            )
+            assertEquals(
+                5L,
+                index.anchors
+                    .getValue(1)
+                    ?.third
+                    ?.id,
+            )
+            assertEquals(
+                2L,
+                index.anchors
+                    .getValue(1)
+                    ?.second
+                    ?.id,
+            )
         }
         val cycle = SavedPlacementIndex(listOf(item(8, 9, 3), item(9, 8, 4), item(10, 8, 5)))
-        assertEquals(listOf(8L, 9L, 10L), cycle.keys.entries.sortedBy { it.value.first }.map { it.key })
+        assertEquals(
+            listOf(8L, 9L, 10L),
+            cycle.keys.entries
+                .sortedBy { it.value.first }
+                .map { it.key },
+        )
         assertTrue(cycle.anchors.values.all { it == null })
     }
 

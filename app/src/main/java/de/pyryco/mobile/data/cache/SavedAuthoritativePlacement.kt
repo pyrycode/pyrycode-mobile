@@ -87,7 +87,9 @@ internal fun savedContributionPostorder(facts: Collection<AuthoritativeItem>): L
 }
 
 /** Shared forest metadata and fixed-size keys: no descendant retains a copy of its ancestry. */
-internal class SavedPlacementIndex(facts: Collection<AuthoritativeItem>) {
+internal class SavedPlacementIndex(
+    facts: Collection<AuthoritativeItem>,
+) {
     val contributions = savedContributionIndex(facts)
     val anchors: Map<Long, Triple<Long, AuthoritativeItem, AuthoritativeItem>?>
     val keys: Map<Long, Pair<String, String>>
@@ -114,23 +116,40 @@ internal class SavedPlacementIndex(facts: Collection<AuthoritativeItem>) {
             val cycle = next != null && (next.id in seen || next.id in cyclic)
             for (record in path.asReversed()) {
                 val parent = indexed[record.parentId]
-                owners[record.id] = if (cycle) null else if (parent?.agent == true) parent.id else owners[parent?.id]
+                owners[record.id] =
+                    if (cycle) {
+                        null
+                    } else if (parent?.agent == true) {
+                        parent.id
+                    } else {
+                        owners[parent?.id]
+                    }
                 if (cycle) cyclic += record.id
             }
         }
         val children = facts.groupBy { it.parentId }
-        anchors = facts.filter { it.agent }.associate { root ->
-            val summaries = children[root.id].orEmpty().mapNotNull { contributions[it.id] }
-            val anchor = summaries.map { it.first }.filter { it.isNotEmpty() }.minOrNull()
-            val tie = summaries.map { it.second }.filter { it.isNotEmpty() }.minOrNull()
-            root.id to if (root.id in cyclic || anchor == null || tie == null) null else Triple(
-                anchor.take(19).toLong(),
-                indexed.getValue(tie.substringAfterLast(':').toLong()),
-                indexed.getValue(anchor.substringAfterLast(':').toLong()),
-            )
-        }
+        anchors =
+            facts.filter { it.agent }.associate { root ->
+                val summaries = children[root.id].orEmpty().mapNotNull { contributions[it.id] }
+                val anchor = summaries.map { it.first }.filter { it.isNotEmpty() }.minOrNull()
+                val tie = summaries.map { it.second }.filter { it.isNotEmpty() }.minOrNull()
+                root.id to
+                    if (root.id in cyclic || anchor == null || tie == null) {
+                        null
+                    } else {
+                        Triple(
+                            anchor.take(19).toLong(),
+                            indexed.getValue(tie.substringAfterLast(':').toLong()),
+                            indexed.getValue(anchor.substringAfterLast(':').toLong()),
+                        )
+                    }
+            }
         // Preorder is exactly the old lexicographic agent-path order, with non-agent links collapsed.
-        val agentChildren = facts.sortedWith(compareBy<AuthoritativeItem> { it.rendererOrder }.thenBy { it.ordinal }).groupBy { owners[it.id] }
+        val agentChildren =
+            facts
+                .sortedWith(
+                    compareBy<AuthoritativeItem> { it.rendererOrder }.thenBy { it.ordinal },
+                ).groupBy { owners[it.id] }
         val pending = ArrayDeque<AuthoritativeItem>()
         agentChildren[null].orEmpty().asReversed().forEach(pending::addLast)
         val blocks = mutableMapOf<Long, AuthoritativeItem>()
@@ -141,33 +160,43 @@ internal class SavedPlacementIndex(facts: Collection<AuthoritativeItem>) {
             val block = if (item.background) item else parentBlock ?: item
             blocks[item.id] = block
             val rank = (rankVisits++).toString().padStart(10, '0')
-            fun key(root: AuthoritativeItem, standalone: Boolean = false): String {
+
+            fun key(
+                root: AuthoritativeItem,
+                standalone: Boolean = false,
+            ): String {
                 val anchor = if (root.orderKey == Long.MAX_VALUE && !standalone) anchors[root.id] else null
-                val order = when {
-                    standalone -> item.orderKey
-                    root.background && !root.active -> root.endedOrder.takeIf { it > 0 } ?: root.orderKey
-                    root.orderKey == Long.MAX_VALUE -> anchor?.first ?: item.orderKey
-                    else -> root.orderKey
-                }
-                val phase = when {
-                    standalone -> "2"
-                    root.orderKey == Long.MAX_VALUE -> "1"
-                    else -> "0"
-                }
+                val order =
+                    when {
+                        standalone -> item.orderKey
+                        root.background && !root.active -> root.endedOrder.takeIf { it > 0 } ?: root.orderKey
+                        root.orderKey == Long.MAX_VALUE -> anchor?.first ?: item.orderKey
+                        else -> root.orderKey
+                    }
+                val phase =
+                    when {
+                        standalone -> "2"
+                        root.orderKey == Long.MAX_VALUE -> "1"
+                        else -> "0"
+                    }
                 val tie = anchor?.second ?: root
                 return (if (root.background && root.active && !standalone) "1" else "0") +
                     order.toString().padStart(19, '0') + phase + tie.rendererOrder.toString().padStart(19, '0') +
                     (tie.ordinal.toLong() - Int.MIN_VALUE).toString().padStart(10, '0') + ":" + rank
             }
             // Hidden unordered agents retain a non-row family prefix for bounded witness lookup.
-            val content = when {
-                item.display -> key(block)
-                item.agent && item.orderKey == Long.MAX_VALUE -> "!" + key(block)
-                else -> ""
-            }
-            val launch = if (item.background && item.display) {
-                if (parentBlock != null && !parentBlock.background) key(parentBlock) else key(item, standalone = true)
-            } else ""
+            val content =
+                when {
+                    item.display -> key(block)
+                    item.agent && item.orderKey == Long.MAX_VALUE -> "!" + key(block)
+                    else -> ""
+                }
+            val launch =
+                if (item.background && item.display) {
+                    if (parentBlock != null && !parentBlock.background) key(parentBlock) else key(item, standalone = true)
+                } else {
+                    ""
+                }
             result[item.id] = content to launch
             agentChildren[item.id].orEmpty().asReversed().forEach(pending::addLast)
         }
