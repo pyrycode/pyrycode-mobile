@@ -55,5 +55,9 @@ Run focused script regressions, lint, assembly, formatting and final `scripts/pr
 
 ## Open Questions
 
-- Recover the first sighting and any surviving assertion stack; distinguish unavailable history from a supported causal mechanism in the final diagnosis.
-- If focused runs reveal a distinct cause, reassess the scope before implementing; use the shared investigation route when a wider sequence/load diagnostic is needed.
+- Resolved: the exact #2333 stage bundle was recovered through authoritative stage records. Both sightings share the first-send / baseline-required / 4414 / reconnect pattern; both exact reruns record two sends without that gap. Neither bundle retains the failed assertion stack or original raw history. The supported producer mechanism remains distinct from the unknown historical assertion phase and publication schedule.
+- No distinct Mobile cause has been established. Reuse Core's controlled regression and preserve the existing native scenario contract; complete configured coverage stays with the dispatcher.
+
+## Revisions
+
+- 2026-10-21: two setup attempts executed zero tests because the installed Go 1.26.9 VCS discovery recognizes a `.git` directory but not a linked worktree's `.git` file. Forcing VCS stamping did not resolve that discovery limit. Use an isolated standalone clone at the same Core merge instead; its binary reports the expected revision and `vcs.modified=false`. Both rejected setup attempts remain in persistent evidence. No scenario, assertion, deadline or fixture changes were needed.

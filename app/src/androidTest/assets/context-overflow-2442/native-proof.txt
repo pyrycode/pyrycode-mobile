@@ -1,0 +1,90 @@
+Fresh Linux Compact proof, 2026-10-21
+
+Command, executed three times as separate normal isolated scenario invocations:
+PYRYCODE_SRC=/tmp/builder-2442/core-3725-clone python3 scripts/android-test-gate.py scripted context-overflow
+No assertion, deadline, fixture, retry or skip changes. Zero real Claude turns.
+
+Selected method, exactly once per run:
+de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_contextOverflowCompactReachesDaemon
+
+Run  UTC XML timestamp       Executed Passed Failed Errors Skipped Exit
+1    2026-10-21T22:51:15     1        1      0      0      0       0
+2    2026-10-21T22:52:32     1        1      0      0      0       0
+3    2026-10-21T22:53:44     1        1      0      0      0       0
+Each retained daemon log contains two send_message.enqueued events and zero
+baseline_required gaps. These are consecutive fresh scenario executions after
+the setup failures below. Counted extracts are in native-counts.xml; original
+counted XML and all raw artifacts remain in the private run directories.
+
+Source identities for all three runs:
+Mobile d7cec904ece18300c8e945008df20a6f5697c301
+Daemon 3d5379ec4b778c569c27b7639a2ae495b32cee0d (Core #3725 merge itself)
+Relay  2fd9338dd1662dbd68f3710a33e6a8cc4e7a0bc1
+Both Go binaries embed the matching source revision and vcs.modified=false.
+Go toolchain: go1.26.9, linux/amd64.
+
+Identical binary SHA256 in all three runs:
+app-debug.apk
+  c12a6bc40f5fa1fdd9ee66b9ec155494e83512e33adb2a4c1ac7d573e2c99e42
+app-debug-androidTest.apk
+  13f0519ab31ab0c4cfa43e2b76ea81492ae1754197e6502195708c565aa20573
+pyry
+  6758cba1ad596ce43187eaca483090b43e0450710cd3e3699002ab241d8f4d4b
+pyrycode-relay
+  79c5e14b4b52c10c6b5523ca56f8d3354b2d6bbcb2672be68588f199a1b61973
+
+Input SHA256:
+DeterministicInteractiveStreamE2ETest.kt
+  99b36e198d98ba5b872796f72fb0c10c98bbfc1c509d86d01141d04c9b8994f8
+context-overflow.jsonl
+  90a03c41c55deb0d316e41b1ceddd5719b82452cbe2f512cf94450e39dd65b32
+e2e-emulator.sh
+  e2bd951e2ed9ab751ec8dc504359b24b08e9a440e1cee0095c402c48272a3d55
+This ticket's subsequent evidence and plan edits do not alter the tested Kotlin,
+fixture or harness. The existing reply timeout remains 90000 ms.
+
+Device / SDK:
+Linux x86_64, container hostname b34a9e66d224.
+Gradle-managed pixel2Api33Atd; Pixel 2, Android 13 / API 33, x86_64.
+System image android-33/google_atd/x86_64, package revision 1.
+Android Emulator 37.2.12, build 16428233.
+SDK source.properties, image build.prop, AVD declaration and raw device-info.pb
+are retained for each run; phase records retain contemporaneous host load.
+
+Persistent private evidence base:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2442/builder-linux/
+Each run-N/ holds gate/dispatcher.xml and original instrumented XML, phone
+logcat, raw-android/ with UTP test-result.pb and test-result.textproto, device
+info, cpuinfo/meminfo, harness/daemon.log and relay.log, SDK identity,
+provenance.json (including binary metadata/hashes), and SHA256SUMS.
+Copies were byte-verified; all retained manifests were independently rehashed.
+Raw files are owner-only and excluded from Git.
+
+run-1/ SHA256SUMS hash:
+  a3f05a1a5174f5e6cbf86ce9b9d30ef420451ac0e6837fd2662f7aafe768ed97
+  Original gate: build/dispatcher-tests/scripted-s_7tfvh2
+  Original harness: fault-3c3369cb117a6662f2074baeaaba500d
+run-2/ SHA256SUMS hash:
+  301e5d8a019f8f7727dd97f0bdfd13f939e174cdebc5c179cb10e30ccb219935
+  Original gate: build/dispatcher-tests/scripted-qs8g_bgc
+  Original harness: fault-16c76c0f3384ec02834babf041c3cb46
+run-3/ SHA256SUMS hash:
+  5379ef4512c7e50433e719b936d65513fe410ef532a7e939ad066baf17f4254e
+  Original gate: build/dispatcher-tests/scripted-cozkf66x
+  Original harness: fault-04739311065e64863f46bc32726f0cbb
+
+Retained setup failures, not passing tests:
+setup-revision-unavailable/ and setup-forced-vcs-unavailable/: exit 1, zero
+executed tests, daemon launch rejected because the binary lacked a revision.
+The installed Go VCS root discovery requires a .git directory; a linked
+worktree's .git file was not recognized, even with GOFLAGS=-buildvcs=true.
+A clean standalone clone at the SAME Core revision supplied valid binary
+metadata. Each setup failure retains gate phases, relay log, source/binary/APK
+identities and a hash manifest; no Android reports exist because no tests ran.
+
+historical/ retains both original fail/rerun bundles; see diagnosis.txt for
+their exact run identities, log paths, supported cause and historical limits.
+Core's committed before/after regression is reused; native passes alone do not
+establish the historical publication schedule or failed assertion phase.
+Complete configured scripted-all remains dispatcher-owned. macOS is outside
+this Linux ticket's verification scope.
