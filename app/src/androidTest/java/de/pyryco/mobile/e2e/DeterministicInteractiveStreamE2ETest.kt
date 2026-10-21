@@ -330,24 +330,19 @@ class DeterministicInteractiveStreamE2ETest {
     fun interactiveTurn_seededChannel_replySuggestionLongPressSends() {
         arriveInSeededThread()
         typeAndSend(SEND_PROMPT)
-        val repository =
-            requireNotNull(
-                GlobalContext
-                    .get()
-                    .get<RelayRepositoryCoordinator>()
-                    .currentRepository.value,
-            )
+        val repositories = GlobalContext.get().get<RelayRepositoryCoordinator>().currentRepository
         val conversation =
             runBlocking {
                 withTimeout(REPLY_TIMEOUT_MS) {
-                    repository
-                        .observeConversations(ConversationFilter.All)
-                        .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                    repositories
+                        .firstOnLive(
+                            { it.observeConversations(ConversationFilter.All) },
+                        ) { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
                         .first { it.name == SEED_CHANNEL_NAME }
                         .id
                 }
             }
-        composeTestRule.assertReplySuggestionLongPress(repository, conversation, REPLY_TIMEOUT_MS)
+        composeTestRule.assertReplySuggestionLongPress(repositories, conversation, REPLY_TIMEOUT_MS)
     }
 
     /** Zero-Claude durable twin runs beside the original ping scenario, with its own channel. */

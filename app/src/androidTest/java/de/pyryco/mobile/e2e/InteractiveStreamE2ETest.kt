@@ -465,7 +465,11 @@ class InteractiveStreamE2ETest {
         }
         val conversation = newHostConversationId(serverId, before)
         awaitOwnedPhoneReply(serverId, conversation) { sendFromPhone(PING_PROMPT) }
-        composeTestRule.assertReplySuggestionLongPress(hostRepository(serverId), conversation, REPLY_TIMEOUT_MS)
+        val repositories =
+            checkNotNull(
+                GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId),
+            ).coordinator.currentRepository
+        composeTestRule.assertReplySuggestionLongPress(repositories, conversation, REPLY_TIMEOUT_MS)
     }
 
     @Test
@@ -6020,13 +6024,39 @@ class InteractiveStreamE2ETest {
                     it.type == "turn_end" && peer.field(it, "turn_id") !in beforeLater
                 }
             val laterTurn = requireNotNull(peer.field(laterEnd, "turn_id"))
-            runBlocking {
-                withTimeout(THREAD_TIMEOUT_MS) {
-                    liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { it.settledTurnReply(laterTurn) != null }
-                }
-            }
-            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
-            composeTestRule.onNodeWithText(string(R.string.agent_finished)).assertIsDisplayed()
+            val laterReadinessStarted = android.os.SystemClock.elapsedRealtime()
+            val finishedAgent =
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) {
+                            it.settledTurnReply(laterTurn) != null && it.renderedAgent(agentId) != null
+                        }
+                    }
+                }.let { checkNotNull(it.renderedAgent(agentId)).agentId }
+            Log.i("AgentRunProof", "event=finished_agent_identity refreshed=${finishedAgent != runningAgent}")
+            var lastFinishedIdentity = finishedAgent
+            composeTestRule.assertFinishedAgentMarker(
+                finishedAgent,
+                marker,
+                string(R.string.agent_finished),
+                readinessTimeoutMillis =
+                    (THREAD_TIMEOUT_MS - (android.os.SystemClock.elapsedRealtime() - laterReadinessStarted)).coerceAtLeast(1L),
+                resolveAgentId = { remaining ->
+                    val current =
+                        runBlocking {
+                            withTimeoutOrNull(minOf(1_000L, remaining)) {
+                                liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { true }
+                            }
+                        }
+                    val identity = current?.takeIf { it.settledTurnReply(laterTurn) != null }?.renderedAgent(agentId)?.agentId
+                    if (identity != null && identity != lastFinishedIdentity) {
+                        Log.i("AgentRunProof", "event=finished_agent_identity generation_changed=true")
+                        lastFinishedIdentity = identity
+                    }
+                    identity
+                },
+                evidence = { Log.i("AgentRunProof", it) },
+            )
             // A late child reply can have its own turn identity. Its parent identifies
             // the Agent; do not require the launching main turn's identity.
             val childReplyFrame =

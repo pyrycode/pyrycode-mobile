@@ -3,7 +3,9 @@ package de.pyryco.mobile.e2e
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
@@ -20,6 +22,78 @@ import androidx.compose.ui.test.performTouchInput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import java.security.MessageDigest
+
+/** Later reply rendering can displace a finished marker after its first reveal. */
+internal fun ComposeTestRule.assertFinishedAgentMarker(
+    agentId: String,
+    markerMatcher: SemanticsMatcher,
+    finishedLabel: String,
+    readinessTimeoutMillis: Long = 10_000,
+    resolveAgentId: (Long) -> String? = { agentId },
+    evidence: (String) -> Unit = {},
+) {
+    val deadline = System.nanoTime() + readinessTimeoutMillis * 1_000_000
+    var lastReadiness: String? = null
+
+    fun remainingMillis(): Long {
+        val remaining = (deadline - System.nanoTime()) / 1_000_000
+        if (remaining <= 0) throw ComposeTimeoutException("finished Agent readiness exceeded its original deadline")
+        return remaining
+    }
+
+    fun currentMarkerKey(): String {
+        var readyKey: String? = null
+        waitUntil(remainingMillis()) {
+            val key = resolveAgentId(remainingMillis())?.let { "agent-start:$it" }
+            val lists = onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes()
+            assertTrue("finished marker needs one message list", lists.size <= 1)
+            val index =
+                key?.let {
+                    lists
+                        .singleOrNull()
+                        ?.config
+                        ?.getOrNull(SemanticsProperties.IndexForKey)
+                        ?.invoke(it)
+                } ?: -1
+            val sample = "event=finished_agent_readiness lists=${lists.size} key_present=${index >= 0}"
+            if (sample != lastReadiness) {
+                evidence(sample)
+                lastReadiness = sample
+            }
+            if (index >= 0) readyKey = key
+            index >= 0
+        }
+        return requireNotNull(readyKey)
+    }
+
+    fun revealCurrentMarker(): Int {
+        var revealedIndex = -1
+        waitUntil(remainingMillis()) {
+            val key = currentMarkerKey()
+            val lists = onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes()
+            assertTrue("finished marker needs one message list", lists.size <= 1)
+            lists.singleOrNull()?.let { node ->
+                // Validate and dispatch together: a generation may change after readiness.
+                runOnIdle {
+                    if (node.layoutInfo.isAttached) {
+                        val config = node.config
+                        val index = config.getOrNull(SemanticsProperties.IndexForKey)?.invoke(key) ?: -1
+                        if (index >= 0) {
+                            val scroll = requireNotNull(config.getOrNull(SemanticsActions.ScrollToIndex)?.action)
+                            assertTrue("the owned marker scroll must be accepted", scroll(index))
+                            revealedIndex = index
+                        }
+                    }
+                }
+            }
+            revealedIndex >= 0
+        }
+        return revealedIndex
+    }
+    val target = questionAnswerTargetWithCurrentKey(markerMatcher, ::currentMarkerKey, ::revealCurrentMarker, evidence)
+    currentMarkerKey()
+    target.assert(hasText(finishedLabel)).assertIsDisplayed()
+}
 
 /** A single pointer tap per transition; list membership distinguishes collapse from lazy disposal. */
 internal fun ComposeTestRule.verifyAgentRunNavigation(
