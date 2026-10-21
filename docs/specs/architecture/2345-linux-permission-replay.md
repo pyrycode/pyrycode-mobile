@@ -62,3 +62,9 @@ Unknown/unqualified reads still fail with the existing sticky mismatch. Reset/re
 ## Open Questions
 
 The original-recording probe independently failed 1/1 before the repair: the pre-answer checkpoint-13 predicate passes, then the captured answer notice erases its eligibility. Raw XML and exact sources are retained in `recording-read-race-control/` beside the first controlled failure. This establishes the residual mechanism without a wider sequence diagnostic; the same failure can occur within a single fresh tape. No unresolved design question remains. Preserve both historical Linux failures and all controlled/native attempts. Complete configured Linux UI acceptance remains dispatcher-owned; focused proof does not establish suite-order independence.
+
+## Verification
+
+On committed repair `ca074c0e7161a9cf68d79c74a9531064b58fabbf`, three separate fresh Linux native invocations each executed/passed the named permission method, with zero failures/errors/skips (8.353, 8.275 and 8.528 seconds). Each log completes all 26 original permission stages. The five affected JVM classes passed 109/109, including all six new read-evidence probes and #2349's seven cleanup probes. Lint, debug assembly and instrumented Kotlin compilation passed. The content-free index at `app/src/test/resources/verification/permission-isolation-2345/evidence.json` identifies historical failures, both controlled reds, baseline passes, exact revisions, report hashes and persistent raw diagnostics.
+
+The launcher refused multi-class JVM selection and aggregate recorded native-class selection before execution. JVM classes subsequently ran separately; aggregate native coverage stays with the configured dispatcher UI gate. This is a scope restriction, with zero executed tests, not additional passing coverage. Full configured Linux UI acceptance and the documentation handoff remain pending for their owning stages.
