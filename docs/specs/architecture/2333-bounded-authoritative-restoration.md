@@ -66,6 +66,8 @@ Disk selection uses the cache IO dispatcher and one Room transaction. Decode/mer
 | Initial supplemental read unavailable, recovery without mutation, and exit before validation | `AuthoritativeWindowRestoreTest.validationInvariant_coldUnavailableOpeningWithholdsReplayUntilRecovery` |
 | Loaded witness hidden, moved or reparented after opening or during held opening | `AuthoritativeWindowRestoreTest.placementInvariant_liveWitnessEditsResolveWinningReplacement` |
 | Valid task link/id becomes absent or invalid, changing the winning family | `AuthoritativeWindowRestoreTest.placementInvariant_taskClassificationResolvesWinningFamily` |
+| Deep root-first parent chains and cycles during contribution construction, import and upgrade | `SavedAuthoritativePlacementTest` and `AuthoritativeRoomStorageTest.availabilityInvariant_deepImportAndMigrationPreserveContributions` |
+| Deep affected ancestor paths and cyclic winning structure | `AuthoritativeRoomStorageTest.availabilityInvariant_deepAndCyclicWinningPathsResolveWitnesses` |
 
 ## Error handling
 
@@ -106,6 +108,14 @@ None concerning product scope. Validate display-contributor indexing against the
 **Date:** 2026-10-21
 
 ## Revisions
+
+### 2026-10-21: stack-independent contribution reduction
+
+Verifier finding 1 identifies an availability boundary shared by contribution construction and supplemental affected-path reduction. Valid saved facts have a retention cap but no parent-depth cap. Replace both recursive reducers with one iterative postorder traversal over explicit heap-backed work and visiting sets. Preserve held child order, memoized summaries and the existing empty contribution for a back edge to an unfinished ancestor. Reduce each node once; group affected children once rather than rescanning every affected identity per node. Each indexed sibling query excludes only the affected children of its exact parent, retaining the same query/result/decode semantics without binding the entire ancestor chain repeatedly.
+
+`SavedAuthoritativePlacementTest` covers root-first 18000-node chains, a deep cycle, self cycles and exact shallow cyclic summaries. Disk probes exercise the actual import and version 9→10 migration with a root-first 18000-node chain, checking every persisted contribution and unchanged payload/certification after fresh reopen. A separate disk probe changes winning structure on deep affected paths and cycles, requiring exact replacement witnesses, unchanged durable facts and owner isolation. Existing bounded restoration, writer/removal, store and presentation probes plus the focused native database first-draw and reconnect scenario remain required. No schema, wire, layout, capability, depth rejection or error-swallowing change is needed.
+
+Security review addendum: PASS after addressing [Trust boundaries / availability] MUST FIX: admitted deep/cyclic parent topology cannot consume one JVM call frame per node in either contribution reducer, including upgrade and import. Explicit traversal retains existing cycle semantics and linear traversal memory. [Storage] Raw payloads, certificates, retirement fences and non-destructive upgrade remain unchanged. [Concurrency] Traversal stays within existing dispatcher/transaction ownership; suspend indexed reads retain cancellation and owner/lifetime checks. [Errors/logs] Do not catch `StackOverflowError` or log payloads. Tokens, cryptography, Android components, network limits and UI leakage are unchanged. This is the same bounded-opening repair under the recorded grandchild verification-floor exception; forecast approximately 300 additional written lines, no exported type or consumer signature changes. No in-flight feature branch overlaps these repair files.
 
 ### 2026-10-21: initial validation and winning descendant evidence
 
