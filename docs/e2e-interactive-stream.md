@@ -35,7 +35,13 @@ offer after a successful turn, assert the empty composer's exact placeholder,
 long-press/release Send, require one verbatim user message, then observe a newer
 revisioned daemon clear and the removed placeholder. The live method is in the
 configured full suite; the scripted twin uses native `prompt_suggestion` output
-and zero real-Claude turns. Shared `ScriptedReplySuggestionTest` separately covers
+and zero real-Claude turns. Both callers pass their owning host's live repository
+holder (#2436): session selection, offer, delivered echo and revisioned clear follow
+connection replacement. Static `ReplySuggestionProof` checkpoints identify offer,
+placeholder, long-press/release, echo, clear, placeholder removal and completion
+without logging authored text or pairing secrets. See the
+[replacement regression](#reply-suggestion-live-connection-observation-2436).
+Shared `ScriptedReplySuggestionTest` separately covers
 set/clear and conversation/session isolation through the real repository-to-screen
 harness. See [counted evidence](#verification-status) and
 [input eligibility](knowledge/features/thread-input-bar.md#the-message-input-button--one-control-two-actions).
@@ -5753,6 +5759,80 @@ The UI gate separately recorded **192 executed, 192 passed, 0 failed, 1 skipped*
 the skipped rename capture supplies no suggestion evidence. Deterministic passes
 are distinct from the real-Claude acceptance above.
 
+### Reply suggestion live-connection observation (#2436)
+
+Linux verification on 2026-10-21 repaired the observation boundary shared by
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_replySuggestionLongPressSends`
+and `InteractiveStreamE2ETest.interactiveTurn_replySuggestion_longPressSends`.
+Capturing a repository before producer-gap redial can leave an offer wait on the
+retired connection even while the phone UI follows the replacement. Switching only
+the suggestion flow is insufficient: conversation and session inputs must come from
+the same current source. `ReplySuggestionReads` selects them inside `firstOnLive`,
+which cancels retired observations and checks source reference identity. Echo and
+clear reads follow that holder too. This changes observation without retrying Send
+or changing the deadlines, actual daemon offer, exact empty-composer placeholder,
+pointer long-press/release, one verbatim delivered echo, newer explicit clear for
+the offered session, or placeholder removal.
+
+The controlled original-behavior extraction executed **4 tests: 1 passed, 3 failed,
+0 errors/skipped**. `offerArrivingOnlyOnReplacementDoesNotLeaveReadOnRetiredConnection`
+stranded its offer read; `offerFollowsReplacementAndRejectsRetiredUpdates` accepted
+a retired offer; `echoAndClearFollowReplacement` accepted a retired echo.
+`offerFollowsSessionSelection` passed. After repair, the same four probes passed,
+including null gaps, reused IDs, session changes, inexact/duplicate echoes and
+invalid clears. `LiveConnectionReadsTest` (4), `ReplyEvidenceTest` (9) and
+`ScriptedReplySuggestionTest` (2) also passed: **19 executed/passed, 0 failed/errors/skipped**
+across the four focused classes. This proves the Mobile observation defect;
+it demonstrates neither a daemon-publication nor a phone-delivery defect.
+
+Historical failures remain failures. At Mobile
+`7e6940251cd3cff775b67c913fc070d36f365734`, #2333's retained daemon trace records
+producer-gap teardown 4414 at 03:28:20.725 UTC and replacement handshake at
+03:28:22.403. At Mobile `b7724753efb9cc9848cdea2bbe5ebb3370bb71e8`, #2334's
+bundle `26f513ea363b0a75f3e0aa79933b529b79e1a995bc5dc0794e88429cfa343798`
+records **22 executed, 21 passed, 1 failed, 1 additional skipped**, then the named
+**1 executed/passed, 0 failed/errors/skipped** rerun. Neither occurrence retained
+its original phone stack, so its exact failed checkpoint remains unknown.
+Controlled replacement proves the session/offer observation failure before the
+gesture independently of those historical correlations.
+
+The builder's `python3 scripts/android-test-gate.py scripted reply-suggestion`
+passed the exact deterministic method: **1 executed/passed, 0 failed/errors/skipped**
+on Mobile `c225d335bb83120f7395ffd95bb8cfc328e8e3c6`. All seven checkpoints
+completed. The pre-repair native baseline also passed 1/1; neither native run had
+a producer gap, so neither substitutes for the controlled causal regression.
+
+The configured `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`
+on reviewed Mobile `61e98b28e1f8f1c3c1a8a50c3ec6ba98356670c2` executed **22:
+21 passed, 1 failed, 0 errors, 1 additional skipped**. The required suggestion
+method executed/passed in that original full invocation with all seven checkpoints
+complete. The unrelated queued-send failure passed its named rerun (**1 executed/passed,
+0 failed/errors/skipped**). The UI gate recorded **337 executed, 336 passed,
+1 failed, 1 additional skipped**; its unrelated background-agent failure also
+passed its named rerun (**1 executed/passed, 0 failed/errors/skipped**). The verifier
+accepted these flakes; the original full-run failures are preserved. JVM/build
+checks executed/passed **6,441 tests, 0 failed/skipped**, including all four
+`ReplySuggestionReadsTest` methods.
+
+Both native suggestion runs used Core source
+`2c68b595440dd7e8e843af9cff0d9a708bcc81a7`, binary SHA-256
+`d93c56662d0072e8aec9d1466bee3f6845f7cdc55247273f177b48b209bdb6ac`.
+Raw files were retained under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2436/`: controlled source/XML
+and hashes in `builder-red-20261021/`, passing JVM XML in
+`builder-green-jvm-20261021/`, focused native XML, phone/daemon/relay logs and
+APK/source hashes in `builder-native-c225d335b-20261021/`, and historical #2333
+trace in `builder-baseline-20261021/historical-2333/`. Configured suggestion
+daemon logs and revision metadata were in `harness/fault-79b9f439cfc35907a8d0ba07d2bf73e6/`.
+The accepted verifier bundle
+`fac2e99a55abb6f0a13763816abd59254f726a978ddc71ade290b446513d1f0d`
+retains the configured JUnit summary in `logs/verifier-gate__2436_6.log`, gate/rerun
+logs and handoff; these are retention locations at verification time.
+See the [accepted verdict](https://github.com/pyrycode/pyrycode-mobile/pull/2440#issuecomment-6327699234)
+and [causal diagnosis](https://github.com/pyrycode/pyrycode-mobile/issues/2436#issuecomment-6327004941).
+The live twin was source-reviewed and compiled without a new real-Claude run;
+macOS is outside this Linux ticket's verification scope.
+
 **Accessible side actions and ping confirmation (#1895, 2026-10-07).** The
 dispatcher full live command
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
@@ -7675,6 +7755,9 @@ The remaining checks here are specific to a real relay or real Claude execution:
   remain in `ScriptedReplySuggestionTest`. [Fresh counted evidence](#verification-status)
   closes the live handoff; no coverage follow-up remains. The pre-ship command
   stays `python3 scripts/android-test-gate.py live`; no wire schema change.
+  \#2436 keeps both callers' offer/session, echo and clear observations on the owning
+  live connection. [Controlled replacement and counted Linux evidence](#reply-suggestion-live-connection-observation-2436)
+  cover the repair; no new live acceptance or coverage follow-up remains.
 
 - **Side-copy selector and notice repair (#1878):** the existing rung-3
   `InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`
