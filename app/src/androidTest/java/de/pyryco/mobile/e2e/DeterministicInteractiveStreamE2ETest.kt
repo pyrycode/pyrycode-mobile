@@ -351,7 +351,6 @@ class DeterministicInteractiveStreamE2ETest {
     }
 
     /** Zero-Claude durable twin runs beside the original ping scenario, with its own channel. */
-    @org.junit.Ignore("blocked on #2167: legacy cache/coverage proof is unhooked from the production thread")
     @Test
     fun interactiveTurn_seededChannel_durableGapCatchUp() {
         arriveInSeededThread()
