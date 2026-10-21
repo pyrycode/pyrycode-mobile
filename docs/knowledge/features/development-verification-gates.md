@@ -498,6 +498,34 @@ Real FCM delivery, encrypted transport and timing obligations keep their live ch
 See [recorded client tests](../../recorded-tests.md#complete-native-suite) for commands,
 recording review rules and the limits of replay evidence.
 
+### Scenario cleanup before activity teardown
+
+Permission isolation removes its paired host inside scenario cleanup, before the
+activity-level replay fence can run. Peer-observed turn end can leave required
+phone catch-up requests and scheduled replies outstanding. Keep the phone graph
+usable by closing the peer first, calling
+`RecordedSuiteNative.beforeHostLinkClose(serverId)`, and only then removing the
+host. The replay-only fence uses `SuiteConnections.beforeClose`'s existing
+30-second bound; capture and ordinary execution retain their original order.
+Strict request ownership, full payload matching, causal delivery and complete tape
+consumption still apply.
+
+Cleanup attempts peer close, fence and host removal even on failure. Preserve the
+scenario throwable as primary, or the first cleanup throwable when the scenario
+succeeded; suppress later failures in order without self-suppression. A fence
+timeout still removes the host and fails. Never replace an earlier dialog-dismissal
+failure with a later close mismatch or claim the cleanup fence repaired it.
+
+The [#2349 counted evidence](../../recorded-tests.md#counted-macos-cleanup-evidence-2026-10-21)
+retains the controlled old-cleanup failure, seven passing cleanup probes, focused
+permission replay and complete dispatcher gates on
+`96c4e6303f1da310f7c22de5df46a4ca0e972b23` (macOS). The configured UI gate executed
+335, passed 332, failed 3 and skipped 1; permission isolation itself executed and
+passed. Verifier PASS accepted the dispatcher's named flaky/inherited-failure
+disposition after comparisons, preserving the raw failures and skips. Focused
+passes alone do not supply complete-gate or sequence acceptance. Linux was outside
+this ticket's verification scope.
+
 ### Preference ownership across ordinary tests and replay
 
 `E2eTestApplication` owns one process-lifetime `DataStore<Preferences>` for
