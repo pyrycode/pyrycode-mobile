@@ -64,7 +64,10 @@ internal fun ComposeTestRule.awaitRunConfiguration(
             noteMatches = state(note)
             observedNote = note
             confirmationEvaluated = false
-            confirmationMatches = present && selected && !pending && noteMatches &&
+            confirmationMatches = present &&
+                selected &&
+                !pending &&
+                noteMatches &&
                 run {
                     confirmationEvaluated = true
                     confirmed()
