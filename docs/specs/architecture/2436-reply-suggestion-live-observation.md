@@ -91,7 +91,29 @@ after the final merge of main.
 
 ## Open Questions
 
-- Does a fresh focused baseline reproduce the retired-observation checkpoint?
-  Resolve with retained results before claiming the occurrence's cause.
-- If the current native run instead proves a foreign producer defect, stop this
-  design and route the demonstrated owner dependency rather than growing scope.
+- Resolved: the fresh native baseline passed 1/1 without a producer gap. It does
+  not reproduce or replace either historical failure.
+- Resolved: controlled replacement proves a Mobile harness observation defect;
+  no foreign repair dependency is demonstrated. Historical phone stacks were not
+  retained, so the exact checkpoint of each historical occurrence remains unknown.
+
+## Revisions
+
+### 2026-10-21 — Controlled causal proof
+
+Extracting the original captured-repository reads and replacing their source after
+collection begins produces three failing tests out of four: the read never sees
+an offer delivered only to the replacement, accepts an old-source offer after
+retirement, and accepts an old-source echo. Session selection on an unchanged
+connection passes. After using `firstOnLive`, the same four tests pass. The direct
+replacement case is `offerArrivingOnlyOnReplacementDoesNotLeaveReadOnRetiredConnection`;
+the other transition rows above retain their named coverage. The tests also reject
+an inexact or duplicate echo, a non-newer clear, a set masquerading as a clear and
+another session's clear. No submission is retried.
+
+The controlled red source, XML and hashes are retained privately under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2436/builder-red-20261021/`.
+The native baseline's raw XML and phone trace are under the adjacent
+`builder-baseline-20261021/`; daemon/binary metadata is in
+`harness/fault-f89f38493678f0dae4054c591c2b34e8/`.
+Native checkpoint logs identify each stage without offer text or connection secrets.

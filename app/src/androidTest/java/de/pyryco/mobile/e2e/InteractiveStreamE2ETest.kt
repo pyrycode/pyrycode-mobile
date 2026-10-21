@@ -469,7 +469,11 @@ class InteractiveStreamE2ETest {
         }
         val conversation = newHostConversationId(serverId, before)
         awaitOwnedPhoneReply(serverId, conversation) { sendFromPhone(PING_PROMPT) }
-        composeTestRule.assertReplySuggestionLongPress(hostRepository(serverId), conversation, REPLY_TIMEOUT_MS)
+        val repositories =
+            checkNotNull(
+                GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId),
+            ).coordinator.currentRepository
+        composeTestRule.assertReplySuggestionLongPress(repositories, conversation, REPLY_TIMEOUT_MS)
     }
 
     @Test
