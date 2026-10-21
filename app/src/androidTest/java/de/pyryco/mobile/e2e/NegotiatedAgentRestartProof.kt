@@ -208,8 +208,12 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
             persisted.records
                 .mapNotNull { row ->
                     row.fact?.takeIf { fact ->
-                        row.message.role == Role.User && row.agentId == null && fact.kind == "user_message" &&
-                            fact.order != null && fact.order > launchOrder && fact.order < endedOrder
+                        row.message.role == Role.User &&
+                            row.agentId == null &&
+                            fact.kind == "user_message" &&
+                            fact.order != null &&
+                            fact.order > launchOrder &&
+                            fact.order < endedOrder
                     }
                 }.maxByOrNull { requireNotNull(it.order) },
         ) { "release message must anchor the Agent between launch and finish" }
