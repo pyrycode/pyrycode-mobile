@@ -1,0 +1,200 @@
+{
+  "ticket": 2345,
+  "operatingSystem": "Linux",
+  "method": "de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_permissionPrompts_heldPerConversation",
+  "candidateRevision": "ca074c0e7161a9cf68d79c74a9531064b58fabbf",
+  "evidenceRoot": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2345/builder-20261021-linux",
+  "fixtureSha256": "8a210181b68a1f238a203c7f2cd23c1fcdbdb19cb9b5af965972b1773d99ae77",
+  "prerequisite": {
+    "parent": 2343,
+    "repair": 2349,
+    "implementation": "eaeb636274498f67d50738de3f7b6ca54db3c830",
+    "merge": "313f151cc10e101675c717f750ca6bc56c13c502",
+    "acceptedVerifierBundle": "f2677cc26f813479c66e121e1d41307d95d6bdd911677c5d9baa2b6495ae61be"
+  },
+  "historical": [
+    {
+      "ticket": 2266,
+      "revision": "fcf19d8415f450888d3f7e7c6a79557d78965989",
+      "bundle": "529932756cd59581e2f8dd545096dd66ab9f8afd3781aa6b2a6688576ed78947",
+      "gate": {
+        "report": "original-2266/logs/verifier-gate__2266_5.log.failure-1792530296421.log",
+        "sha256": "e0438cf0a368eafc5761e5838e61245d3d8bb6b4737aab4af31cdaf3a04d44ad",
+        "executed": 336,
+        "passed": 335,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 1
+      },
+      "rerun": {
+        "report": "original-2266/logs/2026-10-20T21-04-56-445Z_verifier-gate-rerun__2266.log",
+        "sha256": "3bba3f22646a80316e0a4703f2b294529ed1cde462d310074f6243c092782034",
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "ticket": 2333,
+      "revision": "b832d64e8597a7153025d3b25f1ce7686228cd03",
+      "bundle": "aa50c1275b8fff3d751fa35116ada6a633cf53041f15fa238f708222402efbd5",
+      "gate": {
+        "report": "original-2333/logs/verifier-gate__2333_5.log.failure-1792543476626.log",
+        "sha256": "063d0f2856f53c370f42262fe466e5f28716e911050117a5933ac84293e64719",
+        "executed": 336,
+        "passed": 335,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 1
+      },
+      "rerun": {
+        "report": "original-2333/logs/2026-10-21T00-44-36-631Z_verifier-gate-rerun__2333.log",
+        "sha256": "cde87d14365fa17947c8a32a26ac4a6b06504502688bd947c804af644621b5a9",
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    }
+  ],
+  "controls": [
+    {
+      "report": "read-race-control/report.xml",
+      "sha256": "807e766f39d57c413d7b624a8248ae29b411dad110e6afc8481a91efc852f209",
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "report": "recording-read-race-control/report.xml",
+      "sha256": "5d750fa04154985c90f45ffafbe84fa76db8fdbfc79afdf5e275e519bd54efe5",
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "baselineNative": [
+    {
+      "report": "baseline-native-1/0-TEST-pixel2Api33Atd_0-_app-.xml",
+      "sha256": "f38d558efb31dab0d20e646761f57f406d8280c84d4784e1ac0706408e44e652",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "report": "baseline-native-2/0-TEST-pixel2Api33Atd_0-_app-.xml",
+      "sha256": "42de77fe3647c55a11d6c43271a22ff45dbab0a534488117fadf8c4d97c9f04c",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "focusedJvm": [
+    {
+      "report": "green-unit/TEST-de.pyryco.mobile.e2e.PermissionIsolationCleanupTest.xml",
+      "sha256": "660c589f3f59345b93fbc17d80fd6fa44a65ee002fa028013013976b93660314",
+      "executed": 7,
+      "passed": 7,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "report": "green-unit/TEST-de.pyryco.mobile.recording.RecordedSuiteDocumentTest.xml",
+      "sha256": "8d7dcb00bf9d0a5cd779785e0c0e55da19bd6d8a63099287021e3fae91b17bf0",
+      "executed": 12,
+      "passed": 12,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "report": "green-unit/TEST-de.pyryco.mobile.recording.RecordedSuiteTapeTest.xml",
+      "sha256": "a420f936161a988a74f5dee853e3a32a847862355968d1555a40fb1d2ebe9fdb",
+      "executed": 44,
+      "passed": 44,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "report": "green-unit/TEST-de.pyryco.mobile.recording.SuiteConnectionsTest.xml",
+      "sha256": "e101c0437148de4af74714cb39c0b8b5fb44998dcd08df1760c3009505d15730",
+      "executed": 23,
+      "passed": 23,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "report": "green-unit/TEST-de.pyryco.mobile.recording.SuiteReadReceiptsTest.xml",
+      "sha256": "c6cfcb22f35977583a569029d9022d466b67bfb6edaf9c49c0357f274b79ba22",
+      "executed": 23,
+      "passed": 23,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "repairedNative": [
+    {
+      "report": "repaired-native-1/0-TEST-pixel2Api33Atd_0-_app-.xml",
+      "sha256": "4bea4c293c2f24bcd671624ca52959d8954ea25f918aa9a26ae575273452126d",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 8.353,
+      "permissionStagesCompleted": 26
+    },
+    {
+      "report": "repaired-native-2/0-TEST-pixel2Api33Atd_0-_app-.xml",
+      "sha256": "0fc174faabe37b53a15db729e49d9affcbbeaa22f4c703fa53172649dfe2691d",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 8.275,
+      "permissionStagesCompleted": 26
+    },
+    {
+      "report": "repaired-native-3/0-TEST-pixel2Api33Atd_0-_app-.xml",
+      "sha256": "5a29ba55fff20ed4a13b690bd679aaaf6b4c35307888b833d654d88c3c510dd0",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 8.528,
+      "permissionStagesCompleted": 26
+    }
+  ],
+  "manifest": "SHA256SUMS",
+  "nativeCommand": "python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_permissionPrompts_heldPerConversation'",
+  "jvmCommand": "python3 scripts/gradle-gate.py testDebugUnitTest --tests '<fully qualified class>' (one class per invocation)",
+  "unitProvenance": "Executed on ac92e076bd1284b64b1e642e131f182c063fab38 with the implementation/test working tree later committed as candidateRevision; candidate-source retains exact source snapshots and hashes.",
+  "diagnosis": {
+    "original": "At step 46, registry reconciliation closed phone/host-2/0 while required catch-up remained (matched=45 remaining=14). Delivery/test-end failures rethrow the stored close mismatch. The scenario's host removal precedes activity teardown; #2349 fences it after peer close while the phone still supplies work.",
+    "residual": "The #2333 peer B-answer send rethrows an earlier phone read rejection (target=13 previous=0 delivered=false maximum=null action=10). The original recording's checkpoint-13 window is eligible before A's captured answer notice, then the old validator forgets that earlier window. Both controlled probes fail before this repair. Remembering eligible delivered/certified watermarks until repair/reset preserves in-flight read evidence.",
+    "sequence": "Historical suite failures and baseline focused passes are retained. Earlier full-suite load/execution order is not fully known. Controlled single-tape frame ordering reproduces the residual cause; complete suite independence remains pending."
+  },
+  "nonExecutionAttempts": "candidate.json retains scope refusals, the corrected nullable helper compilation and three corrected formatting attempts; none counts as a test pass.",
+  "pending": {
+    "configuredLinuxUiGate": "Dispatcher/verifier must execute and pass the named method in the configured complete UI gate before PASS. Aggregate class selection was refused before execution by builder scope policy.",
+    "documentation": "docs/recorded-tests.md: Linux diagnosis, counted focused evidence and later dispatcher UI result.",
+    "macOS": "Outside this Linux ticket's verification scope."
+  }
+}

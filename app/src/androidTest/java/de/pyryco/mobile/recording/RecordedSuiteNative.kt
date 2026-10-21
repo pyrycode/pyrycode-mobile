@@ -238,6 +238,19 @@ internal object RecordedSuiteNative {
         live: () -> ManagedSessionPump,
     ): ManagedSessionPump = current?.hub?.pump(transport, live) ?: live()
 
+    fun peerPermissionReady(
+        pump: ManagedSessionPump?,
+        modalId: String,
+    ): Boolean = current?.hub?.peerPermissionReady(pump, modalId) ?: true
+
+    suspend fun beforePeerPermission(
+        pump: ManagedSessionPump,
+        modalId: String,
+        timeoutMs: Long,
+    ) {
+        current?.hub?.beforePeerPermission(pump, modalId, timeoutMs)
+    }
+
     fun control(
         action: String,
         body: String,
@@ -309,6 +322,12 @@ internal object RecordedSuiteNative {
         val session = current ?: return
         if (session.document != null && session.document.document["checkpointPolicy"] != JsonPrimitive("test-observations-v1")) return
         runBlocking { session.hub.checkpoint(name) }
+    }
+
+    /** A graph rebuild must drain its current phones before destroying their request producers. */
+    fun beforePhoneRestart() {
+        val session = current?.takeIf { it.document != null } ?: return
+        runBlocking { session.hub.beforePhoneRestart() }
     }
 
     /** Keep the real screen active while a replay catches up with its captured pre-close requests. */

@@ -8,10 +8,10 @@ import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
-import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.LiveRefusalEvent
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
@@ -28,6 +28,8 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -62,11 +64,16 @@ class ThreadViewModelTurnRecoveryTest {
 
     /** Thread rows and the thinking reading are set by the test; sends are counted. */
     private class ControlledRepository : ConversationRepository by FakeConversationRepository() {
-        val items = MutableStateFlow<List<ThreadItem>>(emptyList())
+        override val negotiatedThread = FixtureThread(HOST, CONV)
+        val items = negotiatedThread.facts
+        val sessions = MutableSharedFlow<LiveRefusalEvent>()
         val reading = MutableStateFlow<ThinkingProgress?>(null)
         var sends = 0
 
-        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = items
+        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
+            error("legacy rows must not supply recovery evidence")
+
+        override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> = sessions
 
         override fun observeThinkingProgress(conversationId: String): Flow<ThinkingProgress?> = reading
 
@@ -244,7 +251,7 @@ class ThreadViewModelTurnRecoveryTest {
         }
 
     @Test
-    fun aNewSessionBoundary_clearsIt() =
+    fun aLiveSessionReplacement_clearsItWithItsSuppliedDivider() =
         runTest {
             val f = fixture()
             f.repo.items.value = listOf(messageItem("m1"), boundary("s0", "s1", minute = 1), messageItem("m2"))
@@ -252,10 +259,11 @@ class ThreadViewModelTurnRecoveryTest {
             raise(f)
 
             f.repo.items.value = f.repo.items.value + boundary("s1", "s2", minute = 3)
+            f.repo.sessions.emit(LiveRefusalEvent.SessionReplaced)
             advanceUntilIdle()
 
             assertNull(f.vm.turnOutcome.value)
-            assertTrue(logs.contains("event=turn_recovery_notice state=cleared reason=session_boundary"))
+            assertTrue(logs.contains("event=turn_recovery_notice state=cleared reason=session"))
         }
 
     @Test
@@ -342,13 +350,49 @@ class ThreadViewModelTurnRecoveryTest {
             terminalReason = "prompt_too_long",
         )
 
-    private fun messageItem(id: String) = ThreadItem.MessageItem(message(id, "text $id"))
+    private fun messageItem(id: String) =
+        authoritativeItem(
+            id.removePrefix("m").toLong(),
+            "user_message",
+            order =
+                if (id ==
+                    "m1"
+                ) {
+                    10
+                } else {
+                    30
+                },
+            status = "delivered",
+            session = "s1",
+            content = buildJsonObject { put("text", "text $id") }.toString(),
+        )
 
     private fun boundary(
         previous: String,
         next: String,
         minute: Int,
-    ) = ThreadItem.SessionBoundary(previous, next, BoundaryReason.Clear, Instant.parse("2026-10-01T00:0$minute:00Z"))
+    ) = authoritativeItem(
+        100L + minute,
+        "session_divider",
+        order =
+            if (minute ==
+                0
+            ) {
+                1
+            } else if (minute == 1) {
+                20
+            } else {
+                40
+            },
+        session = next,
+        content =
+            buildJsonObject {
+                put("previous_session_id", previous)
+                put("new_session_id", next)
+                put("reason", "clear")
+                put("occurred_at", "2026-10-01T00:0$minute:00Z")
+            }.toString(),
+    )
 
     private companion object {
         const val HOST = "pyrybox"

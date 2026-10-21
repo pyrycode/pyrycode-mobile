@@ -15,8 +15,10 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.SessionProvenance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -42,6 +44,10 @@ class ScriptedContextFreshnessTest {
                 true
             })
         harness.start()
+        push(
+            "conversations",
+            """{"conversations":[{"id":"c1","name":"Harness channel","is_promoted":true,"cwd":"/p","current_session_id":"s1","last_used_at":"$TS","last_message_ts":"$TS"}]}""",
+        )
     }
 
     @After
@@ -55,12 +61,9 @@ class ScriptedContextFreshnessTest {
             "conversations",
             """{"conversations":[{"id":"c1","name":"Harness channel","is_promoted":true,"cwd":"/p","current_session_id":"s1","last_used_at":"$TS","last_message_ts":"$TS"}]}""",
         )
-        composeRule.waitUntil(5_000) { sent.any { it.type == "request_session_settings" } }
-        val ask = sent.last { it.type == "request_session_settings" }
         push(
             "session_settings",
-            """{"session_id":"s1","model":"sonnet","effort":"high","permission_mode":"default","yolo":false,"used_tokens":100000,"window_tokens":200000}""",
-            ask.id,
+            """{"conversation_id":"c1","session_id":"s1","model":"sonnet","effort":"high","permission_mode":"default","yolo":false,"used_tokens":100000,"window_tokens":200000}""",
         )
         context(150_000)
         awaitFooter("Context usage warning, 75%")
@@ -87,12 +90,12 @@ class ScriptedContextFreshnessTest {
     }
 
     @Test
-    fun legacyTurns_refreshBothSurfaces_afterResetReply() = legacyTurns(resetUnavailable = false)
+    fun suppliedTurns_refreshBothSurfaces_afterResetReply() = suppliedTurns(resetUnavailable = false)
 
     @Test
-    fun legacyTurns_refreshBothSurfaces_afterUnavailableResetReply() = legacyTurns(resetUnavailable = true)
+    fun suppliedTurns_refreshBothSurfaces_afterUnavailableResetReply() = suppliedTurns(resetUnavailable = true)
 
-    private fun legacyTurns(resetUnavailable: Boolean) {
+    private fun suppliedTurns(resetUnavailable: Boolean) {
         context(150_000)
         awaitFooter("Context usage warning, 75%")
         val openingAsk = sent.last { it.type == "request_context_usage" }.id
@@ -116,12 +119,12 @@ class ScriptedContextFreshnessTest {
         }
         push(
             "session_settings",
-            """{"session_id":"s2","model":"sonnet","effort":"high","permission_mode":"default","yolo":false,"used_tokens":180000,"window_tokens":200000}""",
-            sent.last { it.type == "request_session_settings" }.id,
+            """{"conversation_id":"c1","session_id":"s2","model":"sonnet","effort":"high","permission_mode":"default","yolo":false,"used_tokens":180000,"window_tokens":200000}""",
         )
         awaitFooter(if (resetUnavailable) "Context usage high, 90%" else "Context usage 1%")
 
         for ((turn, tokens) in listOf(1 to 40_000L, 2 to 60_000L)) {
+            val asks = sent.count { it.type == "request_context_usage" }
             harness.pushTurnState("thinking")
             composeRule.waitUntil(5_000) {
                 composeRule
@@ -131,14 +134,20 @@ class ScriptedContextFreshnessTest {
                     .isNotEmpty()
             }
             harness.pushAssistantDelta("replacement-$turn", 1, "Current session reply $turn")
+            context(tokens, session = "s1") // Delayed predecessor pushes cannot supply the replacement's reading.
+            context(150_000, session = "s1")
             harness.pushTurnEnd("replacement-$turn")
             harness.pushTurnState("idle")
-            val asks = sent.count { it.type == "request_context_usage" }
-            context(tokens) // Actual legacy post-turn shape: no producer, correlation or as_of.
-            context(150_000) // Delayed predecessor push while verification is pending.
-            composeRule.waitUntil(5_000) { sent.count { it.type == "request_context_usage" } > asks }
+            // The terminal fact is delivered after both stale readings through the same inbound collector.
+            composeRule.waitUntil(5_000) {
+                harness.authoritativeSnapshot().items.any { it.kind == "turn_end" && it.turn == "replacement-$turn" }
+            }
             composeRule.waitForIdle()
-            assertEquals("signals coalesce behind one current read", asks + 1, sent.count { it.type == "request_context_usage" })
+            assertEquals(
+                "completion and retired producer pushes cannot issue a legacy verification read",
+                asks,
+                sent.count { it.type == "request_context_usage" },
+            )
             val previousTokens =
                 when {
                     turn == 2 -> 40_000L
@@ -146,10 +155,12 @@ class ScriptedContextFreshnessTest {
                     else -> 2_000L
                 }
             assertEquals(previousTokens, runBlocking { harness.observeContextUsage().first()?.totalTokens })
-            context(tokens, sent.last { it.type == "request_context_usage" }.id)
+            // The current producer publishes the completed turn's reading; duplicate pushes need no query.
+            context(used = tokens)
+            context(used = tokens)
             val percent = (tokens / 2_000).toInt()
             awaitFooter("Context usage $percent%")
-            assertEquals(asks + 1, sent.count { it.type == "request_context_usage" })
+            assertEquals(asks, sent.count { it.type == "request_context_usage" })
             assertEquals(tokens, runBlocking { harness.observeContextUsage().first()?.totalTokens })
             openConfiguration()
             contextReading("$percent% used").assertIsDisplayed()
@@ -178,18 +189,24 @@ class ScriptedContextFreshnessTest {
     private fun context(
         used: Long,
         replyTo: Long? = null,
+        session: String? = null,
     ) = push(
         "context_usage",
         """{"conversation_id":"c1","model":"","total_tokens":$used,"max_tokens":200000,"percentage":99,"categories":[],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0,"memory_files":[],"dropped_memory_files":0}""",
         replyTo,
+        session,
     )
 
     private fun push(
         type: String,
         payload: String,
         replyTo: Long? = null,
+        session: String? = null,
     ) {
-        harness.pushEnvelope(Envelope(id++, type, TS, MobileJson.parseToJsonElement(payload), inReplyTo = replyTo))
+        val envelope = Envelope(id++, type, TS, MobileJson.parseToJsonElement(payload), inReplyTo = replyTo)
+        harness.pushEnvelope(
+            if (session == null) envelope else envelope.copy(sessionProvenance = SessionProvenance(JsonPrimitive(session))),
+        )
     }
 
     private companion object {

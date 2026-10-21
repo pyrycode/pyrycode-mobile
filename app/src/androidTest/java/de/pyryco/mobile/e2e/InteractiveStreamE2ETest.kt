@@ -116,12 +116,14 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.data.repository.reduceHistoryPage
 import de.pyryco.mobile.di.AttentionAlert
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.RelayConnectionBundle
 import de.pyryco.mobile.di.RelayConnectionRegistry
+import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
@@ -4581,7 +4583,11 @@ class InteractiveStreamE2ETest {
                 android.util.Log.i("PermissionIsolation", "event=step_complete stage=${stage.name}")
             }
         }
-        try {
+        withPermissionIsolationCleanup(
+            closePeer = peer::close,
+            beforeHostRemoval = { RecordedSuiteNative.beforeHostLinkClose(serverId) },
+            removeHost = { runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) } },
+        ) {
             step(PermissionIsolationStage.PairPhone) { pairAnswerHost() }
             val (chatA, nameA) = step(PermissionIsolationStage.CreateA) { answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pa-") }
             val (chatB, nameB) = step(PermissionIsolationStage.CreateB) { answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pb-") }
@@ -4638,9 +4644,6 @@ class InteractiveStreamE2ETest {
             step(PermissionIsolationStage.AllowB) { runBlocking { peer.allowOnce(promptB, THREAD_TIMEOUT_MS) } }
             step(PermissionIsolationStage.RemoveB) { awaitNoPromptDialog("B's dialog stayed after the peer allowed it") }
             step(PermissionIsolationStage.EndB) { awaitTurnEnd(peer, chatB, 1, "B's peer-allowed turn") }
-        } finally {
-            peer.close()
-            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
         }
     }
 
@@ -4854,6 +4857,7 @@ class InteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_otherConversationAttentionPills_waitingAndFinished() {
         val (serverId, peer) = answerHostPeer()
+        var acquisitionGate: InitialAttentionQueryGate? = null
         try {
             pairAnswerHost()
             runBlocking {
@@ -4918,7 +4922,12 @@ class InteractiveStreamE2ETest {
                         throw AssertionError(evidence("first_waiting_timeout"), e)
                     }
                     android.util.Log.i("AttentionPillProbe", evidence("first_waiting_seen"))
+                    // Destination metadata starts the attention query; fence only the subsequent acquisition.
+                    val gate = InitialAttentionQueryGate.arm(checkNotNull(coordinator.negotiatedThread), chatB, THREAD_TIMEOUT_MS)
+                    acquisitionGate = gate
                     composeTestRule.onNodeWithText(waitingLabel).assertIsDisplayed().performTouchInput { click(center) }
+                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { gate.finished }
+                    gate.awaitAcquired()
                     composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                         composeTestRule.onAllNodes(hasText(nameB)).fetchSemanticsNodes().isNotEmpty()
                     }
@@ -4961,6 +4970,7 @@ class InteractiveStreamE2ETest {
                 }
             }
         } finally {
+            acquisitionGate?.close()
             peer.close()
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
         }
@@ -5370,22 +5380,30 @@ class InteractiveStreamE2ETest {
     /** #1827: attributed prose belongs only to the real background Agent's collapsible block. */
     @Test
     fun interactiveTurn_backgroundAgent_replyStaysUnderAgent() {
+        backgroundAgentReplyProof(restart = false)
+    }
+
+    /** #2246: historical Agent, native graph/cache restart and settlement on a replacement connection. */
+    @Test
+    fun interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect() {
+        backgroundAgentReplyProof(restart = true)
+    }
+
+    private fun backgroundAgentReplyProof(restart: Boolean) {
         val fixture = twoHostArg("backgroundAgentFixtureUrl")
         require(fixture.matches(Regex("http://127\\.0\\.0\\.1:[0-9]+"))) { "invalid background Agent fixture" }
         val peer = runningToolPeer()
         val preferences = GlobalContext.get().get<AppPreferences>()
         val previousCollapse = runBlocking { preferences.collapseToolUses.first() }
         val allowed = mutableSetOf<String>()
+        var failure: Throwable? = null
         try {
             runBlocking { preferences.setCollapseToolUses(true) }
             awaitChannelList()
             awaitConnected()
             val serverId = twoHostArg(ARG_SERVER_ID)
             val (chat, name) = answerChat(serverId, "e2e1827-agent-")
-            val liveRepositories =
-                checkNotNull(
-                    GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId),
-                ).coordinator.currentRepository
+            val phoneRepository = GlobalContext.get().get<ThreadDestinationFactory>().repository(serverId)
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             openChatRow(name)
             sendFromPhone(
@@ -5464,10 +5482,13 @@ class InteractiveStreamE2ETest {
                 val current =
                     runBlocking {
                         withTimeoutOrNull(1000) {
-                            liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { true }
+                            harnessThreadEvidence(phoneRepository).observe(chat).first { reading ->
+                                val support = phoneRepository.negotiatedThread?.support?.value
+                                reading.admitted && support is ThreadSupport.Supported && reading.owner.connection === support.connection
+                            }
                         }
                     }
-                val candidate = current?.agentReplyEvidence(current.owner, task.taskId, agentId, childTurn, mainTurn)
+                val candidate = current?.heldAgentReplyEvidence(current.owner, task.taskId, agentId, childTurn, mainTurn)
                 val index =
                     candidate?.let {
                         list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:${it.runId}")
@@ -5503,6 +5524,9 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
             // ScrollTo uses the drawing viewport; reveal the actual tap center between the chrome bars.
             composeTestRule.questionAnswerTarget(closedRun).performTouchInput { click(center) }
+            val ownedTool = hasTestTag(de.pyryco.mobile.ui.conversations.components.TOOL_ROW_TAG) and hasAnyAncestor(child)
+            list.performScrollToNode(ownedTool)
+            composeTestRule.onAllNodes(ownedTool, useUnmergedTree = true).onFirst().assertIsDisplayed()
             // Expansion can put this early paragraph outside composition as later tool rows arrive.
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 runCatching { list.performScrollToNode(reply) }.isSuccess &&
@@ -5542,13 +5566,39 @@ class InteractiveStreamE2ETest {
                     peer.field(it, "task_id") == task.taskId &&
                     !peer.field(it, "status").isNullOrEmpty()
             }
-        } finally {
-            try {
-                stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release-reply")
-            } finally {
-                runBlocking { preferences.setCollapseToolUses(previousCollapse) }
-                peer.close()
+            if (restart) {
+                composeTestRule.proveNegotiatedAgentRestart(serverId, chat, agentId, task.taskId, restart = { beforeLaunch ->
+                    restartApp(beforeLaunch)
+                }, openThread = {
+                    awaitChannelList()
+                    awaitConnected()
+                    openChatRow(name)
+                }, send = { sendFromPhone("Reply briefly to this new-session settlement check.") })
             }
+        } catch (error: Throwable) {
+            failure = error
+            throw error
+        } finally {
+            val original = failure
+            val cleanups =
+                listOf<() -> Unit>(
+                    { stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release-reply") },
+                    { runBlocking { preferences.setCollapseToolUses(previousCollapse) } },
+                    { peer.close() },
+                )
+            for (cleanup in cleanups) {
+                try {
+                    cleanup()
+                } catch (error: Throwable) {
+                    val previous = failure
+                    if (previous == null) {
+                        failure = error
+                    } else if (previous !== error) {
+                        previous.addSuppressed(error)
+                    }
+                }
+            }
+            if (original == null) failure?.let { throw it }
         }
     }
 
@@ -7593,6 +7643,7 @@ class InteractiveStreamE2ETest {
      */
     private fun restartApp(beforeLaunch: () -> Unit = {}): ActivityScenario<MainActivity> {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
+        RecordedSuiteNative.beforePhoneRestart()
         composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
         instrumentation.runOnMainSync {
             (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
@@ -7947,7 +7998,8 @@ class InteractiveStreamE2ETest {
                                 }.filter { shown ->
                                     shown.modalClass == PERMISSION_CLASS &&
                                         shown.modalId !in allowed &&
-                                        shown.options.any { it.id == ALLOW_ONCE }
+                                        shown.options.any { it.id == ALLOW_ONCE } &&
+                                        peer.canAllowOnce(shown.modalId)
                                 }.forEach { shown ->
                                     allowed += shown.modalId
                                     peer.allowOnce(shown.modalId, THREAD_TIMEOUT_MS)

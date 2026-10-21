@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.HistoryCoverage
 import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -38,6 +39,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
 import java.io.IOException
+import kotlin.time.Duration.Companion.minutes
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -91,6 +93,287 @@ class AuthoritativeRoomStorageTest {
     ) {
         store.writeAuthoritativeThread(host, thread, value).getOrThrow()
     }
+
+    private fun deepFacts(): List<JsonObject> =
+        (1..18_001).map { id ->
+            JsonObject(
+                raw(id) +
+                    mapOf(
+                        "parent" to JsonPrimitive(if (id == 18_001) 1 else id - 1),
+                        "shown" to JsonPrimitive(id >= 18_000),
+                        "kind" to JsonPrimitive(if (id == 1) "agent" else "future-kind"),
+                    ),
+            )
+        }
+
+    @Test fun availabilityInvariant_nestedAgentsKeepBoundedKeysThroughImportUpgradeAndStructuralWrites() =
+        runTest(timeout = 5.minutes) {
+            val facts =
+                (1..18_000).map { id ->
+                    JsonObject(raw(id) + mapOf("kind" to JsonPrimitive("agent"), "parent" to JsonPrimitive(id - 1)))
+                }
+            val original = saved(facts)
+            val store = open()
+            seed(store, original)
+            seed(store, saved(listOf(raw(1))), host = "other")
+
+            suspend fun verify(
+                expected: SavedAuthoritativeThread,
+                order: List<Long>,
+            ) {
+                val cold = open()
+                assertEquals(expected, cold.readAuthoritativeThread("Host", "thread"))
+                val db = requireNotNull(database)
+                val selected = db.authoritative().displayWindow("Host", "thread", expected.epoch, 200)
+                assertEquals(order.takeLast(200).asReversed(), selected.map { it.id })
+                db.openHelper.readableDatabase
+                    .query(
+                        "SELECT id,displayKey,launchKey,anchorId,tieId FROM authoritative_items WHERE host='Host' AND conversation='thread' ORDER BY displayKey",
+                    ).use { rows ->
+                        val ids = mutableListOf<Long>()
+                        var characters = 0L
+                        var largest = 0
+                        while (rows.moveToNext()) {
+                            val id = rows.getLong(0)
+                            ids += id
+                            val content = rows.getString(1)
+                            val launch = rows.getString(2)
+                            largest = maxOf(largest, content.length, launch.length)
+                            characters += content.length + launch.length
+                            val child = if (id == 18_000L || (id == 9000L && expected != original)) 0L else id + 1
+                            assertEquals(child, rows.getLong(3))
+                            assertEquals(child, rows.getLong(4))
+                        }
+                        assertEquals(order, ids)
+                        assertTrue("largest=$largest", largest <= 62)
+                        assertTrue("characters=$characters", characters <= 18_000L * 62)
+                        println("nested_agent_keys largest=$largest characters=$characters rows=${ids.size}")
+                    }
+                val bytes =
+                    db.openHelper.readableDatabase.let { sql ->
+                        val pages =
+                            sql.query("PRAGMA page_count").use {
+                                it.moveToFirst()
+                                it.getLong(0)
+                            }
+                        val pageSize =
+                            sql.query("PRAGMA page_size").use {
+                                it.moveToFirst()
+                                it.getLong(0)
+                            }
+                        pages * pageSize
+                    }
+                assertTrue("database bytes=$bytes", bytes <= 18_000L * 4096)
+                println("nested_agent_storage bytes=$bytes")
+                assertEquals(saved(listOf(raw(1))), cold.readAuthoritativeThread("other", "thread"))
+            }
+
+            val ascending = (1L..18_000L).toList()
+            verify(original, ascending)
+            database?.close()
+            // Model an installed v10 database: its schema is unchanged and its derived keys are stale.
+            SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
+                db.execSQL("UPDATE authoritative_items SET displayKey='old',anchorId=0,tieId=0 WHERE host='Host'")
+                db.version = 10
+            }
+            verify(original, ascending)
+            verify(original, ascending) // Fresh database/storage instances after the upgrade.
+
+            val root = JsonObject(facts.first() + mapOf("order" to JsonPrimitive(40_000), "rev" to JsonPrimitive(300_001)))
+            val split = JsonObject(facts[9000] + mapOf("parent" to JsonPrimitive(0), "rev" to JsonPrimitive(300_002)))
+            val changes = original.copy(items = listOf(root, split), appliedVersion = 300_002)
+            open().upsertAuthoritativeThread("Host", "thread", changes, false, original, emptyMap()).getOrThrow()
+            val expected =
+                original.copy(
+                    items =
+                        facts
+                            .map {
+                                when (it["id"]) {
+                                    JsonPrimitive(1) -> root
+                                    JsonPrimitive(9001) -> split
+                                    else -> it
+                                }
+                            }.let { it.drop(1) + root },
+                    appliedVersion = 300_002,
+                )
+            verify(expected, (9001L..18_000L).toList() + (1L..9000L).toList())
+        }
+
+    private fun assertDeepContributions() {
+        val leaf = "0000000000000018000" + "2147501647:18000"
+        val sibling = "0000000000000018001" + "2147501648:18001"
+        val rootTie = "0000000000000000001" + "2147483648:1"
+        requireNotNull(database)
+            .openHelper.readableDatabase
+            .query(
+                "SELECT id,anchorContribution,tieContribution FROM authoritative_items WHERE host='Host' AND conversation='thread' ORDER BY ordinal",
+            ).use { cursor ->
+                var count = 0
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(0)
+                    assertEquals(if (id == 18_001L) sibling else leaf, cursor.getString(1))
+                    assertEquals(
+                        if (id == 1L) {
+                            rootTie
+                        } else if (id == 18_001L) {
+                            sibling
+                        } else {
+                            leaf
+                        },
+                        cursor.getString(2),
+                    )
+                    count++
+                }
+                assertEquals(18_001, count)
+            }
+    }
+
+    @Test fun availabilityInvariant_deepImportAndMigrationPreserveContributions() =
+        runTest(timeout = 5.minutes) {
+            val value = saved(deepFacts())
+            val cycle = saved((1..3).map { JsonObject(raw(it) + ("parent" to JsonPrimitive(if (it == 1) 3 else it - 1))) })
+            seed(open(), value)
+            seed(requireNotNull(database).let { AuthoritativeRoomStorage(it) }, cycle, thread = "cycle")
+            assertEquals(value, open().readAuthoritativeThread("Host", "thread"))
+            assertEquals(cycle, open().readAuthoritativeThread("Host", "cycle"))
+            assertDeepContributions()
+            database?.close()
+
+            val upgradePath = File(temporary.root, "upgrade.db").absolutePath
+            val schema =
+                MobileJson
+                    .parseToJsonElement(
+                        File("src/main/roomSchemas/de.pyryco.mobile.data.cache.ConversationCacheDatabase/9.json").readText(),
+                    ).jsonObject
+                    .getValue("database")
+                    .jsonObject
+            SQLiteDatabase.openOrCreateDatabase(upgradePath, null).use { db ->
+                for (entry in schema.getValue("entities").jsonArray) {
+                    val entity = entry.jsonObject
+                    val table = entity.getValue("tableName").jsonPrimitive.content
+                    db.execSQL(
+                        entity
+                            .getValue("createSql")
+                            .jsonPrimitive.content
+                            .replace("\${TABLE_NAME}", table),
+                    )
+                    entity["indices"]?.jsonArray?.forEach {
+                        db.execSQL(
+                            it.jsonObject
+                                .getValue("createSql")
+                                .jsonPrimitive.content
+                                .replace("\${TABLE_NAME}", table),
+                        )
+                    }
+                }
+                schema.getValue("setupQueries").jsonArray.forEach { db.execSQL(it.jsonPrimitive.content) }
+                db.beginTransaction()
+                try {
+                    for ((conversation, fixture) in mapOf("thread" to value, "cycle" to cycle)) {
+                        db.execSQL(
+                            "INSERT INTO authoritative_headers VALUES (?,?,?,?,?,?,?,?,?)",
+                            arrayOf<Any?>(
+                                "Host",
+                                conversation,
+                                fixture.epoch,
+                                "generation",
+                                fixture.appliedVersion,
+                                fixture.checkpoint,
+                                MobileJson.encodeToString(SavedThreadCoverage.serializer(), requireNotNull(fixture.coverage)),
+                                fixture.items.size,
+                                fixture.incarnation,
+                            ),
+                        )
+                        fixture.items.forEachIndexed { ordinal, raw ->
+                            val item = ThreadItemDto.decodeReplacement(raw)
+                            db.execSQL(
+                                "INSERT INTO authoritative_items (host,conversation,epoch,id,ordinal,orderKey,payload,display,extra) VALUES (?,?,?,?,?,?,?,?,?)",
+                                arrayOf<Any?>(
+                                    "Host",
+                                    conversation,
+                                    fixture.epoch,
+                                    item.id,
+                                    ordinal,
+                                    item.order,
+                                    raw.toString(),
+                                    if (item.savedDisplayRow()) 1 else 0,
+                                    if (item.savedRendererExtra()) 1 else 0,
+                                ),
+                            )
+                        }
+                    }
+                    db.version = 9
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            }
+            val upgraded =
+                Room
+                    .databaseBuilder(
+                        ApplicationProvider.getApplicationContext(),
+                        ConversationCacheDatabase::class.java,
+                        upgradePath,
+                    ).build()
+            database = upgraded
+            assertEquals(value, AuthoritativeRoomStorage(upgraded).readAuthoritativeThread("Host", "thread"))
+            assertEquals(cycle, AuthoritativeRoomStorage(upgraded).readAuthoritativeThread("Host", "cycle"))
+            assertDeepContributions()
+            upgraded.close()
+            val reopened =
+                Room
+                    .databaseBuilder(
+                        ApplicationProvider.getApplicationContext(),
+                        ConversationCacheDatabase::class.java,
+                        upgradePath,
+                    ).build()
+            database = reopened
+            assertEquals(value, AuthoritativeRoomStorage(reopened).readAuthoritativeThread("Host", "thread"))
+            assertEquals(cycle, AuthoritativeRoomStorage(reopened).readAuthoritativeThread("Host", "cycle"))
+            assertDeepContributions()
+        }
+
+    @Test fun availabilityInvariant_deepAndCyclicWinningPathsResolveWitnesses() =
+        runTest(timeout = 5.minutes) {
+            val value = saved(deepFacts())
+            seed(open(), value)
+            seed(requireNotNull(database).let { AuthoritativeRoomStorage(it) }, saved(listOf(raw(1))), host = "other")
+            val store = open()
+            for (cyclic in listOf(false, true)) {
+                val root =
+                    JsonObject(
+                        value.items.first() +
+                            mapOf(
+                                "rev" to JsonPrimitive(200_001),
+                                "order" to JsonPrimitive(2),
+                                "parent" to JsonPrimitive(if (cyclic) 18_000 else 0),
+                            ),
+                    )
+                val hidden = JsonObject(value.items[17_999] + mapOf("rev" to JsonPrimitive(200_002), "shown" to JsonPrimitive(false)))
+                val resolved =
+                    requireNotNull(
+                        store.parentClosure(
+                            "Host",
+                            "thread",
+                            value.epoch,
+                            emptySet(),
+                            emptySet(),
+                            structuralChanges = listOf(root, hidden).map(ThreadItemDto::decodeReplacement),
+                        ),
+                    )
+                assertEquals(listOf(value.items.first(), value.items.last()), resolved.items)
+                assertEquals(value.checkpoint, resolved.checkpoint)
+                assertEquals(value.coverage, resolved.coverage)
+                assertEquals(value.appliedVersion, resolved.appliedVersion)
+                assertTrue(store.lastReadCounts.queries <= (if (cyclic) 2 else 1) * 54_010)
+                assertEquals((if (cyclic) 2 else 1) * 2, store.lastReadCounts.itemDecodes)
+                assertEquals(0, store.fullReads)
+                println("deep_contribution cyclic=$cyclic counts=${store.lastReadCounts}")
+            }
+            assertEquals(value, open().readAuthoritativeThread("Host", "thread"))
+            assertEquals(saved(listOf(raw(1))), open().readAuthoritativeThread("other", "thread"))
+            assertDeepContributions()
+        }
 
     @Test fun orderingInvariant_restartAndBackwardTraversal() =
         runTest {

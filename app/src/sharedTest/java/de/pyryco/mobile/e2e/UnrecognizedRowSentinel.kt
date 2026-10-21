@@ -2,11 +2,13 @@ package de.pyryco.mobile.e2e
 
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.HistoryPage
+import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSnapshot
 import de.pyryco.mobile.data.repository.ThreadSnapshotSource
 import de.pyryco.mobile.data.repository.UnrecognizedSite
 import de.pyryco.mobile.data.repository.threadSnapshots
+import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -235,8 +237,38 @@ internal class TappingConversationRepository(
     private val observeThread: ((String, Flow<ThreadSnapshot>) -> Flow<ThreadSnapshot>)? = null,
 ) : ConversationRepository by delegate,
     ThreadSnapshotSource {
-    private val tappedNegotiated = if (tapNegotiated) delegate.negotiatedThread?.let(PassiveThreadProbe::negotiated) else null
-    override val negotiatedThread get() = if (tapNegotiated) tappedNegotiated else delegate.negotiatedThread
+    private val tappedNegotiated =
+        delegate.negotiatedThread?.let { source ->
+            val recorded =
+                object : NegotiatedThread() {
+                    override val host = source.host
+                    override val support = source.support
+                    override val store = source.store
+
+                    override fun observe(conversationId: String) =
+                        source.observe(conversationId).onEach { snapshot ->
+                            UnrecognizedRowRecorder.record(projectAuthoritativeThread(host, conversationId, snapshot).items)
+                        }
+
+                    override fun progress(
+                        conversationId: String,
+                        connection: Any,
+                    ) = source.progress(conversationId, connection)
+
+                    override suspend fun open(conversationId: String) = source.open(conversationId)
+
+                    override suspend fun acquire(
+                        conversationId: String,
+                        connection: Any,
+                    ) = source.acquire(conversationId, connection)
+
+                    override fun older(conversationId: String) = source.older(conversationId)
+
+                    override fun cancel(conversationId: String) = source.cancel(conversationId)
+                }
+            if (tapNegotiated) PassiveThreadProbe.negotiated(InitialAttentionQueryGate.negotiated(recorded)) else recorded
+        }
+    override val negotiatedThread get() = tappedNegotiated
 
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = observeThreadSnapshot(conversationId).map { it.rows }
 

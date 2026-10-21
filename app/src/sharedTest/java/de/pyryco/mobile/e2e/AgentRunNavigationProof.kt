@@ -14,6 +14,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import org.junit.Assert.assertEquals
@@ -30,6 +31,7 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
     expandLabel: String,
     collapseLabel: String,
     markerMatcher: SemanticsMatcher = hasText(goLabel) and hasClickAction(),
+    ownedChildKey: String? = null,
     evidence: (String) -> Unit = {},
 ) {
     require(childIds.isNotEmpty()) { "Agent proof needs loaded owned children" }
@@ -110,6 +112,23 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
         }
     }
 
+    // Repository evidence can precede a reset/catch-up frame on the screen. Wait for the
+    // exact family in the merged list; an absent list or a different Agent is not ready.
+    var lastReadiness: String? = null
+    waitUntil(10_000) {
+        val lists = onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes()
+        assertTrue("Agent proof needs one message list", lists.size <= 1)
+        val index = lists.singleOrNull()?.config?.getOrNull(SemanticsProperties.IndexForKey)
+        val keys = listOf("msg:$agentId", "agent-start:$agentId", "msg:$runId")
+        val indexes = keys.map { index?.invoke(it) ?: -1 }
+        val ready = indexes.all { it >= 0 }
+        val sample = "event=agent_run_readiness ready=$ready lists=${lists.size} key_indexes=$indexes"
+        if (sample != lastReadiness) {
+            evidence(sample)
+            lastReadiness = sample
+        }
+        ready
+    }
     assertClosed("before-navigation")
     questionAnswerTap(markerMatcher, lazyKey = "agent-start:$agentId", evidence = evidence)
     waitUntil(10_000) { onAllNodes(root).fetchSemanticsNodes().size == 1 }
@@ -118,7 +137,14 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
     tapAndAwait(closed, opened, "open", expandedAfter = true)
     assertTrue("opened run must contain every loaded child key", childIndexes().all { it >= 0 })
     // Positive owned visibility first: an off-screen paragraph is not evidence of collapse.
-    list.performScrollToNode(ownedChild)
+    if (ownedChildKey == null) {
+        list.performScrollToNode(ownedChild)
+    } else {
+        assertTrue("reveal key belongs to this Agent", ownedChildKey in childIds)
+        val index = list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:$ownedChildKey")
+        assertTrue("the exact owned child remains in the opened run", index >= 0)
+        list.performScrollToIndex(index)
+    }
     // Claude may emit several paragraphs or split text around tools. Visibility, not a
     // single prescribed paragraph, is the navigation contract.
     val top = onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot.bottom

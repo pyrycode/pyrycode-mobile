@@ -229,6 +229,16 @@ internal class SuiteConnections private constructor(
         }
     }
 
+    /** Drain only this graph's phones while its activity and request-producing jobs are alive. */
+    suspend fun beforePhoneRestart() {
+        if (tape == null) return
+        val owners =
+            synchronized(this) {
+                transports.values.filter { it.owner.startsWith("phone/") && !it.localClose.get() }.map { it.owner }
+            }
+        for (owner in owners) beforeClose(owner)
+    }
+
     suspend fun beforePhoneTeardown() {
         val replay = tape ?: return
         for (owner in replay.phoneClosesBeforeTeardown()) {
@@ -291,6 +301,35 @@ internal class SuiteConnections private constructor(
             return runBlocking { withTimeout(65000) { reply.await() } }
         } finally {
             controlReplies.remove(frame.id)
+        }
+    }
+
+    fun peerPermissionReady(
+        pump: ManagedSessionPump?,
+        modalId: String,
+    ): Boolean =
+        if (tape == null) {
+            true
+        } else {
+            val replay = pump as? ReplayPump
+            replay != null &&
+                synchronized(this) {
+                    pumps[replay.connection.owner] === replay && tape.peerPermissionReady(replay.connection.owner, modalId)
+                }
+        }
+
+    suspend fun beforePeerPermission(
+        pump: ManagedSessionPump,
+        modalId: String,
+        timeoutMs: Long,
+    ) {
+        if (tape == null) return
+        withTimeout(timeoutMs) {
+            while (!peerPermissionReady(pump, modalId)) {
+                failure.get()?.let { throw it }
+                if (pump.state.value is PumpState.Closed) return@withTimeout
+                delay(10)
+            }
         }
     }
 
@@ -488,6 +527,7 @@ internal class SuiteConnections private constructor(
                     val frame = checkNotNull(step.message)
                     check(frames.trySend(frame).isSuccess)
                     tape!!.delivered(connection.owner, frame)
+                    enqueue(tape.initial())
                 }
                 "inbound_end" -> {
                     tape!!.connectionEnded(connection.owner)

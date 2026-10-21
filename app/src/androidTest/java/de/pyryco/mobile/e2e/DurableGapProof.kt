@@ -14,7 +14,6 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeDown
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.data.cache.ConversationCache
@@ -569,10 +568,6 @@ internal class DurableGapProof(
 
     private fun pull() =
         rule.onNodeWithTag("thread-message-region").performTouchInput {
-            swipeDown(
-                startY = height * 0.3f,
-                endY =
-                    height * 0.7f,
-            )
+            pullHistoryPage()
         }
 }

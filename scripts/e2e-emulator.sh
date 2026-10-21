@@ -126,6 +126,9 @@ fi
 INTERACTIVE_RUNNER="${INTERACTIVE_RUNNER:-}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -n "${DETERMINISTIC}" ] && [ "${SCENARIO:-}" = "background-agent" ] && [ -z "${E2E_BACKGROUND_AGENT_CASE:-}" ]; then
+  exec python3 "${REPO_ROOT}/scripts/e2e-background-agent-scenarios.py"
+fi
 # A LIVE run started by hand fetches the long-term Claude login when it has none (2026-10-05), instead of
 # stalling on a missing or expired shell login. scripts/with-claude-login.sh explains when it fetches.
 if [ -n "${LIVE}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${E2E_LOGIN_TRIED:-}" ]; then
@@ -1533,6 +1536,9 @@ fi
 # excluded. The #965 stop method is added on top, spending two turns: the stopped turn and its follow-up ping.
 if [ -n "${DETERMINISTIC}" ]; then
   TEST_TARGET="${TEST_CLASS}#${TEST_METHOD}"
+  if [ "${SCENARIO}" = "background-agent" ] && [ "${E2E_BACKGROUND_AGENT_CASE:-}" = "restart" ]; then
+    TEST_TARGET="${TEST_CLASS}#interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect"
+  fi
   if [ "${EXTERNAL_FORCE_STOP_PROOF:-}" = "1" ]; then
     TEST_TARGET="${TEST_CLASS}#interactiveTurn_externalForceStop_preparesSettledChannel"
   elif [ "${SCENARIO}" = "ping" ]; then
@@ -1620,6 +1626,7 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgentProgress_showsOnRunningCard"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgent_followsBottomUntilFinished"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgent_replyStaysUnderAgent"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect"
   # #1223: the phone's acknowledged choice in one chat applies before the first real turn in a new chat.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage"
   # #1249 restores the discussion round trip and host-isolated Archive proof through the list toolbar.

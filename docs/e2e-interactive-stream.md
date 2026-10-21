@@ -76,6 +76,19 @@ Since #2171, the deterministic twin's before/after user-message observations rea
 `harnessThreadEvidence` rather than the repository directly; see
 [the source-bound migration](#scripted-streaming-and-reopen-source-bound-migration-2171).
 
+Earlier-session Agent restart (#2246) adds rung 3
+`InteractiveStreamE2ETest.interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+and rung 4
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect`.
+The `background-agent` scripted selection runs the twin and the retained placement
+method with separate isolated daemons and separately counted outcomes. Both restart
+proofs rebuild the application graph over persisted storage, reopen the finished
+session-A Agent and its exact tools, then replace the negotiated connection while a
+session-B send awaits settlement. See [counted evidence](#negotiated-agent-restart-and-settlement-2246).
+The complementary [#1963 repository-to-screen regression](#earlier-session-agent-with-older-paging-and-overlapping-replay-1963)
+adds actual synthetic older-page admission beside a running session-B Agent; it adds
+no real-Claude scenario or new live capture.
+
 Background-agent placement (#1783) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
 and at rung 4 by
@@ -109,7 +122,7 @@ Attributed background-agent prose (#1827) is covered at rung 3 by
 2. **Compose render test** — component level, deterministic, no daemon. Feed the thread a scripted
    structured-event stream and assert the assembled thread renders. **Layer 1a shipped (#432):** the
    reusable `ScriptedThreadHarness` drives the scripted stream through the **real**
-   `RemoteConversationRepository` fold → `ThreadViewModel` → `ThreadScreen`, plus the first two render
+   `RemoteConversationRepository` authoritative projection → `ThreadViewModel` → `ThreadScreen`, plus the first two render
    cases (text deltas → finalized message; `turn_state` → thinking spinner). Layer 1b (#435, split
    3-way, all riding the same harness) adds tool rows (**shipped #472**), the connection banner
    (**shipped #474**), and the session divider (**shipped #473**). See
@@ -348,32 +361,40 @@ Attributed background-agent prose (#1827) is covered at rung 3 by
 
 ## Layer 1 — component render harness (rung 2)
 
-The cheap rung: a Compose render test with **no network, daemon, or emulator-host**, fast enough to gate
-every change. It joins the two halves that the rest of the suite covers separately — the **fold**
-(scripted events → `List<ThreadItem>`, unit-tested in `RemoteConversationRepositoryTest`) and the
-**render** (`ThreadScreen`, component-tested from a hand-built state in `ThinkingIndicatorTest`) — by
-driving a scripted event stream through the real fold and rendering the result.
+The cheap rung joins the real `RemoteConversationRepository`, negotiated thread route,
+`ThreadViewModel` and `ThreadScreen` with a `FakeSessionPump`; it needs no network or daemon.
+Since #2366, `ScriptedThreadHarness` negotiates both `interactive` and `thread`, using the
+exact host `scripted-host` and local device `scripted-device`. Existing `push*` operations
+remain scenario inputs. `ScriptedThreadContent` translates content operations into supplied
+item facts with stable identity, revision, epoch, session and daemon order before delivery
+to the repository. Legacy content frames cannot supply rendered rows: the repository
+wrapper's `observeMessages` fails if used.
 
-| Piece | File |
+| Piece | Current file |
 | --- | --- |
-| Reusable harness — wires the real graph (`FakeSessionPump` → `RemoteConversationRepository` → `ThreadViewModel` → `ThreadScreen`), exposes `push*` scripting + `awaitReady()` | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#432) |
-| The two render cases (text concatenation→finalize; `turn_state`→spinner) | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadRenderTest.kt` (#432) |
+| Real repository → negotiated route → ViewModel → screen, `push*` scripting and readiness | `app/src/sharedTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` |
+| Supplied content adapter and serialized updates/query replies | `app/src/sharedTest/.../ui/conversations/thread/ScriptedThreadContent.kt` |
+| Rendering, query certification, duplicate/revision and ordering probes | `app/src/sharedTest/.../ui/conversations/thread/ScriptedThreadRenderTest.kt` |
 
-Key facts (see [`codebase/432.md`](knowledge/codebase/432.md) for the full notes):
+The pump answers actual `thread_catch_up` and `thread_page` requests with a correlated
+`thread_items` batch followed by a separate final marker carrying coverage. The route
+regression requires rendered reply text, completed certified coverage and an actual
+catch-up request, and rejects `backfill_since` or `request_history` as row sources.
+Repeating an item or supplying an older revision must leave exactly one newest rendered row.
 
-- **Drives the REAL repository fold, not the dormant ViewModel fold.** The #337 `assistant_delta` fold
-  lives in both `RemoteConversationRepository` (canonical — the live app renders it) and
-  `ThreadViewModel.threadItems` (suppressed by a `turnId` render guard whenever the repo already produced
-  the row, which it always does live). A fake-repo harness would exercise only the dormant path, so the
-  harness wires the **real** repo; the only seam is `FakeSessionPump`.
-- **Capability gate open** — built with `negotiatedCapabilities = { setOf("interactive") }`, or the fold
-  produces nothing.
-- **Subscribe-before-push** — `liveSessionEvents` is `replay = 0`, and `isThinking` is sourced only from
-  it, so `awaitReady()` blocks every live push until the VM's collectors have subscribed (proven by the
-  seeded channel name rendering in the top bar). That seed name must not be a substring of any asserted
-  text (the #431 `e2e-ping`→`e2e-seed` false-green lesson, applied here as `"Harness channel"`).
-- **Tolerant asserts only** (substring / presence, generous `waitUntil`) per the Constraints below; the
-  text case asserts after `turn_end` (the streaming body reveals progressively and carries the caret).
+Live readings and controls retain their supported paths. Readings carry producing-session
+provenance; explicit producer tags survive the adapter. Declare conversation/session owners
+before offscreen readings, and send current settings or suggestions again after replacement.
+A family-initialization clear cannot clear a fresh stall: resumed activity supplies the
+supported responding phase. Authoritative post-turn context is a producer-owned push;
+context assertions preserve both surfaces, reset fallback, retired-session rejection and
+request non-amplification without manufacturing a legacy verification request.
+
+`awaitReady()` waits for the distinctive seed title before live pushes, so collectors are
+subscribed; its title must not be a substring of asserted reply text. Keep tolerant render
+waits and assert completed text after terminal facts. `close()` retires support and cancels
+the harness-owned scope. The [original #432 notes](knowledge/codebase/432.md) describe the
+historical legacy fold, not this current content route.
 
 Layer 1b (**#435**, blocked on #432) extends the same harness with tool rows, the connection banner, and
 the session divider — additive scripting methods, no re-wiring. #435 was split 3-way 2026-06-23, **all
@@ -382,16 +403,111 @@ asserting running → done (the absence triad) and failed (see [`codebase/472.md
 the **connection banner (#474)** — `pushConnectionState` + `ScriptedConnectionBannerTest`, asserting
 the connecting / reconnecting-countdown / offline affordances and a present→absent fence for connected
 (see [`codebase/474.md`](knowledge/codebase/474.md)); and the **session divider (#473)** —
-`pushSessionTransition` + `ScriptedSessionBoundaryTest`, asserting one folded `SessionBoundary` draws a
-delimiter positioned between the two cross-session messages, driven through the **real** #336 fold (see
+`pushSessionTransition` + `ScriptedSessionBoundaryTest`, asserting one supplied session divider draws a
+delimiter positioned between the two cross-session messages (historical implementation in
 [`codebase/473.md`](knowledge/codebase/473.md)).
 
 | Piece | File |
 | --- | --- |
-| Tool-step rows (running → done; failed) — `pushToolUse` / `pushToolResult` scripting + builders | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#472), `ScriptedToolRowTest.kt` (#472) |
-| Connection banner (connecting / reconnecting / offline; absent when connected) — `pushConnectionState` scripting (lifted `FakeConnectionStateSource` field) | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#474), `ScriptedConnectionBannerTest.kt` (#474) |
-| Session-boundary divider (one delimiter, between two cross-session messages) — `pushSessionTransition` scripting + `sessionTransitionEnvelope` builder (ported from `RemoteConversationRepositoryTest`) | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#473), `ScriptedSessionBoundaryTest.kt` (#473) |
-| Parser-gap sentinel non-vacuity (a scripted row makes the guard fire; the finding names `site` + a sanitized `message_type` and never the payload body; an unrecognized `site` token drops) — `pushUnrecognizedMessage` scripting + `unrecognizedMessageEnvelope` builder, the one builder assembled through `kotlinx.serialization` rather than string interpolation because `raw` is itself JSON | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#586), `ScriptedUnrecognizedMessageTest.kt` (#586) |
+| Tool-step rows (running → done; failed) — `pushToolUse` / `pushToolResult` scripting + builders | `app/src/sharedTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#472), `ScriptedToolRowTest.kt` (#472) |
+| Connection banner (connecting / reconnecting / offline; absent when connected) — `pushConnectionState` scripting (lifted `FakeConnectionStateSource` field) | `app/src/sharedTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#474), `ScriptedConnectionBannerTest.kt` (#474) |
+| Session-boundary divider (one delimiter, between two cross-session messages) — `pushSessionTransition` scripting translated to a supplied `session_divider` | `app/src/sharedTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#473), `ScriptedSessionBoundaryTest.kt` (#473) |
+| Parser-gap sentinel non-vacuity (a scripted row makes the guard fire; the finding names `site` + a sanitized `message_type` and never the payload body; an unrecognized `site` token drops) — `pushUnrecognizedMessage` scripting + `unrecognizedMessageEnvelope` builder, translated to an authoritative notice and observed by the destination tap | `app/src/sharedTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#586), `ScriptedUnrecognizedMessageTest.kt` (#586) |
+
+### Authoritative fixture migration evidence (#2366)
+
+The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2371#issuecomment-6317136854)
+and retained XML confirm Linux candidate `516daeeeba3be87813dec5448a8ccb354e2a3a5d`,
+including main `4c2940a1793a32eaf7da85fa4a6f924f4cbf23dd`:
+
+| Check | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Complete JVM/build gate | 6420 | 6420 | 0 | 0 |
+| Device UI gate | 336 | 336 | 0 | 1 |
+| Full scripted gate | 21 | 20 | 1 | 1 |
+| Exact refusal comparison, candidate | 1 | 1 | 0 | 0 |
+| Exact refusal comparison, pinned main | 1 | 1 | 0 | 0 |
+| Nine repaired owner/session methods, separate focused run | 9 | 9 | 0 | 0 |
+
+The complete gates contain all **18 harness clients / 91 methods**, with no missing,
+failed or skipped client method. Counts below are executed and passed within those gates,
+not additional runs:
+
+| Harness client | Methods | Gate |
+| --- | ---: | --- |
+| `ScriptedApiRetryTest` | 9 | JVM |
+| `ScriptedBackgroundAgentToolsTest` | 2 | JVM |
+| `ScriptedCompactingTest` | 5 | JVM |
+| `ScriptedConnectionStatusTest` | 4 | JVM |
+| `ScriptedContextFreshnessTest` | 3 | JVM |
+| `ScriptedLocalSendTest` | 6 | JVM |
+| `ScriptedReplySuggestionTest` | 2 | JVM |
+| `ScriptedResettingTest` | 6 | JVM |
+| `ScriptedSessionBoundaryTest` | 1 | JVM |
+| `ScriptedSessionErrorTest` | 5 | JVM |
+| `ScriptedStatusLineTest` | 3 | JVM |
+| `ScriptedThinkingProgressTest` | 6 | JVM |
+| `ScriptedThreadRenderTest` | 16 | JVM |
+| `ScriptedToolRowTest` | 2 | JVM |
+| `ScriptedTurnOutcomeTest` | 5 | JVM |
+| `ScriptedTurnPhaseTest` | 1 | JVM |
+| `ScriptedUnrecognizedMessageTest` | 6 | Android UI |
+| `ScriptedUsageLimitTest` | 9 | JVM |
+
+The client count and supported scenario coverage are unchanged. Three methods were added:
+`ScriptedThreadRenderTest.invariantRenderedContentUsesCompletedAuthoritativeQueryWithoutLegacyRequests`,
+`ScriptedThreadRenderTest.invariantDuplicateAndOlderSuppliedRevisionsCannotRegressOrDuplicateRenderedText`
+and `ScriptedLocalSendTest.invariantAcknowledgementAndPeerCollisionCannotAcceptTheLocalSendingRow`.
+The two context methods changed their `legacyTurns_` prefix to `suppliedTurns_`, retaining
+`refreshBothSurfaces_afterResetReply` and `refreshBothSurfaces_afterUnavailableResetReply`.
+Recovery's `aNewSessionBoundary_clearsIt` became
+`aLiveSessionReplacement_clearsItWithItsSuppliedDivider`: the supplied divider and supported
+`SessionReplaced` control clear recovery with canonical reason `session`; historical/older
+supplied dividers alone must retain the notice. No supported assertion was removed or skipped.
+
+Non-harness retained families also passed without skips: `ArchivedDiscussionsViewModelTest`
+21, `SettingsViewModelTest` 70, `FinishedSelectionReplyTest` 2,
+`ThreadViewModelRefusalOfferTest` 20, `ThreadViewModelTurnRecoveryTest` 14 and
+`PassiveAuthoritativeThreadObservationTest` 3. Content doubles use host/conversation-owned
+facts; settings and all six archive doubles retain fail-if-used content access. Literal
+presentation inputs and dedicated legacy algorithms remain classified separately for #2367.
+
+The scripted failure remains a failure:
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`
+timed out after 90 seconds in the full run. Fresh exact comparisons passed once each on
+candidate and pinned main; they do not prove suite-order independence or an inherited main
+failure. Track the intermittent result in [#2374](https://github.com/pyrycode/pyrycode-mobile/issues/2374).
+The UI skip is `RenameDialogCaptureTest.renameAtFigmaViewport`; the scripted skip is
+`interactiveTurn_seededChannel_durableGapCatchUp`, already ignored on pinned main and owned
+by #2367/#2167. Neither skip is a pass; `DurableGapProof` and its callers were unchanged.
+
+Earlier builder Linux focused runs separately passed all six
+`ScriptedUnrecognizedMessageTest` methods and
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_toolStepRunsThenCompletes`
+(1 executed/passed), both with zero failures/skips, at
+`b68a4f5c336118447a0e6f238a6504ea8e3e39fe`. Their XML remains under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2366/builder-20261021/`,
+`device-sentinel/` and `scripted-tool/` respectively at review time.
+
+Final raw evidence was consolidated on build-fractal-2 under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2366/manual-20261021/`.
+`manual-verification.json`, `gate-inventory.json` and `SHA256SUMS` retain identities and
+method inventories. Accepted harness reports are `gates/jvm-0qclakmc/dispatcher.xml` and
+`gates/ui-8dqotohy/dispatcher.xml`; scripted failure evidence is
+`gates/scripted-all-vyvpbk_i/dispatcher.xml`, with exact comparisons in
+`gates/scripted-t3yc8nwo/` and `baseline-gates/scripted-7opck8xz/`.
+Historical failed XML remains separate, including the earlier complete JVM run
+(6420 executed, 6419 passed, 1 failed, 0 skipped) before the offscreen producer repair.
+These are retained raw locations at review time, subject to evidence pruning.
+
+Both final workers used mobile-agents `974ef55c183bac5180d7935e2d56b2e301bdbc4c`
+and dispatcher `1f8d5e30508561adb2fb7eb5c20e2dfc42fb67f9`. Fractal scripted runs used
+daemon `647a4e7526f581f78d422195cb22b3e9b979e767` and relay
+`2fd9338dd1662dbd68f3710a33e6a8cc4e7a0bc1`; HP JVM metadata records daemon
+`2c68b595440dd7e8e843af9cff0d9a708bcc81a7` and relay
+`9939bc1ff8afec5021c09862e6f14dadba33ad42` separately. Scripted checks use zero real
+Claude turns. No recording refresh or new live activation/restart proof is claimed;
+macOS is outside this ticket's verification scope.
 
 ## What rung 3 is made of
 
@@ -711,6 +827,11 @@ changes B's single Waiting label to an aggregate count. The same prompt must rem
 the pill tap and Back. Cleanup restores original pairing records, names and ordering even after failure
 or cancellation, then closes the peer and removes the answer pairing. This first-Waiting isolation
 repair is separate from #1735's expiry-clock repair; neither retries nor longer timeouts are used.
+Since #2350, the scenario fences only B's destination acquisition after metadata setup,
+using the exact connection/generation's authoritative store certificate. A pre-tap wait can
+prevent the initial query from starting. The original assertions and captured queries remain
+required; [recorded-test guidance](recorded-tests.md#attention-destination-acquisition-2350)
+records the controlled regressions and focused/configured macOS replay evidence.
 Controlled `AttentionHostIsolationTest` drives the production attention fold with the inherited prompt;
 unit/render tests separately cover aggregation, mute filtering, cross-host identity and timer races.
 No `DeterministicInteractiveStreamE2ETest` twin was added: its fixtures lack the answer-host peer and
@@ -2606,10 +2727,11 @@ when it cannot be read (#850) — before this, the daemon line was skipped outri
 
 ## Pre-ship gate
 
-The live rung-3 real-Claude e2e is the post-verifier mobile **pre-ship gate**. The
-dispatcher runs it for tickets carrying `needs-real-claude`, before documentation
-and merge, so an operator is never the **first** real-stack execution. It is the
-mobile parallel of the daemon's `make e2e-realclaude`. The dispatcher command is:
+The live rung-3 real-Claude e2e remains the explicit **pre-ship gate** command.
+Automatic post-verifier live routing is retired. Required live acceptance needs
+counted evidence before verifier PASS; the normal UI and scripted gates do not
+supply it. Ticket #2246 uses seven named captures and requires no automatic full
+live-suite handoff. The explicit command remains:
 
 ```bash
 python3 scripts/android-test-gate.py live
@@ -3772,6 +3894,252 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+### Earlier-session Agent with older paging and overlapping replay (#1963)
+
+Linux-only evidence, 2026-10-21. Other operating systems are outside this ticket's
+verification scope. [PR #2382's accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2382#issuecomment-6322722199)
+is PASS on Mobile `4bb228f723037cf713f2e8a39c8764a148cb8fdb`, accepted submission
+`af5dc154f4949b6eaab99b6568857eb8474ae8915955b7950f91c6d245529ca2`.
+Repair `0787a69ac1e271e3f19942f946aee7056bce5a4f` closes the initial verifier's
+stale-replay synchronization finding. No production repair or visual change was needed.
+
+The historical legacy fold promoted a launch with no observed terminal into the
+newest running block; its conversation/task join lacked session identity, and finish
+memory did not survive restart. The activated authoritative route persists daemon
+identity, session, activity/status, revision and ended order. Only active families
+enter the running tail; a missing roster never establishes successful completion.
+
+**Deterministic integration receipts.**
+`EarlierSessionAgentScreenTest.terminalFamilySurvivesRestartOlderPageAndReplacementBesideRunningAgent`
+finishes A and nested tools, reconstructs the production cache/registry/ViewModel,
+then keeps B active in session B. The real ViewModel destination supplies `ThreadScreen`.
+The retained synthetic wire requests, replies and final certificates pass production
+correlation and admission, rather than replaying a list directly through the projector:
+
+- Restored `thread_catch_up` starts at checkpoint 100 and certifies 200.
+- `onDemandOlderHistory` obtains `thread_page` before order 25. While held, newer
+  terminal A/child revisions 210/211 arrive. The older reply overlaps them with
+  revisions 140/141, admits older row 19 and child 22, and certifies `[19,25)` with
+  continuation 19. Combined coverage is `[19,101)`, `older_exists=false`; held child
+  23 at revision 142 survives beyond the page bound.
+- Disconnect returns support to Unverified. A different admitted Supported connection
+  catches up from 200 to 220 with reversed and duplicated family/session-B facts.
+- Two stale active-Agent/tool pairs precede revision 221 of existing session-B row
+  80 on the same FIFO pump. `awaitFact(80, 221)` drives repository and presentation
+  work before repeated assertions. XML records
+  `stale-replay-presented duplicate-pairs=2 fence-item=80 fence-revision=221`.
+
+After each boundary, stored/projected identities, newest revisions, session/parent
+ownership, unique content rows and stable keys remain intact. The separate finished
+launch marker and A's ended-order placement stay before session-B content; A has no
+spinner, B alone has one, and the badge says “1 task running”. Nested tools retain
+their owner. Final on-disk assertions include row 80 revision 221.
+`missingTerminalNeverInfersCompletionFromLaterSessionOrAbsentRoster` instead requires
+two active Agents, two spinners and “2 tasks running”. Each named method executed and
+passed **1/1/0/0** in both focused repair and fresh complete JVM evidence.
+
+**Counted results.** All counts below are executed/passed/failed/skipped; executed
+excludes skips. Documentation read fresh XML embedded in the current gate logs and
+the retained builder XML. Fresh complete gates on the accepted Mobile revision:
+
+| Gate | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Python discovery | 205 | 205 | 0 | 0 |
+| JVM with build checks | 6437 | 6437 | 0 | 0 |
+| UI | 337 | 337 | 0 | 1 |
+| Scripted-all | 22 | 22 | 0 | 1 |
+
+All six configured commands exited 0, including pre-verification and docs guard.
+JVM invocation metadata records execution without Gradle-result reuse. Fresh focused
+repair runs total **57/57/0/0** across four separately invoked classes:
+`EarlierSessionAgentScreenTest` **2/2/0/0**, `BackgroundAgentBlocksScreenTest`
+**21/21/0/0**, `ToolRunCollapseTest` **6/6/0/0** and
+`AuthoritativeThreadProjectionTest` **28/28/0/0**. These same classes passed in the
+complete JVM gate; `terminalAgentUsesEndedAnchorAndNeverLaunchResultOrNewSession`
+individually passed **1/1/0/0**. Builder lint, debug assembly, instrumented Kotlin
+compilation and forced formatting checks also passed.
+
+The complete UI gate individually executed and passed
+`RecordedMobileSuiteTest.interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+**1/1/0/0**. Both required `DeterministicInteractiveStreamE2ETest` methods executed
+and passed **1/1/0/0** each in complete scripted-all:
+`interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+and `interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`.
+`RenameDialogCaptureTest.renameAtFigmaViewport` and scripted
+`interactiveTurn_seededChannel_durableGapCatchUp` were skipped, not passed.
+Focused repaired recorded restart and scripted restart also each passed **1/1/0/0**
+in separate builder runs. Recorded/scripted checks use zero genuine Claude turns.
+Scripted Core source is `2c68b595440dd7e8e843af9cff0d9a708bcc81a7`, binary SHA-256
+`d93c56662d0072e8aec9d1466bee3f6845f7cdc55247273f177b48b209bdb6ac`.
+
+**Retained failures and raw locations.** Initial candidate
+`e3737b157a6fac61417d8114a330cd30b32b9a10` had the same complete gate counts but
+failed verification because rendered assertions preceded stale-event delivery.
+Those green tests do not prove the repaired boundary. The unfenced control on
+`cde7dcfe695edf01a5cec8b39bba96bd3372ed2e` plus retained patch executed **1/0/1/0**,
+expecting revision 221 but observing 80. Three earlier query-observation attempts
+each remain **2/0/2/0**; the persistence-timer attempt remains **2/1/1/0**.
+Compile/format and refused multi-class-selection attempts executed zero tests.
+
+Raw locations at review time, under
+`/work/Projects/pyrycode-mobile-agents/logs/` (subject to retention pruning):
+
+- `evidence/1963/builder-rework1-4bb228f7/`: focused JVM/native XML, exact patches,
+  source receipts, unfenced failure and hash manifest; `focused-jvm/` retains the
+  page, replacement-connection and revision-221 receipts.
+- `evidence/1963/builder-20261021-e3737b15/`: initial focused passes and failed attempts.
+- `verifier-gate_#1963_{1,2,3,4,5,6}.{log,stderr.log}` dated 17:13–17:46 UTC:
+  current command output, stderr and embedded complete XML. The old `.pass.json`
+  and initial gate report name the initial candidate; neither establishes the repair.
+- `evidence/1963/harness/fault-957495467bea74f60a453b15898332de/` and
+  `fault-a3dd9a8c17e07553e169b69737b09cce/`: fresh complete-gate Agent diagnostics,
+  source/exit receipts; focused repair uses `fault-90ae21b6cdde0e2fc8d9aff167a5f819/`.
+
+**Relationship to accepted genuine evidence.** Reuse
+[#2246's accepted restart/settlement proof](#negotiated-agent-restart-and-settlement-2246),
+stage `3ffde847fd61222a970908d87e301247ccf81924940db07cb3da772153afcede` on candidate
+`bce55074fc40033374927827a4c3c52adbdb1fab`. Repaired genuine restart and fresh replay
+each passed **1/1/0/0** on Mobile `2d9544c24d0a8ec63d4bfe90e1c1e21f77dc01df`,
+Core `a3bfe5e360852586e4af5bf0781ebca00b5ee433`; its independent scripted pair
+passed **2/2/0/0**. Raw repair evidence was under
+`logs/evidence/2246/manual-20261021/{placement-restart-2d9544,verifier-rework-placement,retained-native/interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect}/`
+in the agents repository. It proves graph/cache reconstruction, historical finished
+placement, nested ownership and settlement reconnect. It contains no page query or
+simultaneously active session-B Agent. #1963 supplies that deterministic integration
+proof, without claiming a new genuine live pass. #2246's historical failures, accepted
+reruns and four reviewed strict-comparison replacements retain their recorded meaning.
+
+### Negotiated Agent restart and settlement (#2246)
+
+Implementation and verification ran on Linux, Android API 33, with Claude Code
+2.1.280. Other operating systems are outside this ticket's verification scope.
+The accepted verifier stage record for [PR #2337](https://github.com/pyrycode/pyrycode-mobile/pull/2337)
+is PASS on `bce55074fc40033374927827a4c3c52adbdb1fab`, bundle
+`3ffde847fd61222a970908d87e301247ccf81924940db07cb3da772153afcede`.
+The initial gate report predates this accepted verdict. The tables preserve its
+failed attempts and the later same-tree reruns separately.
+
+**Genuine capture and fresh replay.** Each live method below belongs to
+`InteractiveStreamE2ETest`; counts in each result column are
+executed/passed/failed/skipped. The selected successful evidence combines six
+batch pairs and one focused delimiter pair, all on Mobile
+`cb8fd9926d5c7675d84c4f2d3aa8c786850bcef3` and clean Core
+`a3bfe5e360852586e4af5bf0781ebca00b5ee433` (merged Core #3710).
+The original batch remains **7/6/1/0**: delimiter failed after producer-gap close
+4414 retired its source. Its focused same-build live and replay each passed **1/1/0/0**.
+
+| Method | Live | Fresh replay | Strict outgoing comparison |
+| --- | --- | --- | --- |
+| `interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect` | 1/1/0/0 | 1/1/0/0 | Changed; reviewed replacement |
+| `interactiveTurn_backgroundAgent_followsBottomUntilFinished` | 1/1/0/0 | 1/1/0/0 | Changed; reviewed replacement |
+| `interactiveTurn_backgroundAgent_replyStaysUnderAgent` | 1/1/0/0 | 1/1/0/0 | Changed; reviewed replacement |
+| `interactiveTurn_newSession_rendersSessionBoundaryDelimiter` | 1/1/0/0 | 1/1/0/0 | Changed; reviewed replacement |
+| `interactiveTurn_attentionDot_followsARealTurn` | 1/1/0/0 | 1/1/0/0 | Matched |
+| `interactiveTurn_permissionPrompts_heldPerConversation` | 1/1/0/0 | 1/1/0/0 | Matched |
+| `interactiveTurn_questionAnswer_reachesTheAskingConversation` | 1/1/0/0 | 1/1/0/0 | Matched |
+
+The [counted recording index](specs/architecture/2246-recording-reviews/2026-10-21-manual.json)
+retains all seven baseline/candidate hashes, per-method receipts and identities.
+Daemon binary SHA-256 is
+`29fd50a44c9bea9476363929bafb7016e61bb9418110987f0ae075a2c8c5a74e`;
+application APK is
+`7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf`;
+test APK is
+`cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177`.
+These receipts identify the capture packages; they are not rebuilt-binary verification.
+
+Every actual phone open negotiated `thread`, with no phone legacy history/backfill
+requests. The peer explicitly used its diagnostic route. The review retains 72 exact
+phone catch-ups: 63 terminal certificates, eight resets and one correlated query error
+that grants no completion. All 179 live updates carry conversation/epoch ownership;
+all four reads stay within delivered same-owner certified checkpoints. Ten permission
+answers select options offered to that same physical owner. This set has no page query
+and establishes no paging result.
+
+Restart receipts establish different graph/cache/registry objects, exact persisted
+checkpoint/coverage while support is Unverified before Activity launch, fresh Supported
+reopening and a different admitted connection during pending-send recovery. The saved
+family keeps canonical identity, session, turn, parent, launch order, finished placement
+`endedOrder`, finished state and frozen content. Exact owned tool rows are displayed
+beneath their restored Agent; settled child prose requires its own inactive done/finished
+facts. The recovered session-B send is delivered exactly once with no residual pending
+send. Stable phone-message anchors bracket the finished family in both the production
+projection and actual reversed UI list.
+
+The [difference review](specs/architecture/2246-recording-reviews/2026-10-21-manual.md)
+accepts four changed contracts and retains their strict comparison failures. Restart
+catch-ups change 19→21, summary reads 11→12, MCP reads 3→4 and model requests 1→2;
+commands and physical lifecycles match. Background following has three offered/answered
+permissions instead of four, with the same 15 catch-ups. Reply ownership has nine
+catch-ups instead of ten. Delimiter retains command/query counts with one changed
+certified query base. The remaining three complete normalized contracts match.
+No query-count relaxation or new numeric normalization is used. These are **three
+compatibility matches and four reviewed replacements**, not seven compatibility passes.
+
+**Placement rework and scripted outcomes.** On repaired Mobile
+`2d9544c24d0a8ec63d4bfe90e1c1e21f77dc01df`, each of these
+`DeterministicInteractiveStreamE2ETest` methods executed and passed independently,
+with zero failures/errors/skips, through the ordinary isolated-daemon scripted gate:
+
+- `interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+- `interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+
+Their combined count is **2/2/0/0**, also achieved on the earlier capture source.
+A fresh genuine restart and its fresh replay on the repaired source each passed
+**1/1/0/0**, using the same Core/binary/application APK. Test APK changed to
+`b8bde17716152c9b5fc3ce549a41b8f47d112ad8e2bd5cb0d4aba77aebfb6074`;
+fresh recording hash is
+`cc0b270a3792e66adf68d67172d138b4989dbc1e837ae79dc5c475204113a451`.
+The [supplemental index](specs/architecture/2246-recording-reviews/2026-10-21-verifier-rework.json)
+records these receipts. It leaves the seven committed fixtures unchanged. Placement
+negative probes first recorded **9/7/2/0**, then **9/9/0/0** after repair.
+
+**Configured verification.** Counts exclude skips from executed totals.
+
+| Check | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Python discovery | 205 | 205 | 0 | 0 |
+| JVM retained cached report | 6429 | 6429 | 0 | 0 |
+| Normal UI original run | 337 | 336 | 1 | 1 |
+| UI background-following rerun | 1 | 1 | 0 | 0 |
+| Scripted-all original run | 22 | 21 | 1 | 1 |
+| Scripted refusal-switch rerun | 1 | 1 | 0 | 0 |
+
+The JVM invocation explicitly reused Gradle cache: **zero newly executed JVM methods**.
+The retained report includes both placement probes, `heldParagraphProvesOwnershipWithoutSettling`,
+`deliveredQueryCertificateReschedulesLiveProgressWithoutAnotherPhoneRequest` and
+`interruptedBatchesKeepPriorCertificationWithNewestItems` as passed. Build/static checks,
+pre-verification and docs guard passed. The UI report executes all 68 normal recorded
+scenarios. Committed restart passes **1/1/0/0**; all six other named recordings pass
+except background following in that original run. Its same-tree dispatcher rerun passes
+**1/1/0/0**. Both required scripted Agent methods pass in scripted-all; the failed
+method is `interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`, whose
+same-tree rerun passes **1/1/0/0**. Skips are rename capture and scripted durable-gap;
+neither is credited as passing. Accepted flaky-rerun policy makes the gates green;
+this is not a fresh all-pass full-suite result. Dispatcher owns flaky tracking.
+
+Private raw evidence was retained under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2246/manual-20261021/`:
+`final-seven-cb8`, `final-newsession-cb8`, `final-recording-audit`, `scripted-cb8`,
+`verifier-rework-placement`, `placement-restart-2d9544` and `retained-native`.
+The latter retains per-method XML, instrumentation and first-failure phone logs.
+Gate XML is embedded in agents logs `verifier-gate_#2246_{4,5,6}.*`; reruns are
+`2026-10-21T13-47-32-677Z_verifier-gate-rerun_#2246.*` and
+`2026-10-21T13-55-51-644Z_verifier-gate-rerun_#2246.*`, also in the accepted bundle above.
+These paths identify retention at review time, not permanent availability.
+
+Historical failures remain failed: the original attention run on `d50c03a1d` was
+7 executed/6 passed/1 failed/0 skipped; earlier scripted runs reached owned-tool,
+registry and settlement barriers without completing restart acceptance. Permission
+cleanup and restart reset/early-approval/content-boundary replays failed before the
+repairs; setup/lock cancellations executed zero methods. The first verifier rejected
+`05c9eb9b` for stale inventory totals and missing finished placement, with 205 Python
+checks/204 passed/1 failed and later gates unexecuted. No obsolete-system exclusion
+applies. Salvage PR #2242 is closed as superseded, linked to A #2248, B #2264 and C #2337.
+Replay proves neither real transport/FCM delivery nor current provider timing. The
+downstream cross-session paging regression is covered by [#1963](#earlier-session-agent-with-older-paging-and-overlapping-replay-1963).
+
+
 ### Authoritative completion alerts (#1573)
 
 Manual validation on 2026-10-19 covers certified background completion recovery and notification
@@ -4156,6 +4524,15 @@ and [queue history](knowledge/features/queued-backlog.md#queued-display-metadata
 
 ### Queue, recovery and agent evidence migration (#2174)
 
+The shared component harness now uses supplied authoritative content (#2366); its
+`ThreadEvidence` bindings use scoped presentation identities and supplied completion facts.
+The parser-gap recorder projects notices only from the destination's negotiated observation;
+it does not start another collector or query. Passive observation forwards source ownership,
+progress, leases and controls, retiring disconnected/replaced evidence. Dedicated legacy
+algorithm tests and `DurableGapProof` branches remain for #2367; storage retirement is #2364.
+The historical #2174 results below retain the route and limitations they tested. This fixture
+migration adds no real-Claude scenario and refreshes no recordings.
+
 `DeterministicInteractiveStreamE2ETest`'s
 `interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply`,
 `interactiveTurn_seededChannel_sendQueuedNow_placesAfterToolResult`,
@@ -4163,9 +4540,9 @@ and [queue history](knowledge/features/queued-backlog.md#queued-display-metadata
 `interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect`
 no longer read `observeMessages` directly (six sites) or join raw
 `agent1783`/`child1783`/`parentToolUseId`/`runId` peer IDs (three sites).
-All four now go through #2169's `harnessThreadEvidence` binding, which
-still selects the current legacy source; no production route, capability
-or fixture changed. New shared predicates in
+At #2174 acceptance, all four went through #2169's `harnessThreadEvidence` binding,
+which then selected the legacy source; that ticket changed no production route, capability
+or fixture. New shared predicates in
 `app/src/sharedTest/java/de/pyryco/mobile/e2e/QueueRecoveryAgentEvidence.kt`:
 `heldOpenReply`/`holdsOpen`/`settledHeldReply` back the queued-prompt
 method — the queued check now waits for the held item's completed text
@@ -7104,6 +7481,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 ## Follow-ups to ticket
 
+- **#2246:** rung-3 `InteractiveStreamE2ETest` restart/settlement and its separately
+  counted rung-4 `DeterministicInteractiveStreamE2ETest` twin are covered above.
+  Named live/fresh pairs, committed replay and configured gates are evidenced;
+  failures and accepted reruns remain explicit. [#1963](#earlier-session-agent-with-older-paging-and-overlapping-replay-1963)
+  completes deterministic older-page/simultaneously-running-Agent coverage, with a
+  new-revision delivery fence before stale-replay assertions; it adds no live scenario.
+  The pre-ship command remains `python3 scripts/android-test-gate.py live`.
+
 - **Passive peer-turn evidence (#2317):**
   `InteractiveStreamE2ETest.interactiveTurn_peerStartedTurn_continuesOnPhone`
   preserves the peer send and leave/reopen path. Cold assertion subscriptions had
@@ -7469,6 +7854,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
   wall-clock polling alone was load-dependent. No `DeterministicInteractiveStreamE2ETest` twin exists
   for the live-only answer-host setup; controlled unit/render tests own mute, aggregation, cross-host
   and timer races. The pre-ship command remains `python3 scripts/android-test-gate.py live`.
+  #2350 adds the test-only acquisition fence after destination metadata, with controlled active/completed
+  initial-query regressions in `InitialAttentionQueryTest`. Both exact captured queries and every original
+  assertion remain required. Its focused and configured UI replay passed on macOS; the
+  [failed/passing replay evidence](recorded-tests.md#counted-macos-replay-evidence-2026-10-21)
+  records the separate overall gate dispositions. This supplies replay evidence; the existing live
+  harness, deterministic-twin coverage and pre-ship command remain as described above.
 
 - **Operator-bypass pairing lifetime (#1756):**
   `InteractiveStreamE2ETest.interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`

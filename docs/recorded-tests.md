@@ -41,6 +41,19 @@ scripts/with-claude-login.sh python3 scripts/recorded-exchanges.py verify \
   --serial "$TEST_SERIAL" --pyry "$PYRY_BIN"
 ```
 
+Managed recording commands acquire host test admission before taking device custody
+or building/installing APKs. An inherited admission descriptor must validate against
+the original lock and retain its exclusive hold. Pass that same descriptor through
+nested harness processes and owned cleanup; a foreign or invalid descriptor fails
+rather than creating replacement admission. Scope selection precedes delegation.
+This ordering avoids holding a device while waiting for a host lock held by another
+worker waiting for that device.
+
+Retain per-method XML, instrumentation output and private phone logs before another
+method can replace them. Cleanup runs all release actions while preserving the original
+scenario failure as primary. A failed phone-log collection cannot replace that native
+result or print private exception text. Failed captures remain diagnostic artifacts.
+
 Capture records only decoded application messages, with a 2 MB and 5000-frame limit.
 Handshake frames, keys and pairing credentials do not enter the recorder. Sensitive
 fields, known credential patterns and the actual configured Claude credentials are
@@ -112,11 +125,121 @@ crossed. Their own delivery stays fenced. Earlier unreleased canonical facts for
 same conversation, unknown attribution, lifecycle changes and Android inputs still
 fence the thread reply. The other query remains required.
 
+Canonical live progress may cross its own pending catch-up only when an actually
+delivered, fully decoded earlier query certifies that exact connection lifecycle,
+conversation, epoch and requested checkpoint. Re-drain eligibility after actual daemon
+delivery; waiting for another phone request can deadlock progress. Partial or unconfirmed
+replies, foreign bases, resets and initial queries cannot supply this certificate.
+The pending catch-up and its correlated reply remain required.
+
+Independently attributed live B frames may pass an unrelated A query fence only after
+B has an accepted earlier thread query on that same connection lifecycle. Explicit
+request, envelope and catalog-row conversation identities must agree. Unknown or
+contradictory attribution, earlier same-conversation work, Android input, checkpoints,
+read/observation boundaries and physical close still fence release. Recognized metadata
+replies can be crossed without releasing their own fence. No sibling query is omitted.
+
+Automatic peer `allow_once` approval in replay waits for the captured action boundary
+of that exact peer owner and mapped modal. Readiness is non-consuming: a checkpoint
+alone cannot replace the required phone command, and another modal or owner cannot
+borrow its approval. Polling can observe independent target facts while the answer
+waits. An asynchronous pre-Send approval must leave the actual phone send able to run.
+Complete payload, answer-token binding and exactly-once consumption remain mandatory.
+Live capture does not defer approvals this way.
+
+For graph/cache restart, freeze the complete family actually persisted after session
+rotation. An inactive Agent can still gain final `task_report`/`task_update` fields;
+preserve all earlier root key/value pairs and exact complete child content before
+freezing, with nondecreasing revisions and unchanged identity/session/turn/parent/order,
+`endedOrder`, activity and finished state. Compare the frozen complete content exactly
+through restoration and reconnect. Preserve saved checkpoint/coverage separately from
+newer held facts; Unverified pre-launch data cannot establish negotiated support.
+Check finished placement after a phone message between Agent launch and finish, then
+before the recovered new-session message, in both production projection and actual
+reversed UI list keys. Launch order and identical text alone miss lost lifecycle order.
+See [restart evidence](e2e-interactive-stream.md#negotiated-agent-restart-and-settlement-2246).
+
 Replay proves the recorded permission behaviour. Current-daemon compatibility requires
 the explicit live command. Timing, encrypted transport, reconnect, other permissions,
 session grants and other live scenarios retain their existing tests and requirements.
 Android startup and UI costs remain, so report measured Android times rather than using
 Desktop's replay timing as an Android forecast.
+
+### Attention destination acquisition (#2350)
+
+The Waiting pill can appear before destination metadata makes B's initial attention
+query eligible. Waiting for its certificate before tapping the pill can therefore
+prevent the very query being awaited. Acquiring while that query is active instead
+coalesces with it; acquiring after completion sends the second captured query. A
+missing second query correctly holds the phone's dismissal/completion frames even
+when the independent peer has already observed dismissal. Peer progress alone does
+not establish a product completion or expiry defect.
+
+`InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`,
+also called by `RecordedMobileSuiteTest`, arms the test-only `InitialAttentionQueryGate`
+for freshly created B. The original Waiting-pill tap lets destination list/metadata
+setup proceed; only `NegotiatedThread.acquire` waits. Readiness observes
+`NegotiatedThread.store.observe(host, conversation)` directly: the cached provider's
+`observe` also restores and persists data, so collecting it would introduce extra
+provider work. Readiness requires a nonempty epoch, positive certified checkpoint,
+certified coverage and no repair/reset flag. Batch receipt alone is insufficient.
+
+The gate pins the host, conversation, connection identity and store generation when
+armed, filters readiness to that generation and rechecks scope, connection and
+generation before delegating real acquisition. Other targets and unarmed scenarios
+retain normal provider admission. Timeout/cancellation fails the wait; closing the
+scope clears the gate and cancels its acknowledgement. The scenario pumps Compose
+within its existing thread deadline until actual delegated acquisition is acknowledged,
+before Back can cancel it. The real query controller remains responsible for both
+exact captured requests, including the second request at checkpoint 13; the gate
+neither sends queries nor releases frames.
+
+`InitialAttentionQueryTest` controls initial send, batch receipt, terminal certification
+and navigation through real query controllers and a strict tape. The active-query and
+completed-query cases require both exact sends; the unfenced control leaves the second
+query and phone completion pending. Other probes retain full payload/owner/count
+matching, observation fences, conversation and generation attribution, cancellation,
+scope closure and default provider admission. Production coalescing, recordings and
+reconnect admission are unchanged. The native scenario still requires the original
+Waiting display and tap, the same outstanding permission after tap and Back, return
+to A, peer-only answer/dismissal, actual Finished display, five-second virtual expiry
+(clock advanced 5,100 ms), absence after reopening A and complete tape consumption.
+Original deadlines remain in force.
+
+#### Counted macOS replay evidence, 2026-10-21
+
+The exact native method was
+`de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_otherConversationAttentionPills_waitingAndFinished`.
+Focused attempts used `python3 scripts/android-test-gate.py ui --tests` with that method;
+the configured full gate used
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`.
+
+| Attempt | Revision | Executed | Passed | Failed | Skipped | Exit |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Pre-tap wait, `ui-gomdojl7` | `ae336abd89b4c03f41ad5ad98d9467c0cf407966` | 1 | 0 | 1 | 0 | 1 |
+| Acquisition gate, `ui-mu_hiccu` | `9598c1f6f451aba5b6e21125c1cef1c899aebe29` | 1 | 1 | 0 | 0 | 0 |
+| Configured UI gate, `ui-qoysu3xi` | `9598c1f6f451aba5b6e21125c1cef1c899aebe29` | 335 | 332 | 3 | 1 | 1 |
+
+The first attempt timed out before B's initial query was sent. The repaired focused
+method passed in 6.82 seconds; its retained logcat contains all eight captured thread-query
+sends. The same method passed within the full UI gate (5.233 seconds), with no failure
+or skip in its case. The overall gate retained its failures: permission isolation
+[#2349](https://github.com/pyrycode/pyrycode-mobile/issues/2349), model selection
+[#2351](https://github.com/pyrycode/pyrycode-mobile/issues/2351), and the unrelated offscreen
+reply flake. The dispatcher reproduced the first two on main and the flake passed its
+focused rerun. The [accepted verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2358#issuecomment-6306475597)
+records these dispositions. Dispatcher JVM/build checks passed 6368/6368, with zero
+failed/skipped; the final focused acquisition class passed 11/11. The unfenced boundary
+control retained 9 executed, 7 passed, 2 failed, 0 skipped.
+
+Raw focused XML, logcat, source identities, exit statuses and manifests were retained at
+`$AGENTS_REPO_PATH/logs/evidence/2350/builder-20261021-macos/native-first-fail/` and
+`native-final-pass/` under the same root. The accepted verifier evidence bundle is run
+`b9f310c06228aa022ca8dd886eb5adeeb1fd9c6176c0a6e2caf3ff6b1ba2dde1`; its
+`logs/verifier-gate__2350_5.log` retains the counted dispatcher XML. These references
+identify evidence retained at review time; the counts above survive raw-file pruning.
+No daemon or Claude launch, replacement recording or current-provider compatibility
+claim was needed. Linux was outside this ticket's verification scope.
 
 ## Verified evidence, 2026-10-16
 
@@ -294,6 +417,299 @@ messages, not tape time, and the negative window stays its fixed one second.
 Real push delivery, encryption, transport recovery and timing obligations retain their
 external checks.
 
+### Explicit graph-restart readiness (#2347)
+
+An explicit `restartApp` destroys the Activity and rebuilds the graph inside the
+scenario, before final Activity teardown. Call
+`RecordedSuiteNative.beforePhoneRestart` before Activity destruction, while the
+old graph's request producers and replay delivery workers remain alive. In replay,
+`SuiteConnections.beforePhoneRestart` snapshots currently registered, unclosed
+`phone/` transport owners under the hub monitor, then calls `beforeClose` for each
+outside that monitor. It drains required requests and queued delivery under the
+existing 30-second bound. Capture and ordinary execution keep a no-op fence.
+
+The snapshot excludes peers, closed owners and future phone generations. Final
+`beforePhoneTeardown` instead follows the tape's phone closes before scenario
+completion and can wait for replacement owners. Reusing that final fence during
+restart could wait for a graph that cannot exist until relaunch. Keep these two
+boundaries separate; neither synthesizes queries, changes payload matching or
+waives complete tape consumption.
+
+Peer completion alone does not certify phone catch-up. The interrupted-retrieval
+tape records peer `turn_end`, the phone's version-0 query and replies establishing
+version 20, then a required version-20 query and reply before generation 0 closes.
+An earlier version-0 query cannot stand in for that later checkpoint. The original
+failure closed at this restart boundary, before the retrieval-triggered cut; later
+reconnect and cleanup timeouts propagated the first sticky mismatch, rather than
+identifying another attachment failure or the later [#2219 close race](#atomic-transport-close-2219).
+
+`SuiteConnectionsTest` covers current owners, queued replies, successive restarts
+and exclusion of independent peers/future generations with
+`phoneRestartWaitsForCurrentQueriesWithoutWaitingForFuturePhonesOrPeers`.
+`phoneRestartCannotOmitARequiredQuery` and
+`phoneRestartStillRejectsAChangedQuery` retain missing-work and changed-checkpoint
+failures. See [counted restart evidence](knowledge/features/development-verification-gates.md#graph-restart-replay-evidence-2347)
+and [attachment recovery assertions](knowledge/features/attachment-retrieval.md#interrupted-retrieval-restart-replay-2347).
+
+### Scenario host-removal readiness (#2349)
+
+Peer turn completion does not establish phone completion: permission isolation can
+finish every A/B assertion while B's required catch-up and its scheduled reply are
+still pending. Removing the paired host then disposes the phone connection. The
+activity-level `beforePhoneTeardown` fence runs too late for removal inside the
+scenario's `finally`.
+
+The Linux #2266 failure reached `RelayConnectionRegistry.reconcile` at lifecycle
+step 46: `phone/host-2/0:close` arrived while `thread_catch_up` remained required
+(`matched=45 remaining=14`). Delivery and test-end errors rethrew that first stored
+mismatch. The #2343 split moved this repair to #2349, implementation
+`eaeb636274498f67d50738de3f7b6ca54db3c830`, merged as
+`313f151cc10e101675c717f750ca6bc56c13c502`.
+
+`withPermissionIsolationCleanup` preserves the captured lifecycle order: close the
+peer, call `RecordedSuiteNative.beforeHostLinkClose(serverId)`, then remove the host.
+In replay, the native fence resolves the current phone owner and delegates to
+`SuiteConnections.beforeClose`. Its existing 30-second bound waits for required
+requests and queued deliveries while the phone graph remains usable. Capture and
+ordinary execution keep a no-op fence. No request is fabricated or cancelled to
+claim readiness; ownership, full payloads, causal delivery and complete consumption
+remain strict, with unchanged recordings and scenario deadlines.
+
+Every cleanup action is attempted even if a preceding action fails. The scenario
+throwable remains primary; otherwise the first cleanup throwable is primary. Later
+failures are suppressed in peer/fence/host order, excluding self-suppression. The
+tape's first stored mismatch remains available through completion checking. A fence
+timeout still permits physical host cleanup and fails the test. A timeout at B's
+dialog dismissal before cleanup is a separate earlier failure, not evidence that
+this fence repairs dismissal.
+
+`PermissionIsolationCleanupTest#hostRemovalWaitsForPhoneCatchUpAndScheduledDeliveryAfterPeerCompletion`
+holds a real required phone request after peer completion, then releases it and
+retains a delayed correlated reply. Host removal must wait through both phases.
+`missingPhoneWorkFailsAtTheExistingDeadlineAndStillRemovesHost` checks the unchanged
+30-second failure bound. `aReplayMismatchRemainsFirstThroughCleanup` rejects changed
+owner, conversation, epoch and checkpoint; the remaining probes cover scenario and
+cleanup failure ordering, self-suppression and ordinary peer-before-host cleanup.
+
+#### Counted macOS cleanup evidence, 2026-10-21
+
+[PR #2354](https://github.com/pyrycode/pyrycode-mobile/pull/2354) was accepted at
+`96c4e6303f1da310f7c22de5df46a4ca0e972b23`, against merged main
+`0dffe4d6b723540e9ab03ae511c240975fe6074a`. This includes #2350's reviewed
+acquisition repair through `9598c1f6f451aba5b6e21125c1cef1c899aebe29`, merged by
+`01e48af6269733a309e75ed2c7d03041ade44bb0`.
+
+| Attempt | Executed | Passed | Failed | Skipped | Exit |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Old-cleanup control, uncommitted source on `54606253372257c578cb094cc26e967196e101b3` | 1 | 0 | 1 | 0 | 1 |
+| Intermediate invalid synthetic-reply fixture, same builder workspace | 7 | 6 | 1 | 0 | 1 |
+| Integrated cleanup class, reviewed revision above | 7 | 7 | 0 | 0 | 0 |
+| Focused permission replay, `ui-4hhtfo1d`, reviewed revision | 1 | 1 | 0 | 0 | 0 |
+| Configured JVM/build gate, reviewed revision | 6375 | 6375 | 0 | 0 | 0 |
+| Configured UI gate, `ui-mrji4bh_`, reviewed revision | 335 | 332 | 3 | 1 | 1 |
+| Same-tree UI failure comparison, `ui-wv1edlrj` | 3 | 3 | 0 | 0 | 0 |
+| Configured scripted-all gate, `scripted-all-k9zr05k_`, reviewed revision | 21 | 19 | 2 | 1 | 1 |
+| Same-tree scripted failure comparison, `scripted-all-5guvxb13` | 2 | 1 | 1 | 1 | 1 |
+| Session-error baseline, merged main above | 1 | 0 | 1 | 0 | 1 |
+
+The control failed with `Peer completion cannot authorize phone removal`. The
+intermediate reply lacked required decode fields; its failure is retained separately
+from the corrected passing fixture. The integrated focused classes also passed
+acquisition 11/11, connections 23/23, tape 44/44 and activity rule 2/2, each exit 0
+with zero failed/errors/skipped. The dispatcher report explicitly confirms the held-work,
+missing-work, sticky-mismatch, scenario-failure and ordinary-order probes passed in
+the full JVM gate.
+
+The exact native method was
+`de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_permissionPrompts_heldPerConversation`,
+selected with `python3 scripts/android-test-gate.py ui --tests`. It executed/passed
+in the focused run (10.336 seconds) and in the complete configured UI gate
+(8.166 seconds), with zero failed/errors/skipped in each case and every permission
+stage through RemoveB and EndB. Attention also executed/passed in that UI gate.
+The configured commands were `python3 scripts/jvm-test-gate.py --with-build-checks`
+and `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`
+(or `scripted-all`).
+
+Verifier PASS used the dispatcher's explicit failure disposition, not an all-pass
+raw suite: model-change, offscreen-reply and background-agent UI failures passed
+the same-tree comparison; offscreen is tracked in #2360. Scripted ping passed its
+comparison. Session-error failed again and on merged main, accepted as inherited
+and tracked in #2344. `renameAtFigmaViewport` and scripted durable-gap were skipped,
+not passed. The queued model/offscreen/attention sequence assessment had zero
+executions and supplies no sequence evidence.
+
+Earlier reviewed source `ee784e3bce152366b6efefdaaedb082e1caf5cf5` passed focused
+permission replay `ui-0iutvnod` (1/1, exit 0) and permission in its UI gate. That
+whole gate failed (335 executed, 332 passed, 3 failed, 1 skipped, exit 1); its
+model/offscreen/attention comparison failed attention (3 executed, 2 passed,
+1 failed, 0 skipped, exit 1). Different-selection attention passes did not resolve
+that finding; #2350's integrated acquisition repair and fresh gate evidence did.
+The historical #2350 B-dismissal failure remains distinct from the original
+post-assertion premature close.
+
+Raw XML/logcat, source snapshots, commands, exits, hashes and counts were retained
+under `$AGENTS_REPO_PATH/logs/evidence/2349/`: `builder-20261021-macos/` holds the
+control, intermediate failure and original focused pass; `rework-20261021-macos/`
+holds the earlier gate/sequence evidence; `integrated-20261021-macos/results/`
+holds the reviewed focused results. Accepted verifier bundle
+`f2677cc26f813479c66e121e1d41307d95d6bdd911677c5d9baa2b6495ae61be`
+retains the verdict and counted dispatcher XML in `logs/verifier-gate__2349_5.log`
+and `_6.log`, plus comparison logs. These are review-time locations, not permanent
+build paths. No recording, production contract or current-daemon compatibility
+claim changed. Linux was outside this ticket's verification scope.
+
+#### In-flight read evidence (#2345)
+
+A later Linux failure in #2333 has a different first error:
+`Read receipt checkpoint rejected: target=13 previous=0 delivered=false maximum=null action=10`.
+The peer's B-answer stack rethrows this earlier phone-read failure. A's captured
+answer notice advances live content after the phone qualifies a read from the
+delivered, certified checkpoint-13 window. Consulting only the latest presentation
+forgets the earlier valid window; the host-removal fence cannot repair that race.
+
+`SuiteThreadReadReceipts` remembers eligible watermarks before and after delivered
+frames, by phone owner, conversation and store generation. Later live content can
+advance without revoking proof for an in-flight read. Eligibility still requires
+actually delivered metadata, complete query certification and compatible shown
+rows. Merely enqueued or partial replies grant nothing. Unknown watermarks and
+foreign hosts, clients or conversations remain rejected; existing same-phone/host
+retention remains bounded by generation. Repair/reset invalidates earlier proof,
+including same-epoch resets, which require fresh complete certification. Payload
+shape, monotonicity, action bounds and response correlation remain checked by
+`SuiteReadReceipts`. This changes replay evidence, not product read admission.
+
+`SuiteReadReceiptsTest#aReadQualifiedByDeliveredCertifiedContentSurvivesANewerLiveRevision`
+controls the ordering; `theRecordedPermissionAnswerCannotEraseTheEarlierCertifiedReadWindow`
+reproduces it with the unchanged genuine permission recording. Both failed against
+the old validator and pass after repair. Keep the future-watermark, foreign-owner,
+query-repair and same-epoch-reset probes alongside these positive cases. All original
+isolation assertions remain: A/B hold separate prompts across navigation, the phone's
+armed/confirmed answer resolves only A, and the peer answer dismisses B and ends its
+turn. Complete request/payload matching, causal delivery and full tape consumption
+remain mandatory.
+
+#### Counted Linux evidence, 2026-10-21 (#2345)
+
+The exact native method was
+`de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_permissionPrompts_heldPerConversation`.
+Three fresh invocations used `python3 scripts/android-test-gate.py ui --tests`
+with that fully qualified method on repair
+`ca074c0e7161a9cf68d79c74a9531064b58fabbf`. Each completed all 26 permission stages.
+
+| Attempt | Executed | Passed | Failed | Skipped | Seconds |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Fresh focused replay, `ui-3rqgkmbz` | 1 | 1 | 0 | 0 | 8.353 |
+| Fresh focused replay, `ui-4ds7i5ok` | 1 | 1 | 0 | 0 | 8.275 |
+| Fresh focused replay, `ui-zesz89qc` | 1 | 1 | 0 | 0 | 8.528 |
+
+The [accepted verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2361#issuecomment-6309899647)
+reviewed `b575f0e5442c3960fd4cd3adb79e5341c6079ce9`. The later configured
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui` run
+(`ui-swzuz0gv`) executed/passed **335/335**, with **0 failed, 0 errors, 1 skipped**,
+exit 0. Its XML contains the exact permission method executed/passed once in
+6.328 seconds, with no failure or skip. Only `renameAtFigmaViewport` skipped.
+This supplies suite acceptance separately from focused proof. Earlier full-gate
+load/order is not fully known; the controlled single-tape ordering reproduced the
+residual cause without a wider investigation.
+
+The configured JVM/build gate executed/passed **6381/6381**, zero failed/skipped,
+including the delayed catch-up/delivery cleanup regression and all six new
+read-evidence probes. The five builder-focused JVM classes passed **109/109**,
+zero failed/errors/skipped. Configured `scripted-all` passed **21/21** executed,
+zero failed/errors and one skipped `interactiveTurn_seededChannel_durableGapCatchUp`.
+All repaired focused and configured runs exited 0.
+
+Historical failures remain failures. At `fcf19d8415`, #2266's UI gate executed
+336, passed 335, failed 1 and skipped 1; its unchanged focused rerun passed 1/1,
+zero failed/skipped. At `b832d64e85`, #2333 had the same gate counts and a 1/1
+focused pass, but the distinct read rejection above. Each old-validator control
+executed 1, passed 0, failed 1 and skipped 0. Two fresh baseline native passes
+before the residual repair each passed 1/1, zero failed/skipped; they did not
+disprove the race. Builder aggregate-selection refusals executed zero tests and
+provide no passing coverage.
+
+The [content-free evidence index](../app/src/test/resources/verification/permission-isolation-2345/evidence.json)
+retains source identities, fixture/report hashes and historical, controlled,
+baseline and repaired results. Its pending gate field records the earlier builder
+handoff; the accepted verifier result above supplies the later acceptance.
+Raw XML, diagnostics and exact source snapshots were retained at
+`$AGENTS_REPO_PATH/logs/evidence/2345/builder-20261021-linux/`, including
+`repaired-native-{1,2,3}/`, `read-race-control/`, `recording-read-race-control/`
+and `green-unit/`. The verifier checked all 967 manifest entries. Counted dispatcher
+XML was retained in `$AGENTS_REPO_PATH/logs/verifier-gate_#2345_5.log` (UI),
+`_4.log` (JVM) and `_6.log` (scripted). These are review-time raw locations;
+the counts here survive pruning. No recording or production contract changed,
+so no fresh Claude compatibility result is claimed. macOS was outside this
+Linux ticket's verification scope.
+
+#### Main-sweep occurrence and counted Linux evidence, 2026-10-21 (#2355)
+
+The original main sweep at `3be8ab9163640f10da40c2de0a61682028e49d4c`
+failed at lifecycle step 45: `phone/host-2/0:close` preceded two required
+`thread_catch_up` requests (`matched=44 remaining=16`). The XML failure element
+was empty; stderr identifies the first mismatch, which later delivery and test-end
+errors rethrow. The final activity-focus snapshot does not establish causality.
+The later pre-repair sweep at `0dffe4d6b723540e9ab03ae511c240975fe6074a`
+retained the same early-close failure at step 46 (`matched=45 remaining=14`),
+with one catch-up pending. It additionally failed
+`RecordedMobileSuiteTest#interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile`,
+owned by [#2347 / PR #2352](https://github.com/pyrycode/pyrycode-mobile/pull/2352).
+
+Merged repair `f10409c5c48e401911e16ec287894c96f0f14b0a` includes the #2349
+cleanup implementation above and #2345's separate read-evidence repair. Registry
+reconciliation disposes the phone after pairing removal inside the scenario,
+before activity teardown. The scenario fence now keeps phone producers alive
+through required catch-up and correlated delivery before removal. The existing
+delayed-request/delayed-reply regression covers this occurrence; #2349's accepted
+old-cleanup control executed one test and failed it, exit 1. This causal control
+and the repaired regression supply evidence beyond an unchanged passing rerun.
+The checkpoint-13 read rejection in #2345 remains a distinct first failure.
+
+The [accepted verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2369#issuecomment-6310731943)
+reviewed `97fa2ffb984dcf6a8c6c510e0382b64472ed7068` on Linux. Fresh focused
+checks used `1782cb8b65c395fc88b80f2393f9c65afd524520` (merged repair plus plan);
+subsequent commits added only the evidence index and verification prose.
+
+| Attempt | Executed | Passed | Failed | Skipped | Exit |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original main sweep, `3be8ab9` | 1817 | 1816 | 1 | 2 | 1 |
+| Later pre-repair main sweep, `0dffe4d` | 1817 | 1815 | 2 | 2 | 1 |
+| Fresh exact-method replay, `ui-zqi07wfm` | 1 | 1 | 0 | 0 | 0 |
+| Unchanged `PermissionIsolationCleanupTest` | 7 | 7 | 0 | 0 | 0 |
+| Configured JVM/build gate | 6384 | 6384 | 0 | 0 | 0 |
+| Configured UI gate, `ui-bpkgrei7` | 335 | 335 | 0 | 1 | 0 |
+| Configured scripted-all gate | 21 | 21 | 0 | 1 | 0 |
+
+All rows had zero errors. The fresh exact-method invocation selected
+`RecordedMobileSuiteTest#interactiveTurn_permissionPrompts_heldPerConversation`
+with `python3 scripts/android-test-gate.py ui --tests`, creating fresh scenario
+state. It passed in 8.219 seconds and completed all 26 permission stages: A/B
+isolation across navigation, the armed/confirmed phone answer resolving only A,
+and the peer answer dismissing B and ending its turn. Complete payload matching,
+causal delivery, full tape consumption, the recording and deadlines were unchanged.
+The configured UI command was `ANDROID_GATE_WAIT_SECONDS=2700 python3
+scripts/android-test-gate.py ui`; its report contains the exact method passed once
+in 6.511 seconds, without failure or skip. Only `renameAtFigmaViewport` skipped.
+The JVM gate passed the delayed catch-up/delivery regression; scripted-all skipped
+`interactiveTurn_seededChannel_durableGapCatchUp`. These counted gates satisfy the
+UI requirement left pending in the builder's index and plan.
+
+The [content-free evidence index](../app/src/test/resources/verification/permission-isolation-2355/evidence.json)
+retains revisions, report hashes, exits and counts. Raw XML/logcat, source snapshots
+and original stderr were retained under
+`$AGENTS_REPO_PATH/logs/evidence/2355/builder-20261021-linux/`, in `fresh-native/`,
+`fresh-unit/` and `historical/`; the verifier authenticated all 266 manifest files.
+Accepted verifier bundle
+`c9ce0376c8e62854de2e22b639d2ed2fd9feb2d20ab128b97f774a52ce7aac98`
+retains counted dispatcher XML in `logs/verifier-gate__2355_4.log`, `_5.log` and
+`_6.log`. These are review-time raw locations; the counts here survive pruning.
+
+The next post-repair **in-depth main sweep remains pending with the dispatcher**,
+including counted results and any newly failing methods. Focused and configured
+UI success do not certify the original 1817-test sweep's complete load/order or
+retrieval acceptance. Both historical sweeps remain failed. No fresh Claude
+compatibility claim is made; macOS is outside this Linux ticket's scope.
+
 ### Atomic transport close (#2219)
 
 `RecordedTransport.close` runs on the same hub monitor as `ReplayPump.send`, not only on
@@ -423,6 +839,25 @@ its destination. The destination's `TappingConversationRepository` forwards its
 actual snapshots unchanged and taps that existing collection without adding
 upstream collections or requests. Other reply-helper consumers retain their
 existing contracts. Producer completion alone cannot establish phone delivery.
+
+Since #2366, `TappingConversationRepository` records parser-gap notices from the
+projection of the destination's authoritative `NegotiatedThread.observe` snapshots.
+It forwards support, store, progress, query leases, paging and cancellation to that
+same source. The optional passive probe taps that existing subscription; it starts
+no independent collection or query. Legacy snapshot delegation remains only for
+retained legacy tests until #2367.
+
+Recorded scenario assertions and capture/replay contracts are unchanged; this fixture
+migration required no recording refresh and claims no new live compatibility run.
+The checked inventory remains 18 scripted harness clients, now 91 methods: two new
+render/query/revision invariants and one local-send identity invariant, with two
+context method renames. All 91 executed and passed without skips in the accepted
+Linux JVM/UI gates, including all six device sentinel methods. The
+[complete counted evidence and inventory](e2e-interactive-stream.md#authoritative-fixture-migration-evidence-2366)
+retain the scripted refusal failure, exact comparisons and existing skips separately.
+The complete UI gate also executed and passed
+`RecordedMobileSuiteTest.interactiveTurn_peerStartedTurn_continuesOnPhone` once,
+with zero failures/skips for that method; its existing display/reopen assertions remain.
 
 Passive evidence binds host, conversation, captured connection and subscription
 identity. Reopen requires a different active subscription, even when rows are

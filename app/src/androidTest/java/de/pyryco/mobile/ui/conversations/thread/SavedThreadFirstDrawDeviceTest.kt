@@ -26,15 +26,26 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.viewModelScope
+import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.data.cache.AuthoritativeThreadWindow
+import de.pyryco.mobile.data.cache.AuthoritativeUpsertCache
+import de.pyryco.mobile.data.cache.AuthoritativeWindowCache
 import de.pyryco.mobile.data.cache.ConversationCache
+import de.pyryco.mobile.data.cache.ConversationCacheDatabase
 import de.pyryco.mobile.data.cache.FileConversationCache
+import de.pyryco.mobile.data.cache.MigratingConversationCache
+import de.pyryco.mobile.data.cache.SavedAuthoritativeThread
+import de.pyryco.mobile.data.cache.SavedThreadCoverage
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.CachingConversationRepository
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -43,8 +54,10 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.HistoryCoverage
 import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.HistoryPosition
+import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSnapshotSource
+import de.pyryco.mobile.di.SavedAuthoritativeDestination
 import de.pyryco.mobile.e2e.awaitEmulatorCpuIdle
 import de.pyryco.mobile.e2e.readEmulatorCpuTicks
 import de.pyryco.mobile.e2e.withEmulatorCpuSample
@@ -53,16 +66,19 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -234,6 +250,7 @@ class SavedThreadFirstDrawDeviceTest {
         val snapshot = AtomicLong()
         val complete = AtomicLong()
         val drawn = AtomicLong()
+        val observed = AtomicLong()
 
         fun elapsed(nanos: Long) = (nanos - start) / 1_000_000
 
@@ -249,6 +266,155 @@ class SavedThreadFirstDrawDeviceTest {
 
     @Test fun savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen() {
         measureSavedThreads()
+    }
+
+    @Test fun databaseSavedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_coldOpenAndReopen() {
+        installHost()
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val root = File(context.noBackupFilesDir, "database-first-draw-${SystemClock.elapsedRealtimeNanos()}")
+        check(root.mkdirs())
+
+        fun database() = Room.databaseBuilder(context, ConversationCacheDatabase::class.java, File(root, "cache.db").absolutePath).build()
+        val facts =
+            (1..18_000).map { id ->
+                MobileJson
+                    .parseToJsonElement(
+                        """{
+                    "id":$id,"rev":$id,"order":$id,"kind":"assistant_message",
+                    "status":"done","active":false,"shown":true,"summary":"",
+                    "content":{"text":"Saved $id."},"future":{"clear":null}
+                }""",
+                    ).jsonObject
+            }
+        val expected = facts.takeLast(200)
+        try {
+            val seedDatabase = database()
+            try {
+                runBlocking {
+                    MigratingConversationCache(File(root, "files"), seedDatabase)
+                        .writeAuthoritativeThread(
+                            "host",
+                            "c",
+                            SavedAuthoritativeThread("e", facts, 20_000, 19_000, SavedThreadCoverage(1, 18_000, 1, true)),
+                        ).getOrThrow()
+                }
+            } finally {
+                seedDatabase.close()
+            }
+            for (online in listOf(false, true)) {
+                repeat(2) { opening ->
+                    awaitDeviceReadiness("database online=$online opening=$opening")
+                    // Construction, the first SQLite open, cache restore and the destination are timed.
+                    val probe = Probe("database online=$online opening=$opening", "Saved 18000.")
+                    activeProbe = probe
+                    val db = database()
+                    val disk = MigratingConversationCache(File(root, "files"), db)
+                    val measured =
+                        object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
+                            override suspend fun newestAuthoritativeWindow(
+                                serverId: String,
+                                conversationId: String,
+                                size: Int,
+                            ): AuthoritativeThreadWindow? =
+                                disk.newestAuthoritativeWindow(serverId, conversationId, size).also {
+                                    probe.restored.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
+                                }
+                        }
+                    val owner = ViewModelStore()
+                    lateinit var destination: SavedAuthoritativeDestination
+                    lateinit var vm: ThreadViewModel
+                    composeRule.runOnUiThread {
+                        destination =
+                            SavedAuthoritativeDestination(measured, decorate = { repository ->
+                                val route = requireNotNull(repository.negotiatedThread)
+                                object : ConversationRepository by repository {
+                                    override val negotiatedThread =
+                                        object : NegotiatedThread() {
+                                            override val host = route.host
+                                            override val support = route.support
+                                            override val store = route.store
+
+                                            override fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot> =
+                                                route.observe(conversationId).onEach {
+                                                    if (it.items.isNotEmpty()) {
+                                                        probe.snapshot.compareAndSet(
+                                                            0,
+                                                            SystemClock.elapsedRealtimeNanos(),
+                                                        )
+                                                    }
+                                                }
+
+                                            override fun progress(
+                                                conversationId: String,
+                                                connection: Any,
+                                            ) = route.progress(conversationId, connection)
+
+                                            override suspend fun open(conversationId: String) = route.open(conversationId)
+
+                                            override suspend fun acquire(
+                                                conversationId: String,
+                                                connection: Any,
+                                            ) = route.acquire(conversationId, connection)
+
+                                            override fun older(conversationId: String) = route.older(conversationId)
+
+                                            override fun cancel(conversationId: String) = route.cancel(conversationId)
+                                        }
+                                }
+                            })
+                        if (online) destination.connect()
+                        vm = destination.open()
+                        owner.put("thread", vm)
+                        selected.value = Opening(vm, probe, online)
+                    }
+                    try {
+                        composeRule.waitUntil(15000) { probe.drawn.get() > 0 }
+                        probe.assertBound()
+                        composeRule.waitUntil(15000) {
+                            destination.requests.count { it.type in setOf("thread_page", "thread_catch_up") } == if (online) 1 else 0
+                        }
+                        assertTrue(probe.restored.get() > 0 && probe.snapshot.get() > 0 && probe.complete.get() > 0)
+                        composeRule.runOnIdle {
+                            assertEquals(expected, requireNotNull(vm.state.value.authoritativeThread).sourceSnapshot.items.map { it.raw })
+                            assertEquals(
+                                200,
+                                vm.state.value.authoritativeThread
+                                    ?.items
+                                    ?.size,
+                            )
+                            assertEquals(0, disk.authoritativeFullReads)
+                            assertEquals(200, disk.authoritativeReadCounts.itemReads)
+                            assertEquals(200, disk.authoritativeReadCounts.itemDecodes)
+                            assertEquals(5, disk.authoritativeReadCounts.queries)
+                            assertEquals(
+                                if (online) 1 else 0,
+                                destination.requests.count { it.type in setOf("thread_page", "thread_catch_up") },
+                            )
+                        }
+                        val restoredMs = probe.elapsed(probe.restored.get())
+                        val snapshotMs = probe.elapsed(probe.snapshot.get())
+                        val contentMs = probe.elapsed(probe.complete.get())
+                        val drawnMs = probe.elapsed(probe.drawn.get())
+                        Log.i(
+                            "SavedThreadFirstDraw",
+                            "case=${probe.name} rows=18000 reads=${disk.authoritativeReadCounts} " +
+                                "restored_ms=$restoredMs snapshot_ms=$snapshotMs complete_ms=$contentMs drawn_ms=$drawnMs",
+                        )
+                    } finally {
+                        composeRule.runOnUiThread {
+                            selected.value = null
+                            owner.clear()
+                            destination.close()
+                        }
+                        runBlocking { vm.viewModelScope.coroutineContext[Job]?.join() }
+                        composeRule.waitForIdle()
+                        db.close()
+                    }
+                }
+            }
+        } finally {
+            root.deleteRecursively()
+        }
     }
 
     @Test fun delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen() {
@@ -415,11 +581,21 @@ class SavedThreadFirstDrawDeviceTest {
                                     } ==
                                         true
                                 }
-                            if (viewport != null &&
+                            if (probe.complete.get() > 0 && probe.observed.compareAndSet(0, 1)) {
+                                Log.i(
+                                    "SavedThreadFirstDraw",
+                                    "event=frame_observed case=${probe.name} viewport=$viewport newest=${newest?.boundsInRoot} " +
+                                        "placed=${newest?.layoutInfo?.isPlaced} nodes=${nodes.size}",
+                                )
+                            }
+                            if (probe.drawn.get() == 0L &&
+                                viewport != null &&
                                 newest != null &&
                                 newest.layoutInfo.isPlaced &&
                                 newest.boundsInRoot.width > 0 &&
                                 newest.boundsInRoot.height > 0 &&
+                                newest.boundsInRoot.left >= viewport.left &&
+                                newest.boundsInRoot.right <= viewport.right &&
                                 newest.boundsInRoot.top >= viewport.top &&
                                 newest.boundsInRoot.bottom <= viewport.bottom
                             ) {
@@ -429,13 +605,21 @@ class SavedThreadFirstDrawDeviceTest {
                                         SystemClock.elapsedRealtimeNanos(),
                                     )
                                 }
+                                // OnDraw can run after this traversal captured commit callbacks.
+                                // Require a subsequent frame, still containing the exact visible text.
+                                view.postInvalidateOnAnimation()
                             }
                         }
                     observer.addOnDrawListener(listener)
                     onDispose { observer.removeOnDrawListener(listener) }
                 }
                 Box {
-                    if (state.items.isNotEmpty()) probe.complete.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
+                    if ((state.authoritativeThread?.items ?: state.items).isNotEmpty()) {
+                        probe.complete.compareAndSet(
+                            0,
+                            SystemClock.elapsedRealtimeNanos(),
+                        )
+                    }
                     PyrycodeMobileTheme(darkTheme = true) {
                         ThreadScreen(state, {
                         }, {
