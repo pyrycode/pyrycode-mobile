@@ -215,8 +215,8 @@ class AuthoritativeReaderPagingTest {
                     val counts = cache.authoritativeReadCounts
                     assertEquals(200, counts.itemReads)
                     assertEquals(200, counts.itemDecodes)
-                    assertTrue(counts.ordinalReads in 200..201)
-                    assertTrue(counts.queries in 6..7)
+                    assertEquals((if (page == 88) 200 else 400) + (if (page == 0) 1 else 0), counts.ordinalReads)
+                    assertTrue(counts.queries in 8..9)
                     assertEquals(1, counts.evidenceReads)
                     assertEquals(1, counts.evidenceDecodes)
                     println("reader_page=${page + 1} counts=${cache.authoritativeReadCounts}")
@@ -311,7 +311,7 @@ class AuthoritativeReaderPagingTest {
                     println("reader_retired_boundary moved_order=$movedOrder counts=$counts")
                     assertTrue(counts.itemDecodes <= 203)
                     assertTrue(counts.ordinalReads <= 800)
-                    assertTrue(counts.queries <= 12)
+                    assertTrue(counts.queries <= 14)
                     vm.onDemandOlderHistory()
                     vm.state.first { it.authoritativeThread?.rows?.size == 600 }
                     assertEquals(
@@ -350,6 +350,91 @@ class AuthoritativeReaderPagingTest {
                             .any { it.id == 401L },
                     )
                 }
+            }
+        }
+
+    @Test fun retiredBoundaryKeepsItsOlderComponentAcrossStandaloneSuccessors() =
+        runTest {
+            val parent = JsonObject(fact(90_000, false) + mapOf("kind" to JsonPrimitive("agent"), "order" to JsonPrimitive(10_000)))
+            val children = (1..600).map { JsonObject(fact(it) + ("parent" to JsonPrimitive(90_000))) }
+            val standalone = (11_000..11_198).map { JsonObject(fact(it) + ("order" to JsonPrimitive(it))) }
+            val original =
+                SavedAuthoritativeThread(
+                    "e",
+                    children + parent + standalone,
+                    100_000,
+                    99_000,
+                    SavedThreadCoverage(11_000, 11_198, 11_000, true),
+                )
+            disk().writeAuthoritativeThread("host", "c", original).getOrThrow()
+            val cache = disk()
+            val moved = JsonObject(parent + mapOf("rev" to JsonPrimitive(110_000), "order" to JsonPrimitive(20_000)))
+            val committed = CompletableDeferred<Unit>()
+            destination(trackingWrite(cache, moved, committed)) { fixture, vm, repo ->
+                vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                assertEquals(original.coverage?.toDomain(), repo.authoritativeThreads.current("host", "c").coverage)
+                repo.removeAuthoritativeFact(requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 600))).getOrThrow()
+                vm.state.first { it.authoritativeThread?.rows?.size == 199 }
+                repo.authoritativeThreads.applyBatch("host", "c", "e", 110_000, listOf(ThreadItemDto.decodeReplacement(moved)), 0)
+                committed.await()
+                val requests = fixture.requests.toList()
+                repeat(3) { page ->
+                    vm.onDemandOlderHistory()
+                    vm.state.first { it.historyTail == ThreadHistoryTail.Loading }
+                    vm.state.first { it.historyTail != ThreadHistoryTail.Loading }
+                    val snapshot = repo.authoritativeThreads.current("host", "c")
+                    val selected = requireNotNull(snapshot.openingRows)
+                    val expected = children.dropLast(1).takeLast(minOf(599, (page + 1) * 200))
+                    assertEquals(expected, snapshot.items.filter { it.parent == 90_000L && (it.id to false) in selected }.map { it.raw })
+                    vm.state.first { it.authoritativeThread?.rows?.size == expected.size + standalone.size }
+                    assertEquals(
+                        (standalone + expected).map { it["id"].toString().toLong() to "Saved exact ${it["id"]}" },
+                        vm.state.value.authoritativeThread?.items?.filterIsInstance<ThreadItem.MessageItem>()?.map {
+                            it.message.id
+                                .substringAfterLast(':')
+                                .toLong() to it.message.content
+                        },
+                    )
+                    // Explicit retirement clears certification; hydration must not revive the original one.
+                    assertEquals(null, snapshot.coverage)
+                    assertEquals(0L, snapshot.checkpoint)
+                    val counts = cache.authoritativeReadCounts
+                    println("reader_mixed_component page=${page + 1} counts=$counts")
+                    assertTrue(counts.itemDecodes <= 202)
+                    assertTrue(counts.ordinalReads <= 1000)
+                    assertTrue(counts.queries <= 15)
+                    assertEquals(0, cache.authoritativeFullReads)
+                    advanceTimeBy(1000)
+                    runCurrent()
+                    assertEquals(requests, fixture.requests)
+                    assertEquals(
+                        expected.size + standalone.size,
+                        vm.state.value.authoritativeThread
+                            ?.rows
+                            ?.size,
+                    )
+                }
+            }
+            val fresh = requireNotNull(disk().readAuthoritativeThread("host", "c"))
+            assertEquals((children.dropLast(1) + moved + standalone).toSet(), fresh.items.toSet())
+            assertTrue(600L in fresh.retirements)
+            assertEquals(null, fresh.coverage)
+            assertEquals(0L, fresh.checkpoint)
+            destination(disk()) { fixture, vm, _ ->
+                vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                for (count in listOf(400, 600, 798)) {
+                    vm.onDemandOlderHistory()
+                    vm.state.first { it.authoritativeThread?.rows?.size == count }
+                }
+                assertEquals(
+                    (standalone + children.dropLast(1)).map { it["id"].toString().toLong() },
+                    vm.state.value.authoritativeThread?.items?.filterIsInstance<ThreadItem.MessageItem>()?.map {
+                        it.message.id
+                            .substringAfterLast(':')
+                            .toLong()
+                    },
+                )
+                assertTrue(fixture.requests.none { it.type in setOf("thread_page", "thread_catch_up") })
             }
         }
 

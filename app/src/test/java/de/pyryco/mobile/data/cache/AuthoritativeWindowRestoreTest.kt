@@ -1086,7 +1086,7 @@ class AuthoritativeWindowRestoreTest {
             assertEquals(listOf(fact(1), fact(2)) + items.subList(17_800, 18_000) + items.last(), window.saved.items)
             assertEquals(203, cold.lastReadCounts.itemReads)
             assertEquals(203, cold.lastReadCounts.itemDecodes)
-            assertTrue(cold.lastReadCounts.ordinalReads <= 1)
+            assertTrue(cold.lastReadCounts.ordinalReads <= 201)
             assertNotNull(window)
         }
 
@@ -1176,7 +1176,7 @@ class AuthoritativeWindowRestoreTest {
                         assertEquals(0, disk.authoritativeFullReads)
                         assertEquals(203, disk.authoritativeReadCounts.itemReads)
                         assertEquals(203, disk.authoritativeReadCounts.itemDecodes)
-                        assertEquals(7, disk.authoritativeReadCounts.queries)
+                        assertEquals(9, disk.authoritativeReadCounts.queries)
                         assertEquals(if (online) 1 else 0, fixture.requests.count { it.type in setOf("thread_catch_up", "thread_page") })
                     }
                     assertEquals(original, disk.readAuthoritativeThread("host", "c"))

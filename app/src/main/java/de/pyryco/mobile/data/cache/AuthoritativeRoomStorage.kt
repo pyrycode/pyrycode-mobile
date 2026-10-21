@@ -524,10 +524,6 @@ class AuthoritativeRoomStorage internal constructor(
             val ordered = records.values.sortedWith(compareBy<AuthoritativeItem> { it.orderKey }.thenBy { it.ordinal })
             val fences = relevantRetirements(host, conversation, records.keys)
             lastReadCounts = lastReadCounts.copy(itemReads = sqlRows)
-            RelayLog.d {
-                "event=authoritative_window rows=${selected.size} extras=${records.size - selected.size} " +
-                    "queries=${lastReadCounts.queries} decodes=${lastReadCounts.itemDecodes}"
-            }
             val window = saved.copy(items = ordered.map { decoded.getValue(it.id) }, retirements = fences).also { it.toSnapshot() }
             val rows = contributions.mapTo(mutableSetOf()) { (key, record) -> record.id to (key == record.launchKey) }
             extras.filter { it.active }.forEach { record ->
@@ -549,10 +545,17 @@ class AuthoritativeRoomStorage internal constructor(
                         key,
                         record.id,
                         key == record.launchKey,
-                        contributions.map { (selectedKey, selected) -> selected.id to (selectedKey == selected.launchKey) },
+                        displayCandidates(host, conversation, header.epoch, key, key == record.launchKey, 200)
+                            .asReversed()
+                            .map { (launch, item) -> item.id to launch },
                     )
                 },
-            )
+            ).also {
+                RelayLog.d {
+                    "event=authoritative_window rows=${selected.size} extras=${records.size - selected.size} " +
+                        "queries=${lastReadCounts.queries} decodes=${lastReadCounts.itemDecodes}"
+                }
+            }
         }
 
     /** Seek from the reader, not from newest, even after an owned save invalidated its generation. */
@@ -582,9 +585,9 @@ class AuthoritativeRoomStorage internal constructor(
                 val currentKey = if (cursor.launch) boundary?.launchKey else boundary?.displayKey
                 var recovered = currentKey?.takeIf { it.isNotEmpty() && !it.startsWith("!") }?.let { it to cursor.launch }
                 if (recovered == null) {
-                    // Placement prefixes and preorder ranks may both change after retirement.
-                    // Resolve the captured reading seam by identity, excluding active/parent extras.
-                    for (batch in cursor.successors.chunked(200)) {
+                    // A newer successor may belong to another component that did not move.
+                    // Recover inclusively from the older side, where saved work remains.
+                    for (batch in cursor.predecessors.chunked(200)) {
                         val records = dao.indexItems(host, conversation, header.epoch, batch.mapTo(mutableSetOf()) { it.first })
                         lastReadCounts =
                             lastReadCounts.copy(
@@ -596,7 +599,7 @@ class AuthoritativeRoomStorage internal constructor(
                             batch.firstNotNullOfOrNull { (id, launch) ->
                                 val record = indexed[id]
                                 val key = if (launch) record?.launchKey else record?.displayKey
-                                key?.takeIf { it.isNotEmpty() && !it.startsWith("!") }?.let { it to launch }
+                                key?.takeIf { it.isNotEmpty() && !it.startsWith("!") }?.let { "$it~" to false }
                             }
                         if (recovered != null) break
                     }
@@ -610,19 +613,7 @@ class AuthoritativeRoomStorage internal constructor(
             }
             val contributions = mutableListOf<Pair<Boolean, AuthoritativeItem>>()
             while (contributions.size < size) {
-                val content = dao.displayBefore(host, conversation, header.epoch, before + if (boundaryLaunch) "~" else "", size)
-                val launches = dao.launchBefore(host, conversation, header.epoch, before, size)
-                lastReadCounts =
-                    lastReadCounts.copy(
-                        queries = lastReadCounts.queries + 2,
-                        ordinalReads = lastReadCounts.ordinalReads + content.size + launches.size,
-                    )
-                val candidates =
-                    (content.map { false to it } + launches.map { true to it })
-                        .sortedWith(
-                            compareBy<Pair<Boolean, AuthoritativeItem>> { if (it.first) it.second.launchKey else it.second.displayKey }
-                                .thenBy { it.first },
-                        ).takeLast(size)
+                val candidates = displayCandidates(host, conversation, header.epoch, before, boundaryLaunch, size)
                 if (candidates.isEmpty()) break
                 val unseen = candidates.filter { (launch, item) -> (item.id to launch) !in admitted }
                 contributions.addAll(0, unseen.takeLast(size - contributions.size))
@@ -700,7 +691,9 @@ class AuthoritativeRoomStorage internal constructor(
                         if (launch) item.launchKey else item.displayKey,
                         item.id,
                         launch,
-                        contributions.map { (selectedLaunch, selected) -> selected.id to selectedLaunch } + cursor.successors,
+                        displayCandidates(host, conversation, header.epoch, if (launch) item.launchKey else item.displayKey, launch, 200)
+                            .asReversed()
+                            .map { (selectedLaunch, selected) -> selected.id to selectedLaunch },
                     )
                 }
             RelayLog.d {
@@ -714,6 +707,29 @@ class AuthoritativeRoomStorage internal constructor(
                 next,
             )
         }
+
+    /** Bounded metadata seeks; neither lookahead nor skipped admitted contributions decode payloads. */
+    private suspend fun displayCandidates(
+        host: String,
+        conversation: String,
+        epoch: String,
+        before: String,
+        launch: Boolean,
+        size: Int,
+    ): List<Pair<Boolean, AuthoritativeItem>> {
+        val content = dao.displayBefore(host, conversation, epoch, before + if (launch) "~" else "", size)
+        val launches = dao.launchBefore(host, conversation, epoch, before, size)
+        lastReadCounts =
+            lastReadCounts.copy(
+                queries = lastReadCounts.queries + 2,
+                ordinalReads = lastReadCounts.ordinalReads + content.size + launches.size,
+            )
+        return (content.map { false to it } + launches.map { true to it })
+            .sortedWith(
+                compareBy<Pair<Boolean, AuthoritativeItem>> { if (it.first) it.second.launchKey else it.second.displayKey }
+                    .thenBy { it.first },
+            ).takeLast(size)
+    }
 
     /** Required winning-live parents and overlapping retirement evidence, under the same disk owner. */
     internal suspend fun parentClosure(
