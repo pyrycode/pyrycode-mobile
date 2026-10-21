@@ -39,25 +39,20 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 
 /**
- * Layer 1a component-level harness (#432): drives a scripted sequence of structured live-session
- * events through the **real production graph** — [RemoteConversationRepository]'s fold (#337
- * `assistant_delta`→streaming row + #406 `turn_state`→`isThinking`) into [ThreadViewModel] into the
- * stateless [ThreadScreen] — and renders the assembled thread, with no network, daemon, or
- * emulator-host. The production-canonical streaming row lives in the **repository** fold (its inbound
- * collector runs unconditionally on [scope]), so the harness drives the real
- * [RemoteConversationRepository]; a fake-repo + scripted-`LiveSessionEvent` harness would exercise only
- * the dormant ViewModel fold and miss regressions in the real one.
+ * Component harness: scenario operations supply daemon item facts through the real
+ * [RemoteConversationRepository], negotiated thread route, [ThreadViewModel] and [ThreadScreen].
+ * [ScriptedThreadContent] owns the scripted facts and correlated query replies. Only authoritative
+ * content and supported session-tagged live readings cross the pump's inbound boundary; legacy
+ * reduction cannot provide the rendered rows.
  *
  * The single shared entry point sibling **#435** (Layer 1b: tool rows, session divider, connection
  * banner) extends — it injects the real graph in the constructor, so new scenarios add scripting
- * methods on top without re-deriving the stream → fold → render wiring. Keep the scripting surface
+ * methods on top without re-deriving the facts → repository → render wiring. Keep the scripting surface
  * minimal: text/spinner (#432), the interrupt affordance (#459), and tool rows (#472) are wired here.
  *
  * Construct, then [start] (from `@Before`), script via the `push*` methods (each a thin `pump.push`),
- * and [close] (from `@After`) to cancel [scope]. The `FakeSessionPump` and envelope builders are ported
- * from `RemoteConversationRepositoryTest` (they depend only on `main/` types); ktlint's
- * single-public-class rule constrains only the public [ScriptedThreadHarness], so the private siblings
- * share this file.
+ * and [close] (from `@After`) to retire support and cancel [scope]. Existing scenario vocabulary stays
+ * available at the fixture boundary; its content descriptions become supplied facts before delivery.
  */
 class ScriptedThreadHarness(
     private val composeRule: ComposeContentTestRule,
@@ -66,7 +61,7 @@ class ScriptedThreadHarness(
     private val seedAgent: ConversationAgent = ConversationAgent.Claude,
     onSend: (Envelope) -> Boolean = { true },
 ) {
-    /** Owns the repository's inbound collector + the DataStore; cancelled by [close]. */
+    /** Owns the repository's inbound collector; cancelled by [close]. */
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val pump = FakeSessionPump(onSend)
@@ -83,8 +78,7 @@ class ScriptedThreadHarness(
         RemoteConversationRepository(
             pump = pump,
             scope = scope,
-            // Gate open: with the default closed set, `assistant_delta` folds nothing and
-            // `liveSessionEvents` stays silent (see assistantDelta_capabilityGateClosed_producesNoRow).
+            // Match production's supplied-content and supported live-reading negotiation.
             negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE, "thread") },
             authoritativeHostId = "scripted-host",
             authoritativeDeviceId = { "scripted-device" },

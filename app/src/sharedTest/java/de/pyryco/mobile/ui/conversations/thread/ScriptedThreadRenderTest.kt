@@ -85,6 +85,12 @@ class ScriptedThreadRenderTest {
         }
         assertTrue("the destination must synchronize the supplied document", requests.any { it.type == "thread_catch_up" })
         assertFalse("legacy content must never furnish these rows", requests.any { it.type in setOf("backfill_since", "request_history") })
+        composeRule.waitUntil(TIMEOUT_MS) {
+            val snapshot = harness.authoritativeSnapshot()
+            snapshot.coverage != null &&
+                snapshot.checkpoint == snapshot.completedVersion &&
+                !snapshot.repairNeeded && !snapshot.resetNeeded
+        }
         composeRule.onNodeWithText("Supplied reply").assertIsDisplayed()
     }
 
