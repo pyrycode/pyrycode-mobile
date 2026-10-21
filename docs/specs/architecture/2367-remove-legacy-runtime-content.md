@@ -157,3 +157,9 @@ None requiring a product decision. Record implementation changes to this contrac
 - Content-free source identities, named methods, counts and XML hashes are in `2367-manual-validation.json`. Private raw reports and historical failed results are retained at the evidence root named there. The original evidence file remains attributed to its original revisions.
 - Documentation must also describe the 30 second connection-owned stop-refusal correlation lifetime and the two independently counted stream methods. Existing genuine offline/reconnect observation and strict recording comparisons remain unchanged. Complete configured independent verification remains necessary before Documentation.
 - Integrated assembly and lint pass. Final pre-verification confirms merged main, clean formatting, the retained security review and compilation of every Kotlin source set. This is the builder handoff, not an accepted verifier result.
+
+### 2026-10-21, supported prompt preview coverage
+
+- Independent source review identified two supported prompt-preview tests deleted with the obsolete history-preview class. Their production path remains in `HostConversationSource`.
+- Restore the original permission title/text, first-question wire order, blank prompt, blank first question and other-modal fallback assertions in the retained host-attention test class. Retain the original privacy assertions. Do not restore history APIs or alter production behavior.
+- Run the focused host-attention class through normal test admission. Keep the in-flight verifier candidate unchanged until its verdict is recorded. Independent verification remains required for the resulting test-only repair.
