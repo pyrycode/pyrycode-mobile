@@ -22,7 +22,7 @@ neighbours without moving held rows; exhausted placement rejects the transaction
 appears once. Unobserved rows survive an incomplete view. Removal requires observed intent from
 the repository, including confirmed projection disappearance or suppressed queued echoes;
 omission, settlement exclusion and losing an unsettled row cannot authorize it. See
-[writer ownership and capture fences](caching-conversation-repository.md#state-and-concurrency).
+[writer ownership and capture fences](caching-conversation-repository-concurrency.md#state-and-concurrency).
 
 Schema version 4 adds the unique owner/renderer-identity index and scalar header row count via
 an additive 3 → 4 Room auto-migration. Its backfill decodes existing rows once, preserves invalid
