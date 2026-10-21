@@ -663,6 +663,69 @@ class AuthoritativeReaderPagingTest {
             assertEquals(listOf(fact(599), fact(600)), disk().readAuthoritativeThread("host", "c")?.items)
         }
 
+    @Test fun replacementReaderOwnsLocalRetryAndCleanup() =
+        runTest {
+            disk().writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", (1..600).map { fact(it) }, 1000, 900)).getOrThrow()
+            val disk = disk()
+            val started = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            var attempts = 0
+            val cache =
+                object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
+                    override suspend fun beforeAuthoritativeWindow(
+                        serverId: String,
+                        conversationId: String,
+                        cursor: AuthoritativeDisplayCursor,
+                        admitted: Set<Pair<Long, Boolean>>,
+                        size: Int,
+                    ): AuthoritativeThreadWindow? {
+                        attempts++
+                        if (attempts != 2) return null
+                        val page = disk.beforeAuthoritativeWindow(serverId, conversationId, cursor, admitted, size)
+                        started.complete(Unit)
+                        release.await()
+                        return page
+                    }
+                }
+            destination(cache) { fixture, old, repo ->
+                val route = requireNotNull(repo.negotiatedThread)
+                old.state.first { it.authoritativeThread?.rows?.size == 200 }
+                old.onDemandOlderHistory()
+                old.state.first { it.historyTail == ThreadHistoryTail.Retry }
+                val current = fixture.open()
+                val owner = ViewModelStore().also { it.put("replacement", current) }
+                val collector = backgroundScope.launch { current.state.collect {} }
+                try {
+                    current.state.first { it.authoritativeThread?.rows?.size == 200 }
+                    assertEquals(AuthoritativeHistoryLoad.Idle, route.localHistory("c").first())
+                    assertEquals(ThreadHistoryTail.Offline, current.state.value.historyTail)
+                    current.onDemandOlderHistory()
+                    started.await()
+                    current.state.first { it.historyTail == ThreadHistoryTail.Loading }
+                    old.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+                    runCurrent()
+                    assertEquals(AuthoritativeHistoryLoad.Loading, route.localHistory("c").first())
+                    assertEquals(ThreadHistoryTail.Loading, current.state.value.historyTail)
+                    release.complete(Unit)
+                    current.state.first { it.authoritativeThread?.rows?.size == 400 }
+                    assertEquals(AuthoritativeHistoryLoad.Idle, route.localHistory("c").first())
+                    assertEquals((201..600).map { fact(it) }, repo.authoritativeThreads.current("host", "c").items.map { it.raw })
+                    current.onDemandOlderHistory()
+                    current.state.first { it.historyTail == ThreadHistoryTail.Retry }
+                    advanceTimeBy(1000)
+                    runCurrent()
+                    assertEquals(3, attempts)
+                    assertTrue(fixture.requests.none { it.type in setOf("thread_page", "thread_catch_up") })
+                } finally {
+                    owner.clear()
+                    current.viewModelScope.coroutineContext[Job]?.join()
+                    collector.cancelAndJoin()
+                    runCurrent()
+                }
+                assertEquals(AuthoritativeHistoryLoad.Idle, route.localHistory("c").first())
+            }
+        }
+
     @Test fun localExhaustionPreservesDaemonCoverage() =
         runTest {
             val original = SavedAuthoritativeThread("e", (1..250).map { fact(it) }, 1000, 900, SavedThreadCoverage(450, 500, 450, true))
