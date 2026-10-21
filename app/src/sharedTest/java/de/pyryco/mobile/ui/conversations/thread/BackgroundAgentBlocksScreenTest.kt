@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertCountEquals
@@ -15,6 +16,7 @@ import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -459,6 +461,73 @@ class BackgroundAgentBlocksScreenTest {
             expandLabel = "Show tool uses",
             collapseLabel = "Hide tool uses",
             evidence = { println(it) },
+        )
+    }
+
+    @Test fun resetBeforeClosedRunCheckWaitsForTheSameOwnedFamily() {
+        val paragraphs =
+            (0 until 8).map { n ->
+                ThreadItem.MessageItem(Message("prose$n", "s", Role.Assistant, "Owned paragraph $n", ts, false, parentToolUseId = "a"))
+            }
+        val settled =
+            listOf(tool("a", "Agent"), launch(), tool("child", "Read", "a"), tool("child2", "Glob", "a")) +
+                paragraphs + finish() + user("Later")
+        mount(settled, true)
+        // The repository can supply settled evidence immediately before a reset empties the screen.
+        compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+        compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(0)
+        println("reset unmerged_lists=${compose.onAllNodes(hasScrollToNodeAction(), useUnmergedTree = true).fetchSemanticsNodes().size}")
+        var resetObserved = false
+        compose.verifyAgentRunNavigation(
+            agentId = "a",
+            runId = "child",
+            childIds = listOf("child", "child2") + paragraphs.map { it.message.id },
+            ownedChild = hasText("Owned paragraph", substring = true) and hasAnyAncestor(hasTestTag("background-agent-child:a")),
+            goLabel = "Go to agent ↓",
+            expandLabel = "Show tool uses",
+            collapseLabel = "Hide tool uses",
+            evidence = { sample ->
+                println(sample)
+                if (sample.startsWith("event=agent_run_readiness") && "ready=false" in sample && !resetObserved) {
+                    resetObserved = true
+                    // Release catch-up only after the proof actually observes the absent list.
+                    compose.runOnIdle { state = state.copy(items = settled, hasMessages = true) }
+                }
+            },
+        )
+        assertTrue("the proof must observe the reset before restoring the exact Agent", resetObserved)
+    }
+
+    @Test fun missingListCannotPassTheAgentNavigationProof() {
+        mount(emptyList(), true)
+        compose.runOnIdle { state = state.copy(hasMessages = false) }
+        assertThrows(ComposeTimeoutException::class.java) { verifyMissingAgent() }
+    }
+
+    @Test fun anotherAgentsListCannotPassTheAgentNavigationProof() {
+        mount(
+            listOf(
+                tool("b", "Agent"),
+                launch().copy(taskId = "tb", toolCallId = "b"),
+                tool("other-child", "Read", "b"),
+                tool("other-child2", "Glob", "b"),
+                user("Later"),
+            ),
+            true,
+        )
+        compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(1)
+        assertThrows(ComposeTimeoutException::class.java) { verifyMissingAgent() }
+    }
+
+    private fun verifyMissingAgent() {
+        compose.verifyAgentRunNavigation(
+            agentId = "a",
+            runId = "child",
+            childIds = listOf("child", "child2"),
+            ownedChild = hasText("Owned paragraph") and hasAnyAncestor(hasTestTag("background-agent-child:a")),
+            goLabel = "Go to agent ↓",
+            expandLabel = "Show tool uses",
+            collapseLabel = "Hide tool uses",
         )
     }
 
