@@ -58,7 +58,7 @@ app-private, backup-excluded storage model.
 `removeConversation` removes both thread documents for that host/conversation;
 `removeHost` removes both directories with the host namespace. Same-id conversations under
 another host are unaffected. Ordering of removal against pending, in-flight and final writes
-belongs to the [wrapper's fences](caching-conversation-repository.md#state-and-concurrency),
+belongs to the [wrapper's fences](caching-conversation-repository-concurrency.md#state-and-concurrency),
 not to path hashing or the file mutex alone.
 
 The stored document is a versioned envelope (`version: Int`, `conversations: List<...>`),
