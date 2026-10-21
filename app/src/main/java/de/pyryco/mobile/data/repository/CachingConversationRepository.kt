@@ -787,7 +787,7 @@ class CachingConversationRepository(
             val indexed = (cache as? AuthoritativeWindowCache)?.takeIf { hostThread != null }
             var applied: AuthoritativeThreadSnapshot? = null
             do {
-                val resolved = resolveAuthoritativeRestore(conversationId, saved, generation, indexed)
+                val resolved = resolveAuthoritativeRestore(conversationId, saved, generation, indexed, preserveOpeningRows)
                 if (resolved !is AuthoritativeRestore.Validated) return@withContext resolved
                 saved = resolved.saved
                 val captured = resolved.snapshot
@@ -881,6 +881,7 @@ class CachingConversationRepository(
         initial: SavedAuthoritativeThread,
         generation: Long,
         indexed: AuthoritativeWindowCache?,
+        validatePlacement: Boolean,
     ): AuthoritativeRestore {
         var saved = initial
         while (true) {
@@ -904,7 +905,7 @@ class CachingConversationRepository(
             val parents = winners.values.mapNotNull { it.parent?.takeIf { id -> id > 0 && id !in winners } }.toSet()
             val evidence = changed
             val placementRoots = winners.values.filter { it.kind == "agent" && (it.order ?: 0) <= 0 }.mapTo(mutableSetOf()) { it.id }
-            if (parents.isNotEmpty() || evidence.isNotEmpty()) {
+            if (parents.isNotEmpty() || evidence.isNotEmpty() || validatePlacement && placementRoots.isNotEmpty()) {
                 val closure =
                     try {
                         historyWrites.withLock {
