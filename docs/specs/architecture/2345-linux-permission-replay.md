@@ -9,6 +9,8 @@
 - `app/src/sharedTest/java/de/pyryco/mobile/e2e/PermissionIsolationCleanup.kt`: `withPermissionIsolationCleanup` closes the peer, waits for phone readiness, then removes the host, retaining earlier failures.
 - `app/src/androidTest/java/de/pyryco/mobile/recording/RecordedSuiteNative.kt`: `beforeHostLinkClose` resolves the current phone owner in replay.
 - `app/src/sharedTest/java/de/pyryco/mobile/recording/SuiteConnections.kt`: `beforeClose` waits within the existing 30-second deadline for required requests and queued delivery.
+- `app/src/sharedTest/java/de/pyryco/mobile/recording/SuiteThreadReadReceipts.kt`: `delivered` tracks query certification; `permits` formerly discarded earlier valid windows when newer live facts arrived.
+- `app/src/test/java/de/pyryco/mobile/recording/SuiteReadReceiptsTest.kt`: `authoritativeTape` supplies strict read-admission fixtures; the genuine permission recording supplies the residual race and invalidation probes.
 - `app/src/test/java/de/pyryco/mobile/e2e/PermissionIsolationCleanupTest.kt`: controlled delayed catch-up/delivery, missing-work deadline, exact owner/payload rejection and failure-preservation regressions.
 - Retained #2266 verifier bundle `529932756cd59581e2f8dd545096dd66ab9f8afd3781aa6b2a6688576ed78947`: original Linux failure and focused rerun, including the first stored mismatch rather than only its cleanup rethrows.
 
