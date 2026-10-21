@@ -41,6 +41,12 @@ scripts/with-claude-login.sh python3 scripts/recorded-exchanges.py verify \
   --serial "$TEST_SERIAL" --pyry "$PYRY_BIN"
 ```
 
+For a focused standalone migration, `recorded-exchanges.py managed-refresh --pyry
+<isolated-binary> --output <new-private-directory>` owns the managed device and test
+admission. It retains the real capture, both replay results, their native XML and private
+logs, and the unchanged strict comparison. A changed contract or failed replay returns
+nonzero and requires an explicit semantic review before any fixture replacement.
+
 Managed recording commands acquire host test admission before taking device custody
 or building/installing APKs. An inherited admission descriptor must validate against
 the original lock and retain its exclusive hold. Pass that same descriptor through
@@ -79,9 +85,12 @@ retain their action order. Only named read-only queries may reorder within one a
 Daemon frames keep their recorded order and wait for their causal requests. Missing,
 extra, duplicate or changed requests fail, including requests after the last UI assertion.
 
-The standalone permission fixture deliberately requests legacy capabilities. It proves
-that explicit diagnostic route and supplies no required-thread activation evidence.
-The full recorded Mobile suite uses the actual production selection. Changed production
+The standalone permission fixture and the full recorded Mobile suite use the actual
+production capability selection and negotiated thread route. The standalone screen
+receives that route through the production stable repository wrapper. The retired
+legacy fixture is preserved under `recorded/retired/` and is not current acceptance.
+The genuine replacement and its CHANGED contract review are recorded in
+`docs/specs/architecture/2367-permission-recording-review.md`. Changed production
 requests require genuine native capture, fresh replay, preserved strict comparisons and
 explicit review of every difference. Neither route synthesizes daemon-built thread items.
 
