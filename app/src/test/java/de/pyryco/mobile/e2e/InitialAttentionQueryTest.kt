@@ -6,11 +6,16 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.AuthoritativeThreadQueries
 import de.pyryco.mobile.data.repository.AuthoritativeThreadRoute
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
+import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.NegotiatedThread
+import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.recording.RecordedSuiteTape
 import de.pyryco.mobile.recording.SuiteStep
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
@@ -22,6 +27,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.Closeable
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class InitialAttentionQueryTest {
@@ -34,6 +40,112 @@ class InitialAttentionQueryTest {
     @After fun restoreLogs() {
         RelayLog.sink = savedSink
     }
+
+    @Test fun destinationGateAllowsMetadataBeforeInitialQueryAndDefersOnlyAcquisition() =
+        runTest {
+            val replay = Replay()
+            InitialAttentionQueryGate.arm(replay.thread, "b", 30_000).use { gate ->
+                val source =
+                    object : ConversationRepository by FakeConversationRepository() {
+                        override val negotiatedThread = replay.thread
+                    }
+                val destination = checkNotNull(TappingConversationRepository(source, tapNegotiated = true).negotiatedThread)
+                val acquired = async { gate.awaitAcquired() }
+                var metadataStarted = false
+                val navigation =
+                    async {
+                        metadataStarted = true
+                        destination.acquire("b", replay.connection)
+                    }
+                runCurrent()
+                assertTrue("destination metadata must run before the initial query exists", metadataStarted)
+                assertFalse("only acquisition waits", navigation.isCompleted)
+                assertFalse(acquired.isCompleted)
+                assertTrue("the gate must not manufacture a query", replay.sent.isEmpty())
+                replay.queries.open("b")
+                replay.deliverBatch()
+                runCurrent()
+                assertFalse(navigation.isCompleted)
+                replay.deliverTerminal()
+                runCurrent()
+                replay.assertExactQueriesAndComplete()
+                acquired.await()
+                checkNotNull(navigation.await()).close()
+            }
+        }
+
+    @Test fun unarmedOrDifferentTargetAcquisitionKeepsProviderAdmission() =
+        runTest {
+            val replay = Replay()
+            InitialAttentionQueryGate.arm(replay.thread, "other", 30_000).use {
+                val destination = InitialAttentionQueryGate.negotiated(replay.thread)
+                val lease = checkNotNull(destination.acquire("b", replay.connection))
+                assertEquals(1, replay.sent.size)
+                replay.deliverBatch()
+                replay.deliverTerminal()
+                lease.close()
+            }
+            val after = Replay()
+            val lease = checkNotNull(InitialAttentionQueryGate.negotiated(after.thread).acquire("b", after.connection))
+            assertEquals(1, after.sent.size)
+            after.deliverBatch()
+            after.deliverTerminal()
+            lease.close()
+        }
+
+    @Test fun acquisitionGateRejectsRetiredConnectionAndClosedScope() =
+        runTest {
+            for (condition in listOf("connection", "scope")) {
+                val replay = Replay()
+                val gate = InitialAttentionQueryGate.arm(replay.thread, "b", 30_000)
+                try {
+                    replay.queries.open("b")
+                    val destination = InitialAttentionQueryGate.negotiated(replay.thread)
+                    val navigation = async { destination.acquire("b", replay.connection) }
+                    runCurrent()
+                    assertFalse(navigation.isCompleted)
+                    if (condition == "connection") replay.support.value = ThreadSupport.Supported(Any()) else gate.close()
+                    replay.deliverBatch()
+                    replay.deliverTerminal()
+                    runCurrent()
+                    assertEquals(null, navigation.await())
+                    assertEquals(1, replay.sent.size)
+                    assertFalse(replay.phoneDismissed)
+                } finally {
+                    gate.close()
+                }
+            }
+        }
+
+    @Test fun acquisitionGateCannotSpendAReplacementGenerationsCertificate() =
+        runTest {
+            val replay = Replay()
+            InitialAttentionQueryGate.arm(replay.thread, "b", 30_000).use {
+                val destination = InitialAttentionQueryGate.negotiated(replay.thread)
+                val navigation = async { destination.acquire("b", replay.connection) }
+                runCurrent()
+                replay.store.reset("host", "b", "e")
+                var id = 0L
+                val replacement =
+                    AuthoritativeThreadQueries(
+                        "host",
+                        replay.store,
+                        AuthoritativeThreadRoute("host", replay.store),
+                        { true },
+                        { ++id },
+                        { true },
+                        { 0L },
+                    )
+                replacement.open("b")
+                replacement.accept(frame(2, "thread_items", WINDOW, 1))
+                runCurrent()
+                assertEquals(13L, replay.store.current("host", "b").checkpoint)
+                assertFalse("a new generation's real certificate cannot release the old gate", navigation.isCompleted)
+                assertTrue(replay.sent.isEmpty())
+                navigation.cancelAndJoin()
+                replacement.abandon()
+            }
+        }
 
     @Test fun activeInitialQueryDefersAcquisitionUntilCertified() =
         runTest {
@@ -186,6 +298,8 @@ class InitialAttentionQueryTest {
 
     private class Replay {
         val store = AuthoritativeThreadStore()
+        val connection = Any()
+        val support = MutableStateFlow<ThreadSupport>(ThreadSupport.Supported(connection))
         val sent = mutableListOf<Envelope>()
         private val pending = mutableListOf<Envelope>()
         var peerDismissed = false
@@ -225,6 +339,27 @@ class InitialAttentionQueryTest {
                 },
                 { 0L },
             )
+
+        val thread =
+            object : NegotiatedThread() {
+                override val host = "host"
+                override val store = this@Replay.store
+                override val support = this@Replay.support
+
+                override fun observe(conversationId: String) = store.observe(host, conversationId)
+
+                override suspend fun open(conversationId: String) = queries.open(conversationId)
+
+                override suspend fun acquire(
+                    conversationId: String,
+                    connection: Any,
+                ): Closeable? =
+                    if ((support.value as? ThreadSupport.Supported)?.connection === connection) queries.acquire(conversationId) else null
+
+                override fun older(conversationId: String) = queries.older(conversationId)
+
+                override fun cancel(conversationId: String) = queries.cancel(conversationId)
+            }
 
         fun deliverBatch() {
             queries.accept(pending.removeAt(0))
