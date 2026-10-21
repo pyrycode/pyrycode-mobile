@@ -233,6 +233,54 @@ not fixture paragraph text. See [counted navigation/open/close evidence](../../e
 See [cache-only limitations](thread-screen-previews-and-edge-cases.md#edge-cases--limitations)
 and [the live ladder](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
+### Agent navigation proof readiness (#2373)
+
+Repository completion is not a render fence across reset/catch-up: an empty projection
+temporarily replaces the message list with the empty-thread surface. Before its first
+closed-run reveal, `verifyAgentRunNavigation` waits up to 10 seconds for one merged
+scroll list whose synchronized `IndexForKey` sample contains `msg:<agentId>`,
+`agent-start:<agentId>` and `msg:<runId>`. Missing or wrong-family content stays unready;
+multiple lists fail immediately. Readiness emits static counts/indexes and never scrolls
+or taps. The existing closed/navigation/open/owned-child/close proof, transition deadlines,
+one physical tap per transition, placement, following, settlement and strict replay remain.
+
+`BackgroundAgentBlocksScreenTest.resetBeforeClosedRunCheckWaitsForTheSameOwnedFamily`
+empties the real screen after mounting the settled family, restores it only after the
+readiness callback observes absence, then completes the pointer proof. Before repair its
+retained XML records 1 executed, 1 failed, 0 errors/skips at the first `assertClosed` /
+`questionAnswerLocation` / `performScrollToNode`, before input. Both trees lack a list in
+that controlled state. After repair all 21 block methods pass, including this regression,
+`anotherAgentsListCannotPassTheAgentNavigationProof` and
+`missingListCannotPassTheAgentNavigationProof`; the latter two require timeout rejection.
+
+The [cause report](https://github.com/pyrycode/pyrycode-mobile/issues/2373#issuecomment-6317408688)
+separates #2246's missing-list assertion at `bce55074fc` from suppressed replay-close
+teardown fallout. Its rerun passed 1 executed, 0 failures/errors/skips. Historical logs
+retain reset/zero rows but no simultaneous tree snapshot; a later unmerged match cannot
+establish a merging defect.
+
+Linux acceptance at `0934df51ee60ba8e51a8a09322e63d07f81e9704` includes five consecutive
+separate native executions of
+`RecordedMobileSuiteTest#interactiveTurn_backgroundAgent_followsBottomUntilFinished`, each
+1 executed/passed, 0 failures/errors/skips, using #2246's newer merged genuine recording.
+Earlier five passes at `528c4f966cf2af40e88c77283619845eda96be79` used the older capture.
+Peer `late_tools` counts vary within one asset; source identity and strict replay identify
+the recording. This repair authors none.
+
+The [accepted verifier](https://github.com/pyrycode/pyrycode-mobile/pull/2377#issuecomment-6319512517)
+confirms configured UI coverage: 337 executed/passed, 0 failures/errors, 1 additional
+skipped, with the named recorded method present and passed once. JVM/build coverage:
+6435 executed/passed, 0 failures/errors/skips, including 21 block, 9 prose and 4 authoritative
+screen methods. Focused post-merge scripted background-Agent: 2 executed/passed, 0 failures/errors/skips.
+Full scripted coverage executed 22: 21 passed, 1 failed, 1 additional skipped; the unrelated
+model-switch failure passed its exact same-tree rerun (1 executed/passed, no failures/errors/skips)
+and is tracked in #2380. macOS was outside this ticket's scope.
+
+Raw XML/logs and source metadata were retained at documentation time under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2373/builder-20261021/`:
+`reset-red/`, `blocks-newer-recording-green/`, `newer-native-1/` through `newer-native-5/`.
+Verifier bundle: `795b38bd82594fad5cf8942dabda47efc0395ff1c30c65fbc8306247a7a56ccf`.
+
 ### Attributed assistant prose in Agent blocks (#1827)
 
 `foldBackgroundAgentBlocks` also claims assistant rows whose nonempty `parentToolUseId` reaches a
