@@ -650,15 +650,16 @@ class ConversationTreeRowsTest {
             val rect = control.fetchSemanticsNode().boundsInRoot
             val width = rect.width.toInt()
             val height = rect.height.toInt()
-            val pixels = composeTestRule.runOnIdle {
-                val root = checkNotNull(view)
-                val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
-                root.draw(Canvas(bitmap))
-                IntArray(width * height).also {
-                    bitmap.getPixels(it, 0, width, rect.left.toInt(), rect.top.toInt(), width, height)
-                    bitmap.recycle()
+            val pixels =
+                composeTestRule.runOnIdle {
+                    val root = checkNotNull(view)
+                    val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+                    root.draw(Canvas(bitmap))
+                    IntArray(width * height).also {
+                        bitmap.getPixels(it, 0, width, rect.left.toInt(), rect.top.toInt(), width, height)
+                        bitmap.recycle()
+                    }
                 }
-            }
             val ink = pixels.indices.filter { rgbWithin(pixels[it], primary.toArgb(), 32) }
             assertTrue("$relay has primary-tinted artwork", ink.isNotEmpty())
             val left = ink.minOf { it % width }
@@ -670,7 +671,11 @@ class ConversationTreeRowsTest {
             assertEquals("$relay painted height", if (update) 11.1f else 10.5f, (bottom - top + 1) / 4f, 0.5f)
             assertEquals("$relay horizontal center", width / 2f, (left + right + 1) / 2f, 4f)
             assertEquals("$relay vertical center", height / 2f, (top + bottom + 1) / 2f, 4f)
-            fun painted(x: Int, y: Int) = rgbWithin(pixels[(height / 2 + y) * width + width / 2 + x], primary.toArgb(), 32)
+
+            fun painted(
+                x: Int,
+                y: Int,
+            ) = rgbWithin(pixels[(height / 2 + y) * width + width / 2 + x], primary.toArgb(), 32)
             if (update) {
                 assertTrue("Update arrow shaft", painted(0, -16))
                 assertTrue("Update tray extends on both sides", painted(-16, 20) && painted(16, 20))
