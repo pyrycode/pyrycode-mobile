@@ -530,11 +530,19 @@ class SavedThreadFirstDrawDeviceTest {
                         )
                         release.complete(Unit)
                         composeRule.waitUntil(15_000) { vm.state.value.historyTail == ThreadHistoryTail.Retry }
+                        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(200)
+                        composeRule.waitForIdle()
+                        assertEquals(1, attempts.get())
                         fail = false
-                        composeRule
-                            .onNodeWithContentDescription(
+                        val retry =
+                            composeRule.onNodeWithContentDescription(
                                 context.getString(de.pyryco.mobile.R.string.cd_thread_history_retry),
-                            ).performClick()
+                            )
+                        retry.assertIsDisplayed()
+                        val retryBounds = retry.fetchSemanticsNode().boundsInRoot
+                        assertTrue(retryBounds.top >= header.bottom && retryBounds.bottom <= composer.top)
+                        Log.i("SavedThreadPaging", "case=${probe.name} retry=$retryBounds attempts=${attempts.get()}")
+                        retry.performClick()
                         composeRule.waitUntil(15_000) {
                             vm.state.value.authoritativeThread
                                 ?.rows

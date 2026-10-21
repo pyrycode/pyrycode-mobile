@@ -116,3 +116,5 @@ The retained `placementInvariant_ownedWitnessRemovalResolvesReplacementBeforeDel
 ### 2026-10-21: native demand gesture stays inside the reading area
 
 The first native paging run timed out before any local demand. Its default swipe started against the list's full drawing bounds, which extend beneath the header and composer. Reuse the measured clear-reading-area gesture contract from `ThreadScreenHistoryTest.pullInReadingArea`, keeping a real pointer drag and every demand/retry/viewport assertion. Retain the failed native XML and log numeric gesture and older-row bounds alongside bounded-read counts. No product behavior or first-draw threshold changes.
+
+That repair passed both offline openings, then the held-newest arm exposed the same chrome-underlap constraint for its newly inserted Retry row: the native click did not reach its callback. Explicitly reveal the retry item and assert it is displayed before clicking; semantic positioning must keep the attempt count at one. Offline already had a notice in that slot, so its replacement stayed reachable. Retain this second failed run, including its two successful offline viewport/read records.
