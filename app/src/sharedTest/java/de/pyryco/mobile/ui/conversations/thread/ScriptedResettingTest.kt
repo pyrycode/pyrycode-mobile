@@ -7,6 +7,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MobileJson
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -88,6 +90,22 @@ class ScriptedResettingTest {
     // AC #2: a reset on another conversation never shows here.
     @Test
     fun resetElsewhere_neverShowsHere() {
+        // Declare both producing sessions before testing the foreign reset.
+        harness.pushEnvelope(
+            Envelope(
+                698L,
+                "conversations",
+                "2026-10-07T00:00:00Z",
+                MobileJson.parseToJsonElement(
+                    """{"conversations":[
+                        {"id":"c1","name":"Harness channel","agent":"claude","is_promoted":true,
+                         "cwd":"/p/c1","last_message_ts":"2026-10-07T00:00:00Z","last_used_at":"2026-10-07T00:00:00Z","current_session_id":"session"},
+                        {"id":"c-other","name":"Other channel","agent":"claude","is_promoted":true,
+                         "cwd":"/p/c-other","last_message_ts":"2026-10-07T00:00:00Z","last_used_at":"2026-10-07T00:00:00Z","current_session_id":"session"}
+                    ]}""",
+                ),
+            ),
+        )
         harness.pushResetting(active = true, phase = "wrapping_up", handoff = "pending", targetConversationId = "c-other")
         // An ordered barrier: the repository's single inbound collector handles frames in order, so once this
         // conversation's compaction renders, the other conversation's reset frame has been processed too.

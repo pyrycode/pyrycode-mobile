@@ -109,7 +109,7 @@ Attributed background-agent prose (#1827) is covered at rung 3 by
 2. **Compose render test** — component level, deterministic, no daemon. Feed the thread a scripted
    structured-event stream and assert the assembled thread renders. **Layer 1a shipped (#432):** the
    reusable `ScriptedThreadHarness` drives the scripted stream through the **real**
-   `RemoteConversationRepository` fold → `ThreadViewModel` → `ThreadScreen`, plus the first two render
+   `RemoteConversationRepository` authoritative projection → `ThreadViewModel` → `ThreadScreen`, plus the first two render
    cases (text deltas → finalized message; `turn_state` → thinking spinner). Layer 1b (#435, split
    3-way, all riding the same harness) adds tool rows (**shipped #472**), the connection banner
    (**shipped #474**), and the session divider (**shipped #473**). See
@@ -348,32 +348,40 @@ Attributed background-agent prose (#1827) is covered at rung 3 by
 
 ## Layer 1 — component render harness (rung 2)
 
-The cheap rung: a Compose render test with **no network, daemon, or emulator-host**, fast enough to gate
-every change. It joins the two halves that the rest of the suite covers separately — the **fold**
-(scripted events → `List<ThreadItem>`, unit-tested in `RemoteConversationRepositoryTest`) and the
-**render** (`ThreadScreen`, component-tested from a hand-built state in `ThinkingIndicatorTest`) — by
-driving a scripted event stream through the real fold and rendering the result.
+The cheap rung joins the real `RemoteConversationRepository`, negotiated thread route,
+`ThreadViewModel` and `ThreadScreen` with a `FakeSessionPump`; it needs no network or daemon.
+Since #2366, `ScriptedThreadHarness` negotiates both `interactive` and `thread`, using the
+exact host `scripted-host` and local device `scripted-device`. Existing `push*` operations
+remain scenario inputs. `ScriptedThreadContent` translates content operations into supplied
+item facts with stable identity, revision, epoch, session and daemon order before delivery
+to the repository. Legacy content frames cannot supply rendered rows: the repository
+wrapper's `observeMessages` fails if used.
 
-| Piece | File |
+| Piece | Current file |
 | --- | --- |
-| Reusable harness — wires the real graph (`FakeSessionPump` → `RemoteConversationRepository` → `ThreadViewModel` → `ThreadScreen`), exposes `push*` scripting + `awaitReady()` | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#432) |
-| The two render cases (text concatenation→finalize; `turn_state`→spinner) | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadRenderTest.kt` (#432) |
+| Real repository → negotiated route → ViewModel → screen, `push*` scripting and readiness | `app/src/sharedTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` |
+| Supplied content adapter and serialized updates/query replies | `app/src/sharedTest/.../ui/conversations/thread/ScriptedThreadContent.kt` |
+| Rendering, query certification, duplicate/revision and ordering probes | `app/src/sharedTest/.../ui/conversations/thread/ScriptedThreadRenderTest.kt` |
 
-Key facts (see [`codebase/432.md`](knowledge/codebase/432.md) for the full notes):
+The pump answers actual `thread_catch_up` and `thread_page` requests with a correlated
+`thread_items` batch followed by a separate final marker carrying coverage. The route
+regression requires rendered reply text, completed certified coverage and an actual
+catch-up request, and rejects `backfill_since` or `request_history` as row sources.
+Repeating an item or supplying an older revision must leave exactly one newest rendered row.
 
-- **Drives the REAL repository fold, not the dormant ViewModel fold.** The #337 `assistant_delta` fold
-  lives in both `RemoteConversationRepository` (canonical — the live app renders it) and
-  `ThreadViewModel.threadItems` (suppressed by a `turnId` render guard whenever the repo already produced
-  the row, which it always does live). A fake-repo harness would exercise only the dormant path, so the
-  harness wires the **real** repo; the only seam is `FakeSessionPump`.
-- **Capability gate open** — built with `negotiatedCapabilities = { setOf("interactive") }`, or the fold
-  produces nothing.
-- **Subscribe-before-push** — `liveSessionEvents` is `replay = 0`, and `isThinking` is sourced only from
-  it, so `awaitReady()` blocks every live push until the VM's collectors have subscribed (proven by the
-  seeded channel name rendering in the top bar). That seed name must not be a substring of any asserted
-  text (the #431 `e2e-ping`→`e2e-seed` false-green lesson, applied here as `"Harness channel"`).
-- **Tolerant asserts only** (substring / presence, generous `waitUntil`) per the Constraints below; the
-  text case asserts after `turn_end` (the streaming body reveals progressively and carries the caret).
+Live readings and controls retain their supported paths. Readings carry producing-session
+provenance; explicit producer tags survive the adapter. Declare conversation/session owners
+before offscreen readings, and send current settings or suggestions again after replacement.
+A family-initialization clear cannot clear a fresh stall: resumed activity supplies the
+supported responding phase. Authoritative post-turn context is a producer-owned push;
+context assertions preserve both surfaces, reset fallback, retired-session rejection and
+request non-amplification without manufacturing a legacy verification request.
+
+`awaitReady()` waits for the distinctive seed title before live pushes, so collectors are
+subscribed; its title must not be a substring of asserted reply text. Keep tolerant render
+waits and assert completed text after terminal facts. `close()` retires support and cancels
+the harness-owned scope. The [original #432 notes](knowledge/codebase/432.md) describe the
+historical legacy fold, not this current content route.
 
 Layer 1b (**#435**, blocked on #432) extends the same harness with tool rows, the connection banner, and
 the session divider — additive scripting methods, no re-wiring. #435 was split 3-way 2026-06-23, **all
@@ -382,16 +390,111 @@ asserting running → done (the absence triad) and failed (see [`codebase/472.md
 the **connection banner (#474)** — `pushConnectionState` + `ScriptedConnectionBannerTest`, asserting
 the connecting / reconnecting-countdown / offline affordances and a present→absent fence for connected
 (see [`codebase/474.md`](knowledge/codebase/474.md)); and the **session divider (#473)** —
-`pushSessionTransition` + `ScriptedSessionBoundaryTest`, asserting one folded `SessionBoundary` draws a
-delimiter positioned between the two cross-session messages, driven through the **real** #336 fold (see
+`pushSessionTransition` + `ScriptedSessionBoundaryTest`, asserting one supplied session divider draws a
+delimiter positioned between the two cross-session messages (historical implementation in
 [`codebase/473.md`](knowledge/codebase/473.md)).
 
 | Piece | File |
 | --- | --- |
-| Tool-step rows (running → done; failed) — `pushToolUse` / `pushToolResult` scripting + builders | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#472), `ScriptedToolRowTest.kt` (#472) |
-| Connection banner (connecting / reconnecting / offline; absent when connected) — `pushConnectionState` scripting (lifted `FakeConnectionStateSource` field) | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#474), `ScriptedConnectionBannerTest.kt` (#474) |
-| Session-boundary divider (one delimiter, between two cross-session messages) — `pushSessionTransition` scripting + `sessionTransitionEnvelope` builder (ported from `RemoteConversationRepositoryTest`) | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#473), `ScriptedSessionBoundaryTest.kt` (#473) |
-| Parser-gap sentinel non-vacuity (a scripted row makes the guard fire; the finding names `site` + a sanitized `message_type` and never the payload body; an unrecognized `site` token drops) — `pushUnrecognizedMessage` scripting + `unrecognizedMessageEnvelope` builder, the one builder assembled through `kotlinx.serialization` rather than string interpolation because `raw` is itself JSON | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#586), `ScriptedUnrecognizedMessageTest.kt` (#586) |
+| Tool-step rows (running → done; failed) — `pushToolUse` / `pushToolResult` scripting + builders | `app/src/sharedTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#472), `ScriptedToolRowTest.kt` (#472) |
+| Connection banner (connecting / reconnecting / offline; absent when connected) — `pushConnectionState` scripting (lifted `FakeConnectionStateSource` field) | `app/src/sharedTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#474), `ScriptedConnectionBannerTest.kt` (#474) |
+| Session-boundary divider (one delimiter, between two cross-session messages) — `pushSessionTransition` scripting translated to a supplied `session_divider` | `app/src/sharedTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#473), `ScriptedSessionBoundaryTest.kt` (#473) |
+| Parser-gap sentinel non-vacuity (a scripted row makes the guard fire; the finding names `site` + a sanitized `message_type` and never the payload body; an unrecognized `site` token drops) — `pushUnrecognizedMessage` scripting + `unrecognizedMessageEnvelope` builder, translated to an authoritative notice and observed by the destination tap | `app/src/sharedTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#586), `ScriptedUnrecognizedMessageTest.kt` (#586) |
+
+### Authoritative fixture migration evidence (#2366)
+
+The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2371#issuecomment-6317136854)
+and retained XML confirm Linux candidate `516daeeeba3be87813dec5448a8ccb354e2a3a5d`,
+including main `4c2940a1793a32eaf7da85fa4a6f924f4cbf23dd`:
+
+| Check | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Complete JVM/build gate | 6420 | 6420 | 0 | 0 |
+| Device UI gate | 336 | 336 | 0 | 1 |
+| Full scripted gate | 21 | 20 | 1 | 1 |
+| Exact refusal comparison, candidate | 1 | 1 | 0 | 0 |
+| Exact refusal comparison, pinned main | 1 | 1 | 0 | 0 |
+| Nine repaired owner/session methods, separate focused run | 9 | 9 | 0 | 0 |
+
+The complete gates contain all **18 harness clients / 91 methods**, with no missing,
+failed or skipped client method. Counts below are executed and passed within those gates,
+not additional runs:
+
+| Harness client | Methods | Gate |
+| --- | ---: | --- |
+| `ScriptedApiRetryTest` | 9 | JVM |
+| `ScriptedBackgroundAgentToolsTest` | 2 | JVM |
+| `ScriptedCompactingTest` | 5 | JVM |
+| `ScriptedConnectionStatusTest` | 4 | JVM |
+| `ScriptedContextFreshnessTest` | 3 | JVM |
+| `ScriptedLocalSendTest` | 6 | JVM |
+| `ScriptedReplySuggestionTest` | 2 | JVM |
+| `ScriptedResettingTest` | 6 | JVM |
+| `ScriptedSessionBoundaryTest` | 1 | JVM |
+| `ScriptedSessionErrorTest` | 5 | JVM |
+| `ScriptedStatusLineTest` | 3 | JVM |
+| `ScriptedThinkingProgressTest` | 6 | JVM |
+| `ScriptedThreadRenderTest` | 16 | JVM |
+| `ScriptedToolRowTest` | 2 | JVM |
+| `ScriptedTurnOutcomeTest` | 5 | JVM |
+| `ScriptedTurnPhaseTest` | 1 | JVM |
+| `ScriptedUnrecognizedMessageTest` | 6 | Android UI |
+| `ScriptedUsageLimitTest` | 9 | JVM |
+
+The client count and supported scenario coverage are unchanged. Three methods were added:
+`ScriptedThreadRenderTest.invariantRenderedContentUsesCompletedAuthoritativeQueryWithoutLegacyRequests`,
+`ScriptedThreadRenderTest.invariantDuplicateAndOlderSuppliedRevisionsCannotRegressOrDuplicateRenderedText`
+and `ScriptedLocalSendTest.invariantAcknowledgementAndPeerCollisionCannotAcceptTheLocalSendingRow`.
+The two context methods changed their `legacyTurns_` prefix to `suppliedTurns_`, retaining
+`refreshBothSurfaces_afterResetReply` and `refreshBothSurfaces_afterUnavailableResetReply`.
+Recovery's `aNewSessionBoundary_clearsIt` became
+`aLiveSessionReplacement_clearsItWithItsSuppliedDivider`: the supplied divider and supported
+`SessionReplaced` control clear recovery with canonical reason `session`; historical/older
+supplied dividers alone must retain the notice. No supported assertion was removed or skipped.
+
+Non-harness retained families also passed without skips: `ArchivedDiscussionsViewModelTest`
+21, `SettingsViewModelTest` 70, `FinishedSelectionReplyTest` 2,
+`ThreadViewModelRefusalOfferTest` 20, `ThreadViewModelTurnRecoveryTest` 14 and
+`PassiveAuthoritativeThreadObservationTest` 3. Content doubles use host/conversation-owned
+facts; settings and all six archive doubles retain fail-if-used content access. Literal
+presentation inputs and dedicated legacy algorithms remain classified separately for #2367.
+
+The scripted failure remains a failure:
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`
+timed out after 90 seconds in the full run. Fresh exact comparisons passed once each on
+candidate and pinned main; they do not prove suite-order independence or an inherited main
+failure. Track the intermittent result in [#2374](https://github.com/pyrycode/pyrycode-mobile/issues/2374).
+The UI skip is `RenameDialogCaptureTest.renameAtFigmaViewport`; the scripted skip is
+`interactiveTurn_seededChannel_durableGapCatchUp`, already ignored on pinned main and owned
+by #2367/#2167. Neither skip is a pass; `DurableGapProof` and its callers were unchanged.
+
+Earlier builder Linux focused runs separately passed all six
+`ScriptedUnrecognizedMessageTest` methods and
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_toolStepRunsThenCompletes`
+(1 executed/passed), both with zero failures/skips, at
+`b68a4f5c336118447a0e6f238a6504ea8e3e39fe`. Their XML remains under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2366/builder-20261021/`,
+`device-sentinel/` and `scripted-tool/` respectively at review time.
+
+Final raw evidence was consolidated on build-fractal-2 under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2366/manual-20261021/`.
+`manual-verification.json`, `gate-inventory.json` and `SHA256SUMS` retain identities and
+method inventories. Accepted harness reports are `gates/jvm-0qclakmc/dispatcher.xml` and
+`gates/ui-8dqotohy/dispatcher.xml`; scripted failure evidence is
+`gates/scripted-all-vyvpbk_i/dispatcher.xml`, with exact comparisons in
+`gates/scripted-t3yc8nwo/` and `baseline-gates/scripted-7opck8xz/`.
+Historical failed XML remains separate, including the earlier complete JVM run
+(6420 executed, 6419 passed, 1 failed, 0 skipped) before the offscreen producer repair.
+These are retained raw locations at review time, subject to evidence pruning.
+
+Both final workers used mobile-agents `974ef55c183bac5180d7935e2d56b2e301bdbc4c`
+and dispatcher `1f8d5e30508561adb2fb7eb5c20e2dfc42fb67f9`. Fractal scripted runs used
+daemon `647a4e7526f581f78d422195cb22b3e9b979e767` and relay
+`2fd9338dd1662dbd68f3710a33e6a8cc4e7a0bc1`; HP JVM metadata records daemon
+`2c68b595440dd7e8e843af9cff0d9a708bcc81a7` and relay
+`9939bc1ff8afec5021c09862e6f14dadba33ad42` separately. Scripted checks use zero real
+Claude turns. No recording refresh or new live activation/restart proof is claimed;
+macOS is outside this ticket's verification scope.
 
 ## What rung 3 is made of
 
@@ -4161,6 +4264,15 @@ and [queue history](knowledge/features/queued-backlog.md#queued-display-metadata
 
 ### Queue, recovery and agent evidence migration (#2174)
 
+The shared component harness now uses supplied authoritative content (#2366); its
+`ThreadEvidence` bindings use scoped presentation identities and supplied completion facts.
+The parser-gap recorder projects notices only from the destination's negotiated observation;
+it does not start another collector or query. Passive observation forwards source ownership,
+progress, leases and controls, retiring disconnected/replaced evidence. Dedicated legacy
+algorithm tests and `DurableGapProof` branches remain for #2367; storage retirement is #2364.
+The historical #2174 results below retain the route and limitations they tested. This fixture
+migration adds no real-Claude scenario and refreshes no recordings.
+
 `DeterministicInteractiveStreamE2ETest`'s
 `interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply`,
 `interactiveTurn_seededChannel_sendQueuedNow_placesAfterToolResult`,
@@ -4168,9 +4280,9 @@ and [queue history](knowledge/features/queued-backlog.md#queued-display-metadata
 `interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect`
 no longer read `observeMessages` directly (six sites) or join raw
 `agent1783`/`child1783`/`parentToolUseId`/`runId` peer IDs (three sites).
-All four now go through #2169's `harnessThreadEvidence` binding, which
-still selects the current legacy source; no production route, capability
-or fixture changed. New shared predicates in
+At #2174 acceptance, all four went through #2169's `harnessThreadEvidence` binding,
+which then selected the legacy source; that ticket changed no production route, capability
+or fixture. New shared predicates in
 `app/src/sharedTest/java/de/pyryco/mobile/e2e/QueueRecoveryAgentEvidence.kt`:
 `heldOpenReply`/`holdsOpen`/`settledHeldReply` back the queued-prompt
 method — the queued check now waits for the held item's completed text

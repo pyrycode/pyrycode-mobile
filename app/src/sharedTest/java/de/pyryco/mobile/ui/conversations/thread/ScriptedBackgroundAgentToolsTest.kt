@@ -65,12 +65,12 @@ class ScriptedBackgroundAgentToolsTest {
         compose.onNodeWithText("later reply").assertExists()
         compose.onNodeWithText("foreground").assertExists()
         compose.runOnIdle { harness.collapseToolUses = true }
-        val run = hasTestTag("tool-run:early")
+        val run = hasTestTag("tool-run:${key("early")}")
         compose.onNode(run).assertExists()
         assertMembership(children, expanded = false)
         compose.onAllNodesWithText("late-one").assertCountEquals(0)
         compose.onAllNodesWithText("late-two").assertCountEquals(0)
-        compose.onNodeWithTag("background-agent:agent").assertExists()
+        compose.onNodeWithTag("background-agent:${key("agent")}").assertExists()
         compose.onNode(hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(run)).performClick()
         assertMembership(children, expanded = true)
         assertRenderedChildren(children)
@@ -84,7 +84,7 @@ class ScriptedBackgroundAgentToolsTest {
         assertMembership(children, expanded = true)
         compose.onNode(hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(run)).performClick()
         assertMembership(children, expanded = false)
-        compose.onNodeWithTag("background-agent:agent").assertExists()
+        compose.onNodeWithTag("background-agent:${key("agent")}").assertExists()
     }
 
     @Test fun invariantReplayAndInterleavingPreserveExclusiveOwnership() {
@@ -125,36 +125,36 @@ class ScriptedBackgroundAgentToolsTest {
         }
         assertEquals(before, items().filterNot { it is ThreadItem.MessageItem && it.message.content == "replay barrier" })
         val rows = projected().filterIsInstance<ThreadRow.Delivered>()
-        val owned = rows.filter { it.agentBlockId == "agent" }.map { (it.item as ThreadItem.MessageItem).message.id }
-        assertEquals(listOf("agent") + children, owned)
-        assertEquals("other-agent", rows.single { (it.item as ThreadItem.MessageItem).message.id == "other-child" }.agentBlockId)
-        assertEquals(null, rows.single { (it.item as ThreadItem.MessageItem).message.id == "foreground" }.agentBlockId)
-        assertEquals(items().size - 2, rows.size) // Only the two lifecycle entries are nonvisual.
-        assertEquals(2, toolNestingDepths(items())["grandchild"])
+        val owned = rows.filter { it.agentBlockId == key("agent") }.map { (it.item as ThreadItem.MessageItem).message.id }
+        assertEquals((listOf("agent") + children).map(::key), owned)
+        assertEquals(key("other-agent"), rows.single { (it.item as ThreadItem.MessageItem).message.id == key("other-child") }.agentBlockId)
+        assertEquals(null, rows.single { (it.item as ThreadItem.MessageItem).message.id == key("foreground") }.agentBlockId)
+        assertEquals(items().size, rows.size) // Lifecycle is held on the supplied Agent facts; markers are separate.
+        assertEquals(2, toolNestingDepths(items())[key("grandchild")])
+        assertEquals(1, harness.presentation().depths[key("grandchild")])
         val run = foldToolRuns(projected(), emptySet()).filterIsInstance<ThreadRow.ToolRun>().single()
-        assertEquals(children, run.tools.map { it.id })
-        assertEquals("early", run.runId)
+        assertEquals(children.map(::key), run.tools.map { it.id })
+        assertEquals(key("early"), run.runId)
     }
 
     private fun items() = runBlocking { harness.observeMessages().first() }
 
-    private fun projected(): List<ThreadRow> {
-        val items = items()
-        return foldBackgroundAgentBlocks(foldQueuedRows(items, emptyList()), items, null)
-    }
+    private fun projected(): List<ThreadRow> = harness.presentation().rows
+
+    private fun key(name: String) = harness.itemKey(name)
 
     private fun assertOwnership(
         children: List<String>,
         finished: Boolean,
     ) {
         val rows = projected().filterIsInstance<ThreadRow.Delivered>()
-        val messages = rows.filter { it.agentBlockId == "agent" }.map { (it.item as ThreadItem.MessageItem).message }
-        assertEquals(listOf("agent") + children, messages.map { it.id })
+        val messages = rows.filter { it.agentBlockId == key("agent") }.map { (it.item as ThreadItem.MessageItem).message }
+        assertEquals((listOf("agent") + children).map(::key), messages.map { it.id })
         assertEquals(if (finished) ToolCallStatus.Done else ToolCallStatus.Running, messages.first().toolCall?.status)
         assertEquals(listOf(ToolCallStatus.Done, ToolCallStatus.Done, ToolCallStatus.Failed), messages.drop(1).map { it.toolCall?.status })
         val run = foldToolRuns(projected(), emptySet()).filterIsInstance<ThreadRow.ToolRun>().single()
-        assertEquals(children, run.tools.map { it.id })
-        assertEquals("early", run.runId)
+        assertEquals(children.map(::key), run.tools.map { it.id })
+        assertEquals(key("early"), run.runId)
         assertEquals(rows.size, rows.map { (it.item as ThreadItem.MessageItem).message.id }.toSet().size)
     }
 
@@ -164,14 +164,14 @@ class ScriptedBackgroundAgentToolsTest {
     ) {
         compose.waitUntil(5_000) {
             val index = compose.onNode(hasScrollToNodeAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
-            children.all { (index("msg:$it") >= 0) == (expanded || it == children.first()) }
+            children.all { (index("msg:${key(it)}") >= 0) == (expanded || it == children.first()) }
         }
     }
 
     private fun assertRenderedChildren(children: List<String>) {
         val index = compose.onNode(hasScrollToNodeAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
-        assertTrue(children.zipWithNext().all { (first, next) -> index("msg:$first") > index("msg:$next") })
-        assertTrue(children.all { index("msg:agent") > index("msg:$it") })
+        assertTrue(children.zipWithNext().all { (first, next) -> index("msg:${key(first)}") > index("msg:${key(next)}") })
+        assertTrue(children.all { index("msg:${key("agent")}") > index("msg:${key(it)}") })
         children.forEach {
             compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(it))
             compose.onNodeWithText(it).assertIsDisplayed()
@@ -187,7 +187,7 @@ class ScriptedBackgroundAgentToolsTest {
     private fun awaitTools(vararg ids: String) {
         compose.waitUntil(5_000) {
             val messages = items().filterIsInstance<ThreadItem.MessageItem>().map { it.message }
-            ids.all { id -> messages.any { it.id == id && it.toolCall?.status != ToolCallStatus.Running } }
+            ids.all { id -> messages.any { it.id == key(id) && it.toolCall?.status != ToolCallStatus.Running } }
         }
         compose.waitForIdle()
     }
