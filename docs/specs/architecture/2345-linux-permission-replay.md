@@ -30,7 +30,7 @@ Run the existing `PermissionIsolationCleanupTest` class on Linux. Reuse its prer
 
 The retained #2333 verifier bundle `aa50c1275b8fff3d751fa35116ada6a633cf53041f15fa238f708222402efbd5` at `b832d64e85` reports a different first failure: `Read receipt checkpoint rejected: target=13 previous=0 delivered=false maximum=null action=10`. The peer's B-answer send rethrows the earlier sticky failure. The gate counted 336 executed, 335 passed and one failed, with one unrelated skip; its focused comparison passed 1/1. No replay read-evidence source changed between that revision and the inspected main. Do not attribute this to the cleanup fence.
 
-Probe `SuiteReadReceiptsTest.aReadQualifiedByDeliveredCertifiedContentSurvivesANewerLiveRevision`: certify a real query window, deliver a newer live revision, then send the read qualified from the earlier delivered window. `SuiteThreadReadReceipts.permits` currently consults only the latest presentation, so a pending newer revision may erase proof that the old read was valid. Confirm the controlled failure before choosing a repair. If confirmed, retain only actually observed eligible watermarks for the exact owner/conversation/store generation; incomplete queries, foreign owners/hosts/conversations, unknown watermarks and reset/repair generations must remain rejected. Never derive eligibility from a peer or a merely enqueued response. A same-epoch reset requires new query certification. Run focused read-receipt, tape, connection and cleanup regressions plus three fresh native invocations after any repair; earlier native passes remain baseline evidence. Reassessed ceiling: at most 600 written lines, no exported types/signature migrations and the same single scenario reliability behaviour. No new production contract or recording is needed.
+Probe `SuiteReadReceiptsTest.aReadQualifiedByDeliveredCertifiedContentSurvivesANewerLiveRevision`: certify a real query window, deliver a newer live revision, then send the read qualified from the earlier delivered window. `SuiteThreadReadReceipts.permits` currently consults only the latest presentation, so a pending newer revision may erase proof that the old read was valid. Confirm the controlled failure before choosing a repair. If confirmed, retain only actually observed eligible watermarks for the exact owner/conversation/store generation; incomplete queries, foreign owners/hosts/conversations, unknown watermarks and reset/repair generations must remain rejected. Never derive eligibility from a peer or a merely enqueued response. A same-epoch reset requires new query certification. Run focused read-receipt, tape, connection and cleanup regressions plus three fresh native invocations after any repair; earlier native passes remain baseline evidence. Reassessed forecast: approximately 500 written lines including evidence, no exported types/signature migrations and the same single scenario reliability behaviour. No new production contract or recording is needed.
 
 ## Context
 
@@ -50,10 +50,10 @@ The evidence map belongs to the existing tape-scoped read tracker. The tape/hub 
 | --- | --- |
 | Certified window, then newer live revision before the pending read send | `aReadQualifiedByDeliveredCertifiedContentSurvivesANewerLiveRevision` |
 | The original recording's A answer adds its notice after checkpoint 13 | `theRecordedPermissionAnswerCannotEraseTheEarlierCertifiedReadWindow` |
-| New watermark arrives without a new complete certificate | Add a negative read-evidence probe |
-| Same epoch resets, followed by fresh query certification | Add reset/re-certification probes |
-| Wrong host, client or conversation tries to borrow retained evidence | Existing attribution tests plus a cross-conversation probe |
-| Query is only enqueued/partial, mismatched or repaired | Existing certification tests plus a repair invalidation probe |
+| New watermark arrives without a new complete certificate | `aNewWatermarkStillNeedsItsOwnDeliveredCertification` |
+| Same epoch resets, followed by fresh query certification | `aSameEpochResetNeedsFreshCompleteEvidenceForTheRepeatedWatermark` |
+| Wrong host, client or conversation tries to borrow retained evidence | `rememberedEvidenceCannotCrossConversationHostOrClient` and existing attribution tests |
+| Query is only enqueued/partial, mismatched or repaired | `aQueryRepairCannotRetainOldReadEvidence` and existing certification tests |
 
 ## Error handling
 
@@ -61,4 +61,4 @@ Unknown/unqualified reads still fail with the existing sticky mismatch. Reset/re
 
 ## Open Questions
 
-Resolve the original-recording probe and name/count each new negative probe before handoff. Preserve both historical Linux failures and all controlled/native attempts. Complete configured Linux UI acceptance remains dispatcher-owned.
+The original-recording probe independently failed 1/1 before the repair: the pre-answer checkpoint-13 predicate passes, then the captured answer notice erases its eligibility. Raw XML and exact sources are retained in `recording-read-race-control/` beside the first controlled failure. This establishes the residual mechanism without a wider sequence diagnostic; the same failure can occur within a single fresh tape. No unresolved design question remains. Preserve both historical Linux failures and all controlled/native attempts. Complete configured Linux UI acceptance remains dispatcher-owned; focused proof does not establish suite-order independence.
