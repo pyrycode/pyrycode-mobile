@@ -215,8 +215,8 @@ class AuthoritativeReaderPagingTest {
                     val counts = cache.authoritativeReadCounts
                     assertEquals(200, counts.itemReads)
                     assertEquals(200, counts.itemDecodes)
-                    assertEquals((if (page == 88) 200 else 400) + (if (page == 0) 1 else 0), counts.ordinalReads)
-                    assertTrue(counts.queries in 8..9)
+                    assertEquals(200, counts.ordinalReads)
+                    assertEquals(6, counts.queries)
                     assertEquals(1, counts.evidenceReads)
                     assertEquals(1, counts.evidenceDecodes)
                     println("reader_page=${page + 1} counts=${cache.authoritativeReadCounts}")

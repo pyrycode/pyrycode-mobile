@@ -16,6 +16,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import java.util.UUID
+import java.util.WeakHashMap
 
 /** Selected raw facts with committed certification. Local exhaustion says nothing about the server. */
 class AuthoritativeThreadPage internal constructor(
@@ -54,6 +55,19 @@ class AuthoritativeRoomStorage internal constructor(
 
     private val dao = database.authoritative()
     private val mutex = Mutex()
+
+    private data class ReaderBoundary(val generation: String, val key: String, val launch: Boolean) {
+        override fun toString(): String = "ReaderBoundary(redacted)"
+    }
+
+    // Accessed only under mutex. Values never refer back to their weak cursor keys.
+    private val readerBoundaries = WeakHashMap<AuthoritativeDisplayCursor, ReaderBoundary>()
+    private val pendingReaderBoundaries = mutableMapOf<AuthoritativeDisplayCursor, ReaderBoundary>()
+
+    private fun displayCursor(header: AuthoritativeHeader, key: String, launch: Boolean): AuthoritativeDisplayCursor =
+        AuthoritativeDisplayCursor(header.host, header.conversation, header.epoch, header.incarnation).also {
+            readerBoundaries[it] = ReaderBoundary(header.generation, key, launch)
+        }
 
     internal data class ReadCounts(
         val itemReads: Int = 0,
@@ -289,7 +303,33 @@ class AuthoritativeRoomStorage internal constructor(
                 lastWriteCounts = lastWriteCounts.copy(itemDeletes = lastWriteCounts.itemDeletes + trimmed)
             }
             val affectedIds = placementChanged + assigned.keys + saved.retirements.keys + trimmedRecords.map { it.id }
-            updatePlacements(host, conversation, saved.epoch, affectedIds, formerParents)
+            val nextGeneration = UUID.randomUUID().toString()
+            val previousActive = changes.associate { it.first.id to it.second?.active }
+            val readers = readerBoundaries.entries.filter { (cursor, boundary) ->
+                cursor.host == host && cursor.conversation == conversation && cursor.epoch == saved.epoch &&
+                    cursor.incarnation == saved.incarnation && boundary.generation == header?.generation
+            }.associate { it.key to it.value }
+            val movedReaders = readers.mapValues { (_, boundary) -> boundary.copy(generation = nextGeneration) }.toMutableMap()
+            updatePlacements(host, conversation, saved.epoch, affectedIds, formerParents) { record, keys ->
+                // Old positions classify reachability. Do not widen this classification as the
+                // traversal extends a bound, or unrelated newer components could join it.
+                if (!(previousActive[record.id] ?: record.active)) {
+                    for ((cursor, boundary) in readers) {
+                        for ((launch, oldKey, newKey) in listOf(
+                            Triple(false, record.displayKey, keys.first),
+                            Triple(true, record.launchKey, keys.second),
+                        )) {
+                            if (oldKey.isEmpty() || oldKey.startsWith("!") || newKey.isEmpty() || newKey.startsWith("!") || oldKey == newKey) continue
+                            if (oldKey < boundary.key || (oldKey == boundary.key && (!launch || boundary.launch))) {
+                                val inclusive = "$newKey~"
+                                val held = movedReaders.getValue(cursor)
+                                if (inclusive > held.key) movedReaders[cursor] = held.copy(key = inclusive, launch = false)
+                            }
+                        }
+                    }
+                }
+            }
+            pendingReaderBoundaries.putAll(movedReaders)
             val applied = maxOf(saved.appliedVersion, previous?.appliedVersion ?: 0)
             // Completion can inherit a certificate whose required facts retention already removed.
             // Advancing metadata alone never restores those prerequisites.
@@ -324,7 +364,7 @@ class AuthoritativeRoomStorage internal constructor(
                     host,
                     conversation,
                     saved.epoch,
-                    UUID.randomUUID().toString(),
+                    nextGeneration,
                     applied,
                     checkpoint,
                     coverage?.let { MobileJson.encodeToString(it) },
@@ -434,6 +474,7 @@ class AuthoritativeRoomStorage internal constructor(
         epoch: String,
         changed: Set<Long>,
         formerParents: Set<Long>,
+        moved: (AuthoritativeItem, Pair<String, String>) -> Unit,
     ) {
         val facts = linkedMapOf<Long, AuthoritativeItem>()
         val visited = mutableSetOf<Long>()
@@ -451,6 +492,7 @@ class AuthoritativeRoomStorage internal constructor(
         val placement = SavedPlacementIndex(facts.values.sortedBy { it.ordinal })
         for (id in facts.keys) {
             val keys = placement.keys.getValue(id)
+            moved(facts.getValue(id), keys)
             val anchor = placement.anchors[id]
             dao.placement(host, conversation, epoch, id, keys.first, keys.second, anchor?.third?.id ?: 0, anchor?.second?.id ?: 0)
             val summary = placement.contributions.getValue(id)
@@ -536,19 +578,7 @@ class AuthoritativeRoomStorage internal constructor(
                 window,
                 rows,
                 contributions.firstOrNull()?.let { (key, record) ->
-                    AuthoritativeDisplayCursor(
-                        host,
-                        conversation,
-                        header.epoch,
-                        header.incarnation,
-                        header.generation,
-                        key,
-                        record.id,
-                        key == record.launchKey,
-                        displayCandidates(host, conversation, header.epoch, key, key == record.launchKey, 200)
-                            .asReversed()
-                            .map { (launch, item) -> item.id to launch },
-                    )
+                    displayCursor(header, key, key == record.launchKey)
                 },
             ).also {
                 RelayLog.d {
@@ -576,40 +606,11 @@ class AuthoritativeRoomStorage internal constructor(
             ) {
                 return@read null
             }
-            var before = cursor.key
-            var boundaryLaunch = cursor.launch
-            if (cursor.generation != header.generation) {
-                lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
-                val boundary = dao.indexItem(host, conversation, header.epoch, cursor.id)
-                if (boundary != null) lastReadCounts = lastReadCounts.copy(ordinalReads = lastReadCounts.ordinalReads + 1)
-                val currentKey = if (cursor.launch) boundary?.launchKey else boundary?.displayKey
-                var recovered = currentKey?.takeIf { it.isNotEmpty() && !it.startsWith("!") }?.let { it to cursor.launch }
-                // The boundary and nearer predecessors can survive in unmoved components.
-                // Resolve the entire bounded older frontier on every changed generation.
-                for (batch in cursor.predecessors.chunked(200)) {
-                    val records = dao.indexItems(host, conversation, header.epoch, batch.mapTo(mutableSetOf()) { it.first })
-                    lastReadCounts =
-                        lastReadCounts.copy(
-                            queries = lastReadCounts.queries + 1,
-                            ordinalReads = lastReadCounts.ordinalReads + records.size,
-                        )
-                    val indexed = records.associateBy { it.id }
-                    for ((id, launch) in batch) {
-                        val record = indexed[id]
-                        val key = (if (launch) record?.launchKey else record?.displayKey)
-                            ?.takeIf { it.isNotEmpty() && !it.startsWith("!") } ?: continue
-                        // The predecessor itself is unadmitted saved work, so include it.
-                        val inclusive = "$key~"
-                        if (recovered == null || inclusive > recovered.first) recovered = inclusive to false
-                    }
-                }
-                RelayLog.d { "event=authoritative_local_boundary outcome=${if (recovered == null) "unavailable" else "recovered"}" }
-                val position = recovered ?: return@read null
-                if (position.first >= before) {
-                    before = position.first
-                    boundaryLaunch = position.second
-                }
-            }
+            // Only a continuous chain of committed writes by this storage owner can
+            // translate a reader's seek bound. Unknown generations retain local retry.
+            val boundary = readerBoundaries[cursor]?.takeIf { it.generation == header.generation } ?: return@read null
+            var before = boundary.key
+            var boundaryLaunch = boundary.launch
             val contributions = mutableListOf<Pair<Boolean, AuthoritativeItem>>()
             while (contributions.size < size) {
                 val candidates = displayCandidates(host, conversation, header.epoch, before, boundaryLaunch, size)
@@ -681,19 +682,7 @@ class AuthoritativeRoomStorage internal constructor(
             }
             val next =
                 contributions.firstOrNull()?.let { (launch, item) ->
-                    AuthoritativeDisplayCursor(
-                        host,
-                        conversation,
-                        header.epoch,
-                        header.incarnation,
-                        header.generation,
-                        if (launch) item.launchKey else item.displayKey,
-                        item.id,
-                        launch,
-                        displayCandidates(host, conversation, header.epoch, if (launch) item.launchKey else item.displayKey, launch, 200)
-                            .asReversed()
-                            .map { (selectedLaunch, selected) -> selected.id to selectedLaunch },
-                    )
+                    displayCursor(header, if (launch) item.launchKey else item.displayKey, launch)
                 }
             RelayLog.d {
                 "event=authoritative_local_page rows=${contributions.size} queries=${lastReadCounts.queries} decodes=${lastReadCounts.itemDecodes}"
@@ -1071,12 +1060,20 @@ class AuthoritativeRoomStorage internal constructor(
         try {
             withContext(ioDispatcher) {
                 mutex.withLock {
-                    when (val done = database.classifiedTransaction(beforeCommit, block)) {
-                        is CacheTransaction.Committed -> Result.success(Unit).also { log(operation, "ok") }
-                        is CacheTransaction.Failed -> {
-                            log(operation, done.code)
-                            Result.failure(ConversationCacheException("conversation cache $operation failed: ${done.code}"))
+                    pendingReaderBoundaries.clear()
+                    try {
+                        when (val done = database.classifiedTransaction(beforeCommit, block)) {
+                            is CacheTransaction.Committed -> Result.success(Unit).also {
+                                readerBoundaries.putAll(pendingReaderBoundaries)
+                                log(operation, "ok")
+                            }
+                            is CacheTransaction.Failed -> {
+                                log(operation, done.code)
+                                Result.failure(ConversationCacheException("conversation cache $operation failed: ${done.code}"))
+                            }
                         }
+                    } finally {
+                        pendingReaderBoundaries.clear()
                     }
                 }
             }

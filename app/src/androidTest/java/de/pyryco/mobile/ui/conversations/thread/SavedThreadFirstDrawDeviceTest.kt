@@ -396,7 +396,7 @@ class SavedThreadFirstDrawDeviceTest {
                             assertEquals(0, disk.authoritativeFullReads)
                             assertEquals(200, disk.authoritativeReadCounts.itemReads)
                             assertEquals(200, disk.authoritativeReadCounts.itemDecodes)
-                            assertEquals(7, disk.authoritativeReadCounts.queries)
+                            assertEquals(5, disk.authoritativeReadCounts.queries)
                             assertEquals(
                                 if (online) 1 else 0,
                                 destination.requests.count { it.type in setOf("thread_page", "thread_catch_up") },

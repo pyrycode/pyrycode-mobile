@@ -24,12 +24,6 @@ internal class AuthoritativeDisplayCursor(
     val conversation: String,
     val epoch: String,
     val incarnation: String,
-    val generation: String,
-    val key: String,
-    val id: Long,
-    val launch: Boolean,
-    /** Nearest-to-farthest older contributions; metadata lookahead never admits their payloads. */
-    val predecessors: List<Pair<Long, Boolean>>,
 ) {
     override fun toString(): String = "AuthoritativeDisplayCursor(redacted)"
 }
