@@ -4583,7 +4583,11 @@ class InteractiveStreamE2ETest {
                 android.util.Log.i("PermissionIsolation", "event=step_complete stage=${stage.name}")
             }
         }
-        try {
+        withPermissionIsolationCleanup(
+            closePeer = peer::close,
+            beforeHostRemoval = { RecordedSuiteNative.beforeHostLinkClose(serverId) },
+            removeHost = { runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) } },
+        ) {
             step(PermissionIsolationStage.PairPhone) { pairAnswerHost() }
             val (chatA, nameA) = step(PermissionIsolationStage.CreateA) { answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pa-") }
             val (chatB, nameB) = step(PermissionIsolationStage.CreateB) { answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pb-") }
@@ -4640,9 +4644,6 @@ class InteractiveStreamE2ETest {
             step(PermissionIsolationStage.AllowB) { runBlocking { peer.allowOnce(promptB, THREAD_TIMEOUT_MS) } }
             step(PermissionIsolationStage.RemoveB) { awaitNoPromptDialog("B's dialog stayed after the peer allowed it") }
             step(PermissionIsolationStage.EndB) { awaitTurnEnd(peer, chatB, 1, "B's peer-allowed turn") }
-        } finally {
-            peer.close()
-            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
         }
     }
 
@@ -4856,6 +4857,7 @@ class InteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_otherConversationAttentionPills_waitingAndFinished() {
         val (serverId, peer) = answerHostPeer()
+        var acquisitionGate: InitialAttentionQueryGate? = null
         try {
             pairAnswerHost()
             runBlocking {
@@ -4920,7 +4922,12 @@ class InteractiveStreamE2ETest {
                         throw AssertionError(evidence("first_waiting_timeout"), e)
                     }
                     android.util.Log.i("AttentionPillProbe", evidence("first_waiting_seen"))
+                    // Destination metadata starts the attention query; fence only the subsequent acquisition.
+                    val gate = InitialAttentionQueryGate.arm(checkNotNull(coordinator.negotiatedThread), chatB, THREAD_TIMEOUT_MS)
+                    acquisitionGate = gate
                     composeTestRule.onNodeWithText(waitingLabel).assertIsDisplayed().performTouchInput { click(center) }
+                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { gate.finished }
+                    gate.awaitAcquired()
                     composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                         composeTestRule.onAllNodes(hasText(nameB)).fetchSemanticsNodes().isNotEmpty()
                     }
@@ -4963,6 +4970,7 @@ class InteractiveStreamE2ETest {
                 }
             }
         } finally {
+            acquisitionGate?.close()
             peer.close()
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
         }

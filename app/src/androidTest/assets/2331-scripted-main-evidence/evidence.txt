@@ -1,0 +1,41 @@
+Ticket: pyrycode/pyrycode-mobile#2331
+Operating system: Linux (build-hp-1)
+Task: 9237b07b0b9b35ddca3805d4a4ce92f125e33cf372ae46778ccea433b1088eab
+Run: c2ce2878df122d2ccfeded02ab300146cb942a7a4d7bdfecc4b366c2d45c6f27
+Recipe: mobile-scripted-evidence
+Mobile: 77b5717d6d3a1dba9f1a92a251162e7f9b3770e2 (pushed main)
+Core: f90990dd142f206422bfd4a24a8feedcc94f8274
+Relay: 9939bc1ff8afec5021c09862e6f14dadba33ad42
+Agents: e2f17c0ca3173e2991cfbd5d853fd3f6dc8239d0
+
+The task completed with outcome failed and capture.complete=false.
+This is an incomplete profile, not a failing reply-suggestion test.
+
+Command: python3 scripts/android-test-gate.py scripted reply-suggestion
+Exit: 0
+Executed: 1; passed: 1; failed: 0; errors: 0; skipped: 0.
+Method: de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_replySuggestionLongPressSends
+reply-suggestion-main.xml preserves the returned mobile/gate-0.xml byte for byte.
+
+Command: python3 scripts/android-test-gate.py scripted selection-copy
+Exit: 75
+Executed: 0; no valid JUnit report. Not passed and not an assertion failure.
+The device remained held by a live run from builder-2246 for the entire
+300-second admission window. The runner then reported Malformed JUnit report
+because mobile/gate-1.xml was empty. No permission denial was reported.
+
+The fresh main pass does not establish an inherited failure or explain the
+retained full scripted-gate and installed-app comparison failures. Those
+failures remain failed. Complete dispatcher acceptance remains pending.
+Investigation assessment: d295acf20f083fbb1d39d9ecbb4c315da1fe774f350d25c52aa47fd347789c2d
+
+Raw task artifacts are privately retained at:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2331/main-comparison-9237b07b0b9b/
+Retrieve the original task and verified artifact manifest with fleet-task.py read.
+Original artifact SHA-256 values:
+capture.json 8c95a3da24bad9cbbf6805db35538e4f1068186209298ffe7600c8a7dea3ca99
+execution.log 84a840cbca2c12f4fd1a160233ebfce2192e094f863e268dcc6e8cd80e6b168f
+gate-0.xml 46675c1bc5e2c2687c922fc7b3a9d2839acdb502bb2b3835449328812118549f
+gate-1.xml e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+phases-0.jsonl e4565b8194cea65adf67a7cc0d7532e52fc94b0304f31ed6b943c9b38fee6086
+phases-1.jsonl 81542f6336bd8eb961d63936aa502c2e6eb899ee7b54a4fcaa129117631f216a
