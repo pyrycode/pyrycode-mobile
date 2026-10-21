@@ -101,6 +101,16 @@ None concerning product scope. Validate display-contributor indexing against the
 
 ## Revisions
 
+### 2026-10-21: winning structure and witness retirement
+
+Verifier findings 1–3 expose the same partial-placement boundary. Keep paging order unchanged, but retain the renderer's nullable child order separately: explicit zero sorts before positive child orders; absent order sorts last. Compare exact selected rows against the full renderer for ordered and unordered roots, including an explicit patch clear.
+
+An additive version 8→9 migration backfills child order and agent anchor/tie identities without changing payloads or certification. Maintain those two bounded witness identities for ordered as well as unordered agents. Supplemental resolution requests evidence for the winning unordered agents, rather than inferring their needs from older durable root structure. The production probes cover an ordered root becoming unordered after opening and while opening is held. Owned witness retirement triggers supplemental validation, serialized after its owned write, so the replacement anchor is resolved before the affected projection is delivered. The removal probe checks exact order, bounded reads, final save and cold reopen. Existing unavailable/stale handling and observation-owned bounded retries remain.
+
+This is one bounded-opening repair with its verification floor, under the existing grandchild sizing exception; no independently useful behaviour is added. No layout or wire contract changes. New derived metadata belongs only to the exact disk owner/epoch, and application still requires the captured incarnation, generation and cache lifetime. SQL result/query and payload-decode ceilings cover the new probes; complete configured acceptance remains dispatcher-owned.
+
+Security review addendum (2026-10-21): PASS after addressing [Trust boundaries] MUST FIX: validate placement evidence against the winning live structure even when durable root order differs; retirement invalidates witness sufficiency. [Concurrency] MUST FIX: serialize supplemental reads behind owned removal persistence, then retain the existing atomic capture comparison and cancellation/lifetime fences before delivery and baseline publication. [Storage] SHOULD FIX: non-destructive migration derives metadata from retained validated payloads; raw unknown fields, clears, certification and unloaded facts remain intact. Renderer order is distinct from paging order. No credentials, cryptography, components, transport, rendering surface or logging boundary changes.
+
 ### 2026-10-20: validated restoration boundary after second review
 
 The three findings remain repairs of bounded opening and its verification floor, under the existing grandchild sizing exception. An unordered family's indexed key contains its historical anchor and held tie witness. Resolve those witnesses by bounded index lookup alongside selected payloads and recursive parents. They are renderer inputs, never selected rows or continuous coverage. Carry their complete facts through the existing window/store merge so projection can retain historical placement and recompute it for winning structural live revisions. The 18000-row omitted-sibling fixture compares exact ordered rows through a fresh production destination and a cold storage read, retaining query/result/decode bounds.
