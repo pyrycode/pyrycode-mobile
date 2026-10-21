@@ -793,6 +793,25 @@ actual snapshots unchanged and taps that existing collection without adding
 upstream collections or requests. Other reply-helper consumers retain their
 existing contracts. Producer completion alone cannot establish phone delivery.
 
+Since #2366, `TappingConversationRepository` records parser-gap notices from the
+projection of the destination's authoritative `NegotiatedThread.observe` snapshots.
+It forwards support, store, progress, query leases, paging and cancellation to that
+same source. The optional passive probe taps that existing subscription; it starts
+no independent collection or query. Legacy snapshot delegation remains only for
+retained legacy tests until #2367.
+
+Recorded scenario assertions and capture/replay contracts are unchanged; this fixture
+migration required no recording refresh and claims no new live compatibility run.
+The checked inventory remains 18 scripted harness clients, now 91 methods: two new
+render/query/revision invariants and one local-send identity invariant, with two
+context method renames. All 91 executed and passed without skips in the accepted
+Linux JVM/UI gates, including all six device sentinel methods. The
+[complete counted evidence and inventory](e2e-interactive-stream.md#authoritative-fixture-migration-evidence-2366)
+retain the scripted refusal failure, exact comparisons and existing skips separately.
+The complete UI gate also executed and passed
+`RecordedMobileSuiteTest.interactiveTurn_peerStartedTurn_continuesOnPhone` once,
+with zero failures/skips for that method; its existing display/reopen assertions remain.
+
 Passive evidence binds host, conversation, captured connection and subscription
 identity. Reopen requires a different active subscription, even when rows are
 identical. Ending a subscription clears its snapshot; observing a replaced owner
