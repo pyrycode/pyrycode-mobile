@@ -11,6 +11,7 @@ import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
+import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
@@ -229,10 +230,10 @@ class HostConversationSourceAttentionTest {
             val view = viewing.view("a", "same")
             runCurrent()
             assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["a"])
-            a.push(readUpdate("same", 4u))
+            a.push(readUpdate("same", 4u, 5u))
             runCurrent()
             assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["a"])
-            a.push(readUpdate("same", 5u))
+            a.push(readUpdate("same", 5u, 5u))
             runCurrent()
             assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
             view.close()
@@ -241,7 +242,7 @@ class HostConversationSourceAttentionTest {
             assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["a"])
             // A late list cannot roll either fact back; the repository is the only merge owner.
             a.push(readList("same", 2u, 3u))
-            a.push(readUpdate("same", 6u))
+            a.push(readUpdate("same", 6u, 6u))
             runCurrent()
             assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
         }
@@ -255,11 +256,11 @@ class HostConversationSourceAttentionTest {
             runCurrent()
             assertEquals(mapOf("c" to ConversationAttention.Unread), source.attention.value["a"])
             val command = a.sent.single { it.type == "mark_conversation_read" }
-            a.push(readUpdate("c", 8u), inReplyTo = command.id)
+            a.push(readUpdate("c", 8u, 10u), inReplyTo = command.id)
             runCurrent()
             assertEquals(8uL, request.await().getOrThrow())
             assertEquals(mapOf("c" to ConversationAttention.Unread), source.attention.value["a"])
-            a.push(readUpdate("c", 10u))
+            a.push(readUpdate("c", 10u, 10u))
             runCurrent()
             assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
         }
@@ -274,7 +275,7 @@ class HostConversationSourceAttentionTest {
             host.prompts("c" to "m")
             runCurrent()
             assertEquals(mapOf("c" to ConversationAttention.WaitingForAnswer), source.attention.value["a"])
-            a.push(readUpdate("c", 1u))
+            a.push(readUpdate("c", 1u, 1u))
             runCurrent()
             assertEquals(mapOf("c" to ConversationAttention.WaitingForAnswer), source.attention.value["a"])
             host.prompts()
@@ -299,8 +300,9 @@ class HostConversationSourceAttentionTest {
     private fun readUpdate(
         id: String,
         read: ULong,
+        shown: ULong,
     ) = "conversation_updated" to
-        """{"id":"$id","name":"test","is_promoted":true,"cwd":"/test","last_used_at":"$TS","read_up_to":$read}"""
+        """{"id":"$id","name":"test","is_promoted":true,"cwd":"/test","last_used_at":"$TS","read_up_to":$read,"last_shown_version":$shown}"""
 
     private fun durableMessage(
         id: String,
@@ -315,7 +317,11 @@ class HostConversationSourceAttentionTest {
             val hosts = listOf(Host("a"), Host("b"))
             hosts.zip(pumps).forEach { (host, pump) ->
                 host.repositories.value =
-                    RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) })
+                    RemoteConversationRepository(
+                        pump,
+                        backgroundScope,
+                        negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE, CAPABILITY_THREAD) },
+                    )
             }
             val source =
                 HostConversationSource(

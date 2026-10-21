@@ -67,7 +67,7 @@ class ShownVersionReadMarksTest {
             }
         }
 
-    @Test fun threadAttentionUsesShownAndRetainsPromptRunningPrecedenceAndLegacyFallback() {
+    @Test fun threadAttentionUsesShownAndRetainsPromptAndRunningPrecedence() {
         fun attention(marks: ConversationReadMarks) =
             HostAttentionState(readMarks = mapOf("c" to marks)).resolve(emptyList(), emptyList())["c"]
                 ?: ConversationAttention.Idle
