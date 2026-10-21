@@ -625,7 +625,8 @@ class AuthoritativeReaderPagingTest {
                 runCurrent()
                 assertEquals(1L, repo.authoritativeThreads.current("host", "c").generation)
                 assertEquals(AuthoritativeHistoryLoad.Idle, route.localHistory("c").first())
-                assertEquals(ThreadHistoryTail.Loading, vm.state.value.historyTail)
+                assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
+                // Daemon synchronization owns its request slot, not the legacy/local Loading tail.
                 assertEquals(beforeReset + 1, requests().size)
                 fixture.reply(
                     requests().last(),
@@ -648,7 +649,7 @@ class AuthoritativeReaderPagingTest {
 
                 vm.onDemandOlderHistory()
                 runCurrent()
-                assertEquals(ThreadHistoryTail.Loading, vm.state.value.historyTail)
+                assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
                 assertEquals(beforeReset + 2, requests().size)
                 assertEquals(JsonPrimitive(1200), requests().last().payload.jsonObject["before_order"])
                 fixture.reply(
@@ -705,28 +706,29 @@ class AuthoritativeReaderPagingTest {
                         return page
                     }
                 }
-            destination(cache) { fixture, old, repo ->
+            destination(cache) { fixture, vm, repo ->
                 val route = requireNotNull(repo.negotiatedThread)
-                old.state.first { it.authoritativeThread?.rows?.size == 200 }
-                old.onDemandOlderHistory()
-                old.state.first { it.historyTail == ThreadHistoryTail.Retry }
-                val current = fixture.open()
-                val owner = ViewModelStore().also { it.put("replacement", current) }
-                val collector = backgroundScope.launch { current.state.collect {} }
+                vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                // A destination factory creates separate repositories. Replace observations of this
+                // exact repository so old cleanup and new local work contend for the same owner slot.
+                val oldReader = backgroundScope.launch { route.observe("c").collect {} }
+                runCurrent()
+                vm.onDemandOlderHistory()
+                vm.state.first { it.historyTail == ThreadHistoryTail.Retry }
+                val currentReader = backgroundScope.launch { route.observe("c").collect {} }
                 try {
-                    current.state.first { it.authoritativeThread?.rows?.size == 200 }
                     runCurrent()
                     assertEquals(AuthoritativeHistoryLoad.Idle, route.localHistory("c").first())
-                    assertEquals(ThreadHistoryTail.Offline, current.state.value.historyTail)
-                    current.onDemandOlderHistory()
+                    assertEquals(ThreadHistoryTail.Offline, vm.state.value.historyTail)
+                    vm.onDemandOlderHistory()
                     started.await()
-                    current.state.first { it.historyTail == ThreadHistoryTail.Loading }
-                    old.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+                    vm.state.first { it.historyTail == ThreadHistoryTail.Loading }
+                    oldReader.cancelAndJoin()
                     runCurrent()
                     assertEquals(AuthoritativeHistoryLoad.Loading, route.localHistory("c").first())
-                    assertEquals(ThreadHistoryTail.Loading, current.state.value.historyTail)
+                    assertEquals(ThreadHistoryTail.Loading, vm.state.value.historyTail)
                     release.complete(Unit)
-                    current.state.first { it.authoritativeThread?.rows?.size == 400 }
+                    vm.state.first { it.authoritativeThread?.rows?.size == 400 }
                     runCurrent()
                     assertEquals(AuthoritativeHistoryLoad.Idle, route.localHistory("c").first())
                     assertEquals(
@@ -736,19 +738,19 @@ class AuthoritativeReaderPagingTest {
                             .items
                             .map { it.raw },
                     )
-                    current.onDemandOlderHistory()
-                    current.state.first { it.historyTail == ThreadHistoryTail.Retry }
+                    vm.onDemandOlderHistory()
+                    vm.state.first { it.historyTail == ThreadHistoryTail.Retry }
                     advanceTimeBy(1000)
                     runCurrent()
                     assertEquals(3, attempts)
                     assertTrue(fixture.requests.none { it.type in setOf("thread_page", "thread_catch_up") })
                 } finally {
-                    owner.clear()
-                    current.viewModelScope.coroutineContext[Job]?.join()
-                    collector.cancelAndJoin()
+                    oldReader.cancelAndJoin()
+                    currentReader.cancelAndJoin()
                     runCurrent()
                 }
                 assertEquals(AuthoritativeHistoryLoad.Idle, route.localHistory("c").first())
+                assertEquals(ThreadHistoryTail.Offline, vm.state.value.historyTail)
             }
         }
 

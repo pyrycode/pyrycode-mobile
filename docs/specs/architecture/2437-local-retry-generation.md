@@ -5,9 +5,9 @@
 Repair the independently confirmed Retry/reset defect in retained #2334 candidate
 `b7724753efb9cc9848cdea2bbe5ebb3370bb71e8`. A failed local demand may retain its
 boundary and Retry only while that saved reader still owns the current runtime generation.
-An authoritative reset, including reused epoch text, invalidates that local state. Current
-daemon Loading, successful response and exhaustion must then reach the existing ViewModel
-presentation. Keep the parent feature and its historical evidence; this is its bounded
+An authoritative reset, including reused epoch text, invalidates that local state. Successful daemon responses and exhaustion must then reach the existing ViewModel
+presentation. Daemon query ownership is asserted through exact request counts; it does not
+set the legacy/local history-tail Loading flag. Keep the parent feature and its historical evidence; this is its bounded
 blocking repair, not a replacement implementation.
 
 ## Implementation plan
