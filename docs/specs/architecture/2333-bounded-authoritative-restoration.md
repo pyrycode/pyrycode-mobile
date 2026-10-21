@@ -63,6 +63,9 @@ Disk selection uses the cache IO dispatcher and one Room transaction. Decode/mer
 | Explicit zero versus absent child order under ordered/unordered roots | `AuthoritativeWindowRestoreTest.placementInvariant_zeroAndAbsentChildOrdersMatchRenderer` |
 | Winning root order cleared after opening or during held opening; cold reopen | `AuthoritativeWindowRestoreTest.placementInvariant_winningUnorderedRootResolvesHistoricalWitness` |
 | Loaded placement witness retired; replacement resolved before delivery and durable reopen | `AuthoritativeWindowRestoreTest.placementInvariant_ownedWitnessRemovalResolvesReplacementBeforeDelivery` |
+| Initial supplemental read unavailable, recovery without mutation, and exit before validation | `AuthoritativeWindowRestoreTest.validationInvariant_coldUnavailableOpeningWithholdsReplayUntilRecovery` |
+| Loaded witness hidden, moved or reparented after opening or during held opening | `AuthoritativeWindowRestoreTest.placementInvariant_liveWitnessEditsResolveWinningReplacement` |
+| Valid task link/id becomes absent or invalid, changing the winning family | `AuthoritativeWindowRestoreTest.placementInvariant_taskClassificationResolvesWinningFamily` |
 
 ## Error handling
 
@@ -89,7 +92,7 @@ None concerning product scope. Validate display-contributor indexing against the
 
 **Verdict:** PASS
 
-- [Trust boundaries] MUST FIX addressed: selected disk payloads pass existing full-item validation and exact owner/epoch/index identity checks. A bounded live capture must successfully resolve supplemental parents, placement witnesses and retirement evidence before delivery or writer acceptance; null/failed reads retain the last validated output and cannot poison its committed baseline. Witness requirements follow the winning structure, including an ordered durable agent becoming unordered in a live revision. Retirement invalidates witness sufficiency and requires its bounded replacement before delivery. Cached facts grant no negotiated support. Unknown daemon fields stay inert.
+- [Trust boundaries] MUST FIX addressed: selected disk payloads pass existing full-item validation and exact owner/epoch/index identity checks. Initial unavailable supplemental validation leaves the window pending; observation retries before admitting any unchecked output or writer candidate. A bounded live capture must successfully resolve supplemental parents, placement witnesses and retirement evidence before delivery or writer acceptance; null/failed reads retain the last validated output and cannot poison its committed baseline. Witness requirements follow winning root and descendant structure, including content-dependent task classification. Hidden, moved, reparented or retired witnesses require bounded replacement resolution before delivery. Cached facts grant no negotiated support. Unknown daemon fields stay inert.
 - [Tokens] No credentials or credential storage change; selection stores existing conversation facts only.
 - [Files and storage] Keep the app-private no-backup database/sidecars and additive migration. Existing plaintext cache threat model remains; rooted-device content access is unchanged. Failed reads never rewrite or delete content.
 - [Android attack surface] No component, intent, provider or WebView change. Existing bounded text rendering remains.
@@ -100,7 +103,7 @@ None concerning product scope. Validate display-contributor indexing against the
 - [Threat model] Relay delay/reorder cannot widen certification or stop saved opening. Hostile cached facts remain validated and inert. Cross-host collisions stay isolated. Token theft and UI screenshot/accessibility leakage are unchanged by this local-storage behaviour.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
-**Date:** 2026-10-20
+**Date:** 2026-10-21
 
 ## Revisions
 

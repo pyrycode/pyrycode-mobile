@@ -38,6 +38,7 @@ internal interface AuthoritativeWindowCache {
         parents: Set<Long>,
         evidence: Set<Long>,
         placementRoots: Set<Long> = emptySet(),
+        structuralChanges: List<ThreadItemDto> = emptyList(),
     ): SavedAuthoritativeThread?
 }
 

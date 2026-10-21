@@ -199,9 +199,10 @@ internal class MigratingConversationCache(
         parents: Set<Long>,
         evidence: Set<Long>,
         placementRoots: Set<Long>,
+        structuralChanges: List<de.pyryco.mobile.data.network.ThreadItemDto>,
     ): SavedAuthoritativeThread? =
         read(serverId, conversationId, AUTHORITATIVE) {
-            authoritative.parentClosure(serverId, conversationId, epoch, parents, evidence, placementRoots)
+            authoritative.parentClosure(serverId, conversationId, epoch, parents, evidence, placementRoots, structuralChanges)
         }
 
     internal suspend fun beforeAuthoritativePage(

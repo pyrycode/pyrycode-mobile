@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.cache.SavedAuthoritativeThread
 import de.pyryco.mobile.data.cache.applyOwnedRows
 import de.pyryco.mobile.data.cache.cacheableThreadRows
 import de.pyryco.mobile.data.cache.legacyRowKey
+import de.pyryco.mobile.data.cache.sameSavedStructure
 import de.pyryco.mobile.data.cache.settledThreadRows
 import de.pyryco.mobile.data.cache.threadRowsWereTrimmed
 import de.pyryco.mobile.data.cache.toSavedAuthoritativeThread
@@ -148,6 +149,7 @@ class CachingConversationRepository(
     private val persistedAuthoritative = ConcurrentHashMap<String, CacheCandidate>()
     private val authoritativeOpeningLocks = ConcurrentHashMap<String, Mutex>()
     private val authoritativeOpenings = ConcurrentHashMap<String, SavedAuthoritativeThread>()
+    private val pendingAuthoritativeOpenings = ConcurrentHashMap<String, de.pyryco.mobile.data.cache.AuthoritativeThreadWindow>()
     private val authoritativeLifetimes = ConcurrentHashMap<String, Pair<Long, Long>>()
     private val authoritativeReaders = ConcurrentHashMap<String, CoroutineScope>()
     private val authoritativeHydrations = ConcurrentHashMap<CoroutineScope, Job>()
@@ -633,7 +635,15 @@ class CachingConversationRepository(
         current: AuthoritativeThreadSnapshot,
         accepted: SavedAuthoritativeThread?,
     ): AuthoritativeThreadSnapshot {
-        if (accepted == null || current.generation > 0 || current.openingRows == null) return current
+        if (current.generation > 0) return current
+        if (accepted == null) {
+            return if (hostThread != null && cache is AuthoritativeWindowCache) {
+                current.copy(items = emptyList(), checkpoint = 0, coverage = null)
+            } else {
+                current
+            }
+        }
+        if (current.openingRows == null) return current
         val validated = accepted.toSnapshot()
         return validated.copy(
             items = validated.items.filterNot { it.id in current.retirements },
@@ -663,15 +673,19 @@ class CachingConversationRepository(
                     if (full) {
                         cache.readAuthoritativeThread(serverId, conversationId)
                     } else {
-                        indexed
-                            .newestAuthoritativeWindow(serverId, conversationId, 200)
-                            ?.takeIf { it.serverId == serverId && it.conversationId == conversationId }
-                            ?.also { openingRows = it.rows }
-                            ?.saved
+                        (
+                            pendingAuthoritativeOpenings[conversationId] ?: indexed
+                                .newestAuthoritativeWindow(serverId, conversationId, 200)
+                        )?.takeIf { it.serverId == serverId && it.conversationId == conversationId }
+                            ?.also {
+                                pendingAuthoritativeOpenings[conversationId] = it
+                                openingRows = it.rows
+                            }?.saved
                     }
                 }
             val saved = (restored as? AuthoritativeRestore.Validated)?.saved
             if (saved != null && !full) authoritativeOpenings[conversationId] = saved
+            if (saved != null || restored == AuthoritativeRestore.Stale) pendingAuthoritativeOpenings.remove(conversationId)
             saved
         }
     }
@@ -807,6 +821,11 @@ class CachingConversationRepository(
             }
             val winners = saved.toSnapshot().items.associateByTo(mutableMapOf()) { it.id }
             val changed = captured.items.filter { item -> winners[item.id]?.raw != item.raw }.mapTo(mutableSetOf()) { it.id }
+            val structuralChanges =
+                captured.items.filter { item ->
+                    val committed = winners[item.id]
+                    committed == null || item.rev > committed.rev && !item.sameSavedStructure(committed)
+                }
             captured.items.forEach { item -> if ((winners[item.id]?.rev ?: -1) <= item.rev) winners[item.id] = item }
             val parents = winners.values.mapNotNull { it.parent?.takeIf { id -> id > 0 && id !in winners } }.toSet()
             val evidence = captured.items.mapTo(mutableSetOf()) { it.id }
@@ -822,6 +841,7 @@ class CachingConversationRepository(
                                 parents + changed,
                                 evidence,
                                 placementRoots,
+                                structuralChanges,
                             )
                         }
                     } catch (_: java.io.IOException) {
@@ -870,6 +890,18 @@ class CachingConversationRepository(
                 try {
                     authoritativeThreads.observe(serverId, conversationId).collect { observed ->
                         var snapshot = observed
+                        var openingRetryMs = 100L
+                        while (pendingAuthoritativeOpenings.containsKey(conversationId)) {
+                            if (conversationId in deleted || !authoritativeCurrent(conversationId)) return@collect
+                            restoreAuthoritative(conversationId)
+                            if (!pendingAuthoritativeOpenings.containsKey(conversationId)) {
+                                snapshot = authoritativeThreads.current(serverId, conversationId)
+                                break
+                            }
+                            RelayLog.d { "event=authoritative_restore code=opening_supplement_unavailable" }
+                            delay(openingRetryMs)
+                            openingRetryMs = (openingRetryMs * 2).coerceAtMost(1000L)
+                        }
                         val baseline = persistedAuthoritative[conversationId]?.authoritative
                         if (snapshot.openingRows != null && snapshot.generation == 0L && baseline != null) {
                             val needsClosure =
@@ -883,12 +915,7 @@ class CachingConversationRepository(
                                                 item.parent?.let { it > 0 && it !in heldIds } == true ||
                                                 item.rev > savedItem.rev &&
                                                 (
-                                                    item.parent != savedItem.parent ||
-                                                        item.order != savedItem.order ||
-                                                        item.shown != savedItem.shown ||
-                                                        item.kind != savedItem.kind ||
-                                                        item.active != savedItem.active ||
-                                                        item.endedOrder != savedItem.endedOrder
+                                                    !item.sameSavedStructure(savedItem)
                                                 )
                                         }
                                 }

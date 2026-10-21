@@ -25,7 +25,7 @@ import java.io.IOException
         ConversationCacheDatabase.FileImport::class,
         ConversationCacheDatabase.AuthoritativeRetirement::class,
     ],
-    version = 9,
+    version = 10,
     autoMigrations = [
         AutoMigration(
             from = 1,
@@ -36,6 +36,7 @@ import java.io.IOException
         AutoMigration(from = 6, to = 7, spec = ConversationCacheDatabase.RenderPlacementMigration::class),
         AutoMigration(from = 7, to = 8, spec = ConversationCacheDatabase.RenderPlacementMigration::class),
         AutoMigration(from = 8, to = 9, spec = ConversationCacheDatabase.PlacementWitnessMigration::class),
+        AutoMigration(from = 9, to = 10, spec = ConversationCacheDatabase.PlacementWitnessMigration::class),
     ],
 )
 abstract class ConversationCacheDatabase : RoomDatabase() {
@@ -45,6 +46,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         internal fun backfill(
             db: SupportSQLiteDatabase,
             witnesses: Boolean,
+            contributions: Boolean = false,
         ) {
             val owners = linkedMapOf<Triple<String, String, String>, MutableList<AuthoritativeItem>>()
             db.query("SELECT host,conversation,epoch,id,ordinal,orderKey,payload FROM authoritative_items").use { cursor ->
@@ -83,6 +85,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
             }
             for (records in owners.values) {
                 val held = records.associateBy { it.id }
+                val summaries = if (contributions) savedContributionIndex(records) else emptyMap()
                 for (record in records) {
                     val keys = record.savedPlacementKeys(held::get) { root -> savedUnorderedAnchor(root, held.values) }
                     db.execSQL(
@@ -117,13 +120,28 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
                             ),
                         )
                     }
+                    if (contributions) {
+                        val keys = summaries.getValue(record.id)
+                        db.execSQL(
+                            "UPDATE authoritative_items SET anchorContribution=?,tieContribution=? WHERE host=? AND conversation=? AND epoch=? AND id=?",
+                            arrayOf<Any>(keys.first, keys.second, record.host, record.conversation, record.epoch, record.id),
+                        )
+                    }
                 }
             }
         }
     }
 
     class PlacementWitnessMigration : AutoMigrationSpec {
-        override fun onPostMigrate(db: SupportSQLiteDatabase) = RenderPlacementMigration().backfill(db, true)
+        override fun onPostMigrate(db: SupportSQLiteDatabase) {
+            val contributions =
+                db.query("PRAGMA table_info(authoritative_items)").use { cursor ->
+                    var present = false
+                    while (cursor.moveToNext()) if (cursor.getString(1) == "anchorContribution") present = true
+                    present
+                }
+            RenderPlacementMigration().backfill(db, true, contributions)
+        }
     }
 
     class DisplayWindowMigration : AutoMigrationSpec {
@@ -276,6 +294,8 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
             Index(value = ["host", "conversation", "epoch", "launchKey"]),
             Index(value = ["host", "conversation", "epoch", "orderKey", "displayKey"]),
             Index(value = ["host", "conversation", "epoch", "orderKey", "launchKey"]),
+            Index(value = ["host", "conversation", "epoch", "parentId", "anchorContribution"]),
+            Index(value = ["host", "conversation", "epoch", "parentId", "tieContribution"]),
         ],
     )
     internal data class AuthoritativeItem(
@@ -298,6 +318,8 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         @ColumnInfo(defaultValue = "9223372036854775807") val rendererOrder: Long = orderKey,
         @ColumnInfo(defaultValue = "0") val anchorId: Long = 0,
         @ColumnInfo(defaultValue = "0") val tieId: Long = 0,
+        @ColumnInfo(defaultValue = "''") val anchorContribution: String = "",
+        @ColumnInfo(defaultValue = "''") val tieContribution: String = "",
     ) {
         override fun toString(): String = "AuthoritativeItem(redacted)"
     }
@@ -312,6 +334,40 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
 
     @Dao
     internal interface AuthoritativeDao {
+        @Query(
+            "SELECT anchorContribution FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND parentId=:parent AND anchorContribution>'' AND id NOT IN (:excluded) ORDER BY anchorContribution LIMIT 1",
+        )
+        suspend fun anchorContribution(
+            host: String,
+            conversation: String,
+            epoch: String,
+            parent: Long,
+            excluded: Set<Long>,
+        ): String?
+
+        @Query(
+            "SELECT tieContribution FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND parentId=:parent AND tieContribution>'' AND id NOT IN (:excluded) ORDER BY tieContribution LIMIT 1",
+        )
+        suspend fun tieContribution(
+            host: String,
+            conversation: String,
+            epoch: String,
+            parent: Long,
+            excluded: Set<Long>,
+        ): String?
+
+        @Query(
+            "UPDATE authoritative_items SET anchorContribution=:anchor,tieContribution=:tie WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id=:id",
+        )
+        suspend fun contributions(
+            host: String,
+            conversation: String,
+            epoch: String,
+            id: Long,
+            anchor: String,
+            tie: String,
+        )
+
         @Query(
             "SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND orderKey=:orderKey AND ordinal=:ordinal LIMIT 1",
         )

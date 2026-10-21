@@ -8,12 +8,68 @@ import kotlinx.serialization.json.JsonPrimitive
 // Metadata-only ancestor/descendant lookups never return a saved payload.
 internal const val AUTHORITATIVE_INDEX_FIELDS =
     "host,conversation,epoch,id,ordinal,orderKey,'' AS payload,display,extra,parentId," +
-        "agent,background,active,endedOrder,displayKey,launchKey,rendererOrder,anchorId,tieId"
+        "agent,background,active,endedOrder,displayKey,launchKey,rendererOrder,anchorId,tieId,anchorContribution,tieContribution"
 
 internal fun ThreadItemDto.savedBackgroundAgent(): Boolean {
     val fields = content as? JsonObject ?: return false
     val task = fields["task_id"] as? JsonPrimitive
     return kind == "agent" && task?.isString == true && task.content.isNotBlank() && fields["task_link"] is JsonObject && (order ?: 0) > 0
+}
+
+/** Renderer-affecting structure, including content-dependent background classification. */
+internal fun ThreadItemDto.sameSavedStructure(other: ThreadItemDto): Boolean =
+    parent == other.parent &&
+        order == other.order &&
+        shown == other.shown &&
+        kind == other.kind &&
+        active == other.active &&
+        endedOrder == other.endedOrder &&
+        savedBackgroundAgent() == other.savedBackgroundAgent()
+
+/** A child's contribution to its parent's foreground anchor and held-child order. */
+internal fun AuthoritativeItem.savedContributions(children: Pair<String, String>): Pair<String, String> {
+    fun key(order: Long) =
+        order.toString().padStart(19, '0') +
+            (ordinal.toLong() - Int.MIN_VALUE).toString().padStart(10, '0') + ":$id"
+    val own = if (display) key(orderKey) else ""
+    val anchor = listOf(own, children.first.takeUnless { background }.orEmpty()).filter { it.isNotEmpty() }.minOrNull().orEmpty()
+    val tie =
+        if (agent) {
+            key(rendererOrder)
+        } else {
+            listOf(if (display) key(rendererOrder) else "", children.second).filter { it.isNotEmpty() }.minOrNull().orEmpty()
+        }
+    return anchor to tie
+}
+
+internal fun savedContributionIndex(facts: Collection<AuthoritativeItem>): Map<Long, Pair<String, String>> {
+    val children = facts.groupBy { it.parentId }
+    val result = mutableMapOf<Long, Pair<String, String>>()
+    val visiting = mutableSetOf<Long>()
+
+    fun visit(item: AuthoritativeItem): Pair<String, String> {
+        result[item.id]?.let { return it }
+        if (!visiting.add(item.id)) return "" to ""
+        val keys = children[item.id].orEmpty().map(::visit)
+        val anchor =
+            keys
+                .map { it.first }
+                .filter { it.isNotEmpty() }
+                .minOrNull()
+                .orEmpty()
+        val tie =
+            keys
+                .map { it.second }
+                .filter { it.isNotEmpty() }
+                .minOrNull()
+                .orEmpty()
+        return item.savedContributions(anchor to tie).also {
+            result[item.id] = it
+            visiting.remove(item.id)
+        }
+    }
+    facts.forEach(::visit)
+    return result
 }
 
 /** The renderer sorts placements, then walks each agent block depth first. Launches are separate rows. */

@@ -259,6 +259,8 @@ class AuthoritativeRoomStorage internal constructor(
                         rendererOrder = item.order ?: Long.MAX_VALUE,
                         anchorId = record?.anchorId ?: 0,
                         tieId = record?.tieId ?: 0,
+                        anchorContribution = record?.anchorContribution.orEmpty(),
+                        tieContribution = record?.tieContribution.orEmpty(),
                     )
                 val newPlacement = replacement.copy(payload = "", displayKey = "", launchKey = "")
                 val oldPlacement = record?.copy(payload = "", displayKey = "", launchKey = "")
@@ -395,6 +397,7 @@ class AuthoritativeRoomStorage internal constructor(
         dao.deleteRetirements(serverId, conversationId)
         for ((id, revision) in fences) dao.retire(AuthoritativeRetirement(serverId, conversationId, id, revision))
         val indexed = records.associateBy { it.id }
+        val contributions = savedContributionIndex(records)
         val anchors = mutableMapOf<Long, Triple<Long, AuthoritativeItem, AuthoritativeItem>?>()
         dao.insertItems(
             records.map { record ->
@@ -409,6 +412,8 @@ class AuthoritativeRoomStorage internal constructor(
                     anchorId = anchor?.third?.id ?: 0,
                     tieId =
                         anchor?.second?.id ?: 0,
+                    anchorContribution = contributions.getValue(record.id).first,
+                    tieContribution = contributions.getValue(record.id).second,
                 )
             },
         )
@@ -480,11 +485,14 @@ class AuthoritativeRoomStorage internal constructor(
             }
         }
         val anchors = mutableMapOf<Long, Triple<Long, AuthoritativeItem, AuthoritativeItem>?>()
+        val contributions = savedContributionIndex(facts.values)
         for (id in affected) {
             val record = facts.getValue(id)
             val keys = record.savedPlacementKeys(facts::get) { root -> anchors.getOrPut(root) { savedUnorderedAnchor(root, facts.values) } }
             val anchor = if (record.agent) anchors.getOrPut(id) { savedUnorderedAnchor(id, facts.values) } else null
             dao.placement(host, conversation, epoch, id, keys.first, keys.second, anchor?.third?.id ?: 0, anchor?.second?.id ?: 0)
+            val summary = contributions.getValue(id)
+            dao.contributions(host, conversation, epoch, id, summary.first, summary.second)
         }
     }
 
@@ -575,6 +583,7 @@ class AuthoritativeRoomStorage internal constructor(
         ids: Set<Long>,
         evidence: Set<Long>,
         placementRoots: Set<Long> = emptySet(),
+        structuralChanges: List<ThreadItemDto> = emptyList(),
     ): SavedAuthoritativeThread? =
         read("read_parent_closure", accumulate = true) {
             val header = header(host, conversation)?.takeIf { it.epoch == epoch } ?: return@read null
@@ -584,7 +593,13 @@ class AuthoritativeRoomStorage internal constructor(
             val pending = ArrayDeque(ids + placementRoots)
             val seen = mutableSetOf<Long>()
             val witnessed = mutableSetOf<String>()
-            while (pending.isNotEmpty()) {
+            var resolvedChanges = false
+            while (pending.isNotEmpty() || !resolvedChanges) {
+                if (pending.isEmpty()) {
+                    resolvedChanges = true
+                    pending.addAll(winningPlacementWitnesses(host, conversation, saved, structuralChanges, records, decoded))
+                    if (pending.isEmpty()) break
+                }
                 val id = pending.removeFirst()
                 if (!seen.add(id)) continue
                 lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
@@ -610,6 +625,87 @@ class AuthoritativeRoomStorage internal constructor(
             val ordered = records.values.sortedWith(compareBy<AuthoritativeItem> { it.orderKey }.thenBy { it.ordinal })
             saved.copy(items = ordered.map { decoded.getValue(it.id) }, retirements = fences).also { it.toSnapshot() }
         }
+
+    /** Reduce only changed ancestor paths; unchanged sibling subtrees supply one indexed summary. */
+    private suspend fun winningPlacementWitnesses(
+        host: String,
+        conversation: String,
+        saved: SavedAuthoritativeThread,
+        changes: List<ThreadItemDto>,
+        loaded: Map<Long, AuthoritativeItem>,
+        decoded: Map<Long, JsonObject>,
+    ): Set<Long> {
+        if (changes.isEmpty()) return emptySet()
+        val facts = loaded.toMutableMap()
+        val affected = mutableSetOf<Long>()
+
+        suspend fun index(id: Long): AuthoritativeItem? {
+            facts[id]?.let { return it }
+            lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
+            return dao.indexItem(host, conversation, saved.epoch, id)?.also {
+                facts[id] = it
+                lastReadCounts = lastReadCounts.copy(itemReads = lastReadCounts.itemReads + 1)
+            }
+        }
+
+        suspend fun ancestors(start: Long) {
+            var id = start
+            val seen = mutableSetOf<Long>()
+            while (id > 0 && seen.add(id)) {
+                val item = index(id) ?: break
+                affected += id
+                id = item.parentId
+            }
+        }
+        for (item in changes) {
+            val stored = decoded[item.id]?.let(ThreadItemDto::decodeReplacement)
+            if (stored != null && (stored.rev >= item.rev || stored.sameSavedStructure(item))) continue
+            val old = index(item.id)
+            ancestors(old?.parentId ?: 0)
+            val base = old ?: AuthoritativeItem(host, conversation, saved.epoch, item.id, Int.MAX_VALUE, orderKey(item), "")
+            facts[item.id] =
+                base.copy(
+                    orderKey = orderKey(item),
+                    rendererOrder = item.order ?: Long.MAX_VALUE,
+                    display = item.savedDisplayRow(),
+                    parentId = item.parent ?: 0,
+                    agent = item.kind == "agent",
+                    background = item.savedBackgroundAgent(),
+                    active = item.active,
+                    endedOrder = item.endedOrder ?: 0,
+                )
+            affected += item.id
+            ancestors(item.parent ?: 0)
+        }
+        val summaries = mutableMapOf<Long, Pair<String, String>>()
+        val visiting = mutableSetOf<Long>()
+        val witnesses = mutableSetOf<Long>()
+
+        suspend fun reduce(id: Long): Pair<String, String> {
+            summaries[id]?.let { return it }
+            if (!visiting.add(id)) return "" to ""
+            val item = facts.getValue(id)
+            val anchor = dao.anchorContribution(host, conversation, saved.epoch, id, affected)
+            val tie = dao.tieContribution(host, conversation, saved.epoch, id, affected)
+            lastReadCounts =
+                lastReadCounts.copy(
+                    queries = lastReadCounts.queries + 2,
+                    itemReads = lastReadCounts.itemReads + listOfNotNull(anchor, tie).size,
+                )
+            val children = affected.mapNotNull(facts::get).filter { it.parentId == id }.map { reduce(it.id) }
+            val first = (children.map { it.first } + listOfNotNull(anchor)).filter { it.isNotEmpty() }.minOrNull().orEmpty()
+            val held = (children.map { it.second } + listOfNotNull(tie)).filter { it.isNotEmpty() }.minOrNull().orEmpty()
+            if (item.agent) {
+                for (key in listOf(first, held).filter { it.isNotEmpty() }) witnesses += key.substringAfterLast(':').toLong()
+            }
+            return item.savedContributions(first to held).also {
+                summaries[id] = it
+                visiting.remove(id)
+            }
+        }
+        affected.forEach { reduce(it) }
+        return witnesses
+    }
 
     /** An indexed family key retains both its full-history anchor and the first held child tie. */
     private suspend fun placementWitnesses(

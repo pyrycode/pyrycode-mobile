@@ -455,6 +455,251 @@ class AuthoritativeWindowRestoreTest {
             }
         }
 
+    @Test fun placementInvariant_liveWitnessEditsResolveWinningReplacement() =
+        runTest {
+            for (held in listOf(false, true)) {
+                for (edit in listOf("hidden", "moved", "reparented")) {
+                    databaseFile = "witness-$held-$edit.db"
+                    val original = structuralFixture(unordered = true, replacement = true)
+                    val old = original.items.first { it["id"] == JsonPrimitive(18_010) }
+                    val fields =
+                        when (edit) {
+                            "hidden" -> mapOf("shown" to JsonPrimitive(false))
+                            "moved" -> mapOf("order" to JsonPrimitive(20_000))
+                            else -> mapOf("parent" to JsonNull)
+                        }
+                    val revised = JsonObject(old + fields + ("rev" to JsonPrimitive(50_001)))
+                    assertWinningPlacement(original, revised, held)
+                }
+            }
+        }
+
+    @Test fun placementInvariant_taskClassificationResolvesWinningFamily() =
+        runTest {
+            for (held in listOf(false, true)) {
+                for (invalid in listOf("link", "blank", "number")) {
+                    databaseFile = "task-$held-$invalid.db"
+                    val root = JsonObject(agent(40_000, 0, 0) + ("content" to JsonObject(emptyMap())))
+                    val background = agent(40_001, 18_010, 18_010, parent = 40_000)
+                    val original =
+                        SavedAuthoritativeThread(
+                            "e",
+                            (1..17_799).map { fact(it) } + root + background +
+                                fact(18_011, parent = 40_001) + fact(19_000, parent = 40_001) + fact(18_020, parent = 40_000) +
+                                (18_015..18_213).filter { it != 18_020 }.map { fact(it) },
+                            50_000,
+                            50_000,
+                        ).retained()
+                    val content = background.getValue("content").jsonObject
+                    val changed =
+                        when (invalid) {
+                            "link" -> content + ("task_link" to JsonNull)
+                            "blank" -> content + ("task_id" to JsonPrimitive(" "))
+                            else -> content + ("task_id" to JsonPrimitive(7))
+                        }
+                    val revised = JsonObject(background + mapOf("content" to JsonObject(changed), "rev" to JsonPrimitive(50_001)))
+                    assertWinningPlacement(original, revised, held)
+                }
+            }
+        }
+
+    private suspend fun TestScope.assertWinningPlacement(
+        original: SavedAuthoritativeThread,
+        revised: JsonObject,
+        held: Boolean,
+    ) {
+        assertEquals(18_000, projectAuthoritativeThread("host", "c", original.toSnapshot()).rows.size)
+        open().writeAuthoritativeThread("host", "c", original).getOrThrow()
+        open()
+        val disk = migrating()
+        val captured = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val cache =
+            object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
+                override suspend fun newestAuthoritativeWindow(
+                    serverId: String,
+                    conversationId: String,
+                    size: Int,
+                ) = disk.newestAuthoritativeWindow(serverId, conversationId, size).also {
+                    captured.complete(Unit)
+                    if (held) release.await()
+                }
+            }
+        val updated = original.copy(items = original.items.map { if (it["id"] == revised["id"]) revised else it }, appliedVersion = 50_001)
+        destination(cache) { _, vm, repo ->
+            captured.await()
+            if (!held) vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+            repo.authoritativeThreads.applyBatch("host", "c", "e", 50_001, listOf(ThreadItemDto.decodeReplacement(revised)), 0)
+            release.complete(Unit)
+            val state =
+                vm.state.first {
+                    it.authoritativeThread
+                        ?.sourceSnapshot
+                        ?.items
+                        ?.any { item -> item.raw == revised } == true
+                }
+            val presentation = requireNotNull(state.authoritativeThread)
+            val expected =
+                projectAuthoritativeThread("host", "c", updated.toSnapshot().copy(openingRows = presentation.sourceSnapshot.openingRows))
+            assertEquals(expected.rows.map { it.listKey(0) }, presentation.rows.map { it.listKey(0) })
+            assertTrue("payloads ${disk.authoritativeReadCounts}", disk.authoritativeReadCounts.itemDecodes <= 225)
+            assertTrue("results ${disk.authoritativeReadCounts}", disk.authoritativeReadCounts.itemReads <= 260)
+            assertTrue("queries ${disk.authoritativeReadCounts}", disk.authoritativeReadCounts.queries <= 65)
+            assertEquals(0, disk.authoritativeFullReads)
+            println("winning descendant held=$held counts=${disk.authoritativeReadCounts}")
+        }
+        val fresh = requireNotNull(open().readAuthoritativeThread("host", "c"))
+        assertEquals(updated.items.associateBy { it["id"] }, fresh.items.associateBy { it["id"] })
+        open()
+        destination(migrating()) { _, vm, _ ->
+            val reopened = vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+            assertEquals(
+                projectAuthoritativeThread("host", "c", updated.toSnapshot()).rows.takeLast(200).map { it.listKey(0) },
+                requireNotNull(reopened.authoritativeThread).rows.map { it.listKey(0) },
+            )
+        }
+    }
+
+    @Test fun validationInvariant_coldUnavailableOpeningWithholdsReplayUntilRecovery() =
+        runTest {
+            for (throws in listOf(false, true)) {
+                for (recover in listOf(false, true)) {
+                    databaseFile = "cold-validation-$throws-$recover.db"
+                    val original =
+                        SavedAuthoritativeThread(
+                            "e",
+                            (1..18_000).map { fact(it) },
+                            50_000,
+                            0,
+                            retirements =
+                                mapOf(
+                                    49_000L to 49_000L,
+                                ),
+                        )
+                    open().writeAuthoritativeThread("host", "c", original).getOrThrow()
+                    open()
+                    val disk = migrating()
+                    val captured = CompletableDeferred<Unit>()
+                    val release = CompletableDeferred<Unit>()
+                    var unavailable = true
+                    var attempts = 0
+                    val cache =
+                        object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
+                            override suspend fun newestAuthoritativeWindow(
+                                serverId: String,
+                                conversationId: String,
+                                size: Int,
+                            ) = disk.newestAuthoritativeWindow(serverId, conversationId, size).also {
+                                captured.complete(Unit)
+                                release.await()
+                            }
+
+                            override suspend fun authoritativeParentClosure(
+                                serverId: String,
+                                conversationId: String,
+                                epoch: String,
+                                parents: Set<Long>,
+                                evidence: Set<Long>,
+                                placementRoots: Set<Long>,
+                                structuralChanges: List<ThreadItemDto>,
+                            ): SavedAuthoritativeThread? {
+                                attempts++
+                                if (unavailable) {
+                                    if (throws) throw java.io.IOException("classified unavailable")
+                                    return null
+                                }
+                                return disk.authoritativeParentClosure(
+                                    serverId,
+                                    conversationId,
+                                    epoch,
+                                    parents,
+                                    evidence,
+                                    placementRoots,
+                                    structuralChanges,
+                                )
+                            }
+                        }
+                    destination(cache) { _, vm, repo ->
+                        captured.await()
+                        repo.authoritativeThreads.applyBatch(
+                            "host",
+                            "c",
+                            "e",
+                            50_100,
+                            listOf(ThreadItemDto.decodeReplacement(fact(49_000))),
+                            0,
+                        )
+                        release.complete(Unit)
+                        advanceTimeBy(2000)
+                        runCurrent()
+                        assertFalse(
+                            vm.state.value.authoritativeThread
+                                ?.sourceSnapshot
+                                ?.items
+                                ?.any { it.id == 49_000L } == true,
+                        )
+                        assertTrue(attempts > 0)
+                        assertEquals(original, AuthoritativeRoomStorage(requireNotNull(database)).readAuthoritativeThread("host", "c"))
+                        if (recover) {
+                            unavailable = false
+                            advanceTimeBy(1500)
+                            runCurrent()
+                            val restored = vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                            val snapshot = requireNotNull(restored.authoritativeThread).sourceSnapshot
+                            assertEquals((17_801L..18_000L).toList(), snapshot.items.map { it.id })
+                            assertEquals(mapOf(49_000L to 49_000L), snapshot.retirements)
+                            // A new successful save must inherit only the validated baseline.
+                            val revised = JsonObject(fact(18_000) + ("rev" to JsonPrimitive(50_101)))
+                            repo.authoritativeThreads.applyBatch(
+                                "host",
+                                "c",
+                                "e",
+                                50_101,
+                                listOf(ThreadItemDto.decodeReplacement(revised)),
+                                0,
+                            )
+                            vm.state.first {
+                                it.authoritativeThread
+                                    ?.sourceSnapshot
+                                    ?.items
+                                    ?.any { item -> item.raw == revised } == true
+                            }
+                        }
+                        assertTrue(disk.authoritativeReadCounts.itemDecodes <= 215)
+                        assertTrue(disk.authoritativeReadCounts.itemReads <= 230)
+                        assertTrue(disk.authoritativeReadCounts.queries <= 25)
+                        assertEquals(0, disk.authoritativeFullReads)
+                        println("cold unavailable throws=$throws recover=$recover counts=${disk.authoritativeReadCounts}")
+                    }
+                    val fresh = requireNotNull(open().readAuthoritativeThread("host", "c"))
+                    assertEquals(18_000, fresh.items.size)
+                    assertFalse(fresh.items.any { it["id"] == JsonPrimitive(49_000) })
+                    assertEquals(original.retirements, fresh.retirements)
+                    val expected =
+                        if (recover) {
+                            original.copy(
+                                items =
+                                    original.items.map { raw ->
+                                        if (raw["id"] == JsonPrimitive(18_000)) JsonObject(raw + ("rev" to JsonPrimitive(50_101))) else raw
+                                    },
+                                appliedVersion = 50_101,
+                            )
+                        } else {
+                            original
+                        }
+                    assertEquals(expected, fresh)
+                    open()
+                    destination(migrating()) { _, vm, _ ->
+                        val reopened = vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                        assertEquals(
+                            (17_801L..18_000L).toList(),
+                            requireNotNull(reopened.authoritativeThread).sourceSnapshot.items.map { it.id },
+                        )
+                    }
+                }
+            }
+        }
+
     @Test fun placementInvariant_ownedWitnessRemovalResolvesReplacementBeforeDelivery() =
         runTest {
             val original = structuralFixture(unordered = true, replacement = true)
@@ -534,6 +779,7 @@ class AuthoritativeWindowRestoreTest {
                                     parents: Set<Long>,
                                     evidence: Set<Long>,
                                     placementRoots: Set<Long>,
+                                    structuralChanges: List<ThreadItemDto>,
                                 ): SavedAuthoritativeThread? {
                                     attempts++
                                     if (unavailable) {
@@ -547,6 +793,7 @@ class AuthoritativeWindowRestoreTest {
                                         parents,
                                         evidence,
                                         placementRoots,
+                                        structuralChanges,
                                     )
                                 }
                             }
@@ -1143,7 +1390,7 @@ class AuthoritativeWindowRestoreTest {
 
     @Test fun migrationInvariant_existingFactsAndIndexesSurviveUpgrade() =
         runTest {
-            for (version in listOf(5, 8)) {
+            for (version in listOf(5, 8, 9)) {
                 databaseFile = "migration-$version.db"
                 val fixtures =
                     if (version == 5) {
@@ -1190,7 +1437,7 @@ class AuthoritativeWindowRestoreTest {
                             "INSERT INTO authoritative_items (host,conversation,epoch,id,ordinal,orderKey,payload) VALUES ('host','c','e',?,?,?,?)",
                             arrayOf(item.id, index, item.order?.takeIf { it > 0 } ?: Long.MAX_VALUE, raw.toString()),
                         )
-                        if (version == 8) {
+                        if (version >= 8) {
                             db.execSQL(
                                 "UPDATE authoritative_items SET display=?,extra=? WHERE id=?",
                                 arrayOf(if (item.savedDisplayRow()) 1 else 0, if (item.savedRendererExtra()) 1 else 0, item.id),
@@ -1245,6 +1492,22 @@ class AuthoritativeWindowRestoreTest {
                             val detail = cursor.getString(3)
                             assertTrue(detail, detail.contains("orderKey=? AND $column>?"))
                         }
+                }
+                for (column in listOf("anchorContribution", "tieContribution")) {
+                    requireNotNull(database)
+                        .openHelper.readableDatabase
+                        .query(
+                            "EXPLAIN QUERY PLAN SELECT $column FROM authoritative_items " +
+                                "WHERE host='host' AND conversation='c' AND epoch='e' AND parentId=1 " +
+                                "AND $column>'' AND id NOT IN (2) ORDER BY $column LIMIT 1",
+                        ).use { cursor ->
+                            assertTrue(cursor.moveToFirst())
+                            val detail = cursor.getString(3)
+                            assertTrue(detail, detail.contains("parentId=? AND $column>?"))
+                            assertFalse(detail, detail.contains("TEMP B-TREE"))
+                        }
+                    assertTrue(requireNotNull(database).authoritative().anchorContribution("host", "c", "e", 1, emptySet()) != null)
+                    assertTrue(requireNotNull(database).authoritative().tieContribution("host", "c", "e", 1, emptySet()) != null)
                 }
             }
         }
