@@ -18,7 +18,7 @@ internal class AuthoritativeThreadWindow(
     override fun toString(): String = "AuthoritativeThreadWindow(redacted)"
 }
 
-/** A local display boundary, including which contribution of a fact was admitted. */
+/** Opaque local cursor; its storage owner retains the committed contribution seek bound. */
 internal class AuthoritativeDisplayCursor(
     val host: String,
     val conversation: String,

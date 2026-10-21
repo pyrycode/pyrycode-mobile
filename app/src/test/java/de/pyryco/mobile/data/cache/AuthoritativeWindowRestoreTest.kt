@@ -1176,7 +1176,7 @@ class AuthoritativeWindowRestoreTest {
                         assertEquals(0, disk.authoritativeFullReads)
                         assertEquals(203, disk.authoritativeReadCounts.itemReads)
                         assertEquals(203, disk.authoritativeReadCounts.itemDecodes)
-                        assertEquals(9, disk.authoritativeReadCounts.queries)
+                        assertEquals(7, disk.authoritativeReadCounts.queries)
                         assertEquals(if (online) 1 else 0, fixture.requests.count { it.type in setOf("thread_catch_up", "thread_page") })
                     }
                     assertEquals(original, disk.readAuthoritativeThread("host", "c"))
