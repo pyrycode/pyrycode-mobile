@@ -1115,7 +1115,7 @@ class ThreadViewModel(
                             combine(snapshots, progress) { snapshot, reading ->
                                 withContext(contentScheduling?.worker ?: Dispatchers.Main.immediate) {
                                     // An empty epoch can still carry scoped local Sending feedback.
-                                    projectAuthoritativeThread(route.host, conversationId, snapshot, reading)
+                                    projectDeferredAuthoritativeThread(route.host, conversationId, snapshot, reading)
                                 }
                             }.paceThreadContent(contentScheduling),
                         )

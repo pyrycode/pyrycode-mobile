@@ -62,7 +62,7 @@ None.
 
 Pending documentation stage:
 - `docs/knowledge/features/thread-screen.md`: explain closed presentation is deferred independently of authoritative retention and wire delivery.
-- Owning thread testing topic: record the supplied focused/native/scripted counts and durable evidence paths.
+- `docs/knowledge/features/thread-screen-testing.md`, deferred presentation coverage: record the supplied focused/native/scripted counts and durable evidence paths.
 
 ## Security review
 
@@ -80,3 +80,9 @@ Pending documentation stage:
 
 **Reviewer:** builder self-review per `builder/security-review.md`
 **Date:** 2026-10-21
+
+## Revisions
+
+2026-10-21: `foldToolRuns` and the existing agent navigation proof establish that an Agent root's body toggle is independent of its child-run toggle. Preserve that interaction: demand follows existing folded membership, and ancestor filtering checks omitted ancestors rather than inventing a new root-collapse control. A closed tool's own body stays deferred while its existing child-run headline remains usable. Hidden descendants cannot be read candidates even when another placement exposes their metadata.
+
+2026-10-21: `ThreadMessageList` can subcompose old offscreen boundary rows during agent relocation. Deferred presentations measure only currently demanded rows and current body state; omitted descendants supply no new measurement composition. The mounted composition probe counts measurement slots too. Complete-snapshot/legacy relocation keeps its existing renderer.

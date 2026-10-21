@@ -166,6 +166,9 @@ internal val LocalThreadListCompositionObserver =
 /** Lets the cold-boundary regression distinguish unmeasured rows from merely offscreen rows. */
 internal val LocalThreadRowMeasurementObserver = staticCompositionLocalOf<((Any) -> Unit)?> { null }
 
+/** Counts mounted authoritative rows without observing frame-updated layout state. */
+internal val LocalAuthoritativeRowCompositionObserver = staticCompositionLocalOf<((String, Boolean) -> Unit)?> { null }
+
 /** The status band's reading box (#1312), so a test can tell a band reading from the same words in a message. */
 internal const val STATUS_READING_TEST_TAG = "thread-status-reading"
 
@@ -747,8 +750,18 @@ fun ThreadScreen(
                     previousAgentRows = agentRows
                 }
                 val rows =
-                    remember(agentRows, collapseToolUses, retainedExpandedRuns, state.historyMarkers) {
-                        if (collapseToolUses) foldHistoryToolRuns(agentRows, retainedExpandedRuns, state.historyMarkers) else agentRows
+                    remember(authoritative, agentRows, collapseToolUses, retainedExpandedRuns, expandedTools, state.historyMarkers) {
+                        val folded =
+                            if (collapseToolUses) {
+                                foldHistoryToolRuns(
+                                    agentRows,
+                                    retainedExpandedRuns,
+                                    state.historyMarkers,
+                                )
+                            } else {
+                                agentRows
+                            }
+                        authoritative?.demandRows(folded, expandedTools) ?: folded
                     }
                 val displayedHistoryMarkers =
                     remember(agentRows, rows, state.historyMarkers) {
@@ -837,16 +850,23 @@ fun ThreadScreen(
                                 newestRenderedRow?.listKey(rows.indexOf(newestRenderedRow))
                             }
                         val authoritativeCandidates =
-                            remember(authoritative, rows) {
+                            remember(authoritative, rows, expandedTools) {
                                 if (authoritative == null) {
                                     emptyList()
                                 } else {
-                                    rows.filterIsInstance<ThreadRow.Delivered>().map { row ->
-                                        val key = row.listKey(0)
-                                        ThreadReadCandidate(key, row.item, authoritative.shownRowRevisions[key]).apply {
-                                            if (row.summaryText != null) revealed = true
+                                    rows
+                                        .filterIsInstance<ThreadRow.Delivered>()
+                                        .filter {
+                                            authoritative.suppliesReadSight(
+                                                it,
+                                                expandedTools,
+                                            )
+                                        }.map { row ->
+                                            val key = row.listKey(0)
+                                            ThreadReadCandidate(key, row.item, authoritative.shownRowRevisions[key]).apply {
+                                                if (row.summaryText != null) revealed = true
+                                            }
                                         }
-                                    }
                                 }
                             }
                         val readCandidate =
@@ -980,7 +1000,19 @@ fun ThreadScreen(
                             }
                         val rowRelocationSpec = LocalBringIntoViewSpec.current
                         val rowMeasurementObserver = LocalThreadRowMeasurementObserver.current
+                        val rowCompositionObserver = LocalAuthoritativeRowCompositionObserver.current
+                        val demandedByKey =
+                            remember(authoritative, rows) {
+                                if (authoritative?.defersContents == true) rows.associateBy { it.listKey(0) } else null
+                            }
                         val renderRow: @Composable (ThreadRow, ThreadRow?, Boolean) -> Unit = { row, nextRow, measuring ->
+                            if (authoritative != null && rowCompositionObserver != null) {
+                                val compositionKey = if (measuring) "measurement:${row.listKey(0)}" else row.listKey(0)
+                                DisposableEffect(compositionKey, rowCompositionObserver) {
+                                    rowCompositionObserver(compositionKey, true)
+                                    onDispose { rowCompositionObserver(compositionKey, false) }
+                                }
+                            }
                             val candidate =
                                 if (measuring) {
                                     null
@@ -1183,7 +1215,16 @@ fun ThreadScreen(
                         ThreadMessageList(
                             state = listState,
                             viewport = readerViewport,
-                            measureBoundaryRow = { row, next -> renderRow(row, next, true) },
+                            measureBoundaryRow = { row, next ->
+                                // Relocation cannot recompose a retired or newly closed body offscreen.
+                                if (demandedByKey == null) {
+                                    renderRow(row, next, true)
+                                } else {
+                                    demandedByKey[row.listKey(0)]?.let { current ->
+                                        renderRow(current, next?.let { demandedByKey[it.listKey(0)] }, true)
+                                    }
+                                }
+                            },
                             modifier =
                                 Modifier.fillMaxSize().olderHistoryPull(listPull).onGloballyPositioned {
                                     val origin = it.positionInWindow()
