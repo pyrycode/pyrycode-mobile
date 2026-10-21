@@ -340,7 +340,7 @@ contribution positions with the pre-write reader bound and extends that bound to
 new placement. The bound and new generation become visible only after the database transaction
 commits. A rollback leaves reader state unchanged. This covers moved components beyond any
 fixed predecessor lookahead, even when the boundary and nearer components remain unchanged.
-It adds no reader-side full scan, payload lookahead or newest restart. Skip already admitted
+It adds no whole-thread payload scan, payload lookahead or newest restart. Skip already admitted
 content/launch identities before decoding selected payloads. Missing generation custody retains
 retry; a write from a different storage instance cannot bless an old cursor. Production cache
 readers and writers share one instance, and fresh reopen obtains a new committed cursor.

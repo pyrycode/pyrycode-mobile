@@ -17,7 +17,7 @@ compares each old contribution position with the reader's pre-mutation bound, ex
 bound to include the new placement. Reader bounds and the new header generation publish only
 after that transaction commits; a rollback preserves the old receipt. It tracks older saved
 components even when the boundary survives, nearer predecessors belong to other components,
-or the moved group lies beyond a fixed lookahead. No reader-side full scan or payload lookahead
+or the moved group lies beyond a fixed lookahead. No whole-thread payload scan or payload lookahead
 is added, and obsolete cursor records retain no payloads or accumulated identity lists.
 
 A bounded page starts at its registered bound, filters admitted content/launch identities and
@@ -90,5 +90,83 @@ The passing XML and all raw page records are retained at
 `/work/Projects/pyrycode-mobile-agents/logs/evidence/2334/manual-20261021/paging/`.
 Historical red XML/logs remain alongside it in `red/`, `frontier-red/` and `predecessor-run/`.
 The final main merge adds unused test-fixture helpers and a separate screen regression;
-production paging code is identical. Remaining writer/native checks and independent complete
-configured acceptance must be recorded separately before final acceptance is claimed.
+production paging code is identical. The remaining manual writer/native checks passed as recorded below. Independent complete
+configured acceptance must still validate the final candidate before acceptance is claimed.
+
+### Retained manual JVM regressions
+
+On Linux source **`40d3fd69e22309bd99af423155f08cff713e1d85`**, the following affected classes
+passed with **zero failures/errors/skips**. This merges current main without changing the
+production paging behavior tested above.
+
+| Class | Executed/passed |
+| --- | ---: |
+| `AuthoritativeRoomStorageTest` | 15/15 |
+| `AuthoritativeWindowRestoreTest` | 25/25 |
+| `AuthoritativeOwnedUpsertTest` | 17/17 |
+| `AuthoritativeOwnedRemovalTest` | 18/18 |
+| `AuthoritativeThreadCacheTest` | 23/23 |
+| `AuthoritativeThreadQueriesTest` | 23/23 |
+| `AuthoritativeThreadStoreTest` | 15/15 |
+| `MigratingConversationCacheTest` | 17/17 |
+| `NegotiatedThreadViewModelTest` | 6/6 |
+| `SavedAuthoritativePlacementTest` | 5/5 |
+
+Together with the 12 paging methods, this is **176 executed / 176 passed / 0 failures/errors/skips**.
+The new `readerBoundsRequireCommittedOwnedPlacementHistory` method proves rollback preserves
+both content and the old bounded position, committed movement recovers the older component,
+and an unknown storage writer or intervening generation cannot authorize exhaustion. A later
+ordinary write cannot bless that missing receipt; a fresh committed opening obtains a new one.
+Per-class XML and logs remain at the `manual-20261021/` evidence root above.
+
+### Manual native, build and scripted receipt
+
+Source **`40d3fd69e22309bd99af423155f08cff713e1d85`** passed forced
+`lint assembleDebug compileDebugAndroidTestKotlin spotlessCheck --rerun-tasks` through the
+shared Linux admission gate. Native invocation **`ui-wbh4wodd`** executed **6 / 6 passed /
+0 failures/errors/skips**, each named method once:
+
+- `databaseSavedThreads_upwardDemandAndRetry_offlineAndHeldNewest_coldReopen`
+- `databaseSavedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_coldOpenAndReopen`
+- `savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen`
+- `delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen`
+- `slowRestore_negativeControlRejectsTheSameFirstDrawBound`
+- `heldCpuPipeCancelsAndClosesItsDescriptor`
+
+Positive committed-frame measurements in offline first/reopen, held-newest first/reopen order:
+
+| Fixture/operation | Frames (ms) | Retained bounded-read evidence |
+| --- | --- | --- |
+| Database upward demand/retry/reopen | 499 / 345 / 410 / 281 | Two attempts, 400 displayed rows; successful page: 200 payload results/decodes, 200 metadata results, 6 queries, 1 evidence result/decode |
+| Database opening/reopen | 320 / 329 / 349 / 308 | 200 payload results/decodes, 0 metadata results, 5 queries, 1 evidence result/decode |
+| Fragmented full-file compatibility | 660 / 293 / 622 / 327 | 36000 durable entries / 18000 spans / 18000 rows preserved |
+| Ordinary full-file compatibility | 189 / 204 / 198 / 187 | Complete compatibility restore |
+| Fragmented delayed projection | 813 / 254 / 648 / 337 | Optional projection cannot hold the newest frame |
+| Ordinary delayed projection | 228 / 174 / 203 / 193 | Same delayed-projection contract |
+
+All positive frames are below the unchanged **1000 ms product target**. This managed emulator
+reports ANGLE/Vulkan SwiftShader and the unchanged **2000 ms renderer-specific assertion bound**.
+The slow negative control committed at **3774 ms** (restore 3126 / snapshot 3598 / complete 3628)
+and correctly rejected that same bound. The fixture, delay and control were not reduced.
+Paging asserted exact older text inside the clear viewport, request independence and no extra
+page at rest in all four openings.
+
+Scripted invocation **`scripted-rpezety1`** executed **1 / 1 passed / 0 failures/errors/skips**:
+`DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect`.
+It used zero real Claude turns. Daemon source/revision was
+`647a4e7526f581f78d422195cb22b3e9b979e767`, binary SHA-256
+`871b3cf96e8c8993f09cedc97b8269bb2f4c80b7f829743afaae7f5a4d32a49a`.
+Retained harness inputs/logs are under ticket evidence
+`harness/fault-cf97a5cfc843964f50eef57a35e9ee31/`.
+
+The exact APKs predate the native invocation's completed preparation and were unchanged
+through the scripted run: application SHA-256
+`07e4e41c19b64a18a4648faeb0a94e1a5b644435b8415512a8b75666552495b9`,
+instrumentation SHA-256 `9f51df7cdc87f14eaaffec41ccec60cbaa52ff758b1f53bdf5b220a12974a6ef`.
+Managed image identity:
+`cec1892f04abcb5b7c13b3954e66527b3567c105c6ee2d60b7e3d797ae0d0135`.
+The durable `manual-20261021/` root retains `build.log`, `native.log`, `scripted.log`,
+`apk-identities.json`, each invocation's counted `dispatcher.xml`, original XML, phases,
+managed-image metadata and raw phone logs, plus `SHA256SUMS`.
+These manual results complement the 176 JVM methods; independent review and complete configured
+acceptance remain required on the repaired candidate and must receive a separate final receipt.
