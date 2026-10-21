@@ -12,6 +12,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.data.repository.matchesPending
@@ -30,6 +31,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
+import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -109,22 +111,19 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
     val root = finished.records.single { it.message.id == agent.block }
     val rootId = requireNotNull(root.fact).id
     val session = requireNotNull(root.session)
-    val baseline = listOf(root) + children
+    val initialFamily = listOf(root) + children
 
-    fun assertFamily(restored: ThreadEvidence) {
-        for (old in baseline) {
-            val fact = requireNotNull(old.fact)
-            val now = restored.records.single { it.fact?.id == fact.id }
-            val current = requireNotNull(now.fact)
-            assertEquals("original session", fact.session, current.session)
-            assertEquals("original turn", fact.turn, current.turn)
-            assertEquals("original parent", fact.parent, current.parent)
-            assertEquals("daemon order", fact.order, current.order)
-            assertEquals("finished state", fact.status, current.status)
-            assertEquals("finished activity", fact.active, current.active)
-            assertEquals("complete content", fact.content, current.content)
-            assertTrue("newest revision retained", current.rev >= fact.rev)
-        }
+    fun assertStableFact(
+        fact: ThreadItemDto,
+        current: ThreadItemDto,
+    ) {
+        assertEquals("original session", fact.session, current.session)
+        assertEquals("original turn", fact.turn, current.turn)
+        assertEquals("original parent", fact.parent, current.parent)
+        assertEquals("daemon order", fact.order, current.order)
+        assertEquals("finished state", fact.status, current.status)
+        assertEquals("finished activity", fact.active, current.active)
+        assertTrue("newest revision retained", current.rev >= fact.rev)
     }
     val toolIds =
         children
@@ -165,7 +164,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                     if (snapshot != null &&
                         snapshot.checkpoint > 0 &&
                         coverage != null &&
-                        baseline.all { row ->
+                        initialFamily.all { row ->
                             val fact = requireNotNull(row.fact)
                             snapshot.items.any { it.id == fact.id && it.rev >= fact.rev }
                         }
@@ -177,6 +176,35 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                 error("unreachable")
             }
         }
+    // The daemon can append its final task report after marking the Agent inactive. Freeze the
+    // complete pre-restart facts actually persisted, preserving every earlier identity and field.
+    val persisted = authoritativeThreadEvidence(host, conversation, finished.owner.connection, saved)
+    val baseline =
+        initialFamily.map { old ->
+            val fact = requireNotNull(old.fact)
+            val row = persisted.records.single { it.fact?.id == fact.id }
+            val current = requireNotNull(row.fact)
+            assertStableFact(fact, current)
+            if (fact.id == rootId) {
+                val originalContent = fact.content as JsonObject
+                val persistedContent = current.content as JsonObject
+                for ((key, value) in originalContent) {
+                    assertEquals("existing Agent content retained before restart: $key", value, persistedContent[key])
+                }
+            } else {
+                assertEquals("complete child content before restart", fact.content, current.content)
+            }
+            row
+        }
+
+    fun assertFamily(restored: ThreadEvidence) {
+        for (old in baseline) {
+            val fact = requireNotNull(old.fact)
+            val current = requireNotNull(restored.records.single { it.fact?.id == fact.id }.fact)
+            assertStableFact(fact, current)
+            assertEquals("complete content across restart", fact.content, current.content)
+        }
+    }
     Log.i("NegotiatedAgentRestart", "event=saved_family_ready checkpoint=${saved.checkpoint}")
     restart {
         assertTrue("application graph replaced", GlobalContext.get() !== oldGraph)
