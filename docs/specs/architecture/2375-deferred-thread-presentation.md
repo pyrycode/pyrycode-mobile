@@ -11,6 +11,9 @@
 - `ThreadReadViewport.kt`, `AuthoritativeReadSightTest.kt`: accumulate resolved revision sight independently of newest-row eligibility, then validate snapshot-owned contents at acknowledgement.
 - `ToolRowFormat.kt`: share pure headline field selection with deferred JSON lookup.
 - `AuthoritativeThreadFixtures.kt`, `AuthoritativeThreadScreenTest.kt`: supplied-fact fixtures and mounted interaction patterns.
+- `RelayConnectionFactoryTest.kt`: collision/settlement contents and `ProductionDestinations.sight` must demand the published presentation's exact revisions.
+- `NegotiatedThreadViewModelTest.kt`: `authoritativeBurstsPublishOnlyAtFramesAndMissingDoesNotWaitForOne` retains frame identity and immediate Missing checks when contents are deferred.
+- `ThreadViewModelRefusalOfferTest.kt`: `refusalRowsInTheThread_neverArm` distinguishes a retained resolved refusal from a live recovery offer.
 - `docs/knowledge/features/thread-screen.md` and `thread-screen-subagent-tool-rows.md`: retain exact scoped keys, chronological launch markers, counts and scroll-only navigation.
 - `docs/knowledge/features/development-verification-gates.md`: focused shared tests and native evidence boundaries.
 
