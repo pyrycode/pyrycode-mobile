@@ -238,6 +238,19 @@ internal object RecordedSuiteNative {
         live: () -> ManagedSessionPump,
     ): ManagedSessionPump = current?.hub?.pump(transport, live) ?: live()
 
+    fun peerPermissionReady(
+        pump: ManagedSessionPump?,
+        modalId: String,
+    ): Boolean = current?.hub?.peerPermissionReady(pump, modalId) ?: true
+
+    suspend fun beforePeerPermission(
+        pump: ManagedSessionPump,
+        modalId: String,
+        timeoutMs: Long,
+    ) {
+        current?.hub?.beforePeerPermission(pump, modalId, timeoutMs)
+    }
+
     fun control(
         action: String,
         body: String,

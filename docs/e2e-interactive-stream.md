@@ -76,6 +76,16 @@ Since #2171, the deterministic twin's before/after user-message observations rea
 `harnessThreadEvidence` rather than the repository directly; see
 [the source-bound migration](#scripted-streaming-and-reopen-source-bound-migration-2171).
 
+Earlier-session Agent restart (#2246) adds rung 3
+`InteractiveStreamE2ETest.interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+and rung 4
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect`.
+The `background-agent` scripted selection runs the twin and the retained placement
+method with separate isolated daemons and separately counted outcomes. Both restart
+proofs rebuild the application graph over persisted storage, reopen the finished
+session-A Agent and its exact tools, then replace the negotiated connection while a
+session-B send awaits settlement. See [counted evidence](#negotiated-agent-restart-and-settlement-2246).
+
 Background-agent placement (#1783) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
 and at rung 4 by
@@ -2714,10 +2724,11 @@ when it cannot be read (#850) — before this, the daemon line was skipped outri
 
 ## Pre-ship gate
 
-The live rung-3 real-Claude e2e is the post-verifier mobile **pre-ship gate**. The
-dispatcher runs it for tickets carrying `needs-real-claude`, before documentation
-and merge, so an operator is never the **first** real-stack execution. It is the
-mobile parallel of the daemon's `make e2e-realclaude`. The dispatcher command is:
+The live rung-3 real-Claude e2e remains the explicit **pre-ship gate** command.
+Automatic post-verifier live routing is retired. Required live acceptance needs
+counted evidence before verifier PASS; the normal UI and scripted gates do not
+supply it. Ticket #2246 uses seven named captures and requires no automatic full
+live-suite handoff. The explicit command remains:
 
 ```bash
 python3 scripts/android-test-gate.py live
@@ -3879,6 +3890,137 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+### Negotiated Agent restart and settlement (#2246)
+
+Implementation and verification ran on Linux, Android API 33, with Claude Code
+2.1.280. Other operating systems are outside this ticket's verification scope.
+The accepted verifier stage record for [PR #2337](https://github.com/pyrycode/pyrycode-mobile/pull/2337)
+is PASS on `bce55074fc40033374927827a4c3c52adbdb1fab`, bundle
+`3ffde847fd61222a970908d87e301247ccf81924940db07cb3da772153afcede`.
+The initial gate report predates this accepted verdict. The tables preserve its
+failed attempts and the later same-tree reruns separately.
+
+**Genuine capture and fresh replay.** Each live method below belongs to
+`InteractiveStreamE2ETest`; counts in each result column are
+executed/passed/failed/skipped. The selected successful evidence combines six
+batch pairs and one focused delimiter pair, all on Mobile
+`cb8fd9926d5c7675d84c4f2d3aa8c786850bcef3` and clean Core
+`a3bfe5e360852586e4af5bf0781ebca00b5ee433` (merged Core #3710).
+The original batch remains **7/6/1/0**: delimiter failed after producer-gap close
+4414 retired its source. Its focused same-build live and replay each passed **1/1/0/0**.
+
+| Method | Live | Fresh replay | Strict outgoing comparison |
+| --- | --- | --- | --- |
+| `interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect` | 1/1/0/0 | 1/1/0/0 | Changed; reviewed replacement |
+| `interactiveTurn_backgroundAgent_followsBottomUntilFinished` | 1/1/0/0 | 1/1/0/0 | Changed; reviewed replacement |
+| `interactiveTurn_backgroundAgent_replyStaysUnderAgent` | 1/1/0/0 | 1/1/0/0 | Changed; reviewed replacement |
+| `interactiveTurn_newSession_rendersSessionBoundaryDelimiter` | 1/1/0/0 | 1/1/0/0 | Changed; reviewed replacement |
+| `interactiveTurn_attentionDot_followsARealTurn` | 1/1/0/0 | 1/1/0/0 | Matched |
+| `interactiveTurn_permissionPrompts_heldPerConversation` | 1/1/0/0 | 1/1/0/0 | Matched |
+| `interactiveTurn_questionAnswer_reachesTheAskingConversation` | 1/1/0/0 | 1/1/0/0 | Matched |
+
+The [counted recording index](specs/architecture/2246-recording-reviews/2026-10-21-manual.json)
+retains all seven baseline/candidate hashes, per-method receipts and identities.
+Daemon binary SHA-256 is
+`29fd50a44c9bea9476363929bafb7016e61bb9418110987f0ae075a2c8c5a74e`;
+application APK is
+`7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf`;
+test APK is
+`cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177`.
+These receipts identify the capture packages; they are not rebuilt-binary verification.
+
+Every actual phone open negotiated `thread`, with no phone legacy history/backfill
+requests. The peer explicitly used its diagnostic route. The review retains 72 exact
+phone catch-ups: 63 terminal certificates, eight resets and one correlated query error
+that grants no completion. All 179 live updates carry conversation/epoch ownership;
+all four reads stay within delivered same-owner certified checkpoints. Ten permission
+answers select options offered to that same physical owner. This set has no page query
+and establishes no paging result.
+
+Restart receipts establish different graph/cache/registry objects, exact persisted
+checkpoint/coverage while support is Unverified before Activity launch, fresh Supported
+reopening and a different admitted connection during pending-send recovery. The saved
+family keeps canonical identity, session, turn, parent, launch order, finished placement
+`endedOrder`, finished state and frozen content. Exact owned tool rows are displayed
+beneath their restored Agent; settled child prose requires its own inactive done/finished
+facts. The recovered session-B send is delivered exactly once with no residual pending
+send. Stable phone-message anchors bracket the finished family in both the production
+projection and actual reversed UI list.
+
+The [difference review](specs/architecture/2246-recording-reviews/2026-10-21-manual.md)
+accepts four changed contracts and retains their strict comparison failures. Restart
+catch-ups change 19→21, summary reads 11→12, MCP reads 3→4 and model requests 1→2;
+commands and physical lifecycles match. Background following has three offered/answered
+permissions instead of four, with the same 15 catch-ups. Reply ownership has nine
+catch-ups instead of ten. Delimiter retains command/query counts with one changed
+certified query base. The remaining three complete normalized contracts match.
+No query-count relaxation or new numeric normalization is used. These are **three
+compatibility matches and four reviewed replacements**, not seven compatibility passes.
+
+**Placement rework and scripted outcomes.** On repaired Mobile
+`2d9544c24d0a8ec63d4bfe90e1c1e21f77dc01df`, each of these
+`DeterministicInteractiveStreamE2ETest` methods executed and passed independently,
+with zero failures/errors/skips, through the ordinary isolated-daemon scripted gate:
+
+- `interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+- `interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+
+Their combined count is **2/2/0/0**, also achieved on the earlier capture source.
+A fresh genuine restart and its fresh replay on the repaired source each passed
+**1/1/0/0**, using the same Core/binary/application APK. Test APK changed to
+`b8bde17716152c9b5fc3ce549a41b8f47d112ad8e2bd5cb0d4aba77aebfb6074`;
+fresh recording hash is
+`cc0b270a3792e66adf68d67172d138b4989dbc1e837ae79dc5c475204113a451`.
+The [supplemental index](specs/architecture/2246-recording-reviews/2026-10-21-verifier-rework.json)
+records these receipts. It leaves the seven committed fixtures unchanged. Placement
+negative probes first recorded **9/7/2/0**, then **9/9/0/0** after repair.
+
+**Configured verification.** Counts exclude skips from executed totals.
+
+| Check | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Python discovery | 205 | 205 | 0 | 0 |
+| JVM retained cached report | 6429 | 6429 | 0 | 0 |
+| Normal UI original run | 337 | 336 | 1 | 1 |
+| UI background-following rerun | 1 | 1 | 0 | 0 |
+| Scripted-all original run | 22 | 21 | 1 | 1 |
+| Scripted refusal-switch rerun | 1 | 1 | 0 | 0 |
+
+The JVM invocation explicitly reused Gradle cache: **zero newly executed JVM methods**.
+The retained report includes both placement probes, `heldParagraphProvesOwnershipWithoutSettling`,
+`deliveredQueryCertificateReschedulesLiveProgressWithoutAnotherPhoneRequest` and
+`interruptedBatchesKeepPriorCertificationWithNewestItems` as passed. Build/static checks,
+pre-verification and docs guard passed. The UI report executes all 68 normal recorded
+scenarios. Committed restart passes **1/1/0/0**; all six other named recordings pass
+except background following in that original run. Its same-tree dispatcher rerun passes
+**1/1/0/0**. Both required scripted Agent methods pass in scripted-all; the failed
+method is `interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`, whose
+same-tree rerun passes **1/1/0/0**. Skips are rename capture and scripted durable-gap;
+neither is credited as passing. Accepted flaky-rerun policy makes the gates green;
+this is not a fresh all-pass full-suite result. Dispatcher owns flaky tracking.
+
+Private raw evidence was retained under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2246/manual-20261021/`:
+`final-seven-cb8`, `final-newsession-cb8`, `final-recording-audit`, `scripted-cb8`,
+`verifier-rework-placement`, `placement-restart-2d9544` and `retained-native`.
+The latter retains per-method XML, instrumentation and first-failure phone logs.
+Gate XML is embedded in agents logs `verifier-gate_#2246_{4,5,6}.*`; reruns are
+`2026-10-21T13-47-32-677Z_verifier-gate-rerun_#2246.*` and
+`2026-10-21T13-55-51-644Z_verifier-gate-rerun_#2246.*`, also in the accepted bundle above.
+These paths identify retention at review time, not permanent availability.
+
+Historical failures remain failed: the original attention run on `d50c03a1d` was
+7 executed/6 passed/1 failed/0 skipped; earlier scripted runs reached owned-tool,
+registry and settlement barriers without completing restart acceptance. Permission
+cleanup and restart reset/early-approval/content-boundary replays failed before the
+repairs; setup/lock cancellations executed zero methods. The first verifier rejected
+`05c9eb9b` for stale inventory totals and missing finished placement, with 205 Python
+checks/204 passed/1 failed and later gates unexecuted. No obsolete-system exclusion
+applies. Salvage PR #2242 is closed as superseded, linked to A #2248, B #2264 and C #2337.
+Replay proves neither real transport/FCM delivery nor current provider timing. The
+remaining downstream cross-session regression scope stays with #1963.
+
 
 ### Authoritative completion alerts (#1573)
 
@@ -7220,6 +7362,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **#2246:** rung-3 `InteractiveStreamE2ETest` restart/settlement and its separately
+  counted rung-4 `DeterministicInteractiveStreamE2ETest` twin are covered above.
+  Named live/fresh pairs, committed replay and configured gates are evidenced;
+  failures and accepted reruns remain explicit. #1963 retains downstream scope.
+  The pre-ship command remains `python3 scripts/android-test-gate.py live`.
 
 - **Passive peer-turn evidence (#2317):**
   `InteractiveStreamE2ETest.interactiveTurn_peerStartedTurn_continuesOnPhone`

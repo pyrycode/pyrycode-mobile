@@ -1209,9 +1209,18 @@ class DeterministicInteractiveStreamE2ETest {
     /** #1783: deterministic lifecycle/parent fixture twin; second send releases the terminal fragment. */
     @Test
     fun interactiveTurn_seededChannel_backgroundAgentMovesAndSettles() {
+        backgroundAgentProof(restart = false)
+    }
+
+    @Test
+    fun interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect() {
+        backgroundAgentProof(restart = true)
+    }
+
+    private fun backgroundAgentProof(restart: Boolean) {
         arriveInSeededThread()
-        val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
-        val repository = requireNotNull(coordinator.currentRepository.value)
+        val host = requireNotNull(InstrumentationRegistry.getArguments().getString(E2eTestApplication.ARG_SERVER_ID))
+        val repository = GlobalContext.get().get<de.pyryco.mobile.di.ThreadDestinationFactory>().repository(host)
         val conversationId =
             runBlocking {
                 repository
@@ -1436,6 +1445,16 @@ class DeterministicInteractiveStreamE2ETest {
             expandLabel = expandLabel,
             collapseLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_collapse),
         )
+        if (restart) {
+            composeTestRule.proveNegotiatedAgentRestart(host, conversationId, "agent1783", "task1783", restart = { beforeLaunch ->
+                val instrumentation = InstrumentationRegistry.getInstrumentation()
+                composeTestRule.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.DESTROYED)
+                instrumentation.runOnMainSync { (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph() }
+                beforeLaunch()
+                androidx.test.core.app.ActivityScenario
+                    .launch(MainActivity::class.java)
+            }, openThread = ::arriveInSeededThread, send = { typeAndSend("settlement2175") })
+        }
     }
 
     /**
