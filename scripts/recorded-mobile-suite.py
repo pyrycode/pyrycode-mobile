@@ -3,6 +3,7 @@
 import argparse
 import base64
 import datetime
+import fcntl
 import hashlib
 import gzip
 import io
@@ -642,6 +643,20 @@ def verify_all(args):
     return summary
 
 
+def require_host_admission(environment):
+    """Reuse the original host hold; never manufacture or replace inherited context."""
+    try:
+        descriptor = int(environment.get('PYRY_TEST_ADMISSION_FD', '-1'))
+        actual = os.fstat(descriptor)
+        path = Path(environment.get('PYRY_TEST_ADMISSION_LOCK', str(Path.home() / '.local/share/pyry-fleet/test-admission.lock')))
+        expected = path.stat()
+        require((actual.st_dev, actual.st_ino) == (expected.st_dev, expected.st_ino), 'Foreign host hold')
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, ValueError):
+        raise ValueError('Managed recording requires the original validated host admission descriptor') from None
+    return descriptor
+
+
 def managed_verify(args, gate, capturing=False):
     """Focused named captures or one reviewed verification, under managed device custody."""
     if capturing:
@@ -660,6 +675,11 @@ def managed_verify(args, gate, capturing=False):
         method = document['scenario']
         methods = [method]
     gate.check_selection(ROOT, 'android', ['live', '--tests', ','.join(gate.LIVE_CLASS + '#' + name for name in methods)])
+    if 'PYRY_TEST_ADMISSION_FD' not in os.environ:
+        # Scope selection precedes host admission; its original descriptor then precedes device custody.
+        return os.execv(sys.executable, [sys.executable, str(ROOT / 'scripts/test-admission.py'), '--',
+                                        sys.executable, str(ROOT / 'scripts/recorded-mobile-suite.py'), *sys.argv[1:]])
+    require_host_admission(os.environ)
     require(not legacy.run(['git', 'status', '--porcelain']).strip(), 'Commit source before verification')
     env = gate.live_claude_environment(dict(os.environ))
     require(gate.claude_authenticated(env), 'Configured Claude authentication required')

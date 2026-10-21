@@ -6,6 +6,8 @@ from unittest import mock
 import argparse
 import json
 import tempfile
+import os
+import fcntl
 
 spec = importlib.util.spec_from_file_location('suite', Path(__file__).with_name('recorded-mobile-suite.py'))
 suite = importlib.util.module_from_spec(spec)
@@ -13,6 +15,66 @@ spec.loader.exec_module(suite)
 
 
 class SuiteDriverTest(unittest.TestCase):
+    def setUp(self):
+        host = mock.patch.object(suite, 'require_host_admission')
+        environment = mock.patch.dict(suite.os.environ, {'PYRY_TEST_ADMISSION_FD': '17'})
+        self.host_guard = host.start()
+        self.host_patch = host
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.addCleanup(host.stop)
+
+    def test_host_admission_reuses_only_the_original_descriptor(self):
+        self.host_patch.stop()
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / 'host.lock'
+            foreign = Path(directory) / 'foreign.lock'
+            foreign.touch()
+            with lock.open('w') as held:
+                descriptor = held.fileno()
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                environment = {'PYRY_TEST_ADMISSION_FD': str(descriptor), 'PYRY_TEST_ADMISSION_LOCK': str(lock)}
+                self.assertEqual(descriptor, suite.require_host_admission(environment))
+                self.assertEqual(str(descriptor), environment['PYRY_TEST_ADMISSION_FD'])
+                with self.assertRaisesRegex(ValueError, 'original validated host admission'):
+                    suite.require_host_admission(dict(environment, PYRY_TEST_ADMISSION_LOCK=str(foreign)))
+                with self.assertRaisesRegex(ValueError, 'original validated host admission'):
+                    suite.require_host_admission(dict(environment, PYRY_TEST_ADMISSION_FD='-1'))
+                self.assertEqual(lock.stat().st_ino, os.fstat(descriptor).st_ino)
+
+    def test_invalid_inherited_admission_is_rejected_without_replacement_or_device(self):
+        self.host_patch.stop()
+        gate = mock.MagicMock()
+        gate.LIVE_CLASS = 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest'
+        args = argparse.Namespace(method='interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect')
+        with mock.patch.dict(suite.os.environ, {'PYRY_TEST_ADMISSION_FD': '-1'}), mock.patch.object(suite.os, 'execv') as delegate:
+            with self.assertRaisesRegex(ValueError, 'original validated host admission'):
+                suite.managed_verify(args, gate, capturing=True)
+        delegate.assert_not_called()
+        gate.live_claude_environment.assert_not_called()
+        gate.device_hold.assert_not_called()
+
+    def test_managed_capture_enters_host_admission_before_credentials_or_device(self):
+        method = 'interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect'
+        gate = mock.MagicMock()
+        gate.LIVE_CLASS = 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest'
+        gate.live_claude_environment.return_value = {'ANDROID_HOME': '/sdk'}
+        gate.build_apks.return_value = 1
+        with tempfile.TemporaryDirectory() as directory:
+            args = argparse.Namespace(method=method, output=Path(directory), pyry=Path('/test/pyry'), daemon_source=Path('/test/daemon'))
+            original = ['recorded-mobile-suite.py', 'managed-capture', '--method', method]
+            with mock.patch.dict(suite.os.environ), mock.patch.object(suite.sys, 'argv', original), \
+                    mock.patch.object(suite.os, 'execv', side_effect=RuntimeError('host admission transfer')) as delegate, \
+                    mock.patch.object(suite.legacy, 'run', return_value=b''):
+                suite.os.environ.pop('PYRY_TEST_ADMISSION_FD', None)
+                with self.assertRaisesRegex(RuntimeError, 'host admission transfer'):
+                    suite.managed_verify(args, gate, capturing=True)
+            delegate.assert_called_once_with(suite.sys.executable, [
+                suite.sys.executable, str(suite.ROOT / 'scripts/test-admission.py'), '--',
+                suite.sys.executable, str(suite.ROOT / 'scripts/recorded-mobile-suite.py'), *original[1:]])
+            gate.live_claude_environment.assert_not_called()
+            gate.device_hold.assert_not_called()
+
     def test_managed_capture_keeps_a_named_subset_at_the_selection_boundary(self):
         methods = ['interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect',
                    'interactiveTurn_permissionPrompts_heldPerConversation']
