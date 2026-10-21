@@ -182,7 +182,8 @@ class CachingConversationRepository(
         local.reader?.isActive == true &&
             authoritativeReaders[conversationId] === local.reader &&
             authoritativeThreads.current(serverId, conversationId).generation == local.generation &&
-            conversationId !in deleted && authoritativeCurrent(conversationId)
+            conversationId !in deleted &&
+            authoritativeCurrent(conversationId)
 
     private fun localAuthoritativeHistory(conversationId: String): Flow<AuthoritativeHistoryLoad> =
         localAuthoritativeLoad(conversationId)
@@ -202,8 +203,10 @@ class CachingConversationRepository(
                     local
                 }
             }
-        return published.reader === reader && published.generation == 0L &&
-            published.load == load && currentLocalHistory(conversationId, published)
+        return published.reader === reader &&
+            published.generation == 0L &&
+            published.load == load &&
+            currentLocalHistory(conversationId, published)
     }
 
     private fun authoritativeCurrent(conversationId: String): Boolean =
